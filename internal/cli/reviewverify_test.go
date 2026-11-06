@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 const (
@@ -444,5 +445,201 @@ func TestReviewHeadReadsThroughTheReadMint(t *testing.T) {
 	}
 	if got, want := forge.auth[0], "Bearer "+mint.token; got != want {
 		t.Errorf("the forge read carried %q, want the token the service minted and no other", got)
+	}
+}
+
+// TestReviewHeadRefusesWithoutACredentialsService is the fail-closed shape
+// reviewVerifier already has, one read over: an installation that publishes no
+// credentials_service block has no read mint, and the head read refuses rather
+// than being served by a credential of this process's own -- which a person's
+// machine does not hold anyway.
+func TestReviewHeadRefusesWithoutACredentialsService(t *testing.T) {
+	forge := startForgeStandIn(t, reviewHeadSHA)
+	setReviewReadIdentity(t)
+	env := reviewHeadEnv(t, "")
+
+	_, err := reviewHead(t.Context(), env, "acme/app", 7)
+	if err == nil || !strings.Contains(err.Error(), "credentials_service") {
+		t.Fatalf("err = %v, want the refusal that names the unpublished credentials service", err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the refusal is %v, want a sentence rather than a failure of the cloud", err)
+	}
+	if forge.calls() != 0 {
+		t.Errorf("the forge was read %d times for an installation with no read mint", forge.calls())
+	}
+}
+
+// TestReviewHeadNeverFallsBackToTheEnvironment is the mutation this task
+// exists for: the environment carries a job's App ID and a real App key, and
+// the installation publishes no service. Keeping OpenProvider(os.Environ(),
+// nil) and laying the mint beside it leaves that credential in the read, so
+// the head is served by the environment's App rather than refused.
+func TestReviewHeadNeverFallsBackToTheEnvironment(t *testing.T) {
+	forge := startForgeStandIn(t, reviewHeadSHA)
+	setReviewReadIdentity(t)
+	t.Setenv(providers.EnvGitHubAppID, "999999999")
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	env := reviewHeadEnv(t, "")
+
+	_, err := reviewHead(t.Context(), env, "acme/app", 7)
+	if err == nil || !strings.Contains(err.Error(), "credentials_service") {
+		t.Fatalf("err = %v, want the refusal that names the unpublished credentials service", err)
+	}
+	if forge.calls() != 0 {
+		t.Errorf("the head read reached the forge with the environment's App credential: %d reads", forge.calls())
+	}
+}
+
+// TestReviewHeadRefusesATokenForAnotherRepository: the answer names the
+// repository it was minted for, and a token minted for another repository is
+// one this read must not use. A misconfigured or hostile answer therefore
+// refuses the brief rather than becoming a read of another repository's head.
+func TestReviewHeadRefusesATokenForAnotherRepository(t *testing.T) {
+	mint := startReadMintStandIn(t)
+	mint.names = "acme/other"
+	forge := startForgeStandIn(t, reviewHeadSHA)
+	setReviewReadIdentity(t)
+	env := reviewHeadEnv(t, mint.url)
+
+	_, err := reviewHead(t.Context(), env, "acme/app", 7)
+	if err == nil || !strings.Contains(err.Error(), "read mint") {
+		t.Fatalf("err = %v, want the refusal that names the read mint", err)
+	}
+	if forge.calls() != 0 {
+		t.Errorf("the forge was read %d times with a token minted for another repository", forge.calls())
+	}
+}
+
+// TestReviewHeadRefusesWhenTheMintIsDenied: a person the installation does not
+// list, or a caller the service does not admit, is answered 403 or 401 by the
+// service. The refusal says what it is -- the read mint, and the caller's own
+// identity -- and never reads as a broken pull request.
+func TestReviewHeadRefusesWhenTheMintIsDenied(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusUnauthorized} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			mint := startReadMintStandIn(t)
+			mint.status = status
+			forge := startForgeStandIn(t, reviewHeadSHA)
+			setReviewReadIdentity(t)
+			env := reviewHeadEnv(t, mint.url)
+
+			_, err := reviewHead(t.Context(), env, "acme/app", 7)
+			if err == nil {
+				t.Fatal("a refused read mint read the head")
+			}
+			for _, want := range []string{"read mint", "your own Google ID token", "operators"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("the refusal is %v, want a sentence rather than a failure of the cloud", err)
+			}
+			// The forge's own words are the parenthetical at the end of the
+			// sentence, so the refusal leads with what it is.
+			if !strings.HasPrefix(err.Error(), "the installation's credentials service's read mint") {
+				t.Errorf("the refusal does not lead with the read mint: %v", err)
+			}
+			if forge.calls() != 0 {
+				t.Errorf("the forge was read %d times for a mint the service refused", forge.calls())
+			}
+		})
+	}
+}
+
+// TestFixBriefReadsTheHeadThroughTheReadMint is the read where it is USED: the
+// head a fix round's brief is checked against comes from the forge, read with
+// the token the installation's credentials service minted for this person, and
+// the artifact's own head_sha is the claim being compared with it.
+//
+// Both directions are here, because either one alone is passed by a reader that
+// is wrong in the other: an accepted head the artifact names, and a forge that
+// has moved past the artifact, whose brief is refused. The second is what says
+// the value compared is the forge's read and not the artifact's claim against
+// itself -- and the mint's own calls are checked in both, so the head is read
+// through the service and never from a credential of this process's own.
+func TestFixBriefReadsTheHeadThroughTheReadMint(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		head string
+		want string
+	}{
+		{name: "the head the artifact names", head: fixBriefHead},
+		{name: "a head the forge has moved past", head: strings.Repeat("b", len(fixBriefHead)), want: "head_sha"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mint := startReadMintStandIn(t)
+			forge := startForgeStandIn(t, tc.head)
+			setReviewReadIdentity(t)
+			setFixBriefVerifier(t)
+			if reviewPRHeadSeam != nil {
+				t.Fatal("a head seam is set, so this test would not be the real read")
+			}
+			f := newCloudFixture(t)
+			env := memEnv(t, f)
+			reviewID := wallRunIDAt(0, "121500", "5eed")
+			ctx := t.Context()
+			// The two facts the read needs are the installation's published
+			// credentials_service block and the project's own recorded App ID,
+			// and neither is in the environment. The block is written by hand
+			// because the config's own writers admit an https URL only, and the
+			// stand-in service is a test's loopback one.
+			env.lc.CredentialsService = &localcfg.CredentialsService{URL: mint.url}
+			r := env.lc.Repos["acme/app"]
+			r.GitHubAppID = reviewHeadAppID
+			env.lc.Repos["acme/app"] = r
+
+			data, err := json.Marshal(storedReviewArtifact(fixFirstArtifact(reviewID)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := runstore.Open(env.bucket.Bucket, appSlug, reviewID)
+			if err := store.PutFile(ctx, runstore.ArtifactPrefix+runner.ReviewArtifactName, data, "application/json"); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.PutFile(ctx, runstore.ArtifactPrefix+runner.ReviewSignName,
+				[]byte(fixBriefSign(appSlug, reviewID, data)+"\n"), "text/plain"); err != nil {
+				t.Fatal(err)
+			}
+			spec := firstRunSpec(reviewID)
+			spec.OAuthToken = "acme-personal"
+			if err := store.CreateTask(ctx, spec); err != nil {
+				t.Fatal(err)
+			}
+
+			brief, err := reviewFindings(ctx, env, "acme/app", reviewID, 7)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("the brief of %s: %v", reviewID, err)
+				}
+				if !strings.Contains(brief, "the lock is released before the write") {
+					t.Errorf("the brief does not carry the review's findings:\n%s", brief)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("err = %v, want a refusal naming %q", err, tc.want)
+				}
+			}
+			// The head was read through the service in both directions, and for
+			// the one repository and the one App this brief is for: a read that
+			// reached the forge with anything else is a read of something this
+			// launch is not for.
+			if mint.calls() != 1 {
+				t.Fatalf("the read mint was called %d times, want 1:\n%+v", mint.calls(), mint.bodies)
+			}
+			if body := mint.bodies[0]; body["repository"] != "acme/app" || body["app_id"] != reviewHeadAppID {
+				t.Errorf("the read mint was asked for %+v, want acme/app signed as %s", body, reviewHeadAppID)
+			}
+			if mint.auth[0] != "Bearer "+reviewHeadPersonToken {
+				t.Errorf("the read mint was presented %q, want the caller's own identity token", mint.auth[0])
+			}
+			if forge.calls() != 1 {
+				t.Fatalf("the forge was read %d times, want 1", forge.calls())
+			}
+			if forge.auth[0] != "Bearer "+mint.token {
+				t.Errorf("the forge was read with %q, want the token the read mint answered", forge.auth[0])
+			}
+		})
 	}
 }
