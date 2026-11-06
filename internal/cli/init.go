@@ -579,6 +579,13 @@ type initRun struct {
 	// through the operator's own credentials (policyReadOnce.read). Readiness's
 	// D11 gate turns on whether one exists.
 	policy policyReadOnce
+
+	// policyStage is the converge's policy stage, set when this run registered
+	// one (initStages). It is held here as well as on the engine because the
+	// other half of what that stage's plan is made of — this machine's local
+	// config — is written by this struct (writeConfig), from stages that all run
+	// before the policy stage applies.
+	policyStage *policyMigrateStage
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -2667,6 +2674,20 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// it (effectiveVerifiers reads this struct through the policy stage's
 	// own read of it).
 	*lc = next
+	// The file just replaced is half of what the policy stage's plan is made of,
+	// and the plan the stage holds was made in the read-only preview pass, before
+	// any of this: the members this write has just moved are not in it. The
+	// verifier account's address (CSR14) is the one that made the difference
+	// visible — it is written here for the first time on an installation whose
+	// config predates the key — and the node a stale plan publishes is one the
+	// stage's own Verify refuses ("the published policy was written but still
+	// does not carry what the local config states"), which is the second run
+	// nobody was told to make. The rules stage drops the same read after its own
+	// deploy, for the same reason (init_rules_stage.go): the stage re-plans at
+	// its own check, which the loop makes right before it applies.
+	if r.policyStage != nil {
+		r.policyStage.forget()
+	}
 	if !r.o.planOnly {
 		r.publishSharedConfig(ctx, &next)
 	}

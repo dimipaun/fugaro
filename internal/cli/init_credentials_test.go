@@ -1651,6 +1651,20 @@ func credentialsVarsOnDisk(t *testing.T, r *imagesRig) map[string]any {
 // (verifier.tftest.hcl pins null → the account alone). Half two is the node
 // the same run published, which is what CSR15's reader and the owner's doctor
 // read.
+//
+// Half two is the half that needs the run's ORDER to be right, and this test
+// holds it: the policy stage's plan is made in the read-only preview pass —
+// before any stage applies — while the address reaches this machine's config
+// from the installation stage's own write, so a stage that kept that plan would
+// publish the node the config stated BEFORE it named the verifier and refuse
+// its own write one line later ("the published policy was written but still
+// does not carry what the local config states"). The rules are seeded CURRENT
+// for exactly this reason: a rules stage that deploys drops the stale read on
+// its own (init_rules_stage.go), and an installation at the previous version
+// whose release changed no rule deploys nothing, so the seeding is what makes
+// this a test of the run's order rather than of the rules stage's forget.
+// Mutation (verified, run and restored): drop the forget the local-config write
+// makes (init.go's writeConfig) and this test fails with that sentence.
 func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
 	r := credentialsStageRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
@@ -1662,6 +1676,22 @@ func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
 	// own account is the default and this run's publish is what names it.
 	r.db.Set(budget.PathMark, auroraMark())
 	r.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
+	// The rules this installation is already read under: the generation this
+	// binary deploys AND the document it generates, which is what a project at
+	// the previous version holds when the release between them changed no rule.
+	// Both halves are seeded, and not the marker alone, because the difference
+	// is the whole point of this test: a rules stage that deploys is a stage
+	// that drops the policy stage's cached read (init_rules_stage.go), and a
+	// run whose rules are current deploys nothing — so the publish below is the
+	// policy stage's own read of the config THIS run wrote, made after the
+	// installation stage wrote it, and not a plan the rules stage happened to
+	// re-make.
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.db.SetRules(gen)
+	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	seedCredentialsService(t, r, r.credentialsRef())
 	// The literal, as the module writes it (verifier.tf's account_id) and as
 	// internal/infra spells it (VerifierAccountID): the address is a fact of the
