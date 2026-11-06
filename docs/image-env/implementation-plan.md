@@ -3,8 +3,8 @@
 **Status: plan only; nothing is implemented; no task approved.** Four tasks, **IE1–IE4**, each with its
 files (at most six, and IE2 is exactly at the cap), its interfaces, its named tests, its **red step**,
 its **mutation**, its **reviewer tier**, what it depends on, its command and its commit. Written against
-the tree of **2026-11-06** (`57f7d871`, the merge this branch was cut from); every citation below was
-resolved while writing it. **The owner answered the two questions this design could not open with**
+the tree of **2026-11-06** (`c52d40f9`, v0.20.2, the commit the fix round merged into this branch; the
+first reading was at `57f7d871`); every citation below was resolved while writing it. **The owner answered the two questions this design could not open with**
 (the scope and the release, [reconciliation.md](reconciliation.md) §8 **O1** and **O2**), so each task's
 block is settled and none of them waits on a question. **O3, O4 and O5 are still open and one of them
 changes the code** — IE2 cannot start until **O3** is answered, and **O4** changes IE2's denylist
@@ -12,7 +12,7 @@ source. What is owed besides those answers is the owner's **approval of this pla
 
 **Written to:** [spec.md](spec.md) (issue **#1755** verbatim) and [reconciliation.md](reconciliation.md).
 **Where they disagree, the reconciliation wins**; where a task below and the reconciliation disagree,
-**the reconciliation's findings (F1–F18) and decisions (D1310–D1323) win**, and the task is wrong.
+**the reconciliation's findings (F1–F18) and decisions (D1370–D1383) win**, and the task is wrong.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -24,10 +24,10 @@ source. What is owed besides those answers is the owner's **approval of this pla
   registry, no real job, no network;
 - **no secret-shaped literal** anywhere, in a test or a doc;
 - **a field never changes meaning**: no task reuses or retypes an existing wire field, config key or
-  environment name, and the stamp is a new name (D1311);
+  environment name, and the stamp is a new name (D1371);
 - **comments explain why, never what**; no TODO, no section header, no restatement of a name;
 - **`fugaro update` stays the whole upgrade**: nothing here adds an operator step, and a job that
-  predates the stamp converges with the next `update` (D1311, D1322);
+  predates the stamp converges with the next `update` (D1371, D1382);
 - **`.github/workflows/` is never touched** by any task.
 
 ---
@@ -37,7 +37,7 @@ source. What is owed besides those answers is the owner's **approval of this pla
 | Order | Task | What forces it |
 | --- | --- | --- |
 | 1 | **IE1** — the job carries the catalog entry it was deployed with (the stamp) | Nothing. It is the fact every other task needs and the only one the deploy can supply (F5, F6). It changes no behaviour: a stamp nothing reads yet is what makes IE2 safe to write and IE3 honest |
-| 2 | **IE3** — `fugaro doctor --all` names what a run drops | IE1 alone, and **not IE2**: the report is a statement about the installation and its jobs, and it is the whole of option 3's command half. It is in the release **whatever happens to IE2** (D1323), which is why it is not behind it |
+| 2 | **IE3** — `fugaro doctor --all` names what a run drops | IE1 alone, and **not IE2**: the report is a statement about the installation and its jobs, and it is the whole of option 3's command half. It is in the release **whatever happens to IE2** (D1383), which is why it is not behind it |
 | 2 | **IE2** — the passthrough (SEC) | IE1, and **open item O3** (the redaction question — the answer is a line in this task) and **O4** (`BATCH_`, if the owner takes it). The one task that changes what a run can reach: **SEC — opus, with the independent review mandatory** |
 | 3 | **IE4** — the two doc sentences, the skill clause and the live check | IE2 and IE3 for the half that describes behaviour (**a doc that says an image's `ENV` reaches a run is false until IE2 has landed**), and IE1+IE3 alone for the half that states the rule and points at the report. IE4 splits in exactly that way and says so in its commit |
 
@@ -46,7 +46,7 @@ is `internal/agent` and `internal/runner`, IE3 is `internal/cli`'s doctor; each 
 landing first is the smaller release. **IE2 is the expected one to slip** — it is the only task at the
 six-file cap, the only SEC one, and the only one whose design (a new environment write) is what the
 independent review is for. Nothing else in this plan moves if it slips: the release ships the sentence,
-the report and the rule (D1323) and is never worse than the tree it replaces.
+the report and the rule (D1383) and is never worse than the tree it replaces.
 
 ## 2. Shared files
 
@@ -76,7 +76,7 @@ which is the read IE3 adds — if the read needs nothing, Terraform is untouched
 
 ### IE1. The job carries the catalog entry it was deployed with
 
-**Decisions:** D1311, D1318. **Findings:** F5, F6, F7, F9. **Depends on:** nothing.
+**Decisions:** D1371, D1378. **Findings:** F5, F6, F7, F9. **Depends on:** nothing.
 
 - **Files:** `internal/infra/spec.go`, `internal/infra/spec_test.go`, `internal/runner/provision.go`.
   **3 files.**
@@ -89,8 +89,8 @@ which is the read IE3 adds — if the read needs nothing, Terraform is untouched
   job whose image the catalog chose**, prebuilt and built alike (`CatalogImageEntry` reads the entry
   back out of a prebuilt reference, `internal/backend/gcp/catalog.go:141-159`), and for no other job:
   a repository-built job, `checkout: clone`'s base image and the check jobs carry no stamp, which is
-  the fail-closed direction D1311 asks for. It is a new name under a reserved prefix, so no existing
-  field changes meaning and the agent's own environment never sees it (D1312).
+  the fail-closed direction D1371 asks for. It is a new name under a reserved prefix, so no existing
+  field changes meaning and the agent's own environment never sees it (D1372).
 - **Tests:** `TestSpecStampsTheCatalogEntryOnTheJob` (a job whose workflow runs a built entry and one
   whose workflow runs a prebuilt entry both carry `FUGARO_IMAGE_ENTRY` = the entry's name), and
   `TestSpecStampsNoEntryOnAJobWithNoCatalogEntry` (a repository-built job and a `clone` job carry the
@@ -112,7 +112,7 @@ which is the read IE3 adds — if the read needs nothing, Terraform is untouched
 
 ### IE2. The passthrough: an operator's catalog image reaches its own runs (SEC)
 
-**Decisions:** D1310, D1312, D1313, D1314, D1315, D1316. **Findings:** F1, F3, F4, F8, F9, F10, F11,
+**Decisions:** D1370, D1372, D1373, D1374, D1375, D1376. **Findings:** F1, F3, F4, F8, F9, F10, F11,
 F12, F16, F18. **Depends on:** IE1, **and open items O3 and O4 — the answers change this task**.
 **Reviewer tier: SEC — opus, with the independent review mandatory.**
 
@@ -124,17 +124,22 @@ F12, F16, F18. **Depends on:** IE1, **and open items O3 and O4 — the answers c
   and it is written before everything Fugaro writes, so nothing an image sets can override the routing,
   the auth, a declared secret or a `FUGARO_*` name"*; and `func (r *run) imageEnv() map[string]string`
   in `agentenv.go`, which is the one place the set is computed. `imageEnv` returns nil — the whole
-  feature off — when `r.parentEnv()[ImageEntryEnv]` is empty (D1311's fail-closed), and otherwise the
-  runner's environment **minus** every name `config.ReservedEnv` refuses (D1312, re-applied inside
+  feature off — when `r.parentEnv()[ImageEntryEnv]` is empty (D1371's fail-closed), and otherwise the
+  runner's environment **minus** every name `config.ReservedEnv` refuses (D1372, re-applied inside
   `BuildEnv` too, so the filter sits next to the allow-list it protects whatever a caller passes),
-  minus the platform and launch names (`internal/backend/launchenv.go:32-56`), and minus every name in
+  minus the platform and launch names (`internal/backend/launchenv.go:32-54`), and minus every name in
   `FUGARO_SECRET_ENVS` this run did not declare (`r.secretList()`, `internal/runner/runner.go:927-932`;
   F8 — those reach the agent through the existing declared-secret path alone). **The write goes after
   the allow-list copy and the `DOCKER_HOST` arm (`internal/agent/env.go:85-116`) and before the auth switch
   (`:137`)**, which is what makes `maps.Copy(out, spec.Set)` (`:204`) and `GatewayVars` (`:205-216`,
-  *"Last, so nothing declared or inherited can override the routing"*) the last word, as D1314 requires
-  and O1 ruled. **Nothing is registered with the redactor by this task unless O3 answers otherwise**
-  (D1316): a passed value is not a secret, the agent can already read the runner's environment through
+  *"Last, so nothing declared or inherited can override the routing"*) the last word, as D1374 requires
+  and O1 ruled. **The `DOCKER_HOST` arm is not a hole in that order**: `DOCKER_` is already a
+  `ReservedEnvPrefixes` entry (`internal/config/validate.go:65`), so an image's `DOCKER_HOST` — like
+  anything else the arm reads — is refused by the same filter when `docker: true` ships later
+  (`internal/agent/env.go:91-116`: *"Nothing sets spec.Docker yet … so this fails closed until then"*),
+  and the value the job set is the one that stands. **Nothing is registered with the redactor by this
+  task unless O3 answers otherwise** (D1376): a passed value is not a secret, the agent can already read
+  the runner's environment through
   `/proc` (`SECURITY.md:141`), and the doc already forbids a credential in an image
   (`docs/base-image.md:28`). If O3's answer is the alternative, this task calls `r.addSecret(v)` for
   each passed value too — one loop, in `imageEnv`'s caller, before the stage's environment is built.
@@ -155,7 +160,7 @@ F12, F16, F18. **Depends on:** IE1, **and open items O3 and O4 — the answers c
   `NEXUS_BASEURL` absent from the built environment, which is issue #1755's own bug reproduced as a
   test. **Both are quoted in the pull request.**
 - **Mutation to hold it:** (1) drop the stamp check in `imageEnv` → `TestImageEnvIsNilWithoutTheStamp`
-  fails, and that is the mutation that would let a repository-built image pass its `ENV` (D1310's whole
+  fails, and that is the mutation that would let a repository-built image pass its `ENV` (D1370's whole
   point); (2) remove the `config.ReservedEnv` filter → `TestBuildEnvDropsAReservedImageVariable`
   fails; (3) move the `ImageEnv` write from before the auth switch to after `GatewayVars` →
   `TestBuildEnvSetsFugarosVariablesLast` fails, and that is the mutation that would let an image route
@@ -166,7 +171,7 @@ F12, F16, F18. **Depends on:** IE1, **and open items O3 and O4 — the answers c
   widening the owner accepted (an operator's image is trusted as the operator is), the names that stay
   out (the language-runtime hooks a **repository** could otherwise reach: `NODE_OPTIONS`, `NODE_PATH`,
   `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `PERL5*`, `RUBY*`, `PYTHON*`, `BASH_ENV`), and the statement
-  that a passed value is **not** a secret and is **not** redacted (D1315, D1316) — because the reviewer
+  that a passed value is **not** a secret and is **not** redacted (D1375, D1376) — because the reviewer
   and the release notes both read it from there.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/agent/ -run 'BuildEnv' -count=1` then
   `GOFLAGS=-p=2 go test ./internal/runner/ -run 'ImageEnv|BuildEnv' -count=1 -timeout 40m`.
@@ -174,7 +179,7 @@ F12, F16, F18. **Depends on:** IE1, **and open items O3 and O4 — the answers c
 
 ### IE3. `fugaro doctor --all` names what a run drops
 
-**Decisions:** D1317, D1318, D1315. **Findings:** F13, F14. **Depends on:** IE1. **Reviewer tier:**
+**Decisions:** D1377, D1378, D1375. **Findings:** F13, F14. **Depends on:** IE1. **Reviewer tier:**
 standard, with the doctor pins run in the same pull request.
 
 - **Files:** `internal/cli/doctor.go`, `internal/cli/doctor_render.go`,
@@ -184,12 +189,12 @@ standard, with the doctor pins run in the same pull request.
 - **Interfaces:** consumes the job's container env (`JobFullEnv`,
   `internal/backend/gcp/run.go:377` — **one `Jobs.Get` per job, and the launcher role already carries
   `run.jobs.get`**, `deploy/terraform/gcp/modules/installation/iam.tf:9-10`) and produces, per job, the
-  names that will not reach runs: the job's own env names minus the reserved names (D1312) minus the
+  names that will not reach runs: the job's own env names minus the reserved names (D1372) minus the
   platform, launch and stamp names minus the names in the job's own `FUGARO_SECRET_ENVS`. **The
   subtraction is spelled once, as a function that both IE2's `imageEnv` and this report call** — the
   function lives where both can reach it (`internal/runner`, exported beside `ImageEntryEnv`), which is
-  what D1318 means by "the report and the behaviour can never disagree". The printed line is **names
-  only, never values** (D1315), and a job with **no stamp** prints as *not catalog-stamped* rather than
+  what D1378 means by "the report and the behaviour can never disagree". The printed line is **names
+  only, never values** (D1375), and a job with **no stamp** prints as *not catalog-stamped* rather than
   as "drops nothing" — the two are different facts (a job deployed before IE1, or a repository image).
   **It goes in the `--all` view and `--json`, and the default screen is untouched**: the default is
   pinned at 25 lines by `TestDoctorDefaultIsOneScreen` (`doctor_render_test.go:233-253`) and an
@@ -211,7 +216,7 @@ standard, with the doctor pins run in the same pull request.
 
 ### IE4. The rule, in the two places a reader looks, and the live check
 
-**Decisions:** D1319, D1320, D1321. **Findings:** F2, F14. **Depends on:** IE2 and IE3 for the half
+**Decisions:** D1379, D1380, D1381. **Findings:** F2, F14. **Depends on:** IE2 and IE3 for the half
 that describes behaviour; IE1 and IE3 alone for the half that states the rule. **Reviewer tier:**
 standard, with `go test ./internal/cli/ -run 'Docs|Backlog'` and `go test ./plugin/` run in the same
 pull request.
@@ -233,9 +238,9 @@ pull request.
   stop contradicting the code. `plugin/skills/working/SKILL.md`'s catalog bullet gains one clause: a
   catalog image's `ENV` reaches the run except the reserved names, and `fugaro doctor --all` names what
   a job drops. **The check's section in the register is written by whoever implements the check, under
-  the register's own rule, and not by this task** (D1321, §6 below). **No release-notes file is written
+  the register's own rule, and not by this task** (D1381, §6 below). **No release-notes file is written
   here**: `docs/releases/` belongs to the release (`scripts/release.sh X.Y.Z`, `docs/release.md`), and
-  the `### For operators` sentence D1322 owes is quoted in §5 so it is not invented on release day.
+  the `### For operators` sentence D1382 owes is quoted in §5 so it is not invented on release day.
 - **Tests:** `go test ./internal/cli/ -run 'Docs|Backlog' -count=1 -timeout 40m` (the pins over both
   docs, and the backlog census, which must still read **"2 items: 2 open, 0 closed, 0 dropped."**), and
   `go test ./plugin/ -count=1`. If a pin asserts one of the two sentences word for word, the pin is
@@ -255,9 +260,10 @@ pull request.
 
 ## 4. What is deliberately not in this plan
 
-- **Per-repository images** (D1310, O1's ruling): a separate design is removing that path
-  (`docs/repo-image-removal/`, its tasks R0–R2 in open pull requests #1693, #1694, #1698, #1709). No
-  task here reads or changes it, and none depends on it (F17).
+- **Per-repository images** (D1370, O1's ruling): a separate design is removing that path
+  (`docs/repo-image-removal/`, its tasks R0–R2 in open pull requests #1693, #1694 and #1698; the
+  re-slot that moved that design to 0.20.0 is **#1709, which merged**, and the removal itself is
+  **not built** on `main`). No task here reads or changes it, and none depends on it (F17).
 - **A plain `env:` map on a workflow or a project profile** (option 2, O1): it is the design
   `docs/design/agent-env.md` already is, unbuilt, and its §2 rule is that the allow-list is Fugaro's own
   Go code and never a `fugaro.yaml` field. If the owner ever wants a value with no rebuild, that design
@@ -267,7 +273,7 @@ pull request.
   network, and it cannot answer for a prebuilt entry (F5).
 - **`BATCH_` in the denylist** unless **O4** is answered yes; the answer, not this plan, decides it, and
   it is one line in `internal/config/validate.go` if it is taken (F9).
-- **Registering every passed value with the redactor** unless **O3** is answered that way; D1316's
+- **Registering every passed value with the redactor** unless **O3** is answered that way; D1376's
   recommendation is no, and the answer is a loop in IE2.
 - **A `SECURITY.md` change.** If the owner takes O3's alternative, IE2's pull request is where the
   redaction sentence goes and IE2's file list grows by one; if not, that file is untouched by every
@@ -280,10 +286,17 @@ pull request.
 ## 5. Release slot
 
 **0.20.0, which is O2's answer.** The design note and option 3 land in 0.20.0; the code only if this
-design's review is clean in time (D1322). The slot needs nothing from this plan to be announced — the
+design's review is clean in time (D1382). The slot needs nothing from this plan to be announced — the
 design folder itself is the note — and the release that carries IE1–IE3 adds **no operator step**: the
 stamp converges with the job on the next `fugaro update`, which is the HARD RULE, and an installation
 that never runs a catalog image behaves exactly as it does today.
+
+**`main` has since tagged 0.20.0 and moved past it** — `docs/releases/v0.20.0.md`, `v0.20.1.md` and
+`v0.20.2.md` are all written, the last at `c52d40f9` — and neither this design nor the code it plans
+shipped in any of them. The answer is not undone by that: **O2 named 0.20.0, and the slot is the
+owner's to re-take**, at whichever release the owner names next. **No task here waits on a number**,
+and nothing in this plan has to be rewritten if the owner's next answer is a different one — §7's
+gates name no release.
 
 **The `### For operators` sentence the release owes, quoted here so it is not invented on release day**
 (it is written by the release, `scripts/release.sh X.Y.Z`, not by any task above): *"Run `fugaro update`.
@@ -294,7 +307,7 @@ should be refreshed so the stamp and the image agree — the job is what carries
 
 **Check 291 is not a gate on the release and does not move the slot.** It is the evidence the owner runs
 afterwards, and the register's rule is that the number free is taken **at the check's own merge**
-(D1321).
+(D1381).
 
 ## 6. Check 291 — the live check (owner-run, NOT RUN)
 
@@ -313,16 +326,18 @@ work runs in).
 3. Run one trivial task with `checkout: clone` on the entry's image, and from the run's transcript read:
    the marker variable present in the environment of a command the agent ran through `fugaro verify`,
    and `GOOGLE_APPLICATION_CREDENTIALS` absent — **and the image's value nowhere in the transcript**
-   (that is D1315's claim, and this step is what falsifies it if a later change prints values).
+   (that is D1375's claim, and this step is what falsifies it if a later change prints values).
 4. **Refutation step, and it is the one that matters:** a job on a **repository-built** image (the same
    sandbox repository, `dockerfile:` in its `fugaro.yaml`) whose Dockerfile sets the same marker variable
    — the variable must be **absent** from the run, and `doctor --all` must report that job as not
-   catalog-stamped. This is D1310's scope, and it is the half a code review cannot settle.
+   catalog-stamped. This is D1370's scope, and it is the half a code review cannot settle.
 
 **Number:** **Check 291** — the first number free above the register's highest **written** section
 (**290**: the `## Check 290` section at `docs/gcp-live-checklist.md:11207`, and its summary-table row
-at `:791`), and no open pull request claims 291 or above (read 2026-11-06). **A claim, not a
-reservation**: the register's own rule is that whichever of two claims merges second renumbers itself,
+at `:791`), and no open pull request claims **291** itself: the claims other work holds above that
+section start higher and leave 291 free (`docs/stateless-orchestrator`'s 300–309 and #1780's 311–314,
+read 2026-11-06). **A claim, not a reservation**: the register's own rule is that whichever of two
+claims merges second renumbers itself,
 so the task that writes the section takes the number free **at that merge**, and writes both the
 section and its summary-table row, the shape Check 290's own row has. **The section is written by that
 task, not by this plan.**
@@ -335,8 +350,8 @@ task, not by this plan.**
 | **IE2** | IE1 merged, and **O3 and O4 answered** — O3 changes this task's body (the redaction loop) and O4 changes its denylist source (`internal/config/validate.go`'s prefix list). **No part of IE2 starts before both answers are in**, because both are inside the diff a SEC task is reviewed for |
 | **IE3** | IE1 merged. It may land **before** IE2 and does not wait on O3 or O4 |
 | **IE4** | IE3 merged for the sentence and the skill clause; **IE2 merged for the behaviour half** — the sentence that says an image's `ENV` reaches a run is false until IE2 has landed, and a doc that states it earlier is the one failure mode this repository's doc discipline exists to prevent |
-| **Check 291** | IE2 and IE3 deployed on the sandbox; **owner-run, and it gates only the claim that the feature works**, never the release (D1322) |
+| **Check 291** | IE2 and IE3 deployed on the sandbox; **owner-run, and it gates only the claim that the feature works**, never the release (D1382) |
 
 **If IE2 slips out of 0.20.0**, IE1, IE3 and IE4's rule-and-report half ship anyway, and the release is
 strictly better than the tree it replaces: today the drop is silent and no command reads it, and after
-IE3 the owner can see, per job, exactly what a run never received (D1323).
+IE3 the owner can see, per job, exactly what a run never received (D1383).
