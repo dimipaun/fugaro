@@ -380,8 +380,10 @@ func TestDocsMixedCredentialsRecordsWhatShipped(t *testing.T) {
 // reviewer setting exists" — and both now exist: the guard is shipped
 // (`internal/config/levels.go`, D721) and the per-stage account setting is, so
 // a comment that still promises them reads as a tree two releases behind.
-// What the file may not do is make the owner's decision for them: naming a
-// Claude account here is the owner's step, after Check 290 has passed.
+// What the file may not do is make the owner's decision for them: the account
+// is the owner's and lives in the local project config, so this file names the
+// model that account serves and points at Check 290 as where the mix is read
+// back from a real run.
 func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 	const path = "fugaro.yaml"
 	doc := readDoc(t, path)
@@ -397,7 +399,7 @@ func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 	// claim the comment makes about the pair is only true while it names them.
 	for _, want := range []string{
 		"coder: deepseek/deepseek-v4.1-flash",
-		"reviewer: deepseek/deepseek-v4-pro",
+		"reviewer: claude-opus-5-5",
 		"D721",
 		"stages.<stage>.claude_account",
 		"docs/design/mixed-credentials.md",

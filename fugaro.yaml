@@ -13,10 +13,10 @@ git:
     labels: []
 
 agent:
-  # The cloud loop is all DeepSeek through OpenRouter (docs/multi-model.md), on the OpenRouter API
+  # The coder runs on DeepSeek through OpenRouter (docs/multi-model.md), on the OpenRouter API
   # key (api-key: the budget gateway prices every call; the owner's local config sets the caps).
-  # The in-loop senior review is a different, stronger OpenRouter model than the coder
-  # (deepseek-v4-pro), so a `standard` launch here does not resolve to L1 = L2 — which is what the
+  # The in-loop senior review is a different, stronger model than the coder (the `reviewer` model
+  # below), so a `standard` launch here does not resolve to L1 = L2 — which is what the
   # review levels' guardrail (D721, docs/review-levels-ab-jobmax/) refuses by exact model ID, and
   # it is shipped: this pair is why the refusal does not fire here.
   # The independent review can now run INSIDE the cloud loop on a Claude account: the per-stage
@@ -31,7 +31,8 @@ agent:
   # Naming an account is the owner's own step: the local project config names `bmb` (stages.review
   # .claude_account) and `fugaro update` publishes it. The review stage runs on Opus, direct to
   # Anthropic and on that account, and the first-line review stays on the DeepSeek reviewer through
-  # the gateway.
+  # the gateway. Check 290 of docs/gcp-live-checklist.md is the smoke test that reads the mix back
+  # from a real run (owner-run, not yet run).
   auth: api-key
   max_budget_usd: 500  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
   # The senior review's brief is this repository's own (.fugaro/review.md). It is read
