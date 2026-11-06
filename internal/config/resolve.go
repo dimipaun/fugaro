@@ -92,6 +92,14 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	if len(ps) > 0 {
 		return nil, nil, ps
 	}
+	// A key the repository-image removal took out of a workflow is refused
+	// here, before anything fills a default in: the refusal reads a rebuild
+	// key's value for whether the file wrote it, and applyDefaults writes
+	// every one of them (removedImageKey). Both layer branches below are
+	// behind this, so no resolved config carries one.
+	if ps := removedWorkflowProblems(repo); len(ps) > 0 {
+		return nil, nil, ps
+	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, nil, yamlProblems(err)

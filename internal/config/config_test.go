@@ -822,6 +822,16 @@ func TestAgentOf(t *testing.T) {
 			wantAuth: "oauth", wantToken: "acme-personal", wantOK: true,
 		},
 		{
+			// A key the repository-image removal took out is refused by
+			// Resolve, on the decoded config, and not by the strict decode
+			// this reads: a file a reviewer has not migrated yet is still a
+			// file whose agent block was written, so a launch judges the
+			// account it names (config.go, AgentOf).
+			why:      "a file still carrying a removed key says which account it names",
+			data:     "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: acme-personal }\nworkflows:\n  app: { image: { apt: [jq] }, commands: { build: b } }\n",
+			wantAuth: "oauth", wantToken: "acme-personal", wantOK: true,
+		},
+		{
 			why:    "an unknown key is cannot tell, not names no account",
 			data:   "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: acme-personal }\nnonsense: 1\nworkflows:\n  app: { commands: { build: b } }\n",
 			wantOK: false,

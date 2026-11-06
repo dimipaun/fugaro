@@ -1175,6 +1175,12 @@ func Parse(data []byte) (*Config, []Problem) {
 // "cannot tell", which is not the same answer as "names no account" — and it is
 // the answer a run whose own file is one of those gets too, since the runner
 // resolves that same file with the same strict decode inside the job.
+//
+// A file still carrying a key the repository-image removal took out is not one
+// of those: the strict reader reads it, the agent block is as written, and the
+// refusal that key earns belongs to Resolve — a launch during a migration
+// judges the account the file names rather than falling back to the working
+// tree over a key the launch never reads.
 func AgentOf(data []byte) (Agent, bool) {
 	c, ps := decodeRepo(data)
 	if c == nil || len(ps) > 0 {
@@ -1190,10 +1196,10 @@ func AgentOf(data []byte) (Agent, bool) {
 // validation: the repository layer alone, with today's line-numbered
 // errors.
 //
-// It is also where a key the repository-image removal took out of a workflow
-// is refused: the refusal reads a rebuild key's value for whether the file
-// wrote it, and applyDefaults fills every one of them in, so this is the last
-// place the question can still be answered (removedImageKey).
+// It does not answer whether the file is a config this Fugaro accepts: a key
+// the repository-image removal took out is refused by Resolve, on the decoded
+// result, not here (AgentOf reads a file that still carries one during a
+// migration and finds the agent block it is there for).
 func decodeRepo(data []byte) (*Config, []Problem) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -1212,9 +1218,6 @@ func decodeRepo(data []byte) (*Config, []Problem) {
 	}
 	if _, err := GCPProjectOf(data); err != nil {
 		return nil, []Problem{problemFromYAML(err.Error())}
-	}
-	if ps := removedWorkflowProblems(&c); len(ps) > 0 {
-		return nil, ps
 	}
 	return &c, nil
 }
