@@ -389,10 +389,10 @@ func TestDocsMixedCredentialsRecordsWhatShipped(t *testing.T) {
 // file: a file-wide pin satisfies itself from the `models:` block, which names
 // both models whatever the prose says, and that is how the comment came to
 // describe an OpenRouter reviewer the stage no longer ran on — #1763 moved the
-// pin to Opus and the sentence written to explain it kept passing. The pair the
-// comment has to be about is read out of the block rather than written here a
-// second time, so the owner moving the pin fails this test until the comment
-// moves with it.
+// pin to Opus and the sentence written to explain it kept passing. Each pin is
+// read out of the block rather than written here a second time and held to its
+// own role, so the owner moving a pin, or swapping the two, fails this test
+// until the comment moves with it.
 func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 	const path = "fugaro.yaml"
 	doc := readDoc(t, path)
@@ -426,8 +426,22 @@ func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 		if pinned == "" {
 			t.Fatalf("%s pins no %s model: this test reads the block to hold the comment to it", path, key)
 		}
-		if !strings.Contains(comment, pinned) {
-			t.Errorf("%s's comment never names %q, the %s model the file itself pins: a comment describing a model the file does not pin is the drift this test exists for", path, pinned, key)
+		// The pin has to be the comment's for that role, not merely in it: a
+		// comment line that names a pinned model has to name the role the pin
+		// belongs to, so a pair swapped in the block — the coder's ID written
+		// under `reviewer:` and the other way round — fails here. A pin that
+		// only asked whether each ID appears somewhere in the comment passed
+		// that swap, while the comment then explained each role with the other
+		// role's model: the drift this test exists for.
+		tied := false
+		for _, line := range strings.Split(comment, "\n") {
+			if strings.Contains(line, pinned) && strings.Contains(line, key) {
+				tied = true
+				break
+			}
+		}
+		if !tied {
+			t.Errorf("%s's comment has no line naming both the %s and the %q the file pins for it: the comment explains each role with its own model, and one naming a pinned model for the wrong role is the drift this test exists for", path, key, pinned)
 		}
 	}
 }
