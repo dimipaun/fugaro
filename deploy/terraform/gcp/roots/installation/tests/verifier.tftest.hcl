@@ -32,6 +32,20 @@
 # row no module grants any more. What this file adds is the shape of each row:
 # the role, the member, the account the impersonation is on, and the one state
 # the environment entry is rendered from.
+#
+# Mutation (verified, run and restored): render the account BESIDE the block's
+# list — `jsonencode(concat(var.credentials_service.verifier_accounts,
+# [google_service_account.fugaro_verifier[0].email]))` — and
+# the_owners_list_is_rendered_as_it_is fails, because the entry then carries
+# three addresses where the owner wrote two. That union is the one the review
+# of this task refused: it admits an identity the owner cannot remove with `[]`,
+# and it puts the service and CSR15's launcher on two different identities in
+# every installation whose owner wrote their own list. Render the entry only
+# when the list is non-empty — `length(...) == 0 ? [] : [...]`, which is the
+# spelling that drops the key — and the_owners_clear_admits_nobody fails,
+# because the service is then handed an absent member, which is the state the
+# module's own default is for: the route would admit exactly the caller the
+# owner cleared.
 
 mock_provider "google" {}
 
@@ -259,6 +273,20 @@ run "the_owners_clear_admits_nobody" {
 
   module {
     source = "../../modules/installation"
+  }
+
+  # The account's email is what the default run renders into the entry, and a
+  # plan cannot read it (the account is created by this apply); the override
+  # gives it one so that the entry — and so the assertion below — is readable
+  # here. It is the mechanism the runs above use.
+  override_resource {
+    target          = google_service_account.fugaro_verifier[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-verifier@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-verifier@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-verifier@proj-1234.iam.gserviceaccount.com"
+    }
   }
 
   variables {
