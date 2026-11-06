@@ -1,15 +1,25 @@
 # The credentials service deploys for every installation — the owner's ruling of 2026-11-05
 
-**Status (2026-11-06): AMENDED AFTER REVIEW. The ruling is the owner's; the tasks below are PLAN ONLY,
-none of them is approved, and none of them is buildable until the owner answers the BLOCKING Open item
-(§5 item 1).** The independent review of this file found a fact in the tree that contradicts the
-premise the ruling was taken on: **the service's deploy and the jobs' switch to it are two different
-changes, and the second one, as the tree stands, breaks every installation's runs** (§1.4 — the mount
-drop is auth-blind and the GitHub provider opens keyless with no fallback). **The owner's intent is
-unchanged and this file does not weaken it: the service is deployed for every installation.** What
-changed is that the deploy is now separated from the switch, and the switch waits on a ruling.
-**No task below may be started before that ruling**, because every one of them either is the deploy
-(DON1), tests it (DON2), describes it (DON4, DON5), or depends on it (DON3, DON6, DON7).
+**Status (2026-11-06): the Open item is ANSWERED — DEPLOY NOW, SWITCH LATER.** The owner answered the
+BLOCKING item (§5 item 1) on **2026-11-05**: the service is **deployed for every installation** by
+`fugaro update`, and **the jobs switch to it later, only where and when the service can actually serve
+them**. **The tasks below are PLAN ONLY and none of them is approved** — but the block is lifted: the
+eight tasks are now the **deploy** (DON1–DON7) and the **switch** (DON8), and the answer is why the
+switch is a task of its own rather than a sentence inside the deploy.
+
+The independent review of this file found a fact in the tree that contradicts the premise the ruling
+was taken on: **the service's deploy and the jobs' switch to it are two different changes, and the
+second one, as the tree stands, breaks every installation's runs** (§1.4 — the mount drop is auth-blind
+and the GitHub provider opens keyless with no fallback). **The owner's intent is unchanged and this file
+does not weaken it: the service is deployed for every installation.** What changed is that the deploy is
+separated from the switch, and the switch now has a rule rather than a flag.
+
+**The one consequence to hold on to, because every task below depends on it:** the deploy alone is not
+safe. `internal/infra/spec.go:1177` drops every repository's model mounts once the installation root's
+block exists — the drop lands on each repository root's **next apply**, one repository at a time, which
+§1.4 pins down — so **the gate that holds the switch off is part of 0.20.0 and ships with the deploy** —
+see §1.5 and §3 DON8. A release that shipped DON1 without DON8's gate would break every run of every
+repository whose root is converged after it, in the field.
 
 This file is a **dated amendment** to [implementation-plan.md](implementation-plan.md),
 [reconciliation.md](reconciliation.md) and [runbook.md](runbook.md). It amends exactly one thing those
@@ -32,7 +42,8 @@ that finds every place it is written and every test that pins it.
 | **Date and form** | 2026-11-05, the owner's answer to an `AskUserQuestion` — **the answer taken is not the recommendation the question carried** |
 | **Why, in the owner's words** | the reason for opt-in was **cost**, and a Cloud Run service that **scales to zero costs nothing idle**; so **remove the opt-in complexity** |
 | **Reverses** | the "ships dormant / optional" rulings and the `--provision-credentials` opt-in as the *only* way the service is deployed |
-| **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it and waits on §5 item 1, because the drop it triggers is auth-blind (§1.4) |
+| **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it, because the drop it triggers is auth-blind (§1.4) |
+| **The Open item, answered** | **2026-11-05: DEPLOY NOW, SWITCH LATER.** The service deploys everywhere; the switch happens **per repository** and only where the service can serve that repository's runs — its auth mode must be one the service serves **and** the bundle must hold what that mode needs. §1.5 states what the switch flips; §3 DON8 is the task |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
 
 ---
@@ -51,8 +62,9 @@ requires of everything else `update` does: one command, no second step, no manua
 is that the service **exists** on every installation. Whether the jobs then **use** it — the repository
 roots reading it back, and a run handing its job `FUGARO_CREDENTIALS_SERVICE_URL` — is a second change
 with its own failure mode, and the tree ties the two together in a way the ruling did not assume.
-**§1.4 states the fact; §5 item 1 is the ruling it waits on.** Everything else in this file is written
-against the deploy.
+**§1.4 states the fact; §1.5 states what the switch flips; §3 DON8 is the switch.** The owner answered
+the question that split them on 2026-11-05: **deploy now, switch later** (§5 item 1). Everything else in
+this file is written against the deploy.
 
 **Bitbucket-only installations are in scope, and they are the case worth naming**, because the service
 has been read as a GitHub-App-key holder: it is not. The App key is **one** credential the bundle may
@@ -165,9 +177,10 @@ DON3 fixes.*
 **The premise, in the owner's own words:** the reason for opt-in was **cost**, a Cloud Run service that
 scales to zero costs nothing idle, **so remove the opt-in complexity**. That premise treats *deploying*
 the service as the cheap part and treats the jobs' *use* of it as free. **The second half is not free,
-and the tree says so in the four places below.** This subsection states the fact; §5 item 1 is the ruling it
-waits on. **It is the reason the status line above reads `amended after review`, and it does not change
-the owner's intent: the service still deploys for every installation.**
+and the tree says so in the four places below.** This subsection states the fact; §5 item 1 is the ruling
+it was put to, and **the owner answered it on 2026-11-05 — the deploy lands and the switch is a task of
+its own, §1.5 and DON8.** **It is the reason the status line above reads `amended after review`, and it
+does not change the owner's intent: the service still deploys for every installation.**
 
 **VERIFIED — the mount drop is auth-blind, and it is the whole of what deploying triggers.**
 `deploy/terraform/gcp/modules/workflow/sa.tf`:
@@ -209,9 +222,20 @@ that fires today is the **model credentials'**, and the keyless-provider half fi
 **The consequence, stated plainly.** An installation that converges on DON1 as it was first written is
 an installation whose `oauth` workflow has lost `CLAUDE_CODE_OAUTH_TOKEN` (or `api-key`'s
 `ANTHROPIC_API_KEY`) while the bundle holds nothing that replaces it — because `creds set` is a person's
-step that has not run, and for an `oauth` job the service has no route that would serve it anyway. **Every
-run of every repository fails, on every installation, in the release that deploys the service.** That is
-the failure the review caught, and it is why the deploy and the switch are now two changes.
+step that has not run, and for an `oauth` job the service has no route that would serve it anyway.
+**Every run of every repository fails, on every installation, in the release that deploys the service.**
+That is the failure the review caught, and it is why the deploy and the switch are now two changes.
+
+**When exactly it arrives — VERIFIED, and it is worth one sentence because it is the release's timing
+and not a detail.** The drop lands on the repository root's **next apply**, and the apply is the door
+that takes a checkout: `internal/cli/init.go:344` routes `--repo` to `runInitRepo` and everything else
+to `runInit`, so `fugaro update` without `--repo` converges the installation and leaves every repository
+root alone (`fugaro run` does not apply one either — `internal/cli/run.go` calls no `infra.Repo`, and
+neither does `internal/runner`; §6 V9 states the limit of that reading). **So the failure does not fire
+on the installation's own convergence — it fires on each repository's, one repository at a time, which
+is the shape that makes it worse rather than better:** it arrives while the owner is doing something
+else, on a repository they just converged, and the first symptom is a failed run rather than a failed
+update.
 
 **And the failure is not hypothetical: it is the limit opt-in already has, made universal.** The
 README's own status paragraph states the other half of it in as many words — "the other `agent.auth`
@@ -224,19 +248,78 @@ what becomes universal.** That is the whole of the amendment, and it is why the 
 are now separate: the deploy is cheap and the ruling's own reason holds for it, and the switch is the
 limit.
 
-**So the ruling is split, and only the first half is in DON1:**
+**So the ruling is split, and the two halves are two tasks:**
 
 | | What it is | Where it is | State |
 |---|---|---|---|
-| **the deploy** | the installation root's `credentials_service` block: the service account, the bundle container and its grants, and the Cloud Run service (§1.3's six resources) | DON1 | **the owner's ruling; not buildable until §5 item 1 is answered, because the block itself triggers the drop above** |
-| **the switch** | the repository roots reading the block back (`repoCredentialsService` → `dropModelMounts`) and a run handing the job `FUGARO_CREDENTIALS_SERVICE_URL` (`credentialsServiceLaunchEnv`) | **no task** — §5 item 1 | **the owner's, with two readings and two costs** |
+| **the deploy** | the installation root's `credentials_service` block: the service account, the bundle container and its grants, and the Cloud Run service (§1.3's six resources) | **DON1** | **the owner's ruling; every installation, in 0.20.0** |
+| **the switch** | the repository roots reading the block back (`repoCredentialsService` → `dropModelMounts`) and a run handing the job `FUGARO_CREDENTIALS_SERVICE_URL` (`credentialsServiceLaunchEnv`) | **DON8** | **the owner's answer of 2026-11-05: later, per installation, only where the service can serve that job — and its gate ships in 0.20.0 with DON1, because the deploy alone is not safe** |
 
-**The two readings §5 item 1 carries, in one line each, so the shape is visible here:**
-**(a)** the service is deployed everywhere and the **switch stays off** until the bundle holds what that
-job's auth mode needs — the deploy lands, the read-back and the URL do not, and something must later
-turn them on. **(b)** the credential drop becomes **auth-aware** and `fugaro update` **migrates the
-existing secrets** into the bundle in the owner's own terminal — the switch lands with the deploy, and
-`update` gains a bundle writer. **Each reading's cost is in §5 item 1 and neither is decided here.**
+**The owner's answer, in the words §5 item 1 was answered with:** the service is deployed everywhere,
+and the repository roots' `credentials_service` input and the run's `FUGARO_CREDENTIALS_SERVICE_URL`
+**stay off until the bundle holds what that job's auth mode needs**, so an installation that updates
+keeps every run working with `update` alone. **The owner's one design constraint:** the switch is
+`fugaro update`'s own automatic act — an `update` that switches only when the bundle is ready and the
+workflow's auth mode is covered, with a `doctor` line saying why not, is preferred to any second
+command; if it cannot be done without a second command, that is an Open item and no operator step that
+is another command ships (`CLAUDE.md`'s HARD RULE). **§3 DON8 is that design, and it needs no second
+command.** §5 item 1 records the answer and is closed.
+
+---
+
+### 1.5 What the switch actually flips — VERIFIED, three flips and their conditions
+
+The brief for this amendment asks what the switch flips, verified against the tree rather than assumed.
+It is **three** things, they live in **three** files, and each one has a condition of its own — which is
+why one flag could never have been the whole switch.
+
+| # | What flips | Where it is, verified | Condition it needs before it may flip |
+|---|---|---|---|
+| 1 | the job account's **accessor on the model secrets**, and the job's **mount** of them | `deploy/terraform/gcp/modules/workflow/sa.tf:148-151` (`job_secret_names`, gated on `var.credentials_service == null` and `is_service_held` at `:135-137`); the Go spec's `dropModelMounts` (`internal/infra/spec.go:1177-1178`) and `repoCredentialsService` (`:244-248`, called at `:1314`) | **the bundle holds at least one model credential** — the service is the only source left once the mount is gone (D143, fail closed), and a `cascade` run with an empty bundle stops at the service's named refusal |
+| 2 | the **keyless GitHub provider** | `internal/gitprov/providers/providers.go:93-99` — `FUGARO_CREDENTIALS_SERVICE_URL` set opens the provider with `ServiceHeldKey: true` and returns **before `appKey(vars)`**, so the mounted key is never read | **the installation's service must mint**, which it does from the App key in the bundle: the runner installs the service as the token source (`internal/runner/runner.go:1119`, `serviceTokens` at `:1399-1420`), so this flip is already wired and needs the bundle's App key, not a code change |
+| 3 | the **URL on the execution** | `internal/cli/run.go:3647` (`credentialsServiceLaunchEnv`), which is what sets `FUGARO_CREDENTIALS_SERVICE_URL` at all (`:3553`) | **the workflow's `agent.auth` must be one the service serves** — today `cascade` alone (`config.AuthCascade`, `internal/config/defaults.go:77`); for an `oauth`, `api-key` or `vertex` job the URL buys nothing and flips 1 and 2 against it |
+
+**The auth-mode condition is not a new rule — it is the tree's own rule, read from the same place.**
+`internal/infra/spec.go`'s `SecretMounts` (`:926`) already branches on `cfg.Agent.Auth`: the `cascade`
+case mounts **no model credential at all** ("the credentials service hands the run one at call time"),
+and every other case mounts its own. So the switch's static half is the same predicate the mount list is
+already built from, and a `cascade` job is the only job for which "the service holds my credential" is
+already true.
+
+**The readiness condition has an existing reader, and the switch must use that one and not a new one.**
+`internal/cli/doctor_brokering.go:432` (`doctorBundleChecks`) already reads the bundle with the
+operator's own identity and parses it with **the service's own loader**: `openBundleStore(ctx, lc)`
+(`internal/cli/creds.go:314`) → `store.check` → `store.newest` → `store.access` → `credsvc.ParseBundle`.
+The question the switch asks of the result is the loader's own: **does the document hold at least one
+model credential** — `Bundle.Credentials()`, `internal/credsvc/bundle.go:438`, "the whole of what the
+cascade is offered". **That is the point of reading it this way:** a readiness test written against the
+raw document could say yes to a bundle the service refuses, and the switch would then drop a mount the
+service cannot replace.
+
+**Three things the switch does NOT flip, and each is a deliberate no:**
+- **the Bitbucket token.** `providers.go`'s Bitbucket branch never reads `EnvCredentialsServiceURL`, and
+  `config.ServiceHeldSecretNames` is empty (`internal/config/providers.go:542`, #907), so
+  `sa.tf`'s `service_held_secret_names` names nothing and no git credential's accessor is dropped by
+  this switch. A proxied repository's token is the separate `is_proxied_git` clause (D500/D502) and is
+  not this ruling's.
+- **the App key's own accessor and mount.** They are C2.3's, held behind the owner's live Check 96
+  (§6 V8), and the switch works without them: the runner mints through the service (flip 2), so the key
+  is simply an accessor the job holds and no longer reads.
+- **the workflow's `agent.auth`.** A repository the service cannot serve is not switched, and nothing
+  rewrites its mode.
+
+**And the finding that makes the switch small, verified: flip 1 needs no Terraform change at all.**
+`sa.tf:148-151` gates the drop on `var.credentials_service == null`, and that variable is not the
+installation's block directly — it is what `modules/repo/workflows.tf:36` passes down from the
+**repository root's** `installation.credentials_service`, which `internal/infra/spec.go:1314` builds
+through `repoCredentialsService` (`:244-248`). So **the module already reads the switch; what changes is
+the value the repository root hands it.** A held-off repository's root carries no
+`installation.credentials_service` (the field is `omitempty`, `RepoSpec.Installation`), the workflow
+module receives null, and its own expression keeps the accessors and the mounts — the pre-ruling plan,
+byte for byte. **`sa.tf`, `modules/workflow/variables.tf`, `modules/repo/workflows.tf` and
+`roots/repo/variables.tf` are therefore not edited by the switch, and no golden plan moves.** The same
+predicate is what `internal/infra/spec.go:1177` reads before `dropModelMounts`, so the Go spec and the
+Terraform plan cannot disagree about a repository: they are one expression read twice.
 
 ---
 
@@ -300,16 +383,19 @@ App key, the verifier account, the job accounts, the bundle) rather than reporti
 
 ## 3. The tasks
 
-Seven tasks, **DON1–DON7**, matching §1 and the owner's brief one for one. They follow
+Eight tasks, **DON1–DON8**: the **deploy** (DON1–DON7) and the **switch** (DON8). They follow
 [../cloud-senior-review/implementation-plan.md](../cloud-senior-review/implementation-plan.md) §3's
 convention exactly: decisions and findings named, an exact file list with its cap, the interfaces
 produced, named tests, a red step, the mutation that holds it, a reviewer tier, whether it is OWNER-RUN,
-its dependencies and its commit message. **No task is approved — and, after the review, none of the
-seven is buildable either, until the owner answers §5 item 1.** That item is the switch: §1.4 verifies
-that DON1's deploy, as the tree stands, makes every `oauth` and `api-key` job lose the model credential
-its run needs, so a task that landed before the answer would ship that failure. **DON3 is the one whose
-content the answer cannot change** (a `scaling` block on a resource gated on `credentials_service !=
-null` is right either way); it is still held, because its `Depends on` is DON1 and DON1 is not buildable.
+its dependencies and its commit message. **No task is approved** — the block §5 item 1 raised is lifted
+(the owner answered it on 2026-11-05, §1.4), but these are still a plan, and **the tasks are held in
+order, not together**: §1.4 verifies that DON1's deploy, as the tree stands, makes every `oauth` and
+`api-key` job lose the model credential its run needs, so **DON8's gate ships in the same release as
+DON1** — it is the one thing here that may not be deferred, because the deploy alone breaks the field.
+**DON8 is new after the answer**, and its whole content is the split the answer makes: the switch turns
+on only where the bundle holds what that job's auth mode needs. **DON3 is the one whose content the
+answer did not change** (a `scaling` block on a resource gated on `credentials_service != null` is right
+either way).
 
 **The numbering is deliberately not `C4.x`.** `C0`–`C3` are [implementation-plan.md](implementation-plan.md)'s
 slices and `CSR1`–`CSR13` are the cloud senior review's; a third stream taking `C4` would collide with
@@ -322,15 +408,16 @@ this file's own prefix and collides with nothing.
 **Decisions:** the ruling of 2026-11-05 (this file). **Reverses:** D147's "off by default" half only —
 D146's placement and D145's invariant are untouched. **Verification:** `internal/cli`, `internal/infra`.
 
-**This task is the DEPLOY and nothing else — AMENDED AFTER REVIEW.** It writes the installation root's
-block, which is what makes the service exist. It does **not** decide whether the repository roots read
-the block back or whether a run hands its job `FUGARO_CREDENTIALS_SERVICE_URL`; §1.4 verifies that the
-block alone triggers `dropModelMounts`, so **the task may not land until §5 item 1 is answered**, and
-the answer decides whether DON1 also carries the gate that holds the read-back and the URL off (reading
-(a)) or whether the drop becomes auth-aware and `update` migrates the bundle (reading (b)). **Nothing in
-this task's file list is a bundle write under either reading**: `update` writing a credential is §5 item
-1's reading (b) alone, and if the owner takes it the task's file list, its tests and its SEC flag change
-with it.
+**This task is the DEPLOY and nothing else — AMENDED AFTER REVIEW, and the owner answered §5 item 1 on
+2026-11-05.** It writes the installation root's block, which is what makes the service exist. It does
+**not** decide whether the repository roots read the block back or whether a run hands its job
+`FUGARO_CREDENTIALS_SERVICE_URL`: §1.4 verifies that the block alone triggers `dropModelMounts`, and the
+answer is **deploy now, switch later** — so the read-back and the URL are **DON8's**, and **DON8's gate
+is a release blocker for this task**: DON1 and DON8 ship in the same release, and DON1's own tests
+assert the switch is off (`TestAnOAuthInstallationStillLaunchesAfterUpdateAlone`, moved to DON8, is the
+one that fails if it is not). **Nothing in this task's file list is a bundle write**: the answer is the
+one reading under which `update` never writes a credential, so `fugaro creds set` stays the only writer
+of the bundle and this task's file list, its tests and its SEC flag are as they were first written.
 
 - **Files:** `internal/cli/init_stages.go` (the unconditional set path; today `pinCredentialsImage`
   returns early at "`doc == nil` — no `credentials_service` in the installation's tfvars: nothing opted
@@ -369,13 +456,13 @@ with it.
   for the flag to *do* — `update` is the whole upgrade (the HARD RULE), so the flag cannot be the only
   route to anything. The removal is cheap to reverse if the owner prefers the alias, which is why it is
   stated here as a decision rather than left implicit.
-  **And what this task must NOT touch, because it is §5 item 1's and not the deploy's:**
+  **And what this task must NOT touch, because it is DON8's and not the deploy's:**
   `internal/infra/spec.go`'s `repoCredentialsService` (`:244-248`) and `dropModelMounts`
   (`:1177-1178`), `deploy/terraform/gcp/modules/workflow/sa.tf`'s `is_service_held` (`:135-137`) and
   `job_secret_names` (`:148-151`), and `internal/cli/run.go`'s `credentialsServiceLaunchEnv` (`:3647`).
-  Under reading (a) one of them gains a gate and the other three stay as they are; under reading (b)
-  the first two and the module's two expressions gain an auth-aware condition and the last one flips on
-  with the deploy. **A DON1 that touched them would be making §5 item 1's decision by accident.**
+  **The answered reading leaves all four exactly as they are** — it adds a condition *in front of* them
+  rather than changing them, and that condition is DON8's file list. **A DON1 that touched them would be
+  making the switch's decision by accident, which is the failure §1.4 exists to prevent.**
 - **Tests:** `TestUpdateSetsCredentialsServiceOnEveryInstallation` (a fresh installation's tfvars carry
   the block after one `update`), `TestUpdateKeepsAnOptedInInstallationsServiceUnchanged` (an
   installation that already opted in converges to the same block, byte for byte, with the URL it
@@ -411,11 +498,12 @@ with it.
   1. an installation whose recorded state is **0.19.0** — no `credentials_service` block, the
      pre-ruling shape — reaches the new state with **`fugaro update` alone**: no second command, no
      `--provision-credentials`, no manual repair, and the service's block and image pin both present
-     after that one run. **The URL is the one part of that sentence §5 item 1 decides**: under reading
-     (a) the block carries no URL and the launch sets no service URL until the bundle holds what the
-     job's auth mode needs, and under reading (b) both are present with the block. **The test asserts
-     whichever the answer makes true, and asserts the other state is *not* reached** — a convergence
-     that flipped the switch without the ruling is the failure this direction exists to catch;
+     after that one run. **The URL is the one part of that sentence the answer decides, and it decided
+     "not yet":** the block carries the URL the module assigned (§2.3 — the service is reachable the
+     moment it exists), and **the launch hands the job none** until the bundle holds what the job's auth
+     mode needs (§1.5, DON8). **The test asserts that state and asserts the other one is *not*
+     reached** — a convergence that flipped the switch without the bundle being ready is the failure
+     this direction exists to catch, and the `oauth` half of it is DON8's test, not this one's;
   2. an installation that **already opted in** under an earlier release **does not change** beyond the
      image moving to this release — same account, same container, same grants, and above all the
      **same recorded URL**, because a rebuild that dropped and re-derived it would re-plan the service.
@@ -423,27 +511,18 @@ with it.
 - **Tests:** `TestAnInstallationAt019ConvergesWithUpdateAlone` and
   `TestAnAlreadyOptedInInstallationDoesNotChange`, plus `TestConvergenceAsksNoSecondQuestion` (the run's
   prompts are the ones `update` already asks; the credentials stage's own typed confirmation is gone with
-  the stage), plus **the one the review added, and it is the HARD RULE's own regression test**:
-  `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone` — a 0.19.0 installation whose workflow is
-  `agent.auth: oauth` and whose job mounts the GitHub App key **still launches a run after `update`
-  alone**. It asserts the thing §1.4 says the first draft of DON1 would have broken: the job's
-  `job_secret_names` still carries its model credential's logical name, the App key is still readable by
-  the job's account, and `credentialsServiceLaunchEnv` hands the launch no `FUGARO_CREDENTIALS_SERVICE_URL`
-  unless the answer to §5 item 1 makes the switch part of the same convergence. **It is written against
-  the tree's own fixtures and reads the plan, not the prose** — the same shape
-  `TestServiceHeldSecretsMatchTheCredentialsService` and `dropModelMounts`' own tests use — because the
-  failure it catches is a Terraform expression and a Go predicate disagreeing, not a sentence.
+  the stage). **The review's own regression test, `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone`,
+  is DON8's** — the review added it here because DON1 alone would have broken it, and after the answer it
+  belongs to the task that owns the switch. It is named in DON8 with the same body and the same fixture,
+  and **DON8's `Depends on` is what makes it a release blocker for DON1 rather than a suggestion.**
 - **Red step:** `TestAnInstallationAt019ConvergesWithUpdateAlone` fails against today's tree — the
   fixture converges and the block is absent, because nothing writes it without the flag. It is written
   **before** DON1's change and is DON1's own red step seen from the outside, which is what makes the
   HARD RULE test rather than assert.
 - **Mutation to hold it:** make the update path require the flag → the first test fails; make the
-  already-opted-in path re-derive the block from the spec rather than carry it → the second fails;
-  **flip the switch in the same change as the deploy without §5 item 1's answer** → the `oauth` test
-  fails, which is the whole reason it exists. **Its red step is honestly different from the others':**
-  it does not fail on today's tree (a 0.19.0 installation has no block, so nothing drops) and it cannot.
-  It is a **guard**, not a proof — it fails against the change that would break the HARD RULE, and it is
-  named here as a guard so that a reviewer does not read a passing test as evidence the switch is safe.
+  already-opted-in path re-derive the block from the spec rather than carry it → the second fails.
+  **The switch half of this task's mutation is DON8's** (`flip the switch without the bundle being
+  ready` → its `oauth` test fails), because the switch is no longer this task's to get wrong.
 - **Reviewer tier:** **B** (a test-only task over a path DON1 owns; it is A only in the sense that what
   it proves is the HARD RULE).
 - **OWNER-RUN:** no.
@@ -511,10 +590,10 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
 - **Reviewer tier:** **A** (it is the check that keeps the owner's cost claim true).
 - **OWNER-RUN:** no.
 - **Depends on:** **DON1** — both hold `credentials.tf`, and DON1 has it in level 1. **And it is the one
-  task whose *content* does not depend on §5 item 1's answer** — a `scaling` block on a resource gated on
-  `credentials_service != null` is correct under either reading — while its `Depends on` still does,
-  because DON1 is held. The owner may release it alone if they want the pin in hand first; this file does
-  not reorder the levels on its own.
+  task whose content the answer could not have changed** — a `scaling` block on a resource gated on
+  `credentials_service != null` is correct whichever way the switch went, which is why it was the one
+  task this file did not hold behind the item. The owner may still release it alone if they want the pin
+  in hand first; this file does not reorder the levels on its own.
 - **Commit:** `terraform: pin the credentials service at zero minimum instances`.
 
 ### DON4. Every "dormant" and "opt-in" pin, moved in lockstep — docs and tests
@@ -616,23 +695,22 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
 [docs/releases/README.md](../releases/README.md)'s `### For operators` rule. **Verification:**
 `internal/cli` (`-run Docs`), `website`.
 
-**AMENDED AFTER REVIEW — the first draft's step 2 is struck.** It read "where the bundle holds no GitHub
-App key, `fugaro update` will say so and the one step left is yours: `fugaro creds set github-app-key`".
-Written that way it is **a second command in a release's `### For operators` section**, which is exactly
-what `CLAUDE.md`'s HARD RULE forbids ("a release must not ship an operator step that is another
-command"). `fugaro creds set` is a real thing an owner does — §2.1 keeps it as the bundle's only writer
-— but it is a step of a **capability**, not a repair of the upgrade, and the release notes may not
-present it as something `update` left undone. **What replaces it is not a rewording but a consequence:
-the operator section is step 1 alone, and what happens to the credentials is whatever §5 item 1's answer
-makes it.** The two shapes are below and the task writes the one the answer supports.
+**AMENDED AFTER REVIEW, and settled by the owner's answer of 2026-11-05.** The first draft's step 2 is
+struck: it read "where the bundle holds no GitHub App key, `fugaro update` will say so and the one step
+left is yours: `fugaro creds set github-app-key`". Written that way it is **a second command in a
+release's `### For operators` section**, which is exactly what `CLAUDE.md`'s HARD RULE forbids ("a
+release must not ship an operator step that is another command"). `fugaro creds set` is a real thing an
+owner does — §2.1 keeps it as the bundle's only writer — but it is a step of a **capability**, not a
+repair of the upgrade, and the release notes may not present it as something `update` left undone.
+**The answer makes the section step 1 alone, and the note under it is the whole of what changes.**
+**Reading (b) is not written**: the answer is deploy now, switch later, so `update` migrates nothing and
+no step runs at a terminal.
 
 - **Files:** `docs/releases/vX.Y.Z.md` (the release this lands in),
   `website/data/release-summaries.yaml` (its one line, no backticks),
   `docs/credentials-service/{README,implementation-plan,runbook,reconciliation}.md`. **6 files.**
-- **Interfaces:** the release's `### For operators` section reads, in full and in this shape, **and the
-  number of steps is one under both readings**:
-
-  **Under §5 item 1's reading (a) — the service is deployed everywhere, the switch stays off:**
+- **Interfaces:** the release's `### For operators` section reads, in full and in this shape, **and it
+  is one step**:
 
   > ### For operators
   >
@@ -640,31 +718,24 @@ makes it.** The two shapes are below and the task writes the one the answer supp
   >    installation now, whether or not you opted in before; there is no second command and nothing to
   >    uninstall.
   >
-  > **Note.** Your runs are unchanged by this release: the service is deployed and idle, and nothing
-  > uses it yet. Nothing to do.
+  > **Note.** Your runs are unchanged by this release. The service is deployed and idle, and no run
+  > uses it yet: a repository's runs move onto it only once the service holds what that repository's
+  > auth mode needs, and `fugaro update` does that by itself when it does. `fugaro doctor` says which
+  > repositories are on it and, for the others, why not. Nothing to do.
 
-  **Under §5 item 1's reading (b) — the drop is auth-aware and `update` migrates the bundle:**
-
-  > ### For operators
-  >
-  > 1. Run `fugaro update` once per installation, **at your own terminal** — it moves the credentials
-  >    this installation already holds into the service's bundle and says what it moved. There is no
-  >    second command and nothing to uninstall.
-
-  **What is common to both, and it is the rule this task is written under:** no step 2, no `creds set`
-  named as a step of the upgrade, and **no step that uninstalls or opts out**. Where the section must
-  still name `fugaro creds set` — and under (a) it may, in the note — it names it as the way to
-  *change* a credential the service already holds, which is what it is, and never as the completion of
-  `fugaro update`. The conditional-step precedent the first draft cited
-  (`docs/releases/v0.10.1.md:14`) is still the right **shape** for a note; it is not a licence for a
-  second step.
-  **Reading (a)'s one open question travels with it into the release notes, and it is not this task's to
-  answer:** if the switch is held off until the bundle is ready, then **something must turn it on**, and
-  the release notes must be able to say what — the next `fugaro update` the owner runs anyway, or a
-  readiness read taken at convergence time. **If the only thing that can turn it on is another
-  `fugaro update`, reading (a) has a second command in it after all** and the section cannot promise
-  what the HARD RULE requires. §5 item 1 states this as part of (a)'s cost, and this task writes the
-  note only once the answer says which.
+  **And the three rules this section is written under, each of which the first draft broke:**
+  **no step 2**; **no `creds set` named as a step of the upgrade** — it may appear in a note as the way
+  to *change* a credential the service already holds, which is what it is, and never as the completion
+  of `fugaro update`; and **no step that uninstalls or opts out**. The conditional-step precedent the
+  first draft cited (`docs/releases/v0.10.1.md:14`) is still the right **shape** for the note; it is not
+  a licence for a second step.
+  **The question the first draft left open — what turns the switch on — is answered by DON8 and is not a
+  second command:** it is **the same `fugaro update`**, run whenever the owner runs it anyway, with the
+  bundle read at that moment and a `doctor` line saying why not. **What that costs, stated so the note
+  is not read as promising more than it can:** an owner who fills the bundle and never runs `update`
+  again stays switched off — that is the conservative direction, every run keeps working, and `doctor`
+  names it. **The one thing the note may not claim is that the switch needs no further action ever**;
+  it claims what is true, which is that no *separate* command is needed.
 - **The documents this task moves are this directory's own**, and it moves them rather than DON4,
   because they are this file's neighbours and because one of them (`README.md`) is where this file is
   linked from. It changes: `README.md`'s status paragraph and its table (the new row for
@@ -682,12 +753,14 @@ makes it.** The two shapes are below and the task writes the one the answer supp
 - **Red step:** `go test ./internal/cli/ -run Docs` fails once the README gains its row and the runbook
   its new sentences, until the pins move with them.
 - **Mutation to hold it:** put a second numbered step back in → the HARD RULE is broken in the one
-  surface a person reads, which is what the review caught; drop the note under reading (a) → an owner
-  reads that their runs changed when they did not.
+  surface a person reads, which is what the review caught; drop the note → an owner reads that their
+  runs changed when they did not, or reads the switch as needing a command it does not need; make the
+  note promise that nothing further is ever needed → it claims more than DON8 can make true.
 - **Reviewer tier:** **B**.
 - **OWNER-RUN:** no.
-- **Depends on:** **DON1** (the flag's removal is what step 1's wording reports) and **DON4** (the
-  wording must be the same in both).
+- **Depends on:** **DON1** (the flag's removal is what step 1's wording reports), **DON4** (the wording
+  must be the same in both) and **DON8** (the note's second sentence is a description of what DON8
+  does, and may not be written before it is true).
 - **Commit:** `docs: the release notes for a credentials service that deploys itself`.
 
 ### DON6. The managed project: how an installation with no owner at a terminal reaches it
@@ -754,23 +827,159 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   | deployed, no `verifier_accounts` | deployed and admitting nobody on the verify route: the verifier account is not named |
   | deployed, a job account missing `roles/run.invoker` | the existing half of the check, unchanged |
 
+  **And, because the answer made the switch a state of its own, one line per repository — the "why
+  not" the owner asked for by name (DON8).** It is not a sixth state of the service; it is the same
+  check reporting the half the service's state does not cover, which is *which repositories' runs
+  actually go through it*:
+
+  | repository's state | the line |
+  |---|---|
+  | switched on | the repository's runs go through the service; the bundle holds its credential and its auth mode is one the service serves |
+  | held off, `agent.auth` is not `cascade` | held off: the service serves a `cascade` workflow today, and this repository's `agent.auth` is `<mode>` |
+  | held off, the bundle holds no model credential | held off: the bundle holds nothing to replace the job's credential; `fugaro creds set NAME` is the writer |
+  | held off, never converged since the switch landed | held off: `fugaro update` turns it on once the bundle is ready |
+
+  **The line is read, never guessed, and it is the same read the switch itself makes (§1.5, DON8)** —
+  `Bundle.Credentials()` through the service's own loader for the second row, `config.AuthCascade` for
+  the first. A `doctor` that answered this question with its own second implementation would be a
+  second answer to "is this repository switched on", and the first time the two disagreed `doctor`
+  would be the one lying.
+
   The severity stays **warning**, for the reason the check's own comment gives (an installation mid-
   convergence is a legitimate state) and one more this ruling adds: **an installation that has not run
-  `update` yet is not broken**, it is behind. `--strict` is where that becomes a failure, as it already
-  is.
-- **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the five states, each producing exactly one
-  check with the expected `ID` and severity), `TestDoctorNamesTheMissingHalfNotNotConfigured` (the line
-  never reads "not configured": it names the App key, the verifier account, the bundle or the invoker
-  grant), and the existing `doctor_brokering_test.go` cases at `:335`, `:1218`, `:1373` move with the
-  `Fix` strings DON1's flag removal changes.
+  `update` yet is not broken**, it is behind — and **a repository held off is not broken either, it is
+  the answer's own state.** `--strict` is where that becomes a failure, as it already is.
+- **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the five service states, each producing
+  exactly one check with the expected `ID` and severity), `TestDoctorNamesTheMissingHalfNotNotConfigured`
+  (the line never reads "not configured": it names the App key, the verifier account, the bundle or the
+  invoker grant), `TestDoctorSaysWhyARepositoryIsHeldOff` (the three held-off rows, each naming its own
+  reason, and an `oauth` repository never reported as switched on), and the existing
+  `doctor_brokering_test.go` cases at `:335`, `:1218`, `:1373` move with the `Fix` strings DON1's flag
+  removal changes.
 - **Red step:** `TestDoctorReportsTheServiceStateInOneLine` fails on today's tree: a config with no
   block produces **no check at all**.
 - **Mutation to hold it:** put the `nil` early return back → the first test fails; collapse the five
-  states into one "not configured" line → the second fails.
+  states into one "not configured" line → the second fails; **report a repository as switched on
+  without reading the bundle** → the third fails, and it is the mutation that matters most, because a
+  `doctor` that says "on" while the job's credential is gone is worse than one that says nothing.
 - **Reviewer tier:** **B**.
 - **OWNER-RUN:** no.
-- **Depends on:** **DON1**.
+- **Depends on:** **DON1** — and its per-repository half on **DON8**, whose predicate it reads. **The
+  file is one writer's (§4.1), so this is one task and not two:** the service line and the
+  per-repository line are one check's output, and a second task writing the same file would be the
+  collision §4.1 exists to prevent. **If DON8 slips, this task's per-repository half slips with it and
+  the service half lands alone** — which is why the two halves are separate tables above.
 - **Commit:** `doctor: one line for the credentials service's state, deployed and admitting nobody`.
+
+### DON8. The switch: `update` turns a repository's runs onto the service, and only when it can serve them — SECURITY-SENSITIVE
+
+**Decisions:** the owner's answer of 2026-11-05 (§5 item 1); `CLAUDE.md`'s HARD RULE. **Findings:**
+§1.4 (the drop is auth-blind) and §1.5 (what the switch flips, and each flip's condition).
+**Verification:** `internal/infra`, `internal/cli`, `internal/localcfg`.
+
+**This task is the SWITCH, and it is new after the answer.** It is the second half of the ruling: DON1
+deploys the service everywhere, and this is what turns a repository's runs onto it — **later, per
+repository, and only where the service can serve that job.** It is **the same release as DON1 and it is
+a release blocker for it**: §1.4 verifies that DON1 alone makes a repository root drop its model mounts
+the next time that root is applied, so a release that shipped DON1 without this task's gate would break
+the field. **It needs no second command**, which is the owner's own constraint: the switch is
+`fugaro update`'s act, and the readiness it reads is a read `fugaro doctor` already makes.
+
+- **Files:** `internal/infra/spec.go` (a `repoCtx` field and its resolver beside `resolveBitbucketProxied`
+  at `:624`, and the two decision points at `:1177` and `:1314`), `internal/infra/spec_test.go`,
+  `internal/localcfg/localcfg.go` (the per-repository record, beside `Repo.Vertex` at `:1030-1033`),
+  `internal/cli/init.go` (the converge path that writes the record — the same place
+  `internal/cli/init.go:4271` writes `Vertex`), `internal/cli/run.go` (`credentialsServiceLaunchEnv`
+  at `:3647` and its call site at `:3553`), `internal/cli/update_switch_test.go` (new, so that DON2's
+  `init_converge_test.go` stays DON2's — §4.1). **At most 6 files**, and **`internal/cli/doctor_brokering.go`
+  is not one of them**: DON7 owns that file and reads this task's predicate (§4.1).
+- **Interfaces:** three conditions, and **all three must hold** for a repository's runs to go through
+  the service. They are checked in **one place**, an exported predicate in `internal/infra` that
+  `internal/cli`'s launch path and DON7's `doctor` line both call — a second implementation of "is this
+  repository switched on" would be a second answer, and the first time the two disagreed `doctor` would
+  be the one lying:
+  1. **the installation has the block** — DON1's deploy, and it is the precondition rather than a
+     condition: without it there is no service to switch to;
+  2. **the bundle is ready** — the bundle holds **at least one model credential**, read through **the
+     service's own loader** and not through a new one (§1.5: `openBundleStore` → `check` → `newest` →
+     `access` → `credsvc.ParseBundle` → `len(b.Credentials()) > 0`, the read `doctorBundleChecks` at
+     `internal/cli/doctor_brokering.go:432` already performs). **This is the condition that makes the
+     switch safe**, because the mount it removes is the credential the service must then hand back;
+  3. **the repository's `agent.auth` is one the service serves** — today `config.AuthCascade` alone
+     (`internal/config/defaults.go:77`), and this is the condition the review's finding is about. **It
+     is read live from `c.in.Cfg.Agent.Auth` at every build of the repository root's spec**, not stored:
+     the auth mode is in `fugaro.yaml` in the checkout, and a stored copy could outlive an edit to it,
+     which is the one way this switch could break a run that used to work.
+- **The record, and why there is one.** Conditions 1 and 3 are readable wherever a spec is built, but
+  **condition 2 is not**: the bundle is a Secret Manager secret, `internal/infra` is a hermetic spec
+  builder that reads no cloud, and `internal/infra/spec.go`'s whole input is the local config, the
+  checkout's `fugaro.yaml` and the published policy. So the readiness half is **recorded** by the
+  command that does read the cloud — `fugaro update` — as a per-repository boolean in the local config,
+  following `localcfg.Repo.Vertex` (`internal/localcfg/localcfg.go:1030-1033`, the fact `update` sets
+  from `infra`'s spec at `internal/cli/init.go:4271`). **Both doors refresh it**, and either alone is
+  enough: `fugaro update` reads the bundle once for the installation and writes the record on every
+  repository entry the local config holds; `fugaro update --repo PATH` refreshes the entry for that
+  repository, which is also the door that applies its root. **It is written `false` as well as `true`** —
+  a bundle that is later emptied switches the repository back off on the next `update`, which re-adds
+  the mounts, which is the fail-safe direction and not a failure.
+- **What the switch flips, and the one thing it does not touch.** §1.5's three flips are this task's
+  output, and **flip 1 needs no Terraform change at all** — which is the finding that makes this task
+  small. `deploy/terraform/gcp/modules/workflow/sa.tf:148-151` gates the mount drop on
+  `var.credentials_service == null`, and that variable is what `modules/repo/workflows.tf:36` passes
+  down from the repository root's `installation.credentials_service`. `internal/infra/spec.go:1314`
+  builds that value through `repoCredentialsService` (`:244-248`). So **returning `nil` from
+  `repoCredentialsService` for a repository the switch holds off is the whole of flip 1**: the module
+  receives null, `sa.tf`'s own expression keeps the accessors and the mounts, and the job account gets
+  no `roles/run.invoker` on the service. `sa.tf` is not edited, the `workflow` and `repo` modules'
+  variables are not edited, and **no golden plan moves** — every installation's repository roots plan
+  today exactly what a held-off repository must plan. Flip 3 is the same predicate at
+  `internal/cli/run.go:3647`, where the launch decides whether to set `FUGARO_CREDENTIALS_SERVICE_URL`;
+  flip 2 (`internal/gitprov/providers/providers.go:93-99`) follows the URL and needs nothing.
+- **Tests:** `TestTheSwitchIsOffUntilTheBundleHoldsAModelCredential` (a converged installation with an
+  empty bundle plans a repository root whose `installation.credentials_service` is null and whose jobs
+  keep their model mounts — the review's own regression test, moved here from DON2 with its body and its
+  fixture: **`TestAnOAuthInstallationStillLaunchesAfterUpdateAlone`**, a 0.19.0 installation whose
+  workflow is `agent.auth: oauth` and whose job mounts the GitHub App key **still launches a run after
+  `update` alone**, asserting the job's `job_secret_names` still carries its model credential's logical
+  name, the App key is still readable by the job's account, and `credentialsServiceLaunchEnv` hands the
+  launch no URL — **it is written against the tree's own fixtures and reads the plan, not the prose**,
+  the shape `TestServiceHeldSecretsMatchTheCredentialsService` and `dropModelMounts`' own tests use,
+  because the failure it catches is a Terraform expression and a Go predicate disagreeing);
+  `TestTheSwitchTurnsOnForACascadeRepositoryWithAReadyBundle` (a `cascade` repository of an installation
+  whose bundle holds a model credential plans the drop, the invoker grant and the URL — all three
+  flips, from the one predicate); `TestTheSwitchStaysOffForANonCascadeRepositoryWithAReadyBundle` (the
+  same installation, `agent.auth: oauth`, **every one of the three flips still off** — the condition the
+  review's finding is about); `TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate` (a record that
+  says on, a `fugaro.yaml` that now says `oauth`, and the spec holds the switch off — the live read of
+  condition 3); `TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied` (the fail-safe direction); and
+  `TestNoRepositoryRootGainsAServiceTheBundleCannotServe` (the whole-predicate guard: **no** repository
+  root in the fixtures plans `installation.credentials_service` set unless all three conditions hold).
+- **Red step:** `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone` fails the moment DON1 lands and
+  this task's gate does not — the fixture converges, the repository root drops the model mount, and the
+  launch hands the job a URL the service cannot serve. **It is the one test in this file whose red step
+  is a real failure of a real change rather than of today's tree**, which is exactly why it is a release
+  blocker rather than a guard: it fails on the release, not on the plan. **SEC flag:** the reviewer tier
+  is **A** and the independent review is **mandatory** — this task is what stands between DON1 and every
+  non-`cascade` repository in the field.
+- **Mutation to hold it:** drop condition 2 and switch on readiness by the block alone → the empty-bundle
+  test fails, and a `cascade` run in the field stops at the service's named refusal;
+  drop condition 3 → the `oauth` test fails, which is the review's finding reintroduced; store the auth
+  mode in the record instead of reading it live → the edit-the-`fugaro.yaml` test fails; make
+  `repoCredentialsService` return the block regardless → the no-repository-gains test fails and `sa.tf`
+  drops the mounts of a repository nobody switched on; implement the predicate a second time in
+  `internal/cli` and let the two disagree → the launch and the plan part company, which is the state
+  where a run gets a URL for a job whose credential was never dropped.
+- **Reviewer tier:** **A.** **OWNER-RUN:** no — the task is code and tests. **Check 96 stays the
+  owner's**, and this task does not depend on it: §1.5's flip 2 is wired today
+  (`internal/runner/runner.go:1119`), so the switch mints through the service without the App key's own
+  accessor being dropped.
+- **Depends on:** **DON1** — and it is **the reverse edge too**: DON1 may not ship without this task.
+  §4.1 places it in level 2, because the record write is a hunk in `internal/cli/init.go`, which DON1
+  rewrites in level 1 — **and its release edge runs the other way**, which is a stronger constraint than
+  the build order and one the level table cannot show: DON1 may not *ship* without this task, because
+  §1.4 verifies that DON1 alone drops the mounts of a repository the service cannot serve. **A level is
+  a build order; a release is not.**
+- **Commit:** `cli: the credentials service switch, on only where the bundle can serve the job`.
 
 ---
 
@@ -783,8 +992,12 @@ The rule is [../cloud-senior-review/implementation-plan.md](../cloud-senior-revi
 
 | File | Level 1 | Level 2 | Level 3 | Note |
 |---|---|---|---|---|
-| `internal/cli/init_stages.go`, `init.go`, `init_credentials.go` | **DON1** | — | — | the set path, the flag's removal, the stage's removal |
+| `internal/cli/init_stages.go`, `init.go`, `init_credentials.go` | **DON1** | **DON8** (`init.go` only, `:4271`) | — | the set path and the stage first, the record write second |
 | `internal/infra/tfvars.go` | **DON1** | — | — | `CarriedCredentialsService`, `Credentials` |
+| `internal/infra/spec.go`, `spec_test.go` | — | **DON8** | — | the switch's predicate and its two decision points (`:1177`, `:1314`) |
+| `internal/localcfg/localcfg.go` | — | **DON8** | — | the per-repository readiness record |
+| `internal/cli/run.go` (`credentialsServiceLaunchEnv`, `:3553`, `:3647`) | — | **DON8** | **DON4** | flip 3 first, the flag strings second |
+| `internal/cli/update_switch_test.go` (new) | — | **DON8** | — | the switch's tests, new so that `init_converge_test.go` stays DON2's |
 | `deploy/terraform/gcp/roots/installation/variables.tf` | **DON1** | — | — | the variable's doc comment |
 | `deploy/terraform/gcp/modules/installation/credentials.tf` | **DON1** | **DON3** | — | the verifier rendering first, the `scaling` block second |
 | `internal/cli/init_credentials_test.go`, `setup_refusals_test.go` | **DON1** | — | — | — |
@@ -794,15 +1007,21 @@ The rule is [../cloud-senior-review/implementation-plan.md](../cloud-senior-revi
 | `deploy/terraform/terraform_test.go` | — | **DON3** | — | the static pin |
 | `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` | — | **DON3** | — | the credentials image run |
 | `internal/cli/upgrade_cloud.go`, `internal/cli/managed_apply.go`, `managed_apply_test.go` | — | **DON6** | — | the managed case |
-| `internal/cli/doctor.go`, `doctor_test.go`, `validate.go`, `validate_test.go`, `review.go`, `review_test.go`, `run.go`, `creds.go`, `cascade_test.go`, `managed_test.go`(the pin at `:941`), `doctor_secret_readers_test.go`, `run_credentials_env_test.go`, `init_coordinator_test.go`(`:113`), `internal/config/providers.go`(`:542`) | — | — | **DON4** | the code-side pins, including the two the review added |
+| `internal/cli/doctor.go`, `doctor_test.go`, `validate.go`, `validate_test.go`, `review.go`, `review_test.go`, `creds.go`, `cascade_test.go`, `managed_test.go`(the pin at `:941`), `doctor_secret_readers_test.go`, `run_credentials_env_test.go`, `init_coordinator_test.go`(`:113`), `internal/config/providers.go`(`:542`) | — | — | **DON4** | the code-side pins, including the two the review added |
 | `internal/infra/tf/managed_cost.go`, `managed_cost_test.go` | — | — | — | **nobody's** — §3 DON3's amendment says why: the managed gate never sees this service's plan |
 | `docs/credentials-service/**` | — | — | **DON5** | this directory's own documents |
 | `docs/releases/vX.Y.Z.md`, `website/data/release-summaries.yaml` | — | — | **DON5** | the release |
 | every other document DON4 moves (§3's table) | — | — | **DON4** | — |
 
-**Three files cross levels, and the levels are what settle each of them.** A file is one writer's at a
+**Four files cross levels, and the levels are what settle each of them.** A file is one writer's at a
 time; it may be two tasks' **across** levels and never within one. So:
 
+- `internal/cli/init.go` is **DON1's in level 1** (the set path and the flag's gating sites) and
+  **DON8's in level 2** (the readiness record written at `:4271`, beside `Vertex`). **This is the one
+  file whose second writer is the reason DON8 sits in level 2 rather than beside DON1**: the record
+  write is a hunk in a file DON1 rewrites, so it waits for DON1 rather than racing it.
+- `internal/cli/run.go` is **DON8's in level 2** (`credentialsServiceLaunchEnv`, `:3553` and `:3647`)
+  and **DON4's in level 3** (the `--provision-credentials` strings).
 - `internal/cli/upgrade_cloud.go` and `internal/cli/managed_test.go` are **DON6's in level 2** (the
   managed convergence path and its test) and **DON4's in level 3** (the `--provision-credentials` strings
   at `upgrade_cloud.go:407` and the pin at `managed_test.go:941`, which name a stage DON1 removes).
@@ -819,10 +1038,15 @@ point: a shared-files table that has never caught one is a table nobody checked.
 - **Level 1: DON1, DON7.** Neither depends on the other, and their file sets are disjoint — DON1 holds
   the init path and the two installation roots, DON7 holds `doctor_brokering.go` alone. **They are
   parallel and must not be serialised on the strength of this drawing.**
-- **Level 2: DON2, DON3, DON6.** Each depends on DON1 and on nothing in level 1's other half. DON2
-  tests what DON1 writes; DON3 takes `credentials.tf` after DON1 released it; DON6 reads the managed
-  path DON1 changed. **DON3 → DON4** is not an edge of the code but of the wording: DON4 moves the
-  strings that describe the guard DON3 writes.
+- **Level 2: DON2, DON3, DON6, DON8.** Each depends on DON1 and on nothing in level 1's other half.
+  DON2 tests what DON1 writes; DON3 takes `credentials.tf` after DON1 released it; DON6 reads the
+  managed path DON1 changed; DON8 writes the record into `init.go` after DON1 rewrote it. **DON3 → DON4**
+  is not an edge of the code but of the wording: DON4 moves the strings that describe the guard DON3
+  writes. **DON8's edge to DON1 runs the other way in the release and not in the build**, and that is
+  the one thing this drawing cannot show: DON8 is *built* after DON1 and DON1 may not *ship* without
+  DON8, because §1.4 verifies that DON1 alone drops the mounts of a repository the service cannot serve.
+  **A level is a build order; a release is not**, and a reader who takes the two for the same thing
+  would ship the field-breaking release this file exists to prevent.
 - **Level 3: DON4, DON5.** Both are the same change seen in two places, and they are parallel because
   their files are disjoint — DON4 takes the pins outside this directory, DON5 this directory and the
   release notes. **Their wording must be identical**, which is a coordination cost and not a shared
@@ -831,20 +1055,23 @@ point: a shared-files table that has never caught one is a table nobody checked.
 ### 4.2 The critical path
 
 ```
-[§5 item 1, ANSWERED — the switch]  ─┐
-                                     ├──▶  DON1  ──┬──▶ DON3 ──▶ DON4 ──▶ (the release)
-[the verifier account, named — §4.3] ┘            ├──▶ DON2
-                                                  └──▶ DON6
+[§5 item 1 — ANSWERED 2026-11-05, deploy now, switch later]
+                                     │
+[the verifier account, named — §4.3] ┘──▶  DON1 ──┬──▶ DON3 ──▶ DON4 ──▶ (the release)
+                                                 ├──▶ DON2
+                                                 ├──▶ DON6
+                                                 └──▶ DON8  ══▶ (the release: DON1 may not ship without it)
                                      DON7 ‖ DON1            DON5 ‖ DON4
 ```
 
-`§5 item 1, answered → the verifier account → DON1 → DON3 → DON4 → the release`, and **two of the
-chain's links are not code**: the owner's answer to the switch (new, and it is first — the review added
-it), and the verifier account's name, which is another work stream's Open item (§4.3), plus an owner at
-a terminal for the one step §2.1 keeps. **The gate is first and it holds the whole chain**, which is the
-honest shape after the review: the plan is not waiting on code, it is waiting on a ruling. The chain is
-six links and the last one is a person's, which is the same shape the cloud senior review's own §6.3
-reaches.
+`the verifier account → DON1 → DON3 → DON4 → the release`, with **DON8 a second tail of DON1 that
+returns to the release rather than hanging off it**: the double line is the release edge, not a build
+order, and it is the one edge in this drawing that a level table cannot express. **The owner's answer is
+no longer on the chain** — it was the first link while the item was open, and answering it turned it
+into the shape of the chain (two tails where there was one) rather than a link in it. **Two links are
+still not code:** the verifier account's name, which is another work stream's Open item (§4.3), and an
+owner at a terminal for the one step §2.1 keeps. The chain is five code links and the last one is a
+person's, which is the same shape the cloud senior review's own §6.3 reaches.
 
 ### 4.3 What must precede what — the verifier account, and CSR10 / CSR12 / CSR13
 
@@ -890,6 +1117,16 @@ installation. The order is therefore:
   work is the class-keyed credential and nothing else. **It is not a precondition of DON1 and DON1 is
   not a precondition of it.**
 
+**And one ordering DON8 adds, which no CSR task owns:** **the switch and the App-key flip are
+independent, and neither waits on the other.** C2.3's drop of the App key's own accessor is held behind
+the owner's live Check 96 (§6 V8) and `config.ServiceHeldSecretNames` is empty until it
+(`internal/config/providers.go:542`, #907) — while DON8's switch works without it, because the runner
+already mints through the service (`internal/runner/runner.go:1119`). **So Check 96 does not gate the
+switch and the switch does not gate Check 96**, which is the opposite of what §5 item 1's reading (b)
+would have required (its cost (iv): under (b) Check 96 stops being a later confirmation and becomes a
+precondition). **The owner's answer removed that dependency**, and it is worth stating plainly because
+it is the answer's one unambiguous gain.
+
 **What this ruling does *not* change in the CSR plan:** CSR1–CSR9, CSR11's flip and the live checks
 themselves. The live checks are still the owner's and still the last link.
 
@@ -897,15 +1134,29 @@ themselves. The live checks are still the owner's and still the last link.
 
 ## 5. Open items — the owner's, and none of them decided here
 
-**Item 1 is BLOCKING and the other five are not:** it decides how the jobs switch to the service, and
-**every task in §3 is held behind it**. Items 2–6 are the ones the ruling itself leaves open, and each
-can be answered independently.
+**Item 1 was BLOCKING and is ANSWERED; the other five are not blocking and are still open.** It decided
+how the jobs switch to the service, and **every task in §3 was held behind it** — that hold is lifted.
+Items 2–6 are the ones the ruling itself leaves open, and each can be answered independently.
 
-**1. BLOCKING — how the jobs switch to the service, and it is the one item that holds every task in
-§3.** §1.4 verifies the fact this item exists for: **the deploy and the switch are two changes, and the
-switch, as the tree stands, breaks every installation's runs.** Writing the installation root's
-`credentials_service` block triggers `dropModelMounts` on every repository root
-(`internal/infra/spec.go:1177-1178`, `:1314`), the drop is **auth-blind** (`sa.tf:148-151`, and
+**1. ANSWERED — 2026-11-05: DEPLOY NOW, SWITCH LATER.** The owner took reading **(a)**: the service is
+deployed for every installation by `fugaro update`, and **the repository roots' `credentials_service`
+input and the run's `FUGARO_CREDENTIALS_SERVICE_URL` stay off until the bundle holds what that job's
+auth mode needs**, so an installation that updates keeps every run working with `update` alone. **The
+one-line why:** (a) is the reading under which the deploy is the cheap change the ruling was taken for
+and no run changes at all, and its one real cost — "something has to turn the switch on" — turned out to
+be answerable without the second command (b) was chosen to avoid: **the something is `fugaro update`
+itself, reading the bundle through the loader the doctor already reads** (§3 DON8, and §1.5 states what
+it flips). **The recommendation this file carried was (b)**, and the owner did not take it; the reasons
+(a) won on are the two the answer names, and the cost (b) would have paid — a `fugaro update` that
+refuses a coding agent's session (cost (iii) below) — is one the owner declined. **What the answer
+leaves the plan with:** §3's eight tasks, DON8 new and a release blocker for DON1, and §4.2's chain
+starting at the verifier account rather than here.
+
+**The item as it was put to the owner, kept as the record of what was weighed.** §1.4 verifies the fact
+this item existed for: **the deploy and the switch are two changes, and the switch, as the tree stands,
+breaks every installation's runs.** Writing the installation root's
+`credentials_service` block triggers `dropModelMounts` on every repository root, the next time each of
+them is applied (`internal/infra/spec.go:1177-1178`, `:1314`), the drop is **auth-blind** (`sa.tf:148-151`, and
 `SECURITY.md` states it as a limit of the release), and a run that hands its job
 `FUGARO_CREDENTIALS_SERVICE_URL` opens the GitHub provider **keyless with no fallback**
 (`internal/gitprov/providers/providers.go:93-99`). So an `oauth` or `api-key` job of a converged
@@ -954,14 +1205,16 @@ how the second change happens, and the two readings are:**
   service mints; under (b) that flip is part of this change, so **Check 96 stops being a later
   confirmation and becomes a precondition.**
 
-**The recommendation on this item, and it is a recommendation and not a decision:** **(b)**, because it is the reading
-that keeps the HARD RULE's "one command" true and because the migration is genuinely available — the
-App key is already a project secret and the model credentials already are — while (a) buys the same
-service on every installation and leaves it unused, with the flip postponed to a design that does not
-exist yet. **The cost of (b) is real and the owner should weigh (iii) in particular:** a `fugaro update`
-that refuses a coding agent's session is a different command from the one the plugin runs today.
-**The owner's, and BLOCKING: no task in §3 may be built until this is answered.** DON3's own *content*
-is the one exception (§3 DON3), and its `Depends on` is not.
+**The recommendation this file carried, kept because the answer went the other way:** **(b)**, because
+it is the reading that keeps the HARD RULE's "one command" true and because the migration is genuinely
+available — the App key is already a project secret and the model credentials already are — while (a)
+buys the same service on every installation and leaves it unused, with the flip postponed to a design
+that did not exist yet. **The owner answered (a) on 2026-11-05, and the design that did not exist yet is
+§3 DON8** — so the recommendation's first objection is met (there is no second command after all) and
+its second is not (the service is still unused on an installation whose owner never writes the bundle,
+which §2.3's "deployed, serving, admitting nobody" is the honest name for). **The cost of (b) the owner
+declined is (iii):** a `fugaro update` that refuses a coding agent's session is a different command from
+the one the plugin runs today. **Answered, and the hold on §3 is lifted.**
 
 **2. An installation with no GitHub App at all.** A Bitbucket-only installation, or one whose
 repositories use a different provider, has no App key to write and never will. §3 DON5 writes the
@@ -1015,3 +1268,6 @@ which is the class of decision this file does not make for the owner. **The owne
 | V5 | Whether a **managed** project's `fugaro update` applies its own installation root | §3 DON6 cannot be written until this is known, and it is a fact about the managed convergence path rather than about this ruling | Read out of `internal/cli/upgrade_cloud.go` and the managed path **by DON6's own red step**, which is why that task determines rather than assumes it |
 | V6 | That the compressed size of the credentials image is materially below its ~60 MB uncompressed size | §1.3's "smaller again" | The image's manifest, read by the owner (`docker buildx imagetools inspect`). The **uncompressed** size is VERIFIED in the tree (`images/credentials_test.go:209-220`) and this row is only about the compressed figure |
 | V7 | That no **other** installation-root resource becomes always-on because of this service | §1.3's "nothing else" | The module's own resource list, which is six and is counted by `TestCredentialsServiceResourcesAreCounted`. This row stands until DON1 adds the verifier account's resource, which is a **seventh** — and DON1's own task must say so and move that test's number |
+| V8 | That the deployed service really **mints** an installation token from the bundle's App key, so the App key's own accessor can be dropped (C2.3, `config.ServiceHeldSecretNames`, #907) | §1.5's flip 2 and §4.3's "Check 96 does not gate the switch": the switch mints through the service, and the **runner half is wired today** (`internal/runner/runner.go:1119`) — but "wired" is not "proven to mint" | **The owner's live Check 96**, which is why the App key's drop is held behind it and the model-credential drop is not. **This file does not claim the mint works**; it claims the switch does not depend on the answer |
+| V9 | That **`fugaro update --repo PATH` is the only door that applies a repository root** — the fact §1.4's "the next time that root is applied" and DON8's "which door applies its root" both rest on | §1.4 says the drop lands on the repository root's next apply and not on DON1's own convergence; if some other path applied repository roots, the failure would arrive sooner than this file says | Read out of `internal/cli/init.go:344`'s door switch (`case o.repo: runInitRepo`) and by the absence of any `infra.Repo` call in `internal/cli/run.go` and in `internal/runner`. **Read, not proven exhaustive** — a third caller this amendment did not find would move the timing and not the conclusion |
+| V10 | That `fugaro update`'s convergence can read the bundle **in the stage that writes the local config**, so DON8's record write needs no new cloud client on that path | DON8's design is that the readiness read is the one `doctorBundleChecks` already makes (`internal/cli/doctor_brokering.go:432`). Whether that read is available at the moment the record is written is a fact about the stage order, and **DON8's own implementation determines it** — the fallback is a separate read in the stage, which changes no interface | Read out of `internal/cli/init.go`'s stage list by DON8's own red step, which is why that task determines rather than assumes it |
