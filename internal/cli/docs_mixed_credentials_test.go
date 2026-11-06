@@ -397,10 +397,11 @@ func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 	// claim the comment makes about the pair is only true while it names them.
 	for _, want := range []string{
 		"coder: deepseek/deepseek-v4.1-flash",
-		"reviewer: claude-opus-5-5",
+		"reviewer: deepseek/deepseek-v4-pro",
 		"D721",
 		"stages.<stage>.claude_account",
 		"docs/design/mixed-credentials.md",
+		"Check 290",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s never says %q: the file's own comment is where the pair, the guard that judges it and the setting that would change it are stated", path, want)
