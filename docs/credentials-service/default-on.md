@@ -175,7 +175,7 @@ serving** — the revision starts, passes its health check, and Cloud Run routes
 | Route | What refuses | Where the refusal comes from |
 |---|---|---|
 | every caller | Cloud Run IAM: `invoker_iam_disabled = false` and no `allUsers`/`allAuthenticatedUsers` member anywhere (`credentials.tf:305-320`); the only members are each job account's own `roles/run.invoker` and the operators' (`iam.tf:163`, `:194`) | the front end, before the container runs |
-| the run/read mint | an empty job-account table, or a caller that is not one of them | `FUGARO_JOB_ACCOUNTS`; Global Constraint 6 |
+| the run/read mint | a caller that is not one of the installation's job accounts — and, on an installation with no repository jobs at all, an empty table, which admits nobody | `FUGARO_JOB_ACCOUNTS`, rendered on every installation; Global Constraint 6's shared-job gate |
 | the read mint's person class | an empty list — "a read mint that admits nobody" | `FUGARO_PERSON_ACCOUNTS`, rendered only when the installation has `user:` operators |
 | the verify route | an empty verifier list — the class's own refusal for every caller | `FUGARO_VERIFIER_ACCOUNTS`, `AuthConfig.VerifierAccounts`, empty by default |
 | any model call | the bundle holds no document, or none the loader can parse | the loader fails **closed** — `credentials.tf:149-160`'s own comment: "a container with no document yet is fine: the loader fails closed … so the service answers a named refusal rather than an empty credential set" |
@@ -209,8 +209,9 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
 
 - **Files:** `internal/cli/init_stages.go` (the unconditional set path; today `pinCredentialsImage`
   returns early at "`doc == nil` — no `credentials_service` in the installation's tfvars: nothing opted
-  in"), `internal/cli/init.go` (the flag at `:109`/`:458` and its two gating sites at `:1301`,
-  `:1318-1321`; the `CarriedCredentialsService` call sites at `:736`, `:2090`),
+  in", and the stage's own gate is `:181`), `internal/cli/init.go` (the flag at `:109`/`:458` and its
+  three gating sites at `:1301`, `:1318` and `:3089`; the `CarriedCredentialsService` call sites at
+  `:736`, `:2090`),
   `internal/infra/tfvars.go` (`CarriedCredentialsService` `:591-612`, `Credentials` `:355`,
   `CredentialsServiceURLOf` `:448`, `SetCredentialsServiceURL` `:467`),
   `internal/cli/init_credentials.go` (the `--provision-credentials` engine stage is **removed**;
@@ -353,7 +354,8 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   `internal/infra/readiness_credentials_test.go`, `internal/infra/credentialsvars_test.go`,
   `internal/infra/installation_test.go`, `internal/infra/spec_test.go`,
   `internal/infra/managed/marker_test.go` (`:1829`), `internal/localcfg/shared_test.go` (`:493`).
-  **At most 26 files**, and the cap is the list, not a licence to widen it.
+  **At most 26 Go files**, plus the documents in the table below — and the cap is the list, not a
+  licence to widen it.
 - **The documents this task moves, and no others.** **This file's own directory is out of scope for
   DON4's document half and is DON5's** (§3 DON5). The documents DON4 moves are the ones that state the
   posture **outside** `docs/credentials-service/`:
@@ -470,10 +472,11 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
 **Decisions:** the ruling of 2026-11-05; Global Constraint 7 (the managed path never deploys the
 credentials service). **Verification:** `internal/cli`, `internal/managed`.
 
-- **Files:** `internal/cli/upgrade_cloud.go`, `internal/cli/managed*.go` (the managed convergence path),
-  `internal/cli/managed_test.go`, `internal/cli/update_managed_test.go`,
-  `internal/cli/docs_managed_test.go` (if the file exists on this tree — the task says which it chose).
-  **At most 5 files.**
+- **Files:** `internal/cli/upgrade_cloud.go` (its credentials-service string at `:407`),
+  `internal/cli/managed_apply.go`, `internal/cli/managed_apply_test.go` — plus whichever file the task
+  finds holds the managed convergence path, which it names in its own pull request rather than guessing
+  here. **At most 4 files**, and **not** `internal/cli/managed_test.go` or
+  `internal/cli/update_managed_test.go`, which belong to DON4 and DON2 (§4.1).
 - **Interfaces:** the managed case is a genuine exception and must be **stated rather than papered
   over**, and the reason is already in the tree: `credentials.tf`'s own header says "`fugaro managed
   apply` never deploys it (Global Constraint 7)". So a **managed** project's `fugaro update` cannot set
@@ -568,16 +571,27 @@ The rule is [../cloud-senior-review/implementation-plan.md](../cloud-senior-revi
 | `internal/infra/tf/testdata/golden/installation-credentials.plan.json` | — | **DON3** | — | regenerated |
 | `deploy/terraform/terraform_test.go` | — | **DON3** | — | the static pin |
 | `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` | — | **DON3** | — | the credentials image run |
-| `internal/cli/upgrade_cloud.go`, `managed*.go`, `managed_test.go` | — | **DON6** | — | the managed case |
+| `internal/cli/upgrade_cloud.go`, `internal/cli/managed_apply.go`, `managed_apply_test.go` | — | **DON6** | — | the managed case |
 | `internal/cli/doctor.go`, `doctor_test.go`, `validate.go`, `validate_test.go`, `review.go`, `review_test.go`, `run.go`, `creds.go`, `cascade_test.go`, `managed_test.go`(the pin at `:941`), `doctor_secret_readers_test.go`, `run_credentials_env_test.go` | — | — | **DON4** | the code-side pins |
 | `docs/credentials-service/**` | — | — | **DON5** | this directory's own documents |
 | `docs/releases/vX.Y.Z.md`, `website/data/release-summaries.yaml` | — | — | **DON5** | the release |
 | every other document DON4 moves (§3's table) | — | — | **DON4** | — |
 
-**`internal/cli/managed_test.go` is the one file two tasks want, and the level is what settles it.**
-DON6 takes it in level 2 (the managed convergence test), and DON4 takes it in level 3 (the pin at
-`:941`, which names the credentials stage DON1 removes). Serialising them is the point of the levels;
-a level with two writers of one file is the thing this table exists to make impossible.
+**Three files cross levels, and the levels are what settle each of them.** A file is one writer's at a
+time; it may be two tasks' **across** levels and never within one. So:
+
+- `internal/cli/upgrade_cloud.go` and `internal/cli/managed_test.go` are **DON6's in level 2** (the
+  managed convergence path and its test) and **DON4's in level 3** (the `--provision-credentials` strings
+  at `upgrade_cloud.go:407` and the pin at `managed_test.go:941`, which name a stage DON1 removes).
+- `internal/cli/doctor_brokering_test.go` is **DON7's in level 1** (the one line and its five states) and
+  **DON4's in level 3** (the `Fix` strings at `:335`, `:1218`, `:1373`).
+
+**A level with two writers of one file is the thing this table exists to make impossible**, and the
+first draft of this section had exactly that: DON2 and DON6 both wanted
+`internal/cli/update_managed_test.go`. The task that holds it is **DON2** — the file's `--yes
+--provision-credentials` invocations are the convergence test's own fixture, so the task that owns the
+convergence owns them — and DON6 takes `managed_apply_test.go` instead. Naming the collision is the
+point: a shared-files table that has never caught one is a table nobody checked.
 
 - **Level 1: DON1, DON7.** Neither depends on the other, and their file sets are disjoint — DON1 holds
   the init path and the two installation roots, DON7 holds `doctor_brokering.go` alone. **They are
