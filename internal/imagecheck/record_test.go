@@ -23,6 +23,32 @@ func parse(t *testing.T, yaml string) *config.Config {
 	return cfg
 }
 
+// mutateYAML is yaml parsed and handed to mutate. A fixture that needs the
+// check to see an image: block or a dockerfile: path sets it here instead of
+// writing it in the YAML: the repository-image removal refuses both keys by
+// name (D1195), and the check reads a config.Workflow, which is what its own
+// callers pass.
+func mutateYAML(t *testing.T, yaml string, mutate func(*config.Config)) *config.Config {
+	t.Helper()
+	cfg := parse(t, yaml)
+	if mutate != nil {
+		mutate(cfg)
+	}
+	return cfg
+}
+
+// imageOf is a mutateYAML mutation that applies f to the named workflow's
+// image, so a test that is about what the check does with image.key_files or
+// image.tools sets them on the parsed config instead of writing a key the
+// repository-image removal refuses by name (D1195).
+func imageOf(workflow string, f func(*config.Image)) func(*config.Config) {
+	return func(c *config.Config) {
+		w := c.Workflows[workflow]
+		f(&w.Image)
+		c.Workflows[workflow] = w
+	}
+}
+
 // gitBlobID is git's SHA-1 object ID of a blob holding data.
 func gitBlobID(data string) string {
 	return fmt.Sprintf("%x", sha1.Sum([]byte(fmt.Sprintf("blob %d\x00%s", len(data), data))))
@@ -147,9 +173,15 @@ func TestKeyFilesIncludeYarnAndPnpmInstallFiles(t *testing.T) {
 // vendored toolchain — and each one is a key file: a file as itself, a
 // directory as every file under it, so a change to any of them changes the
 // key exactly as a lockfile change does.
+//
+// The list goes on the parsed config rather than in webYAML: a fugaro.yaml
+// carrying image.key_files is refused by name since the repository-image
+// removal (D1195), and what this test is about is what KeyFiles reads, which
+// its own callers hand it on a config.Workflow.
 func TestKeyFilesIncludeConfiguredEntries(t *testing.T) {
-	const configured = `test: sh test.sh }, image: { key_files: [patches, vendor/toolchain.toml] }`
-	cfg := parse(t, strings.Replace(webYAML, "test: sh test.sh }", configured, 1))
+	cfg := mutateYAML(t, webYAML, imageOf("web", func(i *config.Image) {
+		i.KeyFiles = []string{"patches", "vendor/toolchain.toml"}
+	}))
 	files := map[string]string{
 		"package.json":           `{"name":"web"}`,
 		"package-lock.json":      "{}",
@@ -207,64 +239,80 @@ func TestDirBlobIDMatchesGit(t *testing.T) {
 // TestImageConfigHashChanges: what makes the image wrong (its base,
 // image: settings, the repository Dockerfile's name or content) changes
 // the hash; the commands, cache and secrets don't.
+//
+// A fugaro.yaml can no longer carry the image: block or the dockerfile: path
+// the references differ by — the repository-image removal refuses each by name
+// (D1195) — so a reference is the workflow set on the parsed config, which is
+// what ImageConfigHash reads and what its callers hand it.
 func TestImageConfigHashChanges(t *testing.T) {
-	// image: and dockerfile: are exclusive, so each is varied from its own
-	// reference.
-	const withImage = `version: 1
-project: aurora
-git: { provider: github }
-workflows:
-  web:
-    image: { tools: { node: "20" }, apt: [curl], setup: [echo hi] }
-    commands: { build: sh build.sh, test: sh test.sh }
-`
-	const withDockerfile = `version: 1
-project: aurora
-git: { provider: github }
-workflows:
-  web:
-    dockerfile: .fugaro/web.Dockerfile
-    commands: { build: sh build.sh, test: sh test.sh }
-`
+	img := config.Image{Tools: config.MiseTools{"node": "20"}, Apt: []string{"curl"}, Setup: []string{"echo hi"}}
+	mutWeb := func(f func(w *config.Workflow)) func(*config.Config) {
+		return func(c *config.Config) {
+			w := c.Workflows["web"]
+			f(&w)
+			c.Workflows["web"] = w
+		}
+	}
+	then := func(fs ...func(*config.Config)) func(*config.Config) {
+		return func(c *config.Config) {
+			for _, f := range fs {
+				f(c)
+			}
+		}
+	}
+	mutImage := func(f func(i *config.Image)) func(*config.Config) {
+		return mutWeb(func(w *config.Workflow) {
+			i := img
+			f(&i)
+			w.Image = i
+		})
+	}
+	withImage := mutWeb(func(w *config.Workflow) { w.Image = img })
+	withDockerfile := mutWeb(func(w *config.Workflow) { w.Dockerfile = ".fugaro/web.Dockerfile" })
 	tree := func(t *testing.T, dockerfile string) Dir {
 		dir := t.TempDir()
 		testutil.WriteFiles(t, dir, map[string]string{".fugaro/web.Dockerfile": dockerfile, ".fugaro/other.Dockerfile": dockerfile})
 		return Dir{Root: dir}
 	}
-	hash := func(t *testing.T, yaml, dockerfile string) string {
+	hash := func(t *testing.T, mutate func(*config.Config), dockerfile string) string {
 		t.Helper()
-		h, err := ImageConfigHash(parse(t, yaml), "web", tree(t, dockerfile))
+		h, err := ImageConfigHash(mutateYAML(t, webYAML, mutate), "web", tree(t, dockerfile))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return h
 	}
-	for _, ref := range []string{withImage, withDockerfile} {
+	for _, ref := range []func(*config.Config){withImage, withDockerfile} {
 		if h := hash(t, ref, "FROM x\n"); len(h) != 64 {
 			t.Fatalf("hash = %q, want 64 hex", h)
 		}
 	}
 	for _, tc := range []struct {
-		name, ref, yaml, dockerfile string
-		changes                     bool
+		name       string
+		ref        func(*config.Config)
+		mutate     func(*config.Config)
+		dockerfile string
+		changes    bool
 	}{
 		{"same image", withImage, withImage, "FROM x\n", false},
 		{"same dockerfile", withDockerfile, withDockerfile, "FROM x\n", false},
-		{"image.apt", withImage, strings.Replace(withImage, "apt: [curl]", "apt: [curl, jq]", 1), "FROM x\n", true},
-		{"image.setup", withImage, strings.Replace(withImage, "echo hi", "echo bye", 1), "FROM x\n", true},
-		{"image.tools", withImage, strings.Replace(withImage, `node: "20"`, `node: "22"`, 1), "FROM x\n", true},
-		{"image.key_files", withImage, strings.Replace(withImage, "setup: [echo hi]", "setup: [echo hi], key_files: [patches]", 1), "FROM x\n", true},
+		{"image.apt", withImage, mutImage(func(i *config.Image) { i.Apt = []string{"curl", "jq"} }), "FROM x\n", true},
+		{"image.setup", withImage, mutImage(func(i *config.Image) { i.Setup = []string{"echo bye"} }), "FROM x\n", true},
+		{"image.tools", withImage, mutImage(func(i *config.Image) { i.Tools = config.MiseTools{"node": "22"} }), "FROM x\n", true},
+		{"image.key_files", withImage, mutImage(func(i *config.Image) { i.KeyFiles = []string{"patches"} }), "FROM x\n", true},
 		{"dockerfile content", withDockerfile, withDockerfile, "FROM y\n", true},
-		{"dockerfile path", withDockerfile, strings.Replace(withDockerfile, "web.Dockerfile", "other.Dockerfile", 1), "FROM x\n", true},
+		{"dockerfile path", withDockerfile, mutWeb(func(w *config.Workflow) { w.Dockerfile = ".fugaro/other.Dockerfile" }), "FROM x\n", true},
 		{"dockerfile instead of image", withImage, withDockerfile, "FROM x\n", true},
-		{"commands", withImage, strings.Replace(withImage, "sh build.sh", "make", 1), "FROM x\n", false},
-		{"secrets", withImage, strings.Replace(withImage, "    commands:", "    secrets: [{ name: npm-token, env: NPM_TOKEN }]\n    commands:", 1), "FROM x\n", false},
-		{"rebuild", withImage, strings.Replace(withImage, "    commands:", "    rebuild: { max_age: 3d }\n    commands:", 1), "FROM x\n", false},
-		{"agent", withImage, strings.Replace(withImage, "git: { provider: github }\n", "git: { provider: github }\nagent: { model: other }\n", 1), "FROM x\n", false},
+		{"commands", withImage, then(withImage, mutWeb(func(w *config.Workflow) { w.Commands.Build = "make" })), "FROM x\n", false},
+		{"secrets", withImage, then(withImage, mutWeb(func(w *config.Workflow) {
+			w.Secrets = []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}}
+		})), "FROM x\n", false},
+		{"rebuild", withImage, then(withImage, mutWeb(func(w *config.Workflow) { w.Rebuild.Paths = []string{"packages/**"} })), "FROM x\n", false},
+		{"agent", withImage, then(withImage, func(c *config.Config) { c.Agent.Model = "other" }), "FROM x\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ref := hash(t, tc.ref, "FROM x\n")
-			if got := hash(t, tc.yaml, tc.dockerfile); (got != ref) != tc.changes {
+			if got := hash(t, tc.mutate, tc.dockerfile); (got != ref) != tc.changes {
 				t.Errorf("hash changed = %v, want %v", got != ref, tc.changes)
 			}
 		})
@@ -276,7 +324,7 @@ workflows:
 	if hashOf(a) == hashOf(b) {
 		t.Error("base does not change the hash")
 	}
-	if _, err := ImageConfigHash(parse(t, strings.Replace(withDockerfile, "web.Dockerfile", "missing.Dockerfile", 1)), "web", tree(t, "x")); err == nil {
+	if _, err := ImageConfigHash(mutateYAML(t, webYAML, mutWeb(func(w *config.Workflow) { w.Dockerfile = ".fugaro/missing.Dockerfile" })), "web", tree(t, "x")); err == nil {
 		t.Error("a missing repository Dockerfile gave a hash")
 	}
 }
@@ -369,38 +417,43 @@ workflows:
 // A changed root mise file or image.tools makes the image wrong: the hash
 // moves. Files mise does not read at the root leave it alone.
 func TestImageConfigHashCoversMiseFiles(t *testing.T) {
-	hash := func(t *testing.T, yaml string, files map[string]string) string {
+	// The image.tools row sets the tools on the parsed config rather than in
+	// baseWorkflowYAML: a fugaro.yaml carrying that key is refused by name
+	// since the repository-image removal (D1195), and what the hash reads is
+	// the config.Workflow its callers hand it.
+	hash := func(t *testing.T, mutate func(*config.Config), files map[string]string) string {
 		t.Helper()
 		dir := t.TempDir()
 		testutil.WriteFiles(t, dir, files)
-		h, err := ImageConfigHash(parse(t, yaml), "app", Dir{Root: dir})
+		h, err := ImageConfigHash(mutateYAML(t, baseWorkflowYAML, mutate), "app", Dir{Root: dir})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return h
 	}
-	ref := hash(t, baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"})
+	const mise24 = "[tools]\nnode = \"24\"\n"
+	ref := hash(t, nil, map[string]string{"mise.toml": mise24})
 	for _, tc := range []struct {
 		name    string
-		yaml    string
+		mutate  func(*config.Config)
 		files   map[string]string
 		changes bool
 	}{
-		{"same", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"}, false},
-		{"mise.toml", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"22\"\n"}, true},
-		{"mise.lock", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "mise.lock": "x"}, true},
-		{"conf.d", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".config/mise/conf.d/a.toml": "x"}, true},
+		{"same", nil, map[string]string{"mise.toml": mise24}, false},
+		{"mise.toml", nil, map[string]string{"mise.toml": "[tools]\nnode = \"22\"\n"}, true},
+		{"mise.lock", nil, map[string]string{"mise.toml": mise24, "mise.lock": "x"}, true},
+		{"conf.d", nil, map[string]string{"mise.toml": mise24, ".config/mise/conf.d/a.toml": "x"}, true},
 		// mise itself ignores a dotfile fragment in conf.d (hidden files
 		// aren't config), so miseFiles must skip it too: a project dropping
 		// a .x.toml there (an editor swap file, say) must not rebuild.
-		{"dotfile in conf.d", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".config/mise/conf.d/.x.toml": "x"}, false},
-		{".tool-versions", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".tool-versions": "go 1.27\n"}, true},
-		{"subdirectory", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "web/mise.toml": "x"}, false},
-		{"mise.local.toml", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "mise.local.toml": "x"}, false},
-		{"image.tools", strings.Replace(baseWorkflowYAML, "app: {", "app: { image: { tools: { node: \"24\" } },", 1), map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"}, true},
+		{"dotfile in conf.d", nil, map[string]string{"mise.toml": mise24, ".config/mise/conf.d/.x.toml": "x"}, false},
+		{".tool-versions", nil, map[string]string{"mise.toml": mise24, ".tool-versions": "go 1.27\n"}, true},
+		{"subdirectory", nil, map[string]string{"mise.toml": mise24, "web/mise.toml": "x"}, false},
+		{"mise.local.toml", nil, map[string]string{"mise.toml": mise24, "mise.local.toml": "x"}, false},
+		{"image.tools", imageOf("app", func(i *config.Image) { i.Tools = config.MiseTools{"node": "24"} }), map[string]string{"mise.toml": mise24}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := hash(t, tc.yaml, tc.files); (got != ref) != tc.changes {
+			if got := hash(t, tc.mutate, tc.files); (got != ref) != tc.changes {
 				t.Errorf("changed = %v, want %v", got != ref, tc.changes)
 			}
 		})
