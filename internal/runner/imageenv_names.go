@@ -29,7 +29,7 @@ func SecretEnvNames(jobEnv map[string]string) []string {
 // once, here, where the passthrough and the report that describes it both call
 // it (D1378): a name read as dropped by one is a name dropped by the other.
 //
-// Four sources, and nothing else:
+// Five sources, and nothing else:
 //
 //   - config.ReservedEnv, case-insensitively, which is also every name Fugaro
 //     writes into a job: the FUGARO_ family (the stamp, the platform's five,
@@ -41,6 +41,10 @@ func SecretEnvNames(jobEnv map[string]string) []string {
 //     the CA bundles). Reusing the list a workflow secret's env is held to is
 //     the whole point (D1372): an image sets, shadows or redirects none of
 //     them, and the value the run already had stands.
+//   - config.EnvNameRE's shape, the filter's other half (D1372): a name no
+//     shell can express — LD-PRELOAD, one with a space, a lower-case one — is
+//     dropped rather than passed on as an environment entry, and it is the
+//     same spelling the workflow-secret rule uses, so the two cannot drift.
 //   - backend.PlatformEnvNames, the five internal/infra's platformEnv writes
 //     into every job and a test pins it to. Each is FUGARO_-prefixed and so
 //     refused by the list above already; naming them here states the intent
@@ -77,10 +81,11 @@ func ImageEnvDroppedNames(jobEnv map[string]string, declared []string) []string 
 }
 
 // imageEnvDropped is the one rule, over one name: the names ImageEntryEnv and
-// config.ReservedEnv refuse, the platform's own, and a mounted secret the
-// reader's run did not declare.
+// config.ReservedEnv refuse, a name outside config.EnvNameRE's shape, the
+// platform's own, and a mounted secret the reader's run did not declare.
 func imageEnvDropped(name string, jobSecrets, declared []string) bool {
-	if name == ImageEntryEnv || config.ReservedEnv(name) || slices.Contains(backend.PlatformEnvNames, name) {
+	if name == ImageEntryEnv || config.ReservedEnv(name) || !config.EnvNameRE.MatchString(name) ||
+		slices.Contains(backend.PlatformEnvNames, name) {
 		return true
 	}
 	return slices.Contains(jobSecrets, name) && !slices.Contains(declared, name)

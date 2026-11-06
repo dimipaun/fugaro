@@ -41,6 +41,32 @@ func TestImageEnvDroppedNamesDropsTheReservedNames(t *testing.T) {
 	}
 }
 
+// TestImageEnvDroppedNamesDropsANameAShellCannotExpress: the filter's other
+// half (D1372) — a name that is not an upper-case environment variable name is
+// dropped rather than turned into an environment entry a shell cannot express,
+// and the names from the issue's own image are not among them.
+func TestImageEnvDroppedNamesDropsANameAShellCannotExpress(t *testing.T) {
+	dropped := []string{
+		"LD-PRELOAD", "NEXUS BASEURL", "nexus_baseurl", "1NEXUS_BASEURL", "NEXUS.BASEURL", "NEXUS_BASEURL+EXTRA",
+	}
+	kept := []string{"NEXUS_BASEURL", "MAVEN_OPTS", "_PRIVATE", "A2", "NEXUS_BASEURL_2"}
+	env := map[string]string{}
+	for _, name := range append(append([]string{}, dropped...), kept...) {
+		env[name] = "https://example.invalid/"
+	}
+	got := runner.ImageEnvDroppedNames(env, nil)
+	for _, name := range dropped {
+		if !slices.Contains(got, name) {
+			t.Errorf("%q is not dropped: got %v", name, got)
+		}
+	}
+	for _, name := range kept {
+		if slices.Contains(got, name) {
+			t.Errorf("%q is dropped: got %v", name, got)
+		}
+	}
+}
+
 // TestImageEnvDroppedNamesDropsTheStampAndThePlatformNames: the job's own
 // origin marker and the installation's identity are the deployment's, and the
 // agent sees neither.

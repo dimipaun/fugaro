@@ -937,3 +937,14 @@ func ReservedClaudeAccountName(name string) bool { return reservedClaudeAccountN
 // same words whichever file they wrote the name in, and the sentence never
 // echoes the name, which is untrusted text printed to a terminal.
 const ReservedClaudeAccountNameMessage = reservedAccountNameMessage
+
+// EnvNameRE is what an environment variable name looks like, exported for the
+// runner's subtraction, which applies the same shape rule the workflow-secret
+// check does and must not spell the pattern a second time (docs/image-env,
+// reconciliation D1372): a name a shell cannot express is dropped rather than
+// passed on as an environment entry.
+//
+// It is declared at the end of this file rather than beside the name patterns
+// at its head, for the same reason ReservedClaudeAccountName is: several docs
+// cite this file by line.
+var EnvNameRE = envNameRE

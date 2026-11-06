@@ -286,7 +286,10 @@ settles.
   already reviewed, already mirrored in `schemas/fugaro.schema.json:473`; a name the shape rule
   refuses is dropped rather than made into an environment entry a shell cannot express. *Alternative:*
   a new passthrough-specific list — refused: two lists drift, and the second one is never reviewed as
-  carefully as the first.
+  carefully as the first. **Implemented 2026-11-06, both halves:** IE1's shared subtraction applies
+  the list and the shape (`config.EnvNameRE`, the pattern at `:32` exported for it at the end of
+  `validate.go`, the file's own convention, so no citation into it moves), so IE2 adds no rule of its
+  own.
 - **D1373. Beyond the denylist, the passthrough subtracts every name Fugaro writes: the five platform
   names and the launch-reserved names (`internal/backend/launchenv.go:32-54`), every `FUGARO_*` (a
   consequence of D1372, stated because the stamp depends on it) and every name in
@@ -394,7 +397,10 @@ settles.
   on one backend and none on the other. The cost is a new refusal a repository's workflow-secret
   `env` sees — a tightening, so it is legal under the layering rule, but it is a change to an
   existing refusal and a decision of its own, which is why it was put to the owner rather than taken
-  here. **It is IE2's line** (`internal/config/validate.go`), not IE1's.
+  here. **It is IE2's, and it is three edits** — `internal/config/validate.go`'s prefix list,
+  `schemas/fugaro.schema.json`'s `env` pattern (`:473`, the mirror `TestFugaroSchemaReservesTheSameEnv`
+  holds to the Go list, so a Go-side-only change reddens `main`) and `docs/design/v1.md`'s enumeration
+  (`:616`) — not IE1's.
 - **The one-line stale comment in `internal/backend/backend.go:131`.** *Noted as F15, not taken:*
   it is not this design's file and a drive-by edit to a comment is exactly the kind of change this
   repository keeps out of a design PR.
@@ -463,9 +469,11 @@ above"; that is no longer true of the neighbours, and the claim is unchanged bec
   task variables *are* the job's environment and no list covers them today (F9), so without it the
   passthrough hands a run the cluster's own variables on one backend and none on the other. The cost
   accepted is the new refusal a repository's workflow-secret `env` sees — a tightening, legal under
-  the layering rule. **The one line is IE2's** (`internal/config/validate.go`, the file O4 names) and
-  is not in IE1's diff; the subtraction IE1 spells reads the list, so it follows the change with no
-  edit of its own.
+  the layering rule. **The edits are IE2's** and they are three, not one: the file O4 names
+  (`internal/config/validate.go`), the schema pattern that mirrors it (`schemas/fugaro.schema.json:473`,
+  held to the Go list by `TestFugaroSchemaReservesTheSameEnv`, `schemas/schemas_test.go:1543`) and the
+  doc enumeration of both (`docs/design/v1.md:616`). None is in IE1's diff; the subtraction IE1 spells
+  reads the list, so it follows the change with no edit of its own.
 - **O5. Is `fugaro doctor --all` the right surface for the report? — ANSWERED 2026-11-06: yes.**
   **`fugaro doctor --all` (and `--json`) is the report** (D1377 as recommended): the smallest surface,
   the pinned one-screen default untouched, and one read the converge already makes. The default

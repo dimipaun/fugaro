@@ -2,7 +2,8 @@
 
 **Status: IE1 is implemented (this branch, not merged); IE2, IE3 and IE4 are planned and not
 implemented.** Four tasks, **IE1–IE4**, each with its
-files (at most six, and IE2 is exactly at the cap), its interfaces, its named tests, its **red step**,
+files (IE2's is the longest at eight, because a change to the reserved list is a change to its
+schema mirror too), its interfaces, its named tests, its **red step**,
 its **mutation**, its **reviewer tier**, what it depends on, its command and its commit. Written against
 the tree of **2026-11-06** (`c52d40f9`, v0.20.2, the commit the fix round merged into this branch; the
 first reading was at `57f7d871`); every citation below was resolved while writing it. **The owner
@@ -12,8 +13,9 @@ block is settled and none of them waits on a question.
 
 **Recorded 2026-11-06, and reconciled in [reconciliation.md](reconciliation.md) §8:** **O3 = names
 only**, no value this work passes is registered with the redactor (D1376, the recommendation), so IE2
-carries no redaction loop; **O4 = yes**, `BATCH_` joins `config.ReservedEnvPrefixes`, and that line is
-**IE2's**, not IE1's; **O5 = yes**, the report is **`fugaro doctor --all`** (D1377), which is IE3.
+carries no redaction loop; **O4 = yes**, `BATCH_` joins `config.ReservedEnvPrefixes` and the three
+edits that follow from it are **IE2's** (the list, the schema mirror of it and the doc enumeration),
+not IE1's; **O5 = yes**, the report is **`fugaro doctor --all`** (D1377), which is IE3.
 **The owner's approval of this plan** is what let IE1 start, and it is what the rest wait on.
 
 **Written to:** [spec.md](spec.md) (issue **#1755** verbatim) and [reconciliation.md](reconciliation.md).
@@ -49,8 +51,8 @@ carries no redaction loop; **O4 = yes**, `BATCH_` joins `config.ReservedEnvPrefi
 
 **IE2 and IE3 are the same level and share no file**, which is why they are two tasks and not one: IE2
 is `internal/agent` and `internal/runner`, IE3 is `internal/cli`'s doctor; each can land alone, and IE3
-landing first is the smaller release. **IE2 is the expected one to slip** — it is the only task at the
-six-file cap, the only SEC one, and the only one whose design (a new environment write) is what the
+landing first is the smaller release. **IE2 is the expected one to slip** — it is the largest of the
+four, the only SEC one, and the only one whose design (a new environment write) is what the
 independent review is for. Nothing else in this plan moves if it slips: the release ships the sentence,
 the report and the rule (D1383) and is never worse than the tree it replaces.
 
@@ -60,7 +62,9 @@ the report and the rule (D1383) and is never worse than the tree it replaces.
 | --- | --- | --- |
 | `internal/infra/spec.go` | IE1 | the job spec's env, where `CatalogEntry` is already in hand (`:1103-1104`) and the two other marks are written (`:1127-1135`). One writer; no other task here touches it |
 | `internal/runner/provision.go` | IE1 | where `CheckoutEnv` (`:29`) and `RemoteEnv` (`:57`) live, and `internal/infra/spec.go:79`/`:88` alias both. The stamp's constant goes beside them for the same reason: one spelling, two readers. IE1's `internal/runner/imageenv_names.go` sits beside it: the subtraction IE2 and IE3 both call |
-| `internal/config/validate.go` | IE2 (O4's answer) | the prefix list `BATCH_` joins, and the source of the filter IE2 applies |
+| `internal/config/validate.go` | IE1 (the `EnvNameRE` export) and IE2 (O4's answer, `BATCH_`) | the source of the filter's shape half and, from IE1, the spelling the runner reads (`EnvNameRE`, declared at the file's end for the reason that file records, so no citation into it moves); the prefix list `BATCH_` joins is IE2's edit to the same file |
+| `schemas/fugaro.schema.json` | IE2 (O4's answer) | the reserved secret variables' `env` pattern (`:473`), the mirror `TestFugaroSchemaReservesTheSameEnv` (`schemas/schemas_test.go`) holds to `config.ReservedEnv`. **`BATCH_` added to one list and not the other reddens `go test ./...`**, which CI runs: the two are one edit |
+| `docs/design/v1.md` | IE2 (O4's answer) | §"Reserved secret variables" (`:616`), the enumeration of both lists; the same edit moves it |
 | `internal/runner/agentenv.go` | IE2 | `parentEnv()` and the env plumbing the subtraction belongs with |
 | `internal/runner/runner.go` | IE2 | **reserved: one writer across work streams.** IE2 takes it for exactly one call site (`:2294-2312`) and says so in its pull request; if the subtraction turns out to need a second site, IE2 takes the file alone and reports it rather than editing it silently |
 | `internal/cli/doctor.go`, `doctor_render.go`, `doctor_launcher.go` | IE3 | the report's command, its renderer and the job read it needs. No other task here touches `internal/cli` |
@@ -70,12 +74,14 @@ the report and the rule (D1383) and is never worse than the tree it replaces.
 
 **Not touched by this plan, and named so it is not discovered later:** `SECURITY.md` (the answer in
 reconciliation §4 is a trust statement this design writes down, not a change to that file's claims —
-O3's answer of 2026-11-06 means the sentence the alternative owed there is **not** written, and IE2's
-files stay at five), `schemas/` (no config key, no wire field), `deploy/terraform/**` (the launcher role
+O3's answer of 2026-11-06 means the sentence the alternative owed there is **not** written),
+`schemas/` other than the reserved-variable mirror IE2 edits with O4's answer (no config key, no wire
+field, and no other schema file), `deploy/terraform/**` (the launcher role
 already carries `run.jobs.get` and `run.jobs.list`, `deploy/terraform/gcp/modules/installation/iam.tf:9-10`,
 which is the read IE3 adds — if the read needs nothing, Terraform is untouched by every task),
-`internal/config/**`, which **O4**'s answer of 2026-11-06 opens for IE2 alone: its denylist source is
-`internal/config/validate.go`'s prefix list with `BATCH_` added there, and IE2 says so, `docs/repo-image-removal/**`,
+`internal/config/**` other than `validate.go`, which IE1 reads (`EnvNameRE`) and **O4**'s answer of
+2026-11-06 has IE2 edit: its denylist source is that file's prefix list with `BATCH_` added there,
+and IE2 says so, `docs/repo-image-removal/**`,
 `docs/cloud-senior-review/**`, `ee/**`, `console/**`, `mobile/**`, `shared/**`, `website/**` and
 `.github/workflows/**`.
 
@@ -85,11 +91,11 @@ which is the read IE3 adds — if the read needs nothing, Terraform is untouched
 
 **Decisions:** D1371, D1378. **Findings:** F5, F6, F7, F9. **Depends on:** nothing.
 
-- **Files:** `internal/infra/spec.go`, `internal/infra/spec_test.go`, `internal/runner/provision.go`, and the new pure function that spells the subtraction once (the names a run drops: a job's env names minus the reserved, platform, launch, stamp and declared-secret names) with its test, in `internal/runner` (new, `imageenv_names.go`, beside `ImageEntryEnv`; nothing calls it yet). IE2's `imageEnv` and IE3's report both call it, which is why it is IE1's and not either's: IE3 therefore depends on IE1 alone, as D1383 says.
-  **5 files.**
+- **Files:** `internal/infra/spec.go`, `internal/infra/spec_test.go`, `internal/runner/provision.go`, `internal/config/validate.go` (one export, `EnvNameRE`), and the new pure function that spells the subtraction once (the names a run drops: a job's env names minus the reserved, platform, launch, stamp and declared-secret names) with its test, in `internal/runner` (new, `imageenv_names.go`, beside `ImageEntryEnv`; nothing calls it yet). IE2's `imageEnv` and IE3's report both call it, which is why it is IE1's and not either's: IE3 therefore depends on IE1 alone, as D1383 says.
+  **6 files.**
 - **Interfaces:** produces `runner.ImageEntryEnv = "FUGARO_IMAGE_ENTRY"` beside `CheckoutEnv` and
   `RemoteEnv`, aliased as `infra.ImageEntryEnv = runner.ImageEntryEnv` the way those two are
-  (`internal/infra/spec.go:79`, `:88`), and one assignment in `repoCtx.workflowSpec` where
+  (`internal/infra/spec.go:79`, `:88`), and one assignment in `repoCtx.workflow` where
   `CatalogEntry` is set: `if entry.Name != "" { ws.Env[ImageEntryEnv] = entry.Name }`. **The value is an
   entry's own name and nothing else** — it is `config.ValidateCatalog`-checked operator text, so it is
   a name, not a reference, a URL or a digest, and the runner never parses it. **It is written for every
@@ -101,13 +107,23 @@ which is the read IE3 adds — if the read needs nothing, Terraform is untouched
   this branch): the constant is `runner.ImageEntryEnv`, aliased `infra.ImageEntryEnv` and assigned in
   `repoCtx.workflow`; the subtraction is `runner.ImageEnvDroppedNames(jobEnv, declared)`, with
   `runner.SecretEnvNames(jobEnv)` reading the job's own `FUGARO_SECRET_ENVS` list and `declared` the
-  names the calling run may read, and nothing calls either yet.
+  names the calling run may read, and nothing calls either yet. It applies **both halves** of D1372's
+  filter — `config.ReservedEnv`, and a name outside `config.EnvNameRE`'s shape — which is why this
+  task exports that pattern from `internal/config` (at the end of `validate.go`, the file's own
+  convention, so no citation into that file moves) rather than spelling it again in the runner.
+  **IE2 applies the filter through this function and adds no shape rule of its own.**
 - **Tests:** `TestSpecStampsTheCatalogEntryOnTheJob` (a job whose workflow runs a built entry and one
   whose workflow runs a prebuilt entry both carry `FUGARO_IMAGE_ENTRY` = the entry's name), and
   `TestSpecStampsNoEntryOnAJobWithNoCatalogEntry` (a repository-built job and a `clone` job carry the
   name not at all — not empty, absent). Both extend the assertions the existing
   `TestSpecRecordsABuiltCatalogEntry` and `TestReadinessDeploysAPrebuiltCatalogEntry`
-  (`internal/infra/readiness_catalog_test.go:155-207`) already make about the same spec.
+  (`internal/infra/readiness_catalog_test.go:155-207`) already make about the same spec. The
+  subtraction's own tests live beside it (`internal/runner/imageenv_names_test.go`): the names an
+  image sets for itself are kept, the reserved ones are dropped,
+  `TestImageEnvDroppedNamesDropsANameAShellCannotExpress` is the corpus for the shape half of the
+  filter (a hyphen, a space, a lower-case name, a leading digit, a dot, a `+`), the stamp and the
+  platform names are dropped, an undeclared secret name is dropped and a declared one is not, and the
+  result is sorted.
 - **Red step:** `TestSpecStampsTheCatalogEntryOnTheJob` fails on the env lookup: `FUGARO_IMAGE_ENTRY` is
   absent from every job's container env, because nothing writes it (F5).
 - **Mutation to hold it:** write the stamp unconditionally (drop the `entry.Name != ""` guard) →
@@ -130,16 +146,24 @@ D1376's recommendation, so this task writes **no** redaction loop, and O4 answer
 **Reviewer tier: SEC — opus, with the independent review mandatory.**
 
 - **Files:** `internal/agent/env.go`, `internal/agent/agent_test.go`, `internal/runner/agentenv.go`,
-  `internal/runner/agentenv_test.go`, `internal/runner/runner.go` (the one call site, `:2294-2312`).
-  **5 files, and `internal/runner/provision.go` if O4 changes the denylist — at most six.**
+  `internal/runner/agentenv_test.go`, `internal/runner/runner.go` (the one call site, `:2294-2312`),
+  and **O4's three**: `internal/config/validate.go` (`BATCH_` joins `ReservedEnvPrefixes`),
+  `schemas/fugaro.schema.json` (the same name joins the `env` pattern's refused families, `:473`) and
+  `docs/design/v1.md` (§"Reserved secret variables", `:616`). **8 files.** O4's answer is not one line
+  in one file: `TestFugaroSchemaReservesTheSameEnv` (`schemas/schemas_test.go:1543`) holds the schema's
+  list to `config.ReservedEnv` and **fails when the Go list gains `BATCH_` alone**, and CI runs
+  `go test -race ./...`, so a task that changed only the Go list would redden `main` — and `v1.md`'s
+  enumeration is the doc mirror of both. IE2's pull request says so.
 - **Interfaces:** produces `EnvSpec.ImageEnv map[string]string` — *"the variables the operator's own
   catalog image declares, already narrowed by the caller; a name here is dropped if it is reserved,
   and it is written before everything Fugaro writes, so nothing an image sets can override the routing,
   the auth, a declared secret or a `FUGARO_*` name"*; and `func (r *run) imageEnv() map[string]string`
   in `agentenv.go`, which is the one place the set is computed. `imageEnv` returns nil — the whole
   feature off — when `r.parentEnv()[ImageEntryEnv]` is empty (D1371's fail-closed), and otherwise the
-  runner's environment **minus** every name `config.ReservedEnv` refuses (D1372, re-applied inside
-  `BuildEnv` too, so the filter sits next to the allow-list it protects whatever a caller passes),
+  runner's environment **minus** every name `config.ReservedEnv` refuses (D1372 — and the shape rule
+  with it: both halves make up IE1's `runner.ImageEnvDroppedNames`, which this task calls rather than
+  re-implements; re-applied inside `BuildEnv` too, so the filter sits next to the allow-list it
+  protects whatever a caller passes),
   minus the platform and launch names (`internal/backend/launchenv.go:32-54`), and minus every name in
   `FUGARO_SECRET_ENVS` this run did not declare (the declared names are `secretEnvs`, built at `internal/runner/runner.go:2192-2196` before the `BuildEnv` call; `r.secretList()` returns redaction values and is not the set;
   F8 — those reach the agent through the existing declared-secret path alone). **The write goes after
@@ -279,13 +303,17 @@ pull request.
 - **A plain `env:` map on a workflow or a project profile** (option 2, O1): it is the design
   `docs/design/agent-env.md` already is, unbuilt, and its §2 rule is that the allow-list is Fugaro's own
   Go code and never a `fugaro.yaml` field. If the owner ever wants a value with no rebuild, that design
-  is the place to rule it — this plan adds no config key and no schema.
+  is the place to rule it — this plan adds no config key and no wire field, and its one schema edit
+  (O4's `BATCH_` in the `env` pattern) is a name added to a list that already exists.
 - **Reading the image's config at run time** (a registry call for `Config.Env`): refused in the
   reconciliation's §6 — it needs a registry credential inside the job, it makes bootstrap depend on the
   network, and it cannot answer for a prebuilt entry (F5).
-- **`BATCH_` in the denylist**: answered **yes** on 2026-11-06 (**O4**), so it is one line in
-  `internal/config/validate.go` **in IE2** and one more name the subtraction reads — the answer, not
-  this plan, decided it (F9).
+- **`BATCH_` in the denylist**: answered **yes** on 2026-11-06 (**O4**), so it is one name the
+  subtraction reads and **three edits, in IE2**: `internal/config/validate.go`'s prefix list,
+  `schemas/fugaro.schema.json`'s `env` pattern and `docs/design/v1.md`'s enumeration of both lists.
+  The answer, not this plan, decided it (F9) — and the schema edit is not optional: the mirror is
+  tested (`TestFugaroSchemaReservesTheSameEnv`, `schemas/schemas_test.go:1543`) and a Go-side-only
+  change reddens `main`.
 - **Registering every passed value with the redactor**: answered **no** on 2026-11-06 (**O3**), so
   D1376's recommendation stands and IE2 writes no loop at all.
 - **A `SECURITY.md` change.** O3's alternative would have been the one thing to add it: the redaction

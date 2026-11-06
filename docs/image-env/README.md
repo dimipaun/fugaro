@@ -1,7 +1,10 @@
 # An image's `ENV` reaches a run, for operator-owned catalog images — and the runs say what is dropped
 
 **Status: the design is approved and IE1 is implemented (one branch, not merged); IE2, IE3 and IE4
-are not.** The design adds no schema, no command and no Terraform; IE1 adds code, and it is the only
+are not.** The design adds no config key, no wire field, no command and no Terraform; the one schema
+edit it does make is IE2's and it comes with the Go change, never alone (`BATCH_`, O4's answer, joins
+the refused names in `schemas/fugaro.schema.json`'s `env` pattern as well as in
+`config.ReservedEnvPrefixes`, and a test holds the two together). IE1 adds code, and it is the only
 implemented task. The owner ruled on **2026-11-05** on the two questions this design could not open
 with — the scope (below) and the release (**0.20.0**, a number `main` has since tagged and this work
 did not ship in: the slot is the owner's to re-take, and no task waits on it) — and **on 2026-11-06**
@@ -36,7 +39,7 @@ nothing** (D1371).
 | --- | --- |
 | [spec.md](spec.md) | Issue **#1755**, verbatim: the problem, the three asks in the issue's own order of preference, and the checklist line. Where this file and the others disagree about what the issue *says*, this file wins |
 | [reconciliation.md](reconciliation.md) | Every claim of the issue and of this design against the code on `main` and against the open pull requests: findings **F1–F18**, the **attacker probe** (§4: can a repository steer which names pass; `PATH`/`HOME`; proxies and CA bundles; `JAVA_TOOL_OPTIONS`/`MAVEN_OPTS`-style hooks; a variable that looks like a secret; the gateway's credential; the logging), the decisions **D1370–D1383** with a recommendation each (§5), what is considered and declined (§6), the number block and how it was read (§7), and the **Open items** that are the owner's (§8). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **IE1–IE4**, each with its files (at most six, per commit), its interfaces, its named tests, its **red step**, its **mutation**, its **reviewer tier** and its commit; the order and the shared-files table (§2), what is deliberately not in the plan (§4), the **release slot 0.20.0** (§5), the owner-run live check **Check 291** (§6) and the gates a task may not start without (§7) |
+| [implementation-plan.md](implementation-plan.md) | The tasks **IE1–IE4**, each with its files (IE2's is the longest at eight, and one of them is the schema mirror of the list `BATCH_` joins), its interfaces, its named tests, its **red step**, its **mutation**, its **reviewer tier** and its commit; the order and the shared-files table (§2), what is deliberately not in the plan (§4), the **release slot 0.20.0** (§5), the owner-run live check **Check 291** (§6) and the gates a task may not start without (§7) |
 | `README.md` | This file: the status, the ruling, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
 ## The owner's ruling (2026-11-05, `AskUserQuestion`, both answers the recommendation)
