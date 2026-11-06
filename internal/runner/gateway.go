@@ -125,22 +125,77 @@ const (
 // error.)
 var metadataClient = &http.Client{Timeout: 10 * time.Second}
 
-// modelAuth is the auth this run's model path takes: the run's own
-// configuration's, and (CSR13) the review class's when the run is one.
+// modelAuth is the run's answer to which auth its model path takes: the
+// credentials service's review class when the run is a review class run
+// (reviewClassRun), and its own configuration's auth otherwise (O1, D143,
+// D893 (c)).
+//
+// It is an accessor and not a rewrite of r.cfg.Agent.Auth: the configuration is
+// what the repository wrote, and the record's cost basis (runstore.ModelBasis)
+// and the account walk (accountWalkApplies) read the field, so a class that
+// moved it would move those with it.
+//
+// The class is spelled cascade because every arm it needs already exists for
+// that auth, and none of them is a credential of the job's: a cascade run
+// carries none (D143), the gateway holds the per-run token Claude Code presents
+// (GatewayVars), the gateway's upstream is the credentials service
+// (serviceUpstream), and agent.BuildEnv's cascade arm requires no secret and
+// refuses a run with no gateway. The oauth arm the review job's own
+// configuration would otherwise take is the one that demands a mounted
+// CLAUDE_CODE_OAUTH_TOKEN (agent.BuildEnv) — the token CSR7's variant
+// deliberately does not mount. So no fourth auth name is invented and
+// internal/agent is not touched: GatewayOn already answers true for cascade,
+// and the readers that share it (validate's prices read) keep answering for a
+// coding run, which is the only question a repository's configuration can be
+// asked.
 func (r *run) modelAuth() string {
 	if r.cfg == nil {
 		return ""
 	}
+	if r.reviewClassRun() {
+		return config.AuthCascade
+	}
 	return r.cfg.Agent.Auth
+}
+
+// reviewClassRun reports whether this run's model path is the credentials
+// service's review class: the run's mode is review (r.runClass) and the job it
+// was admitted to is the review-only variant (jobTriple.Class, set where the
+// candidate was matched).
+//
+// Both halves are facts of the run and of the job the platform put it in, and
+// neither is read from the container's environment. r.reviewJob() reads
+// FUGARO_REVIEW_JOB, which the launcher writes into the execution's environment
+// (backend.LaunchSpec.Env) and which any job definition can carry: keyed on
+// that marker, a run in the shared coding job whose environment carries it
+// would take the review class's path — O2's arm skipped, the gateway's upstream
+// the credentials service, its calls served by the review class's credential —
+// while the service holds it to the allow-list alone. A coding run holds the
+// App key and a Claude token, and a container must not be able to trade them
+// for another class's credential by writing one variable. The marker's own job
+// is a permission the caller states (reviewMayComment), never a credential.
+//
+// The conjunction fails closed. r.job is the triple the run was admitted to,
+// and a per-repository job adopts none at all (jobTriple's zero value), so a
+// run whose mode is review but which was not placed in the variant keeps its
+// own configuration's auth — for the review job, oauth with a token its
+// container does not mount, which is a refusal and never a call on a credential
+// nobody chose.
+// A run with no task at all is not one: r.runClass reads the task's mode, and
+// a caller that has no task is asking about a run that never started.
+func (r *run) reviewClassRun() bool {
+	return r.spec != nil && r.runClass() == classReview && r.job.Class == classReview
 }
 
 // gatewayOn reports whether the agent's calls go through the gateway. It is
 // GatewayOn — the same predicate for the readers that hold a mode and an auth
 // rather than a run — read off the run, and it is the only place that happens:
 // the routing switch's own question (RoutingInertReason) and the gateway's
-// rules all ask one function, so no reader can answer it differently.
+// rules all ask one function, so no reader can answer it differently. The auth
+// it asks about is the run's model path's (modelAuth), never the file's own:
+// the class is what decides where a review container's calls go.
 func (r *run) gatewayOn() bool {
-	return r.cfg != nil && GatewayOn(r.cfg.Agent.Auth, r.spend.Mode)
+	return GatewayOn(r.modelAuth(), r.spend.Mode)
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
@@ -203,10 +258,10 @@ func (r *run) startGateway(ctx context.Context) error {
 }
 
 // gatewayUpstream is where this run's gateway sends its calls and with what
-// credential: the run's own auth, spelled once. startGateway builds its
-// options from it, and the two are separate so that what a run does with
-// each auth is one function a reader -- and a test -- can ask without
-// starting a gateway.
+// credential: the auth this run's model path takes (modelAuth), spelled once.
+// startGateway builds its options from it, and the two are separate so that
+// what a run does with each auth is one function a reader -- and a test -- can
+// ask without starting a gateway.
 //
 // The auths are the three the gateway serves. api-key and vertex are the
 // job's own credential (the run's key, or the job's own Vertex identity);
@@ -215,9 +270,14 @@ func (r *run) startGateway(ctx context.Context) error {
 // reach for one (D143). An auth with no arm is refused rather than guessed
 // at: the gateway is the only thing between the agent and a model, and an
 // upstream nobody chose is a credential nobody chose.
+//
+// A review class run is the cascade arm (modelAuth): the credential is the
+// service's review class's and the job holds none, so an upstream built from
+// the review job's own file — oauth, whose arm is refused here — is exactly
+// what must not happen.
 func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
 	up := gateway.Upstream{BaseURL: r.d.GatewayUpstream}
-	switch r.cfg.Agent.Auth {
+	switch r.modelAuth() {
 	case "api-key":
 		up.Kind, up.APIKey = "anthropic", envLookup(r.d.Env, "ANTHROPIC_API_KEY")
 		r.addSecret(up.APIKey)
@@ -241,7 +301,7 @@ func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
 	case config.AuthCascade:
 		return r.serviceUpstream()
 	default:
-		return gateway.Upstream{}, fmt.Errorf("starting the gateway: auth %q never goes through it", r.cfg.Agent.Auth)
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: auth %q never goes through it", r.modelAuth())
 	}
 	return up, nil
 }

@@ -3,11 +3,16 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -769,5 +774,410 @@ func TestReviewRunIsGatewayOnWhateverItsAuth(t *testing.T) {
 				t.Errorf("a review class run's agent carries CLAUDE_CODE_OAUTH_TOKEN (%q): the variant mounts no token of its own", v)
 			}
 		})
+	}
+}
+
+// TestReviewRunSkipsTheCodingCascadeSwitch (CSR13, O2): the class is the
+// consent the operator's switch stands for in a coding run, so a review needs
+// no routing.claude at all to be admitted — and nothing more than the switch is
+// skipped: the class is decided by the run's mode and the job it was admitted
+// to, so the same policy still refuses a *coding* cascade run, and the
+// environment marker a launcher writes (FUGARO_REVIEW_JOB) buys a coding run
+// nothing.
+//
+// Mutation (run, restored): key the class on the environment marker instead of
+// the run's mode and the job — the third case is admitted to the class, and a
+// container that writes one variable trades its own credential for another
+// class's. Skip the allow-list arm along with O2's → the second case of
+// TestReviewRunIsStillHeldToTheAllowList fails.
+func TestReviewRunSkipsTheCodingCascadeSwitch(t *testing.T) {
+	// No routing.claude anywhere in the policy: a coding run with
+	// agent.auth: cascade is refused, and the review class run is not.
+	r := reviewClassRun(t, "oauth", policy.ModeEnforce)
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Fatalf("a review class run whose policy publishes no switch: %v", err)
+	}
+	coding := cascadeRun(t, nil)
+	coding.d.Env = append(coding.d.Env, EnvReviewJob+"=1")
+	if err := coding.applyRouting(coding.projPolicy.policy, false); err == nil {
+		t.Fatal("a coding cascade run with no published switch was admitted")
+	} else if !strings.Contains(err.Error(), "project policy publish") {
+		t.Errorf("the coding refusal is not O2's: %v", err)
+	}
+	// The spoof: a coding-mode run in the shared job whose environment carries
+	// the marker. It keeps its own configuration's auth, so with agent.auth:
+	// cascade O2's arm refuses it — the marker never gives it the class.
+	spoof := cascadeRun(t, nil)
+	spoof.d.Env = append(spoof.d.Env, EnvReviewJob+"=1")
+	if spoof.modelAuth() != config.AuthCascade {
+		t.Fatalf("the spoof's own auth is %q", spoof.modelAuth())
+	}
+	if err := spoof.applyRouting(spoof.projPolicy.policy, false); err == nil {
+		t.Fatal("a coding run whose environment carries the review marker was admitted with no published switch: the marker buys the class")
+	}
+}
+
+// TestReviewRunIsStillHeldToTheAllowList (CSR13, C1.11): the arm O2's skip does
+// *not* carry with it. The credentials service holds every /v1/messages call it
+// carries to the project's budget.allowed_models and refuses a project that
+// publishes none — the node is read before the class is resolved
+// (internal/credsvc/server.go) — so a review class run of such a project could
+// make no call at all, whether its repository wrote oauth or cascade. Both are
+// refused in bootstrap rather than left to halt on the first forwarded call.
+//
+// "The switch does not apply" and "no rule applies" are one word apart in the
+// wrong direction, which is why this is a test of its own.
+//
+// Mutation (run, restored): skip the allow-list arm along with O2's for a class
+// run. Both cases are admitted and the reviewer's first call is refused by the
+// service instead.
+func TestReviewRunIsStillHeldToTheAllowList(t *testing.T) {
+	for _, auth := range []string{"oauth", config.AuthCascade} {
+		t.Run(auth, func(t *testing.T) {
+			r := reviewClassRun(t, auth, policy.ModeEnforce)
+			r.projPolicy.policy.Budget.AllowedModels = nil
+			err := r.applyRouting(r.projPolicy.policy, true)
+			if err == nil {
+				t.Fatal("a review class run whose policy publishes no allow-list was admitted: the credentials service would refuse its first call")
+			}
+			for _, want := range []string{"budget.allowed_models", "project policy publish"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			// The ceiling is another layer, and not the one the service reads.
+			r.spend.AllowedModels = []string{reviewClassModel}
+			if err := r.applyRouting(r.projPolicy.policy, true); err == nil {
+				t.Error("a review class run whose ceiling publishes the allow-list and whose policy does not was admitted: the ceiling never reaches the credentials service")
+			}
+			// The node's own list is the way out.
+			r.projPolicy.policy.Budget.AllowedModels = []string{reviewClassModel}
+			if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+				t.Errorf("a review class run whose policy publishes the allow-list: %v", err)
+			}
+		})
+	}
+}
+
+// TestCodingRunKeepsItsOwnModelPath (CSR13): the second direction of the whole
+// task, and the one a careless accessor breaks. Every auth a coding run has
+// today keeps the gateway state, the upstream and the environment variables it
+// had: the class moves nothing for a run that is not a review, and the
+// configuration is not rewritten — it is an accessor, so the record's cost
+// basis and the account walk read the file the repository wrote.
+//
+// Mutation (run, restored): make the class a rewrite of r.cfg.Agent.Auth rather
+// than an accessor — the oauth case alone moves (its gateway would come on, and
+// its agent's environment would be the cascade's), and so do the record's
+// basis and the account walk with it.
+func TestCodingRunKeepsItsOwnModelPath(t *testing.T) {
+	for _, tc := range []struct {
+		auth          string
+		wantGatewayOn bool
+		wantUpstream  string
+	}{
+		{"oauth", false, ""},
+		{"api-key", true, "anthropic"},
+		{"vertex", true, "vertex"},
+		{config.AuthCascade, true, gateway.KindService},
+	} {
+		t.Run(tc.auth, func(t *testing.T) {
+			r := codingRun(t, tc.auth, policy.ModeEnforce)
+			if got := r.modelAuth(); got != tc.auth {
+				t.Fatalf("modelAuth() = %q, want the configuration's own %q", got, tc.auth)
+			}
+			if got := r.gatewayOn(); got != tc.wantGatewayOn {
+				t.Errorf("gatewayOn() = %v, want %v", got, tc.wantGatewayOn)
+			}
+			if !tc.wantGatewayOn {
+				return
+			}
+			r.sess = svcSession(t)
+			up, err := r.gatewayUpstream(context.Background())
+			if err != nil {
+				t.Fatalf("gatewayUpstream: %v", err)
+			}
+			if up.Kind != tc.wantUpstream {
+				t.Errorf("upstream kind = %q, want %q", up.Kind, tc.wantUpstream)
+			}
+		})
+	}
+}
+
+// codingRun is reviewClassRun with the two facts of the class taken away: the
+// launcher's mode is the ordinary one and the job the platform reports is the
+// shared coding job of the fixture's profile. Everything else — the job
+// environment, the policy — is the same, so the two fixtures differ in nothing
+// but the class.
+func codingRun(t *testing.T, auth, mode string) *run {
+	t.Helper()
+	r := svcRun(t, auth, nil)
+	r.d.Env = append(r.d.Env,
+		credentialsServiceURLEnv+"="+reviewClassServiceURL,
+		"ANTHROPIC_VERTEX_PROJECT_ID=aurora-fp", "CLOUD_ML_REGION=europe-west1")
+	r.spec = &task.Spec{Version: 1, RunID: "20261106-042141-abcd", Repo: "acme/app", Ref: "main",
+		Workflow: "app", Task: "Add a feature"}
+	r.job = jobTriple{Profile: "standard", Provider: "github", Account: "acme-personal"}
+	r.spend = Spend{Mode: mode}
+	r.projPolicy = policyRead{done: true, found: true, policy: &projectpolicy.Policy{Version: projectpolicy.Version}}
+	if auth == "vertex" {
+		// A test token source: nothing here dials Google, and a run with a
+		// test upstream must never be paired with real credentials.
+		r.d.VertexTokens = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ya29.placeholder"})
+	}
+	return r
+}
+
+// withoutCredentialsService is a fixture's job environment with the credentials
+// service's URL taken out: the installation that has not opted into one (D147).
+func withoutCredentialsService(r *run) *run {
+	out := make([]string, 0, len(r.d.Env))
+	for _, kv := range r.d.Env {
+		if strings.HasPrefix(kv, credentialsServiceURLEnv+"=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	r.d.Env = out
+	return r
+}
+
+// TestReviewRunCarriesNoCredentialOfItsOwn (CSR13, O1, D143): the shape CSR7's
+// variant was built to make true. The class's run holds neither an Anthropic
+// key nor a Claude CLI token — the job's environment is asked for one and is
+// given the gateway's per-run token under ANTHROPIC_API_KEY, which is what
+// Claude Code presents at the gateway — and the managed settings carry the
+// same address and the same token, so a stage that reads either file is routed
+// at the gateway and holds nothing of the job's.
+//
+// Mutation (run, restored): build the agent's environment from the repository's
+// own auth instead of the class's → BuildEnv's oauth arm refuses the run
+// outright for a missing CLAUDE_CODE_OAUTH_TOKEN, and the planted key would be
+// the value under ANTHROPIC_API_KEY if the gateway were dropped.
+func TestReviewRunCarriesNoCredentialOfItsOwn(t *testing.T) {
+	const plantedKey = "sk-ant-PLANTED-0123456789abcdefghijklmnop"
+	const plantedToken = "CLI-TOKEN-PLANTED-0123456789"
+	r := reviewClassRun(t, "oauth", policy.ModeEnforce)
+	r.d.Env = append(r.d.Env, "ANTHROPIC_API_KEY="+plantedKey, "CLAUDE_CODE_OAUTH_TOKEN="+plantedToken)
+	r.d.ManagedSettingsPath = filepath.Join(t.TempDir(), "managed-settings.json")
+	r.gwAgent = &agent.Gateway{BaseURL: "http://127.0.0.1:1", Token: reviewClassToken}
+
+	env, _, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{Auth: r.modelAuth(), Gateway: r.gateway()})
+	if err != nil {
+		t.Fatalf("building the agent's environment: %v", err)
+	}
+	got := map[string]string{}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			got[k] = v
+		}
+	}
+	if got["ANTHROPIC_API_KEY"] != reviewClassToken {
+		t.Errorf("the agent's ANTHROPIC_API_KEY is %q, want the gateway's per-run token: the job's own key must never reach it", got["ANTHROPIC_API_KEY"])
+	}
+	if _, ok := got["CLAUDE_CODE_OAUTH_TOKEN"]; ok {
+		t.Error("a review class run's agent carries CLAUDE_CODE_OAUTH_TOKEN: the variant mounts no token of its own")
+	}
+	if err := r.writeManagedSettings("review", nil); err != nil {
+		t.Fatalf("writing the managed settings: %v", err)
+	}
+	raw, err := os.ReadFile(r.managedPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		t.Fatalf("the managed settings are not JSON: %v", err)
+	}
+	if settings.Env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:1" || settings.Env["ANTHROPIC_API_KEY"] != reviewClassToken {
+		t.Errorf("the managed settings route to %q with %q, want the gateway's URL and its per-run token", settings.Env["ANTHROPIC_BASE_URL"], settings.Env["ANTHROPIC_API_KEY"])
+	}
+	if strings.Contains(string(raw), plantedKey) || strings.Contains(string(raw), plantedToken) {
+		t.Error("the managed settings carry a credential of the job's")
+	}
+}
+
+// TestReviewRunUpstreamRefusesWithoutAService (CSR13, D147/D143): the cascade
+// arm's own refusal, reached through the class. An installation that has not
+// opted into a credentials service has no service to call and the run has no
+// credential of its own to fall back to — the job's environment is asked for an
+// Anthropic key and is refused rather than quietly served by it. The second
+// case is the same run with a test upstream in Deps: a cascade run's
+// destination is the installation's own service and nothing else, so a test
+// that set both is told rather than silently sent to the service.
+//
+// Mutation (run, restored): let the class answer with no service URL — the run
+// is admitted with an upstream nobody chose, and its first call reaches
+// Anthropic on a credential the class never picked.
+func TestReviewRunUpstreamRefusesWithoutAService(t *testing.T) {
+	const plantedKey = "sk-ant-PLANTED-0123456789abcdefghijklmnop"
+	r := withoutCredentialsService(reviewClassRun(t, "oauth", policy.ModeEnforce))
+	r.d.Env = append(r.d.Env, "ANTHROPIC_API_KEY="+plantedKey)
+	r.sess = svcSession(t)
+	up, err := r.gatewayUpstream(context.Background())
+	if err == nil {
+		t.Fatalf("a review class run with no credentials service built the upstream %+v", up)
+	}
+	for _, want := range []string{credentialsServiceURLEnv, "D147", "D143"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), plantedKey) {
+		t.Errorf("the refusal prints the job's own key: %v", err)
+	}
+	// A test upstream paired with a service run: the class is refused the same
+	// way, because its destination is the installation's service.
+	r = reviewClassRun(t, "oauth", policy.ModeEnforce)
+	r.d.GatewayUpstream = "http://test-upstream.invalid"
+	r.sess = svcSession(t)
+	if _, err := r.gatewayUpstream(context.Background()); err == nil || !strings.Contains(err.Error(), credentialsServiceURLEnv) {
+		t.Errorf("a review class run with a test upstream and a service: %v, want the service's own refusal", err)
+	}
+}
+
+// TestReviewJobModelPathIsKeyedOnTheRunClass (CSR13): what the class is keyed
+// on, and the correction this task was re-read for. It is the run's mode and
+// the job the run was admitted to, never the environment marker the launcher
+// writes (EnvReviewJob, the read r.reviewJob performs): the marker is a
+// permission the caller states (reviewMayComment), and a credential may not be
+// chosen by a variable a container can carry.
+//
+// The three directions:
+//
+//   - a run in the review variant, mode: review, whose environment carries no
+//     marker at all is given the class — nothing reads the variable;
+//   - a run in the review variant whose mode is not review is refused admission
+//     by CSR8's own door (checkJobClass) before this accessor is asked, so the
+//     marker buys it no class;
+//   - a coding-mode run in the shared job whose environment carries
+//     FUGARO_REVIEW_JOB=1 is not given the class: it keeps its own
+//     configuration's auth (and with agent.auth: cascade O2's arm then refuses
+//     it, TestReviewRunSkipsTheCodingCascadeSwitch's third case).
+//
+// Mutation (run, restored): key the class on the marker instead of the run's
+// mode and the job — the third direction is given the class, and a container
+// that writes one variable trades the App key and the Claude token it holds for
+// another class's credential.
+func TestReviewJobModelPathIsKeyedOnTheRunClass(t *testing.T) {
+	// The marker is nowhere in this run's environment: the class is not read
+	// from it.
+	r := reviewClassRun(t, "oauth", policy.ModeEnforce)
+	if envLookup(r.d.Env, EnvReviewJob) != "" {
+		t.Fatalf("the fixture carries %s already", EnvReviewJob)
+	}
+	if got := r.modelAuth(); got != config.AuthCascade {
+		t.Errorf("a review class run with no marker: modelAuth() = %q, want %s", got, config.AuthCascade)
+	}
+	// A run in the review variant whose mode is not review: the class check
+	// (CSR8) refuses it before any model path is chosen.
+	notReview := codingRun(t, "oauth", policy.ModeEnforce)
+	notReview.job = r.job
+	notReview.d.Env = append(notReview.d.Env, EnvReviewJob+"=1")
+	if err := notReview.checkJobClass(notReview.job); err == nil {
+		t.Fatal("a coding-mode run was admitted to the review variant's job")
+	}
+	if got := notReview.modelAuth(); got != "oauth" {
+		t.Errorf("a run the class check refuses: modelAuth() = %q, want its own configuration's auth", got)
+	}
+	// The spoof: a coding-mode run in the shared job carrying the marker.
+	spoof := codingRun(t, "oauth", policy.ModeEnforce)
+	spoof.d.Env = append(spoof.d.Env, EnvReviewJob+"=1")
+	if got := spoof.modelAuth(); got != "oauth" {
+		t.Errorf("a coding run carrying %s: modelAuth() = %q, want its own configuration's auth", EnvReviewJob, got)
+	}
+	if spoof.gatewayOn() {
+		t.Error("a coding oauth run carrying the review marker was given a gateway: the marker bought it the class")
+	}
+}
+
+// TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn (CSR13, Open
+// item 6's answer of 2026-11-05/06): a cloud review does not run with the
+// installation's budget off. The class's calls are the credentials service's,
+// the service is reached through the gateway, and a mode of off (or none) is
+// what leaves the run nowhere to send them — so the class refuses in bootstrap,
+// naming budget.mode published as observe or enforce as the fix, rather than
+// falling through to agent.BuildEnv's cascade arm, whose sentence is written
+// for a coding run and names a fix a review job cannot apply.
+//
+// The class does not force the gateway on: GatewayOn(cascade, "") is false, and
+// the reading Open item 6 refused is one where a mode the installation set to
+// off would be overridden by the class.
+//
+// Mutation (run, restored): force the gateway on in the class's own path — the
+// run's gateway would be "on" in a mode the gateway is not built for, and the
+// refusal below is never reached. Drop the arm and the run stops at
+// agent.BuildEnv's cascade sentence instead, which names the wrong fix.
+func TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn(t *testing.T) {
+	for _, mode := range []string{"", policy.ModeOff} {
+		t.Run("mode "+mode, func(t *testing.T) {
+			r := reviewClassRun(t, "oauth", mode)
+			if r.gatewayOn() {
+				t.Fatal("a review class run with the budget off routes through the gateway")
+			}
+			err := r.applyRouting(r.projPolicy.policy, true)
+			if err == nil {
+				t.Fatal("a review class run with the installation's budget off was admitted: its calls have nowhere to go")
+			}
+			for _, want := range []string{"budget.mode", policy.ModeObserve, policy.ModeEnforce, "project policy publish"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			// It is the class's own sentence and not agent.BuildEnv's: that one
+			// is about a coding run's cascade and names a fix a review job's own
+			// file cannot apply.
+			if strings.Contains(err.Error(), "this agent has none") {
+				t.Errorf("the refusal is agent.BuildEnv's cascade sentence: %v", err)
+			}
+			// And the class offers one credential and no fallback: built with no
+			// gateway, the agent's environment is refused rather than given one
+			// of the job's.
+			if _, _, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{Auth: r.modelAuth()}); err == nil {
+				t.Error("a review class run with no gateway built an agent environment: it would carry a credential nobody chose")
+			}
+		})
+	}
+}
+
+// TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn (CSR13, O1 and the owner's cut
+// of 2026-11-06): a repository's own api-key configuration cannot produce an
+// api-key review. The class's one credential is the pairing account's tier-A
+// OAuth one (reviewCandidates), and the api-key review is a later release, so
+// the run is refused in bootstrap with a sentence that names the api-key review
+// and the release it is in — and nothing in 0.20.0 reads as though it works.
+// vertex is refused the same way: it is a credential of the repository's, and
+// the review variant mounts none of them (CSR7).
+//
+// The refusal is the auth's and not the budget's, so it is the same sentence
+// whatever the mode says: an api-key review is refused before a mode can be
+// asked about.
+//
+// Mutation (run, restored): let a repository's own agent.auth: api-key give the
+// review run a key — the run is admitted and its first call is served by a
+// credential the class never picked.
+func TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn(t *testing.T) {
+	for _, auth := range []string{"api-key", "vertex"} {
+		for _, mode := range []string{policy.ModeEnforce, policy.ModeOff} {
+			t.Run(auth+"/"+mode, func(t *testing.T) {
+				r := reviewClassRun(t, auth, mode)
+				err := r.applyRouting(r.projPolicy.policy, true)
+				if err == nil {
+					t.Fatal("a review whose repository writes a credential of its own was admitted")
+				}
+				for _, want := range []string{auth, "api-key review", "later release", "0.20.0 ships the OAuth review alone", "oauth"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				// The class is an accessor and not a rewrite: the repository's
+				// own file is what the record's basis and the account walk read.
+				if r.cfg.Agent.Auth != auth {
+					t.Errorf("the run's own auth was rewritten to %q", r.cfg.Agent.Auth)
+				}
+			})
+		}
 	}
 }
