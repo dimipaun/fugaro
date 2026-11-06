@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gocloud.dev/blob"
 
@@ -477,6 +478,76 @@ func TestRunRetryLaunchesAMixedRunOnTheMixsAccount(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 1 {
 		t.Fatalf("%d executions, want 1", n)
+	}
+}
+
+// TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount: a follow-up of a mixed
+// run launches as what the account walk resolved and not as the name its
+// previous task happened to carry (newFollowUpSpec). The two differ exactly
+// where it matters: a previous task stored before the mix reached the launch —
+// or stored when this repository mixed nothing — names no account at all,
+// while the review stages of the run about to start are still served by the
+// config's, and a follow-up that launched on the plain job would leave them
+// refused for a token nothing mounted (Check 290's failure).
+//
+// Mutation (newFollowUpSpec's `spec.OAuthToken = resolved` back to
+// `= account`): the second row starts on the plain job.
+func TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount(t *testing.T) {
+	cases := []struct {
+		name        string
+		blankStored bool
+	}{
+		{"the previous task names the mix's account", false},
+		{"the previous task names no account", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
+			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			variant := gcp.WorkflowVariant("svc", "acme-overflow")
+			f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
+			root := wallRunIDAt(2, "090000", "d5e1")
+			if _, _, err := execute(t, "run", "--repo", "acme/other", "--run-id", root, "Add a feature"); err != nil {
+				t.Fatalf("root launch: %v", err)
+			}
+			ctx := context.Background()
+			b, err := blob.OpenBucket(ctx, f.bucket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer b.Close()
+			s := runstore.Open(b, otherSlug, root)
+			if tc.blankStored {
+				stored := otherSpec(t, f, root)
+				stored.OAuthToken = ""
+				if err := s.WriteTask(ctx, stored); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// resolvePR needs a run on the PR's branch that has pushed: give
+			// the root run's record a pushed_head and the PR, as a real
+			// finalize would.
+			if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: root, Repo: "acme/other", Workflow: "svc",
+				Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+				Branch: "fugaro/" + root, PushedHead: "1111111111111111111111111111111111111111",
+				StartedAt: time.Now().Add(-time.Hour), PR: &runstore.PRRef{Number: 7, URL: "https://github.com/acme/other/pull/7"}}); err != nil {
+				t.Fatal(err)
+			}
+			fu := wallRunIDAt(0, "130000", "d5e2")
+			var got gcpfake.RunCall
+			f.run.OnRun = func(c gcpfake.RunCall) { got = c }
+			if _, _, err := execute(t, "run", "--repo", "acme/other", "--pr", "7", "--run-id", fu, "more work"); err != nil {
+				t.Fatalf("follow-up: %v", err)
+			}
+			if want := gcp.JobName(otherSlug, variant); got.Job != want {
+				t.Fatalf("follow-up job = %q, want %q", got.Job, want)
+			}
+			if got := otherSpec(t, f, fu).OAuthToken; got != "acme-overflow" {
+				t.Fatalf("follow-up OAuthToken = %q, want acme-overflow", got)
+			}
+		})
 	}
 }
 
