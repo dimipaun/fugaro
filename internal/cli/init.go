@@ -733,7 +733,7 @@ func runInit(r *initRun) error {
 		// about (this path touches no cloud and no Terraform by design).
 		if dir, derr := infra.InstallationWorkdir(os.Getenv, lc.GCPProject); derr == nil {
 			if prev, perr := infra.ReadWorkdirVars(dir, "installation"); perr == nil {
-				if data, err = infra.CarriedCredentialsService(data, prev); err != nil {
+				if data, err = infra.CarriedCredentialsService(data, prev, lc.VerifierAccountsEffective(nil)); err != nil {
 					return err
 				}
 				if data, err = infra.CarriedManagedDeployerScoped(data, prev); err != nil {
@@ -2050,7 +2050,13 @@ func (r *initRun) managedScope(ctx context.Context, c *infra.Clients) (bool, err
 }
 
 // prepare writes the root's tfvars, imports and backend configuration.
-func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (map[string]string, error) {
+//
+// verifiers is the effective verifier list this run's document must carry
+// (effectiveVerifiers), and it is a parameter rather than something read here
+// because two of the three callers have no client to read the published node
+// with: the rollback passes nil, which is the state the module's own verifier
+// account is the default in, and --print-vars passes the config's own answer.
+func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, verifiers []string) (map[string]string, error) {
 	vars, err := infra.InstallationVars(spec)
 	if err != nil {
 		return nil, err
@@ -2085,9 +2091,14 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 		// would lose the key here and plan the service's removal — a plan the
 		// bundle container's prevent_destroy refuses, so every ordinary run of
 		// fugaro update after the opt-in would fail instead of applying. The key
-		// is carried forward exactly as the workdir had it, present or absent.
+		// is carried forward exactly as the workdir had it, present or absent —
+		// except its verifier_accounts member, which is the effective list of
+		// THIS run (CSR14): the member is new, so an installation that opted in
+		// before this release carries a block without it, and one ordinary
+		// `fugaro update` has to leave that block naming the verifier account
+		// the same apply creates — or `[]`, when the owner cleared the list.
 		for _, prev := range documents {
-			if vars, err = infra.CarriedCredentialsService(vars, prev); err != nil {
+			if vars, err = infra.CarriedCredentialsService(vars, prev, verifiers); err != nil {
 				return nil, userErr("reading the installation's tfvars: %v", err)
 			}
 		}
@@ -2184,7 +2195,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	for _, n := range im.Notes {
 		r.warn(n)
 	}
-	backend, err := prepare(wd, spec, im)
+	backend, err := prepare(wd, spec, im, r.effectiveVerifiers(ctx, lc))
 	if err != nil {
 		return outs, false, err
 	}
@@ -2450,12 +2461,36 @@ func nameFromOutputs(lc *localcfg.Config, outs infra.InstallationOutputs) (*loca
 	return existing, path, old, nil
 }
 
+// effectiveVerifiers is the verifier list this run's installation tfvars must
+// carry (CSR14): the owner's own when the local config states one — an
+// explicit empty list included, which is their clear — the published node's
+// when it does not, and nil when neither names a verifier. nil is not "no
+// verifiers": it is the state the module's own default is for, the address of
+// the verifier account the same apply creates (verifier.tf).
+//
+// The node read is TOLERANT, and that is the whole reason this is not the
+// credentials stage's read. That stage is fail-closed — publishedPolicyOf
+// refuses a node an older Fugaro wrote, and the stage stops rather than
+// writing a tfvars from a value it could not read — while this one runs on
+// every ordinary `fugaro update`, including the one that upgrades an
+// installation whose node predates the key. Stopping there would be the
+// operator step CLAUDE.md's HARD RULE forbids; answering with the config's own
+// list, which is what the keep rule answers when nothing is published, is what
+// lets that one run write the account's address and migrate the node itself.
+func (r *initRun) effectiveVerifiers(ctx context.Context, lc *localcfg.Config) []string {
+	p, _, err := r.policy.read(ctx, lc)
+	if err != nil || p == nil {
+		return lc.VerifierAccountsEffective(nil)
+	}
+	return lc.VerifierAccountsEffective(p.VerifierAccounts)
+}
+
 // configOnly writes the local config alone, from the installation's
 // outputs when its state is reachable, else from the flags. The outputs
 // name the project: a config without a name takes theirs, and one with a
 // name must match it.
 func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {
-	outs, err := r.readOutputs(ctx, c, t, wd, spec)
+	outs, err := r.readOutputs(ctx, c, t, wd, lc, spec)
 	switch {
 	case errors.Is(err, errNoState), errors.Is(err, infra.ErrNoOutputs):
 		if lc.Name == "" {
@@ -2500,7 +2535,7 @@ func noInstallationRefusal(stateBucket string) error {
 	return userErr("there is no Terraform state bucket gs://%s, so no installation: run fugaro setup first", stateBucket)
 }
 
-func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.InstallationSpec) (infra.InstallationOutputs, error) {
+func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (infra.InstallationOutputs, error) {
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
 	if err != nil {
 		return infra.InstallationOutputs{}, err
@@ -2508,7 +2543,7 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if !exists {
 		return infra.InstallationOutputs{}, fmt.Errorf("%w gs://%s", errNoState, spec.StateBucket)
 	}
-	backend, err := prepare(wd, spec, infra.Imports{})
+	backend, err := prepare(wd, spec, infra.Imports{}, r.effectiveVerifiers(ctx, lc))
 	if err != nil {
 		return infra.InstallationOutputs{}, err
 	}
@@ -2587,6 +2622,26 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	if outs.CoordinatorServiceAccount != "" {
 		next.Terraform.Coordinator = true
 	}
+	// The verifier account (CSR14): the address of the account the
+	// installation's own module creates, written here — and not read from an
+	// output — so that the SAME run's policy stage publishes a node that names
+	// it and the credentials stage hands the service a list that admits it. The
+	// address is a fact of the configuration, because the module's account ID
+	// is a literal (infra.VerifierAccountID): that is what lets one ordinary
+	// `fugaro update` create the account, name it for the service and publish
+	// it, with no output to read back and no second run nobody was told to
+	// make (CLAUDE.md's HARD RULE).
+	//
+	// It is written ONLY when nothing anywhere names a verifier — the local
+	// config is silent and the published node names none — which is the state
+	// the module's default is for. A config that states a list keeps it, the
+	// owner's `[]` included (the keep rule, localcfg.VerifierAccountsEffective):
+	// otherwise an update from a machine whose config merely predates the key
+	// would replace the list another machine set, and an owner's clear would be
+	// undone by the next run.
+	if r.effectiveVerifiers(ctx, lc) == nil {
+		next.VerifierAccounts = []string{infra.VerifierAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"}
+	}
 	if r.mutate != nil {
 		r.mutate(&next)
 	}
@@ -2603,6 +2658,15 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	if err := r.writeLocalConfig(&next, path, old, confirmed); err != nil {
 		return err
 	}
+	// The engine's own view of the local config follows the file it just
+	// wrote, the way init_images.go's does after the pin: the stages that run
+	// after this one — the credentials stage, the policy stage, the layer
+	// stage — read this struct, and a value written here that they could not
+	// see would be one the same run contradicted. It is what makes the
+	// verifier account above reach the published node in the run that writes
+	// it (effectiveVerifiers reads this struct through the policy stage's
+	// own read of it).
+	*lc = next
 	if !r.o.planOnly {
 		r.publishSharedConfig(ctx, &next)
 	}
@@ -2950,7 +3014,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	// reaches this line belongs to a project neither record claims, and its
 	// document (the one prepare rewrites) carries no key for the carry in
 	// prepare to keep.
-	backend, err := prepare(wd, fs, infra.Imports{})
+	backend, err := prepare(wd, fs, infra.Imports{}, nil)
 	if err != nil {
 		return err
 	}
@@ -2972,7 +3036,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		return remote(err)
 	}
 	fs.AdoptLegacyRegistry = outs.LegacyRegistry != ""
-	if _, err := prepare(wd, fs, infra.Imports{}); err != nil {
+	if _, err := prepare(wd, fs, infra.Imports{}, nil); err != nil {
 		return err
 	}
 	changed, err := t.Plan(ctx, infra.PlanFile)

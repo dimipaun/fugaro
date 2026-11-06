@@ -378,38 +378,55 @@ func TestCredentialsRefusesAnImageThatIsNotADigest(t *testing.T) {
 // D1075): the configuration's own list when it states one — an explicit empty
 // one included, which is how the verify route is turned off on purpose — and
 // the published node's, which the caller reads and this writer cannot,
-// otherwise. The last case is what keeps an installation that names no verifier
-// byte for byte what it was: no entry at all, so the module renders its seven
-// names and the process reads an empty list.
+// otherwise. A list that was written is written as it is, and the empty one is
+// written as a PRESENT empty array: an absent member is no longer "no verifier"
+// but the module's own default — the verifier account the same apply creates
+// (CSR14) — so an owner's `[]` that reached the module as an absent member
+// would admit the account they cleared. The last case is the one where nothing
+// anywhere names a verifier: no entry at all, which is the state the default
+// is for.
 func TestCredentialsVerifierAccountsFollowTheKeepRule(t *testing.T) {
 	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
 	published := []string{"person-1@example.com"}
 	for _, tc := range []struct {
 		name      string
 		own       []string
-		want      []string
-		wantEntry bool
+		published []string
+		// want nil is the member absent from the tfvars, which is the only
+		// state the module's own verifier account is the default in.
+		want []string
 	}{
-		{"a config silent about the list keeps the published one", nil, published, true},
-		{"a config that states one publishes it", []string{"person-2@example.com"}, []string{"person-2@example.com"}, true},
-		{"an explicit empty list writes no entry at all", []string{}, nil, false},
+		{"a config silent about the list keeps the published one", nil, published, published},
+		{"a config that states one writes it", []string{"person-2@example.com"}, published, []string{"person-2@example.com"}},
+		{"an explicit empty list is written as a present empty array", []string{}, published, []string{}},
+		{"a config silent and a node that names none writes no entry", nil, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lc := credentialsLC(t)
 			lc.VerifierAccounts = tc.own
-			svc, err := Credentials(lc, image, published)
+			svc, err := Credentials(lc, image, tc.published)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(svc.VerifierAccounts, tc.want) {
-				t.Errorf("VerifierAccounts = %v, want %v", svc.VerifierAccounts, tc.want)
+			switch {
+			case tc.want == nil && svc.VerifierAccounts != nil:
+				t.Errorf("VerifierAccounts = %v, want no entry: the module's own verifier account is the default, and a list written here would be one it is never added to", *svc.VerifierAccounts)
+			case tc.want != nil && svc.VerifierAccounts == nil:
+				t.Errorf("VerifierAccounts = nil, want %v written: nil omits the key, which the module reads as its own default", tc.want)
+			case tc.want != nil && !slices.Equal(*svc.VerifierAccounts, tc.want):
+				t.Errorf("VerifierAccounts = %v, want %v", *svc.VerifierAccounts, tc.want)
 			}
 			data, err := json.Marshal(svc)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Contains(string(data), "verifier_accounts"); got != tc.wantEntry {
-				t.Errorf("the tfvars carry verifier_accounts = %v, want %v:\n%s", got, tc.wantEntry, data)
+			if got := strings.Contains(string(data), "verifier_accounts"); got != (tc.want != nil) {
+				t.Errorf("the tfvars carry verifier_accounts = %v, want %v:\n%s", got, tc.want != nil, data)
+			}
+			// A present member is a JSON array, empty one included: a bare
+			// string is refused by the module's own caller.
+			if tc.want != nil && !strings.Contains(string(data), `"verifier_accounts":[`) {
+				t.Errorf("verifier_accounts is not written as an array:\n%s", data)
 			}
 		})
 	}

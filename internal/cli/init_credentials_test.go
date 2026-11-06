@@ -1635,9 +1635,12 @@ func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	// The database is this installation's, marked (the ownership check every
-	// policy write is behind), so the run's own policy stage publishes the
-	// node this test reads back.
+	// policy write is behind), and it holds the node the PREVIOUS release
+	// published — a node with no verifier member, which is the state this
+	// installation is in: nothing anywhere names a verifier, so the module's
+	// own account is the default and this run's publish is what names it.
 	r.db.Set(budget.PathMark, auroraMark())
+	r.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
 	seedCredentialsService(t, r, r.credentialsRef())
 	// The literal, as the module writes it (verifier.tf's account_id) and as
 	// internal/infra spells it (VerifierAccountID): the address is a fact of the

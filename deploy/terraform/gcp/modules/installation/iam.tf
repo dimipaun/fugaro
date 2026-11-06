@@ -201,6 +201,63 @@ resource "google_cloud_run_v2_service_iam_member" "credentials_coordinator" {
   member   = google_service_account.coordinator[0].member
 }
 
+# ... and the verify route's one caller class (CSR14, D1068): the installation's
+# own verifier service account, which asks the service whether a verdict's
+# signature is its own. It is the coordinator's grant again in every respect —
+# a service account THIS module creates, on the same switch as the service —
+# and it is a resource of its own because the two accounts are two identities
+# and the coordinator is on a switch of its own.
+#
+# Without it the front end refuses the verifier's ID token before the container
+# runs (invoker_iam_disabled = false), so the one caller the route is built for
+# could never reach it.
+#
+# A role granted to a new kind of principal is not covered by an ordinary
+# update's confirmation until internal/infra/tf's grantRules says so, which is
+# why that table carries the verifier beside the coordinator (toVerifier) —
+# deliberately, in this task.
+resource "google_cloud_run_v2_service_iam_member" "credentials_verifier" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.credentials_service.service
+  role     = "roles/run.invoker"
+  member   = google_service_account.fugaro_verifier[0].member
+}
+
+# The verifier account's own half of the impersonation the verify route is
+# called through (CSR14): the operators, and nobody else, may mint an ID token
+# for it — the `gcloud auth print-identity-token --impersonate-service-account=…`
+# the owner's live check runs and the launcher's own mint (CSR15) both stand on.
+#
+# It is the SECOND grant of this role in the tree, beside D75's one-time setup
+# on the deployer account (deployer.tf), and both fences that refused a second
+# site are widened to exactly these two on purpose: the file-level guard
+# (deploy/terraform/terraform_test.go's
+# TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant) and
+# internal/infra/tf's deployerTokenCreator, which without this refuses the plan
+# that creates the account — an update that does not converge, which is the one
+# failure CLAUDE.md's HARD RULE is about.
+#
+# The account is the literal path, built from var.project, for the reason
+# deployer.tf's own grant gives: the account resource's name attribute is
+# unknown at plan time, and a grant whose account nobody can name is a grant
+# nobody can check (the whole module is held to it by
+# TestInstallationServiceAccountGrantsNameTheirAccount). It is gated on the
+# service for the same reason the account is: with the service off the account
+# is not created, and a grant on an account that does not exist would be a plan
+# of its own.
+resource "google_service_account_iam_member" "fugaro_verifier_token_creator" {
+  for_each = local.credentials_service_on ? toset(var.operators) : toset([])
+
+  service_account_id = "projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = each.value
+
+  depends_on = [google_service_account.fugaro_verifier]
+}
+
 # The runs bucket (design bucket-iam.md §3). Operators read and write all of
 # it: fugaro/ (the project layer, the shared config, recipes, the marker),
 # builds/, cache/, locks/ and runs/.

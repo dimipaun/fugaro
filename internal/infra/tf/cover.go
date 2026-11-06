@@ -356,7 +356,8 @@ const (
 // project and nothing else, so it is its own kind (toCoordinator).
 const CoordinatorAccountID = "fugaro-coordinator"
 
-// VerifierAccountID is the verifier service account (CSR14, D1068), the one
+// VerifierAccountID is the verifier service account (internal/infra's
+// VerifierAccountID; CSR14, D1068), the one
 // caller of the credentials service's verify route, created in the
 // installation's project by the same module and the same apply that turns the
 // service on. It is NOT among FugaroAccounts, for the credentials and
