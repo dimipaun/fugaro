@@ -1100,6 +1100,18 @@ func TestReviewJobModelPathIsKeyedOnTheRunClass(t *testing.T) {
 	if spoof.gatewayOn() {
 		t.Error("a coding oauth run carrying the review marker was given a gateway: the marker bought it the class")
 	}
+	// A review-mode run in a per-repository job has no admitted job triple, so
+	// no class check ran: the class is the task's mode AND the admitted job,
+	// and without the job half this run would take the cascade without the
+	// operator's consent to it.
+	perRepo := reviewClassRun(t, "oauth", policy.ModeEnforce)
+	perRepo.job = jobTriple{}
+	if got := perRepo.modelAuth(); got != "oauth" {
+		t.Errorf("a review-mode run with no admitted job: modelAuth() = %q, want its own configuration's auth", got)
+	}
+	if perRepo.gatewayOn() {
+		t.Error("a review-mode run with no admitted job was given a gateway: the mode alone bought it the class")
+	}
 }
 
 // TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn (CSR13, Open
