@@ -1747,8 +1747,8 @@ func TestVerifierAccountsDecode(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
-	if !slices.Equal(c.VerifierAccounts, want) {
-		t.Errorf("VerifierAccounts = %v, want %v", c.VerifierAccounts, want)
+	if c.VerifierAccounts == nil || !slices.Equal(*c.VerifierAccounts, want) {
+		t.Errorf("VerifierAccounts = %v, want %v", verifiersOf(c), want)
 	}
 	// The key absent is not the same value as the key written empty: the first
 	// keeps what the node publishes, the second clears it (the rule below).
@@ -1763,8 +1763,8 @@ func TestVerifierAccountsDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty.VerifierAccounts == nil || len(empty.VerifierAccounts) != 0 {
-		t.Errorf("VerifierAccounts = %v, want a written empty list", empty.VerifierAccounts)
+	if empty.VerifierAccounts == nil || len(*empty.VerifierAccounts) != 0 {
+		t.Errorf("VerifierAccounts = %v, want a written empty list", verifiersOf(empty))
 	}
 	for _, body := range []string{
 		"verifier_accounts: [serviceAccount:person-1@example.com]\n",
@@ -1833,9 +1833,19 @@ func TestVerifierAccountsNotInShared(t *testing.T) {
 			t.Errorf("%s: output carries verifier_accounts:\n%s", name, out)
 		}
 	}
-	if len(c.VerifierAccounts) != 1 {
+	if len(verifiersOf(c)) != 1 {
 		t.Error("Shared/MergeShared cleared the local list")
 	}
+}
+
+// verifiersOf reads the verifier list out of a config for an assertion: the
+// field is a pointer so that the owner's empty list survives a write, and a
+// bare %v on the pointer would print its address instead of the list.
+func verifiersOf(c *Config) []string {
+	if c.VerifierAccounts == nil {
+		return nil
+	}
+	return *c.VerifierAccounts
 }
 
 // catalogYAML is an operator's image catalog in the shape the spec writes one:

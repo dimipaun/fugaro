@@ -389,16 +389,18 @@ func TestCredentialsVerifierAccountsFollowTheKeepRule(t *testing.T) {
 	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
 	published := []string{"person-1@example.com"}
 	for _, tc := range []struct {
-		name      string
-		own       []string
+		name string
+		// own is the configuration's field, which is a pointer so that the
+		// written empty list is a value of its own rather than an absent key.
+		own       *[]string
 		published []string
 		// want nil is the member absent from the tfvars, which is the only
 		// state the module's own verifier account is the default in.
 		want []string
 	}{
 		{"a config silent about the list keeps the published one", nil, published, published},
-		{"a config that states one writes it", []string{"person-2@example.com"}, published, []string{"person-2@example.com"}},
-		{"an explicit empty list is written as a present empty array", []string{}, published, []string{}},
+		{"a config that states one writes it", &[]string{"person-2@example.com"}, published, []string{"person-2@example.com"}},
+		{"an explicit empty list is written as a present empty array", &[]string{}, published, []string{}},
 		{"a config silent and a node that names none writes no entry", nil, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

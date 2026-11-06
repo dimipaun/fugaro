@@ -220,14 +220,15 @@ type Config struct {
 	// member spelling the launcher and operator lists are written with, which
 	// is what the shape check below refuses.
 	//
-	// It travels to the policy node, the way bitbucket_api_roots does and for
-	// the same reason: the node is written only by the owner and the runner
-	// fails closed on it, while the shared config in the runs bucket is
-	// writable by any launcher — and a launcher who could write this list could
-	// admit its own address to the verify route, so Shared nils it and
-	// ParseShared refuses the key. Only the owner sets it, here, never in
-	// fugaro.yaml.
-	VerifierAccounts []string `yaml:"verifier_accounts,omitempty"`
+	// A pointer, not a slice: the empty list is a value, and omitempty would
+	// turn the owner's clear into a file that says nothing about the list.
+	// It travels to the policy node, the way bitbucket_api_roots does, for the
+	// same reason: the runs bucket is writable by any launcher, and one who
+	// could write this list could admit its own address to the verify route —
+	// so Shared nils it and ParseShared refuses the key, and the node,
+	// owner-written with the runner failing closed on it, is where it belongs,
+	// never in fugaro.yaml.
+	VerifierAccounts *[]string `yaml:"verifier_accounts,omitempty"`
 	// ImageCatalog is the project's image catalog (D1140): the named images
 	// the project's jobs are built from, each a Dockerfile definition or a
 	// reference to a prebuilt image, and the one a repository names with
@@ -1401,7 +1402,7 @@ func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
 // nothing about the list at all.
 func (c *Config) VerifierAccountsEffective(published []string) []string {
 	if c.VerifierAccounts != nil {
-		return c.VerifierAccounts
+		return *c.VerifierAccounts
 	}
 	return published
 }
@@ -1755,8 +1756,10 @@ func (c *Config) validate() error {
 	// address an ID token's email claim carries — would be a list the operator
 	// believes names a verifier and that admits nobody. The publish holds the
 	// node to the same function, so the file and the node cannot disagree.
-	if err := policy.ValidVerifierAccounts(c.VerifierAccounts); err != nil {
-		bad("%v", err)
+	if c.VerifierAccounts != nil {
+		if err := policy.ValidVerifierAccounts(*c.VerifierAccounts); err != nil {
+			bad("%v", err)
+		}
 	}
 	// The image catalog is held to the node's own rule here, the way the
 	// verifier list and the floor are: it is copied into the policy node, and

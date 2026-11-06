@@ -2640,7 +2640,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// would replace the list another machine set, and an owner's clear would be
 	// undone by the next run.
 	if r.effectiveVerifiers(ctx, lc) == nil {
-		next.VerifierAccounts = []string{infra.VerifierAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"}
+		next.VerifierAccounts = &[]string{infra.VerifierAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"}
 	}
 	if r.mutate != nil {
 		r.mutate(&next)
