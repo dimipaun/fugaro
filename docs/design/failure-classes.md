@@ -40,11 +40,11 @@ run, none of them a cause. So the owner's own 7-day report had to be built by no
 text with a script: **the vocabulary below exists because the arithmetic that answers "where does the
 money go" was done by hand in a shell.**
 
-**A terminal status is written in one place: `recordEnd`, and no statement of `internal/runner`
-outside `internal/runner/recordend.go` assigns a `runstore.Status` to a record's `Status`.** FC2 is
-the task that made it so. Before it the census was **36 statements, in 24 functions across 8 files** —
-every statement of `internal/runner` that assigned a `runstore.Status` to a record's `Status`, over
-the non-test files:
+**A run's ending is written in one place: `recordEnd`, and no statement of `internal/runner`
+outside `internal/runner/recordend.go` writes a record's `Status`, `Outcome`, `Reason` or
+`FailureClass`.** FC2 is the task that made it so. Before it the census was **36 statements, in 24
+functions across 8 files** — every statement of `internal/runner` that assigned a `runstore.Status`
+to a record's `Status`, over the non-test files:
 
 - `artifactMode` (`internal/runner/artifact.go`), `endArtifactCancelled`,
   `endArtifactHalted`, `failArtifactInfra` and `endArtifactFailed`;
@@ -620,19 +620,24 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
   `docs_pr_state_test.go` rather than a new one, so the docs-pin census it is chosen not to move
   does not move (§11).
 - **Interfaces:** `func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string)`.
-- **Tests:** `TestRecordEndIsTheOnlyWriterOfATerminalStatus` — the guard has to see **any** assignment
-  of a `runstore.Status` to a record's `Status`, not only `r.rec.Status`: `storeUnposted`
-  (`internal/runner/followup.go:522`) renders a *copy* of the record through `recordend.go`'s
-  `reportCopy`, and a guard written for `r.rec.Status` alone would leave exactly a statement like
-  that one, and a second writer reaching the writer through a call to `writeEnd` in another file,
-  free to carry a status past `recordEnd`. So the guard matches `\.Status` assigned a
-  `runstore.Status` anywhere in `internal/runner`, and a call to `writeEnd` anywhere but
-  `recordend.go`, and the task accounts for the copy explicitly rather than excepting it
-  silently. It reads the **parsed** Go code, not the text: `runstore.Record{Status: …}` in a struct
+- **Tests:** `TestRecordEndIsTheOnlyWriterOfATerminalStatus` — the guard has to see **any** statement
+  that writes a record's `Status`, `Outcome`, `Reason` or `FailureClass`, not only `r.rec.Status`:
+  `storeUnposted` (`internal/runner/followup.go:522`) renders a *copy* of the record through
+  `recordend.go`'s `reportCopy`, and a guard written for `r.rec.Status` alone would leave exactly a
+  statement like that one — and a statement that writes the class alone, which is the field a report
+  counts runs by and which FC4 fills — free to carry an ending past `recordEnd`. So the guard matches
+  a selector by any of those four names assigned anywhere in `internal/runner`, and any of the four
+  as a key of a `runstore.Record` literal (bar the record's construction, whose status is
+  `running`), and the task accounts for the copy explicitly rather than excepting it silently.
+  It reads the **parsed** Go code, not the text: `runstore.Record{Status: …}` in a struct
   literal, `r.rec.Status = st` through a variable, or a status written in a helper and assigned
   later all sit past any pattern matched against lines, and only the parsed form can say whether a
   statement *calls* the writer or writes the field itself — the AST is what the rewritten census
-  pin counts too. Also `TestNoClassIsWrittenWhereTheRunDidNotFail` — the absence pin, named here
+  pin counts too. The same reading covers the second way in, which is not a field at all: a
+  reference to `writeEnd` anywhere but `recordend.go`, or to `recordEnd` anywhere but the call
+  itself, since `w := writeEnd` and `f := r.recordEnd` reach the writer one hop further from its
+  name and a guard over the call alone would pass over them. Also
+  `TestNoClassIsWrittenWhereTheRunDidNotFail` — the absence pin, named here
   `TestUnclassifiedIsWrittenWhereNoClassIsChosen`: a class on a `succeeded` run, a `mode: review` run
   that reviewed or an artifact run that delivered would be a classification of a success, and the
   half of that name that is true — an unmatched reason reading `unclassified` — is the reader's,

@@ -16,19 +16,36 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// statusSite is one statement that writes a record's Status field, as the
-// guard below reads it off the parsed file.
+// statusSite is one statement that writes a record's ending, or one reference
+// to the writer that writes it, as the guard below reads it off the parsed
+// file. what says which of the two, in the words the failure is reported in.
 type statusSite struct {
 	file string
 	line int
 	pos  token.Pos
+	what string
 }
 
-// recordEndFile is the one file allowed to write a record's Status. The rule
+// recordEndFile is the one file allowed to write a record's ending. The rule
 // the design states is that recordEnd is the only writer of a run's terminal
-// status, outcome, reason and failure class, so an assignment anywhere else
-// is a second writer whatever it intends.
+// status, outcome, reason and failure class, so a statement that writes any one
+// of them, or a reference to the writer, anywhere else is a second writer
+// whatever it intends.
 const recordEndFile = "recordend.go"
+
+// endingField reports whether a name is one of the four fields recordEnd writes
+// together. The four are one fact — the class describes the status the record
+// carries — so a guard over the status alone would leave the class, which is
+// durable and which FC4 fills from the agent's own message, free to be written
+// anywhere: `r.rec.FailureClass = …` after an ending would say a run failed a
+// way its ending does not carry, and nothing reads the record again to see it.
+func endingField(name string) bool {
+	switch name {
+	case "Status", "Outcome", "Reason", "FailureClass":
+		return true
+	}
+	return false
+}
 
 // TestRecordEndIsTheOnlyWriterOfATerminalStatus is the guard over the tree
 // that makes "one writer" a fact rather than an intention.
@@ -38,45 +55,58 @@ const recordEndFile = "recordend.go"
 // helper (the shape storeUnposted has) writes a status through a local record
 // and reaches no `r.rec.Status` pattern at all, and so does a status carried
 // in a variable or set in a runstore.Record literal. Every assignment to a
-// record's Status is the same fact, so every one of them is reported by the
+// record's ending is the same fact, so every one of them is reported by the
 // file and line that makes it.
 //
-// The field is not the only way in, so the guard does not stop at it: writeEnd
-// is the pair of assignments recordEnd is, and a second writer could as easily
-// be a helper in another file calling writeEnd(r.rec, …). That call is the same
-// fact through one more hop, so it is reported like an assignment — which is
-// what makes "one writer" a statement about recordEnd and not about the syntax
-// it happens to use.
+// The four fields are one fact and the guard reads all four: recordEnd writes
+// the status, the outcome, the reason and the class together, so a statement
+// that writes the class alone is as much a second writer as one that writes the
+// status alone — and the class is the one a report counts runs by, which FC4
+// will fill from the agent's own message.
+//
+// The field is not the only way in, so the guard does not stop at it either:
+// writeEnd is the pair of assignments recordEnd is, and a second writer could
+// as easily be a helper in another file calling writeEnd(r.rec, …), or taking
+// it as a value (`w := writeEnd; w(r.rec, …)`, which is the same call one hop
+// further from its name). Every reference to a writer is therefore reported,
+// not only a call — which is what makes "one writer" a statement about
+// recordEnd and not about the syntax a site happens to use.
 //
 // storeUnposted is accounted for rather than excepted: it renders a copy of
 // the record into the stored report, and the copy is ended by recordend.go's
-// own reportCopy, so no call to writeEnd and no statement naming the field
-// sits outside that file at all.
+// own reportCopy, so no reference to writeEnd and no statement naming a field
+// of the ending sits outside that file at all.
 func TestRecordEndIsTheOnlyWriterOfATerminalStatus(t *testing.T) {
 	// The reader first, on a file that is not in the tree: a guard that missed
-	// a shape would pass on any tree, and the shape it must not miss is the
-	// copy through a local record that storeUnposted makes.
+	// a shape would pass on any tree, and the shapes it must not miss are the
+	// copy through a local record that storeUnposted makes, the class written
+	// on its own, and the writer reached through a variable.
 	t.Run("the reader sees every shape", func(t *testing.T) {
 		const src = `package runner
 
-func f(rec *runstore.Record, st runstore.Status) {
+func f(r *run, rec *runstore.Record, st runstore.Status) {
 	c := *rec
 	c.Status = st
+	c.FailureClass = failure.InfraError
 	rec.Status, rec.Outcome = st, runstore.OutcomeNone
-	_ = runstore.Record{Status: runstore.StatusFailed}
-	_ = runstore.Record{Status: runstore.StatusRunning}
+	_ = runstore.Record{Status: runstore.StatusFailed, Reason: "a reason"}
+	_ = runstore.Record{Status: runstore.StatusRunning, Outcome: runstore.OutcomeNone}
 	writeEnd(rec, runstore.StatusFailed, runstore.OutcomeNone, "", "")
+	w := writeEnd
+	g := r.recordEnd
 }
 `
 		file, err := parser.ParseFile(token.NewFileSet(), "shape.go", src, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Four: the copy, the record itself, the literal and the call to the
-		// writer. The running literal is the record's construction and not an
-		// ending.
-		if got := len(statusSitesIn(file)); got != 4 {
-			t.Errorf("the guard read %d of the 4 statements in a file that assigns a local record's status, assigns the record's own, writes a terminal status in a literal and calls writeEnd: a guard that does not see them passes on a tree that does", got)
+		// Nine: the copy's status and its class, the record's own status and
+		// outcome, the failed literal's status and reason, the call to the
+		// writer, the writer taken as a value and the method taken as a value.
+		// The running literal is the record's construction — it too carries an
+		// outcome, and neither is an ending.
+		if got := len(statusSitesIn(file)); got != 9 {
+			t.Errorf("the guard read %d of the 9 statements and references in a file that writes a copy's status and class, the record's own status and outcome, a literal's status and reason, calls writeEnd and takes writeEnd and recordEnd as values: a guard that does not see them passes on a tree that does", got)
 		}
 	})
 
@@ -104,11 +134,11 @@ func f(rec *runstore.Record, st runstore.Status) {
 		}
 	}
 	for _, site := range outside {
-		t.Errorf("%s:%d writes a record's Status outside %s: every terminal status goes through recordEnd, so that the status, the outcome, the reason and the class describing it are written together and the last call is the only rule",
-			site.file, site.line, recordEndFile)
+		t.Errorf("%s:%d %s outside %s: every ending goes through recordEnd, so that the status, the outcome, the reason and the class describing it are written together and the last call is the only rule",
+			site.file, site.line, site.what, recordEndFile)
 	}
 	if len(outside) > 0 {
-		t.Errorf("%d statements write a record's Status outside %s: the count is the census, and one writer is the whole rule", len(outside), recordEndFile)
+		t.Errorf("%d statements write a record's ending, or reach its writer, outside %s: the count is the census, and one writer is the whole rule", len(outside), recordEndFile)
 	}
 }
 
@@ -525,27 +555,38 @@ func haltReasonConstants(t *testing.T) []runstore.HaltReason {
 	return out
 }
 
-// statusSitesIn is every statement of one parsed file that writes a Status
-// field, or reaches the writer that writes it: an assignment to a selector
-// named Status, a Status entry of a runstore.Record literal, and a call to
-// writeEnd. Each is how a record's status is set, and a guard that knows only
-// the first would leave the others free.
+// statusSitesIn is every statement of one parsed file that writes a record's
+// ending, or reaches the writer that writes it: an assignment to a selector
+// named for one of the four fields, such a field as a key of a runstore.Record
+// literal, a reference to writeEnd, and a reference to recordEnd that is not
+// the call itself. Each is how a record's ending is set, and a guard that knows
+// only the first would leave the others free.
 func statusSitesIn(file *ast.File) []statusSite {
 	var out []statusSite
+	// The call to recordEnd is the site; the method taken as a value is the
+	// same ending one hop away, so the calls are collected first and every
+	// other reference to the name is reported.
+	called := map[token.Pos]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			called[call.Fun.Pos()] = true
+		}
+		return true
+	})
+	// The declaration of a writer is its name once, and not a site.
+	declared := map[token.Pos]bool{}
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
+		case *ast.FuncDecl:
+			declared[node.Name.Pos()] = true
 		case *ast.AssignStmt:
 			for _, lhs := range node.Lhs {
-				if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Status" {
-					out = append(out, statusSite{pos: sel.Sel.Pos()})
+				if sel, ok := lhs.(*ast.SelectorExpr); ok && endingField(sel.Sel.Name) {
+					out = append(out, statusSite{pos: sel.Sel.Pos(), what: "writes a record's " + sel.Sel.Name})
 				}
 			}
-		case *ast.CallExpr:
-			if ident, ok := node.Fun.(*ast.Ident); ok && ident.Name == "writeEnd" {
-				out = append(out, statusSite{pos: ident.Pos()})
-			}
 		case *ast.CompositeLit:
-			if !isRecordType(node.Type) {
+			if !isRecordType(node.Type) || isRecordConstruction(node) {
 				return true
 			}
 			for _, elt := range node.Elts {
@@ -553,14 +594,40 @@ func statusSitesIn(file *ast.File) []statusSite {
 				if !ok {
 					continue
 				}
-				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Status" && !isRunningStatus(kv.Value) {
-					out = append(out, statusSite{pos: key.Pos()})
+				if key, ok := kv.Key.(*ast.Ident); ok && endingField(key.Name) {
+					out = append(out, statusSite{pos: key.Pos(), what: "writes a record's " + key.Name})
 				}
+			}
+		case *ast.Ident:
+			if node.Name == "writeEnd" && !declared[node.Pos()] {
+				out = append(out, statusSite{pos: node.Pos(), what: "reaches writeEnd"})
+			}
+		case *ast.SelectorExpr:
+			if node.Sel.Name == "recordEnd" && !called[node.Pos()] {
+				out = append(out, statusSite{pos: node.Pos(), what: "reaches recordEnd"})
 			}
 		}
 		return true
 	})
 	return out
+}
+
+// isRecordConstruction reports whether a runstore.Record literal is the record
+// being built — the one whose Status is `running` (runner.go's Run). A literal
+// is the one place a record exists before any writer has seen it, so the fields
+// it carries there say what the run started as and not how it ended; every
+// other record literal is an ending written by hand.
+func isRecordConstruction(lit *ast.CompositeLit) bool {
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Status" {
+			return isRunningStatus(kv.Value)
+		}
+	}
+	return false
 }
 
 // isRecordType reports whether a composite literal's type spells

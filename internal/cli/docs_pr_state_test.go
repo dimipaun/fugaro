@@ -288,11 +288,13 @@ var fcCensusRE = regexp.MustCompile(`[0-9]+ items: [0-9]+ open, [0-9]+ closed, [
 // names.
 const fcRecordEndFile = "recordend.go"
 
-// fcStatusSite is one statement that writes a record's Status field, with the
-// file and line a reader can open.
+// fcStatusSite is one statement that writes a record's ending, or one
+// reference to the writer that writes it, with the file and line a reader can
+// open and the words the failure is reported in.
 type fcStatusSite struct {
 	file string
 	line int
+	what string
 }
 
 // TestDocsFailureClassCensusMatchesTheRunner: the design's §1 says where a
@@ -302,17 +304,19 @@ type fcStatusSite struct {
 //
 // It reads the **parsed** files, the shape the design's own guard
 // (`TestRecordEndIsTheOnlyWriterOfATerminalStatus`, internal/runner) reads them
-// in: a status written through a local copy of the record, through a variable,
-// or as a `Status:` entry of a `runstore.Record` literal reaches no
-// `rec.Status = runstore.Status` pattern at all, and each of those is a second
-// writer. `running` in a literal is the one status that is not an ending -- it
-// is the record's construction, before any writer has seen it.
+// in: an ending written through a local copy of the record, through a variable,
+// or as a `Status:` or `FailureClass:` entry of a `runstore.Record` literal
+// reaches no `rec.Status = runstore.Status` pattern at all, and each of those is
+// a second writer. A record literal whose `Status` is `running` is the record's
+// construction -- the one place a record exists before any writer has seen it,
+// so none of the four fields it carries there is an ending.
 //
-// A call to the writer is flagged as well, in whatever file it is made: the
-// sentence above is about the one place a status is written from, and a helper
-// in another file calling writeEnd on the run's own record is that rule broken
-// one hop away from the field it writes. The design's sentence does not have to
-// say "or calls writeEnd" for this to be the same claim.
+// A reference to the writer is flagged as well, in whatever file it is made:
+// the sentence above is about the one place a run's ending is written from, and
+// a helper in another file calling writeEnd on the run's own record -- or
+// taking writeEnd or recordEnd as a value and calling that -- is that rule
+// broken one hop away from the field it writes. The design's sentence does not
+// have to say "or reaches writeEnd" for this to be the same claim.
 //
 // Before FC2 this test counted the statements instead -- thirty-six of them, in
 // twenty-four functions across eight files -- and the design said the same
@@ -348,14 +352,14 @@ func TestDocsFailureClassCensusMatchesTheRunner(t *testing.T) {
 		}
 	}
 	if inside == 0 {
-		t.Fatalf("no statement of internal/runner writes a record's Status, %s included: the rule below would pass over a tree it never read, so this is the reader having stopped seeing the shape rather than the tree having stopped writing one", fcRecordEndFile)
+		t.Fatalf("no statement of internal/runner writes a record's ending, %s included: the rule below would pass over a tree it never read, so this is the reader having stopped seeing the shape rather than the tree having stopped writing one", fcRecordEndFile)
 	}
 	for _, site := range outside {
-		t.Errorf("%s:%d writes a record's Status outside %s: every terminal status goes through recordEnd, so that the status, the outcome, the reason and the class describing it are written together and the last call is the only rule",
-			site.file, site.line, fcRecordEndFile)
+		t.Errorf("%s:%d %s outside %s: every ending goes through recordEnd, so that the status, the outcome, the reason and the class describing it are written together and the last call is the only rule",
+			site.file, site.line, site.what, fcRecordEndFile)
 	}
 	if len(outside) > 0 {
-		t.Errorf("%d statements write a record's Status outside %s: %s", len(outside), fcRecordEndFile, fcStatusRule)
+		t.Errorf("%d statements write a record's ending, or reach its writer, outside %s: %s", len(outside), fcRecordEndFile, fcStatusRule)
 	}
 	doc := flattenDoc(readDoc(t, fcDoc))
 	if !strings.Contains(doc, fcStatusRule) {
@@ -366,30 +370,44 @@ func TestDocsFailureClassCensusMatchesTheRunner(t *testing.T) {
 
 // fcStatusRule is the design's §1 sentence this pin holds, kept as one string so
 // the document and the check above cannot drift into saying it two ways.
-const fcStatusRule = "no statement of `internal/runner` outside `internal/runner/recordend.go` assigns a `runstore.Status` to a record's `Status`"
+const fcStatusRule = "no statement of `internal/runner` outside `internal/runner/recordend.go` writes a record's `Status`, `Outcome`, `Reason` or `FailureClass`"
 
-// fcStatusSitesIn is every statement of one parsed file that writes a Status
-// field, or reaches the writer that writes it: an assignment to a selector
-// named Status, a Status entry of a runstore.Record literal, and a call to
-// writeEnd. Each is how a record's status is set, and the second and third are
+// fcStatusSitesIn is every statement of one parsed file that writes a record's
+// ending, or reaches the writer that writes it: an assignment to a selector
+// named for one of the four fields, such a field as a key of a runstore.Record
+// literal, a reference to writeEnd, and a reference to recordEnd that is not
+// the call itself. Each is how a record's ending is set, and the last three are
 // why this reads the parsed code rather than a pattern over its text.
 func fcStatusSitesIn(fset *token.FileSet, path string, file *ast.File) []fcStatusSite {
 	name := filepath.Base(path)
 	var out []fcStatusSite
+	at := func(pos token.Pos, what string) {
+		out = append(out, fcStatusSite{file: name, line: fset.Position(pos).Line, what: what})
+	}
+	// The call to recordEnd is the site; the method taken as a value is the
+	// same ending one hop away, so the calls are collected first and every
+	// other reference to the name is reported.
+	called := map[token.Pos]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			called[call.Fun.Pos()] = true
+		}
+		return true
+	})
+	// The declaration of a writer is its name once, and not a site.
+	declared := map[token.Pos]bool{}
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch node := n.(type) {
+		case *ast.FuncDecl:
+			declared[node.Name.Pos()] = true
 		case *ast.AssignStmt:
 			for _, lhs := range node.Lhs {
-				if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Status" {
-					out = append(out, fcStatusSite{file: name, line: fset.Position(sel.Sel.Pos()).Line})
+				if sel, ok := lhs.(*ast.SelectorExpr); ok && fcEndingField(sel.Sel.Name) {
+					at(sel.Sel.Pos(), "writes a record's "+sel.Sel.Name)
 				}
 			}
-		case *ast.CallExpr:
-			if ident, ok := node.Fun.(*ast.Ident); ok && ident.Name == "writeEnd" {
-				out = append(out, fcStatusSite{file: name, line: fset.Position(ident.Pos()).Line})
-			}
 		case *ast.CompositeLit:
-			if !fcSelects(node.Type, "runstore", "Record") {
+			if !fcSelects(node.Type, "runstore", "Record") || fcRecordConstruction(node) {
 				return true
 			}
 			for _, elt := range node.Elts {
@@ -397,16 +415,51 @@ func fcStatusSitesIn(fset *token.FileSet, path string, file *ast.File) []fcStatu
 				if !ok {
 					continue
 				}
-				key, ok := kv.Key.(*ast.Ident)
-				if !ok || key.Name != "Status" || fcSelects(kv.Value, "runstore", "StatusRunning") {
-					continue
+				if key, ok := kv.Key.(*ast.Ident); ok && fcEndingField(key.Name) {
+					at(key.Pos(), "writes a record's "+key.Name)
 				}
-				out = append(out, fcStatusSite{file: name, line: fset.Position(key.Pos()).Line})
+			}
+		case *ast.Ident:
+			if node.Name == "writeEnd" && !declared[node.Pos()] {
+				at(node.Pos(), "reaches writeEnd")
+			}
+		case *ast.SelectorExpr:
+			if node.Sel.Name == "recordEnd" && !called[node.Pos()] {
+				at(node.Pos(), "reaches recordEnd")
 			}
 		}
 		return true
 	})
 	return out
+}
+
+// fcEndingField reports whether a name is one of the four fields recordEnd
+// writes together: the status, the outcome, the reason and the failure class.
+// They are one fact, so a guard over the status alone would leave the class --
+// the field the report counts runs by -- free to be written anywhere.
+func fcEndingField(name string) bool {
+	switch name {
+	case "Status", "Outcome", "Reason", "FailureClass":
+		return true
+	}
+	return false
+}
+
+// fcRecordConstruction reports whether a runstore.Record literal is the record
+// being built: the shape runner.go's Run has, whose Status is `running`. A
+// literal is the one place a record exists before any writer has seen it, so
+// the fields it carries there say what the run started as and not how it ended.
+func fcRecordConstruction(lit *ast.CompositeLit) bool {
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Status" {
+			return fcSelects(kv.Value, "runstore", "StatusRunning")
+		}
+	}
+	return false
 }
 
 // fcSelects reports whether expr is the qualified name pkg.name.
