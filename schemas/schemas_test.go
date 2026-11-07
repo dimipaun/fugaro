@@ -4608,7 +4608,7 @@ settings:
 // for, and the schema validated it anyway.
 //
 // Four more are the members a consumer draws the edit from (D1102), and they
-// are the registry's answer rather than the fixture's: `target_layer` is the
+// are the CLI's answer rather than the fixture's: `target_layer` is the
 // narrowest of repo, project and local the key may be set in, which is what
 // settingsDefaultLayer answers for `settings set` and what the read prints, so
 // a row whose write lands in a different layer than the one it names is a row
@@ -4621,12 +4621,14 @@ settings:
 // produces. The fixture this branch corrected spelled `target_layer` "project"
 // on the row whose write lands in `repo` and `""` on two rows that each name a
 // layer, and it said `writable` on two rows that carry an owner word -- the
-// drift this half exists for. What this half cannot answer is `owner` and
-// `writable` themselves, whose answers are settingsFamilyCommands and
-// settingsWriteRow and live in internal/cli:
-// TestSettingsConsoleFixtureOwnerAndWritable
+// drift this half exists for. **The rule this half restates is the read's own,
+// and its guard is in the package that holds it**: `target_layer` is
+// settingsDefaultLayer's answer, and `owner` and `writable` are
+// settingsFamilyCommands' and settingsWriteRow's, all three set by projectRow
+// in internal/cli, so TestSettingsConsoleFixtureOwnerAndWritable
 // (internal/cli/settings_console_fixture_test.go) holds the fixture to those
-// two, from the package that owns them.
+// three functions and a change to one of them is red there even where the
+// restatements here stay green.
 func TestSettingsConsoleFixture(t *testing.T) {
 	const file = "../console/test/fixtures/settings.json"
 	data, err := os.ReadFile(file)

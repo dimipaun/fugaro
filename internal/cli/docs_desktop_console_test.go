@@ -9810,10 +9810,15 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		// the generic path would not write the key at all", and the read answers
 		// `settingsDefaultLayer` instead -- the narrowest of the three the key may
 		// be set in, which is non-empty for a key the generic path refuses
-		// (`mailbox.keychain_item` is `local` on a `writable: false` row). The
-		// phrase pinned is the schema's own (`schemas/settings.schema.json`,
-		// `$defs.row.target_layer`), so the contract, the schema and the read say
-		// one thing, and the fixture the e2e draws is a document with it.
+		// (`mailbox.keychain_item` is `local` on a `writable: false` row). Of the
+		// two phrases pinned below, the first is the schema's own
+		// (`schemas/settings.schema.json`, `$defs.row.target_layer`) and the
+		// second is this contract's: the schema's description does not carry it,
+		// and no test holds the two descriptions to each other -- the contract's
+		// claim is held to the read by TestSettingsConsoleFixtureOwnerAndWritable
+		// (internal/cli/settings_console_fixture_test.go), which asks
+		// settingsDefaultLayer for the fixture's own rows. The fixture the e2e
+		// draws is a document with it.
 		"the narrowest of `repo`, `project` and `local` the key may be set in",
 		"non-empty on a row the generic path refuses",
 	} {

@@ -583,13 +583,15 @@ describe('the committed synthetic fixture', () => {
       // drawn). **Invented means its values, not its spelling**: every member a
       // screen draws is spelled the way the CLI spells it.
       // `TestSettingsConsoleFixture` (`schemas/schemas_test.go`) holds it to
-      // `schemas/settings.schema.json`, to the registry's own defaults, and to
-      // the rules one member keeps about another (a resolved row's `levels`, the
-      // layer its `state` is the age of, and `target_layer` beside `sensitive`);
+      // `schemas/settings.schema.json`, to the registry's own defaults, to the
+      // rules one member keeps about another (a resolved row's `levels` and the
+      // layer its `state` is the age of) and to `sensitive`; it restates the
+      // narrowest-layer rule and the two refusals as a cross-check.
       // `TestSettingsConsoleFixtureOwnerAndWritable`
-      // (`internal/cli/settings_console_fixture_test.go`) holds its `owner` and
-      // `writable` -- the two the pencil is decided from that no registry row
-      // answers -- to the read's own functions. Between them, the e2e that draws
+      // (`internal/cli/settings_console_fixture_test.go`) is the guard for the
+      // three the read computes itself -- `target_layer`, `owner` and
+      // `writable`, which a pencil is decided from (C2) -- and it asks the
+      // functions that answer them. Between them, the e2e that draws
       // this document draws an answer the CLI could have given -- a fixture with
       // words no read prints, or a value no read renders, would prove the window
       // draws an impossible document. The members the schema leaves free strings

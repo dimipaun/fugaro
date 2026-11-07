@@ -148,12 +148,13 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // builds against anything the console holds.
 //
 // The fifth is the same fixture read from this package's side, and it is the
-// other half of the same claim: the registry answers a row's `target_layer` and
-// `sensitive` (the entry above), but `owner` is the word settingsFamilyCommands
-// makes of the registry's owner token and `writable` is settingsWriteRow's own
-// answer -- the write's decision the read copies, D1102 -- and both of those
-// live in this package. So the test that holds the fixture to them
-// (internal/cli/settings_console_fixture_test.go,
+// other half of the same claim: the registry answers a row's `sensitive` and
+// supplies the layers the narrowest-layer rule reads (the entry above), but
+// `target_layer` is settingsDefaultLayer's own answer, `owner` is the word
+// settingsFamilyCommands makes of the registry's owner token, and `writable` is
+// settingsWriteRow's -- the write's decision the read copies, D1102 -- and all
+// three of those live in this package. So the test that holds the fixture to
+// them (internal/cli/settings_console_fixture_test.go,
 // TestSettingsConsoleFixtureOwnerAndWritable) is the one file here that reads a
 // console document to ask this package's own functions, which is why it is an
 // entry and not a line in a test of its own. Bytes again, like the other four:
