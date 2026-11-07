@@ -365,7 +365,7 @@ func pinDoctorNow(t *testing.T, now func() time.Time) {
 // installation opted into that is not there, and a service no job account may
 // invoke. Neither fails doctor without --strict: an installation mid-opt-in is
 // a legitimate state. The installation that never opted in is not silent here
-// either, and it is the first of the five states
+// either, and it is the first of the states
 // TestDoctorReportsTheServiceStateInOneLine owns.
 func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 	t.Run("deployed with the grant", func(t *testing.T) {
@@ -624,11 +624,12 @@ type brokeringServiceState struct {
 	build func(t *testing.T) *brokeringRig
 }
 
-// brokeringServiceStates are the five states of the service: the installation
+// brokeringServiceStates are the six states of the service: the installation
 // that has not converged on it at all, the one whose block is written and
 // whose service is not deployed, the deployed service whose bundle holds no
-// version, the deployed service whose verifier list admits nobody, and the
-// deployed service with a job account missing its invoker grant.
+// version, the deployed service whose newest bundle version is disabled, the
+// deployed service whose verifier list admits nobody, and the deployed service
+// with a job account missing its invoker grant.
 func brokeringServiceStates() []brokeringServiceState {
 	// deployed is the service every state after the first two starts from:
 	// there, admitting this installation's one job account, with the bundle
@@ -663,6 +664,22 @@ func brokeringServiceStates() []brokeringServiceState {
 			names:    []string{"creds set"},
 			severity: "info",
 			build:    deployed,
+		},
+		{
+			// The bundle holds a version and Secret Manager will not serve it:
+			// DisableVersions is the state an operator's incident disable
+			// leaves, and the one `creds ls` and `creds set` both refuse as
+			// their own (credsDisabledRefusal). A check that read only whether
+			// a version exists answered the bare ok here.
+			name:     "the deployed service's newest bundle version is disabled",
+			names:    []string{infra.CredentialsServiceName, "DISABLED", "gcloud secrets versions enable"},
+			severity: "info",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := deployed(t)
+				r.sm.DisableVersions(r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token"))))
+				return r
+			},
 		},
 		{
 			name:     "the deployed service's verifier list admits nobody",

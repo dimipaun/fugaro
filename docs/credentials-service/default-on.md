@@ -824,6 +824,7 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   | no block in the local config | the installation has not converged on the service; `fugaro update --provision-credentials` deploys it (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it) |
   | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update --provision-credentials` re-applies the root (the same flag as the row above, for the same reason) |
   | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer |
+  | deployed, the bundle's newest version is not `ENABLED` | deployed and admitting nobody: the version and its document are there and Secret Manager will not serve them, so the loader's read fails closed. The line names the version and its state; `DISABLED` is the one an operator's incident disable leaves, and the fix names the enable (`gcloud secrets versions enable <version> --secret=<id>`) because `creds set` refuses while the newest version is disabled |
   | deployed, `verifier_accounts` written **empty** | deployed and admitting nobody on the verify route: a list written empty names no verifier account. The list is the one the service is deployed with (`localcfg.VerifierAccountsEffective`): this checkout's `verifier_accounts` when it states one, the published policy node's otherwise, and the line names which of the two holds the empty list. An absent key is NOT this state — it leaves the module's own account admitted |
   | deployed, a job account missing `roles/run.invoker` | the existing half of the check, unchanged |
 
@@ -849,14 +850,15 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   exist: whether a run can work around it.** The two states a run cannot work around — the block
   written and no service behind it, and a job account the service does not admit — keep the
   **warning** they already had: they print in the default view, and `--strict` is where they become a
-  failure. The other three — never converged, an empty bundle, an empty verifier list — are `OK` with
+  failure. The others — never converged, an empty bundle, a bundle whose newest version is not
+  `ENABLED`, an empty verifier list — are `OK` with
   severity **info**, which is doctor's measurement class: **an installation that has not run `update`
   yet is not broken, it is behind**, and **a repository held off is not broken either, it is the
   answer's own state**, so neither may be an item of doctor's one screen — a clean installation would
   print an item for merely being behind the release, and `fugaro doctor --strict` in a repository's CI
   would go red for it. They are the answer §1.4 asks for under `--all` and in `--json`, where a reader
   who wants the service *used* reads which half is missing, and none of them fails `--strict`.
-- **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the five service states, each producing
+- **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the six service states, each producing
   exactly one check with the expected `ID` and severity), `TestDoctorNamesTheMissingHalfNotNotConfigured`
   (the line never reads "not configured": it names the App key, the verifier account, the bundle or the
   invoker grant), `TestDoctorSaysWhyARepositoryIsHeldOff` (the three held-off rows, each naming its own

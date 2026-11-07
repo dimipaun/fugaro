@@ -107,9 +107,10 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // makes the states behind that one AHEAD of it doctor's business: `fugaro
 // update` deploys the service on every installation and a run is switched to
 // it only when it can serve that run, so an installation that has not
-// converged on the service, one whose bundle holds no version and one whose
-// verifier list is empty are states a release leaves behind rather than faults
-// in an installation. None of the three is an item of the default view: they
+// converged on the service, one whose bundle holds no version (or only one
+// that is switched off) and one whose verifier list is empty are states a
+// release leaves behind rather than faults in an installation. None of them is
+// an item of the default view: they
 // are measurements, one line each, and --all and --json are where a reader who
 // wants the service used finds which half is missing. The two states a run
 // cannot work around — the block written and no service behind it, and a job
@@ -221,10 +222,13 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 // route admits.
 //
 // Both are read and never guessed, and each is read the way the thing that
-// uses it reads it: the bundle through the container's own version metadata
-// (the value is never touched here, and never is: the document is the
-// service's, and doctor reads a value only behind --check-bitbucket-token),
-// and the verify route through the list the service is deployed with —
+// uses it reads it: the bundle through the container's own version metadata,
+// which is two answers in one read — whether a version is there at all, and
+// whether the newest of them is ENABLED, since a version that is not is one
+// Secret Manager will not serve and so one the loader cannot read either (the
+// value is never touched here, and never is: the document is the service's, and
+// doctor reads a value only behind --check-bitbucket-token) — and the verify
+// route through the list the service is deployed with —
 // localcfg's one keep rule for the key, this checkout's verifier_accounts when
 // it states one and the published policy node's otherwise, which is what the
 // credentials stage hands the module's own variable and therefore what the
@@ -239,10 +243,12 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 // published" without a call, and every other state of the service returns
 // before this one.
 //
-// Neither state fails doctor and neither fails --strict: the service is up and
-// answering, and what it refuses is a run it is not switched to yet. They are
-// measurements, and the one line each of them produces is where a reader who
-// wants the service used learns which half is missing.
+// None of these states fails doctor and none fails --strict: the service is up
+// and answering, and what it has nothing to serve with is an operator's own
+// document (a version nobody set, a version switched off, a route nobody was
+// named for) rather than a fault of the installation. They are measurements,
+// and the one line each of them produces is where a reader who wants the
+// service used learns which half is missing.
 func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, id string) []doctorCheck {
 	// A read that did not answer is not a state of the service: it is said, and
 	// it is said as the info note of a read that failed, which no view prints
@@ -259,7 +265,7 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 			"whether there is a document for it to serve a run's credential out of could not be checked",
 			"rerun doctor with the Secret Manager API available, or read the bundle's names yourself: "+selfCommand()+" creds ls")
 	}
-	_, err = store.newest(ctx)
+	meta, err := store.newest(ctx)
 	switch {
 	case errors.Is(err, errNoBundleVersion):
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
@@ -269,6 +275,23 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 		return unreadable("the bundle's newest version ("+oneLineCLI(err.Error())+")",
 			"whether there is a document for it to serve a run's credential out of could not be checked",
 			"rerun doctor with the Secret Manager API available, or read the bundle's names yourself: "+selfCommand()+" creds ls")
+	}
+	// The version's own state is the rest of that read, and it is not the empty
+	// container: a version that is not ENABLED is there, its document is there,
+	// and Secret Manager refuses to serve either — the loader reads `latest`
+	// and is refused the same way, so the service has nothing to hand a run
+	// however full the bundle is. `creds ls` and `creds set` read this same
+	// metadata (newestIsDisabled, credsDisabledRefusal) and refuse it, which is
+	// why the fix is the enable first: a `creds set` would refuse too until the
+	// version is served again.
+	if meta.state != "ENABLED" {
+		fix := selfCommand() + " creds set NAME (writes a new version: no update writes a credential)"
+		if meta.state == "DISABLED" {
+			fix = fmt.Sprintf("gcloud secrets versions enable %s --secret=%s (the document is there; Secret Manager will not serve a disabled version), then %s creds set NAME writes a new one", pluginwire.Printable(meta.number), pluginwire.Printable(store.id), selfCommand())
+		}
+		return []doctorCheck{{ID: id, OK: true, Severity: "info",
+			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the newest version of the bundle it serves from (%s, version %s) is %s, so the loader's read of it is refused and every model call of a run against it fails", infra.CredentialsServiceName, pluginwire.Printable(store.id), pluginwire.Printable(meta.number), pluginwire.Printable(meta.state)),
+			Fix:     fix}}
 	}
 	verifiers, published, err := doctorDeployedVerifierAccounts(ctx, lc)
 	if err != nil {
