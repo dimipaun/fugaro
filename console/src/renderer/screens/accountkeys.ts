@@ -30,15 +30,17 @@
 // drawn with a blank. `buildAccountKeys` is where that happens, so no drawing
 // code can be handed one.
 //
-// **A key the read does not carry is `unset`, not empty.** The document carries
-// no row for a key whose layer has none, and an empty cell would read as "the
-// value is the empty string" -- a different fact from "the read carries no value
-// for this key". The read spells an unset value `unset = <what it means>` too,
-// and that spelling is the same fact again rather than an account: an account is
-// a name, and the sentence is the registry's own words about the key
-// (`UNSET_PREFIX`). The section always draws both subjects: the project's
-// default row, and the stage rows it found or the registry's own wildcard key
-// when it found none.
+// **A key with no account behind it is `unset`, not empty.** An empty cell would
+// read as "the value is the empty string", a different fact from "no account is
+// decided here". The read writes the second fact in its own words: a key no
+// layer decides arrives with the registry's sentence for it
+// (`unset = <what it means>`) as its value, which is no more an account than an
+// empty cell is -- an account is a name, and that sentence is the registry
+// talking about the key (`UNSET_PREFIX`). A key the read carries no row for --
+// or the subject whose only row was `sensitive`, which this module dropped -- is
+// drawn the same way, from a row the section supplies itself. The section always
+// draws both subjects: the project's default row, and the stage rows it found or
+// the registry's own wildcard key when it found none.
 //
 // **The reason a read gave is drawn the way every screen draws it.** The
 // section's two reasons are its own sentences and the CLI's refusal sentence on
@@ -237,10 +239,10 @@ type ValueRead = { readonly kind: 'value'; readonly value: string | null } | { r
 const UNSET_PREFIX = 'unset = '
 
 /** valueAt reads a row's `value` member: absent is a row the read carries no
- * value for -- which is what a `sensitive` row is, and what a key no layer sets
- * is -- the read's own unset spelling is that same fact written out, and a
- * member of any other type is a row this console does not read rather than a
- * value it coerces. */
+ * value for -- which is what a `sensitive` row is -- the read's own unset
+ * spelling is that same fact written out (a key no layer decides arrives that
+ * way), and a member of any other type is a row this console does not read
+ * rather than a value it coerces. */
 function valueAt(row: Record<string, unknown>): ValueRead {
   const raw = row['value']
   if (raw === undefined) return { kind: 'value', value: null }
@@ -298,10 +300,10 @@ export function buildAccountKeys(inputs: AccountKeysInputs): AccountKeys {
   for (const entry of settings) {
     const row = objectAt(entry)
     if (row === null) continue
-    const key = textAt(row['key'])
-    if (key === null || key === '') continue
     const sensitive = row['sensitive']
     if (sensitive !== undefined && sensitive !== false) continue
+    const key = textAt(row['key'])
+    if (key === null || key === '') continue
     const stage = stageOf(key)
     if (stage === null && key !== DEFAULT_ACCOUNT_KEY) continue
     const read = valueAt(row)
