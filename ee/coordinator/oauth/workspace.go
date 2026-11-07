@@ -383,6 +383,21 @@ func ExchangeURL(coordinatorIssuer string) (string, error) {
 	return raw + mcpauth.AuthorizePath, nil
 }
 
+// exchangeURLOK holds a member's exchange URL to the shape an assertion's
+// audience may have: an https URL with a host and no userinfo. It is the rule
+// the workspace owner's own per-member table is held to when `fugaro workspace
+// member add` writes an exchange_url (localcfg's validateWorkspace), restated
+// here because the signer's copy of the value arrives over a wire rather than
+// from that file, and an audience that is not this shape is one no browser
+// reaches — and a `user@host` audience is one a member's own URL is not.
+func exchangeURLOK(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return fmt.Errorf("%w: it must be an https URL with a host and no userinfo", ErrUnusableExchangeURL)
+	}
+	return nil
+}
+
 // Admit verifies a presented assertion and answers the identity it proves
 // together with this member's own limits, or a refusal.
 //
@@ -400,9 +415,65 @@ func (e *Exchange) Admit(ctx context.Context, raw string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
+	// The audience first among the claim checks: it is the binding that makes
+	// an assertion minted for one member worthless at another (finding 1), and
+	// the member it names is the member this exchange is.
+	if a.Audience != e.exchangeURL {
+		return Session{}, refusef("the assertion was not minted for this member's exchange URL")
+	}
+	// Then the workspace it claims to be from, against this member's own pin
+	// and never against anything the workspace publishes: a member's trust is
+	// its own record of which workspace it joined.
+	if a.Issuer != e.pin.Issuer {
+		return Session{}, refusef("the assertion names an issuer this member does not pin")
+	}
+	if a.Subject != e.pin.FirebaseProject {
+		return Session{}, refusef("the assertion names a workspace project this member does not pin")
+	}
+	// The window, read against this member's own clock: an assertion that has
+	// expired is refused, one issued in the future is refused, and one whose
+	// whole life is longer than maxAssertionLifetime is refused because a
+	// "short-lived" assertion is what bounds a stolen one (spec.md §8).
+	now := e.now()
+	switch {
+	case now.Unix() >= a.ExpiresAt:
+		return Session{}, refusef("the assertion has expired")
+	case time.Unix(a.IssuedAt, 0).After(now.Add(assertionClockSkew)):
+		return Session{}, refusef("the assertion is issued in the future")
+	case a.ExpiresAt-a.IssuedAt > int64(maxAssertionLifetime/time.Second):
+		return Session{}, refusef("the assertion's lifetime is longer than this member accepts")
+	}
+	// The two facts the signer stated and this member re-checks rather than
+	// taking on its word (spec.md §3 step 2, finding 7): an address nobody
+	// proved they own, and a provider outside the pinned set — an anonymous
+	// sign-in proves no address at all, and a custom-token sign-in is one whose
+	// minter chooses the address and its verified flag.
+	if !a.EmailVerified {
+		return Session{}, refusef("the assertion's address is not marked verified")
+	}
+	if !slices.Contains(e.providers, a.Provider) {
+		return Session{}, refusef("the assertion's sign-in provider is not one this member pins")
+	}
+	// The address, held to this member's own one rule for addresses
+	// (mobileauth.NormalizeEmail, the rule W5's launcher and operator lists are
+	// written and compared with): the answer to that comparison is a refusal
+	// here if the address is a form this member cannot read, and one canonical
+	// spelling of it if it is.
 	folded, err := mobileauth.NormalizeEmail(a.Email)
 	if err != nil {
 		return Session{}, refusef("the assertion's address is not one this member can read")
+	}
+	// Last, and only once the assertion is one this member would admit at all:
+	// spend the jti. Spending it earlier would let a refusal burn an id, and
+	// spending it later would leave the window between the check and the
+	// answer. What the store is handed is the HASH (D1296): it never sees the
+	// jti, so nothing at rest can be presented.
+	already, err := e.consumed.Consume(ctx, mcpauth.TokenHash(a.JTI), time.Unix(a.ExpiresAt, 0))
+	if err != nil {
+		return Session{}, fmt.Errorf("oauth: recording a spent assertion id: %w", err)
+	}
+	if already {
+		return Session{}, refusef("the assertion has already been spent at this member")
 	}
 	return Session{
 		Identity: VerifiedIdentity{

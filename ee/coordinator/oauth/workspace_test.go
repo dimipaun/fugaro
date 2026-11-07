@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,14 @@ const (
 	// that proves a refusal never repeats them.
 	testAssertionMarker = "marker-workspace-assertion"
 )
+
+// memberLimits is a member's OWN limits, the ones its token is minted with:
+// a spend cap, a scope and nothing else. Every test that reads a Session reads
+// this value back, which is how "the assertion supplied no limit" is checked.
+var memberLimits = mcpauth.Limits{
+	SpendUSD: 12,
+	Scopes:   []string{mcpauth.ScopeTasksRead},
+}
 
 // testKey is a fresh RSA key per test: a fixture written down would be key
 // material in a file, which no rule here allows, and one shared key would make
@@ -85,7 +94,7 @@ func newTestMember(t *testing.T, host string, pin Pin, opts ...ExchangeOption) *
 	ex, err := NewExchange(ExchangeConfig{
 		Pin:               pin,
 		CoordinatorIssuer: "https://" + host,
-		Limits:            mcpauth.Limits{SpendUSD: 12},
+		Limits:            memberLimits,
 		Consumed:          consumed,
 	}, opts...)
 	if err != nil {
@@ -170,5 +179,305 @@ func TestExchangeRefusesAWorkspaceAssertionMintedForAnotherMember(t *testing.T) 
 	}
 	if strings.Contains(err.Error(), testMemberB) {
 		t.Fatalf("the refusal names the member the assertion was minted for: %q", err)
+	}
+}
+
+// TestExchangeRefusesAReplayedAssertion is finding 1's single-use rule: the
+// assertion the member has already spent is refused for the assertion's
+// lifetime, so a stolen one is worth one sign-in rather than a bearer.
+func TestExchangeRefusesAReplayedAssertion(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+	raw := assertionFor(t, key, testProject, member.url, nil)
+
+	if _, err := member.ex.Admit(context.Background(), raw); err != nil {
+		t.Fatalf("the first Admit refused an assertion this member minted for itself: %v", err)
+	}
+	_, err := member.ex.Admit(context.Background(), raw)
+	refuse(t, err, "the same assertion a second time")
+	if !strings.Contains(err.Error(), "spent") {
+		t.Fatalf("the refusal is %q, and it is the replay that must be named", err)
+	}
+}
+
+// TestExchangeRefusesAnAssertionReplayedAtAnotherMember is the replay a
+// per-member set alone would not catch: each member's consumed-jti set is its
+// own, so a second member has no record of the assertion at all — what refuses
+// it there is the audience, and what the first member's own set still holds is
+// the assertion it spent.
+func TestExchangeRefusesAnAssertionReplayedAtAnotherMember(t *testing.T) {
+	key := testKey(t)
+	pin := testPin(t, testWorkspace, testProject, &key.PublicKey)
+	memberA := newTestMember(t, testMemberA, pin)
+	memberB := newTestMember(t, testMemberB, pin)
+
+	raw := assertionFor(t, key, testProject, memberA.url, nil)
+	if _, err := memberA.ex.Admit(context.Background(), raw); err != nil {
+		t.Fatalf("the first Admit refused the assertion at its own member: %v", err)
+	}
+
+	refuse(t, mustErr(memberB.ex.Admit(context.Background(), raw)), "at a second member")
+	if len(jtisSpent(memberB)) != 0 {
+		t.Fatalf("the second member recorded %d spent ids, and its set is its own", len(jtisSpent(memberB)))
+	}
+
+	// And the first member's entry is still the first member's: the assertion
+	// is spent where it was spent, not wherever it was later presented.
+	refuse(t, mustErr(memberA.ex.Admit(context.Background(), raw)), "at the member that already spent it")
+}
+
+// TestExchangeRefusesAnExpiredAssertion reads the window against the member's
+// own clock: an assertion whose lifetime has run out is refused, and so is one
+// whose whole life is longer than a "short-lived" assertion may be — a
+// workspace's key can mint anything, and a pin bounds what a key may be used
+// for rather than how careful its holder is.
+func TestExchangeRefusesAnExpiredAssertion(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+
+	expired := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+		now := time.Now().UTC()
+		a.IssuedAt = now.Add(-10 * time.Minute).Unix()
+		a.ExpiresAt = now.Add(-time.Minute).Unix()
+	})
+	refuse(t, mustErr(member.ex.Admit(context.Background(), expired)), "an expired assertion")
+
+	long := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+		now := time.Now().UTC()
+		a.IssuedAt = now.Add(-3 * time.Hour).Unix()
+		a.ExpiresAt = now.Add(3 * time.Hour).Unix()
+	})
+	refuse(t, mustErr(member.ex.Admit(context.Background(), long)), "an assertion with a lifetime of hours")
+}
+
+// TestExchangeNeverEchoesTheAssertion is the credsvc rule applied to this
+// endpoint: a refusal reaches a log line and an answer body, and neither is a
+// place for the document a stranger sent.
+func TestExchangeNeverEchoesTheAssertion(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+
+	cases := map[string]string{
+		"an assertion for another member":   assertionFor(t, key, testProject, "https://"+testMemberB+mcpauth.AuthorizePath, nil),
+		"a marker that is not an assertion": testAssertionMarker,
+		"an expired assertion": assertionFor(t, key, testProject, member.url, func(a *assertion) {
+			now := time.Now().UTC()
+			a.IssuedAt = now.Add(-10 * time.Minute).Unix()
+			a.ExpiresAt = now.Add(-time.Minute).Unix()
+		}),
+	}
+	for what, raw := range cases {
+		t.Run(what, func(t *testing.T) {
+			err := mustErr(member.ex.Admit(context.Background(), raw))
+			if err == nil {
+				t.Fatalf("Admit admitted %s", what)
+			}
+			msg := err.Error()
+			if strings.Contains(msg, raw) {
+				t.Fatalf("the refusal repeats the assertion: %q", msg)
+			}
+			if strings.Contains(msg, testEmail) || strings.Contains(msg, "jti-1") {
+				t.Fatalf("the refusal repeats a value out of the assertion: %q", msg)
+			}
+		})
+	}
+}
+
+// TestExchangeVerifiesTheMembersPinnedKeyNotTheRecords. The key an assertion is
+// verified against is the one THIS member pins — a workspace's record names no
+// key at all (§2) — so an assertion signed by another workspace's key is
+// refused even though everything else about it is in order. The second half is
+// the signer's: it refuses a Firebase token that is not this project's, so a
+// workspace cannot be talked into minting for a project it is not either.
+func TestExchangeVerifiesTheMembersPinnedKeyNotTheRecords(t *testing.T) {
+	pinned, other := testKey(t), testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &pinned.PublicKey))
+
+	stranger := assertionFor(t, other, testProject, member.url, nil)
+	refuse(t, mustErr(member.ex.Admit(context.Background(), stranger)), "an assertion signed by a key this member does not pin")
+
+	signer := newTestSigner(t, testProject)
+	token := firebaseIDToken(t, signer.idKey, defaultIDToken(testProject2))
+	if _, err := signer.Mint(context.Background(), token, member.url); !errors.Is(err, mcpauth.ErrUnverifiedIDToken) {
+		t.Fatalf("the signer answered %v for a token of another project, and it must refuse it as an unverified ID token", err)
+	}
+
+	// And nothing in this package reads the workspace's published record: the
+	// record is not an input anywhere, which is what makes "the member's pin
+	// and never a value from the workspace's record" a fact about the code and
+	// not a promise about the caller.
+	assertPackageReadsNoWorkspaceRecord(t)
+}
+
+// TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords is the other half of
+// the pin: the issuer and the project are the member's own, so an assertion
+// naming another workspace's issuer or project is refused however well it is
+// signed, and the signer refuses a Firebase token whose iss is not the
+// workspace's pinned issuer.
+func TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+
+	otherIssuer := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+		a.Issuer = WorkspaceIssuer(testProject2)
+	})
+	refuse(t, mustErr(member.ex.Admit(context.Background(), otherIssuer)), "an assertion naming another workspace's issuer")
+
+	otherProject := assertionFor(t, key, testProject2, member.url, nil)
+	refuse(t, mustErr(member.ex.Admit(context.Background(), otherProject)), "an assertion naming another workspace's project")
+
+	signer := newTestSigner(t, testProject)
+	fields := defaultIDToken(testProject)
+	fields.Issuer = WorkspaceIssuer(testProject2)
+	if _, err := signer.Mint(context.Background(), firebaseIDToken(t, signer.idKey, fields), member.url); !errors.Is(err, mcpauth.ErrUnverifiedIDToken) {
+		t.Fatalf("the signer answered %v for a token whose iss is another project's, and it must refuse it as an unverified ID token", err)
+	}
+}
+
+// TestExchangeRefusesWhenTheMemberPinsNoWorkspace is the member's own
+// `workspace rm` (W1) as the exchange sees it: the membership key AND the pin
+// are gone, so there is no key, no project and no issuer left to verify
+// against, and the exchange refuses whatever the workspace's record still says
+// about this member. It is the half of a removal only the member can complete
+// (spec.md §3), and it is a refusal of its own rather than a bad-assertion one.
+func TestExchangeRefusesWhenTheMemberPinsNoWorkspace(t *testing.T) {
+	key := testKey(t)
+	unpinned := newTestMember(t, testMemberA, Pin{})
+	raw := assertionFor(t, key, testProject, unpinned.url, nil)
+
+	_, err := unpinned.ex.Admit(context.Background(), raw)
+	if !errors.Is(err, ErrNoWorkspacePinned) {
+		t.Fatalf("Admit answered %v, and a member that pins no workspace refuses with ErrNoWorkspacePinned", err)
+	}
+	if errors.Is(err, ErrUnverifiedAssertion) {
+		t.Fatal("the refusal reads as a bad assertion, and there is no assertion this member could accept")
+	}
+
+	// A pin that is there is not this state: the same call admits with a pin.
+	pinned := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+	if _, err := pinned.ex.Admit(context.Background(), assertionFor(t, key, testProject, pinned.url, nil)); err != nil {
+		t.Fatalf("a member with a pin refused its own assertion: %v", err)
+	}
+}
+
+// TestExchangeRefusalIsIndistinguishableForAnUnknownMember. spec.md §8 forbids
+// member enumeration: a member the person is not in is refused with a refusal
+// identical in shape to one for a member that does not exist. An assertion
+// minted for a member that is nowhere is refused exactly as one minted for the
+// member next door, and neither refusal names a member.
+func TestExchangeRefusalIsIndistinguishableForAnUnknownMember(t *testing.T) {
+	key := testKey(t)
+	memberA := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+
+	nextDoor := "https://" + testMemberB + mcpauth.AuthorizePath
+	unknown := "https://" + testMemberA + "-that-is-not-there.example.com" + mcpauth.AuthorizePath
+	errNext := mustErr(memberA.ex.Admit(context.Background(), assertionFor(t, key, testProject, nextDoor, nil)))
+	errNone := mustErr(memberA.ex.Admit(context.Background(), assertionFor(t, key, testProject, unknown, nil)))
+	if errNext == nil || errNone == nil {
+		t.Fatal("a member admitted an assertion minted for an exchange URL that is not its own")
+	}
+	if errNext.Error() != errNone.Error() {
+		t.Fatalf("the refusals differ: a member that exists answers %q and one that does not answers %q", errNext, errNone)
+	}
+	for _, name := range []string{testMemberB, "-that-is-not-there"} {
+		if strings.Contains(errNext.Error(), name) {
+			t.Fatalf("the refusal names the member it was minted for: %q", errNext)
+		}
+	}
+}
+
+// TestExchangeAcceptsAProviderThatIsPinnedAndRefusesOneThatIsNot is finding 7
+// at the member: `google.com` and `password` are the providers the workspace's
+// Firebase carries, `custom` and `anonymous` are refused — and the claim is
+// re-checked here rather than taken from the signer's word, which is why this
+// test mints the assertion itself rather than going through the signer.
+func TestExchangeAcceptsAProviderThatIsPinnedAndRefusesOneThatIsNot(t *testing.T) {
+	key := testKey(t)
+	for provider, want := range map[string]bool{
+		"google.com": true,
+		"password":   true,
+		"custom":     false,
+		"anonymous":  false,
+		"oidc.other": false,
+	} {
+		t.Run(provider, func(t *testing.T) {
+			member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+			raw := assertionFor(t, key, testProject, member.url, func(a *assertion) { a.Provider = provider })
+			sess, err := member.ex.Admit(context.Background(), raw)
+			if !want {
+				refuse(t, err, "an assertion whose provider is not pinned")
+				return
+			}
+			if err != nil {
+				t.Fatalf("Admit refused the pinned provider %q: %v", provider, err)
+			}
+			if sess.Identity.Provider != provider {
+				t.Fatalf("the session names the provider %q, and the assertion named %q", sess.Identity.Provider, provider)
+			}
+		})
+	}
+}
+
+// TestExchangeMintsAMemberTokenWithTheMembersOwnLimits. The exchange's answer is
+// what the member's own mint is built from, and the limits in it are the
+// member's own configuration's — carried unchanged, never read from the
+// assertion. A workspace cannot widen or narrow what its people may do at this
+// member by anything it puts in an assertion, and the payload's closed claim
+// set is what refuses the attempt rather than trusting it to be harmless.
+func TestExchangeMintsAMemberTokenWithTheMembersOwnLimits(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+	sess, err := member.ex.Admit(context.Background(), assertionFor(t, key, testProject, member.url, nil))
+	if err != nil {
+		t.Fatalf("Admit refused the member's own assertion: %v", err)
+	}
+	if !slices.Equal(sess.Limits.Scopes, memberLimits.Scopes) || sess.Limits.SpendUSD != memberLimits.SpendUSD ||
+		sess.Limits.MinRigor != memberLimits.MinRigor || sess.Limits.MaxRigor != memberLimits.MaxRigor || sess.Limits.Hotfix != memberLimits.Hotfix {
+		t.Fatalf("the session's limits are %+v, and this member's own are %+v", sess.Limits, memberLimits)
+	}
+
+	// The member's mint, over the session: the limits it validates are the
+	// member's own, so a token minted from this sign-in carries exactly what a
+	// token minted from a sign-in that started at the member carries.
+	token := mcpauth.Token{
+		Identity:  "user:" + sess.Identity.Email,
+		ClientID:  "client-1",
+		Limits:    sess.Limits,
+		ExpiresAt: time.Now().UTC().Add(mcpauth.AccessTokenTTL),
+	}
+	if err := token.Validate(); err != nil {
+		t.Fatalf("the member's own mint refuses the session's limits: %v", err)
+	}
+
+	// And the assertion cannot carry limits of its own: a payload with a claim
+	// this member does not model is refused rather than read past.
+	widened := assertionWithClaim(t, key, testProject, member.url, "limits", map[string]any{"spend_usd": 1000})
+	refuse(t, mustErr(member.ex.Admit(context.Background(), widened)), "an assertion carrying a limits claim")
+}
+
+// TestExchangeStoresOnlyHashes is D1296: the one thing the member stores about a
+// sign-in is the hash of the assertion's id, in a subtree no client of its own
+// database may read. Nothing at rest can be presented, so a reader of that
+// subtree holds nothing it could sign in with.
+func TestExchangeStoresOnlyHashes(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+	raw := assertionFor(t, key, testProject, member.url, func(a *assertion) { a.JTI = "jti-single-use" })
+
+	if _, err := member.ex.Admit(context.Background(), raw); err != nil {
+		t.Fatalf("Admit refused the member's own assertion: %v", err)
+	}
+	spent := jtisSpent(member)
+	if len(spent) != 1 {
+		t.Fatalf("the store holds %d entries, and one assertion is one spent id", len(spent))
+	}
+	if spent[0] != mcpauth.TokenHash("jti-single-use") {
+		t.Fatalf("the store holds %q, and a spent id is kept as its hash", spent[0])
+	}
+	if spent[0] == "jti-single-use" {
+		t.Fatal("the store holds the jti itself")
+	}
+	if !strings.HasPrefix(PathConsumedJTI(spent[0]), ConsumedJTIPrefix) || strings.Contains(PathConsumedJTI(spent[0]), "jti-single-use") {
+		t.Fatalf("PathConsumedJTI(%q) = %q, and the path carries the hash rather than the id", spent[0], PathConsumedJTI(spent[0]))
 	}
 }

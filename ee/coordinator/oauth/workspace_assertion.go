@@ -298,10 +298,12 @@ func refusef(format string, args ...any) error {
 // here with unverified bytes would be reading a stranger's text, which is why
 // this function's only caller verifies first and says so.
 //
-// The nested object is refused unless it is an object with a string in it: the
-// claim is present in every Firebase ID token, and a token whose firebase
-// object is missing or shaped otherwise is one this exchange will not read a
-// provider out of.
+// The nested object is required: a token whose `firebase` claim is missing or
+// is not an object is one this code will not read a provider out of. A
+// `sign_in_provider` that is absent, empty or not a string answers the empty
+// provider and no error, because the pinned set is what refuses it — and one
+// refusal an operator can act on ("this sign-in's provider is not pinned") is
+// better than three that name the shape of a claim.
 func splitSignInProvider(idToken string) (string, error) {
 	_, claims, _, err := splitAssertion(idToken)
 	if err != nil {
@@ -311,10 +313,7 @@ func splitSignInProvider(idToken string) (string, error) {
 	if !ok {
 		return "", errors.New("oauth: the ID token carries no firebase claim")
 	}
-	provider, ok := fb["sign_in_provider"].(string)
-	if !ok || provider == "" {
-		return "", errors.New("oauth: the ID token's firebase claim names no sign-in provider")
-	}
+	provider, _ := fb["sign_in_provider"].(string)
 	return provider, nil
 }
 
