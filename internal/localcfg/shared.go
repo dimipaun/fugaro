@@ -131,6 +131,15 @@ func (c *Config) Shared() *Config {
 	// on, and ParseShared refuses the key besides — a shared config carrying
 	// it was not written by the converge.
 	s.ImageCatalog = nil
+	// Orchestrator travels the catalog's way, into the policy node, and is
+	// dropped here for the same reason the floor is: the block is what stops a
+	// launcher spending the project's budget faster than the owner allows — the
+	// running cap and the per-minute, hourly and daily spawn rates are the
+	// figures a looping cycle runs up against (D1239) — so a launcher who could
+	// write it into the runs bucket's shared file would be raising its own
+	// guardrails. ParseShared refuses the key besides, because a shared config
+	// carrying it was not written by the converge.
+	s.Orchestrator = nil
 	// The account-choice keys are local-only for claude_accounts' own reason
 	// (docs/accounts-add/spec.md §11.1): a published layer that could name an
 	// account would be a way around that account's allow_data_to, which is the

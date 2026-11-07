@@ -74,7 +74,7 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 
 	// Step 7: the publish and the deploy, through the registered stages and
 	// nothing else.
-	stages, err := accountsAddRunStages(ctx, cmd, after, path, old)
+	stages, err := accountsAddRunStages(ctx, cmd, after, path, old, "accounts add")
 	if err != nil {
 		return err
 	}
@@ -264,8 +264,14 @@ var (
 // command's own writer is pointed at stderr for the length of the run besides,
 // which is what keeps a stage that prints to cmd.OutOrStdout() directly — the
 // policy stage's diff — off the stdout this command's answer is on.
-func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, path string, old []byte) (map[string]initflow.StageResult, error) {
-	o := &initOptions{door: "accounts add", yes: true, nonInteractive: true, asJSON: true}
+// door is the command whose run this is — "accounts add" or "accounts rm",
+// whichever called — and it is the caller's because both commands converge
+// through this one loop: the door names the run on every line it prints (the
+// header, the fix a stage leaves, the step left for the person), so a removal
+// run that borrowed add's name would print its own progress as add's and hand
+// the person the inverse command to finish with.
+func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, path string, old []byte, door string) (map[string]initflow.StageResult, error) {
+	o := &initOptions{door: door, yes: true, nonInteractive: true, asJSON: true}
 	r := newInitRun(cmd, o)
 	r.setProject(lc)
 	spec, err := installOptions(o, lc)

@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -261,11 +262,14 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		return remote(err)
 	}
 	// The provider's credential comes from where it actually is -- the local
-	// config and the repository's github-app-key secret -- rather than from
-	// the process environment, which holds neither (catalogProviderEnv). That
-	// read, like the copies below, waits for the typed confirmation: a
-	// declined build reads no secret.
-	providerEnv, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv)
+	// config, the repository's github-app-key secret and the project's
+	// bitbucket-token secret -- rather than from the process environment,
+	// which holds none of it (catalogProviderEnv). That read, like the copies
+	// below, waits for the typed confirmation: a declined build reads no
+	// secret. The terminal fact is the command's own stdin, where the
+	// confirmation above was typed, so the helper's coding-agent refusal asks
+	// the question this command already answered.
+	providerEnv, providerHint, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	if err != nil {
 		return err
 	}
@@ -281,6 +285,15 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			return userErr("%v", err)
 		}
 		if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e); err != nil {
+			// A provider opened without the credential its environment did
+			// not carry fails here with its own sentence, which is left
+			// exactly as it is; the hint says where the token actually is
+			// and what reading it needs (catalogProviderEnv). No other
+			// failure carries it: providers.ErrNoCredential is only ever the
+			// missing token.
+			if providerHint != "" && errors.Is(err, providers.ErrNoCredential) {
+				return fmt.Errorf("%w%s", err, providerHint)
+			}
 			return err
 		}
 		// What the build pins and records is the copy itself: its bytes and

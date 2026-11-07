@@ -244,6 +244,22 @@ export const BRIDGE_VERSION = 1
  * main process's, and the argv the child is started from is the argv the window
  * drew: a plan that differs from it is refused rather than spawned
  * (`SETTINGS_EDIT_MOVED`, `src/source/source.ts`).
+ *
+ * **The graph plan's CG9a added the thirty-second** (`graph.read` /
+ * `graphRead`, the Graph screen's second read -- `fugaro graph --json`) and left
+ * the other thirty-one exactly where they were. It is **not in 0.119.0** or
+ * 0.120.0 as they shipped: it lands in the release that carries the graph plan's
+ * CG9a. It sits directly under `plan.status`, the same screen's other read, and
+ * it is the read that makes that screen work with **no checkout at all** -- its
+ * one scope today is the coordinator's stored view, read from the project's own
+ * database through the caller's own credential -- where `plan status` reads the
+ * checkout's own `docs/`. Its method takes one argument, the scope, and that is
+ * the narrowest argument on this surface: the pattern is the CLI's own closed
+ * set (`GRAPH_SCOPE_RE`, `src/main/ipc.ts`), and `src/source/cli.ts` refuses a
+ * scope no previous document of this read listed, so a renderer can name only a
+ * scope the document itself offered (F21). The command is a **paid** one
+ * (`ee/graph`, D1362), and its `--watch` stream form is a different argv: it is
+ * not on this surface, and CG9b is the task that will put it there.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -262,6 +278,18 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // default.
   ['runs.summary', 'summaryRuns'],
   ['plan.status', 'planStatus'],
+  // The Graph screen's other read (the graph plan's CG9a): `fugaro graph
+  // --json`, the dependency graph as one versioned document, which needs **no
+  // checkout** -- its scope is the coordinator's stored view, read from the
+  // project's own database -- so an installation with no recorded directory
+  // still draws it. One row here for the reason every other is one: a method
+  // that took the operation as an argument is the shape rule 5 forbids. Its
+  // one argument is the scope, and it is the surface's narrowest: `src/main/
+  // ipc.ts`'s `GRAPH_SCOPE_RE` admits the CLI's own closed set and nothing
+  // else, and `src/source/cli.ts` refuses a scope the previous document did not
+  // list -- so a renderer cannot name one the read never offered (F21). The
+  // `--watch` stream form is a different argv and is not on this surface.
+  ['graph.read', 'graphRead'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],

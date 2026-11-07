@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/runs-digest-due.schema.json",
+  "title": "Fugaro runs digest --due",
+  "description": "The document `fugaro runs digest --due --json` prints: the periods that have closed with no report under `dir`, newest first, and the newest report the folder holds with how many days old it is. The read is offline and read-only — it reads the folder in the checkout it runs in and opens no project, no credential and no bucket — and it writes nothing. The due periods are digest.DuePeriods(now), the same computation a report run's own step reads (D962, R0), so a person's reading and a report run's cannot disagree about what is due. Members are only ever added within a version, so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document.",
+  "type": "object",
+  "required": [
+    "version",
+    "dir",
+    "due",
+    "newest"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "digestDueDocVersion in internal/cli/runs_digest.go."
+    },
+    "dir": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The folder the reading read, as --dir gave it: digest.Dir (docs/fugaro-reviews) unless the caller named another."
+    },
+    "due": {
+      "type": "array",
+      "description": "The periods that have closed and have no report file under dir, newest first: ordered by the day the period ended, and of two periods that ended on the same day the longer one first (a year before the month, the month before the week, the week before the day), which is the rule the newest report below is picked by too. The periods themselves are the seven closed days the catch-up covers, plus the week, month or year that just closed. Empty when nothing is due. A file whose name is not the layout's shape is not a report, so it neither satisfies a period nor appears here.",
+      "items": {
+        "$ref": "#/$defs/period"
+      }
+    },
+    "newest": {
+      "description": "The newest report the folder holds — the report whose own period ends latest — and how many whole days old that period is. Null when the folder holds no report at all.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/report"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "period": {
+      "type": "object",
+      "required": [
+        "dim",
+        "key"
+      ],
+      "properties": {
+        "dim": {
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "year"
+          ],
+          "description": "The time grouping: digest.ByDay, ByWeek, ByMonth or ByYear. A due period is always one of the four; the other dimensions of digest.ParseDim are not periods and no report is written for them."
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The period's own key, and the name a reader greps for: 2026-10-25, 2026-W43, 2026-10 or 2026 (digest.PeriodKey)."
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "required": [
+        "key",
+        "dim",
+        "days_ago"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The key of the period the newest report covers."
+        },
+        "dim": {
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "year"
+          ],
+          "description": "The time grouping of that period."
+        },
+        "days_ago": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many whole days have passed since the period ended, at the clock the reading ran with: a report of yesterday's day is 1. A period that has not ended yet (a hand-written file) is 0 rather than a negative count."
+        }
+      }
+    }
+  }
+}

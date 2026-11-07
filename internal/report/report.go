@@ -112,6 +112,9 @@ type Reporter struct {
 	spinName  string
 	spinFrame int
 	spinStop  chan struct{}
+	// spinPaused is a line in flight that is down on purpose: a prompt is on
+	// the screen, and Resume draws the line again once it is answered.
+	spinPaused bool
 }
 
 // New returns the reporter for one command's run.
@@ -155,12 +158,13 @@ func New(o Options) *Reporter {
 }
 
 // Step starts a step named name and returns it, to be ended by exactly one of
-// Done, Skipped, Failed and Left. Ending it twice does nothing, so a caller
-// that reports twice cannot print two lines for one step.
+// Done, Skipped, Failed, Left and Abandon. Ending it twice does nothing, so a
+// caller that reports twice cannot print two lines for one step.
 func (r *Reporter) Step(name string) *Step {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stopSpinner()
+	r.spinPaused = false
 	r.startSpinner(name)
 	return &Step{r: r, name: name}
 }
@@ -173,12 +177,44 @@ func (r *Reporter) Summary() Outcome {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stopSpinner()
+	r.spinName, r.spinPaused = "", false
 	o := Outcome{State: r.state, Steps: r.steps, Elapsed: r.o.Now().Sub(r.start)}
 	if !r.summarised && o.Steps > 0 {
 		fmt.Fprintln(r.human, summaryLine(o))
 	}
 	r.summarised = true
 	return o
+}
+
+// Pause takes the line in flight down and stops drawing it, without ending
+// the step: a command about to write something a person has to read on a line
+// of its own — a prompt it then reads stdin on — pauses first, so no frame is
+// ever drawn over it (G1). Resume draws the line again; ending the step ends
+// it whether it was paused or not, and a run with nothing in flight pauses
+// nothing.
+func (r *Reporter) Pause() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.spinName == "" {
+		return
+	}
+	r.stopSpinner()
+	r.spinPaused = true
+}
+
+// Resume draws the line in flight again after the prompt it made room for has
+// been answered, where the rules allow one to be drawn at all. It is what
+// keeps a stage that prompts in the middle of its work — the project's typed
+// confirmation, an image build's question — a stage somebody is still
+// watching, and it does nothing for a run whose step ended meanwhile.
+func (r *Reporter) Resume() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.spinPaused {
+		return
+	}
+	r.spinPaused = false
+	r.startSpinner(r.spinName)
 }
 
 // Stream is where a run's own output goes: Terraform's progress, a stage's
@@ -259,6 +295,21 @@ func (s *Step) Left(text string) {
 	s.end(glyphLeft, colourLeft, Left, ": "+text, lines)
 }
 
+// Abandon ends the step without a line and without counting it: the run never
+// got to a result for it — a refusal stops the run before the stage ran — so
+// there is nothing to report, and a line in flight still has to come down.
+func (s *Step) Abandon() {
+	r := s.r
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if s.ended {
+		return
+	}
+	s.ended = true
+	r.stopSpinner()
+	r.spinName, r.spinPaused = "", false
+}
+
 // end prints the step's one result line and the lines under it, and records
 // what the result means for the run. Only the first result counts.
 func (s *Step) end(g glyph, c termenv.ANSIColor, state State, tail string, under []string) {
@@ -270,6 +321,7 @@ func (s *Step) end(g glyph, c termenv.ANSIColor, state State, tail string, under
 	}
 	s.ended = true
 	r.stopSpinner()
+	r.spinName, r.spinPaused = "", false
 	r.steps++
 	if state > r.state {
 		r.state = state

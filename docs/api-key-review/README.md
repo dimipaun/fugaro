@@ -1,9 +1,19 @@
 # The api-key review path — the independent review served by an API key instead of a subscription account
 
-**Status: plan only; nothing is implemented; no task approved.** This is a design for the owner to
-read. It adds no code, no schema, no config key and no Terraform; it edits no file outside `docs/`.
-Nothing in it is an approval: every task in [implementation-plan.md](implementation-plan.md) needs
-the owner's own go, and the first of them needs an answer before it — see **Open items** below.
+**Status: plan only; nothing is implemented; the decisions D1410–D1429 are answered 2026-11-07 and
+all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** Every answer is the
+recommendation, and the ones that decide the shape are worth a line: **D1410 both slices** — the
+in-job half and the cloud half; **D1411 and D1412 Path A, and no second Anthropic key**; **D1413 the
+key wins when the owner asks for it explicitly**; **D1414 no** — an `oauth` run's review does not
+move onto an API key; and **D1415 a new additive field** on `StageTiming`, never a new value on
+`credential`. This is a design for the owner to read. It adds no code, no schema, no config key and
+no Terraform; it edits no file outside `docs/`. **The decisions are answered and every task is
+approved (2026-11-07), and items 1–5 of [implementation-plan.md](implementation-plan.md) §6 are
+satisfied.** Three things are still owed, none of them a further answer from the owner, and each is
+named where it stands: **items 6 and 7 of that list** — the mandatory security review owed before
+**AK4–AK7** land, and **E7**, not met, so those four tasks may not start and the cloud half stays
+unlaunchable — and **D1413's spelling**, which that section records as design work this plan still
+owes because no task names it yet.
 
 **Asked by:** the repository owner, in a message of **2026-11-07** — "the api-key review path: let's
 start a design". The role is the one the ask's own clauses describe: the person who owns the
@@ -57,8 +67,8 @@ and says plainly that no installation can reach it yet.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's ask of **2026-11-07**, verbatim, with a header naming the owner by role and the status line. Where this file and the others disagree about what the ask *says*, this file wins |
-| [reconciliation.md](reconciliation.md) | Every clause of the ask against the code on `main`, read by path and symbol: the findings **F1–F24** (Wrong / Exists / Gap / Rule / Open), what the **in-job** path does today end to end (§1), what the **cloud** path does today end to end (§2), the two readings of "the api-key review" (§4), **the security analysis as an attacker would see it** (§5), an **UNVERIFIED** section (§6), the decisions **D1410–D1429** each with a recommendation, an alternative and an **empty owner's-answer cell** (§7), the number block and how it was read (§8), and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK8**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot left to the owner (§4), the owner-run live check **Check 330** (§5) and the gates a task may not start without (§6) |
+| [reconciliation.md](reconciliation.md) | Every clause of the ask against the code on `main`, read by path and symbol: the findings **F1–F24** (Wrong / Exists / Gap / Rule / Open), what the **in-job** path does today end to end (§1), what the **cloud** path does today end to end (§2), the two readings of "the api-key review" (§4), **the security analysis as an attacker would see it** (§5), an **UNVERIFIED** section (§6), the decisions **D1410–D1429** each with a recommendation, an alternative and **the owner's answer of 2026-11-07** (§7), the number block and how it was read (§8), and the owner's **Open items**, each with the answer it now carries (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
+| [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK8**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot — **after 0.20.0**, from D1421 (§4) — the owner-run live check **Check 330** (§5) and the gates a task may not start without — the five the answers of 2026-11-07 satisfy, and the two that stand (§6) |
 | `README.md` | This file: the status, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
 ## The two things to read first
@@ -83,11 +93,14 @@ upstreams in one run and asserts the reviewer's call reached Anthropic (**F4**).
 
 ## What this folder is not
 
-- **It is not an approval, and it is not a decision.** D1410–D1429 are questions with a recommended
-  answer each; the owner's-answer cell is empty in every row. No recommendation here has been taken.
+- **It is answered, and it is a decision.** D1410–D1429 are questions with a recommended answer
+  each, and the owner took **every recommendation on 2026-11-07**
+  ([reconciliation.md](reconciliation.md) §7, the dated answer in each row), approving every task in
+  [implementation-plan.md](implementation-plan.md) the same day (owner: "All tasks approved.
+  Jobmax").
 - **It is not a second answer to the owner's cut of 2026-11-06.** The owner removed the api-key
   review from 0.20.0 deliberately, and nothing here reopens the release slot: **D1421** asks whether
-  to, and the plan books no release until it is answered.
+  to, and the answer of 2026-11-07 is **after 0.20.0**, so the cut stands.
 - **It is not a plan to add a second credential path.** The ask's own instruction — "decide how it
   fits the existing machinery rather than adding a parallel one" — is the constraint every task in
   [implementation-plan.md](implementation-plan.md) is written to, and **§3** of that file says what
@@ -103,39 +116,38 @@ upstreams in one run and asserts the reviewer's call reached Anthropic (**F4**).
 
 | Block | State |
 | --- | --- |
-| **D1410–D1429** | this work's block, read on 2026-11-07 over `origin/main` (`aa26f322f`) and every open pull request's head. The highest decision written anywhere on `main` is **D1409** (`docs/catalog-build-context`, merged as #1805), and a `git grep` for the decision numbers in the `D141x` and `D142x` ranges over `main` and over all open heads returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1410–D1429 are all written** in [reconciliation.md](reconciliation.md) §7 and **not one is answered**; none is reserved unused. The reading, with its commands, is §8 |
+| **D1410–D1429** | this work's block, read on 2026-11-07 over `origin/main` (`aa26f322f`) and every open pull request's head. The highest decision written anywhere on `main` is **D1409** (`docs/catalog-build-context`, merged as #1805), and a `git grep` for the decision numbers in the `D141x` and `D142x` ranges over `main` and over all open heads returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1410–D1429 are all written** in [reconciliation.md](reconciliation.md) §7 and **every one of them is answered, as recommended, on 2026-11-07**; none is reserved unused. The reading, with its commands, is §8 |
 | **Check 330** | this work's live check (implementation-plan §5), far above the register's highest **written** `## Check` section: **290** at this folder's own reading ([reconciliation.md](reconciliation.md) §8, `origin/main` at `aa26f322f`, 2026-11-07) and **291** since `docs/image-env`'s check was written (`docs/gcp-live-checklist.md`, the image-`ENV` work's check: what a catalog image's `ENV` does in a run, itself **NOT RUN**). **292 is claimed** by `docs/catalog-build-context` (merged on `main` as #1805); **293–299** are claimed by nobody; `docs/stateless-orchestrator` claims 300–309 and `docs/cli-output-console-graph` claims 310–314, both below this block. Like every claim above the highest written section, 330 is **claimed, not reserved**: the register's rule is that a claim is settled at its merge, and whichever of two claims merges second renumbers itself. The register's own row and section are written by the task that implements the check, under the number free **at that merge** |
 | **Findings F1–F24** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §1 and §2, taking no number any other work reads |
 | **AK1–AK8** | this folder's task series, in [implementation-plan.md](implementation-plan.md). Distinct from `docs/cloud-senior-review`'s **CSR1–CSR18** and from `docs/in-job-review`'s **Q1–Q17** on purpose: two series in one tree that share letters would be read as one |
 
 ## Open items
 
-These are the owner's, and none is decided here. The full text, with the reason each one exists, is
+These were the owner's, and **all six are closed: he answered every one on 2026-11-07, each as
+recommended.** The full text, with the reason each one existed and the answer it carries, is
 [reconciliation.md](reconciliation.md) §9; this is the index.
 
-1. **D1410 — blocking, and first.** The ask names **one** thing, "the api-key review path", and the
-   tree has **two** independent reviews: the in-job stage and the cloud review run. **No task in
-   [implementation-plan.md](implementation-plan.md) may start before this is answered**, because the
-   answer decides which half the plan is about — and the in-job half needs a name and a test, while
-   the cloud half needs the credentials service changed **and is refused outright today**: every
-   review launch is gated by `reviewJobAdmitted`, which is `false` until E7 (**F10**, **U6**). An
-   owner who wants something runnable soonest should read the in-job half first for that reason alone.
-2. **D1421 — the release.** The owner cut the api-key review from 0.20.0 on 2026-11-06. This design
-   reopens nothing: whether the Anthropic-key half ships in 0.20.0, in the release after it, or not
-   at all is the owner's.
-3. **D1412 / D1413 — the in-job fork.** The run has exactly one Anthropic key (**F6**), and a
-   project that publishes a stage account for `review` takes the stage **off** the gateway and onto
-   the account (**F7**) — so an owner who wants the review on the key has no way to say so. Whether
-   the review gets a secret of its own, and which of the two wins when both are configured, changes
-   whether the first slice is a test or a config key.
-4. **D1416 / D1417 — the cloud fork, and the one that changes the slice's size.** The Anthropic-key
-   half needs the pairing to name the project's own key (**F12**, **F13**); the OpenRouter half
-   needs the provider-key apparatus of §6.7 (**F15**). The owner decides whether one design carries
-   both.
-5. **D1414 — the `oauth` run.** Under `agent.auth: oauth` the gateway is refused
+1. **D1410 — answered: both slices.** The ask names **one** thing, "the api-key review path", and the
+   tree has **two** independent reviews: the in-job stage and the cloud review run. The gate that
+   carried — **no task in [implementation-plan.md](implementation-plan.md) may start before this is
+   answered** — is lifted, and the plan covers both halves. The in-job half needs a name and a test,
+   while the cloud half needs the credentials service changed **and is refused outright today**: every
+   review launch is gated by `reviewJobAdmitted`, which is `false` until E7 (**F10**, **U6**).
+2. **D1421 — answered: after 0.20.0.** The owner cut the api-key review from 0.20.0 on 2026-11-06,
+   and the answer keeps that cut, so this design reopens nothing.
+3. **D1412 / D1413 — answered: no secret of its own, and the key wins when the owner asks for it
+   explicitly.** The run has exactly one Anthropic key (**F6**), and a project that publishes a
+   stage account for `review` takes the stage **off** the gateway and onto the account (**F7**) — so
+   the answer fixes which of the two wins; the spelling of that explicit request is the plan's to
+   design.
+4. **D1416 / D1417 — answered: the Anthropic key first, paired to the project's own key.** The
+   Anthropic-key half needs the pairing to name the project's own key (**F12**, **F13**); the
+   OpenRouter half needs the provider-key apparatus of §6.7 (**F15**), and the answer is that one
+   design does not carry both.
+5. **D1414 — answered: no.** Under `agent.auth: oauth` the gateway is refused
    (`internal/runner/routing.go` `GatewayOn`), so a subscription-coder run can never have an api-key
-   review (**F8**). Whether that stays is the owner's.
-6. **D1415 — the record.** `runstore.StageTiming.Credential`'s stated meaning is "the credential
-   that served this stage **when it was not the run's own**", so recording one for a stage the run's
-   own key served is a meaning change under an existing name — which CLAUDE.md forbids — and the
-   honest shapes are a new field or nothing at all (**F18**).
+   review (**F8**), and it stays that way.
+6. **D1415 — answered: a new additive field.** `runstore.StageTiming.Credential`'s stated meaning is
+   "the credential that served this stage **when it was not the run's own**", so recording one for a
+   stage the run's own key served is a meaning change under an existing name — which CLAUDE.md
+   forbids — so the answer is the new field and not a new value on `credential` (**F18**).

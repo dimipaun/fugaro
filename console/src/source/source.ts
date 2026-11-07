@@ -239,6 +239,28 @@ export interface FugaroSource {
    */
   planStatus(args: ValidatedArguments): Promise<Snapshot>
   /**
+   * graphRead is the dependency graph as one versioned document (`graph
+   * --json`, the graph plan's CG9a, contract §6.22): the scopes that answered,
+   * the nodes and edges they hold, and the read's own warnings.
+   *
+   * It is the one read here whose argument is a **scope**, and the one whose
+   * answer is what decides whether that argument may be used again: the CLI's
+   * `--source` is closed (`all`, `coordinator`, `orchestrator:<id>`,
+   * `local:<id>`) and this source holds a value to the *further* rule that a
+   * previous read of the same installation listed it -- an id a renderer made up
+   * is refused before any child runs, whatever it looks like (`NO_GRAPH_SCOPE`
+   * below, finding F21).
+   *
+   * **It needs no checkout**, which is the other half of why it exists: every
+   * scope the CLI has a reader for today is the project's own stored view, read
+   * through the caller's credential, so an installation with no checkout is
+   * answered rather than refused (unlike `planStatus` above). A scope that is
+   * down is a `sources[]` row with its own state and reason (contract §6.22,
+   * H3); a *refused* scope is an error with no document at all -- and that
+   * distinction is what a screen draws its empty state from.
+   */
+  graphRead(args: ValidatedArguments): Promise<Snapshot>
+  /**
    * coordinatorStatus is the project view: every repository the installation's
    * local config lists, drawn from the view the coordinator's sweep last stored
    * (`coordinator status --from-store --all --json`, Bitbucket credentials
@@ -462,6 +484,38 @@ export const SETTINGS_EDIT_MOVED =
   'the installation changed since this edit was read: nothing was written; open the settings again'
 
 /**
+ * GRAPH_SCOPE_ALL is the graph read's default scope and its only **selector**:
+ * the CLI's `--source` defaults to it, and it is the read a Graph screen opens
+ * on. It is deliberately not a member of a document's `sources[]` -- there is no
+ * source called `all`, only the set of them (contract §6.22) -- which is why the
+ * membership rule below admits it beside the ids a read listed rather than
+ * requiring it to appear.
+ */
+export const GRAPH_SCOPE_ALL = 'all'
+
+/**
+ * NO_GRAPH_SCOPE is what `graph.read` answers for a scope no read of this
+ * installation has listed. The CLI's `--source` is closed, and `src/main/ipc.ts`
+ * already refuses anything outside that closed set; this is the *further* rule
+ * the source holds, and the reason it is here rather than there: the values the
+ * CLI accepts include `orchestrator:<id>` and `local:<id>` for **any** id of the
+ * right shape, so a renderer could name one that exists nowhere -- and a path, a
+ * provider call or a graph built from a made-up scope is a question this console
+ * must not ask on a screen's word (F21). So the ids a `graph.read` may be asked
+ * for are the ones its own previous answer's `sources[]` carried: the read
+ * teaches the surface the scopes that exist, and nothing else is ever spawned.
+ *
+ * `all` is the one value that is not a source of that array: it is the selector
+ * rather than a source, and the command's own default, so it is admitted beside
+ * them. (A screen opens on the plan scope, not on `all`: the Graph reaches this
+ * read when that scope refuses for want of a checkout.)
+ * The refusal is the console's own sentence, like `NO_PLAN_CHECKOUT`'s: no child
+ * ran, so there is no CLI sentence to show.
+ */
+export const NO_GRAPH_SCOPE =
+  'this scope is not one the last graph read listed: re-read the graph and pick a scope it shows'
+
+/**
  * handlersFor answers the whole IPC surface from one source. It is a function
  * rather than a class because the surface is a table: one handler per operation,
  * each a one-line call.
@@ -550,6 +604,7 @@ export function handlersFor(
     'runs.stats': (args) => source.statsRuns(args),
     'runs.summary': (args) => source.summaryRuns(args),
     'plan.status': (args) => source.planStatus(args),
+    'graph.read': (args) => source.graphRead(args),
     'coordinator.status': (args) => source.coordinatorStatus(args),
     'coordinator.show': (args) => source.coordinatorShow(args),
     'coordinator.intents': (args) => source.coordinatorIntents(args),

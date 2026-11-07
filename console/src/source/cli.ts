@@ -67,7 +67,7 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { SourceRefusal, refusalFrom, NO_PLAN_CHECKOUT, SETTINGS_EDIT_MOVED } from './source'
+import { SourceRefusal, refusalFrom, GRAPH_SCOPE_ALL, NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SETTINGS_EDIT_MOVED } from './source'
 import type {
   FeedEnd,
   FugaroSource,
@@ -128,6 +128,22 @@ export const FEED_STALE_AFTER_SECONDS = 45
  * the interval answers that document; a call outside it runs the child.
  */
 export const PLAN_STATUS_MIN_INTERVAL_MS = 60_000
+
+/**
+ * GRAPH_READ_MIN_INTERVAL_MS is the same floor for `graph.read` (the graph
+ * plan's CG9a): the read is one child per scope, it walks the project's stored
+ * view and joins the nodes it holds, and the document changes when the
+ * coordinator's sweep writes rather than per frame. The plan gives the graph
+ * read the plan read's cadence -- "on demand, at most once a minute" -- and a
+ * screen whose scope dropdown is clicked through would otherwise spawn once per
+ * press for a document that cannot have moved.
+ *
+ * What is cached is the snapshot the read produced, stamped with the console
+ * clock of that read and never re-stamped, exactly as `PLAN_STATUS_MIN_INTERVAL_MS`
+ * above; the scope is part of the key, because one scope's document is not
+ * another's.
+ */
+export const GRAPH_READ_MIN_INTERVAL_MS = 60_000
 
 /**
  * FeedSilence is what the console knows about how long the feed has been quiet:
@@ -505,6 +521,18 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('plan.status', args)
   }
 
+  /** graphRead reads `graph --json`, which is the one read here whose answer
+   * decides what the *next* call of the same read may ask for: the scopes its
+   * document listed are the values a later `--source` may carry, and that check
+   * is the binding's (`createBoundSource`), not this class's -- `CliSource`
+   * builds the argv it is handed and would spawn a scope that exists nowhere.
+   * Nothing here names a path, a directory or an id: the scope is the row's one
+   * declared argument (`src/main/spawn.ts`), and a document the CLI refuses is a
+   * refusal this class raises like any other. */
+  graphRead(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('graph.read', args)
+  }
+
   /** coordinatorStatus reads `coordinator status --from-store --all --json`,
    * which is the one read here that touches nothing on this machine and no
    * credential: the child reads the caller's own database node through
@@ -821,6 +849,32 @@ function bindingKey(installation: BoundInstallation): string {
 }
 
 /**
+ * graphSourcesOf is the scopes one graph document **listed**: the `source` of
+ * every well-shaped member of its `sources[]`, read out of the raw answer rather
+ * than out of a decoded view, because this is what the read below admits a later
+ * argument against and the decode happens in the renderer, on the other side of
+ * the seam.
+ *
+ * A member that is not an object, or whose `source` is not a string, is skipped:
+ * the document is decoded somewhere else and refused there if it is malformed,
+ * and a value this function cannot read is one that must not become an admitted
+ * scope. Nothing is invented for a document that carries no `sources[]` at all,
+ * which is what makes a malformed answer teach the surface nothing rather than
+ * everything.
+ */
+function graphSourcesOf(document: JSONDoc): readonly string[] {
+  const sources = document['sources']
+  if (!Array.isArray(sources)) return []
+  const found: string[] = []
+  for (const member of sources) {
+    if (member === null || typeof member !== 'object' || Array.isArray(member)) continue
+    const source = (member as Record<string, unknown>)['source']
+    if (typeof source === 'string') found.push(source)
+  }
+  return found
+}
+
+/**
  * createBoundSource is the join between the console's own state and the data
  * plane: every read resolves the installation that is active **now**, builds the
  * one source for it if there is not one already, and delegates.
@@ -840,14 +894,19 @@ function bindingKey(installation: BoundInstallation): string {
  *     **lazy** one: it attaches on the first `current()`, and the same argument
  *     object answers the same feed object while it is live -- the contract the
  *     interface states, kept here rather than only under it.
- *   - **`planStatus` is the one read that decides something here** instead of
- *     delegating a one-liner: it refuses an installation with no checkout
- *     **before** `resolve` is reached, so nothing is spawned for a question with
- *     no directory to be asked about, and it answers the document it read within
- *     `PLAN_STATUS_MIN_INTERVAL_MS` rather than running the child again. Both
- *     belong on this side of the seam because both are about the *binding*: the
- *     checkout is the binding's, and the document is a function of the binding
- *     and the arguments.
+ *   - **`planStatus` and `graphRead` are the two reads that decide something
+ *     here** instead of delegating a one-liner. `planStatus` refuses an
+ *     installation with no checkout **before** `resolve` is reached, so nothing
+ *     is spawned for a question with no directory to be asked about, and it
+ *     answers the document it read within `PLAN_STATUS_MIN_INTERVAL_MS` rather
+ *     than running the child again. `graphRead` holds the other two rules the
+ *     two reads before it cannot hold themselves: a scope is admitted only if a
+ *     previous answer of this installation **listed** it (`NO_GRAPH_SCOPE`, F21
+ *     -- the CLI's pattern admits any well-shaped id, and a renderer must not be
+ *     able to name one that exists nowhere), and the scope is read at
+ *     `GRAPH_READ_MIN_INTERVAL_MS`. Both belong on this side of the seam because
+ *     both are about the *binding*: the checkout is the binding's, and so is the
+ *     set of scopes its project has.
  */
 export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   // The two seams are this function's own and are not `CliSource` options, so
@@ -868,6 +927,31 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * same defect as a live feed for one.
    */
   const planReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
+
+  /**
+   * graphReads is the same cache for `graph.read`, keyed by the binding *and*
+   * the scope: one scope's document is not another's, and the read is one child
+   * per scope, so two scopes must not share a floor.
+   */
+  const graphReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
+
+  /**
+   * graphScopes is what each binding's graph read has **taught** this source: the
+   * union of the `sources[].source` values every answered document of that
+   * binding has listed. It is the whole of the argument's allow-list -- nothing
+   * else admits an id, and `'all'` is admitted beside it as the selector rather
+   * than as a member (`GRAPH_SCOPE_ALL`).
+   *
+   * **The union, not the last answer's set.** A scoped read's document lists that
+   * one scope, so replacing would drop the ids an earlier `all` read had listed
+   * while a screen still draws them in its dropdown -- and a scope a person can
+   * still see must not be refused. A scope that has since gone is admitted too;
+   * the CLI answers it as a state or a refusal with a sentence, which is the
+   * honest answer, and it is a value the CLI itself named either way. The map is
+   * cleared wherever `feeds` is, for the same reason the caches above are: what
+   * one installation's project lists says nothing about another's.
+   */
+  const graphScopes = new Map<string, Set<string>>()
 
   /** nowMs is the console's own clock in milliseconds, the one the sources are
    * built with (`options.clock`), so a test that moves the clock moves this
@@ -934,6 +1018,8 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     bound = null
     feeds.clear()
     planReads.clear()
+    graphReads.clear()
+    graphScopes.clear()
     epoch += 1
     const mine = epoch
     const source = (async (): Promise<CliSource> => {
@@ -1048,6 +1134,8 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     pending = null
     feeds.clear()
     planReads.clear()
+    graphReads.clear()
+    graphScopes.clear()
     // A build in flight is invalidated here rather than awaited: it is for an
     // installation that is gone, and it closes its own source when it lands.
     epoch += 1
@@ -1132,6 +1220,68 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
         entry.at = nowMs()
       }
       reading.then(settled, settled)
+      return reading
+    },
+    /**
+     * graphRead is the surface's other read with rules of its own: **which
+     * scopes may be named**, and the cadence.
+     *
+     * The scope is the half of this that is a security boundary rather than a
+     * cost. `fugaro graph --source` is closed to `all`, `coordinator` and an id
+     * of the right shape (`H1`) and `src/main/ipc.ts` refuses everything else
+     * before argv is built -- but the id grammar admits an id that exists
+     * nowhere, so a renderer could name one and have this process spawn a read
+     * for a scope no project has (F21). So an id is admitted here only when a
+     * **previous answer of this installation listed it**
+     * (`graphScopes` above): the read teaches the surface which scopes exist,
+     * and nothing else is ever spawned. `all` is the one value admitted without
+     * being listed, because it is the selector rather than a source -- it is what
+     * a caller that names no scope is answered with, and what the Graph asks for
+     * when the plan scope refuses for want of a checkout, never what a screen
+     * opens on. The refusal is `NO_GRAPH_SCOPE`, thrown **before**
+     * `resolve` -- no binary is probed and no child runs. `graph.read` is
+     * answered whatever the installation's checkout is: the read needs none.
+     *
+     * The cadence is `GRAPH_READ_MIN_INTERVAL_MS`, keyed by the binding *and*
+     * the scope, on the same terms as `planStatus`'s above: the entry is the read
+     * itself, in flight as well as answered, and the clock is read after the
+     * child finished.
+     *
+     * **What the answer listed is recorded whatever the caller does with it**, so
+     * a scope a screen has stopped looking at is still admitted later in the same
+     * binding; a refused read records nothing, since it has no document to read
+     * scopes out of.
+     */
+    graphRead: async (args) => {
+      const installation = deps.installation()
+      if (installation === null) throw noInstallation()
+      const binding = bindingKey(installation)
+      const scope = typeof args['source'] === 'string' ? args['source'] : GRAPH_SCOPE_ALL
+      if (scope !== GRAPH_SCOPE_ALL && !(graphScopes.get(binding)?.has(scope) ?? false)) {
+        throw new SourceRefusal(NO_GRAPH_SCOPE)
+      }
+      const key = `${binding}\u0000${scope}`
+      const cached = graphReads.get(key)
+      if (cached !== undefined && (cached.at === null || nowMs() - cached.at < GRAPH_READ_MIN_INTERVAL_MS)) {
+        return cached.reading
+      }
+      const reading = read('graph.read', (source) => source.graphRead(args))
+      const entry: { readonly reading: Promise<Snapshot>; at: number | null } = { reading, at: null }
+      graphReads.set(key, entry)
+      const settled = (): void => {
+        entry.at = nowMs()
+      }
+      reading.then(settled, settled)
+      void reading.then(
+        (snapshot) => {
+          for (const source of graphSourcesOf(snapshot.document)) {
+            const listed = graphScopes.get(binding) ?? new Set<string>()
+            listed.add(source)
+            graphScopes.set(binding, listed)
+          }
+        },
+        () => undefined,
+      )
       return reading
     },
     /** coordinatorStatus has no precondition and no cadence: the read touches

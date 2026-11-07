@@ -1,6 +1,8 @@
 # Reconciliation: the failure-classes design against the code on `main`
 
-**Status: plan only; nothing is implemented; no task approved.** This file reads
+**Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
+(owner: "All tasks approved. Jobmax"); of them, FC1 is built on `main` and FC2–FC9 are not started.**
+This file reads
 [spec.md](spec.md) — a verbatim copy of `docs/design/failure-classes.md` — against the tree of `main`
 at **`56c91f66`** (2026-11-07), path by path and symbol by symbol. Everything below was resolved
 against that tree while writing it; the two commands that read the numbers this work holds are in §7,
@@ -20,9 +22,13 @@ disagree about what the design *says*, spec.md wins. Where a task in
 (**F1–F36**) and decisions (**D1450–D1469**) win, and the task is wrong.
 
 **The design's decisions are not this file's.** §8 D1–D9 and §9 O1–O6 of the design are the owner's,
-and **nothing here answers one of them** — not one row of §6 re-asks one, and §9 repeats them as the
-owner's. The design's own status line is the one a reader must take from spec.md:
-*"a design; nothing is built; no decision below is answered."*
+and **this file answers none of them** — not one row of §6 re-asks one, and §9 repeats them as the
+owner's; the decisions §6 does carry are the plan's own, D1450–D1469, and the owner answered every one
+of them on 2026-11-07 as this file recommended. The design's status line as **this folder's copy**
+carries it is the dated one — *"a design; nothing is built; no decision below is answered."* — and the
+design on `main` has moved past it: the copy's sentence speaks for the design's own decisions, which
+the design's own status now says stay the owner's, and the line records the one thing that has shipped
+— *"a design, and its FC1 has shipped; the rest of §10 is not built."*
 
 ---
 
@@ -37,9 +43,9 @@ the design against the tree:
 
 | Test | Line | What it holds |
 | --- | --- | --- |
-| `TestDocsFailureClassDesignPinsTheVocabulary` | `internal/cli/docs_pr_state_test.go:138` | the status line, the nineteen-value vocabulary (as a literal list in the test, not read from the document), every sentence an implementer acts on — `failure_class`, `stays const 1`, the `recordEnd` signature, `--group-by failure_class`, `FailuresTable`, `failure_class_high`, `failure_class_new`, `ClassOf`, `stageFailureClass`, the HARD RULE — the backlog census it promises not to move, and the file its own pin lives in |
-| `TestDocsFailureClassCensusMatchesTheRunner` | `internal/cli/docs_pr_state_test.go:250` | the 36-statements / 24-functions / 8-files census, **counted from `internal/runner`'s own files** with the regexp `\brec\.Status[^=!]*= runstore\.Status`, so a new writer reddens the design and the pin together |
-| `TestDocsFailureClassDesignCitationsResolve` | `internal/cli/docs_pr_state_test.go:333` | every `path:line` the design cites names exactly one file of the tree and a line that is **inside** that file, and every relative `:NNN` resolves to its paragraph's nearest preceding citation |
+| `TestDocsFailureClassDesignPinsTheVocabulary` | `internal/cli/docs_pr_state_test.go:127` | the status line, the nineteen-value vocabulary (**read from `failure.Classes()` in `internal/failure`, and held to the document in both directions** — FC1's own change, which replaced the literal list this row described before it: the table's rows are checked against the slice, the slice against the table, the two orders against each other, and the sentence's count word against `len(Classes())`), every sentence an implementer acts on — `failure_class`, `stays const 1`, the `recordEnd` signature, `--group-by failure_class`, `FailuresTable`, `failure_class_high`, `failure_class_new`, `ClassOf`, `stageFailureClass`, the HARD RULE — the backlog census it promises not to move, and the file its own pin lives in |
+| `TestDocsFailureClassCensusMatchesTheRunner` | `internal/cli/docs_pr_state_test.go:303` | the 36-statements / 24-functions / 8-files census, **counted from `internal/runner`'s own files** with the regexp `\brec\.Status[^=!]*= runstore\.Status`, so a new writer reddens the design and the pin together |
+| `TestDocsFailureClassDesignCitationsResolve` | `internal/cli/docs_pr_state_test.go:386` | every `path:line` the design cites names exactly one file of the tree and a line that is **inside** that file, and every relative `:NNN` resolves to its paragraph's nearest preceding citation |
 
 **What that pin does not check, and it matters here: it does not check that the symbol is on the
 cited line**, only that the line exists. Every `runner.go` citation above `:3700` has drifted by four
@@ -60,17 +66,17 @@ every reader of `result.json`'s shape, and what a new field on it costs each one
 
 ### 2.1 `result.json` and its schema
 
-`runstore.Record` (`internal/runstore/runstore.go:651`) carries `Version` (`:652`), `Status` (`:681`),
-`Stage` (`:682`), `Outcome` (`:683`), `Reason` (`:684`, `json:"reason,omitempty"`) and, when the run
-halted, `Halt *Halt` (`:744`) whose `Reason` is the closed `HaltReason` (`:44`).
+`runstore.Record` (`internal/runstore/runstore.go:688`) carries `Version` (`:689`), `Status` (`:718`),
+`Stage` (`:719`), `Outcome` (`:720`), `Reason` (`:721`, `json:"reason,omitempty"`) and, when the run
+halted, `Halt *Halt` (`:790`) whose `Reason` is the closed `HaltReason` (`:45`).
 `schemas/result.schema.json` declares `"additionalProperties": false` (`:7`), `"required"` without any
 of the optional blocks (`:8`) and `"version": { "const": 1 }` (`:10`), and
-`TestResultSchemaAcceptsRunnerRecords` (`schemas/schemas_test.go:694`) validates a fully populated
+`TestResultSchemaAcceptsRunnerRecords` (`schemas/schemas_test.go:696`) validates a fully populated
 record against it. **A property added to the schema and not to `Record`, or the reverse, is red in the
 same commit** — the two are one edit, which is what the design says and what the tree shows.
 
 The additive precedent the design leans on is real, and its test is
-`TestResultSchemaAcceptsARecordWithoutArtifacts` (`schemas/schemas_test.go:1324`): a record written
+`TestResultSchemaAcceptsARecordWithoutArtifacts` (`schemas/schemas_test.go:1331`): a record written
 before a field existed validates with the field absent, and the field is not in `required`.
 
 ### 2.2 `runs ls --json`: `runview.Row` and `lsDoc`
@@ -248,16 +254,16 @@ own pair — `:1058`, declared `:979` — is the one this table holds.
 
 ### 3.2 `internal/runstore`
 
-`Status` (`:26`) is `running`, `succeeded`, `failed`, `infra_error`, `cancelled`, `halted` — the closed
+`Status` (`:27`) is `running`, `succeeded`, `failed`, `infra_error`, `cancelled`, `halted` — the closed
 set `TestResultSchemaStatusesAgreeWithGo` would have held if that test existed (F15).
-`Outcome` (`:116`) is `ready`, `draft`, `none`, `reviewed`. `HaltReason` (`:44`) is the closed set the
-design's three halt families read: `kill_switch` (`:47`), the budget family `run_cap`, `repo_daily_cap`,
-`global_daily_cap`, `no_cap`, `token_cap` (`:48`–`:52`), `budget_unavailable` (`:53`) and
-`budget_token_expired` (`:54`), the credential family `no_credential` (`:61`) and `creds_rules_denied`
-(`:70`), and the governance family `stage_budget`, `review_ratio`, `fanout`, `review_scope`,
-`expected_exceeded` (`:81`–`:95`) with `GovernanceHaltReasons` (`:103`) the one slice the checkpoint
-schema and the digest are pinned to. The design's `halted_credential` row cites `:54–70`, which misses
-`HaltBudgetUnavailable` at `:53` (F17).
+`Outcome` (`:117`) is `ready`, `draft`, `none`, `reviewed`. `HaltReason` (`:45`) is the closed set the
+design's three halt families read: `kill_switch` (`:48`), the budget family `run_cap`, `repo_daily_cap`,
+`global_daily_cap`, `no_cap`, `token_cap` (`:49`–`:53`), `budget_unavailable` (`:54`) and
+`budget_token_expired` (`:55`), the credential family `no_credential` (`:62`) and `creds_rules_denied`
+(`:71`), and the governance family `stage_budget`, `review_ratio`, `fanout`, `review_scope`,
+`expected_exceeded` (`:82`–`:96`) with `GovernanceHaltReasons` (`:104`) the one slice the checkpoint
+schema and the digest are pinned to. The design's `halted_credential` row cites `:55–71`, which misses
+`HaltBudgetUnavailable` at `:54` (F17).
 
 `runstore` imports no Fugraro package of its own for these values (`internal/rigor`, `internal/task`
 and `internal/verify` are imported for other fields), which is the property the vocabulary's own
@@ -302,14 +308,14 @@ be held to it) or **Open** (the design leaves it to the owner).
   drops (`mobile/src/feed/document.test.js:69`). `shared/` reads neither. → **D1458**.
 - **F15 — a test that does not exist.** Design §7 and §3 call the shape for an enum-mirroring test
   "`TestResultSchemaStatusesAgreeWithGo`". No such test exists anywhere in the tree. The shape is
-  `TestResultSchemaHaltReasonsAgreeWithGo` (`schemas/schemas_test.go:1978`), with
-  `TestResultSchemaCheckpointAgreeWithGo` (`:1910`) and `TestResultSchemaReviewScopeReasonsAgreeWithGo`
-  (`:2027`) as its siblings. → **FC1** names the sibling it copies.
+  `TestResultSchemaHaltReasonsAgreeWithGo` (`schemas/schemas_test.go:1985`), with
+  `TestResultSchemaCheckpointAgreeWithGo` (`:1917`) and `TestResultSchemaReviewScopeReasonsAgreeWithGo`
+  (`:2094`) as its siblings. → **FC1** names the sibling it copies.
 - **F16 — `api.LoadRows`.** Design §6.1: "the listing already reads the window (`api.LoadRows`,
   `internal/cli/runs.go`)". The symbol is `(*cli.Cloud).LoadRows`, declared in
   `internal/cli/api.go:301`; `internal/cli/runs.go:109` names it in a comment only.
 - **F17 — the credential family's range.** Design §3's `halted_credential` row cites
-  `runstore.go:54–70`. `HaltBudgetUnavailable` is at `:53`, outside it; the four names span `:53–70`.
+  `runstore.go:55–71`. `HaltBudgetUnavailable` is at `:54`, outside it; the four names span `:54–71`.
 - **F18 — the `finalize` switch.** Design §1 and §4.2 cite `internal/runner/runner.go:4156–4165` for
   the switch "whose four cases are four of the 36", and `:4155` for `r.rec.Reason = reason`. The four
   cases are at `:4162`, `:4164`, `:4166` and `:4168`, and the reason assignment is at `:4159`.
@@ -334,7 +340,7 @@ be held to it) or **Open** (the design leaves it to the owner).
 
 ### Exists
 
-- **F1 — the free text is all there is.** `runstore.Record.Reason` (`:684`) is the only place a
+- **F1 — the free text is all there is.** `runstore.Record.Reason` (`:721`) is the only place a
   non-success run's *why* is kept; `runview.Row.Reason` (`:106`) copies it to the listing; nothing
   groups it. Verified by reading both, and by `fugaro diagnose`'s one-run shape (§2.3).
 - **F2 — the 36/24/8 census**, reproduced from the tree (§3.1) and held by
@@ -347,11 +353,11 @@ be held to it) or **Open** (the design leaves it to the owner).
 - **F6 — nothing groups failures**: `runs stats`'s census (`internal/userstats/userstats.go:125`,
   `:196`), `runs summary`'s states (`internal/cli/runs_summary.go:62`), the digest's six flags
   (`internal/digest/digest.go:79`–`:93`, `FlagNames` `:97`) and `diagnose` (§3.3).
-- **F7 — the halt vocabulary and `GovernanceHaltReasons`** (`internal/runstore/runstore.go:44`–`:103`),
+- **F7 — the halt vocabulary and `GovernanceHaltReasons`** (`internal/runstore/runstore.go:45`–`:104`),
   the closed set the design's three halt classes translate.
 - **F8 — the schema's shape**: `additionalProperties: false` (`schemas/result.schema.json:7`),
-  `version` `const 1` (`:10`), the additive precedent's test (`schemas/schemas_test.go:1324`) and the
-  fully-populated-record test (`:694`).
+  `version` `const 1` (`:10`), the additive precedent's test (`schemas/schemas_test.go:1331`) and the
+  fully-populated-record test (`:696`).
 - **F9 — the five readers of a status change** (design §8 D5): `RUN_FAILURE_OUTCOMES`
   (`console/src/renderer/screens/run.ts:1324`), `mobile/` (§2.5), the history census
   (`internal/userstats/userstats.go:196`), `runs summary` (`internal/cli/runs_summary.go:62`) and
@@ -393,8 +399,8 @@ be held to it) or **Open** (the design leaves it to the owner).
   `plugin/skills/working/reference/periodic-reviews.md:54`, which names the four patterns and what each
   one means). → **D1463**.
 - **F25 — this folder's copy is falsified by FC2.** `TestDocsFailureClassCensusMatchesTheRunner`
-  (`internal/cli/docs_pr_state_test.go:250`) fatals on `statements == 0`, which is exactly the state
-  `recordEnd` produces; `TestDocsFailureClassDesignPinsTheVocabulary` (`:138`) pins sentences of the
+  (`internal/cli/docs_pr_state_test.go:303`) fatals on `statements == 0`, which is exactly the state
+  `recordEnd` produces; `TestDocsFailureClassDesignPinsTheVocabulary` (`:127`) pins sentences of the
   design FC2 rewrites. So FC2 edits the design **and its pin**, and `spec.md`'s copy is a snapshot of
   the pre-FC2 document. Nothing in the tree pins this folder's copy, and nothing should.
 - **F32 — the contract's rows land with the Go keys, not two tasks later.** The design's §10.2 gives
@@ -464,9 +470,10 @@ be held to it) or **Open** (the design leaves it to the owner).
   and amended the row's narrative in the same commit, `docs/rigor-modes/reconciliation.md:752` — and
   the design quotes the count as one it does not move), so **this folder adds no test file** and the
   plan's tasks write their pins into the existing `docs_pr_state_test.go`. The design's own promise —
-  it kept `docs/backlog/README.md` at "2 items: 2 open, 0 closed, 0 dropped" (`:13`) — is quoted by the
-  vocabulary pin, which reads `docs/backlog/README.md` at `internal/cli/docs_pr_state_test.go:210` and
-  fails when the quote is gone (`:218`)) and holds.
+  it kept `docs/backlog/README.md` at "2 items: 2 open, 0 closed, 0 dropped"
+  (`docs/backlog/README.md:13`) — is quoted by the vocabulary pin, which reads `docs/backlog/README.md`
+  at `internal/cli/docs_pr_state_test.go:248` and fails when the line is gone (`:251`) or the design
+  stopped quoting it (`:255`).
 - **F29 — the HARD RULE, and the one word in it that needs reading.** A field addition owes no operator
   step: `fugaro update` is the whole upgrade, the policy node is untouched, no schema version moves, no
   image contract changes and no plugin pin **migration** is owed. The design's §10.3 states it and the
@@ -485,8 +492,9 @@ be held to it) or **Open** (the design leaves it to the owner).
 
 - **F31 — the design's own decisions.** §8 D1–D9 and §9 O1–O6 are unanswered, and this file does not
   answer one of them (§9). The plan's gates (§7 of the implementation plan) name D-numbers from §6 and
-  never an Open item: an unanswered Open item is a reason a *task* may not start, and it is stated as
-  such rather than folded into a decision row.
+  never an Open item: an Open item is the owner's own question and is not a decision row in disguise,
+  and the plan states, rather than folds away, which of its tasks an Open item would hold — here,
+  none of them.
 
 ---
 
@@ -494,7 +502,7 @@ be held to it) or **Open** (the design leaves it to the owner).
 
 | Format | What this work adds | What moves | Version |
 | --- | --- | --- | --- |
-| `result.json` (`schemas/result.schema.json`, `runstore.Record`) | `failure_class`, an enum of the nineteen values, **not** in `required` | the schema's enum and `Record`'s field in one commit, or `TestResultSchemaAcceptsRunnerRecords` (`schemas/schemas_test.go:694`) is red | **stays `const 1`** (`schemas/result.schema.json:10`) |
+| `result.json` (`schemas/result.schema.json`, `runstore.Record`) | `failure_class`, an enum of the nineteen values, **not** in `required` | the schema's enum and `Record`'s field in one commit, or `TestResultSchemaAcceptsRunnerRecords` (`schemas/schemas_test.go:696`) is red | **stays `const 1`** (`schemas/result.schema.json:10`) |
 | `runs ls --json` (`lsDoc` + `runview.Row`) | one row key `failure_class`, and one `lsDoc` key `groups` under `--group-by` | `console/docs/json-contract.md` §5's row table, held by the struct-reflecting pin (`internal/cli/docs_desktop_console_test.go:353`); **`groups` must be `omitempty`** so the embedded `watchDegradedDoc` never emits it (F14) | no version key exists on this document; additive |
 | `fugaro diagnose --json` (`Diagnosis`) | one field, if D1460 answers yes | `console/docs/json-contract.md` §6.1 (`:748`) | additive |
 | the digest's committed report and its `summary` block | the Failures table, `failures` in the block, two rules | `docs/periodic-reviews/`'s rule list and D326's document (F24) | the block is read key by key; the two rules read only blocks that carry the key |
@@ -513,35 +521,37 @@ stats` and every command the design's §6.3 does not name.
 
 ## 6. Decisions D1450–D1469
 
-**Not one of these is answered here.** The owner's-answer cell is empty in every row, and a task in
-[implementation-plan.md](implementation-plan.md) may not start before the rows its gate names (§7 of
-the plan) are answered. Each row states the question, what this reconciliation recommends and why, the
-alternative, and what the alternative costs. **No row re-asks one of the design's §8 D1–D9 or §9
-O1–O6**; where a question here touches one of them, the row says so and leaves that question to the
-design's own numbering.
+**Every one of these is answered, as recommended, on 2026-11-07.** The owner's dated answer is in
+every row — put to him through `AskUserQuestion`, every option the recommended one, and he took all
+of them — and every task in [implementation-plan.md](implementation-plan.md) was approved the same day
+(owner: "All tasks approved. Jobmax"), so no gate the plan names is still open — **FC1's included, and
+FC1 is the one task of the nine that is built and merged; FC2–FC9 are not started.** Each row states
+the question, what this reconciliation recommends and why, the alternative, and what the alternative
+costs. **No row re-asks one of the design's §8 D1–D9 or §9 O1–O6**; where a question here touches one
+of them, the row says so and leaves that question to the design's own numbering.
 
 | # | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer |
 | --- | --- | --- | --- | --- | --- |
-| **D1450** | Does this plan keep the design's task names and its §10 order, or start its own series? | **Keep FC1–FC8 and add FC9** (F13). The design's §10 is the same work written in the same convention, and a second series is two names for one task — the failure mode `docs/catalog-build-context` F29 names for two plans of one feature | A new series (FK1…) with its own edges and levels | Two documents listing the same work under two sets of names, and a reviewer reconciling them by hand at every build | |
-| **D1451** | Is [spec.md](spec.md) a verbatim copy of the merged design, or a pointer to it? | **A verbatim copy with a dated header** (what this folder does). The convention's four files give a reader the document the reconciliation is answerable to without leaving the folder, and the header states which copy is pinned | A one-paragraph pointer to `docs/design/failure-classes.md` | The folder has no spec; the four-file shape breaks; a reader of the reconciliation follows every citation into another folder, and the *spec wins* rule has nothing to point at | |
-| **D1452** | Where does `recordEnd` live: in `internal/runner/runner.go`, or in a file of its own? | **A file of its own, `internal/runner/recordend.go`.** The writer's rule is the one thing FC2's diff has to make reviewable, and §10's FC2 is already at 11 files against the twelve-file cap; a 4,000-line file also makes the shared-files row meaningless | `runner.go`, beside `finalize` | one 4,000-line file is the diff of record and of two other tasks (FC3, FC4), and the cap is spent before the guard test is in the list | |
-| **D1453** | Does the vocabulary live in a new `internal/failure` package, or in `internal/runstore`? | **`internal/failure`.** Three packages need it (`runstore` for the field's type, `runview` for the reader, `digest` for the table) and `runstore` importing nothing new is the property its own graph is built on; the type is a wire vocabulary and belongs with the other closed ones (`"the shape `runstore.HaltReason` … has`) | `internal/runstore/failure.go` | the runner, the reader and the digest import the record's package for a value that is not a record, and the "one slice the tests read" acquires the record's dependency weight | |
-| **D1454** | Where does the legacy reader live, and under which of the design's two names (F20)? | **`internal/runview.ClassOf`, exported, called by the digest** — the name FC5 gives it, not §5's `legacyClass`, because it is the one function both readers call and a reader in another package cannot call an unexported one. It cannot live in `internal/failure`, which §D1453 forbids importing `runstore` (F21) | `failure.ClassOf(status, outcome, reason string, halt string)`, taking the four scalars instead of the record | the reader's signature has to grow every time a legacy pattern needs a fifth input, and two call sites build the same four values by hand | |
-| **D1455** | Where does the `runstore.HaltReason` → class translation live, so a legacy halted row and a new one cannot disagree? | **Two thin switches over one table of names**: `haltClass` in `internal/runner` for the writer, and the same mapping read by `internal/runview` for old records, with a test that walks `runstore.GovernanceHaltReasons()` plus the budget and credential families and asserts both agree. It cannot be one function in `internal/failure` for the same import reason (F21) | one switch in `internal/failure` over the halt reason's **string** value | the string form is the one thing the closed type exists to avoid: a halt reason renamed would compile everywhere and read as a budget halt, and the reader's table would be the only place that noticed | |
-| **D1456** | Is FC2 one task (11 files, `runner.go` plus eight sibling files) or two? | **One task, with `recordend.go`** (D1452). The change is mechanical and the guard test is what makes it safe; splitting it leaves one half of the tree writing a status directly, which is the state the guard fails on | Split into "the writer and the helpers" and "the deferred and bootstrap sites" | the first half cannot land green (the guard sees the second half's statements) unless the guard is weakened to a list, which is the pin the design rejects | |
-| **D1457** | Does `plugin/skills/working/reference/status.md` gain `failure_class` in the same PR as the row (F13)? | **Yes — FC9, in the same PR as the row.** CONTRIBUTING's rule is that a CLI change touching a documented command changes the skill in the same PR, the skill names fourteen of the row's keys in prose (§2.7), and the key is the answer to the question the skill's own "Needs attention" section tells a user to ask | leave the skill to a later PR | `runs ls --json` carries a key the skill never names, and a user asking "why did this fail?" is told to run `diagnose`, which is the state the design exists to leave | |
-| **D1458** | Is `lsDoc.Groups` `omitempty`, and does anything hold it out of the watch document (F14)? | **Yes, and a test.** The phone's reader refuses an unknown key in the degraded document (`mobile/src/feed/document.js:122`, `:358`) and `watchDegradedDoc` embeds `lsDoc` (`internal/cli/watch.go:518`), so an emitted `groups` breaks the app; `--group-by` is never a watch flag, so `omitempty` is enough, and a test that decodes the watch document's key set holds it | emit `groups: {}` always | the phone refuses the whole degraded document — the app renders degraded-as-nothing — for a block it does not read | |
-| **D1459** | Does the console task add `failure_class` to `CONTRACT_KEYS` in `console/src/source/redact.ts:1159` (F22)? | **Yes, and the console task names the file.** The set is contract-wide — the fields whose values the console never rewrites as a person (§2.4), not the row's keys — and a class value not in it is a value the person pass may rewrite, i.e. a figure drawn wrong with no error | the chip or column alone | the redactor treats a class value as a possible person's name, and a recording's class can come back as a pseudonym | |
-| **D1460** | Does `fugaro diagnose` print the class, and does `Diagnosis` carry it (F23)? | **Both, one field and one line** — the design's D9 recommends the line and the shape half is what makes it honest: diagnose's `--json` is a contract (`console/docs/json-contract.md:748`) and a text-only answer would leave the console able to print the class for `runs ls` and not for the one run a person is looking at | the printed line only | the two documents disagree about one run: the listing says `review_not_converged` and diagnose, the command that explains it, cannot | |
-| **D1461** | Does `internal/watch`'s own feed (`JSONRun`, `JSONFinished`) carry the class? | **No.** The feed is a different document with its own contract and its own reader, the class needs a decision about the watch screen (a column, a flag) first, and the design deliberately leaves `watch` out; a second consumer added silently is the opposite of what its §7 argues | add the key to `JSONFinished` | the phone and the console's live screen grow a key whose screen has not been designed, and the contract row is written before the reading of it | |
-| **D1462** | Does the plan add a `internal/cli/docs_failure_classes_test.go` pin of its own? | **No.** The docs-pin census counts `internal/cli/docs_*_test.go` files (**101** today, `docs/rigor-modes/reconciliation.md:752`) and the design promises not to move it (F28); the plan's pins go into the existing `docs_pr_state_test.go`, which is where the design's own pin lives, and this folder's documents are pinned by nothing, as the convention's other folders are | a pin file for this folder | the census moves, the row `docs/rigor-modes/reconciliation.md:752` goes stale, and **four folders' pins over that one row redden**: `internal/cli/docs_rigor_modes_test.go:388` runs every census row's own command, and `internal/cli/docs_config_management_test.go:397`, `docs_managed_agent_converge_test.go:160` and `docs_repo_image_removal_test.go:525` each re-read the row and compare it with the tree's glob — so a merge that added a pin file without moving the row is a red build, and the design's own sentence about the count becomes false | |
-| **D1463** | Which document owns the two digest rules' prose (F24)? | **`docs/periodic-reviews/`'s rule list, with D326's document named as the rule's source** — the rule *list* is written there (`spec.md:114`, `implementation-plan.md:266`, `:279`) and the plugin's own reference is a fourth place that must not become a fifth | `docs/task-governance/reconciliation.md` alone, beside D326 | the rule is written where the reader of the *report* does not look, and the skill's list and the digest's constants become two lists that drift | |
-| **D1464** | Is a class written on a `mode: review` run that reviewed, or on an artifact run that delivered? | **No** (the design's §3, restated as a plan rule): those runs have no failure to name, `outcome` already says what they delivered, and a class on them would be a classification of a success. The task's guard asserts the field is absent, so a later writer cannot add one without a decision | classify them `unclassified` | every successful delivery carries a value that means "the vocabulary does not hold this", and the report's share of classified runs stops meaning anything | |
-| **D1465** | In the grouped table, is `share` a share of the window's **runs** or of its spend? | **Runs**, with the spend beside it as its own column and the totals line's two figures unchanged. "33% of runs, 42% of spend" is two readings of one window, and a single `share` column that could be either is a figure a reader takes the wrong way | spend | the biggest class by spend and the biggest by count print the same `share`, and the row a person acts on is not the row that is marked | |
-| **D1466** | Do the two digest rules ship in this work, or does the table ship alone (F26)? | **The table ships; the rules are FC7's second half and may be dropped without touching FC7's first half.** A rule reads only summaries carrying the block, so the first week after the release raises neither (the design says so) and the rules cost a week of silence either way | hold the rules back entirely | the digest's whole point (D326) is that a committed report is read over time, and a table with no rule is a figure somebody has to remember | |
-| **D1467** | Does `fugaro runs stats` / `internal/userstats` learn about classes (F9, §2.6)? | **No.** The census counts statuses by person and reads no rows: `userstats.Counts` (`internal/userstats/userstats.go:125`) is filled from `runstore.Status` alone (`:196`). A class census is a different question (by cause, not by person) and `runs ls --group-by` is where it lives | a class column in the census | the census document grows a dimension its own reader (`fugaro runs stats --json`, the console's spend screen) has no use for, and its "they add up" invariant grows a term | |
-| **D1468** | Must `docs/design/v1.md` §4.6 gain the field's sentence, and is that a doc-pin risk? | **Yes, one sentence, in FC8** — §4.6 is the record's own field list (`docs/design/v1.md:406`) and a field it does not name is a field the next reader of the design does not know exists. The doc pins read `docs/`, and the Docs run is FC8's gate | leave `v1.md` to the release notes | the design of record and the record disagree, which is the state `docs/design/v1.md` exists to prevent | |
-| **D1469** | What release carries it, and does it owe an operator step? | **The owner's 0.22.0**, stated in [README.md](README.md) and [implementation-plan.md](implementation-plan.md) §5. `docs/release-streams.yaml`'s cli stream reads `current: "0.20.3"`, `next: Rhino`, so 0.22.0 is the name after Rhino, and `docs/catalog-build-context`'s D1409 already names 0.22.0 for its own work — a shared slot, not a second claim of the number. **No operator step**: `fugaro update` is the whole upgrade (F29) | a slot of its own, earlier | a second release for a field addition that owes nothing, and the runs between the two releases carry classes only the second one reads | |
+| **D1450** | Does this plan keep the design's task names and its §10 order, or start its own series? | **Keep FC1–FC8 and add FC9** (F13). The design's §10 is the same work written in the same convention, and a second series is two names for one task — the failure mode `docs/catalog-build-context` F29 names for two plans of one feature | A new series (FK1…) with its own edges and levels | Two documents listing the same work under two sets of names, and a reviewer reconciling them by hand at every build | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1451** | Is [spec.md](spec.md) a verbatim copy of the merged design, or a pointer to it? | **A verbatim copy with a dated header** (what this folder does). The convention's four files give a reader the document the reconciliation is answerable to without leaving the folder, and the header states which copy is pinned | A one-paragraph pointer to `docs/design/failure-classes.md` | The folder has no spec; the four-file shape breaks; a reader of the reconciliation follows every citation into another folder, and the *spec wins* rule has nothing to point at | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1452** | Where does `recordEnd` live: in `internal/runner/runner.go`, or in a file of its own? | **A file of its own, `internal/runner/recordend.go`.** The writer's rule is the one thing FC2's diff has to make reviewable, and §10's FC2 is already at 11 files against the twelve-file cap; a 4,000-line file also makes the shared-files row meaningless | `runner.go`, beside `finalize` | one 4,000-line file is the diff of record and of two other tasks (FC3, FC4), and the cap is spent before the guard test is in the list | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1453** | Does the vocabulary live in a new `internal/failure` package, or in `internal/runstore`? | **`internal/failure`.** Three packages need it (`runstore` for the field's type, `runview` for the reader, `digest` for the table) and `runstore` importing nothing new is the property its own graph is built on; the type is a wire vocabulary and belongs with the other closed ones (`"the shape `runstore.HaltReason` … has`) | `internal/runstore/failure.go` | the runner, the reader and the digest import the record's package for a value that is not a record, and the "one slice the tests read" acquires the record's dependency weight | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1454** | Where does the legacy reader live, and under which of the design's two names (F20)? | **`internal/runview.ClassOf`, exported, called by the digest** — the name FC5 gives it, not §5's `legacyClass`, because it is the one function both readers call and a reader in another package cannot call an unexported one. It cannot live in `internal/failure`, which §D1453 forbids importing `runstore` (F21) | `failure.ClassOf(status, outcome, reason string, halt string)`, taking the four scalars instead of the record | the reader's signature has to grow every time a legacy pattern needs a fifth input, and two call sites build the same four values by hand | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1455** | Where does the `runstore.HaltReason` → class translation live, so a legacy halted row and a new one cannot disagree? | **Two thin switches over one table of names**: `haltClass` in `internal/runner` for the writer, and the same mapping read by `internal/runview` for old records, with a test that walks `runstore.GovernanceHaltReasons()` plus the budget and credential families and asserts both agree. It cannot be one function in `internal/failure` for the same import reason (F21) | one switch in `internal/failure` over the halt reason's **string** value | the string form is the one thing the closed type exists to avoid: a halt reason renamed would compile everywhere and read as a budget halt, and the reader's table would be the only place that noticed | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1456** | Is FC2 one task (11 files, `runner.go` plus eight sibling files) or two? | **One task, with `recordend.go`** (D1452). The change is mechanical and the guard test is what makes it safe; splitting it leaves one half of the tree writing a status directly, which is the state the guard fails on | Split into "the writer and the helpers" and "the deferred and bootstrap sites" | the first half cannot land green (the guard sees the second half's statements) unless the guard is weakened to a list, which is the pin the design rejects | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1457** | Does `plugin/skills/working/reference/status.md` gain `failure_class` in the same PR as the row (F13)? | **Yes — FC9, in the same PR as the row.** CONTRIBUTING's rule is that a CLI change touching a documented command changes the skill in the same PR, the skill names fourteen of the row's keys in prose (§2.7), and the key is the answer to the question the skill's own "Needs attention" section tells a user to ask | leave the skill to a later PR | `runs ls --json` carries a key the skill never names, and a user asking "why did this fail?" is told to run `diagnose`, which is the state the design exists to leave | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1458** | Is `lsDoc.Groups` `omitempty`, and does anything hold it out of the watch document (F14)? | **Yes, and a test.** The phone's reader refuses an unknown key in the degraded document (`mobile/src/feed/document.js:122`, `:358`) and `watchDegradedDoc` embeds `lsDoc` (`internal/cli/watch.go:518`), so an emitted `groups` breaks the app; `--group-by` is never a watch flag, so `omitempty` is enough, and a test that decodes the watch document's key set holds it | emit `groups: {}` always | the phone refuses the whole degraded document — the app renders degraded-as-nothing — for a block it does not read | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1459** | Does the console task add `failure_class` to `CONTRACT_KEYS` in `console/src/source/redact.ts:1159` (F22)? | **Yes, and the console task names the file.** The set is contract-wide — the fields whose values the console never rewrites as a person (§2.4), not the row's keys — and a class value not in it is a value the person pass may rewrite, i.e. a figure drawn wrong with no error | the chip or column alone | the redactor treats a class value as a possible person's name, and a recording's class can come back as a pseudonym | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1460** | Does `fugaro diagnose` print the class, and does `Diagnosis` carry it (F23)? | **Both, one field and one line** — the design's D9 recommends the line and the shape half is what makes it honest: diagnose's `--json` is a contract (`console/docs/json-contract.md:748`) and a text-only answer would leave the console able to print the class for `runs ls` and not for the one run a person is looking at | the printed line only | the two documents disagree about one run: the listing says `review_not_converged` and diagnose, the command that explains it, cannot | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1461** | Does `internal/watch`'s own feed (`JSONRun`, `JSONFinished`) carry the class? | **No.** The feed is a different document with its own contract and its own reader, the class needs a decision about the watch screen (a column, a flag) first, and the design deliberately leaves `watch` out; a second consumer added silently is the opposite of what its §7 argues | add the key to `JSONFinished` | the phone and the console's live screen grow a key whose screen has not been designed, and the contract row is written before the reading of it | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1462** | Does the plan add a `internal/cli/docs_failure_classes_test.go` pin of its own? | **No.** The docs-pin census counts `internal/cli/docs_*_test.go` files (**101** today, `docs/rigor-modes/reconciliation.md:752`) and the design promises not to move it (F28); the plan's pins go into the existing `docs_pr_state_test.go`, which is where the design's own pin lives, and this folder's documents are pinned by nothing, as the convention's other folders are | a pin file for this folder | the census moves, the row `docs/rigor-modes/reconciliation.md:752` goes stale, and **four folders' pins over that one row redden**: `internal/cli/docs_rigor_modes_test.go:388` runs every census row's own command, and `internal/cli/docs_config_management_test.go:403`, `docs_managed_agent_converge_test.go:190` and `docs_repo_image_removal_test.go:525` each re-read the row and compare it with the tree's glob — so a merge that added a pin file without moving the row is a red build, and the design's own sentence about the count becomes false | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1463** | Which document owns the two digest rules' prose (F24)? | **`docs/periodic-reviews/`'s rule list, with D326's document named as the rule's source** — the rule *list* is written there (`spec.md:114`, `implementation-plan.md:266`, `:279`) and the plugin's own reference is a fourth place that must not become a fifth | `docs/task-governance/reconciliation.md` alone, beside D326 | the rule is written where the reader of the *report* does not look, and the skill's list and the digest's constants become two lists that drift | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1464** | Is a class written on a `mode: review` run that reviewed, or on an artifact run that delivered? | **No** (the design's §3, restated as a plan rule): those runs have no failure to name, `outcome` already says what they delivered, and a class on them would be a classification of a success. The task's guard asserts the field is absent, so a later writer cannot add one without a decision | classify them `unclassified` | every successful delivery carries a value that means "the vocabulary does not hold this", and the report's share of classified runs stops meaning anything | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1465** | In the grouped table, is `share` a share of the window's **runs** or of its spend? | **Runs**, with the spend beside it as its own column and the totals line's two figures unchanged. "33% of runs, 42% of spend" is two readings of one window, and a single `share` column that could be either is a figure a reader takes the wrong way | spend | the biggest class by spend and the biggest by count print the same `share`, and the row a person acts on is not the row that is marked | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1466** | Do the two digest rules ship in this work, or does the table ship alone (F26)? | **The table ships; the rules are FC7's second half and may be dropped without touching FC7's first half.** A rule reads only summaries carrying the block, so the first week after the release raises neither (the design says so) and the rules cost a week of silence either way | hold the rules back entirely | the digest's whole point (D326) is that a committed report is read over time, and a table with no rule is a figure somebody has to remember | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1467** | Does `fugaro runs stats` / `internal/userstats` learn about classes (F9, §2.6)? | **No.** The census counts statuses by person and reads no rows: `userstats.Counts` (`internal/userstats/userstats.go:125`) is filled from `runstore.Status` alone (`:196`). A class census is a different question (by cause, not by person) and `runs ls --group-by` is where it lives | a class column in the census | the census document grows a dimension its own reader (`fugaro runs stats --json`, the console's spend screen) has no use for, and its "they add up" invariant grows a term | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1468** | Must `docs/design/v1.md` §4.6 gain the field's sentence, and is that a doc-pin risk? | **Yes, one sentence, in FC8** — §4.6 is the record's own field list (`docs/design/v1.md:406`) and a field it does not name is a field the next reader of the design does not know exists. The doc pins read `docs/`, and the Docs run is FC8's gate | leave `v1.md` to the release notes | the design of record and the record disagree, which is the state `docs/design/v1.md` exists to prevent | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1469** | What release carries it, and does it owe an operator step? | **The owner's 0.22.0**, stated in [README.md](README.md) and [implementation-plan.md](implementation-plan.md) §5. `docs/release-streams.yaml`'s cli stream reads `current: "0.20.3"`, `next: Rhino`, so 0.22.0 is the name after Rhino, and `docs/catalog-build-context`'s D1409 already names 0.22.0 for its own work — a shared slot, not a second claim of the number. **No operator step**: `fugaro update` is the whole upgrade (F29) | a slot of its own, earlier | a second release for a field addition that owes nothing, and the runs between the two releases carry classes only the second one reads | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 
 ---
 
@@ -662,7 +672,9 @@ answers none.
    `stageErrorReason` today (`internal/runner/runner.go:3759`) and falls into
    `stage_error_unexplained`; whether it earns a value of its own is a ruling on O2.
 
-**Everything else in this folder is a decision row (§6) or a finding (§4) — and neither is an
-answer.** No task in [implementation-plan.md](implementation-plan.md) may start until the rows its own
-gate names are answered, and the design's §10 status stands unchanged beside all of it: **a plan; no
-task is approved.**
+**Everything else in this folder is a decision row (§6) or a finding (§4) — and the rows are
+answered: every one of D1450–D1469 takes the recommendation, 2026-11-07.** Every task in
+[implementation-plan.md](implementation-plan.md) is approved the same day (owner: "All tasks
+approved. Jobmax"), so the gates that named those rows are satisfied. The design's own §10 status
+stands unchanged beside all of it, in `docs/design/failure-classes.md`, which is the pinned copy
+[spec.md](spec.md) carries and is not this folder's to rewrite.

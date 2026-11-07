@@ -404,7 +404,15 @@ func (s *checkoutStage) upgradeCtx(env initflow.Env, loc pluginwire.Location) *u
 		cmd: s.e.r.cmd,
 		w:   s.e.r.w,
 		o: upgradeOptions{yes: env.Yes, allowFork: o.allowFork, refresh: refreshOptions{
-			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud, in: s.e.r.in}},
+			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud,
+			// The refresh's own run prints and asks where its command says
+			// (newInitRun), and this stage runs inside the converge's step:
+			// given this run's reader and writer, what it prints takes the step
+			// in flight down and the questions it asks hold it down until the
+			// answer is in (G1). The reader is the same value the stage's own
+			// steps read through, so a typed-ahead answer is not lost between
+			// two readers over one stdin.
+			in: s.e.r.in, out: s.e.r.w}},
 		loc:   loc,
 		agent: s.e.options().Agent,
 	}

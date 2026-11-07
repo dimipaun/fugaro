@@ -412,6 +412,11 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(modelsModel{}),
 		reflect.TypeOf(modelsRepo{}),
 		reflect.TypeOf(priceCatalog{}),
+		// §6.21, the managed screens' read (the managed-screens plan's CM2):
+		// the document and the bounded subset of the newest audit record,
+		// which is bounded because argv is not in it.
+		reflect.TypeOf(managedStatusDoc{}),
+		reflect.TypeOf(managedStatusAudit{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -671,6 +676,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// §6.20, the write's dry run (the settings-edit plan's C3, CLI 0.16.0):
 		// the one shape its field table is read against.
 		reflect.TypeOf(settingsWriteDoc{}),
+		// §6.21, the managed screens' own document (the managed-screens plan's
+		// CM2): the marks' four facts and the bounded subset of the newest
+		// audit record, which is bounded because argv is not in it.
+		reflect.TypeOf(managedStatusDoc{}), reflect.TypeOf(managedStatusAudit{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1008,6 +1017,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// document and half of them -- `--dry-run` not least -- belong to both.
 	"settings set":   newSettingsSetCmd,
 	"settings unset": newSettingsUnsetCmd,
+	// §6.21 documents the managed screens' read (the managed-screens plan's
+	// CM2), one closed document about one managed project. The console's own
+	// rule 6 row for it is that plan's CM3 and not this task's, so the console
+	// does not spawn it yet — but the document describes its flags, so they are
+	// checked against this constructor like any other command's.
+	"managed status": newManagedStatusCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1281,7 +1296,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-two argvs and nothing else -- the console's one spawn table
+// the twenty-five argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1328,6 +1343,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// The graph screen's per-task state (console v2 plan GV2.1, the
 		// `plan.status` operation): read-only, no path in the argv.
 		"plan status --json",
+		// The dependency graph as one versioned document (the graph plan's
+		// CG9a, the `graph.read` operation): read-only, no path in the argv,
+		// and no checkout either -- its scope is the project's stored view.
+		// Its one argument is the scope, the only argument on this table held
+		// to a closed grammar **and** to what a previous read listed, and it is
+		// optional the way `plan status --json`'s `--all` is: the row's cell
+		// spells the command's argv and names the argument in its parenthesis.
+		"graph --json",
 		// The project view (Bitbucket credentials T1.2, the
 		// `coordinator.status` operation): read-only, no path in the argv.
 		// `--from-store` is what makes it need no host credential at all --
@@ -1364,6 +1387,20 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// then the write's -- with the value last, after the terminator, and
 		// the `unset` form the same words with no value at all.
 		"settings set KEY --layer <L> [--dry-run --json] [--yes] --project <name> [--config <path>] -- <VALUE>",
+		// The managed state and its audit trail (the managed screens' plan's
+		// CM3, the `managed.status` operation, D1472 to D1477): the two marks'
+		// own answer and the bounded subset of the newest audit record, never
+		// `argv` (D1476). Read-only, and the two words of its argv are the
+		// project flags §3.4 rule 3 gives every cloud command, so the row
+		// spells the whole argv back with no argument an operation's schema
+		// fills.
+		"managed status --json --project <name> [--config <path>]",
+		// The published policy node (the same plan's CM3, the `policy.show`
+		// operation, D1480 and D1481): `{project, policy}` and nothing else,
+		// and never `project show --json`, whose caps belong to the Spend
+		// screen and the `caps` panel. The same two project flags and no
+		// argument of its own.
+		"project policy show --json --project <name> [--config <path>]",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1502,9 +1539,10 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-one commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-four commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
-	// screen's `plan status --json` (GV2.1), the project view's
+	// screen's `plan status --json` (GV2.1), the dependency graph read
+	// `graph --json` (the graph plan's CG9a), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
 	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
 	// --pr <n>` (coordinator v2 C3), the declarations read
@@ -1513,10 +1551,12 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// read `models ls --json` (console 0.119.0, the owner's ruling of
 	// 2026-11-02), the settings read `settings --json` (the settings-edit
 	// plan's C1), the settings write `settings set KEY ...` (the same plan's
-	// C3, and the row that is not a read at all) and the launch `fugaro run`
-	// (V2.5.1a).
-	if len(allowed) != 21 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 21 (logs has two argvs)", path, argvs, len(allowed))
+	// C3, and the row that is not a read at all), the two managed reads
+	// `managed status --json` and `project policy show --json` (the managed
+	// screens' CM3: the marks with their trail, and the policy node) and the
+	// launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 24 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 24 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1527,6 +1567,255 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	for cmdPath := range consoleReadPaths {
 		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
 			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor a read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
+		}
+	}
+}
+
+// consoleOnlyFlags reports whether every token is a flag: a word of the argv
+// that starts with a dash, brackets included (`[--config`, `--json]` are how the
+// design's optional and alternative words are written). A bare word is a word of
+// the command -- a subcommand or a positional -- rather than a flag, which is
+// the distinction the spawn check below turns on.
+func consoleOnlyFlags(tokens []string) bool {
+	for _, tok := range tokens {
+		if !strings.HasPrefix(strings.TrimLeft(tok, "["), "-") {
+			return false
+		}
+	}
+	return true
+}
+
+// consoleIpcPath is the main process's IPC module, which carries
+// `CONSOLE_OPERATIONS` -- the constant §5.1 rule 5's count is the count of --
+// and the operations `SPAWN_COMMANDS` spawns. Reading it from Go is the
+// boundary exception this file holds (consoleBoundaryAllowList), not a habit:
+// no test below imports anything from console/, and the two halves here are
+// strings read off the source.
+const consoleIpcPath = "console/src/main/ipc.ts"
+
+// consoleSpawnRow is one row of spawn.ts's `SPAWN_COMMANDS`: the operation it
+// spawns for and the fixed words its argv begins with.
+type consoleSpawnRow struct {
+	operation string
+	words     []string
+}
+
+// consoleSpawnRows reads spawn.ts's `SPAWN_COMMANDS` rows. The table is split on
+// its own two-space `{` lines and each entry's two fields are read inside it,
+// rather than pairing `operation:` and `words:` with one pattern across the
+// whole constant: a row whose fields a comment separates is otherwise paired
+// with the next row's words, and both halves of this file's check would be
+// quietly about the wrong row.
+func consoleSpawnRows(t *testing.T, src string) []consoleSpawnRow {
+	t.Helper()
+	at := strings.Index(src, "export const SPAWN_COMMANDS")
+	if at < 0 {
+		t.Fatalf("%s no longer declares SPAWN_COMMANDS, the spawn table the design's §5.1 rule 6 is written against", consoleSpawnPath)
+	}
+	block := src[at:]
+	if next := strings.Index(block[len("export const SPAWN_COMMANDS"):], "\nexport const "); next >= 0 {
+		block = block[:len("export const SPAWN_COMMANDS")+next]
+	}
+	var out []consoleSpawnRow
+	for _, entry := range regexp.MustCompile(`(?m)^  \{$`).Split(block, -1)[1:] {
+		op := regexp.MustCompile(`operation: '([^']+)'`).FindStringSubmatch(entry)
+		words := regexp.MustCompile(`words: \[([^\]]*)\]`).FindStringSubmatch(entry)
+		if op == nil || words == nil {
+			t.Fatalf("%s's SPAWN_COMMANDS carries an entry with no `operation: '…'` or no `words: [...]` beside it, so this test cannot read the rows: %q", consoleSpawnPath, strings.TrimSpace(strings.SplitN(entry, "\n", 2)[0]))
+		}
+		var list []string
+		for _, raw := range strings.Split(words[1], ",") {
+			if v := strings.Trim(strings.TrimSpace(raw), "'\""); v != "" {
+				list = append(list, v)
+			}
+		}
+		out = append(out, consoleSpawnRow{operation: op[1], words: list})
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s's SPAWN_COMMANDS carries no rows this test could read, and a table with nothing in it is nothing for the design to admit", consoleSpawnPath)
+	}
+	return out
+}
+
+// consoleArgvWords is one of §5.1 rule 6's argvs without the placeholders an
+// operation's own schema fills: the design spells those in capitals (`RUN`,
+// `KEY`) or in angle brackets (`<name>`, `--title=<T>`), which is what makes
+// them arguments rather than words of the command, so what is left is the argv's
+// fixed words in the order the row states them.
+func consoleArgvWords(argv string) []string {
+	var out []string
+	for _, tok := range strings.Fields(argv) {
+		if strings.ContainsAny(tok, "<>") {
+			continue
+		}
+		if tok == strings.ToUpper(tok) && strings.ToLower(tok) != tok {
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
+// consoleOperationCount is §5.1 rule 5's size of the dashboard's surface, read
+// off the document rather than remembered in Go: the word its count sentence
+// spells and the number that word is. Both pins that read it -- the comparison
+// against `CONSOLE_OPERATIONS`'s length below and §5.1's own prose in
+// TestDocsDesktopConsoleDesignLaunchIsTheOnlyRunRow -- take the number from
+// here, so the task that lands an operation moves the sentence and no Go line.
+func consoleOperationCount(t *testing.T, text string) (int, string) {
+	t.Helper()
+	m := regexp.MustCompile(`is ([a-z]+(?:-[a-z]+)?) operations`).FindStringSubmatch(text)
+	if m == nil {
+		t.Fatalf("the document no longer says \"The dashboard's surface is … operations\": §5.1 rule 5 states the surface's size in that sentence, and this file's two pins read it from there")
+	}
+	return consoleSpelledNumber(t, m[1]), m[1]
+}
+
+// consoleSpelledNumber reads a number spelled the way this document spells one:
+// a tens word, or a tens word and a ones word joined by a hyphen. A word outside
+// those is a failure rather than a zero, because the number is compared against
+// the constant and a silent zero would read as a surface of no operations.
+func consoleSpelledNumber(t *testing.T, spelled string) int {
+	t.Helper()
+	tens := map[string]int{"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60}
+	ones := map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
+	if n, ok := tens[spelled]; ok {
+		return n
+	}
+	if parts := strings.Split(spelled, "-"); len(parts) == 2 {
+		high, okHigh := tens[parts[0]]
+		low, okLow := ones[parts[1]]
+		if okHigh && okLow {
+			return high + low
+		}
+	}
+	t.Fatalf("the document spells a count %q, which this test cannot read as a number: the count is compared against the constant's length, so add the word here rather than leaving the comparison to a zero", spelled)
+	return 0
+}
+
+// TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource: §5.1 rule 5's count and
+// §5.1 rule 6's table are the design's two claims about what the console can do,
+// and no test in either job read them against the console's source. The
+// console's own copies (spawn.test.ts's ordered list and ipc.test.ts's
+// `DESIGN_ARGV`) are held in step with the document **by hand**, as their own
+// comment says, and the console's job reads no document at all -- so a task that
+// moved one side and not the other left the design describing a console this
+// tree does not have, with every test in both jobs green. That is not
+// hypothetical: the managed screens' plan puts rule 6's two managed rows and the
+// console's `managed.status`/`policy.show` entries in two tasks (CM3 and CM4),
+// so between them the two disagree by construction, and the disagreement has to
+// be a test's business rather than a reviewer's memory. This test is the two
+// directions the design can be wrong:
+//
+//   - **rule 5's count is `CONSOLE_OPERATIONS`'s length.** A count of operations
+//     the constant does not carry is a hole a reader cannot close, so the task
+//     that lands an operation moves rule 5's count with it -- CM4's own move of
+//     this count is why the plan marks it SEC. The count's history is the tasks
+//     that moved it, each with its own entry in the constant: V2.5.1a took the
+//     surface to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull
+//     request read to twenty-seven, console 0.119.0's totals read to
+//     twenty-eight, console 0.119.0's models read to twenty-nine, the
+//     settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and
+//     the graph plan's CG9a to thirty-two; the managed screens' plan's CM4 --
+//     `managed.status` and `policy.show`, whose rule 6 rows CM3 already wrote --
+//     is the next, on thirty-four.
+//   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
+//     the row's own words lead some row of the design's table **and what that row
+//     carries after them is flags, nothing else**. The second half is the whole
+//     check rather than a refinement of it: on a leading-words test alone a row
+//     cut back to its group word reads as admitted -- `['project']` against
+//     `project policy show --json …`, `['coordinator']` against `coordinator
+//     intents --all --json` -- which is a spawn that lost its subcommand passing
+//     as an argv the design allows. A bare word after the row's words is another
+//     word of the command, and the one exception is the design's own: the
+//     `settings.edit` row states the `set`/`unset` its `op` argument becomes
+//     while `SPAWN_COMMANDS` carries `['settings']`.
+//
+// The other direction -- a design row the console does not spawn yet -- is
+// deliberately **not** asserted: a fence may be ahead of the surface (that is
+// where rule 6's two managed rows stand until CM4), which is the safe direction
+// for a permission, and the console's own test holds its copy that way.
+//
+// Mutations that prove it: add an entry to `CONSOLE_OPERATIONS` and leave rule 5's
+// count alone (this test fails naming the constant's length and the word the
+// design spells); move rule 5's count and leave the constant alone (the same
+// failure, from the other side); cut a row's words back to their group word
+// (`['coordinator']` for `coordinator.intents`, `['project']` for a `policy.show`
+// row) -- which the leading-words half alone admits, and this test fails; and
+// give a row a word no row of the table leads (it fails naming the operation).
+// None of the three numbers is remembered in Go: the count is read off the
+// design's sentence and the surface's size off the constant, so the task that
+// lands an operation moves the sentence alone and edits nothing here.
+func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+	ipc := readDoc(t, consoleIpcPath)
+	spawn := readDoc(t, consoleSpawnPath)
+
+	// The design's own words: §5.1 rule 5's count -- read off its sentence
+	// rather than remembered here -- and the table's argvs.
+	rule := consoleNumberedRule(t, consoleReadmeSection(t, doc, "### 5.1 The hard rules"), 5)
+	count, spelled := consoleOperationCount(t, rule)
+	var admitted []string
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		if argv := firstBacktick(cells[0]); argv != "" {
+			admitted = append(admitted, argv)
+		}
+	}
+	if len(admitted) == 0 {
+		t.Fatalf("%s: no row follows §5.1 rule 6's allow-list header; update this test's marker", path)
+	}
+
+	// The constant's own length, and the rows spawn.ts spawns.
+	at := strings.Index(ipc, "export const CONSOLE_OPERATIONS")
+	if at < 0 {
+		t.Fatalf("%s no longer declares CONSOLE_OPERATIONS, the surface §5.1 rule 5's count is the count of", consoleIpcPath)
+	}
+	block := ipc[at:]
+	if next := strings.Index(block[len("export const CONSOLE_OPERATIONS"):], "\nexport const "); next >= 0 {
+		block = block[:len("export const CONSOLE_OPERATIONS")+next]
+	}
+	// The entries' own `name: '…'` lines, at the entries' own indent: the
+	// surface's members are declared at four spaces and nothing nested in an
+	// entry carries a `name:` of its own (`args` entries carry `key:`).
+	names := regexp.MustCompile(`(?m)^    name: '([^']+)',$`).FindAllStringSubmatch(block, -1)
+	if len(names) == 0 {
+		t.Fatalf("%s's CONSOLE_OPERATIONS carries no `name: '…'` entry this test could read; the entries' shape moved", consoleIpcPath)
+	}
+	if len(names) != count {
+		t.Errorf("%s's CONSOLE_OPERATIONS carries %d operations and %s's §5.1 rule 5 says the surface is %s (%d): the count is the constant's, so the two move together -- and a task that lands an operation without moving the count leaves the design describing a console this tree does not have", consoleIpcPath, len(names), path, spelled, count)
+	}
+
+	rows := consoleSpawnRows(t, spawn)
+	for _, row := range rows {
+		found := false
+		for _, argv := range admitted {
+			words := consoleArgvWords(argv)
+			if len(words) < len(row.words) || !slices.Equal(words[:len(row.words)], row.words) {
+				continue
+			}
+			rest := words[len(row.words):]
+			// The settings write is the one row whose design row spells a word
+			// the row itself does not carry: its subcommand is the operation's
+			// own `op` argument (`words: ['settings']`), and the table's row
+			// states the `set`/`unset` it becomes.
+			if row.operation == "settings.edit" && len(rest) > 0 && (rest[0] == "set" || rest[0] == "unset") {
+				rest = rest[1:]
+			}
+			// What the design row carries after the row's own words must be
+			// flags and nothing else. A prefix alone admits a row cut back to
+			// its group word -- `['project']` would pass against `project policy
+			// show --json …`, and `['coordinator']` against `coordinator intents
+			// --all --json` -- so a spawn that lost its subcommand would read as
+			// an argv the design allows, which is the hole this half exists to
+			// close.
+			if consoleOnlyFlags(rest) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s spawns %s's argv as %q, and no row of %s's §5.1 rule 6 allow-list leads with those words: every spawn is an argv the design admits, and a row added to SPAWN_COMMANDS is a rule 6 row (with consoleReadPaths' command, if it is a read) in the same commit", consoleSpawnPath, row.operation, strings.Join(row.words, " "), path)
 		}
 	}
 }
@@ -9623,9 +9912,13 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is thirty-one operations**") {
-		t.Errorf("%s no longer says the surface is thirty-one operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty and the same plan's C3 to thirty-one), and the two cannot disagree", path)
-	}
+	// §5.1 rule 5's count sentence, read rather than remembered: the number in it
+	// is held to `CONSOLE_OPERATIONS`'s length by
+	// TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource, which is also where
+	// the history of the count is written down, so a task that lands an operation
+	// moves the sentence and no line here. This call is that sentence's own pin
+	// in §5.1's prose.
+	consoleOperationCount(t, doc)
 
 	var neverRows [][]string
 	for _, cells := range docTableAfter(t, path, doc, "| Never (the \"nothing else\" table) |") {
@@ -9723,6 +10016,31 @@ func TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections(t *testing.T) {
 	if !strings.Contains(never, "the console's first write") {
 		t.Errorf("%s's rule 6 never names the launch as the console's *first* write, so the second write has nothing to be second to", path)
 	}
+	// And the one line number that row carries. `VALUE` is the word after the
+	// `--` terminator rather than an `=` away, and the row proves it by citing
+	// the line of the pair's own `Use:` string — the citation a reader follows
+	// by hand, and the one nothing read: the key list under that command grew
+	// (`--add-entry`, `--remove-entry`), `Use:` moved with it, and the number
+	// stayed where it was, pointing at the list. The line is found in the file
+	// rather than pinned as a number here, so the check says what the row
+	// claims and not what the file happened to be the day the row was written.
+	body, err := os.ReadFile("../../internal/cli/settings_set.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for i, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) == `Use:   "set KEY VALUE",` {
+			want = i + 1
+			break
+		}
+	}
+	if want == 0 {
+		t.Fatalf("internal/cli/settings_set.go no longer declares `Use:   \"set KEY VALUE\"`: rule 6's write row turns on that declaration, so the two move together")
+	}
+	if !strings.Contains(never, fmt.Sprintf("`internal/cli/settings_set.go:%d`", want)) {
+		t.Errorf("%s's rule 6 does not cite internal/cli/settings_set.go:%d, the line that declares the `Use: \"set KEY VALUE\"` the row turns on: what makes `VALUE` a positional and the `--` terminator necessary is that declaration, and a citation to a line of the key list below it is one a reader cannot follow", path, want)
+	}
 
 	// §6.2 item 3, the Project screen: the settings section is the tab's third
 	// read and rule 12's window is where its pencil leads.
@@ -9789,6 +10107,31 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"`widening`",
 		"`changed`",
 		"`refusal`",
+		// The four optional members version 1 has since grown (D1164), off the
+		// four `omitempty` fields of `settingsWriteDoc` and the four rows
+		// `writeSettingsWriteTable` prints below `refusal`. The console's own
+		// row cannot build an entry write, so its reader ignores them — but the
+		// section is the document described member by member, and a reader who
+		// finds ten of the fourteen members is reading a shape the CLI no
+		// longer writes.
+		// `operation` is not only the entry pair's word: the schema's enum has
+		// three values, and `remove-secret` is the one §6.20's own pair never
+		// writes (secretsRmDryRun, D1171).
+		"`operation`",
+		"`remove-secret`",
+		// And the block the entry it takes away lives in: `secrets rm` removes
+		// the entry the NAME has, which is `workflow_secrets.NAME` for a
+		// workflow secret (D1260) — a row that named only `project_secrets`
+		// describes a key the command does not touch (secretsRmWhat).
+		"`workflow_secrets.NAME`",
+		"`entry_key`",
+		"`entry_value`",
+		"`entry_fields`",
+		// And the phase slot's third word. `settingsDryRunFlags` refuses
+		// `--ask` beside `--dry-run` exactly as it refuses `--yes`, so a
+		// section that counts the slot's words and stops at two is short by
+		// one, whatever the console's own argv passes.
+		"`--ask`",
 	} {
 		if !strings.Contains(write, want) {
 			t.Errorf("%s's §6.20 does not state %q: the write's dry run is the document the window and the write are built over, and it is the console's contract to describe", path, want)

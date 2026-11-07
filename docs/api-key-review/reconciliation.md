@@ -1,9 +1,10 @@
 # The api-key review path — reconciliation
 
-**Status: reconciliation only; no code is implemented; no task approved.** This document reads every
+**Status: reconciliation only; no code is implemented; D1410–D1429 are answered 2026-11-07 and all
+tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** This document reads every
 clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree, classifies what it finds,
-and turns the parts that need a decision into questions **D1410–D1429** (§7). Nothing here is
-approved and nothing follows it: a recommendation is not a go, and an answer is not an approval.
+and turns the parts that needed a decision into questions **D1410–D1429** (§7), every one of them
+answered the same day, each as recommended.
 
 **Checked against:** `origin/main` at `aa26f322f`, on **2026-11-07**. `graphify` has no graph for
 this repository (there is no `graphify-out/`), so every claim was located with `git grep` and then
@@ -29,7 +30,7 @@ reviews, each with its own machinery, its own credential and its own record:
 | What proves it | **Check 290**, written and **NOT RUN** (**U5**) | the class's own tests |
 
 So the ask is one name for two paths. §1 and §2 read each of them; §4 states the reading this design
-takes and the decision that settles it (**D1410**).
+takes and the decision that settled it (**D1410**, answered **both slices** on 2026-11-07).
 
 ## 1. The in-job half
 
@@ -373,31 +374,34 @@ the class's own credential*, never to let the repository supply one.
 ## 7. Owner decisions D1410–D1429
 
 Recommendation first in each, with the reason; then the alternative and its cost. **The owner's
-answer cell is empty in every row: none of these is answered, and nothing in this folder is an
-approval.** **D1410–D1429 are this work's block** (§8).
+answer cell carries his ruling in every row: the questions went to him through `AskUserQuestion`,
+every option offered was the recommended one, and he took all of them** (2026-11-07), approving
+every task in [implementation-plan.md](implementation-plan.md) the same day (owner: "All tasks
+approved. Jobmax").
+**D1410–D1429 are this work's block** (§8).
 
 | # | The question | Recommended, and why | The alternative, and its cost | Owner's answer |
 | --- | --- | --- | --- | --- |
-| **D1410** | Which review does "the api-key review path" name — the in-job stage, the cloud review run, or both? | **Both, in three slices** (§4): the in-job slice is a test and a paragraph, the cloud Anthropic-key slice is small (**F12**), and the OpenRouter slice is §6.7. Writing them as one task would price a test at a service change. **The cloud slices are priced on their own code and not on a launch anybody can make today** (**F10**, **U6**) | **The in-job half alone.** Cheapest, and it satisfies clauses 1 and 4 — but clause 2's "a project with only an Anthropic API key" is the cloud half (**F17**), so the ask would be only half answered. It also sidesteps E7 entirely, which is the only reading under which this design ships something an installation can actually run | |
-| **D1411** | For the in-job half, is `docs/design/mixed-credentials.md` §3's Path A the answer, or does the review need machinery of its own? | **Path A is the answer.** It works today (**F1**), it satisfies clauses 1 and 4, and "fits the existing machinery rather than adding a parallel one" is the ask's own instruction | **A stage-scoped review credential**, mirroring `stage_accounts`. Its cost is a new config key, a new precedence rule against `claude_accounts`, and a second credential in the runner — a parallel path for a capability the gateway already has | |
-| **D1412** | Does the review get an Anthropic key of its **own** — a second secret, separate from the run's? | **No, in the first slice.** The run already has one key and the provider's key is already a different secret (**F21**); a second Anthropic key buys separation the record cannot even express (**F18**) | **A second secret** (a name, a `SecretMounts` entry, a gateway upstream selected per stage). Its cost is that `gateway.Upstream` is one value for the whole run, so the gateway would need a per-stage key — machinery nothing else needs | |
-| **D1413** | When a project publishes **both** an Anthropic key and a stage account for `review`, which wins? | **The key, when the owner asks for it explicitly** — but the spelling is the decision. Today the account wins silently (**F7**) and no key says otherwise | **Leave the account winning.** Zero cost, and it keeps one rule — but an owner who adds a key expecting the review to use it gets notional dollars with no warning, which is the shape of bug Check 290's own configuration would hide | |
-| **D1414** | May an `oauth` run's review move onto an API key? | **No.** The gateway is what holds a key, `GatewayOn` refuses `oauth` (**F8**), and an oauth run holds no key to move onto — the request is incoherent without a second credential | **A second key for an oauth run's review.** Its cost is the machinery D1412 rejects, plus a run that holds two credentials of two kinds at once — the thing `docs/design/mixed-credentials.md` §11's "never a second provider's key" was written to prevent | |
-| **D1415** | Does the record name the credential a stage the run's **own** key served? | **A new field, or nothing — never a new value on `credential`.** `credential`'s stated meaning is "the credential that served this stage when it was not the run's own" (**F18**), so `"api-key"` there is a meaning change under an existing name, which CLAUDE.md forbids; a new field is additive and keeps both meanings intact | **Nothing at all**, which is the cheaper and defensible answer: the review's two configurations are already distinguishable (`credential: "oauth"` with `model_notional_usd == model_usd` for the account, neither for the key) and the model and the route name what served any stage. Its cost is that a reader must combine three fields to answer one question. **A new value on `credential`** is the third shape and is not available: it changes a meaning on a wire shape the console, the mobile app and the history read | |
-| **D1416** | Does the cloud half land both keys at once, or the Anthropic key first? | **The Anthropic key first.** It needs no base URL, no auth shape and no new upstream (**F12**); the provider key needs all three and a bundle that is not a credential (**F15**) | **Both at once**, as §6.7's CSR17 sketches. Its cost is one SEC task that carries the whole provider apparatus and the bundle-contract question together | |
-| **D1417** | For the cloud half, does the pairing name the **project's own** `anthropic-api-key`, or a review-scoped secret? | **The project's own key**, which is what the service already holds at tier B (**F12**). A review is a call the project pays for, exactly as a cascade coding run is | **A review-scoped secret** in the bundle. Its cost is a second entry in a closed key set (**F24**) plus a mount, for a distinction the accounting does not make | |
-| **D1418** | Does the bundle grow a section for a provider's base URL and auth shape, or does the published policy carry them? | **Defer until D1416 is answered** — this is §6.7's own "design point this task must settle first", and it is a change to a contract another reader consumes | Either way: a bundle section that is not a credential, or a policy node that carries routing facts. Both are contract changes and both are priced in §6.7 | |
-| **D1419** | How does the service reach a provider's endpoint? | **Not at all in the Anthropic-key slice** (**F12**): `upstreamKindAnthropic` with a `""` base is already the right upstream. A provider endpoint is CSR18's work | **A provider upstream in the service now.** Its cost is a destination rule, a base URL from a non-credential source, and a second way for a credential to leave the service | |
-| **D1420** | What happens to `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` when the path lands? | **Rewritten, keeping its name** — §6.7's own instruction: the refusal is 0.20.0's answer and the test gains the second direction | **Deleted.** Its cost is losing the one test that holds the fail-closed direction (a repository's own file must never choose the review's credential) | |
-| **D1421** | Does the Anthropic-key half ship in 0.20.0, in the release after it, or not at all? | **After 0.20.0.** The owner cut the path from 0.20.0 on 2026-11-06, and nothing here found a reason to reopen a cut the owner made with the full picture in front of them | **Into 0.20.0.** Its cost is re-opening a release whose tasks and live checks are already sequenced, for a slice §6.7 deliberately put outside every level | |
-| **D1422** | May `fugaro review --pr N` be launched for a project with no Claude account at all? | **Yes, once the key is a pairing axis** — this is clause 2 (**F17**), and it is the whole point of the Anthropic-key half. **The variant is already deployed and admitted for that project** (the axis always carries the no-account entry, **F17**); what is missing is the credential | **No.** Its cost is that clause 2 is not answered: an installation with only a key still cannot have an independent review. **Either way the question is downstream of E7** (**F10**): every review launch is refused until the service admits the review caller, and **this design's slices do not carry that work** — pricing it here without E7 would price a launch nobody can make | |
-| **D1423** | Which model does an api-key review run? | **The same model the OAuth review runs** — the class's own model path is unchanged by which credential pays, and the ask is about the credential and not the model | **A separate model choice for the key path.** Its cost is a second model resolution beside `applyLevels` and the class's, for no gain the ask names | |
-| **D1424** | What is the cost basis of an api-key review? | **`runstore.BasisAPIList`** — `internal/runstore/cost.go`'s `ModelBasis` already answers `api-key` this way, and the review's dollars are list-price dollars like any other api-key run's | **A basis of its own for reviews.** Its cost is a third basis in a contract the console, the history and the mobile app read | |
-| **D1425** | Is an api-key review held to the service's `budget.allowed_models` gate? | **Yes, unchanged** — the class is already held to it (`internal/runner/routing.go`'s allow-list arm, the owner's ruling of 2026-10-22), and which key pays does not change what may be called | **Exempt the key path.** Its cost is a review that may call a model the project's own policy refuses, which is the one thing the allow-list exists to prevent | |
-| **D1426** | Is the cloud api-key review a **service** path, or a job-held key? | **The service path**, which is D143's posture: the job holds no credential and the service attaches one per call | **A key mounted into the review job.** Its cost is the `/proc` residual `SECURITY.md` records for a job that holds a credential, in the one job that reads untrusted content | |
-| **D1427** | Is a live check owed, and by whom? | **Yes — Check 330** (implementation-plan §5), owner-run, on a sandbox installation and repository | **None.** Its cost is a path whose only evidence is unit tests, which is exactly the gap §6.7's own tasks were left with | |
-| **D1428** | Which page carries the user-facing statement of the path? | **`docs/multi-model.md`**, whose §3 already states the Anthropic-key rule in the owner's words and whose §4 already shows the configuration | **A new page.** Its cost is a second place to keep true, beside a page that is already the user-facing answer | |
-| **D1429** | Does the plugin's `routing` skill change? | **No**, unless a command or flag changes. The skill is checked against the CLI by `plugin/`'s tests, and this design adds no command | **A skill section describing the review's credential.** Its cost is a skill that documents behaviour rather than commands, which is not what the skill tests check | |
+| **D1410** | Which review does "the api-key review path" name — the in-job stage, the cloud review run, or both? | **Both, in three slices** (§4): the in-job slice is a test and a paragraph, the cloud Anthropic-key slice is small (**F12**), and the OpenRouter slice is §6.7. Writing them as one task would price a test at a service change. **The cloud slices are priced on their own code and not on a launch anybody can make today** (**F10**, **U6**) | **The in-job half alone.** Cheapest, and it satisfies clauses 1 and 4 — but clause 2's "a project with only an Anthropic API key" is the cloud half (**F17**), so the ask would be only half answered. It also sidesteps E7 entirely, which is the only reading under which this design ships something an installation can actually run | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1411** | For the in-job half, is `docs/design/mixed-credentials.md` §3's Path A the answer, or does the review need machinery of its own? | **Path A is the answer.** It works today (**F1**), it satisfies clauses 1 and 4, and "fits the existing machinery rather than adding a parallel one" is the ask's own instruction | **A stage-scoped review credential**, mirroring `stage_accounts`. Its cost is a new config key, a new precedence rule against `claude_accounts`, and a second credential in the runner — a parallel path for a capability the gateway already has | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1412** | Does the review get an Anthropic key of its **own** — a second secret, separate from the run's? | **No, in the first slice.** The run already has one key and the provider's key is already a different secret (**F21**); a second Anthropic key buys separation the record cannot even express (**F18**) | **A second secret** (a name, a `SecretMounts` entry, a gateway upstream selected per stage). Its cost is that `gateway.Upstream` is one value for the whole run, so the gateway would need a per-stage key — machinery nothing else needs | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1413** | When a project publishes **both** an Anthropic key and a stage account for `review`, which wins? | **The key, when the owner asks for it explicitly** — but the spelling is the decision. Today the account wins silently (**F7**) and no key says otherwise | **Leave the account winning.** Zero cost, and it keeps one rule — but an owner who adds a key expecting the review to use it gets notional dollars with no warning, which is the shape of bug Check 290's own configuration would hide | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1414** | May an `oauth` run's review move onto an API key? | **No.** The gateway is what holds a key, `GatewayOn` refuses `oauth` (**F8**), and an oauth run holds no key to move onto — the request is incoherent without a second credential | **A second key for an oauth run's review.** Its cost is the machinery D1412 rejects, plus a run that holds two credentials of two kinds at once — the thing `docs/design/mixed-credentials.md` §11's "never a second provider's key" was written to prevent | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1415** | Does the record name the credential a stage the run's **own** key served? | **A new field, or nothing — never a new value on `credential`.** `credential`'s stated meaning is "the credential that served this stage when it was not the run's own" (**F18**), so `"api-key"` there is a meaning change under an existing name, which CLAUDE.md forbids; a new field is additive and keeps both meanings intact | **Nothing at all**, which is the cheaper and defensible answer: the review's two configurations are already distinguishable (`credential: "oauth"` with `model_notional_usd == model_usd` for the account, neither for the key) and the model and the route name what served any stage. Its cost is that a reader must combine three fields to answer one question. **A new value on `credential`** is the third shape and is not available: it changes a meaning on a wire shape the console, the mobile app and the history read | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1416** | Does the cloud half land both keys at once, or the Anthropic key first? | **The Anthropic key first.** It needs no base URL, no auth shape and no new upstream (**F12**); the provider key needs all three and a bundle that is not a credential (**F15**) | **Both at once**, as §6.7's CSR17 sketches. Its cost is one SEC task that carries the whole provider apparatus and the bundle-contract question together | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1417** | For the cloud half, does the pairing name the **project's own** `anthropic-api-key`, or a review-scoped secret? | **The project's own key**, which is what the service already holds at tier B (**F12**). A review is a call the project pays for, exactly as a cascade coding run is | **A review-scoped secret** in the bundle. Its cost is a second entry in a closed key set (**F24**) plus a mount, for a distinction the accounting does not make | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1418** | Does the bundle grow a section for a provider's base URL and auth shape, or does the published policy carry them? | **Defer until D1416 is answered** — this is §6.7's own "design point this task must settle first", and it is a change to a contract another reader consumes | Either way: a bundle section that is not a credential, or a policy node that carries routing facts. Both are contract changes and both are priced in §6.7 | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1419** | How does the service reach a provider's endpoint? | **Not at all in the Anthropic-key slice** (**F12**): `upstreamKindAnthropic` with a `""` base is already the right upstream. A provider endpoint is CSR18's work | **A provider upstream in the service now.** Its cost is a destination rule, a base URL from a non-credential source, and a second way for a credential to leave the service | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1420** | What happens to `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` when the path lands? | **Rewritten, keeping its name** — §6.7's own instruction: the refusal is 0.20.0's answer and the test gains the second direction | **Deleted.** Its cost is losing the one test that holds the fail-closed direction (a repository's own file must never choose the review's credential) | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1421** | Does the Anthropic-key half ship in 0.20.0, in the release after it, or not at all? | **After 0.20.0.** The owner cut the path from 0.20.0 on 2026-11-06, and nothing here found a reason to reopen a cut the owner made with the full picture in front of them | **Into 0.20.0.** Its cost is re-opening a release whose tasks and live checks are already sequenced, for a slice §6.7 deliberately put outside every level | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1422** | May `fugaro review --pr N` be launched for a project with no Claude account at all? | **Yes, once the key is a pairing axis** — this is clause 2 (**F17**), and it is the whole point of the Anthropic-key half. **The variant is already deployed and admitted for that project** (the axis always carries the no-account entry, **F17**); what is missing is the credential | **No.** Its cost is that clause 2 is not answered: an installation with only a key still cannot have an independent review. **Either way the question is downstream of E7** (**F10**): every review launch is refused until the service admits the review caller, and **this design's slices do not carry that work** — pricing it here without E7 would price a launch nobody can make | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1423** | Which model does an api-key review run? | **The same model the OAuth review runs** — the class's own model path is unchanged by which credential pays, and the ask is about the credential and not the model | **A separate model choice for the key path.** Its cost is a second model resolution beside `applyLevels` and the class's, for no gain the ask names | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1424** | What is the cost basis of an api-key review? | **`runstore.BasisAPIList`** — `internal/runstore/cost.go`'s `ModelBasis` already answers `api-key` this way, and the review's dollars are list-price dollars like any other api-key run's | **A basis of its own for reviews.** Its cost is a third basis in a contract the console, the history and the mobile app read | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1425** | Is an api-key review held to the service's `budget.allowed_models` gate? | **Yes, unchanged** — the class is already held to it (`internal/runner/routing.go`'s allow-list arm, the owner's ruling of 2026-10-22), and which key pays does not change what may be called | **Exempt the key path.** Its cost is a review that may call a model the project's own policy refuses, which is the one thing the allow-list exists to prevent | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1426** | Is the cloud api-key review a **service** path, or a job-held key? | **The service path**, which is D143's posture: the job holds no credential and the service attaches one per call | **A key mounted into the review job.** Its cost is the `/proc` residual `SECURITY.md` records for a job that holds a credential, in the one job that reads untrusted content | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1427** | Is a live check owed, and by whom? | **Yes — Check 330** (implementation-plan §5), owner-run, on a sandbox installation and repository | **None.** Its cost is a path whose only evidence is unit tests, which is exactly the gap §6.7's own tasks were left with | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1428** | Which page carries the user-facing statement of the path? | **`docs/multi-model.md`**, whose §3 already states the Anthropic-key rule in the owner's words and whose §4 already shows the configuration | **A new page.** Its cost is a second place to keep true, beside a page that is already the user-facing answer | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1429** | Does the plugin's `routing` skill change? | **No**, unless a command or flag changes. The skill is checked against the CLI by `plugin/`'s tests, and this design adds no command | **A skill section describing the review's credential.** Its cost is a skill that documents behaviour rather than commands, which is not what the skill tests check | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 
 ## 8. The number block, and how it was read
 
@@ -412,7 +416,8 @@ open pull request's head:
   returns the same folder — so the command does find a decision number that is present.
 - The highest decision written on `main` is therefore **D1409**, the tail of
   `docs/catalog-build-context`'s block (merged as #1805), and **D1410–D1429 are free**. They are all
-  written above and **not one is answered**; none is reserved unused.
+  written above, **every one of them is answered as recommended on 2026-11-07** (§7), and none is
+  reserved unused.
 
 **The check block.** The register's highest **written** `## Check` section on `main` was **290** at
 this reading (`docs/gcp-live-checklist.md`, the mixed-credentials run), and is **291** since
@@ -432,33 +437,39 @@ no number any other work reads.
 
 ## 9. Open items
 
-These are the owner's. The recommendation and the cost of each are in §7; this is the index, with
-the reason each one exists.
+These were the owner's. The recommendation and the cost of each are in §7; this is the index, with
+the reason each one existed and **the answer it carries since 2026-11-07**. **Items 1–8 are the
+owner's decisions and every one of them takes the recommendation**; **item 9 is not** — **U1** and
+**U2** are outside the tree (an owner/counsel question and the owner's own figures), so no answer
+here settles them and none is recorded. All tasks were approved the same day.
 
-1. **D1410 — blocking, and first.** The ask names one path and the tree has two reviews (§4).
-   **No task in [implementation-plan.md](implementation-plan.md) may start before this is
-   answered**, because the answer decides which slice the plan is about. The two halves also differ
+1. **D1410 — answered: both slices.** The ask names one path and the tree has two reviews (§4), so
+   the answer decides which slice the plan is about; the gate it carried — no task may start before
+   it was answered — is lifted, and the plan covers both halves. The two halves also differ
    in when they can be used: the in-job half runs today, and the cloud half is refused at the launch
-   until **E7** is met (**F10**, **U6**) — so an answer of "both" is three slices of code and a
+   until **E7** is met (**F10**, **U6**) — so the answer of "both" is three slices of code and a
    path an owner still cannot reach.
-2. **D1421 — the release.** The owner cut the api-key review from 0.20.0 on 2026-11-06; this design
-   reopens nothing, and the plan books no release until the owner says which one (**F11**, §4).
-3. **D1412 and D1413 — the in-job fork, and the one that decides whether the first slice is a test
-   or a config key.** The run has one Anthropic key (**F6**) and a published stage account silently
-   wins (**F7**).
-4. **D1414 — the `oauth` run.** A subscription-coder run can never have an api-key review today
-   (**F8**), and the ask does not say whether it should.
-5. **D1415 — the record.** `StageTiming.Credential` cannot name a credential the run's own key
-   served without changing a meaning on a wire shape the console, the mobile app and the history
-   read (**F18**), so the answer is a new field or nothing.
-6. **D1416, D1417, D1418 and D1419 — the cloud fork, and the one that decides the slice's size.**
-   The Anthropic-key half needs a pairing that may name the project's key (**F12**, **F13**); the
-   OpenRouter half needs the provider-key apparatus §6.7 describes (**F15**).
-7. **D1420 — the refusal.** `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` is the test that holds
-   the fail-closed direction, and §6.7 says it is rewritten rather than deleted.
-8. **D1422 and D1427 — clause 2 and the evidence.** Whether a project with no Claude account may
-   launch a review at all (**F17** — and note the variant is already deployed for it: what it lacks
-   is a credential, not a job), and whether the owner runs Check 330 to prove the path. Both are
-   downstream of **E7** (**F10**, **U6**).
+2. **D1421 — answered: after 0.20.0.** The owner cut the api-key review from 0.20.0 on 2026-11-06,
+   and the answer keeps that cut, so this design reopens nothing (**F11**, §4).
+3. **D1412 and D1413 — answered: no key of its own, and the key wins when the owner asks for it
+   explicitly.** The run has one Anthropic key (**F6**) and a published stage account silently
+   wins (**F7**), so the answer fixes which of the two wins; the spelling of that explicit request
+   is the plan's to design.
+4. **D1414 — answered: no.** A subscription-coder run can never have an api-key review today
+   (**F8**), and it stays that way.
+5. **D1415 — answered: a new additive field.** `StageTiming.Credential` cannot name a credential the
+   run's own key served without changing a meaning on a wire shape the console, the mobile app and
+   the history read (**F18**), so the answer is the new field and not a new value on `credential`.
+6. **D1416, D1417, D1418 and D1419 — answered: the Anthropic key first, paired to the project's own
+   key, and no provider endpoint in this slice.** The Anthropic-key half needs a pairing that may
+   name the project's key (**F12**, **F13**); the OpenRouter half needs the provider-key apparatus
+   §6.7 describes (**F15**), and D1418 defers the bundle-and-policy contract question to that work.
+7. **D1420 — answered: rewritten, keeping its name.**
+   `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` is the test that holds the fail-closed direction,
+   and §6.7 says it is rewritten rather than deleted.
+8. **D1422 and D1427 — answered: yes to both.** A project with no Claude account may launch a review
+   (**F17** — and note the variant is already deployed for it: what it lacks
+   is a credential, not a job), and the owner runs Check 330 to prove the path. Both are
+   downstream of **E7** (**F10**, **U6**), which neither answer lifts.
 9. **U1 and U2 (§6) — the terms question and the cost.** Both are outside the tree: clause 3's
    substance (**F20**) is an owner/counsel question, and the figures are the owner's own.

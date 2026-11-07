@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -62,12 +61,6 @@ const (
 // The step's bounds, all of them so one report run cannot spend its context on
 // another repository's history.
 const (
-	// digestCatchUpDays is how many closed days the step reports at once. The
-	// report run is launched by the user's own routine (R8, no Fugaro-side
-	// scheduler), so a missed day must be filled by the next run: the
-	// launcher's manifest window covers these days plus the month a monthly
-	// report needs (internal/cli's digestManifestWindow).
-	digestCatchUpDays = 7
 	// digestOpenPRs bounds how many open report runs the step reads the branch
 	// of when it looks for one: the fetch and the tree read behind it are the
 	// work this bound is for. The launcher refuses a launch while one report
@@ -323,7 +316,7 @@ func (r *run) writeDueReports(ctx context.Context) ([]string, error) {
 	}
 
 	var written, keys []string
-	for _, p := range digestDuePeriods(r.d.Now()) {
+	for _, p := range digest.DuePeriods(r.d.Now()) {
 		rel := digest.Dir + "/" + digest.PeriodPath(p.Key)
 		held, err := r.digestHeld(ctx, base, rel, open)
 		if err != nil {
@@ -411,48 +404,6 @@ func (r *run) digestRecords(ctx context.Context, ids []string) ([]runstore.Recor
 		recs = append(recs, *rec)
 	}
 	return recs, dropped, nil
-}
-
-// digestDuePeriods is the periods a report run writes at now: the seven closed
-// days the catch-up covers, and the week, month or year that closed since the
-// last one. A day with no run of the repository still gets its file, which is
-// how a reader tells "no runs that day" from "no report run that day" (G5).
-//
-// The coarser periods are due on the day after they ended: the week on a
-// Monday (yesterday is its Sunday), the month on the 1st, and the year on 1
-// January. A 1st that is a Monday closes a week and a month at once, and both
-// are written.
-func digestDuePeriods(now time.Time) []digest.Period {
-	today := now.UTC()
-	type due struct {
-		dim  digest.Dim
-		date string
-	}
-	var dues []due
-	for i := 1; i <= digestCatchUpDays; i++ {
-		dues = append(dues, due{digest.ByDay, today.AddDate(0, 0, -i).Format("2006-01-02")})
-	}
-	yesterday := today.AddDate(0, 0, -1).Format("2006-01-02")
-	if today.Weekday() == time.Monday {
-		dues = append(dues, due{digest.ByWeek, yesterday})
-	}
-	if today.Day() == 1 {
-		dues = append(dues, due{digest.ByMonth, yesterday})
-		if today.Month() == time.January {
-			dues = append(dues, due{digest.ByYear, yesterday})
-		}
-	}
-	var out []digest.Period
-	for _, d := range dues {
-		// A date this step formatted is a date internal/digest's own clock
-		// reads; one it cannot name is a period no report is written for.
-		p, err := digest.NewPeriod(d.dim, d.date)
-		if err != nil {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
 }
 
 // digestOpenBranches is the branches of this repository's report runs whose

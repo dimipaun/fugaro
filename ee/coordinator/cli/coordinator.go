@@ -536,13 +536,10 @@ var coordinatorDefaultSince = fcli.LsDefaultSince()
 // coordinatorSince is --since's span as the instant the runs bucket is read
 // from: zero for no bound (parseSince's own answer), otherwise that far back
 // from lsNow — runs ls's clock, so a test that pins the window pins this
-// command's too and the two view the same runs.
-func coordinatorSince(window time.Duration) time.Time {
-	if window <= 0 {
-		return time.Time{}
-	}
-	return fcli.LsNow().Add(-window)
-}
+// command's too and the two view the same runs. The rule itself is the core's
+// (fcli.LsSince), which is what the graph's read of the same objects uses, so
+// the two commands cannot drift apart.
+func coordinatorSince(window time.Duration) time.Time { return fcli.LsSince(window) }
 
 // coordinatorDeclaredNote is the line every table carries under it, because
 // the column above it is the one column of this view that is not a fact.

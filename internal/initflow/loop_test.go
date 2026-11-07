@@ -25,6 +25,10 @@ type fake struct {
 	applyErr  error
 	verifyErr error
 	unchanged bool // Apply finds nothing to do
+	// onApply, when set, runs inside Apply, before it returns: what the run's
+	// own writer holds at the moment this stage starts its work, which is
+	// where a stage that takes minutes is watched from.
+	onApply func()
 	// outLeft is the step Apply leaves for the user: a stage that applied
 	// what this session may do and left the rest (Outcome.Left).
 	outLeft     *Left
@@ -55,6 +59,9 @@ func (f *fake) Plan(_ context.Context, env Env) (Plan, error) {
 func (f *fake) Apply(_ context.Context, env Env) (Outcome, error) {
 	f.rec("apply")
 	f.gotEnv = &env
+	if f.onApply != nil {
+		f.onApply()
+	}
 	if f.applyErr != nil {
 		return Outcome{}, f.applyErr
 	}
@@ -1424,6 +1431,40 @@ func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 	lines := outputLines(out.String())
 	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Left for you in ") || !strings.HasSuffix(last, ", 4 steps") {
 		t.Errorf("the account does not end in the run's closing line: %q\n%s", last, out.String())
+	}
+}
+
+// TestAStepLineIsOnScreenBeforeTheNextStageRuns: a stage's line prints when
+// that stage ends, not in one block at the end of the run. The stage that
+// takes minutes — a Terraform apply, an image build — is the case that
+// matters: a terminal that has said nothing since the stage before it looks
+// like a hang, and a person who interrupts an apply over it leaves Terraform a
+// lock and a half-written state behind, which `fugaro update` then has to
+// repair.
+func TestAStepLineIsOnScreenBeforeTheNextStageRuns(t *testing.T) {
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation)
+	m := reporterMarks(t)
+	stages[1].(*fake).onApply = func() {
+		if line := m.line(out.String(), Preflight); line == "" {
+			t.Errorf("the second stage's work started with the first stage's line not on the screen:\n%q", out.String())
+		}
+		if line := m.line(out.String(), Installation); line != "" {
+			t.Errorf("the second stage has a result on the screen before it ran: %q\n%q", line, out.String())
+		}
+	}
+	stages[1].(*fake).applyErr = errors.New("the apply failed")
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	// The stage's own failure is on the screen with it: the run does not wait
+	// for the end of a three-minute apply to say it stopped.
+	if line := m.line(out.String(), Installation); !strings.HasPrefix(line, m.failed+" "+Installation) {
+		t.Errorf("the failing stage's line is %q, want the failure marker:\n%s", line, out.String())
 	}
 }
 

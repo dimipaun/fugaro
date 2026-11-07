@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -988,5 +989,136 @@ func TestResultJSONCacheTokenTotals(t *testing.T) {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("result.json's cost lacks %s: %s", want, raw)
 		}
+	}
+}
+
+// TestStageNamesTheCredentialThatServedIt is plan AK3's first direction
+// (docs/api-key-review/implementation-plan.md, F18, D1415): the record's new
+// field names the credential a stage ran on, the run's own included -- which
+// is exactly the case `credential` excludes -- and names a stage-scoped
+// account's beside `credential` where an account took the stage.
+//
+// Three runs, because telling the configurations apart is the whole point: an
+// api-key run whose every stage the run's own key served through the gateway,
+// an oauth run with no gateway at all, whose every stage the run's own
+// subscription token served, and the mixed run, whose coder stage the key
+// served and whose review stage the account did. The oauth one is the case
+// the field's other value is for: without it, a mapping that named the key's
+// class and nothing else would leave a subscription run's stages unnamed and
+// no test would say so.
+func TestStageNamesTheCredentialThatServedIt(t *testing.T) {
+	t.Run("a stage the run's own api-key credential served", func(t *testing.T) {
+		g := newGW(t, gwConfig(t, ""), "enforce", "50", out4k())
+		rec, err := g.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review") {
+			t.Fatalf("stages = %v", got)
+		}
+		for _, s := range rec.Stages {
+			if s.ServedBy != runstore.CredentialAPIKey {
+				t.Errorf("stage %s: served_by = %q, want %q: the run's own key served it through the gateway",
+					s.Name, s.ServedBy, runstore.CredentialAPIKey)
+			}
+			if s.Credential != "" {
+				t.Errorf("stage %s: credential = %q, want absent: that field's case is a credential that is not the run's own",
+					s.Name, s.Credential)
+			}
+		}
+	})
+	t.Run("a stage the run's own oauth token served", func(t *testing.T) {
+		// An oauth run with no gateway (GatewayOn is false for it), whose
+		// stages' figures are Claude Code's own: the run's own subscription
+		// token is the credential that served every one of them, and the
+		// field's case for it is "oauth" rather than the absent value -- the
+		// run's own is what this field is for.
+		oauthCfg := strings.Replace(gwRolesConfig(t), "auth: api-key", "auth: oauth", 1)
+		g := newGW(t, oauthCfg, "observe", "")
+		g.deps.Env = append(filterEnv(g.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef")
+		rec, err := g.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review") {
+			t.Fatalf("stages = %v", got)
+		}
+		for _, s := range rec.Stages {
+			if s.ServedBy != runstore.CredentialOAuth {
+				t.Errorf("stage %s: served_by = %q, want %q: the run's own subscription token served it",
+					s.Name, s.ServedBy, runstore.CredentialOAuth)
+			}
+			if s.Credential != "" {
+				t.Errorf("stage %s: credential = %q, want absent: no account took this stage",
+					s.Name, s.Credential)
+			}
+		}
+	})
+	t.Run("a stage the stage-scoped account served", func(t *testing.T) {
+		b := mixedAccountRun(t, "acme-overflow")
+		rec, err := b.run(t, calling(new([]int), implement("feature"), call{sonnet, 4000}),
+			boundedStage(accountReview("ship", 0.42), 30*time.Second, 3))
+		if err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review") {
+			t.Fatalf("stages = %v", got)
+		}
+		coder, account := rec.Stages[0], rec.Stages[1]
+		if coder.ServedBy != runstore.CredentialAPIKey || coder.Credential != "" {
+			t.Errorf("the coder stage = %+v, want served_by %q and no credential", coder, runstore.CredentialAPIKey)
+		}
+		if account.ServedBy != runstore.CredentialOAuth || account.Credential != runstore.CredentialOAuth {
+			t.Errorf("the account stage = %+v, want served_by beside credential, both %q", account, runstore.CredentialOAuth)
+		}
+	})
+}
+
+// TestAPIKeyReviewRecordsItsCredential is plan AK3's red step: the api-key
+// review -- an api-key run whose coder is the provider's model and whose
+// reviewer is a Claude ID, the configuration docs/design/mixed-credentials.md
+// §3 Path A describes -- has to say on the review stage's own record which
+// credential served it. Before this task the stage carried nothing: no
+// `credential`, whose case is the account's, and no other field either (F18).
+//
+// The two upstreams are what make the credential readable from outside: the
+// coder's call reaches the provider's fake and the review's reaches
+// Anthropic's, on the run's own key. The stage's figure is the gateway's and
+// all of it money, which is what the field now lets a reader say in one place.
+func TestAPIKeyReviewRecordsItsCredential(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := providerRun(t, providerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+	// The review's call is Anthropic's to answer, on the run's api-key upstream.
+	g.fake.Script = append(g.fake.Script, anthropicfake.Compat{}.MessageOK(sonnet, use))
+
+	rec, err := g.run(t, callModel(deepseek, implement("feature")), callModel(sonnet, review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if n := g.compat.Count(); n != 1 {
+		t.Fatalf("the provider saw %d calls, want the coder stage's alone: %+v", n, g.compat.Seen())
+	}
+	if n := g.fake.Count(); n != 1 {
+		t.Fatalf("Anthropic saw %d calls, want the review stage's alone", n)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review") {
+		t.Fatalf("stages = %v", got)
+	}
+	senior := rec.Stages[1]
+	if senior.Name != "review" {
+		t.Fatalf("the second stage is %q", senior.Name)
+	}
+	if senior.ServedBy != runstore.CredentialAPIKey {
+		t.Errorf("the review stage's served_by = %q, want %q: the run's own api-key credential served it (F18)",
+			senior.ServedBy, runstore.CredentialAPIKey)
+	}
+	if senior.Credential != "" {
+		t.Errorf("the review stage's credential = %q: that field's meaning is a credential that is not the run's own",
+			senior.Credential)
+	}
+	if micros(t, senior.ModelUSD) == 0 || senior.ModelNotionalUSD != 0 {
+		t.Errorf("the review stage's model_usd = %v, model_notional_usd = %v, want the gateway's real dollars and no notional part",
+			senior.ModelUSD, senior.ModelNotionalUSD)
 	}
 }
