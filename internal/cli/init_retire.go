@@ -66,6 +66,11 @@ var (
 // cannot read stops it, and so does a label call that did not answer (M-4,
 // below). An abandoned run is not a degradation either.
 func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.TF, spec infra.RepoSpec) ([]infra.Retirement, error) {
+	// Whether this read saw everything the set is computed from. It is what
+	// keeps "nothing to retire" and "could not look" apart when the set comes
+	// back empty (design §3.1a), which is the one thing the record written
+	// from it may not confuse: see recordUpdate.
+	r.retireLooked = true
 	st, err := t.ShowState(ctx)
 	if err != nil {
 		if r.o.retire || ctx.Err() != nil {
@@ -73,6 +78,7 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 		}
 		r.warn(fmt.Sprintf("could not read %s's Terraform state (%v); a retirement cannot be predicted, so an address the state holds and the configuration no longer produces will not be named. Read it by hand with terraform show -json in the repository root's workdir", spec.Name, err))
 		st = nil
+		r.retireLooked = false
 	}
 	r.retireState = st.Addresses()
 	orphans, notes, warnings, err := infra.Orphans(ctx, c, spec, r.retireState)
@@ -92,6 +98,13 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 	// the flag and read the plan as it is.
 	if len(warnings) > 0 && r.o.retire {
 		return nil, remote(fmt.Errorf("--retire removes protected addresses from Terraform's state, so it will not run on a retirement set read without the labels:\n  %s\nWithout the answer the run cannot tell a live container of this repository from a retired one, and the removal would release the live one from Terraform's management without deleting or saying anything else. Nothing was removed from the state, nothing was deleted and nothing was confirmed. Rerun when the call named above answers, or rerun without --retire to read the plan and the summary as they are", strings.Join(warnings, "\n  ")))
+	}
+	if len(warnings) > 0 {
+		// A label call that did not answer is the same shape of hole: the
+		// state may name a retired address, but a live one the state no
+		// longer holds is invisible, so an empty set is not proof of
+		// nothing (M-4, and the warning above says so in its own words).
+		r.retireLooked = false
 	}
 	for _, w := range warnings {
 		r.warn(w)
@@ -1227,7 +1240,13 @@ func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
 //
 //   - the run found nothing to retire, which is a record of its own: an empty
 //     set replaces the previous update's, so the screen never draws an earlier
-//     update's rows as the last one's;
+//     update's rows as the last one's. This is the one site the read has to
+//     have *proved*: an empty set the run could not look for -- a state it
+//     could not read, a label call that did not answer (retireLooked) -- is not
+//     "nothing to retire" but the absence of an answer, and writing it would
+//     replace the previous update's rows, which are kept nowhere else, with a
+//     sentence the run has no right to (design §3.1a's rule for the summary,
+//     and D1483's for the count: unknown is not zero, one member over);
 //   - --retire ran the guarded flow to the end, or a managed project retired
 //     its own derived addresses (retireManaged) -- the two flows that remove
 //     addresses from the state and delete them;
@@ -1257,6 +1276,9 @@ func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
 // writes this record until the next update.
 func (r *initRun) recordUpdate(ctx context.Context, lc *localcfg.Config, rets []infra.Retirement) {
 	if r.o.door != updateDoor.name || r.o.planOnly {
+		return
+	}
+	if len(rets) == 0 && !r.retireLooked {
 		return
 	}
 	up := localcfg.UpdateProject{At: time.Now(), Retire: updateRecordRows(rets)}

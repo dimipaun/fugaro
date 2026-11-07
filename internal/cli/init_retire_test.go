@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -2563,6 +2564,167 @@ func TestTheUpdateRecordIsTheLastRunsAndNotAMerge(t *testing.T) {
 	if last.At.Before(first.At) {
 		t.Errorf("the record's time went backwards: %s then %s", first.At, last.At)
 	}
+}
+
+// TestAnUpdateThatCouldNotLookDoesNotRecordNothing: an empty retirement set is
+// recorded -- as "the last update retired nothing" -- only when the read
+// proved it. A state that could not be read, or a label call that did not
+// answer, comes back with the same empty set; design §3.1a keeps "nothing to
+// retire" and "could not look" apart, and the record is where confusing them
+// costs something: what it writes replaces the previous update's rows, and
+// those rows are kept nowhere else. So an update that could not look leaves
+// the record exactly as it found it, and says so in the run.
+func TestAnUpdateThatCouldNotLookDoesNotRecordNothing(t *testing.T) {
+	previous := localcfg.UpdateProject{At: time.Date(2026, 11, 6, 9, 30, 0, 0, time.UTC), Retire: []localcfg.UpdateRetirement{
+		{Address: retireJobAddr, Kind: "workflow job", Cause: "the workflow's default variant is app", Protected: true},
+	}}
+	cases := []struct {
+		name string
+		// said is the warning the run has to have printed: the sentence it
+		// says instead of "nothing to retire".
+		said string
+		o    retireOpts
+		// refused makes the cloud's jobs.list answer a permission error,
+		// which is the other way a read comes back incomplete.
+		refused bool
+	}{
+		{
+			name: "the state could not be read",
+			said: "could not read",
+			o:    retireOpts{protection: true, stateUnreadable: true, noOrphanJob: true},
+		},
+		{
+			name:    "a label call did not answer",
+			said:    "could not list",
+			o:       retireOpts{protection: true, stateEmpty: true, keptAsNote: true},
+			refused: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRetireRig(t, tc.o)
+			// The update before this one left its set here.
+			if err := localcfg.RecordUpdate(os.Getenv, initProjectName, previous); err != nil {
+				t.Fatal(err)
+			}
+			// A plan that deletes nothing: what this test is about is the set
+			// the run could not read, not what a plan does with one.
+			b, err := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": []planChange{
+				retireChange(retireRegistryAddr, "google_artifact_registry_repository", "create")}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.script["show@repo"] = map[string]any{"stdout": string(b)}
+			if tc.refused {
+				r.run.FailListWith = http.StatusForbidden
+			}
+			r.save(t)
+			out, errOut, err := executeStdin(t, "aurora\n", "update", "--repo", "--no-build")
+			text := out + errOut
+			if err != nil {
+				t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
+			}
+			if !strings.Contains(text, tc.said) {
+				t.Errorf("the run did not say it could not look (%q):\n%s", tc.said, text)
+			}
+			after := updateRecordFor(t, initProjectName)
+			if !slices.Equal(recordedAddresses(after), recordedAddresses(previous)) || !after.At.Equal(previous.At) {
+				t.Errorf("an update that could not look replaced the record: %+v, want the previous update's %+v", after, previous)
+			}
+		})
+	}
+}
+
+// noUpdateRecorded is the record's own "nothing to say": no project has an
+// entry. The state directory may hold other files (the remembered checkouts
+// are written by the same runs), so what it asserts is the record's reader
+// answering with an empty document.
+func noUpdateRecorded(t *testing.T, why string) {
+	t.Helper()
+	if rec := updateRecord(t); len(rec.Projects) != 0 {
+		t.Errorf("%s wrote an update record: %+v", why, rec.Projects)
+	}
+}
+
+// TestUpdateRecordNamesWhatTheRetireDoorTookAway: `--retire` is the explicit
+// door of the same flow the managed project runs by itself, and the run that
+// made it is an update like any other, so its set is the record's. This is one
+// of the four sites recordUpdate is called from, and the one a regression
+// would silently lose.
+func TestUpdateRecordNamesWhatTheRetireDoorTookAway(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "update", "--repo", "--retire", "--no-build")
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
+		t.Fatalf("the retirement did not run: JobDeletes = %v", deletes)
+	}
+	up := updateRecordFor(t, initProjectName)
+	if !slices.Contains(recordedAddresses(up), retireJobAddr) {
+		t.Errorf("the record names %v, want the job --retire took out of the state", recordedAddresses(up))
+	}
+}
+
+// TestUpdateRecordNamesWhatTheOrdinaryPlanRetired: the third way a set goes
+// away, and the second site a regression would lose -- a set the run left to
+// the ordinary plan, whose apply is what deletes it. The addresses the plan
+// deletes are the unprotected ones (the job's state says
+// deletion_protection = false here), and the container beside them is not:
+// what a reader has to be able to tell apart is the rows' Protected member.
+func TestUpdateRecordNamesWhatTheOrdinaryPlanRetired(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: false})
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	if got := r.applies(t); len(got) != 1 {
+		t.Fatalf("applies = %v, want the ordinary apply", got)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
+		t.Errorf("the ordinary path deleted a job: %v", deletes)
+	}
+	up := updateRecordFor(t, initProjectName)
+	svc := recordedRow(t, up, retireSvcAddr)
+	if svc.Protected {
+		t.Errorf("the service account's row is %+v, want the plan's own unprotected delete", svc)
+	}
+	if job := recordedRow(t, up, retireJobAddr); job.Protected || job.Job != retireJobName {
+		t.Errorf("the job's row is %+v, want the job the lowered state lets the plan delete", job)
+	}
+	if kept := recordedRow(t, up, retireKeptAddr); !kept.Protected || kept.Kept == "" {
+		t.Errorf("the container's row is %+v, want a container the apply does not delete", kept)
+	}
+}
+
+// TestTheUpdateRecordIsTheUpdatesAndNotTheOnboardings: the record is the last
+// update's, and the door guard in recordUpdate is what keeps the same flow from
+// writing itself there twice over. `setup --repo --retire` onboards a
+// repository: it removes the same addresses from the state and deletes the same
+// job -- everything the record is about -- and it must leave the record alone,
+// because a first onboarding is not the project's last update. `--plan-only` is
+// the same non-write for the update door itself: it prints the summary and
+// applies nothing, so there is nothing to record.
+func TestTheUpdateRecordIsTheUpdatesAndNotTheOnboardings(t *testing.T) {
+	setup := newRetireRig(t, retireOpts{protection: true})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
+	if err != nil {
+		t.Fatalf("setup: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	if deletes := setup.run.JobDeletes(); len(deletes) != 1 {
+		t.Fatalf("setup's retirement did not run: JobDeletes = %v", deletes)
+	}
+	noUpdateRecorded(t, "fugaro setup --repo --retire")
+
+	planned := newRetireRig(t, retireOpts{protection: true})
+	out, errOut, err = executeStdin(t, "", "update", "--repo", "--no-build", "--plan-only", "--allow-delete", retireSvcAddr)
+	if err != nil {
+		t.Fatalf("update --plan-only: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	if got := planned.applies(t); len(got) != 0 {
+		t.Fatalf("--plan-only applied: %v", got)
+	}
+	noUpdateRecorded(t, "fugaro update --repo --plan-only")
 }
 
 // TestUpdateRecordInAnUnwritableStateDirectoryIsReported: the record is the

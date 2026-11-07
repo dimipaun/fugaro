@@ -594,6 +594,7 @@ type initRun struct {
 	retireSet     []infra.Retirement
 	retireNotes   []infra.Retirement
 	retired       bool     // the flow was entered (a later plan must not re-enter it)
+	retireLooked  bool     // the read saw the state and the labels: an empty set is "nothing to retire" (see readRetirements)
 	retireApplied bool     // it applied: the jobs it removed from state still need deleting
 	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
 	retireClean   bool     // the resume's plan changed nothing: no apply is left, only the API delete
