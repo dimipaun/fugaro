@@ -92,6 +92,10 @@ type Lease struct {
 	now     ServerNow
 }
 
+// The guard Node.Save re-checks is this type: a lease that stopped satisfying
+// it would make every retry unfenced.
+var _ LeaseGuard = (*Lease)(nil)
+
 // NewLease builds the claim of one daemon on one orchestrator id.
 func NewLease(db CAS, agentID, holder string, now ServerNow) (*Lease, error) {
 	if db == nil {

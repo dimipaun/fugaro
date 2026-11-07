@@ -136,6 +136,14 @@ type Node struct {
 	attempts int
 }
 
+// The store the daemon is handed is this one, and the client it is handed is
+// rtdb's: a narrowing of either interface would otherwise be found by the next
+// task rather than here.
+var (
+	_ Store = (*Node)(nil)
+	_ CAS   = (*rtdb.Client)(nil)
+)
+
 // NewNode builds the state node of one orchestrator id. The id, the role and
 // the lease's holder are checked here rather than at the first write, so a
 // daemon is refused its own construction rather than a tick.
