@@ -20,10 +20,10 @@ the register read name by name, is §7 of [reconciliation.md](reconciliation.md)
 ruling of 2026-10-27 is that **central orchestrators — and the hosted MCP server with them — are
 born in the business-licensed folder**, not in the core
 ([../subscriptions/reconciliation.md](../subscriptions/reconciliation.md), D435) — which is what
-this plan, and the pull request that was building its P2, had both assumed. So **P2 onward
-lands in `ee/`**, and **#831 — the pull request that built P2 (`fugaro orchestrator add|rm|ls`) as
-core code — closes as superseded**. That closure is **OWNER-RUN**: the pull request is already
-closed (2026-10-27, per the census of 2026-11-07,
+this plan, and the pull request that was building its P2, had both assumed. So **a part whose
+product is the orchestrator itself lands in `ee/`**, and **#831 — the pull request that built P2
+(`fugaro orchestrator add|rm|ls`) as core code — closes as superseded**. That closure is
+**OWNER-RUN**: the pull request is already closed (2026-10-27, per the census of 2026-11-07,
 [../subscriptions/status-2026-11-07.md](../subscriptions/status-2026-11-07.md)), but the comment
 T20 names, `gh pr close 831 --comment "Superseded: re-planned in ee/ (T20)"`, is a person's to post
 — this re-plan neither posts it nor records it as done.
@@ -33,9 +33,9 @@ What "born in `ee/`" changes, and what it does not:
 - **A part whose product is the orchestrator itself lands under `ee/orchestrator/`**, reached only
   through `ee/register`: the command surface (P2), the resident service's Go half (P4), the session
   protocol (P5), the session's own records (P6), the prompts (P7) and the alert path's own half
-  (P8). An untagged build keeps the core's stub for the name — it exits non-zero and says why (the
-  subscriptions work's E1.1, D522) — so a console or a phone reaches the orchestrator only in the
-  tagged binary, which is a reading each client's own part has to make explicitly. **The order in
+  (P8). An untagged build keeps the core's stub for the name — it exits non-zero and says why (E1.1,
+  D522) — so a console or a phone reaches the orchestrator only in the tagged binary, which is a
+  reading each client's own part has to make explicitly. **The order in
   §1 and every part's red step are unchanged**: what moves is where the code lands, not what it has
   to prove.
 - **A part whose product is a capability the core already enforces stays in the core, or grows a

@@ -23,12 +23,13 @@ and `docs/coordinator/` were each
 **Re-planned 2026-11-07 (D435; T20): the parts land in `ee/`, behind `ee/register`, and #831 closes
 as superseded.** The owner's ruling of 2026-10-27 is that **central orchestrators — and the hosted
 MCP server with them — are born in the business-licensed folder**
-([../subscriptions/reconciliation.md](../subscriptions/reconciliation.md), D435), so **P2 onward
-lands under `ee/orchestrator/`**, reached only through `ee/register`, while the parts whose product
-is a capability the core already enforces — P1's allow-list admission, the policy and the rules, the
-caps and the breaker, P3's lease and its two core readers — stay in the core, and the Terraform
-stays in `deploy/terraform/` where the MIT `fugaro update` applies it. `implementation-plan.md`
-carries the ruling and a note under each part saying which of the two it is. **#831**, the pull
+([../subscriptions/reconciliation.md](../subscriptions/reconciliation.md), D435), so **a part whose
+product is the orchestrator itself lands under `ee/orchestrator/`**, reached only through
+`ee/register`, while the parts whose product is a capability the core already enforces — P1's
+allow-list admission, the policy and the rules, the caps and the breaker, P3's lease and its two core
+readers — stay in the core, and the Terraform stays in `deploy/terraform/` where the MIT `fugaro
+update` applies it. `implementation-plan.md` carries the ruling and a note under each part saying
+which of the two it is. **#831**, the pull
 request that was building P2 (`fugaro orchestrator add|rm|ls`) as core code, **closes as
 superseded** — and that closure is **OWNER-RUN**: the pull request is already closed (2026-10-27,
 per the census of 2026-11-07,
@@ -36,7 +37,7 @@ per the census of 2026-11-07,
 names, `gh pr close 831 --comment "Superseded: re-planned in ee/ (T20)"`, is a person's to post, so
 it is recorded here as **unperformed** rather than reported as done. **Two sentences above are stale
 as of the same date, and are corrected rather than deleted**: `docs/coordinator/` is no longer
-*"plan only"* — its P0–P5 are built, in `ee/coordinator/` since the ee-reorg plan's E2.1b — and
+*"plan only"* — its P1–P5 are built, in `ee/coordinator/` since the ee-reorg plan's E2.1b — and
 `docs/credentials-service/` no longer is either: its service is deployed by every `fugaro update`
 (DON1). What is still true of both is what this folder's dependency actually rests on: neither
 sibling's own parts that this plan waits for are built.
