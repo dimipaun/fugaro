@@ -1,7 +1,8 @@
 # Periodic run reviews: reconciliation against the code
 
-**Status: design answered by the owner 2026-11-04 and ruled on again 2026-11-05; plan only; nothing
-implemented; no task approved.**
+**Status: design answered by the owner 2026-11-04, ruled on again 2026-11-05, and its decisions
+D1430–D1449 answered 2026-11-07 with all tasks approved 2026-11-07 (owner: "All tasks approved.
+Jobmax"); plan only; nothing implemented.**
 
 Read against `origin/main` at `b41709ea` on 2026-11-04, and **refreshed against that tree** the same
 day: line numbers are that commit's, and §4 lists what `main` has overtaken since the design was
@@ -727,9 +728,11 @@ register's own rule for a work that reserved none (`docs/gcp-live-checklist.md:5
 
 ### 6.4 Decisions D1430–D1449
 
-**None of these is answered.** Each row carries the recommendation, the alternative with its cost,
-and an **empty owner's-answer cell** — the plan is written to the recommendation until the owner
-says otherwise, and nothing here is approved.
+**Every one of these is answered, as recommended, on 2026-11-07.** Each row carries the
+recommendation, the alternative with its cost, and **the owner's dated answer** — asked one at a
+time through `AskUserQuestion`, he took the recommendation each time, and approved every task in
+[implementation-plan.md](implementation-plan.md) the same day (owner: "All tasks approved.
+Jobmax").
 
 | # | Question | Recommendation, and why | Alternative, and its cost | Owner's answer |
 | --- | --- | --- | --- | --- |

@@ -1,9 +1,10 @@
 # The api-key review path — reconciliation
 
-**Status: reconciliation only; no code is implemented; no task approved.** This document reads every
+**Status: reconciliation only; no code is implemented; D1410–D1429 are answered 2026-11-07 and all
+tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** This document reads every
 clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree, classifies what it finds,
-and turns the parts that need a decision into questions **D1410–D1429** (§7). Nothing here is
-approved and nothing follows it: a recommendation is not a go, and an answer is not an approval.
+and turns the parts that needed a decision into questions **D1410–D1429** (§7), every one of them
+answered the same day, each as recommended.
 
 **Checked against:** `origin/main` at `aa26f322f`, on **2026-11-07**. `graphify` has no graph for
 this repository (there is no `graphify-out/`), so every claim was located with `git grep` and then
@@ -29,7 +30,7 @@ reviews, each with its own machinery, its own credential and its own record:
 | What proves it | **Check 290**, written and **NOT RUN** (**U5**) | the class's own tests |
 
 So the ask is one name for two paths. §1 and §2 read each of them; §4 states the reading this design
-takes and the decision that settles it (**D1410**).
+takes and the decision that settled it (**D1410**, answered **both slices** on 2026-11-07).
 
 ## 1. The in-job half
 
@@ -373,8 +374,10 @@ the class's own credential*, never to let the repository supply one.
 ## 7. Owner decisions D1410–D1429
 
 Recommendation first in each, with the reason; then the alternative and its cost. **The owner's
-answer cell is empty in every row: none of these is answered, and nothing in this folder is an
-approval.** **D1410–D1429 are this work's block** (§8).
+answer cell carries his ruling of 2026-11-07 in every row: asked one at a time through
+`AskUserQuestion`, he took the recommendation each time**, and the same day he approved every task
+in [implementation-plan.md](implementation-plan.md) (owner: "All tasks approved. Jobmax").
+**D1410–D1429 are this work's block** (§8).
 
 | # | The question | Recommended, and why | The alternative, and its cost | Owner's answer |
 | --- | --- | --- | --- | --- |
@@ -412,7 +415,8 @@ open pull request's head:
   returns the same folder — so the command does find a decision number that is present.
 - The highest decision written on `main` is therefore **D1409**, the tail of
   `docs/catalog-build-context`'s block (merged as #1805), and **D1410–D1429 are free**. They are all
-  written above and **not one is answered**; none is reserved unused.
+  written above, **every one of them is answered as recommended on 2026-11-07** (§7), and none is
+  reserved unused.
 
 **The check block.** The register's highest **written** `## Check` section on `main` was **290** at
 this reading (`docs/gcp-live-checklist.md`, the mixed-credentials run), and is **291** since
@@ -432,33 +436,37 @@ no number any other work reads.
 
 ## 9. Open items
 
-These are the owner's. The recommendation and the cost of each are in §7; this is the index, with
-the reason each one exists.
+These were the owner's. The recommendation and the cost of each are in §7; this is the index, with
+the reason each one existed and **the answer it carries since 2026-11-07**. Every one takes the
+recommendation, and all tasks were approved the same day.
 
-1. **D1410 — blocking, and first.** The ask names one path and the tree has two reviews (§4).
-   **No task in [implementation-plan.md](implementation-plan.md) may start before this is
-   answered**, because the answer decides which slice the plan is about. The two halves also differ
+1. **D1410 — answered: both slices.** The ask names one path and the tree has two reviews (§4), so
+   the answer decides which slice the plan is about; the gate it carried — no task may start before
+   it was answered — is lifted, and the plan covers both halves. The two halves also differ
    in when they can be used: the in-job half runs today, and the cloud half is refused at the launch
-   until **E7** is met (**F10**, **U6**) — so an answer of "both" is three slices of code and a
+   until **E7** is met (**F10**, **U6**) — so the answer of "both" is three slices of code and a
    path an owner still cannot reach.
-2. **D1421 — the release.** The owner cut the api-key review from 0.20.0 on 2026-11-06; this design
-   reopens nothing, and the plan books no release until the owner says which one (**F11**, §4).
-3. **D1412 and D1413 — the in-job fork, and the one that decides whether the first slice is a test
-   or a config key.** The run has one Anthropic key (**F6**) and a published stage account silently
-   wins (**F7**).
-4. **D1414 — the `oauth` run.** A subscription-coder run can never have an api-key review today
-   (**F8**), and the ask does not say whether it should.
-5. **D1415 — the record.** `StageTiming.Credential` cannot name a credential the run's own key
-   served without changing a meaning on a wire shape the console, the mobile app and the history
-   read (**F18**), so the answer is a new field or nothing.
-6. **D1416, D1417, D1418 and D1419 — the cloud fork, and the one that decides the slice's size.**
-   The Anthropic-key half needs a pairing that may name the project's key (**F12**, **F13**); the
-   OpenRouter half needs the provider-key apparatus §6.7 describes (**F15**).
-7. **D1420 — the refusal.** `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` is the test that holds
-   the fail-closed direction, and §6.7 says it is rewritten rather than deleted.
-8. **D1422 and D1427 — clause 2 and the evidence.** Whether a project with no Claude account may
-   launch a review at all (**F17** — and note the variant is already deployed for it: what it lacks
-   is a credential, not a job), and whether the owner runs Check 330 to prove the path. Both are
-   downstream of **E7** (**F10**, **U6**).
+2. **D1421 — answered: after 0.20.0.** The owner cut the api-key review from 0.20.0 on 2026-11-06,
+   and the answer keeps that cut, so this design reopens nothing (**F11**, §4).
+3. **D1412 and D1413 — answered: no key of its own, and the key wins when the owner asks for it
+   explicitly.** The run has one Anthropic key (**F6**) and a published stage account silently
+   wins (**F7**), so the answer fixes which of the two wins; the spelling of that explicit request
+   is the plan's to design.
+4. **D1414 — answered: no.** A subscription-coder run can never have an api-key review today
+   (**F8**), and it stays that way.
+5. **D1415 — answered: a new additive field.** `StageTiming.Credential` cannot name a credential the
+   run's own key served without changing a meaning on a wire shape the console, the mobile app and
+   the history read (**F18**), so the answer is the new field and not a new value on `credential`.
+6. **D1416, D1417, D1418 and D1419 — answered: the Anthropic key first, paired to the project's own
+   key, and no provider endpoint in this slice.** The Anthropic-key half needs a pairing that may
+   name the project's key (**F12**, **F13**); the OpenRouter half needs the provider-key apparatus
+   §6.7 describes (**F15**), and D1418 defers the bundle-and-policy contract question to that work.
+7. **D1420 — answered: rewritten, keeping its name.**
+   `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` is the test that holds the fail-closed direction,
+   and §6.7 says it is rewritten rather than deleted.
+8. **D1422 and D1427 — answered: yes to both.** A project with no Claude account may launch a review
+   (**F17** — and note the variant is already deployed for it: what it lacks
+   is a credential, not a job), and the owner runs Check 330 to prove the path. Both are
+   downstream of **E7** (**F10**, **U6**), which neither answer lifts.
 9. **U1 and U2 (§6) — the terms question and the cost.** Both are outside the tree: clause 3's
    substance (**F20**) is an owner/counsel question, and the figures are the owner's own.

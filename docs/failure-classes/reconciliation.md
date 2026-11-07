@@ -1,6 +1,7 @@
 # Reconciliation: the failure-classes design against the code on `main`
 
-**Status: plan only; nothing is implemented; no task approved.** This file reads
+**Status: plan only; nothing is implemented; D1450–D1469 are answered 2026-11-07 and all tasks are
+approved 2026-11-07 (owner: "All tasks approved. Jobmax").** This file reads
 [spec.md](spec.md) — a verbatim copy of `docs/design/failure-classes.md` — against the tree of `main`
 at **`56c91f66`** (2026-11-07), path by path and symbol by symbol. Everything below was resolved
 against that tree while writing it; the two commands that read the numbers this work holds are in §7,
@@ -485,8 +486,9 @@ be held to it) or **Open** (the design leaves it to the owner).
 
 - **F31 — the design's own decisions.** §8 D1–D9 and §9 O1–O6 are unanswered, and this file does not
   answer one of them (§9). The plan's gates (§7 of the implementation plan) name D-numbers from §6 and
-  never an Open item: an unanswered Open item is a reason a *task* may not start, and it is stated as
-  such rather than folded into a decision row.
+  never an Open item: an Open item is the owner's own question and is not a decision row in disguise,
+  and the plan states, rather than folds away, which of its tasks an Open item would hold — here,
+  none of them.
 
 ---
 
@@ -513,9 +515,11 @@ stats` and every command the design's §6.3 does not name.
 
 ## 6. Decisions D1450–D1469
 
-**Not one of these is answered here.** The owner's-answer cell is empty in every row, and a task in
-[implementation-plan.md](implementation-plan.md) may not start before the rows its gate names (§7 of
-the plan) are answered. Each row states the question, what this reconciliation recommends and why, the
+**Every one of these is answered, as recommended, on 2026-11-07.** The owner's dated answer is in
+every row — put to him one at a time through `AskUserQuestion`, he took the recommendation each time
+— and every task in [implementation-plan.md](implementation-plan.md) was approved the same day
+(owner: "All tasks approved. Jobmax"), so no gate the plan names is still open. Each row states the
+question, what this reconciliation recommends and why, the
 alternative, and what the alternative costs. **No row re-asks one of the design's §8 D1–D9 or §9
 O1–O6**; where a question here touches one of them, the row says so and leaves that question to the
 design's own numbering.
@@ -662,7 +666,9 @@ answers none.
    `stageErrorReason` today (`internal/runner/runner.go:3759`) and falls into
    `stage_error_unexplained`; whether it earns a value of its own is a ruling on O2.
 
-**Everything else in this folder is a decision row (§6) or a finding (§4) — and neither is an
-answer.** No task in [implementation-plan.md](implementation-plan.md) may start until the rows its own
-gate names are answered, and the design's §10 status stands unchanged beside all of it: **a plan; no
-task is approved.**
+**Everything else in this folder is a decision row (§6) or a finding (§4) — and the rows are
+answered: every one of D1450–D1469 takes the recommendation, 2026-11-07.** Every task in
+[implementation-plan.md](implementation-plan.md) is approved the same day (owner: "All tasks
+approved. Jobmax"), so the gates that named those rows are satisfied. The design's own §10 status
+stands unchanged beside all of it, in `docs/design/failure-classes.md`, which is the pinned copy
+[spec.md](spec.md) carries and is not this folder's to rewrite.

@@ -3,8 +3,8 @@
 This file reads [spec.md](spec.md) — the owner's ask of 2026-11-07 — against the console and the CLI
 as they are on this tree, and says for each of the five things he named where the fact lives, whether
 a screen can read it today, and what a CLI change would have to add. Nothing here is a task approval:
-the tasks are [implementation-plan.md](implementation-plan.md), and **not one of D1470–D1489 is
-answered**.
+the tasks are [implementation-plan.md](implementation-plan.md), and **every one of D1470–D1489 is
+answered, as recommended, on 2026-11-07**.
 
 **How this was read.** Every claim was checked by reading the named file and symbol, not a summary of
 it. **Citations name a path and a symbol**, and a line number only where the line itself is the point
@@ -232,8 +232,10 @@ Stated as a list because each one is a fence a later task could move without not
 
 ## 7. Decisions D1470–D1489
 
-**Not one of these is answered here.** The owner's-answer cell is empty in every row, and a task in
-[implementation-plan.md](implementation-plan.md) may not start before its row is answered. Each row
+**Every one of these is answered, as recommended, on 2026-11-07.** The owner's dated answer is in
+every row — put to him one at a time through `AskUserQuestion`, he took the recommendation each time
+— and every task in [implementation-plan.md](implementation-plan.md) was approved the same day
+(owner: "All tasks approved. Jobmax"). Each row
 states the question, what this reconciliation recommends and why, the alternative, and what the
 alternative costs.
 

@@ -4,10 +4,10 @@
 all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** This is a design-only
 folder: it adds no code, no schema, no console source, no test fixture and no workflow, and it edits
 no file outside `docs/console-managed-screens/`. Every command, flag, field, operation and file
-below is a proposal. **No decision here is answered** ([reconciliation.md](reconciliation.md) §7
-carries D1470–D1489, each with an empty owner's-answer cell), and **no task in
-[implementation-plan.md](implementation-plan.md) may start before the owner approves it** — an
-answer is not an approval.
+below is a proposal, and **every one of them is approved**: the owner answered **D1470–D1489** on
+2026-11-07 ([reconciliation.md](reconciliation.md) §7 carries the dated answer in each row) and
+approved every task in [implementation-plan.md](implementation-plan.md) the same day (owner: "All
+tasks approved. Jobmax").
 
 **Asked by:** the owner, 2026-11-07, in the release planning for **console 0.121.0 (Raspberry)**: put
 "managed-project screens" in that release — **read-only** screens showing what the CLI does on a
@@ -21,8 +21,8 @@ DON7 lands. His words are [spec.md](spec.md), verbatim, and they are the only te
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's ask, verbatim, with a header naming him by role |
-| [reconciliation.md](reconciliation.md) | Findings **F1–F27** against the console and the CLI on this tree, read by path and symbol; the security analysis as an attacker would see it (§5); what the screens may not do (§6); the decisions **D1470–D1489**, each a table row with a recommendation, an alternative, its cost and an **empty owner's-answer cell** (§7); the number block and how it was read (§8); **UNVERIFIED** (§9) |
-| [implementation-plan.md](implementation-plan.md) | The CLI tasks **CM1–CM2**, the fence tasks **CM3–CM4** and the console tasks **CM5–CM13**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), the tasks in detail (§3), what is deliberately not in the plan (§4), the release slot (§5), the owner-run live check **Check 360** (§6) and the gates a task may not start without (§7). **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | Findings **F1–F27** against the console and the CLI on this tree, read by path and symbol; the security analysis as an attacker would see it (§5); what the screens may not do (§6); the decisions **D1470–D1489**, each a table row with a recommendation, an alternative, its cost and **the owner's answer of 2026-11-07** (§7); the number block and how it was read (§8); **UNVERIFIED** (§9) |
+| [implementation-plan.md](implementation-plan.md) | The CLI tasks **CM1–CM2**, the fence tasks **CM3–CM4** and the console tasks **CM5–CM13**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), the tasks in detail (§3), what is deliberately not in the plan (§4), the release slot (§5), the owner-run live check **Check 360** (§6) and the gates a task may not start without, every one of them satisfied by the answers of 2026-11-07 (§7). **Nothing in it is implemented; every task is approved** |
 
 ## What it is
 
@@ -66,7 +66,7 @@ Three things this design settles that the ask does not:
 
 | Block | State |
 | --- | --- |
-| **D1470–D1489** | **this work's block, all twenty written and NONE answered.** Taken above every number on `main` and in every pull-request head this checkout could fetch. On `main` (`origin/main` at `56c91f66`) the highest number written or cited is **D1409** (`docs/catalog-build-context/reconciliation.md`, the tail of that work's D1390–D1409); across the pull-request heads the highest is **D1429**. **Verified free on 2026-11-07**: no `D147x` or `D148x` appears anywhere on `main` or in any of the **1,796** fetched `refs/pull/*/head` refs (§8 carries the commands) |
+| **D1470–D1489** | **this work's block, all twenty written and every one of them answered as recommended on 2026-11-07** (§7 of [reconciliation.md](reconciliation.md) carries the dated answer in each row); none is reserved unused. Taken above every number on `main` and in every pull-request head this checkout could fetch. On `main` (`origin/main` at `56c91f66`) the highest number written or cited is **D1409** (`docs/catalog-build-context/reconciliation.md`, the tail of that work's D1390–D1409); across the pull-request heads the highest is **D1429**. **Verified free on 2026-11-07**: no `D147x` or `D148x` appears anywhere on `main` or in any of the **1,796** fetched `refs/pull/*/head` refs (§8 carries the commands) |
 | **D1490–D1499** | **reserved and unused**, so no second work can take a number adjacent to this one |
 | **Check 360** | this work's live check (implementation-plan §6). The highest `## Check` **section written** on `main` is **290** (`docs/gcp-live-checklist.md`); the highest number **cited** on `main` is **314**; the highest claimed in a pull-request head is **330** (`docs/api-key-review`, pull request **#1819**). 360 is a fresh block, well above all three, and 361–369 are available if a task needs a second check. Like every claim above the highest written section, 360 is **claimed, not reserved**: the register's rule is that a claim is settled at its merge, and whichever of two claims merges second renumbers itself |
 
