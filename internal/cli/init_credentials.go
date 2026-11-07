@@ -437,8 +437,9 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 }
 
 // backfillCredentialsServiceReady records the switch on every repository entry
-// whose root has already been applied with the credentials service on — by any
-// machine, from any checkout — and whose entry carries no record yet.
+// the installation's own state answers for — by any machine, from any checkout
+// — whether the entry carries no record yet, one left by an earlier apply, or
+// one the root's last apply has outlived.
 //
 // It is the upgrade path of docs/credentials-service/default-on.md's DON1, and
 // it exists because the record is new in this release: an entry written before
@@ -472,22 +473,25 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // that is applied — and the upgrade would converge one checkout at a time, the
 // operator step this function exists to remove. The state is also the honest
 // half of the pair: the tfvars are what a run HANDED Terraform, so an apply
-// that failed leaves a document ahead of the state. A repository whose state
-// holds no such grant — never applied anywhere, applied with the service off,
-// or forgotten — is left alone: the record vouches for a grant, and none of
-// those is evidence of one. That read is made for an entry recorded `false` as
-// well as for one with no record (the loop below says why), and it is the only
-// thing that repairs a stale false: the record is published whole, so a machine
-// whose own apply predates the grant keeps writing its `false` over the `true`
-// the machine that made the grant published, and no other command would ever
-// correct it (localcfg's mergeRepoRecords). The value is this run's bundle
-// reading, the same one the repository door writes, and the bundle reading
-// alone: this door fills
-// the roots no checkout here applies, so it has neither the installation's
-// outputs nor their files to fold in — and does not need them, the grant that
-// brought a key here being one an apply made with the switch on, while both
-// readers judge those two conditions again, live, on the run that reads the
-// record (localcfg.Repo.CredentialsServiceReady).
+// that failed leaves a document ahead of the state. That read is made for
+// EVERY entry the config holds, whatever record it carries (the loop below says
+// why), and it is the only thing that repairs a record the root's last apply
+// has outlived: the record is published whole and a local one wins the union
+// (localcfg's mergeRepoRecords), so a machine whose own apply is older keeps
+// writing its answer over the one the machine that applied last published, in
+// both directions — a stale false withholds the address from a repository whose
+// jobs have no model mounts left, and a stale true hands an address to a job
+// whose account holds no roles/run.invoker grant. Where the state shows no
+// grant a record that says on is written `false`; an entry with no record and
+// no grant keeps its absence, since nothing has judged that root and a written
+// false would claim an apply that ran with the switch off. Where the state
+// shows the grant the record is written as this run's bundle reading — the same
+// value the repository door writes, and the bundle reading alone: this door
+// fills the roots no checkout here applies, so it has neither the
+// installation's outputs nor their files to fold in, and does not need them,
+// the grant that brought a key here being one an apply made with the switch on,
+// while both readers judge those two conditions again, live, on the run that
+// reads the record (localcfg.Repo.CredentialsServiceReady).
 //
 // Nothing is written where the bundle was not read (credentialsBundleReady's
 // second answer): in a coding agent's session or in a run's own process, and on
@@ -510,36 +514,48 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 	if lc == nil || len(lc.Repos) == 0 {
 		return
 	}
-	var switched []string
+	var switched, heldOff []string
 	for key := range lc.Repos {
-		// A record saying on is a door's judgement of that root
-		// (recordCredentialsServiceReady, or a previous backfill), and this one
-		// has nothing to add to it. Every other entry is read against the
-		// installation's own state: no record at all is an entry written before
-		// the field existed, and a recorded false is an apply that ran with the
-		// switch off — the emptied bundle, or an auth the service does not
-		// serve. Neither is evidence that the grant is absent, and the false in
-		// particular is not: the apply that made the grant can be NEWER than
-		// it, made on another machine from a bundle filled since, and a false
-		// left alone here outranks the true that machine published for every
-		// reader of the published file (localcfg's mergeRepoRecords is where
-		// that happens) — the installation-wide outage of the switch this read
-		// is what keeps `fugaro update` alone able to repair. It costs one
-		// state read per such entry per update, which is the price of that
-		// repair: the alternative is a record that no door can correct.
-		if lc.Repos[key].CredentialsServiceOn() {
-			continue
-		}
-		on, err := appliedRepoCredentialsService(ctx, c, stateBucket, lc, key)
+		// Every entry is read against the installation's own state, whatever
+		// record it holds, because the record is this machine's and the state is
+		// the installation's: a record carries no stamp, so one left by an
+		// EARLIER apply of that root — on another machine, or from another
+		// checkout of this one — outranks the answer that root's last apply
+		// published for every reader of the published file (localcfg's
+		// mergeRepoRecords is where that happens), and no other door would ever
+		// correct it. A recorded false is that case in one direction: the apply
+		// that made the grant can be NEWER than the record, made on another
+		// machine from a bundle filled since, and the false then withholds the
+		// address from a repository whose jobs have no model mounts left
+		// (D143). A recorded true is the same case the other way: a root
+		// re-applied held off — the owner switching the repository back, or an
+		// auth the service does not serve — puts the jobs' mounts back and takes
+		// the roles/run.invoker grant away, and the stale true hands those jobs
+		// an address their accounts may not knock with, which fails every run of
+		// them at bootstrap. It costs one state read per entry per update, which
+		// is the price of a repair `fugaro update` alone can make: the
+		// alternative is a record no door can correct.
+		on, judged, err := appliedRepoCredentialsService(ctx, c, stateBucket, lc, key)
 		if err != nil {
 			r.warn(fmt.Sprintf("whether %s's repository root carries the credentials service could not be read (%s): its record is left as it is, and a run of it may not be handed the service's address until the next update reads the state", key, oneLineCLI(err.Error())))
 			continue
 		}
+		if !judged {
+			// Nowhere to read the answer from — no state bucket, or a
+			// repository this config cannot name a root for — is not the answer
+			// "no grant": the entry keeps the record it has, as it does for a
+			// read that failed.
+			continue
+		}
 		if on {
 			switched = append(switched, key)
+			continue
+		}
+		if lc.Repos[key].CredentialsServiceOn() {
+			heldOff = append(heldOff, key)
 		}
 	}
-	if len(switched) == 0 {
+	if len(switched) == 0 && len(heldOff) == 0 {
 		return
 	}
 	ready, record := r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
@@ -548,14 +564,24 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 		// own process, or a read that failed — is there a reading to write, so
 		// every entry keeps the record the person's last run left on it and the
 		// upgrade converges on that person's next `fugaro update`. The entries
-		// this door visits are the ones whose record is not already true, and
-		// the value it would write is this run's own reading, so a failed read
-		// costs it a convergence and cannot clear a record someone else wrote.
+		// this door visits are the ones the installation's state disagrees with,
+		// and the values it would write are this run's own reading and a plain
+		// off, so a failed read costs it a convergence and cannot clear a record
+		// someone else wrote.
 		return
 	}
 	for _, key := range switched {
 		entry := lc.Repos[key]
 		entry.CredentialsServiceReady = localcfg.RecordSwitch(ready)
+		lc.Repos[key] = entry
+	}
+	for _, key := range heldOff {
+		// Off whatever this run's bundle says: the state carries no grant, so
+		// the service refuses this repository's accounts whatever the bundle
+		// holds, and its jobs kept (or got back) the mounts that make the
+		// service unnecessary to them.
+		entry := lc.Repos[key]
+		entry.CredentialsServiceReady = localcfg.RecordSwitch(false)
 		lc.Repos[key] = entry
 	}
 }
@@ -575,24 +601,33 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 // own state (the review of 2026-11-07's fourth round).
 //
 // A repository the local config does not hold, one it cannot name a slug for,
-// and a run with no state bucket to read all answer false: none of them names
-// a root whose state could carry the grant.
-func appliedRepoCredentialsService(ctx context.Context, c *infra.Clients, stateBucket string, lc *localcfg.Config, repo string) (bool, error) {
+// and a run with no state bucket to read all answer false, and none of them
+// JUDGES the root: the second answer is what keeps the caller from writing "no
+// grant" where it could not ask, which is the difference between a repository
+// whose root was applied with the service off and one whose state this run
+// never read. A state that holds no object at all for that root IS judged, and
+// answers false: the bucket is the installation's own, so nothing of this
+// installation applied that root with the service on.
+func appliedRepoCredentialsService(ctx context.Context, c *infra.Clients, stateBucket string, lc *localcfg.Config, repo string) (on, judged bool, err error) {
 	if lc == nil || c == nil || stateBucket == "" {
-		return false, nil
+		return false, false, nil
 	}
 	entry, ok := lc.RepoFor(repo)
 	if !ok {
-		return false, nil
+		return false, false, nil
 	}
 	slug, err := task.Slug(entry.Provider, repo)
 	if err != nil {
 		// A repository whose provider this config cannot name has no state
 		// prefix to have written the root's state under: the slug is what
 		// names it (repoEngine's own derivation).
-		return false, nil
+		return false, false, nil
 	}
-	return infra.RepoCredentialsServiceApplied(ctx, c, stateBucket, slug)
+	on, err = infra.RepoCredentialsServiceApplied(ctx, c, stateBucket, slug)
+	if err != nil {
+		return false, true, err
+	}
+	return on, true, nil
 }
 
 // deployedRepoCredentialsService reports whether the repository root this

@@ -323,12 +323,16 @@ func MergeShared(published, local *Config) *Config {
 // returns in it. Every launch that reads the published file then hands no
 // address to that repository's cascade runs — whose jobs gave their model
 // mounts up to the later apply — so they halt at the service's door (D143).
-// What repairs it is the machine holding the stale false: the backfill re-reads
-// the installation's own state for a recorded `false` as well as for an entry
-// with no record, so that machine's next `fugaro update` — the one command the
-// upgrade promises — writes the record true again when the state shows the
-// grant and that run's bundle holds a model credential, and publishes it back
-// (internal/cli's backfillCredentialsServiceReady). Until that run, the window
+// What repairs it is the machine holding the stale record, in either direction:
+// the backfill re-reads the installation's own state for EVERY entry the config
+// holds, whatever record it carries, so that machine's next `fugaro update` —
+// the one command the upgrade promises — writes the record true again when the
+// state shows the grant and that run's bundle holds a model credential, and
+// writes it `false` when the state shows no grant, and publishes the correction
+// back (internal/cli's backfillCredentialsServiceReady). The other direction is
+// the same stale record with the signs swapped: a `true` outliving the apply
+// that took the grant away hands a job an address its account may not knock
+// with, which fails every run of it at bootstrap. Until that run, the window
 // above is open. Stamping the record would close the window instead of
 // repairing it, and would cost the published shape a field.
 //

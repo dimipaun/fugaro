@@ -3901,12 +3901,14 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // root OR the repository's own record, never on this machine's tfvars alone:
 // a machine that never applied the root holds no tfvars of it — the desktop
 // console spawns from a private directory, so this is every console launch —
-// while the
-// record is written only alongside the apply it describes, by that apply's
-// machine or by an installation-wide backfill that read the installation's own
-// state, so it agrees with the root wherever it was applied. A record that
-// lags a bundle emptied since the apply cannot withdraw the address on its own
-// here: the deployed root still answers for the machine that applied it.
+// while the record is written only alongside the apply it describes, by that
+// apply's machine or by an installation-wide backfill that read the
+// installation's own state and corrects a record that root's last apply has
+// outlived, in both directions, on the next `fugaro update` any machine of the
+// installation runs — so it agrees with the root wherever it was applied. A
+// record that lags a bundle emptied since the apply cannot withdraw the address
+// on its own here: the deployed root still answers for the machine that applied
+// it.
 func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, deployed bool) []string {
 	if job != "" || lc == nil {
 		return nil

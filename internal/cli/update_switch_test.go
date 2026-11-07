@@ -376,8 +376,9 @@ func TestTheInstallationDoorRecordsNoRepositoryItDoesNotApply(t *testing.T) {
 // of 2026-11-07's fourth round (localcfg.Repo.CredentialsServiceReady is a
 // pointer), and it is the no-record one that tells this installation from one
 // that never opted in: a recorded false is a door's judgement of that root, and
-// the backfill corrects one only where the state shows a grant it does not
-// already say (TestAStaleFalseIsCorrectedByTheInstallationsState is that half).
+// the backfill corrects a record only where the installation's own state
+// disagrees with it (TestAStaleFalseIsCorrectedByTheInstallationsState and
+// TestAStaleTrueIsCorrectedByTheInstallationsState are the two directions).
 //
 // One ordinary `fugaro update` has to finish that upgrade, which is CLAUDE.md's
 // HARD RULE, and that is why the installation door backfills: this release's
@@ -519,6 +520,75 @@ func TestAStaleFalseIsCorrectedByTheInstallationsState(t *testing.T) {
 	published.Repos = map[string]localcfg.Repo{"acme/sandbox": {Provider: "bitbucket", CredentialsServiceReady: localcfg.RecordSwitch(true)}}
 	if got := localcfg.MergeShared(&published, lc).Repos["acme/sandbox"].CredentialsServiceOn(); !got {
 		t.Errorf("the shared config this machine publishes records acme/sandbox as not served, over the true the machine that applied its root published: every teammate's launch reads that file, and its cascade runs are handed no address from it (D143)")
+	}
+}
+
+// TestAStaleTrueIsCorrectedByTheInstallationsState is the mirror of the test
+// above, and the direction that hands an address out rather than withholding
+// one: machine B switches a repository back off — it re-applies that root held
+// off, which puts the jobs' model mounts back and takes their
+// roles/run.invoker grant away — and publishes `false`, while THIS machine
+// still holds the `true` of its own earlier apply. A local record wins the
+// published union (localcfg's mergeRepoRecords), so without the state read this
+// machine would publish its stale `true` over B's answer, and every launch that
+// reads the published file — every console launch, which takes the empty-auth
+// path and judges the switch on the record alone — would hand those jobs the
+// service's address: the GitHub provider opens keyless, the mint is refused for
+// the grant nobody holds any more, and every run of that repository fails at
+// bootstrap until a machine happens to apply that root again.
+//
+// The state read answers for both ways a root stops carrying the service: the
+// first row is the re-applied held-off root (its state holds the root's own
+// resources and no invoker grant, seedRepoStateHeldOff), the second the state
+// the review reproduced it with — no object at all under the repository's
+// prefix, which is judged too, because the bucket is the installation's own and
+// nothing of this installation applied that root with the service on.
+//
+// Mutation (verified, run and restored): skip the entries whose record already
+// says on (leave `if lc.Repos[key].CredentialsServiceOn() { continue }` in
+// place) and both rows fail, the record still true and the merge still
+// publishing it.
+func TestAStaleTrueIsCorrectedByTheInstallationsState(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, seed := range map[string]func(*testing.T, *initRig, string){
+		"the state carries the root applied held off": seedRepoStateHeldOff,
+		"the state holds nothing for that root":       func(*testing.T, *initRig, string) {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := credentialsRig(t)
+			r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+			credentialsOutputs(t, r)
+			putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+			markSwitchRepoRecord(t, r.initRig, "acme/sandbox", true)
+			seed(t, r.initRig, slug)
+
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatalf("the local config does not parse: %v", err)
+			}
+			if lc.Repos["acme/sandbox"].CredentialsServiceOn() {
+				t.Errorf("acme/sandbox is still recorded ready after an ordinary update on the machine that held that record, though the installation's own state shows its root applied with the service OFF: the record is published whole, so this machine keeps writing its stale true over the false the machine that re-applied the root wrote, and every launch that reads the published file hands those jobs the service's address — the provider opens keyless, the mint is refused for the roles/run.invoker grant that apply took away, and every run of that repository fails at bootstrap until a machine applies that root again\n%s", readFileString(t, r.cfg))
+			}
+			if raw := readFileString(t, r.cfg); !strings.Contains(raw, "credentials_service_ready: false") {
+				t.Errorf("the local config carries no switch-off for this repository, and this file is the one `fugaro update` publishes for the installation: the correction has to travel, or the next machine's launch reads the same stale true:\n%s", raw)
+			}
+			// The publish half: the entry the other machine published is a
+			// `false`, and this machine's next publish must not carry its own
+			// stale true over it.
+			published := *lc
+			published.Repos = map[string]localcfg.Repo{"acme/sandbox": {Provider: "bitbucket", CredentialsServiceReady: localcfg.RecordSwitch(false)}}
+			if got := localcfg.MergeShared(&published, lc).Repos["acme/sandbox"].CredentialsServiceOn(); got {
+				t.Errorf("the shared config this machine publishes records acme/sandbox as served, over the false the machine that re-applied its root held off published: every teammate's launch reads that file, and its jobs are handed an address their accounts hold no grant for (D143)")
+			}
+		})
 	}
 }
 
