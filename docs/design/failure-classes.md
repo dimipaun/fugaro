@@ -40,7 +40,7 @@ run, none of them a cause. So the owner's own 7-day report had to be built by no
 text with a script: **the vocabulary below exists because the arithmetic that answers "where does the
 money go" was done by hand in a shell.**
 
-**A terminal status is written in one statement: `recordEnd`, and no statement of `internal/runner`
+**A terminal status is written in one place: `recordEnd`, and no statement of `internal/runner`
 outside `internal/runner/recordend.go` assigns a `runstore.Status` to a record's `Status`.** FC2 is
 the task that made it so. Before it the census was **36 statements, in 24 functions across 8 files** —
 every statement of `internal/runner` that assigned a `runstore.Status` to a record's `Status`, over
@@ -63,7 +63,7 @@ the non-test files:
 - `finalize`'s switch (`internal/runner/runner.go`), which decides
   succeeded/halted/cancelled/failed and whose four cases were four of the 36.
 
-Twelve of the functions were the `end*` helpers, three the `fail*Infra` helpers and two the
+Twelve of the functions were the `end*` helpers, three were the `fail*Infra` helpers and two were the
 `refuse*` writers; the rest wrote inline, which is why the count was a count of statements and not of
 functions, and each wrote `Status`, `Outcome` and usually `Reason` in a statement of its own. Every
 one of those statements is now one `recordEnd(…)` call, so the site that already knows why the run is
