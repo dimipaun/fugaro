@@ -7,11 +7,14 @@ finding F13 adds — each with its files, its interfaces, its named tests **and 
 them**, its **red step**, the mutation that holds it, its **reviewer tier**, its **SEC** and
 **owner-run** flags, what it depends on and its commit. **Every citation below was resolved against
 the tree of `main` at `56c91f66` on 2026-11-07 while writing it**, and where the design's own citation
-had drifted the reconciliation's line is used and the drift is named (F18, F19).
+had drifted the reconciliation's line is used and the drift is named (F18, F19). **`main` has since
+moved to `4dc17549` and the citations were re-checked against it**: none of the files it changed in
+between is one this plan cites, so every line still resolves, and what the move did change — the two
+number blocks and the docs-pin census — is re-read in the reconciliation's §7 and F28.
 
 **Written to:** [spec.md](spec.md) — the design, `docs/design/failure-classes.md`, byte for byte — and
 [reconciliation.md](reconciliation.md). **Where a task below and the reconciliation disagree, the
-reconciliation's findings (F1–F35) and decisions (D1450–D1469) win, and the task is wrong.**
+reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the task is wrong.**
 
 **Nothing here is an approval.** The design is a design and this is a plan (§10 of the design and
 [README.md](README.md) say so); each task's gate is in §7, and most of them name a decision row whose
@@ -352,8 +355,11 @@ standard, with the Docs and console-contract pins in the same pull request. **SE
   reviewer cannot see by reading the diff.
 - **Mutation to hold it:** drop `omitempty` → the watch test fails; make `share` a share of spend →
   `TestRunsGroupByShareIsRunsNotSpend` fails.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'RunsGroupBy|RunsWithoutGroupBy|WatchDocumentCarriesNoGroups' -count=1 -timeout 40m`
-  then `go run ./ee/clidoc && go test ./ee/clidoc/ -run CliReference -count=1`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'RunsGroupBy|RunsWithoutGroupBy|LegacyRowsAreGrouped|WatchDocumentCarriesNoGroups' -count=1 -timeout 40m`
+  then `go run ./ee/clidoc && go test ./ee/clidoc/ -run CliReference -count=1`. Every test the list
+  above names matches one of those four alternatives — `TestLegacyRowsAreGroupedByTheirReason` is the
+  one name that does not begin `Runs`, and a command written for the other three alone would leave the
+  old-record half of the grouping unrun.
 - **Commit:** `feat(cli): group runs ls by failure class`.
 
 ### FC7. The Failures table and the two rules
@@ -388,7 +394,7 @@ standard, with the digest's own pins and the weekly-report golden in the same pu
 
 ### FC8. The documents, the contract and the skills
 
-**Decisions:** D1460, D1468, D1469. **Findings:** F10, F23, F24, F27. **Depends on:** FC6, FC7.
+**Decisions:** D1460, D1468, D1469. **Findings:** F10, F23, F24, F27, F29, F36. **Depends on:** FC6, FC7.
 **Reviewer tier:** standard, with `go test ./internal/cli -run 'Docs'`, `go test ./plugin/` and
 `go test -tags terraform ./internal/infra/...`'s absence of a change noted in the pull request.
 **SEC:** no. **Owner-run:** no.
@@ -398,7 +404,10 @@ standard, with the digest's own pins and the weekly-report golden in the same pu
   rule list, which is where the two rules' prose belongs — **D1463**; D326
   (`docs/task-governance/reconciliation.md:302`) is the rule's *idea* and is named as its source),
   `plugin/skills/working/reference/diagnose.md` (one sentence, telling a person to use the grouping
-  when a run failed — the file that already tells a reader what to do with a failed run), and
+  when a run failed — the file that already tells a reader what to do with a failed run; **F36: it is
+  133 lines and 16375 bytes against `plugin/skills_lint_test.go`'s `maxReferenceBytes` 16384, nine
+  bytes of room, so the sentence is written by shortening what it displaces rather than by adding**),
+  and
   `internal/cli/docs_desktop_console_test.go` **only if a pin's wording moves**. If **D1460** answers
   yes, diagnose's field is FC5's Go change and this task carries its contract §6.1 row and the
   printed line's sentence (F23) — a docs task adds no Go field.
@@ -412,23 +421,27 @@ standard, with the digest's own pins and the weekly-report golden in the same pu
   (`skills_lint_test.go` resolves every command and flag a skill names against the tree, so the
   sentence that names `--group-by` is checked against the flag).
 - **Red step:** none of its own — the task writes no behaviour, and its gate is the Docs run plus the
-  plugin lint. The first honest failure it can produce is a **wrong** sentence: a sentence saying
-  diagnose prints the class in a release that does not is red at the next release's audit, which is
-  why the sentence is only written for what has landed.
+  plugin lint. It can still go **red**, in two ways and both of them honest: the sentence that pushes
+  `diagnose.md` past 16384 bytes fails `go test ./plugin/` with `diagnose.md: N bytes, the budget is
+  16384`, so the sentence is paid for by the prose it shortens before it is added (F36); and a
+  sentence saying diagnose prints the class in a release that does not is red at the next release's
+  audit, which is why the sentence is only written for what has landed.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1 -timeout 40m` then
   `go test ./plugin/ -count=1`.
 - **Commit:** `docs: the failure class on the record, the contract and the report`.
 
 ### FC9. The plugin's own enumeration of the row's keys
 
-**Decisions:** D1457. **Findings:** F13, F12. **Depends on:** FC6 (the skill names `--group-by`, and
+**Decisions:** D1457. **Findings:** F12, F13, F29. **Depends on:** FC6 (the skill names `--group-by`, and
 `plugin/skills_lint_test.go` refuses a skill naming a flag that does not exist). **Reviewer tier:**
 standard, with `go test ./plugin/` in the same pull request. **SEC:** no. **Owner-run:** no.
 
 - **Files (2):** `plugin/skills/working/reference/status.md` (`:31` — the sentence that names the
   run keys a reader of the status screen is given, which is where `failure_class` belongs, in the same
   PR as the row that adds it: CONTRIBUTING's rule is that a CLI change touching a documented command
-  changes the skill in the same PR), and `plugin/routing_skill_test.go`, the pin.
+  changes the skill in the same PR), and `plugin/routing_skill_test.go`, the pin. **The clause costs
+  no budget**: `status.md` is 94 lines and 8711 bytes, well inside `maxReferenceBytes` 16384 — unlike
+  FC8's file, which has nine bytes of room (F36).
   **The sentence names fourteen of `runview.Row`'s forty-four json keys, in an order of its own; it
   is a selection and claims nothing more** (§2.7 of the reconciliation, and F13): the row is
   `internal/runview/runview.go:74` and `lsDoc.Runs` is `[]runview.Row` (`internal/cli/runs.go:216`).
@@ -510,12 +523,18 @@ Rhino is 0.21 and Sloth 0.22). It is a **shared** slot — `docs/catalog-build-c
 puts its own work there — and not a second claim of the number (**D1469**).
 
 **The HARD RULE, and it is satisfied by construction:** `fugaro update` is the whole upgrade. This
-work publishes no policy node, moves no schema version, changes no image contract, changes no plugin
-pin and adds no command, so an installation at the previous version converges with **nothing new to
-do** — no migration runs because none is owed, and no run between the two releases needs a backfill
-because old records are read from `reason` (FC5). **The release's `### For operators` section is
-"run `fugaro update`" and nothing else.** Its Highlights line says the run record now says why a run
-failed, in a closed vocabulary, and that the digest commits a Failures table.
+work publishes no policy node, moves no schema version, changes no image contract, **owes no
+plugin-pin migration** and adds no command, so an installation at the previous version converges with
+**nothing new to do** — no migration runs because none is owed, and no run between the two releases
+needs a backfill because old records are read from `reason` (FC5). **The pin is one line and it does
+move**, so the design's words are worth reading exactly: a checkout pins the plugin by **release tag**
+(`ref: vX.Y.Z` in `.claude/settings.json`), this work edits two skill files (FC8's `diagnose.md`,
+FC9's `status.md`), and every release rewrites the plugin's version, so the tag it publishes carries
+them and `fugaro update` moves the pin to it as it does for any release — the design's §10.3 sentence
+("changes no plugin pin") denies the **migration**, never the move, and no task here owes the owner a
+step because of it (F29). **The release's `### For operators` section is "run `fugaro update`" and
+nothing else.** Its Highlights line says the run record now says why a run failed, in a closed
+vocabulary, and that the digest commits a Failures table.
 
 **What the release notes must not claim:** that a class is retroactive (it is derived at read time
 for old records — the record is never rewritten), that the two digest rules fire immediately (they
@@ -554,11 +573,13 @@ which is the claim the design exists to make true.
    already asks, and `fugaro doctor` clean afterwards. A step needed here that this plan did not name
    is a defect in the release, not in the check (F29).
 
-**Number: Check 350** — a fresh block. The register's highest **written** `## Check` section is
-**290** (`docs/gcp-live-checklist.md`); `main` names 300–305, 309 and 311–314 as blocks other designs
-claim, and open pull request #1819 claims **330**. **Nothing in `main` or in any open pull request's
-head names a number in 350–359**, so this work takes **350** and reserves 351–359 (the reconciliation
-§7 carries the commands). **A claim, not a reservation:** the register's own rule is that whichever of
+**Number: Check 350.** The register's highest **written** `## Check` section is **290**
+(`docs/gcp-live-checklist.md`); `main` names 300–305, 309 and 311–314 as blocks other designs claim,
+**330** (`docs/api-key-review`) and **360** (`docs/console-managed-screens`, which reads 361–369 as
+available above it). **Nothing on `main` names a number in 350–359** — the gap between those two — so
+this work takes **350** and reserves 351–359, and neither claim collides with it (the register
+renumbers the later of two *colliding* claims; 350 is neither 330 nor 360). The reconciliation §7
+carries the commands and the two readings, the second of them against `main` today. **A claim, not a reservation:** the register's own rule is that whichever of
 two claims merges second renumbers itself, so **the task that implements the check writes
 `## Check 350` and its summary-table row under the number free at that merge**, the shape Check 290's
 row has (`docs/gcp-live-checklist.md:791`). **The section is written by that task, not by this plan**,
@@ -588,9 +609,11 @@ and it is not one of FC1–FC9.
 **D1451 and D1462 are not gates of any task.** D1451 is this folder's own shape and it is already
 taken ([spec.md](spec.md) *is* the design's verbatim copy, and the README states which copy is
 pinned); D1462 is a rule every task above obeys — the pins go into the existing
-`internal/cli/docs_*_test.go` files, and no task adds one, because the docs-pin census counts them
-(`ls internal/cli/docs_*_test.go | wc -l`, `internal/cli/docs_rigor_modes_test.go:528`) and four other
-folders' reconciliations state the same count in a row their own pins re-run.
+`internal/cli/docs_*_test.go` files, and no task adds one, because the docs-pin census counts them in
+one row (`ls internal/cli/docs_*_test.go | wc -l`, `docs/rigor-modes/reconciliation.md:752`, **101**
+on `main` today) that four folders' pins re-read: `internal/cli/docs_rigor_modes_test.go:388` runs the
+row's own command, and `docs_config_management_test.go:397`, `docs_managed_agent_converge_test.go:160`
+and `docs_repo_image_removal_test.go:525` compare the row against the tree's glob (F28, D1462).
 
 **If FC7's second half is dropped** (D1466 = the table alone), FC8 loses one document and one
 sentence and nothing else moves. **If D1460 = no**, FC5's diagnose field and FC8's row and sentence

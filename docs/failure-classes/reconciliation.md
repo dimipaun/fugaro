@@ -4,12 +4,15 @@
 [spec.md](spec.md) — a verbatim copy of `docs/design/failure-classes.md` — against the tree of `main`
 at **`56c91f66`** (2026-11-07), path by path and symbol by symbol. Everything below was resolved
 against that tree while writing it; the two commands that read the numbers this work holds are in §7,
-and what could not be resolved at all is in §8.
+and what could not be resolved at all is in §8. **`main` has moved since** — to **`4dc17549`**, 39
+files and two new docs folders later — so the citations were re-checked against it: **not one of the
+39 files is one this folder cites**, and the census, the row counts and every line below still resolve
+there. What the move *did* change is the two number blocks, and §7 is the re-read one.
 
 **Where this file and [spec.md](spec.md) disagree about the code, this file wins.** Where they
 disagree about what the design *says*, spec.md wins. Where a task in
 [implementation-plan.md](implementation-plan.md) and this file disagree, this file's findings
-(**F1–F35**) and decisions (**D1450–D1469**) win, and the task is wrong.
+(**F1–F36**) and decisions (**D1450–D1469**) win, and the task is wrong.
 
 **The design's decisions are not this file's.** §8 D1–D9 and §9 O1–O6 of the design are the owner's,
 and **nothing here answers one of them** — not one row of §6 re-asks one, and §9 repeats them as the
@@ -408,6 +411,23 @@ be held to it) or **Open** (the design leaves it to the owner).
   describes in half — an unmatched reason reading `unclassified` — is the reader's, not a run's. →
   **FC2** names the absence pin `TestNoClassIsWrittenWhereTheRunDidNotFail`, **FC5** keeps
   `TestLegacyUnmatchedReasonIsUnclassified`, and **D1464** is the decision the absence answers.
+- **F36 — the file the design puts a sentence in is nine bytes from its budget.**
+  `plugin/skills/working/reference/diagnose.md` is 133 lines and **16375 bytes** on 2026-11-07, and
+  `plugin/skills_lint_test.go` fails any reference file over `maxReferenceLines` 300 (`:37`) or
+  `maxReferenceBytes` 16384 (`:39`, compared at `:348`) — **nine bytes of room**, against a sentence
+  that costs far more than nine. The design's §10 puts its one sentence there
+  (`docs/design/failure-classes.md:705`, `spec.md:741`; the design marks it conditional on **O1**'s
+  answer), so the sentence is written by **trimming the file as much as
+  it adds**: the prose it replaces leaves, or the sentence is shorter than what it displaces, and
+  `go test ./plugin/` — which FC8's own gate already runs — is what says so. The precedent is the
+  repository's own: 0.9.5 → 0.10.0's bump added two bytes to each skill file and pushed
+  `plugin/skills/setup/SKILL.md` over `maxSkillBytes`, which reddened `TestPluginSkillsLintClean` on
+  `main` and put the tag on a follow-up (`docs/release.md:103`), and that is why the release runs the
+  plugin tests on a version-bumped tree before it tags (`scripts/release.sh`'s `plugin_budget_check`,
+  `docs/release.md:182`). → **FC8** states the budget in its file list, and its red step says what red
+  looks like (`diagnose.md: 16390 bytes, the budget is 16384`). The other file this folder's tasks
+  edit, `status.md`, is 94 lines and 8711 bytes and has room; the byte budget is not a second finding
+  there.
 
 ### Rule
 
@@ -417,15 +437,26 @@ be held to it) or **Open** (the design leaves it to the owner).
   `const 1`; `reason` keeps its text and its meaning byte for byte; the enum may grow inside the field
   (a reader that does not know a value reads `unclassified`), and the set is written **once**, in one Go
   slice the schema's enum and the report's table are read from.
-- **F28 — the docs-pin census.** `internal/cli/docs_*_test.go` files are counted (100 today, and the
-  design quotes the count as one it does not move), so **this folder adds no test file** and the
+- **F28 — the docs-pin census.** `internal/cli/docs_*_test.go` files are counted (**101** today — the
+  row moved from 100 to 101 on 2026-11-07, when `docs/cli-output-console-graph` added its own pin file
+  and amended the row's narrative in the same commit, `docs/rigor-modes/reconciliation.md:752` — and
+  the design quotes the count as one it does not move), so **this folder adds no test file** and the
   plan's tasks write their pins into the existing `docs_pr_state_test.go`. The design's own promise —
   it kept `docs/backlog/README.md` at "2 items: 2 open, 0 closed, 0 dropped" (`:13`) — is quoted by the
   vocabulary pin, which reads `docs/backlog/README.md` at `internal/cli/docs_pr_state_test.go:210` and
   fails when the quote is gone (`:218`)) and holds.
-- **F29 — the HARD RULE.** A field addition owes no operator step: `fugaro update` is the whole upgrade,
-  the policy node is untouched, no schema version moves, no image contract changes and no plugin pin
-  moves. The design's §10.3 states it and the plan repeats it (§5).
+- **F29 — the HARD RULE, and the one word in it that needs reading.** A field addition owes no operator
+  step: `fugaro update` is the whole upgrade, the policy node is untouched, no schema version moves, no
+  image contract changes and no plugin pin **migration** is owed. The design's §10.3 states it and the
+  plan repeats it (§5). The pin is a plain move, though, and reading the design's own words strictly is
+  worth one sentence here: `.claude/settings.json` pins the plugin by **tag ref** (`ref: vX.Y.Z`,
+  `internal/pluginwire/wire.go:191`, `:262`, `internal/pluginwire/status.go:207`), and every release
+  rewrites `plugin/.claude-plugin/plugin.json`'s version and every skill header to the new number
+  (`scripts/bump-plugin-version.sh`, run by `scripts/release.sh:400`), so the pin moves on **every**
+  release. This work is no exception — it edits two skill files (FC8's `diagnose.md`, FC9's
+  `status.md`), the release publishes the tag that carries them, and `fugaro update` moves the pin to
+  it as it does for any release, asking nothing new of the command. What the design's sentence denies
+  is a migration, and that is exactly what holds (F36 is the other thing the plugin files owe).
 - **F30 — `.github/workflows/` is never edited by an agent run**, and this folder is docs only.
 
 ### Open
@@ -481,7 +512,7 @@ design's own numbering.
 | **D1459** | Does the console task add `failure_class` to `CONTRACT_KEYS` in `console/src/source/redact.ts:1159` (F22)? | **Yes, and the console task names the file.** The set is the keys whose values the console reads as a CLI-made enumeration and never rewrites as a person; a class value not in it is a value the person pass may rewrite, i.e. a figure drawn wrong with no error | the chip or column alone | the redactor treats a class value as a possible person's name, and a recording's class can come back as a pseudonym | |
 | **D1460** | Does `fugaro diagnose` print the class, and does `Diagnosis` carry it (F23)? | **Both, one field and one line** — the design's D9 recommends the line and the shape half is what makes it honest: diagnose's `--json` is a contract (`console/docs/json-contract.md:748`) and a text-only answer would leave the console able to print the class for `runs ls` and not for the one run a person is looking at | the printed line only | the two documents disagree about one run: the listing says `review_not_converged` and diagnose, the command that explains it, cannot | |
 | **D1461** | Does `internal/watch`'s own feed (`JSONRun`, `JSONFinished`) carry the class? | **No.** The feed is a different document with its own contract and its own reader, the class needs a decision about the watch screen (a column, a flag) first, and the design deliberately leaves `watch` out; a second consumer added silently is the opposite of what its §7 argues | add the key to `JSONFinished` | the phone and the console's live screen grow a key whose screen has not been designed, and the contract row is written before the reading of it | |
-| **D1462** | Does the plan add a `internal/cli/docs_failure_classes_test.go` pin of its own? | **No.** The docs-pin census counts `internal/cli/docs_*_test.go` files (**100** today) and the design promises not to move it (F28); the plan's pins go into the existing `docs_pr_state_test.go`, which is where the design's own pin lives, and this folder's documents are pinned by nothing, as the convention's other folders are | a pin file for this folder | the census moves, the pin `internal/cli/docs_rigor_modes_test.go:528` reddens, **four other folders' reconciliations state the same count in a row their own pins re-run** (`internal/cli/docs_config_management_test.go:397`, `docs_managed_agent_converge_test.go:160`, `docs_repo_image_removal_test.go:525` and the rigor-modes row), and the design's own sentence about the count becomes false | |
+| **D1462** | Does the plan add a `internal/cli/docs_failure_classes_test.go` pin of its own? | **No.** The docs-pin census counts `internal/cli/docs_*_test.go` files (**101** today, `docs/rigor-modes/reconciliation.md:752`) and the design promises not to move it (F28); the plan's pins go into the existing `docs_pr_state_test.go`, which is where the design's own pin lives, and this folder's documents are pinned by nothing, as the convention's other folders are | a pin file for this folder | the census moves, the row `docs/rigor-modes/reconciliation.md:752` goes stale, and **four folders' pins over that one row redden**: `internal/cli/docs_rigor_modes_test.go:388` runs every census row's own command, and `internal/cli/docs_config_management_test.go:397`, `docs_managed_agent_converge_test.go:160` and `docs_repo_image_removal_test.go:525` each re-read the row and compare it with the tree's glob — so a merge that added a pin file without moving the row is a red build, and the design's own sentence about the count becomes false | |
 | **D1463** | Which document owns the two digest rules' prose (F24)? | **`docs/periodic-reviews/`'s rule list, with D326's document named as the rule's source** — the rule *list* is written there (`spec.md:114`, `implementation-plan.md:266`, `:279`) and the plugin's own reference is a fourth place that must not become a fifth | `docs/task-governance/reconciliation.md` alone, beside D326 | the rule is written where the reader of the *report* does not look, and the skill's list and the digest's constants become two lists that drift | |
 | **D1464** | Is a class written on a `mode: review` run that reviewed, or on an artifact run that delivered? | **No** (the design's §3, restated as a plan rule): those runs have no failure to name, `outcome` already says what they delivered, and a class on them would be a classification of a success. The task's guard asserts the field is absent, so a later writer cannot add one without a decision | classify them `unclassified` | every successful delivery carries a value that means "the vocabulary does not hold this", and the report's share of classified runs stops meaning anything | |
 | **D1465** | In the grouped table, is `share` a share of the window's **runs** or of its spend? | **Runs**, with the spend beside it as its own column and the totals line's two figures unchanged. "33% of runs, 42% of spend" is two readings of one window, and a single `share` column that could be either is a figure a reader takes the wrong way | spend | the biggest class by spend and the biggest by count print the same `share`, and the row a person acts on is not the row that is marked | |
@@ -494,44 +525,66 @@ design's own numbering.
 
 ## 7. The number block, and how it was read
 
-Read on **2026-11-07** with a fresh `git fetch` of `origin/main` and of **every** open pull request's
-head (`git fetch origin pull/<n>/head:pr<n>` for the twenty open pull requests, #620 through #1819), so
-"nothing uses this" is a statement about the whole tree and not about `main` alone.
+**Read twice on 2026-11-07.** First against `origin/main` at **`56c91f66`** — the commit this branch is
+based on — with a fresh `git fetch` of **every** open pull request's head (`git fetch origin
+pull/<n>/head:pr<n>` for the twenty open pull requests, #620 through #1819), while this folder was
+written. Then again against `origin/main` at **`4dc17549`**, which is what `main` is now: the tree had
+moved (39 files, two of them new docs folders), so every figure below is the **second** reading, and
+the commands are the ones that produced it. The second reading could **not** re-fetch the pull-request
+heads — this job has no network — so everything below that is a statement about a head is the first
+reading's, and §8 carries it as UNVERIFIED. A statement about `main` is re-read.
 
-**Decisions: D1450–D1469.** Commands:
+**Decisions: D1450–D1469.** Commands, with the results of the second reading beside them:
 
 ```
-git grep -ohE '\bD1[0-9]{3}\b' origin/main -- docs | sort -u | tail -1          # D1409
-git grep -ohE '\bD14[5-6][0-9]\b' origin/main -- docs internal ee console mobile plugin schemas website
-for r in $(git for-each-ref --format='%(refname)' refs/remotes/pr/*); do
-  git grep -ohE '\bD14[5-6][0-9]\b' "$r" -- docs internal ee console mobile plugin schemas website
-done                                                                            # (nothing, all refs)
+git grep -ohE '\bD1[0-9]{3}\b' origin/main -- docs | sort -n | uniq | tail -1   # D1499
+git grep -ohE '\bD14[5-6][0-9]\b' origin/main -- docs internal ee console mobile plugin schemas website | wc -l   # 0
 ```
 
-The highest decision written anywhere on `main` is **D1409** (`docs/catalog-build-context`). Open pull
-request **#1819** writes **D1427–D1429** for its own design (the api-key review path), so D1410–D1449
-are free below this block. **The third and fourth commands print nothing** — no path on `main` and no
-path in any open pull-request head uses `D145x` or `D146x` — so this work writes **D1450–D1469** and
-takes the whole block. Positive controls were run so that "nothing" is not a broken command: `D1409` is
-found in `docs/catalog-build-context/README.md`, and `D1427` is found in `pr/1819`'s
+**What `main` holds now.** The highest number **written** on `main` is **D1489** and the highest
+**appearing** is **D1499**, both in `docs/console-managed-screens`: that work holds D1470–D1489 and
+reserves D1490–D1499, and it took them **above** the numbers of its day rather than in the gap —
+*"so that two works in flight cannot claim adjacent numbers and collide at their merge"*, the reason
+it gives for reading the highest on `main` as **D1409** and the highest in a pull-request head as
+**D1429**. `docs/api-key-review` — pull request **#1819**, which this folder read while it was open and
+which has merged since — holds **D1410–D1429** on `main` today, and **Check 330** with it. **D1431–D1469
+is therefore a gap both works stepped over**, and this work's block is its upper half.
+
+**What this folder holds.** **D1450–D1469**, taken on the day the highest claim was D1429 (in #1819) and
+five above it — the reading the other two works took on the same day, which is why none of the three
+reads another's numbers. **The second command prints nothing on `main`**: no path on `main` uses `D145x`
+or `D146x`, so the block is still unused, and the two blocks `main` has taken since (D1410–D1429,
+D1470–D1499) are neither inside it nor adjacent to it. Positive controls were run so that "nothing" is
+not a broken command: `D1409` is found in `docs/catalog-build-context/README.md`, and `D1429` in
 `docs/api-key-review/reconciliation.md`.
+
+**The first reading** ran the same greps over the **twenty fetched pull-request heads** as well, with
+`for r in $(git for-each-ref --format='%(refname)' refs/remotes/pr/*); do git grep -ohE
+'\bD14[5-6][0-9]\b' "$r" -- docs internal ee console mobile plugin schemas website; done`, and over the
+same heads for `Check 3[0-9]{2}` and `Check 3[5-9][0-9]`: nothing answered in either. Those runs are
+what made this block a claim about the whole tree rather than about `main` alone, and the second
+reading could not repeat them (§8).
 
 **Checks: Check 350+.** Commands:
 
 ```
 git grep -ohE '^## Check [0-9]+' origin/main -- docs | awk '{print $3}' | sort -n | tail -1   # 290
-git grep -ohE 'Check 3[0-9]{2}' origin/main -- docs | sort -u                                  # 300-305, 309, 311, 313, 314
-git grep -ohE 'Check 3[0-9]{2}' pr1819 -- docs | sort -u                                       # … and 330
-git grep -ohE 'Check 3[5-9][0-9]' origin/main pr1819 pr1817 -- docs                            # (nothing)
+git grep -ohE 'Check 3[0-9]{2}' origin/main -- docs | sort -u    # 300 301 302 303 304 305 309 311 313 314 330 360
+git grep -ohE 'Check 3(5[0-9])' origin/main -- docs | sort -u    # (nothing)
 ```
 
-The highest **written** `## Check` section anywhere is **290** (`docs/gcp-live-checklist.md`, the
-mixed-credentials run). `main` names 300–305, 309 and 311–314 as blocks other designs claim
-(`docs/stateless-orchestrator`, `docs/cli-output-console-graph`), and open PR #1819 claims **330**.
-**No ref names a number in 350–359**, so this work takes **Check 350** and reserves 351–359 for a
-second owner-run check if a task needs one. The register's own summary row and `## Check 350` section
-are written by the task that implements the check, under the number free **at that merge** — the
-register's rule, and not this folder's choice.
+The highest **written** `## Check` section anywhere is still **290** (`docs/gcp-live-checklist.md`, the
+mixed-credentials run — and `docs/api-key-review` reads that row as "USER-RUN, NOT RUN", which is why
+its own check carries a contrast case rather than assuming 290's numbers exist). `main` names 300–305,
+309 and 311–314 as blocks other designs claim (`docs/stateless-orchestrator`,
+`docs/cli-output-console-graph`), **330** (`docs/api-key-review`) and **360**
+(`docs/console-managed-screens`, which reads 361–369 as available above it). **Nothing on `main` names
+a number in 350–359**, the gap between those two claims, so this work takes **Check 350** and
+reserves 351–359 for a second owner-run check if a task needs one. Neither claim around it collides
+with it: 350 is neither 330 nor 360, and the register's rule renumbers the later of two **colliding**
+claims, which this is not. The register's own summary row and `## Check 350` section are written by the
+task that implements the check, under the number free **at that merge** — the register's rule, and not
+this folder's choice.
 
 ---
 
@@ -550,6 +603,13 @@ register's rule, and not this folder's choice.
   `docs/rigor-modes/reconciliation.md` F24. That is a claim about a deployed bucket's lifecycle rule,
   not about a file in this tree; the plan's `ClassOf` is written so it is right either way (an old
   record is read, never written back).
+- **The pull-request-head half of the number reading.** §7's first reading fetched **every** open pull
+  request's head on 2026-11-07 — twenty of them, #620 through #1819 — and found nothing in this work's
+  two blocks; that is what makes the blocks claims about the whole tree and not about `main`. **The
+  re-read could not repeat it**: the job that took the second reading has no network, so `git
+  ls-remote` returns nothing and no `refs/pull/*` ref exists in this clone. Everything §7 says about
+  `main` (`4dc17549`) is re-read; everything it says about a head is the first reading's, quoted as it
+  was taken.
 - **The console's and the phone's behaviour.** Both were read as source; neither was run. The design's
   §7 claim "a reader older than the field sees the record and the row it always saw" is a claim about
   shipped builds, and the version floors it would need (`console/docs/json-contract.md`'s own version
