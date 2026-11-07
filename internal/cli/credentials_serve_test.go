@@ -20,6 +20,7 @@ import (
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The credentials service's entry point (plan task C1.14) is not a command
@@ -557,12 +558,18 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the three optional ones, which is
-// the whole of what the module renders: the optional ones belong here because
-// a name the module sets and this command does not read is the same mistake
-// whether the command requires it or reads it outside the loop. Which of the
-// names is which is pinned by the tests around this one, not by this
-// comparison.
+// The list is the seven REQUIRED names plus the four optional ones, which is
+// the whole of what the module renders and what this command reads: the
+// optional ones belong here because a name the module sets and this command
+// does not read is the same mistake whether the command requires it or reads it
+// outside the loop. Which of the names is which is pinned by the tests around
+// this one, not by this comparison.
+//
+// One of the four is read here and NOT set by the module yet
+// (internal/infra/tf's CredentialsServiceEnvAwaitingTheModule, which is also
+// what the cover's allow-list answers with): the entry is admitted first and
+// the module that renders it lands second, and the tripwire below fails the
+// moment credentials.tf sets it, so it cannot be left on that list.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
@@ -574,7 +581,15 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 	for _, m := range regexp.MustCompile(`name\s*=\s*"(FUGARO_[A-Z0-9_]+)"`).FindAllStringSubmatch(tf, -1) {
 		inModule[m[1]] = true
 	}
-	for _, n := range append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envCoordinatorAccount) {
+	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
+	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envCoordinatorAccount, envReviewJobAccounts)
+	for _, n := range read {
+		if slices.Contains(pending, n) {
+			if inModule[n] {
+				t.Errorf("credentials.tf sets %s, so it is no longer a name the module does not render yet: drop it from internal/infra/tf's CredentialsServiceEnvAwaitingTheModule, which this test reads", n)
+			}
+			continue
+		}
 		if !inModule[n] {
 			t.Errorf("this command reads %s, which credentials.tf does not set on the service: the service would refuse to start on a deployment that is right", n)
 		}
