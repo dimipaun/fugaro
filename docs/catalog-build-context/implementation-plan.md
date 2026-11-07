@@ -83,7 +83,7 @@ CB3 rather than running beside it.
 | `internal/backend/gcp/catalog_test.go` | CB3 (2) | the step-order tests |
 | `internal/backend/gcp/build.go` | CB3 (2) | the step's own builder, beside `CatalogDockerfileStep`, and `TemplateSalt`'s doc if the salt moves (D1402) |
 | `internal/backend/gcp/build_test.go` | CB3 (2) | the step-builder tests |
-| `images/derived/cloudbuild.yaml` | CB3 (2) | the new step, by id, in the file `catalogBuildSteps` picks steps out of |
+| `images/derived/cloudbuild.yaml` | CB3 (2) | the `_CONTEXT_DIR` substitution and the build step's `env:`/context argument — **no new step**: the checkout step is Go-built and reaches the build through `SubmitCatalog`'s `own` map, as `catalog-pin`, `catalog-tag` and `catalog-record` do |
 | `internal/imagecheck/check.go` | CB3 (2) **and** CB4 (3) | **two writers at two levels, disjoint regions**: CB3 the two fields on `CatalogRecordState`, CB4 the comparison in `DecideCatalog` and the reason constant. CB4 depends on CB3 for this file and says so |
 | `internal/imagecheck/check_test.go` | CB4 (3) | the decision tests |
 | `internal/cli/image_check_catalog.go` | CB4 (3) | `evaluate` reads the staged hash and puts it in `CatalogInputs` |
@@ -203,48 +203,75 @@ independent security review mandatory.**
 - **Files:** `internal/backend/gcp/catalog.go`, `internal/backend/gcp/catalog_test.go`,
   `internal/backend/gcp/build.go`, `internal/backend/gcp/build_test.go`,
   `images/derived/cloudbuild.yaml`, `internal/imagecheck/check.go`. **6 files, plus
-  `images/cloudbuild_test.go` if the new step changes a property that file pins** — the pull request
-  says which, and a step added between two existing ones should not.
-- **Interfaces:** `catalogBuildSteps` gains one step **by id**, between `dockerfile` and
-  `catalog-pin`, that clones the entry's repository at the staged commit into `/workspace/context`
-  and removes the Dockerfile it just copied there, so the context is the repository's tree and the
-  Dockerfile the build uses is the one CB2 read (`--file /workspace/context/<path>`, D1404). The
-  clone is the shape `images/derived/Dockerfile.tmpl` already proves works: a shallow clone, then
+  `images/cloudbuild_test.go` if the substitution below changes a property that file pins** — the
+  pull request says which, and a substitution whose default is today's literal should not.
+- **Interfaces:** `catalogBuildSteps` gains one id between `catalogDockerfileStepID` and
+  `catalogPinStepID`, and `SubmitCatalog`'s `own` map gains its **Go-built** step
+  (`catalogContextStep`, beside `catalogPinStep`) — **the template gains no step**, exactly as
+  `catalog-pin`, `catalog-tag` and `catalog-record` are Go-built today. The step mirrors the derived
+  `source` step's shape (`gcr.io/cloud-builders/git`, the `fugaro-creds` volume,
+  `credential.helper='store --file=/creds/git-credentials'`) but clones the **staged commit** rather
+  than the branch head: a shallow clone, then
   `git cat-file -e "$commit^{commit}" || git fetch --quiet origin "$commit"`, then
-  `git reset --hard "$commit"` (F12) — a shallow `--depth 1 --branch` clone does not contain an
-  arbitrary commit, so the fetch-by-sha fallback is load-bearing. It is **outside** the Docker build,
-  because Docker resolves `COPY` before any `RUN` and a checkout inside the build is not a context at
-  all (F21, D1396). When `context` names a subdirectory, that directory **is** the context root
-  (D1406). `CatalogBuildSpec` gains the two fields the step needs (the entry's `Context` and the
-  pinned commit); `check` refuses a spec that has one without the other. `CatalogRecordState` gains
-  `ContextCommit` and `ContextSHA256` — **two new names, neither a reuse of `SourceCommit`** (F25,
-  D1400) — written by `catalogRecordStep`. `docker build` **keeps** its
+  `git reset --hard "$commit"` (F12) — a `--depth 1 --branch` clone does not contain an arbitrary
+  commit, so the fetch-by-sha fallback is load-bearing. It is **outside** the Docker build, because
+  Docker resolves `COPY` before any `RUN` and a checkout inside the build is not a context at all
+  (F21, D1396).
+
+  **The step clones into `/workspace/src` and never touches `/workspace/context/Dockerfile`.** That
+  object is CB2's copy, it is the one `catalogPinStep` verifies with `sha256sum`, and it stays the
+  Dockerfile the build runs: the build step is invoked with `--file /workspace/context/Dockerfile`
+  and the checkout — or the subdirectory `context:` names, which **is** the context root (D1406) — as
+  its context argument. **This is D1404's recommendation, not the alternative that row rejects.** A
+  step that removed the copy, or that pointed `docker build` at the checkout's own Dockerfile, would
+  leave `catalogPinStep` verifying a file the build never read — the cost D1404 names — and would
+  break every context build at `catalog-pin`, which verifies that exact path. `/workspace/src` is the
+  path the derived `source` step clones into and that a catalog build drops; the clone creates it and
+  the step writes nothing under `/workspace/context`, so `CatalogDockerfileStep`'s own note — that a
+  catalog step which *does* write there as the image's user needs the `source` step's 0777 and not
+  this step's 0755 — has nothing to apply to.
+
+  The build step's context argument is the literal `/workspace/context` in
+  `images/derived/cloudbuild.yaml` today, so the template gains a `_CONTEXT_DIR` substitution whose
+  **default is that literal** (the derived path stays byte-identical) and the build step reads it
+  through `env:` as a quoted `"$$CONTEXT_DIR"` — the file's own rule, "substitution is textual, so no
+  `${_…}` ever appears in a step's shell script". `CatalogBuildRequest` sets `_CONTEXT_DIR` to the
+  checkout root. `CatalogBuildSpec` gains the two fields the step needs (the entry's `Context` and
+  the pinned commit); `check` refuses a spec that has one without the other. `CatalogRecordState`
+  gains `ContextCommit` and `ContextSHA256` — **two new names, neither a reuse of `SourceCommit`**
+  (F25, D1400) — written by `catalogRecordStep`. `docker build` **keeps** its
   `--secret "id=git-credentials,src=/creds/git-credentials"` (D1397): D1208's migrated entries clone
   inside their own Dockerfile and need it, and stopping it for context entries would make the two
   entry shapes behave differently for no gain. `TemplateSalt` covers the changed
   `images/derived/cloudbuild.yaml`, so the catalog check should salt on it in the same change (F33,
   D1402's second half) — **if the owner takes that half**; the alternative is stated in the task's
   commit message rather than left silent.
-- **Tests:** `TestCatalogBuildHasACheckoutStepForAContextEntry` (the step order is
+- **Tests:** `TestCatalogBuildHasACheckoutStepForAContextEntry` (the step list is
   `dockerfile`, `catalog-context`, `catalog-pin`, … and the step's script names the staged commit, not
-  the branch), `TestCatalogBuildHasNoCheckoutStepWithoutAContext` (an entry with no context builds the
-  step list it builds today, in the same order — the regression CB1's grammar promises),
-  `TestCatalogContextRootIsTheNamedSubdirectory` (`context: ci/` makes the build's context `/workspace/context/ci`,
-  or copies that directory into `/workspace/context`, whichever D1406's answer fixes, and the
-  Dockerfile's `COPY` resolves from there), and `TestCatalogRecordCarriesTheContextCommitAndHash`
-  (the record has both new fields, and neither is spelled `source_commit`). **The reviewer is asked
-  for one thing beyond the tests:** whether the step can read or write anything the build account
-  could not already read or write before it existed (reconciliation §4.2, F24).
+  the branch), `TestCatalogContextEntryBuildsTheCopiedDockerfile` (**the assertion this task exists to
+  keep honest**: the build step's `--file` is `/workspace/context/Dockerfile`, its context argument is
+  the checkout, and `catalogPinStep`'s script still names `/workspace/context/Dockerfile` — a build
+  whose Dockerfile is the checkout's, or whose pin names a file the build does not read, fails here),
+  `TestCatalogBuildHasNoCheckoutStepWithoutAContext` (an entry with no context builds the step list it
+  builds today, in the same order, and `_CONTEXT_DIR` keeps its default — the regression CB1's grammar
+  promises), `TestCatalogContextRootIsTheNamedSubdirectory` (`context: ci/` makes the context argument
+  `<checkout>/ci` and the Dockerfile's `COPY` resolves from there), and
+  `TestCatalogRecordCarriesTheContextCommitAndHash` (the record has both new fields, and neither is
+  spelled `source_commit`). **The reviewer is asked for one thing beyond the tests:** whether the step
+  can read or write anything the build account could not already read or write before it existed
+  (reconciliation §4.2, F24).
 - **Red step:** `TestCatalogBuildHasACheckoutStepForAContextEntry` fails on the step list: there is no
-  step between `dockerfile` and `catalog-pin`, and `/workspace/context` holds one file
+  id between `catalogDockerfileStepID` and `catalogPinStepID`, and `/workspace/context` holds one file
   (`CatalogDockerfileStep`'s "a catalog build reads one object instead of a checkout", F4).
 - **Mutation to hold it:** run the clone **inside** the Docker build instead of before it → the
-  first test fails on the step order, and the mutation is exactly the one that would leave `COPY`
-  broken while looking like the feature (F21). Second mutation: reuse `SourceCommit` for the context's
-  commit → `TestCatalogRecordCarriesTheContextCommitAndHash` fails on the field's name, which is the
-  wire-format rule (F25). Third mutation: drop the `git fetch` fallback and keep only the shallow
-  clone → the step fails on a commit that is not the branch head, which is the case the issue's
-  "exact commit" asks for.
+  first test fails on the step list, and the mutation is exactly the one that would leave `COPY`
+  broken while looking like the feature (F21). Second mutation: point `docker build` at the checkout's
+  own Dockerfile, or have the checkout step write into `/workspace/context` → the second test fails,
+  and the mutation is D1404's rejected alternative in code. Third mutation: reuse `SourceCommit` for
+  the context's commit → `TestCatalogRecordCarriesTheContextCommitAndHash` fails on the field's name,
+  which is the wire-format rule (F25). Fourth mutation: drop the `git fetch` fallback and keep only
+  the shallow clone → the step fails on a commit that is not the branch head, which is the case the
+  issue's "exact commit" asks for.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/backend/gcp/ -run 'Catalog' -count=1` then
   `go test ./images/ -run 'CloudBuild' -count=1` then `go build ./...`. That last one is not
   optional: `images/cloudbuild_test.go` has no build tag (the `docker`-tagged files beside it are the

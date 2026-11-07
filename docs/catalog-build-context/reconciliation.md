@@ -120,11 +120,14 @@ else).
 
 **2.8 What the issue compares with: the per-repository build.** `images/derived/cloudbuild.yaml`'s
 `source` step is `git clone --quiet --depth 1 --branch "$$BASE_BRANCH" -- "$$REPO_URL" /workspace/src`
-with `credential.helper='store --file=/creds/git-credentials'`, and its build step runs
-`docker build … --secret "id=git-credentials,src=/creds/git-credentials" … /workspace/context`. So
-the per-repository path has **two** credential uses: a clone outside the Docker build (into
-`/workspace/src`, for the cache warm-up) and the BuildKit secret inside it (for the clone the
-Dockerfile itself does). The issue's claim 13 sees the first and misses the second.
+with `credential.helper='store --file=/creds/git-credentials'` — its own comment says why: "A shallow
+clone, so render can read fugaro.yaml and the lockfiles". The `render` step runs with `dir: src`, so
+`/workspace/src` is **the render's working directory**, and it writes the Dockerfile it renders to
+`/workspace/context/Dockerfile`. The `build` step then runs
+`docker build … --secret "id=git-credentials,src=/creds/git-credentials" … /workspace/context`. So the
+per-repository path has **two** credential uses: the clone outside the Docker build (into
+`/workspace/src`, for the render) and the BuildKit secret inside it (for the clone the Dockerfile
+itself does). The issue's claim 13 sees the first and misses the second.
 
 ---
 
@@ -330,7 +333,8 @@ constraint the code enforces and a design must keep; **Open** is a question only
 ### Gap
 
 - **F14. There is no `context` field, in either grammar.** `internal/config/catalog.go`'s `Source`
-  has five fields and no context; `schemas/settings.schema.json` lists `image_catalog.entries.*.source.{kind,repo,path,branch,inline,image}`
+  has six fields (`Kind`, `Repo`, `Path`, `Branch`, `Inline`, `Image`) and no context;
+  `schemas/settings.schema.json` lists `image_catalog.entries.*.source.{kind,repo,path,branch,inline,image}`
   and nothing else. A new key is a change in **two** grammars (the local YAML and the node's JSON,
   which share the struct) plus the settings key list.
 - **F15. `context: .` — the issue's own example value — is the value the sibling key refuses.**
@@ -351,8 +355,16 @@ constraint the code enforces and a design must keep; **Open** is a question only
   **D1401** covers it.
 - **F19. No context size bound exists.** §4.4. The only nearby ceiling is
   `internal/catalog/fetch.go`'s `MaxDockerfileBytes` (1 MiB, one file). **D1398.**
-- **F20. No `.dockerignore` handling exists anywhere.** `git grep` finds none under `images/`,
-  `internal/` or `deploy/`. §4.5. **D1399.**
+- **F20. No `.dockerignore` is read anywhere in the *catalog build path*.** Stated precisely, because
+  the broader claim is false: Fugaro's own repository has a root `.dockerignore`, and
+  `images/build_tags_test.go`'s `TestBuildContextAdmitsEE` pins its list in full — the base and
+  history images build with "the whole repository filtered by the root `.dockerignore`" — and the
+  merged amendment already rules on the question (`docs/project-image-catalog/context-design.md` §A4,
+  whose sentence "`.dockerignore` is read by Docker from the context root" is pinned by
+  `internal/cli/docs_project_image_catalog_test.go`). What is absent is any handling in the path this
+  issue is about: `CatalogDockerfileStep` copies one file, and no step of `catalogBuildSteps` reads,
+  requires or filters by a `.dockerignore`. §4.5. **D1399**, whose answer should start from §A4 rather
+  than from scratch.
 - **F21. The context would be cloned by a step that does not exist.** `catalogBuildSteps` has no
   checkout step; the `source` step it replaces is dropped for catalog builds by design
   (`CatalogDockerfileStep`'s "reads one object instead of a checkout"). A context entry re-introduces
