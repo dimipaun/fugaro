@@ -464,7 +464,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			sep = append(sep, "migrating the published policy node in place (type the project's name)")
 		}
 		if e.previewState(initflow.Workspace) == initflow.Todo {
-			sep = append(sep, "publishing the workspace record (its own y/N, and the project's name typed when it admits more to the group than the published record does)")
+			sep = append(sep, "publishing the workspace record (its own y/N, and the project's name typed for the group's first record and whenever it admits more to the group than the published one does)")
 		}
 	} else {
 		// The plugin wiring is not in this list: its y/N is one of the
@@ -476,7 +476,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: a Typed step is money or permanence, and no plan gate admits one (D1026)")
 		}
 		if e.previewState(initflow.Workspace) == initflow.Todo {
-			sep = append(sep, "publishing the workspace record when it admits more to the group than the published record does, which takes the project's name: a member, a repository or the ceiling itself is a Typed step, and no plan gate admits one (D1026)")
+			sep = append(sep, "publishing the workspace record when it admits the group's first one or more than the published record does, which takes the project's name: the first record, a member, a repository or the ceiling itself is a Typed step, and no plan gate admits one (D1026)")
 		}
 	}
 	if len(sep) == 0 {

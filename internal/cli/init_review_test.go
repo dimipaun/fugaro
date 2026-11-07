@@ -794,8 +794,9 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 
 // The workspace publish is the one step of the run the shared confirmation does
 // not cover, and the list at the end of the review names it in both of the
-// run's cases: the ordinary project's y/N with the typed name for a widening,
-// and the managed project's widening alone, which the gate refuses by class. The
+// run's cases: the ordinary project's y/N with the typed name for the group's
+// first record and for a widening, and the managed project's two Typed writes
+// alone, which the gate refuses by class. The
 // control is a preview where the stage has nothing to do, which is the case the
 // entry exists for: without it the screen printed the typed-name prompt's own
 // stage nowhere and could say nothing else was waiting.
@@ -811,8 +812,8 @@ func TestReviewScreenNamesTheWorkspacePublish(t *testing.T) {
 		e.reviewScreen(t.Context(), "test")
 		return b.String()
 	}
-	ordinary := "publishing the workspace record (its own y/N, and the project's name typed when it admits more to the group than the published record does)"
-	gated := "publishing the workspace record when it admits more to the group than the published record does, which takes the project's name"
+	ordinary := "publishing the workspace record (its own y/N, and the project's name typed for the group's first record and whenever it admits more to the group than the published one does)"
+	gated := "publishing the workspace record when it admits the group's first one or more than the published record does, which takes the project's name"
 	if out := screen(t, false, initflow.Todo); !strings.Contains(out, ordinary) {
 		t.Errorf("an ordinary project's review does not name the workspace publish:\n%s", out)
 	}

@@ -338,7 +338,12 @@ func TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace(t *testing.
 	t.Run("the first publish", func(t *testing.T) {
 		h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
 		r := newWSUpdateRig(t, h)
-		oc, out, err := r.apply(t, true)
+		// The group's first record takes the owner's typed word rather than
+		// --yes (the whole membership is chosen where none was): the run here is
+		// the owner's own, at a terminal, typing the workspace's name.
+		fakeTerminal(t)
+		r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
+		oc, out, err := r.apply(t, false)
 		if err != nil {
 			t.Fatalf("the owner's run published nothing: %v\n%s", err, out)
 		}
@@ -466,7 +471,15 @@ func TestUpdateNamesTheOneCommandAndNoOther(t *testing.T) {
 	collect("check", nil, r.check(t).Detail)
 	collect("plan", nil, r.planText(t))
 	collect("left", nil, r.s.Left().Text)
+	// The same write two ways: refused by --yes (the group's first record takes
+	// the typed name, so this is the refusal sentence), then published by the
+	// owner's own word at a terminal. Both are sentences of this stage, and both
+	// have to name the one command.
 	_, out, err := r.apply(t, true)
+	collect("apply refused", err, out)
+	fakeTerminal(t)
+	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
+	_, out, err = r.apply(t, false)
 	collect("apply", err, out)
 
 	// A workspace with no members: the refusal.
@@ -546,6 +559,8 @@ func TestMembershipNeedsBothSides(t *testing.T) {
 	h.add(t, "member-c", "member-c-gcp", wsPin)
 	r := newWSUpdateRig(t, h)
 	out := r.planText(t)
+	fakeTerminal(t)
+	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
 	// The two sentences are the ones `fugaro workspace show` prints for the same
 	// state (workspaceRow.problems, W1), verbatim: this stage reports the
 	// half-done membership through W1's own function and words no second copy of
@@ -558,7 +573,7 @@ func TestMembershipNeedsBothSides(t *testing.T) {
 			t.Errorf("the plan does not report the half-done membership %q:\n%s", want, out)
 		}
 	}
-	if _, _, err := r.apply(t, true); err != nil {
+	if _, _, err := r.apply(t, false); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	// Neither half wins: the node this run publishes lists the table's member
@@ -679,6 +694,54 @@ func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 			t.Errorf("the diff reports a ceiling where there was none as what this write ADDS to the group:\n%s", out)
 		}
 	})
+}
+
+// TestUpdateTheFirstRecordTakesTheTypedName: a workspace that has no published
+// record is the whole membership chosen where none was, so the write is the
+// widening the whole classifier is about — every member it names is admitted by
+// it, and from the moment it lands every run of every member reads it. --yes
+// does not stand in, the write happens on the owner's own typed word, and the
+// refusal says what was chosen rather than naming a comparison that does not
+// exist yet.
+//
+// The state it closes is the one a hand edit reaches: `workspace_members` in
+// the YAML is a document this stage builds a node from, so a session that
+// edited the table past the fenced `fugaro workspace member add` would
+// otherwise publish a whole group behind a mark.
+func TestUpdateTheFirstRecordTakesTheTypedName(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+
+	r := newWSUpdateRig(t, h)
+	_, out, err := r.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes published the group's first record:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "has no published record at workspaces/workspace-alpha") {
+		t.Errorf("the refusal does not say there is no record to be wider than: %v\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "the whole group: the member list, the repositories each member contributes and the workspace's own ceiling are chosen here for the first time") {
+		t.Errorf("the refusal does not say what this write chooses: %v\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "does not stand in") {
+		t.Errorf("the refusal does not tell the operator that --yes was not the answer: %v\n%s", err, out)
+	}
+	if p.db.Value(projectpolicy.PathWorkspace("workspace-alpha")) != nil {
+		t.Error("the refused first record was published anyway")
+	}
+
+	fakeTerminal(t)
+	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
+	oc, out, err := r.apply(t, false)
+	if err != nil {
+		t.Fatalf("the typed project name did not publish the first record: %v\n%s", err, out)
+	}
+	if !oc.Changed {
+		t.Errorf("the first publish reports no change: %s", oc.Detail)
+	}
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+		t.Errorf("the published members are %v, want [member-b]", got)
+	}
 }
 
 // TestUpdateAdmittingAMemberTakesTheTypedName is the positive control under the
@@ -851,6 +914,40 @@ func TestUpdateANewRepositoryOnAListedMemberIsAWidening(t *testing.T) {
 	}
 	if got := wsRepos(t, p.db, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
 		t.Errorf("member-b's published repositories are %v, want the two the table declares", got)
+	}
+}
+
+// TestUpdateEscapesTheRemovedRepositoryItPrints: a repository of the PUBLISHED
+// node is the one string of this document nothing holds to a grammar. The name
+// above it is a project name (config.ProjectNameRE), the cap is a number, and a
+// repository the local table contributes is held to owner/name where the config
+// is read (localcfg's repoRE) — but the node's own repositories are checked only
+// for being non-empty (DecodeWorkspace), because a node a later Fugaro wrote may
+// name them more freely. The removal line prints them, and that line is what the
+// operator confirms, so they go through pluginwire.Printable like every other
+// document-derived name in this package: a repository carrying an escape and a
+// carriage return is a legal JSON string, and printed raw it would rewrite the
+// line that says what this write removes.
+func TestUpdateEscapesTheRemovedRepositoryItPrints(t *testing.T) {
+	const evil = "owner/evil\x1b[2K\rmember-b"
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	// The node carries a repository the table does not declare any more, so this
+	// write removes it and the diff has to say so — in one line.
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b", evil),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	_, out, err := r.apply(t, true)
+	if err != nil {
+		t.Fatalf("apply: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `removed: owner/evil\u001b[2K\u000dmember-b from member-b`) {
+		t.Errorf("the diff does not print the removed repository escaped:\n%s", out)
+	}
+	if strings.ContainsAny(out, "\x1b\r") {
+		t.Errorf("a repository of the published node reached the terminal raw:\n%q", out)
 	}
 }
 

@@ -1263,6 +1263,10 @@ func TestUpdateManagedPolicyStageRefusesAnEmptyNode(t *testing.T) {
 // record is the owner's own table in the local config and the gate's questions
 // are the policy stage's two, so what the mark stands in for is the ordinary
 // y/N and never the owner's word about the group itself.
+//
+// The write here removes a member the node carries and the table does not: that
+// is the ordinary write this step is — the two writes it never converges, the
+// group's first record and a widening, are the class rule's own tests below.
 func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 	r, db := updateBudgetRig(t)
 	r.managedRuns(t, initProjectName, initProject)
@@ -1275,6 +1279,18 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 	// publish there is the one write a session is never admitted (D854).
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	// The node the table replaces: member-b as the table declares it (and no
+	// widening anywhere in it) plus a member this table does not declare, so
+	// this publish removes rather than admits.
+	db.Set(projectpolicy.PathWorkspace(initProjectName), map[string]any{
+		"version": projectpolicy.WorkspaceVersion,
+		"name":    initProjectName,
+		"members": []any{
+			wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+			wsPublishedMember("member-c", "owner/repo-c"),
+		},
+		"cap": map[string]any{"monthly_micros": 25_000_000},
+	})
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	got := out + errOut
@@ -1363,6 +1379,51 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 		for _, rule := range rec.Rules {
 			if strings.Contains(rule, "the published node is one this binary's own may write over") {
 				t.Errorf("a step the gate never judged left a record: %+v", rec)
+			}
+		}
+	}
+}
+
+// TestUpdateManagedRefusesTheFirstWorkspacePublish: the group's first record is
+// the owner's to write, whichever door the session came through. A workspace
+// with nothing published has no node for the write to be narrower than, so the
+// whole membership is chosen by it — every member it names is admitted where
+// none was — and a table edited by hand is exactly the document a mark would
+// otherwise publish (workspaceWidening, the policy stage's M3 reading of its own
+// first node). The gate refuses it as it refuses the policy stage's: no
+// admission, no record, and the node still absent when the run is over.
+func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("a managed project's agent session wrote the workspace's first record:\n%s", got)
+	}
+	head := "[needs you]  " + initflow.Workspace
+	if !strings.Contains(got, head) {
+		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
+	}
+	line := got[strings.Index(got, head):]
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+		t.Errorf("the refusal does not name the class rule that refused the first record: %s", line)
+	}
+	if v := db.Value(projectpolicy.PathWorkspace(initProjectName)); v != nil {
+		t.Errorf("the refused first publish wrote the node: %v", v)
+	}
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "the published node is one this binary's own may write over") {
+				t.Errorf("a step the gate never admitted left a record: %+v", rec)
 			}
 		}
 	}

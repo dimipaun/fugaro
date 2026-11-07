@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -291,22 +292,29 @@ func workspacePublicationIn(ctx context.Context, lc *localcfg.Config, db *rtdb.C
 	return p, nil
 }
 
-// workspaceWidening names what this write adds to a group the workspace already
-// publishes. It is empty for a first publish, which has nothing to widen: the
-// record is this installation's own declaration and the operator's `--yes` or
-// typed word is the confirmation every other write of the run takes. What is
-// reserved for the typed name is a write that puts MORE in a group that is
-// already there — a project that can now spend against the workspace's
-// credentials, a repository it now covers, a ceiling higher than the one the
-// owner set — which is the policy stage's loosening rule (D846) read on this
-// node.
+// workspaceWidening names what this write adds to a group, and it is never
+// empty: what is reserved for the typed name is a write that puts MORE in the
+// group — a project that can now spend against the workspace's credentials, a
+// repository it now covers, a ceiling higher than the one the owner set — which
+// is the policy stage's loosening rule (D846) read on this node, and a FIRST
+// publish is the whole of that rule at once, exactly as the policy stage reads
+// its own first node (M3): the document is chosen where none was, so the member
+// list, the repositories each member contributes and the ceiling the workspace's
+// own credentials are bounded by are all decided here for the first time, and
+// every run of every member reads the record from the moment it lands.
+//
+// That is what keeps the group's first record out of a coding agent's reach: the
+// class is Typed, and D1026 admits no plan gate's answer for a Typed step. A
+// hand edit of `workspace_members` in the YAML — past the fenced `fugaro
+// workspace member add` — is a document this stage would otherwise publish
+// behind a mark, and the node is the group's whole membership.
 //
 // The comparison is against the published node and not the local file: a member
 // whose own config still lists a repository the node does not carry is a
 // widening this stage would make, whatever the file's history was.
 func workspaceWidening(rec *workspace.Record, node *projectpolicy.Workspace, found bool) []string {
 	if !found || node == nil {
-		return nil
+		return []string{"the whole group: the member list, the repositories each member contributes and the workspace's own ceiling are chosen here for the first time"}
 	}
 	published := map[string][]string{}
 	for _, m := range node.Members {
@@ -373,7 +381,17 @@ func workspaceRemovals(rec *workspace.Record, node *projectpolicy.Workspace) []s
 		}
 		for _, repo := range m.Repos {
 			if !slices.Contains(repos, repo) {
-				out = append(out, fmt.Sprintf("%s from %s", repo, m.Project))
+				// The repository is the node's own value and the only string in
+				// this document nothing holds to a grammar: a project name is a
+				// project name (config.ProjectNameRE), the cap is a number, and a
+				// repository the local table contributes is held to owner/name
+				// where the config is read — but a node's repositories are
+				// checked only for being non-empty (DecodeWorkspace). Printed
+				// raw, a repository carrying an escape or a bidi override would
+				// rewrite the diff line the operator is confirming, so it goes
+				// through pluginwire.Printable where every other
+				// document-derived name in this package does.
+				out = append(out, fmt.Sprintf("%s from %s", pluginwire.Printable(repo), m.Project))
 			}
 		}
 	}
@@ -457,11 +475,12 @@ func workspaceRefusal(path string, err error) error {
 // the workspaces design says so: spec §6 has W2's publish of workspaces/<name>
 // running "under the gate update already opens", so a managed project's coding
 // agent converges it like the policy node beside it rather than stopping here
-// with a step for the owner. What the gate may NOT admit is the one write this
-// stage is watched for: a publish that admits more to the group than the node
-// already carries is initflow.Typed (D846), and D1026 admits no plan gate's
-// answer for a Typed step — so a member is still admitted by the owner's own
-// word and never by a mark (SEC, rule 1). It is not in runCovered, for the
+// with a step for the owner. What the gate may NOT admit are the writes this
+// stage is watched for: a publish that admits something the node does not carry
+// — and the workspace's first record, which admits the whole membership — is
+// initflow.Typed (D846, M3), and D1026 admits no plan gate's answer for a Typed
+// step — so a member is still admitted by the owner's own word and never by a
+// mark (SEC, rule 1). It is not in runCovered, for the
 // policy stage's reason: it takes its own confirmation where the gate does not
 // stand in for one.
 type workspaceStage struct {
@@ -643,19 +662,22 @@ func (s *workspaceStage) Apply(ctx context.Context, env initflow.Env) (initflow.
 }
 
 // confirm is the confirmation this write is made behind: the typed project name
-// when the write puts more in a group the workspace already publishes, and the
-// ordinary y/N (or --yes) otherwise. A managed project's gate that admitted the
-// node replaces both — the diff is printed either way, and the class rule has
-// already refused a widening there (gateStep).
+// when the write puts more in the group — the group's first record, which
+// chooses the whole of it, and any later write that admits something the node
+// does not carry — and the ordinary y/N (or --yes) otherwise. A managed
+// project's gate that admitted the node replaces both — the diff is printed
+// either way, and the class rule has already refused a widening there
+// (gateStep).
 //
 // The typed name is the policy stage's loosening rule (confirmTypedStrict, D846)
 // read on this node: what it reserves is a write that ADMITS something — a
 // project that can now spend against the workspace's credentials, a repository
-// it now covers, a ceiling above the one the owner set, or the ceiling itself
-// when the record states none — and --yes does not stand in for it, which is
-// what the sentence says to the operator whose script has just passed --yes and
-// been refused. What it does NOT reserve is a removal: a member the record no
-// longer declares shrinks the group, and the diff says so.
+// it now covers, a ceiling above the one the owner set, the ceiling itself when
+// the record states none, or the whole membership when there is no published
+// record yet — and --yes does not stand in for it, which is what the sentence
+// says to the operator whose script has just passed --yes and been refused.
+// What it does NOT reserve is a removal: a member the record no longer declares
+// shrinks the group, and the diff says so.
 func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer, admitted bool) error {
 	p.print(w)
 	if admitted {
@@ -665,7 +687,7 @@ func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer
 	if len(p.widens) == 0 {
 		return confirmRemoval(cmd, p.lc, yes, what)
 	}
-	why := fmt.Sprintf("this admits more to the workspace %s than the published record does: %s; every run of a member project reads the record, and what it admits is paid for by the workspace's own credentials", p.record.Name, strings.Join(p.widens, "; "))
+	why := p.wideningWhy()
 	// The sentence is said once: a session with no terminal is refused with it
 	// inside the error (confirmTypedStrict), and a door that printed it beside
 	// that error would say the same thing twice.
@@ -673,6 +695,25 @@ func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer
 		fmt.Fprintf(w, "%s\n", why)
 	}
 	return confirmTypedStrict(cmd, p.lc, why, what)
+}
+
+// wideningWhy is the sentence the typed confirmation shows and the refusal
+// gives: what this write admits, and what it takes to admit it.
+//
+// The first publish has no published record for the write to be wider than, so
+// it says what it decides instead: the record written now is the one every run
+// of every member is admitted by, and there is nothing before it to be compared
+// against. Neither sentence names a value out of the node — a node's
+// repositories are the one string of it nothing holds to a grammar — and both
+// name `--yes` as the thing that does not stand in, because the operator reading
+// this from a script has just passed it and would otherwise take it for the
+// answer.
+func (p *workspacePublication) wideningWhy() string {
+	if !p.found {
+		return fmt.Sprintf("the workspace %s has no published record at %s, and this writes the one every run of its members reads — %s. %s is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s",
+			p.record.Name, p.path, strings.Join(p.widens, "; "), p.record.Name, selfCommand()+" update")
+	}
+	return fmt.Sprintf("this admits more to the workspace %s than the published record does: %s; every run of a member project reads the record, and what it admits is paid for by the workspace's own credentials", p.record.Name, strings.Join(p.widens, "; "))
 }
 
 // what names this write as the confirmation reads it.

@@ -626,15 +626,18 @@ var policyAdmittedRules = []string{
 // document: the database is this installation's (budgetDBUnadopted, D1017) and
 // the node in play is one this binary's own may write over.
 //
-// A publish that ADMITS more to the group than the node already carries is
-// initflow.Typed, the class D846 gives the policy stage's raised ceiling and
-// the one D1026 refuses whatever a plan gate said: the record decides who is in
-// the group, so a member this stage adds may only be the owner's own word and
-// never a mark's. Every other publish — the first one, a plain rewrite, a
-// migration, a removal — is the ordinary YesOrTyped step the gate may stand in
-// for, which is what the workspaces design says of this write ("it runs under
-// the gate `update` already opens", §6; reconciliation F32 names it the cloud
-// write of the two that the gate ADMITS).
+// A publish that ADMITS something is initflow.Typed, the class D846 gives the
+// policy stage's raised ceiling and the one D1026 refuses whatever a plan gate
+// said: the record decides who is in the group, so a member this stage adds —
+// and the whole membership, on a workspace that has no published record yet —
+// may only be the owner's own word and never a mark's. A first publish is that
+// class for the policy stage's reason (M3): the document is chosen where none
+// was, and a session that edited `workspace_members` in the YAML by hand would
+// otherwise publish the group's whole membership behind a mark. Every other
+// publish — a plain rewrite, a migration, a removal — is the ordinary
+// YesOrTyped step the gate may stand in for, which is what the workspaces design
+// says of this write ("it runs under the gate `update` already opens", §6;
+// reconciliation F32 names it the cloud write of the two that the gate ADMITS).
 func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
 	r := s.e.r
 	if !r.gateUnderway() {
