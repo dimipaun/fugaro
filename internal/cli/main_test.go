@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -259,7 +260,9 @@ func TestATestNeverWritesTheDeveloperConfigHome(t *testing.T) {
 // landed in the developer's own directory would be pruned by the next run
 // (D1352). The command is not isolated the way its own tests isolate it —
 // no t.Setenv of its own — so what it does is what every other test in this
-// package does.
+// package does, and the directory it must not have written is read the way
+// OpenLog would resolve it with $XDG_STATE_HOME taken away: the developer's
+// own.
 //
 // Mutation (run, restore): delete the XDG_STATE_HOME block from TestMain and
 // this fails twice over — testStateRoot is empty, and the log lands in the
@@ -273,25 +276,64 @@ func TestATestNeverWritesTheDeveloperStateHome(t *testing.T) {
 	}
 	secretsFixture(t)
 	logs := filepath.Join(testStateRoot, "fugaro", "logs")
-	before := map[string]bool{}
-	for _, e := range readDirNames(t, logs) {
-		before[e] = true
-	}
+	devLogs := developerStateLogDir(t)
+	before, devBefore := readDirNames(t, logs), readDirNames(t, devLogs)
 	if _, _, err := executeStdin(t, tokenValue+"\n", "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
 		t.Fatal(err)
 	}
-	// This test's own run left one log, in TestMain's directory: read as the
-	// new names rather than as the whole directory, because the tests that ran
-	// before this one left logs of their own in the same place.
-	var fresh []string
-	for _, name := range readDirNames(t, logs) {
-		if !before[name] {
-			fresh = append(fresh, name)
-		}
+	// The harm this is about, and the half that cannot be read as a count of
+	// names: nothing this run left is in the developer's own directory. It is
+	// asserted first because it is the assertion no other test can take away —
+	// a log is named `<command>-<14 digits UTC>-<pid>` (report.logName) and the
+	// create is O_EXCL, so a second run of one command in this process and
+	// second keeps no log at all.
+	if fresh := newNames(readDirNames(t, devLogs), devBefore); len(fresh) != 0 {
+		t.Fatalf("a test filed %v in the developer's own state directory %s", fresh, devLogs)
 	}
-	if len(fresh) != 1 || !strings.HasPrefix(fresh[0], "secrets-set-") {
+	// And this run's log is the new one here. It cannot be when another test's
+	// run of this command in this same process and second already holds the
+	// name: that is a test to give a state home of its own (familyLogs,
+	// newInitRig), not a failure of this one.
+	fresh := newNames(readDirNames(t, logs), before)
+	switch {
+	case len(fresh) == 1 && strings.HasPrefix(fresh[0], "secrets-set-"):
+	case len(fresh) == 0:
+		t.Skipf("another run of `secrets set` in this process and second holds this run's log name, so this run kept no log to find in %s", logs)
+	default:
 		t.Fatalf("the run left %v in %s, want one secrets-set log of its own", fresh, logs)
 	}
+}
+
+// developerStateLogDir is the directory a run would file its log in with
+// $XDG_STATE_HOME taken away: the developer's own, resolved through the one
+// rule the CLI has (localcfg.UserDir), so this test names no path of its own.
+func developerStateLogDir(t *testing.T) string {
+	t.Helper()
+	base, err := localcfg.UserDir(func(name string) string {
+		if name == "XDG_STATE_HOME" {
+			return ""
+		}
+		return os.Getenv(name)
+	}, runtime.GOOS, localcfg.DirState)
+	if err != nil {
+		t.Skipf("the developer's own state directory cannot be named: %v", err)
+	}
+	return filepath.Join(base, "fugaro", "logs")
+}
+
+// newNames is the names of after that were not in before.
+func newNames(after, before []string) []string {
+	had := make(map[string]bool, len(before))
+	for _, n := range before {
+		had[n] = true
+	}
+	var fresh []string
+	for _, n := range after {
+		if !had[n] {
+			fresh = append(fresh, n)
+		}
+	}
+	return fresh
 }
 
 // readDirNames is a directory's entry names, and nothing when it is not there

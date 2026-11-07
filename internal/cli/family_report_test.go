@@ -465,6 +465,11 @@ func TestAccountsRmWritesALog(t *testing.T) {
 // marker off a terminal, never a coloured one, and a spinner is not drawn
 // where nobody is watching.
 func TestNoStepCommandPrintsAnsiOffATerminal(t *testing.T) {
+	// A state home of this test's own, like every other test in this file: the
+	// runs below are mutating commands and three of them file a log
+	// (main_test.go's TestATestNeverWritesTheDeveloperStateHome is the backstop
+	// for the ones that do not, and it needs TestMain's own root to itself).
+	familyLogs(t)
 	// One rig per command: these fixtures select their local config through
 	// FUGARO_CONFIG, so two of them cannot be alive in one test at once.
 	runs := []struct {
