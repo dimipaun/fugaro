@@ -85,6 +85,16 @@ const MaxClaudeAccountNameLen = 31
 // api-key review plan's next task (AK5), and no message here may send an
 // operator at a route that does not exist.
 //
+// The account-CHOICE keys stand beside those readers and are the same claim
+// from the other side — a profile entry says which account a repository's runs
+// may use, a choice key says which account a run's stages choose — so they
+// refuse the value too, in this file's one sentence for them
+// (AnthropicKeyAccountChoiceMessage): localcfg's choiceRefProblem (the
+// default_claude_account and stages.<s>.claude_account keys) and
+// projectpolicy's decoder (default_claude_account and claude_account_stages) —
+// the entry lookup's own sentence would otherwise prescribe the claude_accounts
+// entry ValidateClaudeAccounts refuses.
+//
 // Which repositories it may serve is decided where every other axis value's is
 // (projectpolicy's accounts block, D3), and its own source is the profiles that
 // name it: the key is stored project-wide rather than for a list of
@@ -273,6 +283,30 @@ const reservedAccountNameMessage = "this name is reserved: the platform holds an
 // operator there would hand them a route that ends in a refusal. The clause
 // changes when that variant is deployed (AK5).
 const anthropicKeyAccountNameMessage = `this is the account axis's value for the project's own Anthropic API key, not a Claude account: its credential is the project's own, held by the platform, so there is no token to store under this name, and no job serves a profile that names it yet — pick a different account name`
+
+// AnthropicKeyAccountChoiceMessage is the one sentence every account-CHOICE key
+// answers AnthropicKeyAccount with. A profile's claude_accounts entry names the
+// account a repository's runs may use, which is why ValidClaudeAccountRef
+// admits the sentinel there; a choice key names the account a run's stages
+// choose — the local config's default_claude_account and
+// stages.<s>.claude_account, the project layer's default_claude_account and
+// claude_account_stages — and the project's own key is no such account: no job
+// mounts it, in this release, as a Claude token (the deployer refuses the
+// profile that lists it, ProjectJobTokenAccount answers no token for it). So
+// the value is refused there, and the move the sentence names is the one that
+// works today, dropping the key.
+//
+// It never names a claude_accounts entry, and that is the point of its own
+// case: the lookup that answers a name this file does not define would tell the
+// operator to define claude_accounts: {anthropic-api-key--project:
+// {allow_data_to: [...]}}, the one entry ValidateClaudeAccounts refuses
+// (anthropicKeyAccountNameMessage) — a refusal naming what another refusal
+// forbids, which is no remedy at all.
+//
+// It is declared once, beside the sentinel itself, because two packages ask the
+// question (localcfg's choiceRefProblem, projectpolicy's decoder): a second
+// wording for one rule is a second rule.
+const AnthropicKeyAccountChoiceMessage = `the project's own Anthropic API key is not a Claude account and no job this installation deploys mounts it: its credential is the project's own copy, held by the platform, so a key that chooses a run's account cannot name it — drop the key`
 
 // ReviewVariantAccount is one entry of ProjectJobAccounts' axis as the
 // review-only variant's names spell it: the policy's own spelling of the

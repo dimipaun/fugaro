@@ -24,7 +24,7 @@ and a slice the owner does not want is simply not started.
 | Level | Tasks | What it is | Why these can run together |
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
-| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This is code for a launch E7 still refuses** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
+| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This is code for a launch E7 still refuses** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
 | **L3** | **AK6**, **AK7** | the OpenRouter half: the bundle holds a provider key (**F15**, **F16**, **F24**), and the review run's model path reaches a provider's endpoint | AK6 is `internal/credsvc` and `schemas/`; AK7 is `internal/runner` and `internal/gateway` |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
@@ -74,6 +74,10 @@ the review of AK4's own change asked for exactly this one (the refusal would oth
 | `internal/config/project_secrets_test.go` | L2 | AK4 (the same) |
 | `internal/projectpolicy/accounts.go` | L2 | AK4 (the sentinel's `accounts` entry) |
 | `internal/projectpolicy/accounts_test.go` | L2 | AK4 (the same) |
+| `internal/projectpolicy/policy.go` | L2 | AK4 (the account-choice members refuse the sentinel) |
+| `internal/projectpolicy/stage_accounts_test.go` | L2 | AK4 (the same) |
+| `internal/localcfg/localcfg.go` | L2 | AK4 (the account-choice keys refuse the sentinel) |
+| `internal/localcfg/localcfg_test.go` | L2 | AK4 (the same) |
 | `internal/runner/routing.go` | L2 | AK5, then AK7 |
 | `internal/runner/routing_internal_test.go` | L2 | AK5, then AK7 |
 | `internal/cli/run.go` | L2 | AK5 |
@@ -232,7 +236,7 @@ not.
 **Slice:** cloud, Anthropic key (L2). **Depends on:** AK1's slice decided (**D1410**), **D1416** as
 "Anthropic key first", **D1417** as "the project's own key".
 
-**Files (10):** `internal/credsvc/review.go`, `internal/credsvc/review_test.go`,
+**Files (14):** `internal/credsvc/review.go`, `internal/credsvc/review_test.go`,
 `internal/credsvc/cascade.go`, `internal/credsvc/cascade_test.go`,
 `internal/config/claude_accounts.go`, `internal/config/project_secrets.go`,
 `internal/projectpolicy/accounts.go` and the test file of each — the last four because the sentinel has
@@ -243,7 +247,10 @@ is a class no installation could ever be served by, however AK4 builds the candi
 `internal/infra/projectjobs.go` and its test, §2's declared exception: the sentinel is accepted at
 load and published, so the deployer's answer about it is reachable, and the review of this change
 found that answer naming a `claude_accounts` key `ValidateClaudeAccounts` refuses. AK4 makes that
-refusal honest; AK5 replaces it with the route.
+refusal honest; AK5 replaces it with the route. And `internal/localcfg/localcfg.go` with its test plus
+`internal/projectpolicy/policy.go` with `stage_accounts_test.go`, for the reason the next paragraph
+gives: the account-**choice** keys are the other reader of the same value, and both of them had the
+same unreachable remedy.
 
 **Interfaces:** the pairing's account axis gains one value that is **not** a Claude account — the
 sentinel the admissions spell for "the project's own Anthropic API key" — resolved in
@@ -288,12 +295,27 @@ about a credential, and AK5 owns the two that are the route itself.
   `ClaudeAccountNameRE` too, so the axis value reaches a task's spec only if **AK5** decides it must.
   **AK5** books both.
 
+**The account-choice keys are the same claim from the other side, and AK4 answers them.** A profile's
+`claude_accounts` entry says which account a repository's runs may use; the choice keys say which
+account a run's stages *choose* — the local config's `default_claude_account` and
+`stages.<s>.claude_account` (`localcfg.choiceRefProblem`), the project layer's `default_claude_account`
+and `claude_account_stages` (`projectpolicy`'s decoder). Both readers hold a value to
+`config.ValidClaudeAccountRef`, which admits the sentinel because the profile entry may name it, so
+both fell past it: `localcfg` into the defined-account lookup, whose sentence prescribes
+`claude_accounts: {anthropic-api-key--project: {allow_data_to: […]}}` — the entry
+`ValidateClaudeAccounts` refuses, the same unreachable remedy; `projectpolicy` into acceptance, a
+published default or stage account no job mounts. **AK4 refuses the value at all four sites**, in one
+sentence declared beside the sentinel (`config.AnthropicKeyAccountChoiceMessage`), whose move is the one
+that works — drop the key. Nothing relaxes these until the route exists: a choice key naming the
+sentinel becomes meaningful only if **AK5** decides a stage of a run may be served by the project's own
+key, and a task that needs one of these files books itself in §2's table then.
+
 **The unmade decision this exposes belongs to AK5 and is recorded in §6**, not taken here: whether a
 profile that names the sentinel gets a coding job at all, what that job's account segment is, and
 what `ReviewJobAccountsFor` and the deployer then agree the review variant's segment is.
 
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/config/ ./internal/projectpolicy/ ./internal/infra/ -run 'TestReviewPairingMayNameTheProjectsAnthropicKey|TestReviewCandidateListIsExactlyOneCredential|TestReviewCallerIsNeverOfferedAProviderKey|TestReviewCandidateListStillOffersThePairingAccount|TestAnthropicKeyAccountIsAReferenceAndNotADefinition|TestAnthropicKeyAccountIsNoJobsToken|TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt|TestProjectSecretReaches|TestDeriveAccountsPublishesTheProjectsAnthropicKey|TestAnthropicKeySentinelRefusedWithAReachableRemedy' -count=1`
+`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/config/ ./internal/projectpolicy/ ./internal/infra/ ./internal/localcfg/ -run 'TestReviewPairingMayNameTheProjectsAnthropicKey|TestReviewCandidateListIsExactlyOneCredential|TestReviewCallerIsNeverOfferedAProviderKey|TestReviewCandidateListStillOffersThePairingAccount|TestAnthropicKeyAccountIsAReferenceAndNotADefinition|TestAnthropicKeyAccountIsNoJobsToken|TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt|TestProjectSecretReaches|TestDeriveAccountsPublishesTheProjectsAnthropicKey|TestAnthropicKeySentinelRefusedWithAReachableRemedy|TestAccountChoiceKeysRefuseTheProjectsAnthropicKey|TestDecodeRefusesTheProjectsAnthropicKeyAsAStageAccount' -count=1`
 
 - `TestReviewPairingMayNameTheProjectsAnthropicKey` — a review caller whose pairing names the
   sentinel is served by the bundle's `config.AnthropicSecret` entry, and the forwarded call carries
@@ -318,6 +340,11 @@ what `ReviewJobAccountsFor` and the deployer then agree the review variant's seg
   `UserError`, and the refusal names neither `claude_accounts.<sentinel>` nor `.allow_data_to` — the
   keys `ValidateClaudeAccounts` refuses, so naming one would send the operator to a remedy nobody can
   carry out — while it does name `profiles.<profile>.claude_accounts`, the field they edit.
+- `TestAccountChoiceKeysRefuseTheProjectsAnthropicKey` and
+  `TestDecodeRefusesTheProjectsAnthropicKeyAsAStageAccount` — the choice keys' half, in both readers:
+  each key refuses the sentinel naming itself, the sentence names the move that works (drop the key),
+  and it contains neither `claude_accounts` nor `allow_data_to` — either string would mean the operator
+  was handed the account lookup's forbidden remedy instead.
 
 **Red step:** `TestReviewPairingMayNameTheProjectsAnthropicKey` fails today, for the reason **F13**
 names: `reviewCandidates` offers the pairing's tier-A account and nothing else, so a pairing naming
@@ -577,8 +604,9 @@ any installation whose budget mode is `off` — the review class refuses a run w
    *launchable*, and a plan that implied otherwise would be selling a path nobody can run. Nothing
    here takes E7, and no release of this design is worth anything to a user until it is met.
 8. **AK5 is gated on the sentinel's job shape, and AK4 does not take it.** AK4 makes the sentinel
-   publishable and servable; no installation can *deploy* it, and the four readers of the account
-   axis that must yield are listed in AK4's section and booked in §2. What is **not** decided
+   publishable and servable; no installation can *deploy* it, and the readers of the account axis that
+   must yield — plus the account-choice keys AK4 refuses outright — are listed in AK4's section and
+   booked in §2. What is **not** decided
    anywhere yet, and is a product question rather than a mechanical one: whether a profile that names
    the sentinel gets a coding job at all, what that job's account segment is
    (`modules/project`'s `job.account` validation admits an empty account or a Claude account name,
