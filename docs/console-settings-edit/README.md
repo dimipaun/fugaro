@@ -1,13 +1,24 @@
 # Editing the Project tab's settings from the console, behind a pencil
 
-**Status: plan only; nothing is implemented; no task approved.** This is a design-only folder: it adds
-no code, no schema, no console source, no test fixture and no workflow, and it edits no file outside
-`docs/` and the one Go test that pins this folder. Every command, flag, field and argv below is a
-proposal. The owner answered **every one of its decisions** on 2026-11-01 ([spec.md](spec.md)):
-D1100–D1121 as recommended, except **D1107**, which he answered with **`--yes` is allowed for a
-widening** — so the console runs `settings set … --yes` and gets no hook of its own. An answer is not
-an approval: no task in [implementation-plan.md](implementation-plan.md) may start before the owner
-approves it.
+**Status (2026-11-07, later): the plan is built — every task in it has landed.** Each task needed the
+owner's go by name and got it, and the tree followed: the prerequisite CLI tasks **P1–P4** and all
+six console tasks **C1–C6** are on `main` — the settings write, the pencil, the window, the widening
+answered by `--yes` — so the commands, flags, fields and argv proposed below are what the CLI and
+the console now do, and the console shipped it in **0.120.0 "Quince"**.
+[reconciliation.md](reconciliation.md) §1 records the commit its citations were re-read on. What
+landed were the tasks, in their own pull requests — **this folder ships no code itself**, and the
+paragraph kept below is the folder's own statement of what it is. **This line records what the tree
+holds; it approves no task and it changes no sentence below.** Everything under it is the state as
+it was written on its own date, kept as written.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.**
+This is a design-only folder: it adds no code, no schema, no console source, no test fixture and no
+workflow, and it edits no file outside `docs/` and the one Go test that pins this folder. Every
+command, flag, field and argv below is a proposal. The owner answered **every one of its decisions**
+on 2026-11-01 ([spec.md](spec.md)): D1100–D1121 as recommended, except **D1107**, which he answered
+with **`--yes` is allowed for a widening** — so the console runs `settings set … --yes` and gets no
+hook of its own. An answer is not an approval: no task in
+[implementation-plan.md](implementation-plan.md) may start before the owner approves it.
 
 **Asked by:** the owner, 2026-11-01: "In the console, under the Project tab, for each of those values,
 a way for administrators to edit them from within the console: a little pencil icon to trigger an

@@ -12,14 +12,18 @@ disagrees with [spec.md](spec.md), it wins.**
   designed has landed since and every line under a citation moved with it: the prerequisites
   **P1–P4** — `fugaro settings` can be aimed at an installation, the read carries
   `writable`/`owner`/`target_layer`, `set|unset` have `--dry-run --json`, and `--yes` answers a
-  widening — and the console tasks **C1–C6**. So a citation points at the tree the reader has, a
-  finding's tense is the tree it was read on, and every finding the tree has refuted says so in
-  place rather than in a footnote: **F1**, **F3**, **F5**, **F10**, **F11**, **F12** and **F13**.
+  widening — and the console tasks **C1–C6**, all six of them, in console 0.120.0. So a citation
+  points at the tree the reader has, a finding's tense is the tree it was read on, and every finding
+  the tree has refuted says so in place rather than in a footnote: **F1**, **F3**, **F4**, **F5**,
+  **F10**, **F11**, **F12** and **F13**.
 - **S5, `fugaro settings get|set|unset`, pull request #1525**, branch `fugaro/20261101-151752-0d66`,
   head `f7871b3a` — **read while it was open, and merged into `main` as #1525
-  (`f09f10e5`) while this design was in review**, unchanged, so every line number taken from it above
-  still holds on this branch. Every citation into it is marked **S5 #1525**. It is the command every
-  edit in this design spawns, so it is the single most load-bearing input here.
+  (`f09f10e5`) while this design was in review**, unchanged. Every citation into it is marked **S5
+  #1525**, and that mark says where the symbol came from rather than that the line is S5's: the files
+  it landed have moved since — `readSettings` was line 146 there and is line 154 today,
+  `settingsSelection` line 272 → line 574 — so the numbers are lines of the tree named in the bullet
+  above, as the amendment there says. It is the command every edit in this design spawns, so it is
+  the single most load-bearing input here.
 - **`docs/settings-commands/`** — its [spec.md](../settings-commands/spec.md) §4.2, §4.3 and §4.4
   (the write path, `unset`, and the allow-list of keys the generic path owns),
   [reconciliation.md](../settings-commands/reconciliation.md) **D846** (which writes ask for the
@@ -80,8 +84,14 @@ count in rule 5 all move in **one commit each** (**D1115**), and the count is no
 what a reader checks against the table.
 
 **F4: Exists. The console's child environment is fixed, and no coding-agent marker can reach it.**
-`CHILD_ENV_KEYS` (`console/src/main/spawn.ts:366`) is the whole environment a child receives:
-`PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, five `XDG_*`, plus `WSLENV`/`WSL_UTF8` on the WSL route.
+`CHILD_ENV_KEYS` (`console/src/main/spawn.ts:366`) is the whole environment a child receives, and it
+is **eleven keys**: `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`, five `XDG_*`, and
+**`FUGARO_PROJECT`, which is always the chosen installation's project** — `childEnvironment` writes
+it unconditionally (`:2170`), so a spawn with no installation yet carries it empty rather than
+absent. Plus `WSLENV` and `WSL_UTF8` on the WSL route, which are `wsl.exe`'s own and never the
+distribution's (`:349-357`). *(Amended 2026-11-07: this enumeration read **ten** keys and called them
+the whole environment — it left `FUGARO_PROJECT` out, and everything below that asked what the child
+carries was read through that gap. See **F12**.)*
 The marker list is `agentenv.Markers` (`internal/agentenv/agentenv.go:50`): `CLAUDECODE`,
 `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`, `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT`, `AI_AGENT`.
 *Consequence, and it cuts both ways:* S5's agent-session refusal (`applySettingsEdit`, **S5 #1525**
@@ -172,24 +182,37 @@ are S5's, and a copy in TypeScript is a second answer that will drift the day D8
 decides the widening tick, so the console still asks the CLI and re-derives nothing.)*
 
 **F12: Conflicts on `d1585a6f` — P1 has since landed. `fugaro settings` could not be aimed at an
-installation.** `newSettingsCmd` (`internal/cli/settings.go:61`, on `main` since #1484) registered no
-`--project` and no `--config`; the flags it had were `--repo`, `--all-repos`, `--layer`, `--grep`,
-`--changed`, `--why`, `--offline`, `--json` (`settingsOptions`, `:21`). Both the read and the write
-built a `localcfg.SelectInput` with **`Project`, `Config` and `Checkout` all empty** (`readSettings`,
-**S5 #1525** `internal/cli/settings_read.go:154`, whose `SelectInput` is at `:156`;
-`settingsSelection`, **S5 #1525** `internal/cli/settings_set.go:574`) — so `localcfg.Select`
-(`internal/localcfg/select.go:104`) reaches step 6, "exactly one project config", with steps 1–5 all
-unavailable. The console's child carries no `FUGARO_PROJECT` and no `FUGARO_CONFIG` (F4) and its
-working directory is the installation's checkout (`createBoundSource`, cited in `ipc.ts`'s
-`plan.status` comment at `console/src/main/ipc.ts:779`), which `Select` would consult at step 3
-**only if `Checkout` were filled — and it is not**. *Consequence, and it is the largest finding
-here:* on a machine with the owner's two installations, **every** `fugaro settings` argv the console
-could spawn is refused with "the projects are: …", and on a machine with one it silently reads
-whichever installation is the only one, so **no console task in this plan could start before P1** —
-which it did: *(Amended 2026-11-07: **P1 has landed** — `settingsAimFlags`
-(`internal/cli/settings.go:52`, called from `newSettingsCmd` at `:91`) gives the family `--project`
-and `--config`, so the read's `SelectInput` is no longer empty of them and a console spawn names the
-installation. The paragraph above records the tree the design was written against.)* The other
+installation with a flag.** `newSettingsCmd` (`internal/cli/settings.go:61`, on `main` since #1484)
+registered no `--project` and no `--config`; the flags it had were `--repo`, `--all-repos`,
+`--layer`, `--grep`, `--changed`, `--why`, `--offline`, `--json` (`settingsOptions`, `:21`). What
+aimed the family was therefore the environment and nothing else: both the read and the write built a
+`localcfg.SelectInput` with **`Config` empty and `Checkout` nil, and `Project` taken from
+`$FUGARO_PROJECT`** (`readSettings`, **S5 #1525** `internal/cli/settings_read.go:154`, whose
+`SelectInput` is at `:156`; `settingsSelection`, **S5 #1525** `internal/cli/settings_set.go:574`) —
+so `localcfg.Select` (`internal/localcfg/select.go:104`) resolves at step 2, "`--project`", for the
+project the environment names, and only with that variable unset does it fall past steps 3–5 to step
+6, "exactly one project config". The console's child **carries `FUGARO_PROJECT`, which is always the
+chosen installation's project** (F4) and carries no `FUGARO_CONFIG`, so a spawn from the console
+names the installation it is looking at; what does not name it is a plan with no installation chosen
+yet (`target.project` is `''` for the console's own `installation.list` read,
+`console/src/main/index.ts:620`). The child's working directory is the installation's checkout
+(`createBoundSource`, cited in `ipc.ts`'s `plan.status` comment at `console/src/main/ipc.ts:779`),
+which `Select` would consult at step 3 **only if `Checkout` were filled — and it is not**.
+*Consequence:* the aim is the environment's alone, which is the conflict this finding is about — the
+CLI names one installation through a variable the console happens to set, and nothing the console
+passes says it — so **no console task in this plan could name its installation in argv before P1**,
+and a spawn without the variable is refused with "the projects are: …" on a machine with several
+installations while on a machine with one it silently reads whichever installation is the only one.
+**P1 replaces the environment with a flag pair:** *(Amended 2026-11-07: **P1 has landed** —
+`settingsAimFlags` (`internal/cli/settings.go:52`, called from `newSettingsCmd` at `:91`) gives the
+family `--project` and `--config`, so the read's `SelectInput` is no longer empty of them and a
+console spawn names the installation. The paragraph above records the tree the design was written
+against, **except for the two sentences corrected here**: it said both the read and the write were
+built with `Project` empty and that the console's child carries no `FUGARO_PROJECT` — F4's key list,
+which left the key out (F4's own amendment), is where that came from, and the tree refutes both:
+`FUGARO_PROJECT` has been one of the eleven `CHILD_ENV_KEYS` since the design commit
+(`console/src/main/spawn.ts:377`) and `childEnvironment` always writes it (`:2170`), while S5's
+`readSettings` and `settingsSelection` read it into `SelectInput.Project`.)* The other
 allow-listed rows did not have this problem because `addCloudFlags` (`internal/cli/cloud.go:51`) gives
 them `--project` and `--config` and §3.4 rule 3 makes the console pass both.
 
