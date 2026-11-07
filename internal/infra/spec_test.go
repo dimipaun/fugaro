@@ -15,8 +15,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -1041,6 +1043,44 @@ func TestGoldenTfvars(t *testing.T) {
 		if !bytes.Equal(got, want) {
 			t.Errorf("%s differs from the generated tfvars; regenerate with -update and review the diff\ngot:\n%s", path, got)
 		}
+	}
+}
+
+// TestWorkflowJobTaskTimeoutFollowsTheTimeoutDefault: the job's Cloud Run task
+// timeout is the workflow's own timeouts.total plus the slack every backend
+// adds, derived here on every `fugaro update` from the config the CLI resolves
+// — it is never stored in the installation. So an installation deployed when
+// the default total was 90 minutes converges to the new one on the next
+// `fugaro update` alone, with no operator step: the workflow below names no
+// timeouts (the previous default's shape, and the shape a repository written
+// before this release has), and what comes out is the current default plus the
+// slack. The previous default's own number is named so that a change to either
+// half fails here rather than silently leaving deployed jobs on the old clock.
+func TestWorkflowJobTaskTimeoutFollowsTheTimeoutDefault(t *testing.T) {
+	in := webappInputs(t)
+	w := in.Cfg.Workflows["api"]
+	// The api workflow of webappYAML writes no timeouts: what it resolves to is
+	// the config's default, read here from a fugaro.yaml that names none.
+	def, ps := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  api:\n    commands: { build: \"true\", test: \"true\" }\n"))
+	if len(ps) > 0 {
+		t.Fatalf("the minimal repository is refused: %v", ps)
+	}
+	if w.Timeouts.Total.Duration != def.Workflows["api"].Timeouts.Total.Duration {
+		t.Fatalf("the fixture's api workflow is at %s and the config's default is %s: this test is about a workflow left at the default",
+			w.Timeouts.Total.Duration, def.Workflows["api"].Timeouts.Total.Duration)
+	}
+	ws, err := Workflow(in, "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int((w.Timeouts.Total.Duration + backend.TaskTimeoutSlack) / time.Second)
+	if ws.TaskTimeoutS != want {
+		t.Errorf("task_timeout_s = %d, want %d (the default total %s plus the %s slack): an installation at the previous default does not converge with `fugaro update` alone",
+			ws.TaskTimeoutS, want, w.Timeouts.Total.Duration, backend.TaskTimeoutSlack)
+	}
+	if prev := int((90*time.Minute + backend.TaskTimeoutSlack) / time.Second); ws.TaskTimeoutS == prev {
+		t.Errorf("task_timeout_s is still %d, the previous 90-minute default's job timeout: `fugaro update` would leave deployed jobs on the old clock", prev)
 	}
 }
 

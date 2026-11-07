@@ -47,9 +47,38 @@ func TestParseAppliesDefaults(t *testing.T) {
 		t.Errorf("reports = %v", got)
 	}
 	to := w.Timeouts
-	if to.Total.Duration != 90*time.Minute || to.Stage.Duration != 40*time.Minute ||
+	if to.Total.Duration != 3*time.Hour || to.Stage.Duration != 60*time.Minute ||
 		to.Verify.Duration != 30*time.Minute || to.FinalizeReserve.Duration != 5*time.Minute {
 		t.Errorf("timeouts = %+v", to)
+	}
+}
+
+// TestDefaultTimeoutsSatisfyTheRelation: the set applyDefaults leaves must be
+// one Validate accepts, and the relations the runner reads out of it must
+// hold at it. A default that broke one would refuse every fugaro.yaml that
+// names no timeouts, so the relation is asserted here rather than left to the
+// values: a stage inside the run, the verify step inside the run, the render
+// inside the wrapper it is one step of and inside what the reserve leaves, and
+// a reserve shorter than the run.
+func TestDefaultTimeoutsSatisfyTheRelation(t *testing.T) {
+	cfg, problems := Parse([]byte(minimalYAML))
+	if len(problems) > 0 {
+		t.Fatalf("the defaults are refused: %v", problems)
+	}
+	to := cfg.Workflows["server"].Timeouts
+	for _, c := range []struct {
+		what string
+		ok   bool
+	}{
+		{"timeouts.stage is inside timeouts.total", to.Stage.Duration <= to.Total.Duration},
+		{"timeouts.verify is inside timeouts.total", to.Verify.Duration <= to.Total.Duration},
+		{"timeouts.render is inside timeouts.verify", to.Render.Duration <= to.Verify.Duration},
+		{"timeouts.render fits what the reserve leaves", to.Render.Duration <= to.Total.Duration-to.FinalizeReserve.Duration},
+		{"timeouts.finalize_reserve is shorter than timeouts.total", to.FinalizeReserve.Duration < to.Total.Duration},
+	} {
+		if !c.ok {
+			t.Errorf("at the defaults (%+v): %s does not hold", to, c.what)
+		}
 	}
 }
 
@@ -911,8 +940,8 @@ func TestRenderTimeoutDefaultsUnderTotal(t *testing.T) {
 	if w.Commands.Render != "sh render.sh" || w.Commands.Probe != "sh probe.sh" {
 		t.Fatalf("commands = %+v", w.Commands)
 	}
-	// 90m total: verify is min(30m, 90m) = 30m, the reserve is 5m, so render
-	// is min(30m, 85m) = 30m.
+	// 3h total: verify is min(30m, 3h) = 30m, the reserve is 5m, so render
+	// is min(30m, 2h55m) = 30m.
 	if got := w.Timeouts.Render.Duration; got != 30*time.Minute {
 		t.Fatalf("render = %s, want 30m", got)
 	}
