@@ -565,6 +565,34 @@ func TestLogDirSymlinkOrForeignOwnerMeansNoLog(t *testing.T) {
 		}
 	})
 
+	t.Run("the directory above the logs is a symlink", func(t *testing.T) {
+		// F6a: checking the last component is not enough. An Lstat of
+		// `<state>/fugaro/logs` resolves a link at `<state>/fugaro` on the
+		// way, so whoever placed it — in a state directory someone else
+		// pointed the session at — decides where the run's log lands.
+		state, env := logStateDir(t)
+		elsewhere := t.TempDir()
+		if err := os.Symlink(elsewhere, filepath.Join(state, "fugaro")); err != nil {
+			t.Skipf("this filesystem has no symlinks: %v", err)
+		}
+		sink, err := OpenLog("update", env, "linux", logFixedNow, nil)
+		if err == nil {
+			t.Errorf("a symlinked `fugaro` above the logs directory was followed")
+		}
+		if sink == nil || sink.Path() != "" {
+			t.Errorf("the sink reports a path with no log: %v", sink)
+		}
+		if _, err := os.Lstat(filepath.Join(elsewhere, "logs")); !os.IsNotExist(err) {
+			t.Errorf("the logs directory was created through the link: %v", err)
+		}
+		if names := logNames(t, elsewhere); len(names) != 0 {
+			t.Errorf("the log was written through the link: %v", names)
+		}
+		if fi, err := os.Lstat(filepath.Join(state, "fugaro")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("the link was replaced rather than refused: %v %v", fi, err)
+		}
+	})
+
 	t.Run("the logs directory belongs to another user", func(t *testing.T) {
 		state, env := logStateDir(t)
 		if err := os.MkdirAll(logDirOf(state), 0o700); err != nil {

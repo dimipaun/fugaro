@@ -80,7 +80,7 @@ func OpenLog(cmdName string, getenv func(string) string, goos string, now func()
 		return noLog{}, fmt.Errorf("report: no state directory to keep %s's log in: %w", cmdName, err)
 	}
 	at := now().UTC()
-	dir, err := logDir(filepath.Join(base, "fugaro", "logs"))
+	dir, err := logDir(base)
 	if err != nil {
 		return noLog{}, fmt.Errorf("report: no log for %s: %w", cmdName, err)
 	}
@@ -103,42 +103,64 @@ func logName(cmdName string, at time.Time, pid int) string {
 }
 
 // logDir returns the directory the logs live in, creating it 0700 or
-// tightening an existing one — and refusing both where the directory is not a
-// directory this process may write a log into.
+// tightening an existing one — and refusing both where the path to it is not
+// one this process may write a log into.
 //
-// The path is attacker-influenced (an agent's session often points XDG_STATE_HOME
-// at a temporary directory) and the file's name is predictable, so the
-// directory is Lstat'ed first: a symlink is refused rather than followed, and
-// so is a directory owned by another user, who would otherwise decide where
-// this run's log of its own secrets lands (F6a).
-func logDir(dir string) (string, error) {
+// Every component this package adds below the state directory is checked, not
+// only the last: Lstat'ing `<state>/fugaro/logs` resolves a symlink at
+// `<state>/fugaro` on the way, so a link there would decide where this run's
+// log of its own secrets lands — the very thing the check exists to refuse
+// (F6a). The state directory itself is not checked for a link: it is the one
+// directory rule (D1351), read from the caller's own environment, and where
+// it points is the user's choice; a link of theirs onto another user's
+// directory is still caught, by the ownership check on what it lands on.
+func logDir(base string) (string, error) {
+	dir := base
+	for _, part := range []string{"fugaro", "logs"} {
+		dir = filepath.Join(dir, part)
+		if err := checkLogDir(dir); err != nil {
+			return "", err
+		}
+	}
+	return dir, nil
+}
+
+// checkLogDir is one component of that path: created if it is not there,
+// refused if what is there is not a directory this process may use.
+//
+// The path is attacker-influenced (an agent's session often points
+// XDG_STATE_HOME at a temporary directory) and the file's name is
+// predictable, so the directory is Lstat'ed first: a symlink is refused
+// rather than followed, and so is a directory owned by another user, who
+// would otherwise decide where this run's log of its own secrets lands (F6a).
+func checkLogDir(dir string) error {
 	fi, err := os.Lstat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		if err := os.MkdirAll(dir, logDirMode); err != nil {
-			return "", err
+			return err
 		}
 		// MkdirAll applies the umask, so the mode is set once more rather
 		// than assumed.
 		if err := os.Chmod(dir, logDirMode); err != nil {
-			return "", err
+			return err
 		}
-		return dir, nil
+		return nil
 	case err != nil:
-		return "", err
+		return err
 	}
 	if !fi.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", dir)
+		return fmt.Errorf("%s is not a directory", dir)
 	}
 	if !dirOwnedByUser(fi) {
-		return "", fmt.Errorf("%s is not this user's directory", dir)
+		return fmt.Errorf("%s is not this user's directory", dir)
 	}
 	// An existing directory is tightened only here, past both checks: chmod
 	// follows a symlink, which is the thing the Lstat above exists to refuse.
 	if fi.Mode().Perm() != logDirMode {
 		_ = os.Chmod(dir, logDirMode)
 	}
-	return dir, nil
+	return nil
 }
 
 // createLogFile creates the log and never an existing one. The name is
