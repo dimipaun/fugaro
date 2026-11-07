@@ -46,6 +46,18 @@ func TestGuideIsEmbeddedAndNonEmpty(t *testing.T) {
 	}
 }
 
+func TestGuideNamesTheOutcomeLabels(t *testing.T) {
+	// The guide spells the labels out in prose, and the prompt's block and the
+	// command's reader take them from the constants: a label renamed in Go
+	// would leave the guide telling the agent to write a word nothing reads.
+	guide := Guide()
+	for _, outcome := range Outcomes {
+		if !strings.Contains(guide, outcome) {
+			t.Errorf("the guide does not name the outcome %q", outcome)
+		}
+	}
+}
+
 func TestGuideCopyMatchesTheDocument(t *testing.T) {
 	doc, err := os.ReadFile(guideSourcePath)
 	if err != nil {
@@ -66,6 +78,6 @@ func TestGuideCopyMatchesTheDocument(t *testing.T) {
 		t.Errorf("%s is not %s: regenerate it with `go test ./internal/diagnoseagent -run Guide -update-guide` and commit both", guideCopyPath, guideSource)
 	}
 	if embedded := Guide(); embedded != string(want) {
-		t.Errorf("the embedded bytes are not %s: the binary would ship a guide that is not the document", guideCopyPath)
+		t.Errorf("the embedded guide is not %s: the binary would ship a guide that is not the document", guideSource)
 	}
 }
