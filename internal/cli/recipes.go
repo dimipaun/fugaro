@@ -280,7 +280,11 @@ func newRecipesLsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "also print each recipe's use_when and steps")
+	// The shorthand is what keeps this flag from taking the root's persistent
+	// --verbose with it: a local flag of the same name shadows the persistent
+	// one whole, shorthand included, so without `v` here `recipes ls -v` would
+	// be an unknown shorthand rather than this flag (D1353).
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "also print each recipe's use_when and steps")
 	addCloudFlags(cmd, &o)
 	return cmd
 }

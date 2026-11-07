@@ -149,6 +149,19 @@ func (c *Config) Shared() *Config {
 	s.DefaultClaudeAccount = ""
 	s.ClaudeAccountStages = nil
 	s.ClaudeAccountAuto = false
+	// The workspace keys are local-only, and the pin is the sharpest of them:
+	// the shared file is written into the runs bucket, which any launcher of
+	// the project can write, so a launcher who could put a workspace_pin there
+	// would be aiming this project's exchange — and the assertion key it
+	// verifies against — at a party of its choosing. The membership key and
+	// the owner's member table are dropped with it: a shared file that could
+	// name a workspace would be one that could join this project to a group
+	// nobody here chose, and ParseShared refuses all four keys besides,
+	// because a shared config carrying one was not written by the converge.
+	s.Workspace = ""
+	s.WorkspacePin = WorkspacePin{}
+	s.WorkspaceMembers = nil
+	s.WorkspaceCap = nil
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }

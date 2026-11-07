@@ -35,6 +35,48 @@ func TestTaggedBuildReportsEE(t *testing.T) {
 	}
 }
 
+// TestTaggedBuildCarriesNoPaidStub is the other half of the paid-command stub
+// (D522): the sentence the stub answers with -- "X is part of Fugaro
+// Subscription Edition; this build does not include it" -- is a statement about
+// a build that is not the Subscription Edition, and the design says so (§6 of
+// docs/design/ee-boundary-moves.md: it appears only in untagged/core builds).
+// This package's init is what makes a build the Subscription Edition
+// (TestTaggedBuildReportsEE), so no name the CLI lists as paid may answer it
+// here: a paid command the tagged binary holds is registered by this package,
+// and one whose code has not landed yet is not in the tree at all. `graph` is
+// that second case today, until the graph task registers it, and a tagged
+// binary answering the stub for it would tell a subscriber their build does not
+// include what they bought.
+//
+// Each name is asked with `--help`, which cobra answers before any RunE: a
+// registered command is never run, and the stub, which parses no flags, takes
+// the flag as an argument and answers its sentence.
+func TestTaggedBuildCarriesNoPaidStub(t *testing.T) {
+	names := cli.PaidCommandNames()
+	if len(names) == 0 {
+		t.Fatal("the CLI lists no paid command: a test that asks nothing would pass on any tree")
+	}
+	answered := 0
+	for _, name := range names {
+		cmd := cli.NewRootCmd()
+		var out, errOut bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs(cli.NormalizeArgs([]string{name, "--help"}))
+		err := cmd.Execute()
+		if err == nil {
+			answered++
+			continue
+		}
+		if strings.Contains(err.Error(), "part of Fugaro Subscription Edition") {
+			t.Errorf("a tagged build answers `fugaro %s` with the core stub (%v): this build is the Subscription Edition the sentence names, so a paid command it holds is registered by this package and one whose code has not landed is not in the tree at all", name, err)
+		}
+	}
+	if answered == 0 {
+		t.Errorf("this build answers none of the paid names (%v) with a command of its own: the tree held neither the registered commands nor their stubs, and a test that found no stub because it found no command proves nothing", names)
+	}
+}
+
 // TestRegisterFollowsTheGatingModel is T27 (b): what a tagged build prints for
 // a core command, and the set-once rule that keeps a seam from being halved.
 //

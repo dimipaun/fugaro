@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/workspace-list.schema.json",
+  "title": "Fugaro workspace ls",
+  "description": "The document `fugaro workspace ls --json` and `fugaro workspace show --json` print (docs/workspaces/spec.md §6): one workspace per row, read offline from this machine's own project configs. It is a named set of fields and not a marshalled localcfg.Config, which is the `config list` rule: a marshalled config would publish every key the file happens to carry, and the membership's pin is one of the keys it carries. The pin's assertion key is not a field here at all — a row says a membership is pinned, never what the member's key is. Members are only ever added within a version (D784), so a renamed or re-meant member is a new member under a new name and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which the same version promises to keep readable.",
+  "type": "object",
+  "required": [
+    "version",
+    "workspaces",
+    "warnings"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "workspaceLsDocVersion in internal/cli/workspace_json.go."
+    },
+    "workspaces": {
+      "type": "array",
+      "description": "One row per workspace this machine knows, in name order: one its own project config declares here, one a project config here names, or both.",
+      "items": {
+        "$ref": "#/$defs/workspace"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "description": "The project configs this read could not use, each naming the config and the loader's own refusal. They are in the document and not only on stderr, because a consumer would otherwise read a short listing as a complete one.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "workspace": {
+      "type": "object",
+      "required": [
+        "name",
+        "owner",
+        "members",
+        "memberships",
+        "problems"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The workspace's name, which uses the project-name grammar (config.ProjectNameRE, F21)."
+        },
+        "owner": {
+          "type": "boolean",
+          "description": "This machine holds the workspace's own project config, which is where the member table and the cap are written. It is what makes members readable: false means the members are on the workspace owner's machine and this document says nothing about them, rather than saying the workspace has none."
+        },
+        "cap": {
+          "$ref": "#/$defs/cap",
+          "description": "The workspace's own spend ceiling, as this machine's config states it (D1300). Absent when there is none and when owner is false."
+        },
+        "members": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "The member table of the workspace's own config here, in name order. [] is a workspace whose table declares no member yet, and null is a machine that does not hold that config at all. A consumer reads owner before it reads this.",
+          "items": {
+            "$ref": "#/$defs/member"
+          }
+        },
+        "memberships": {
+          "type": "array",
+          "description": "The project configs on this machine that name the workspace, in name order: the member's own half, which is the key and the pin it carries.",
+          "items": {
+            "$ref": "#/$defs/membership"
+          }
+        },
+        "problems": {
+          "type": "array",
+          "description": "The half-done memberships this machine's own files show (W2's two-sided check, as far as this machine can make it): a member the workspace's table here declares whose config here names no workspace, and a config here that names the workspace whose table here does not declare it. Empty on a machine that holds no owner's config.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "cap": {
+      "type": "object",
+      "required": [
+        "monthly_usd"
+      ],
+      "properties": {
+        "monthly_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "US dollars a month, the same amount `fugaro workspace cap set --monthly` takes and the unit the config file writes. More than zero: a workspace with no cap leaves the block out rather than stating a zero."
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "project",
+        "job_service_accounts",
+        "firebase_project",
+        "fp",
+        "exchange_url",
+        "repos"
+      ],
+      "properties": {
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The member's Fugaro project name, which is the key of the owner's table."
+        },
+        "job_service_accounts": {
+          "type": "array",
+          "description": "The member's job service accounts: the identities the workspace's service resolves a caller by (spec §5).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "firebase_project": {
+          "type": "string",
+          "description": "The member's Firebase project id, which the caller's token is issued under. The member's database URL is derived from it (finding 6) and is not a field here."
+        },
+        "fp": {
+          "type": "string",
+          "description": "The member's Fugaro project name, which the token's fp claim must be."
+        },
+        "exchange_url": {
+          "type": "string",
+          "description": "The member's exchange endpoint, where the workspace's signer mints a member-bound assertion for."
+        },
+        "repos": {
+          "type": "array",
+          "description": "The repositories the member contributes to the workspace, as owner/name. Empty for a member that contributes none.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "membership": {
+      "type": "object",
+      "required": [
+        "project",
+        "firebase_project",
+        "issuer",
+        "service_account"
+      ],
+      "properties": {
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The project config on this machine that names the workspace."
+        },
+        "firebase_project": {
+          "type": "string",
+          "description": "The pin's firebase_project: the workspace's Firebase project id, which the token's aud must be."
+        },
+        "issuer": {
+          "type": "string",
+          "description": "The pin's issuer, which is exactly https://securetoken.google.com/<firebase_project>."
+        },
+        "service_account": {
+          "type": "string",
+          "description": "The pin's service_account: the workspace service account this project's own fugaro update binds its read-only database grant to."
+        }
+      }
+    }
+  }
+}

@@ -362,6 +362,11 @@ const (
 	// keys are stated there and nowhere else yet (D1239, D1234): a spec of the
 	// daemon's own would be the document that takes the row over.
 	docOrchestrator = "docs/stateless-orchestrator/implementation-plan.md"
+	// The workspace keys' document: the design that decides the membership
+	// key, the pin and the owner's member table (docs/workspaces/spec.md §2,
+	// §5 and §6). The folder's own README, reconciliation and plan are not the
+	// document a key's meaning is stated in, so the row points at the spec.
+	docWorkspace = "docs/workspaces/spec.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -749,6 +754,26 @@ var localRows = []Row{
 	loc("repos.*.workflows", "every workflow the repository defines", "project", docSetup),
 	loc("repos.*.github_app_id", "none", "project", docSetup),
 	loc("repos.*.vertex", "false", "project", docSetup),
+
+	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
+	// them local-only: the pin is the member's own trust and the member table
+	// is the workspace owner's own declaration, and a launcher who could write
+	// either into the shared file could aim this project's exchange and this
+	// project's database grant (internal/cli/sharedcfg.go's sharedForbidden).
+	// Their owner is the `fugaro workspace` family, so the generic writer
+	// refuses them (D853) — a member entry and a pin are written whole by the
+	// commands that know what the four values have to agree about.
+	locLocal("workspace", "this project is a member of no workspace", "workspace", docWorkspace),
+	locLocal("workspace_pin.firebase_project", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.issuer", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.assertion_key", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.service_account", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_members.*.repos", "the member contributes no repository", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.firebase_project", "none", "workspace", docWorkspace),
+	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
+	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
+	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in

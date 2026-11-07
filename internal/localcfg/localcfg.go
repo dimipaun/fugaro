@@ -415,9 +415,147 @@ type Config struct {
 	// empty map, an absent key a nil one) and mean the same floor, none.
 	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
 	Repos       map[string]Repo     `yaml:"repos"`
+	// Workspace is the membership: the name of the workspace this project
+	// belongs to, and nothing else (D1291, docs/workspaces/spec.md §2). It is
+	// a scalar and not a list, because a project is in at most one workspace —
+	// the cap and the credential pool both need a unique owner for a project,
+	// and "which of N workspaces' headroom applies" has no answer a reader can
+	// act on — so the loader refuses a list where it holds a name.
+	//
+	// A project with no key is a member of nothing, which is the state of
+	// every installation today. It is local-only: a launcher who could write
+	// this key into the runs bucket's shared file would be choosing which
+	// workspace reaches this project's runs, so Shared drops it and
+	// ParseShared refuses the key besides.
+	Workspace string `yaml:"workspace,omitempty"`
+	// WorkspacePin is the member's own record of which workspace it trusts
+	// and which identity acts for it there: the workspace's Firebase project
+	// id, the issuer the member's exchange requires, the assertion-signing key
+	// it verifies a member-bound assertion against, and the workspace service
+	// account its own `fugaro update` binds the read-only database grant to.
+	//
+	// It is the member's value and never the workspace's. The record a
+	// workspace publishes names no key, no issuer and no service account
+	// (spec.md §2), because a record that could supply one would aim every
+	// member's exchange and every member's database grant at a party of its
+	// choosing — the one direction the spec's rule 1 does not survive. It is
+	// local-only for Workspace's reason and a sharper one: a launcher who
+	// could write this key could aim the member's exchange.
+	//
+	// The four values are written together by `fugaro workspace add` and
+	// validated together (validateWorkspace): a pin whose issuer is not
+	// exactly WorkspaceIssuer(firebase_project) is refused at the load,
+	// because the signature is verified against Google's one global set of
+	// Firebase signing keys (internal/credsvc's GoogleKeysURL), so the pair
+	// aud/iss is the whole of what tells one project's tokens from another's.
+	WorkspacePin WorkspacePin `yaml:"workspace_pin,omitempty"`
+	// WorkspaceMembers is the workspace owner's own member table, written in
+	// the config of the workspace's own project: one entry per member, keyed
+	// by the member's Fugaro project name. It is where `fugaro workspace
+	// member add` records how the workspace reaches a member — the member's
+	// job service accounts, its Firebase project id and `fp`, and its exchange
+	// URL, which is the whole of what the workspace's credentials service
+	// needs to resolve a caller (spec.md §5) — and it is not the member's
+	// database URL, which is derived from the Firebase project the verified
+	// `iss` names so that an owner cannot pair one member's accounts with
+	// another's database. There is no runs bucket either: O1's answer dropped
+	// the bucket grant, and nothing derives it.
+	//
+	// A pointer, so the key's presence is a fact of its own: `workspace_members: {}`
+	// is a workspace whose owner has declared no member yet — a state
+	// `fugaro workspace show` reports and W2's publish refuses — while an
+	// absent key is a config that declares no workspace at all.
+	WorkspaceMembers *map[string]WorkspaceMember `yaml:"workspace_members,omitempty"`
+	// WorkspaceCap is the workspace's own spend ceiling: what the workspace's
+	// own credentials pay for and nothing else (D1300). It is not a member's
+	// cap, and no member's own cap is widened by it. A pointer for
+	// WorkspaceMembers' reason: the block's presence is the claim that there
+	// is a ceiling, so a block that is written states its amount.
+	WorkspaceCap *WorkspaceCap `yaml:"workspace_cap,omitempty"`
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// WorkspacePin is one member's pin: what its own config records about the
+// workspace it joined, and the whole of what its exchange trusts. Every value
+// is the member's own, written by `fugaro workspace add` and read by W4 (the
+// exchange), W5 (the admission) and W7 (the grant), and no code path reads one
+// of them from the workspace's record — which carries none of them.
+//
+// The four are all required together: a pin missing one is refused at the load
+// rather than read as a member that trusts less, because a member that verified
+// no signature, or bound its grant to no account, would be a member whose
+// admission depends on which half happens to be absent.
+type WorkspacePin struct {
+	// FirebaseProject is the workspace's Firebase project id, which the
+	// token's `aud` must be.
+	FirebaseProject string `yaml:"firebase_project"`
+	// Issuer is the issuer the member's exchange requires, and it must be
+	// exactly WorkspaceIssuer(FirebaseProject).
+	Issuer string `yaml:"issuer"`
+	// AssertionKey is the key the member verifies a member-bound assertion
+	// against. The workspace's record names no key, so a workspace cannot
+	// move a member's trust by publishing a different one.
+	AssertionKey string `yaml:"assertion_key"`
+	// ServiceAccount is the workspace service account the member's own
+	// `fugaro update` binds its read-only database grant to.
+	ServiceAccount string `yaml:"service_account"`
+}
+
+// IsZero reports whether the pin is the absent one, which is the state of
+// every config that names no workspace.
+func (p WorkspacePin) IsZero() bool { return p == WorkspacePin{} }
+
+// WorkspaceMember is one member of a workspace, as the workspace owner
+// declares it: how the workspace's own service reaches that member. It is the
+// owner's declaration and never the member's, and every value in it is one the
+// owner writes by hand (`fugaro workspace member add`).
+type WorkspaceMember struct {
+	// Repos are the repositories this member contributes to the workspace, as
+	// `owner/repo`. Empty for a member that contributes none.
+	Repos []string `yaml:"repos,omitempty"`
+	// JobServiceAccounts are the member's job service accounts: the identities
+	// the workspace's service resolves a caller by. Each is an IAM service
+	// account address.
+	JobServiceAccounts []string `yaml:"job_service_accounts,omitempty"`
+	// FirebaseProject is the member's Firebase project id, which the caller's
+	// token is issued under.
+	FirebaseProject string `yaml:"firebase_project,omitempty"`
+	// FP is the member's Fugaro project name, which the token's `fp` claim
+	// must be: the project the member's installation is, not its GCP project.
+	FP string `yaml:"fp,omitempty"`
+	// ExchangeURL is the member's exchange endpoint, where the workspace's
+	// signer mints a member-bound assertion for.
+	ExchangeURL string `yaml:"exchange_url,omitempty"`
+}
+
+// IsZero reports whether the entry declares nothing at all, which is the state
+// validateWorkspace refuses and `fugaro workspace member rm` reads as "there is
+// no entry to remove". It is one rule with two readers, so the loader and the
+// command cannot come to different answers about an entry that is there and
+// says nothing.
+func (m WorkspaceMember) IsZero() bool {
+	return len(m.Repos) == 0 && len(m.JobServiceAccounts) == 0 && m.FirebaseProject == "" && m.FP == "" && m.ExchangeURL == ""
+}
+
+// WorkspaceCap is a workspace's own spend ceiling, as the file writes it: a
+// dollar amount, converted once by whatever builds the record the workspace
+// publishes (workspace.Parse's pricing.FromUSD), so nothing below that point
+// does money arithmetic in a float.
+type WorkspaceCap struct {
+	Monthly float64 `yaml:"monthly"`
+}
+
+// WorkspaceIssuer is the issuer a workspace's Firebase project mints its
+// tokens under, and the value a member's pin must carry exactly. It is derived
+// from the project id and never stored as a free choice, because the signature
+// is verified against Google's published Firebase signing keys, which are one
+// global set for every project (internal/credsvc's GoogleKeysURL): what tells
+// one project's tokens from another's is the pair aud/iss, so a pin whose two
+// halves disagree is a member that admits tokens the other half forbids.
+func WorkspaceIssuer(firebaseProject string) string {
+	return "https://securetoken.google.com/" + firebaseProject
 }
 
 // StageChoice is one stage's own choice of Claude account, the entry under
@@ -1850,7 +1988,131 @@ func (c *Config) validate() error {
 			}
 		}
 	}
+	validateWorkspace(c, bad)
 	return errors.Join(errs...)
+}
+
+// validateWorkspace holds the workspace keys to their own rules at the load,
+// the way the verifier list and the image catalog are held to theirs: the file
+// is the only place a member's trust and a workspace's member table are
+// stated, and a value this loader accepts and W4's exchange, W5's admission or
+// W7's grant then refuses would be a member that reads as joined and admits
+// nobody. Every rule here is one the writers apply too (`fugaro workspace add`,
+// `member add`, `cap set` build through yamledit and re-read what they wrote),
+// so the file they write and the file this loader reads cannot disagree.
+func validateWorkspace(c *Config, bad func(string, ...any)) {
+	if c.Workspace != "" && !config.ProjectNameRE.MatchString(c.Workspace) {
+		bad("workspace %q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", c.Workspace)
+	}
+	// The membership key and the pin are one statement: a config that names a
+	// workspace and pins nothing is a project whose exchange has no project to
+	// require as the token's aud and no key to verify an assertion against, and
+	// a pin with no membership is a trust nothing acts on. Both are refused
+	// rather than read as a member that trusts less than the four values say.
+	p := c.WorkspacePin
+	if !p.IsZero() && c.Workspace == "" {
+		bad("workspace_pin is set and workspace names no workspace: the pin is one member's trust in one workspace, so the two keys are written together")
+	}
+	if c.Workspace != "" {
+		switch {
+		case p.FirebaseProject == "" || p.Issuer == "" || p.AssertionKey == "" || p.ServiceAccount == "":
+			bad("workspace %q is set, so workspace_pin must carry firebase_project, issuer, assertion_key and service_account together: a member that pinned half a workspace would admit what the other half forbids", c.Workspace)
+		default:
+			if !projectRE.MatchString(p.FirebaseProject) {
+				bad("workspace_pin.firebase_project %q is not a GCP project ID", p.FirebaseProject)
+			}
+			// The pair is the whole of what tells one project's tokens from
+			// another's: Google publishes one set of Firebase signing keys for
+			// every project (internal/credsvc's GoogleKeysURL), so an issuer
+			// that is not this project's securetoken issuer is a pin whose two
+			// halves disagree, and one of them is a typo.
+			if want := WorkspaceIssuer(p.FirebaseProject); p.Issuer != want {
+				bad("workspace_pin.issuer %q must be %q, the issuer of firebase_project %q: the signature is verified against Google's one published set of Firebase keys, so the aud/iss pair is what tells one project's tokens from another's",
+					p.Issuer, want, p.FirebaseProject)
+			}
+			if !signerRE.MatchString(p.ServiceAccount) {
+				bad("workspace_pin.service_account %q is not a service account address (<name>@<project>.iam.gserviceaccount.com)", p.ServiceAccount)
+			}
+		}
+	}
+	if c.WorkspaceMembers != nil {
+		for _, name := range slices.Sorted(maps.Keys(*c.WorkspaceMembers)) {
+			m := (*c.WorkspaceMembers)[name]
+			if !config.ProjectNameRE.MatchString(name) {
+				bad("workspace_members: %q is not a project name", name)
+			}
+			// An entry with none of the five values is a member the workspace
+			// cannot reach at all — not one it reaches with less — and the
+			// service resolves a caller by exactly these (spec §5). The list
+			// rule is uniqueness and not order: yamledit appends, so the order
+			// is the order they were declared in, and the record that is
+			// published is sorted where it is built (W2).
+			if m.IsZero() {
+				bad("workspace_members.%s declares nothing: an entry carries the member's job_service_accounts, firebase_project, fp and exchange_url, which is what the workspace's own service resolves a caller by", name)
+				continue
+			}
+			for _, repo := range m.Repos {
+				if !repoRE.MatchString(repo) {
+					bad("workspace_members.%s: repos entry %q must look like owner/name", name, repo)
+				}
+			}
+			if why := duplicated(m.Repos); why != "" {
+				bad("workspace_members.%s: repos lists %s twice", name, why)
+			}
+			for _, sa := range m.JobServiceAccounts {
+				if !signerRE.MatchString(sa) {
+					bad("workspace_members.%s: job_service_accounts entry %q is not a service account address", name, sa)
+				}
+			}
+			if why := duplicated(m.JobServiceAccounts); why != "" {
+				bad("workspace_members.%s: job_service_accounts lists %s twice", name, why)
+			}
+			if m.FirebaseProject != "" && !projectRE.MatchString(m.FirebaseProject) {
+				bad("workspace_members.%s: firebase_project %q is not a GCP project ID", name, m.FirebaseProject)
+			}
+			if m.FP != "" && !config.ProjectNameRE.MatchString(m.FP) {
+				bad("workspace_members.%s: fp %q is not a project name (the token's fp claim is the member's Fugaro project, not its GCP project)", name, m.FP)
+			}
+			// The exchange URL is where the workspace's own service sends a
+			// member-bound assertion, so it is https and nothing else. The
+			// localhost escape checkEndpoint allows is not here: that one is
+			// for an endpoint the operator's own credentials are sent to in a
+			// test, and this URL is one a signed assertion is POSTed to.
+			if m.ExchangeURL != "" {
+				u, err := url.Parse(m.ExchangeURL)
+				if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+					bad("workspace_members.%s: exchange_url %q must be an https URL with a host and no userinfo", name, m.ExchangeURL)
+				}
+			}
+		}
+	}
+	if c.WorkspaceCap != nil {
+		// FromUSD is the one conversion, and it is what bounds the amount: the
+		// unit below this point is the integer micro-dollar the budget
+		// database stores (pricing.Micros), and a cap of zero is refused here
+		// rather than read as a cap that forbids every call the workspace's
+		// credentials pay for.
+		micros, err := pricing.FromUSD(c.WorkspaceCap.Monthly)
+		switch {
+		case err != nil:
+			bad("workspace_cap.monthly: %v", err)
+		case micros < 1:
+			bad("workspace_cap.monthly %v is less than one micro-dollar: the smallest cap this file can state is 0.000001, and a workspace with no cap leaves the block out", c.WorkspaceCap.Monthly)
+		}
+	}
+}
+
+// duplicated is the first value a list holds twice, "" when it holds none
+// twice.
+func duplicated(values []string) string {
+	seen := make(map[string]bool, len(values))
+	for _, v := range values {
+		if seen[v] {
+			return v
+		}
+		seen[v] = true
+	}
+	return ""
 }
 
 // Override applies --gcp-project and --region when they are set, and

@@ -142,8 +142,11 @@ export type SettingsViewRead =
   | { readonly ok: true; readonly view: SettingsView }
   | { readonly ok: false; readonly because: string }
 
-/** SettingsDryRun is P3's dry-run document (`settingsWriteDoc`), read
- * strictly: the ten members the contract gives it, and no others. */
+/** SettingsDryRun is P3's dry-run document (`settingsWriteDoc`), read for the
+ * ten members this window draws from: the types are strict and a member this
+ * build does not know is ignored (the owner's ruling of 2026-10-30), so the
+ * four optional entry members version 1 has since grown (D1164) neither shape a
+ * window nor refuse one. */
 export interface SettingsDryRun {
   readonly key: string
   readonly layer: string
