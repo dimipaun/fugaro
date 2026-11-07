@@ -1517,6 +1517,60 @@ func TestUpdatePublishRaisedGuardrailNeedsTheTypedName(t *testing.T) {
 	}
 }
 
+// TestUpdatePublishOfAReplacedBlockAsksForTheMemberItDrops: the publish copies
+// the file's block whole (buildProjectPolicy), so a file that states one member
+// takes the node's other members away — and where the node's figure was the
+// tighter one, that is a raise of a cap like any other: the daemon goes from one
+// spawn a minute to the shipped two. The gate reads the block it is about to
+// write against the block the node holds (policyCeilingValues fills both sides
+// with the shipped guardrails), so the member the file leaves out is compared at
+// the default it falls back to and the typed name is asked for it.
+//
+// Without that the replace-not-merge call would be silent: a file stating a
+// lower running cap would publish a raised spawn rate on the ordinary class, and
+// an agent's session on a managed project would write it with nothing asked.
+func TestUpdatePublishOfAReplacedBlockAsksForTheMemberItDrops(t *testing.T) {
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":      projectpolicy.Version,
+		"budget":       map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos":  []string{"bitbucket/acme/other", "github/acme/app"},
+		"orchestrator": map[string]any{"max_running": 4, "spawn_per_minute": 1},
+	})
+	rewriteProjectConfig(t, f, "orchestrator: {max_running: 2}\n")
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes alone published a block that drops spawn_per_minute 1 back to the shipped 2:\n%s", out)
+	}
+	for _, want := range []string{"orchestrator.spawn_per_minute", "1", "2", "needs a real terminal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if p := publishedPolicy(t, f); p.Orchestrator == nil || p.Orchestrator.SpawnPerMinute != 1 || p.Orchestrator.MaxRunning != 4 {
+		t.Errorf("the node carries %+v, want the published block untouched behind the refusal", p.Orchestrator)
+	}
+
+	// The typed name closes it, and what reaches the node is the file's block
+	// whole — the member it does not state is not carried over from the node's.
+	h = typedRig(t, f)
+	if out, err := h.apply(t, false); err != nil {
+		t.Fatalf("the project's name typed at a terminal did not confirm the publish: %v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Orchestrator == nil || p.Orchestrator.MaxRunning != 2 || p.Orchestrator.SpawnPerMinute != 0 {
+		t.Errorf("the node carries %+v, want the file's own block", p.Orchestrator)
+	}
+}
+
 // TestUpdatePublishLooserNodeRefusesYesAlone: the refusal is what an operator
 // running the one upgrade command from a script — or an agent's session — reads
 // instead of the write, so it names the member that loosens and the command that

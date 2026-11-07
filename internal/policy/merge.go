@@ -470,7 +470,7 @@ func ValidOrchestrator(o *Orchestrator) error {
 		{"spawn_per_day", o.SpawnPerDay},
 	} {
 		if count.v < 0 {
-			bad("%s: %d is not a number of runs: a guardrail is a positive count, and a key left out takes the default", count.key, count.v)
+			bad("%s: %d is not a number of runs: a guardrail is a count of runs and cannot be negative, and a key left out takes the default", count.key, count.v)
 		}
 	}
 	for _, class := range slices.Sorted(maps.Keys(o.DecisionModelPerClass)) {
