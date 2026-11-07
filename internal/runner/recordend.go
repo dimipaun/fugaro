@@ -39,6 +39,19 @@ func writeEnd(rec *runstore.Record, status runstore.Status, outcome runstore.Out
 	rec.Status, rec.Outcome, rec.Reason, rec.FailureClass = status, outcome, reason, class
 }
 
+// reportCopy is the record a stored report carries: the run's own record as it
+// stood when the report was rendered, ended as status, outcome, class and
+// reason say. It is a copy, so the run's record is untouched — storeUnposted
+// renders it when a follow-up stops before updating its pull request — and it
+// is here rather than at its caller because writeEnd is reached from this file
+// and no other: a call to it in another file is a second writer of a status,
+// and one the guard over the tree cannot tell from a legitimate one.
+func reportCopy(rec *runstore.Record, status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string) runstore.Record {
+	c := *rec
+	writeEnd(&c, status, outcome, class, reason)
+	return c
+}
+
 // haltClass is which family a report groups a halt by, read from the halt's
 // own closed reason. It does not replace the reason and is not a copy of it:
 // the status says halted, the halt says which cap, and the class says which

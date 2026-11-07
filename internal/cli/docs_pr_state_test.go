@@ -308,6 +308,12 @@ type fcStatusSite struct {
 // writer. `running` in a literal is the one status that is not an ending -- it
 // is the record's construction, before any writer has seen it.
 //
+// A call to the writer is flagged as well, in whatever file it is made: the
+// sentence above is about the one place a status is written from, and a helper
+// in another file calling writeEnd on the run's own record is that rule broken
+// one hop away from the field it writes. The design's sentence does not have to
+// say "or calls writeEnd" for this to be the same claim.
+//
 // Before FC2 this test counted the statements instead -- thirty-six of them, in
 // twenty-four functions across eight files -- and the design said the same
 // number, so the two failed together whenever the runner gained a writer. That
@@ -363,9 +369,10 @@ func TestDocsFailureClassCensusMatchesTheRunner(t *testing.T) {
 const fcStatusRule = "no statement of `internal/runner` outside `internal/runner/recordend.go` assigns a `runstore.Status` to a record's `Status`"
 
 // fcStatusSitesIn is every statement of one parsed file that writes a Status
-// field: an assignment to a selector named Status, and a Status entry of a
-// runstore.Record literal. Both are how a record's status is set, and the
-// second is why this reads the parsed code rather than a pattern over its text.
+// field, or reaches the writer that writes it: an assignment to a selector
+// named Status, a Status entry of a runstore.Record literal, and a call to
+// writeEnd. Each is how a record's status is set, and the second and third are
+// why this reads the parsed code rather than a pattern over its text.
 func fcStatusSitesIn(fset *token.FileSet, path string, file *ast.File) []fcStatusSite {
 	name := filepath.Base(path)
 	var out []fcStatusSite
@@ -376,6 +383,10 @@ func fcStatusSitesIn(fset *token.FileSet, path string, file *ast.File) []fcStatu
 				if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Status" {
 					out = append(out, fcStatusSite{file: name, line: fset.Position(sel.Sel.Pos()).Line})
 				}
+			}
+		case *ast.CallExpr:
+			if ident, ok := node.Fun.(*ast.Ident); ok && ident.Name == "writeEnd" {
+				out = append(out, fcStatusSite{file: name, line: fset.Position(ident.Pos()).Line})
 			}
 		case *ast.CompositeLit:
 			if !fcSelects(node.Type, "runstore", "Record") {

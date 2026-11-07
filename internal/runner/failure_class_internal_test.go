@@ -46,9 +46,9 @@ const recordEndFile = "recordend.go"
 // it happens to use.
 //
 // storeUnposted is accounted for rather than excepted: it renders a copy of
-// the record into the stored report, and the copy's status is written by
-// recordend.go's own writeEnd like every other, which is why no statement
-// outside that file names the field.
+// the record into the stored report, and the copy is ended by recordend.go's
+// own reportCopy, so no call to writeEnd and no statement naming the field
+// sits outside that file at all.
 func TestRecordEndIsTheOnlyWriterOfATerminalStatus(t *testing.T) {
 	// The reader first, on a file that is not in the tree: a guard that missed
 	// a shape would pass on any tree, and the shape it must not miss is the
@@ -62,16 +62,18 @@ func f(rec *runstore.Record, st runstore.Status) {
 	rec.Status, rec.Outcome = st, runstore.OutcomeNone
 	_ = runstore.Record{Status: runstore.StatusFailed}
 	_ = runstore.Record{Status: runstore.StatusRunning}
+	writeEnd(rec, runstore.StatusFailed, runstore.OutcomeNone, "", "")
 }
 `
 		file, err := parser.ParseFile(token.NewFileSet(), "shape.go", src, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Three: the copy, the record itself and the literal. The running
-		// literal is the record's construction and not an ending.
-		if got := len(statusSitesIn(file)); got != 3 {
-			t.Errorf("the guard read %d of the 3 statements in a file that assigns a local record's status, assigns the record's own and writes a terminal status in a literal: a guard that does not see them passes on a tree that does", got)
+		// Four: the copy, the record itself, the literal and the call to the
+		// writer. The running literal is the record's construction and not an
+		// ending.
+		if got := len(statusSitesIn(file)); got != 4 {
+			t.Errorf("the guard read %d of the 4 statements in a file that assigns a local record's status, assigns the record's own, writes a terminal status in a literal and calls writeEnd: a guard that does not see them passes on a tree that does", got)
 		}
 	})
 
@@ -169,9 +171,10 @@ func TestHaltedRunCarriesItsHaltsClass(t *testing.T) {
 }
 
 // statusSitesIn is every statement of one parsed file that writes a Status
-// field: an assignment to a selector named Status, and a Status entry of a
-// runstore.Record literal. Both are how a record's status is set, and a guard
-// that knows only the first would leave the second free.
+// field, or reaches the writer that writes it: an assignment to a selector
+// named Status, a Status entry of a runstore.Record literal, and a call to
+// writeEnd. Each is how a record's status is set, and a guard that knows only
+// the first would leave the others free.
 func statusSitesIn(file *ast.File) []statusSite {
 	var out []statusSite
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -181,6 +184,10 @@ func statusSitesIn(file *ast.File) []statusSite {
 				if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Status" {
 					out = append(out, statusSite{pos: sel.Sel.Pos()})
 				}
+			}
+		case *ast.CallExpr:
+			if ident, ok := node.Fun.(*ast.Ident); ok && ident.Name == "writeEnd" {
+				out = append(out, statusSite{pos: ident.Pos()})
 			}
 		case *ast.CompositeLit:
 			if !isRecordType(node.Type) {
