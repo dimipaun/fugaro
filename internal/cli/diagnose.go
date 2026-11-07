@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -136,6 +137,13 @@ type Diagnosis struct {
 	// for a run that tolerated nothing, and for every record written before
 	// the field existed.
 	Tolerated *runstore.ToleratedFindings `json:"tolerated,omitempty"`
+	// Ruling is the owner's ruling this run was launched with (OD1,
+	// runstore.Record.OwnerRuled, fugaro run --owner-ruled): the answer to
+	// the findings a run on this pull request left, which the brief of this
+	// run carries verbatim. The record's own text, redacted and clipped on
+	// read like every other field of it, and absent for a run launched
+	// without one — which is every run that is not answering a decision.
+	Ruling string `json:"owner_ruled,omitempty"`
 	// Checkpoint is the report a governance halt left (T6.1, D329, G7): why a
 	// tripwire stopped the run, and what a person deciding whether to continue
 	// it needs to know. The record's own block, with every string redacted and
@@ -260,6 +268,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
 		d.Row.OwnerDecisions = ownerDecisionsOf(rec.OwnerDecisions, red)
+		d.Ruling = clipRunes(red(rec.OwnerRuled), task.MaxOwnerRuledBytes)
 		d.Retries = rec.Retries
 		d.Reviews = reviewsOf(rec.Reviews, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
@@ -501,6 +510,25 @@ func ownerBlock(od *runstore.OwnerDecisions) string {
 	}
 	if n := od.Total - len(od.Decisions); n > 0 {
 		fmt.Fprintf(&b, "  and %s more; the run's record lists %d of them\n", runner.Plural(n, "decision"), len(od.Decisions))
+	}
+	return b.String()
+}
+
+// rulingBlock is the owner's ruling a run was launched with (OD1), printed
+// under what the run before it was waiting for: the text the brief carries,
+// indented as a block so a multi-line ruling reads as one, and empty for a run
+// launched without one. Only carriage returns are turned into newlines here —
+// the ruling is a person's own prose, and the diagnosis is where they read it
+// back — but every line is still flattened to one terminal line, since the
+// record is an object a hand can edit.
+func rulingBlock(ruling string) string {
+	if strings.TrimSpace(ruling) == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nThe owner ruled (this run works from it)\n")
+	for _, line := range strings.Split(strings.ReplaceAll(ruling, "\r\n", "\n"), "\n") {
+		fmt.Fprintf(&b, "  %s\n", oneLine(line))
 	}
 	return b.String()
 }
@@ -845,6 +873,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	b.WriteString(checkpointBlock(d.Checkpoint))
 	b.WriteString(ownerBlock(d.Row.OwnerDecisions))
+	b.WriteString(rulingBlock(d.Ruling))
 	for _, ln := range costLines(r.Cost) {
 		fmt.Fprintf(&b, "%s\n", ln)
 	}

@@ -1678,6 +1678,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	// The owner's ruling this follow-up was launched with (OD1), onto the
+	// record with the rest of what the task says the run is: it is the answer
+	// the brief below works from, and a reader of the record has to find the
+	// same text the agent was given.
+	r.rec.OwnerRuled = spec.OwnerRuled
 	// The task's arm, before anything else the task's text can reach: an
 	// arm refuses the run further down the very path an unsampled run
 	// takes (shadow.go, readArm).

@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -94,10 +95,13 @@ var readRunRecord = func(ctx context.Context, s *runstore.Store) (*runstore.Reco
 
 // resolvePR finds pull request pr of slug through the runs bucket, and
 // refuses a follow-up whose context can't be trusted. exclude is a run ID
-// to leave out (a retry, or a repeated --run-id). Every refusal is a
+// to leave out (a retry, or a repeated --run-id). ruled says this launch
+// already carries the owner's ruling (--owner-ruled, or a stored task that
+// carries one): without it, a follow-up whose previous run stopped waiting on
+// owner decisions is refused rather than launched (OD1). Every refusal is a
 // userErr naming the run and what to do; a failed read is a remote error.
 // The runner checks the PR itself with the provider when it starts.
-func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, exclude string, warn io.Writer) (*prChain, error) {
+func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, exclude string, ruled bool, warn io.Writer) (*prChain, error) {
 	if warn == nil {
 		warn = io.Discard
 	}
@@ -198,6 +202,17 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	case err != nil:
 		return nil, remote(fmt.Errorf("reading the record of run %s to keep its mode and its recipe: %w; nothing was launched", c.Previous.Run, err))
 	default:
+		// The previous run stopped on findings only the owner can settle
+		// (OD1): a follow-up launched without their answer would read the same
+		// diff, find the same finding and stop in the same place — which is
+		// how a blind loop burns run after run on a question no code change
+		// answers. Refused here, before anything is stored or launched, and
+		// the refusal names each decision so the person who can answer them
+		// has the question in front of them.
+		if od := rec.OwnerDecisions.Bounded(); od != nil && !ruled {
+			return nil, userErr("%s; answer them and launch again with --owner-ruled <text-or-file>, which is appended to this follow-up's brief verbatim",
+				ownerWaitingRefusal(c.Previous.Run, pr, od))
+		}
 		// The runner chose this run's recipe (agent.recipe at the ref); a
 		// follow-up keeps it, as the runner ignores agent.recipe on follow-ups.
 		if c.Recipe == nil && rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name) {
@@ -237,6 +252,29 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		c.Workflow = c.Previous.Workflow
 	}
 	return c, nil
+}
+
+// ownerWaitingRefusal is the sentence resolvePR refuses such a follow-up
+// with: the run it read, the pull request, and one clause per pending decision
+// — the file the reviewer named and its own sentence — so the person who can
+// answer them reads the questions in the refusal itself, not in a transcript
+// they have to open. Both fields are the reviewer's text about an untrusted
+// diff, so both are flattened to one line before they reach a terminal.
+func ownerWaitingRefusal(run string, pr int, od *runstore.OwnerDecisions) string {
+	parts := make([]string, 0, len(od.Decisions))
+	for _, d := range od.Decisions {
+		s := oneLine(d.Summary)
+		if d.File != "" {
+			s = "`" + oneLine(d.File) + "`: " + s
+		}
+		parts = append(parts, s)
+	}
+	msg := fmt.Sprintf("run %s, the last to update PR #%d, stopped waiting on %s only you can settle: %s",
+		oneLine(run), pr, runner.Plural(od.Total, "owner decision"), strings.Join(parts, "; "))
+	if n := od.Total - len(od.Decisions); n > 0 {
+		msg += fmt.Sprintf(" (and %s more: fugaro diagnose %s lists them)", runner.Plural(n, "decision"), oneLine(run))
+	}
+	return msg
 }
 
 // commitLikeRE is a ref that looks like a commit ID, full or abbreviated.
@@ -439,7 +477,7 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 			return slug, spec, spec != nil, err
 		}
 	}
-	c, err := resolvePR(ctx, env, repo, slug, o.pr[0], o.runID, warn)
+	c, err := resolvePR(ctx, env, repo, slug, o.pr[0], o.runID, o.ownerRuled != "", warn)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -492,6 +530,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
 		(o.planTask != "" && have.PlanTask != o.planTask) ||
 		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
+		(have.OwnerRuled != o.ownerRuled) ||
 		(o.tier != "" && string(have.Tier) != o.tier) ||
 		(len(o.paths) > 0 && !slices.Equal(have.Paths, o.paths)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
@@ -682,7 +721,8 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		PlanTask:       o.planTask,
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
-		Rigor: mode, Paths: o.paths, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
+		OwnerRuled: o.ownerRuled,
+		Rigor:      mode, Paths: o.paths, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -752,7 +792,7 @@ func refuseFollowUpRigor(req, recorded rigor.Mode, recordedBy string, pr int, su
 // with the run itself left out, and refuses it when another run has
 // updated the PR since it was made: it would act on stale context.
 func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, warn io.Writer) error {
-	c, err := resolvePR(ctx, env, spec.Repo, slug, spec.PR, spec.RunID, warn)
+	c, err := resolvePR(ctx, env, spec.Repo, slug, spec.PR, spec.RunID, spec.OwnerRuled != "", warn)
 	if err != nil {
 		return err
 	}
