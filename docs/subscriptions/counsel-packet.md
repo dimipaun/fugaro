@@ -4,12 +4,16 @@
 writes. It goes to counsel with the Subscription Terms
 ([`docs/licensing/subscription-terms.md`](../licensing/subscription-terms.md)) in the round
 [S8.4](implementation-plan.md#slice-s8-the-owners-counsels-and-the-accountants-steps) records, and it
-asks **only what the Terms' own list for counsel does not already ask**: the draft counsel was given
-carried eighteen questions (#1146), of which 12–18 were added with the owner's answers, and that
-list is the eight items counsel's restructured text ends with today. Nothing here is legal advice,
-and nothing here decides anything: every question is counsel's, and every ruling it cites is the
-owner's, already recorded in
-[reconciliation.md](reconciliation.md#rulings-on-the-tensions-2026-10-27).
+asks **only what the Terms' own list for counsel does not already ask**. The draft counsel was given
+carried eighteen numbered questions (#1146), of which 12–18 were added with the owner's answers;
+counsel's restructured text answers most of those and ends with its own list of eight open items,
+and none of the questions below repeats one of the eight. Nothing here is legal advice, and nothing
+here decides anything: every question is counsel's, and every ruling it cites is the owner's — the
+tensions T10 to T27 in
+[reconciliation.md](reconciliation.md#rulings-on-the-tensions-2026-10-27), with T27's consequence
+[ruled 2026-10-29](reconciliation.md#a-consequence-the-rulings-create-ruled-2026-10-29), and the
+two later rulings, the coordinator (2026-10-29) and crash reporting (2026-10-31), in the Terms' own
+list for counsel, items 7 and 5.
 
 **It carries no figure (D430, T22).** An amount, a rate and a discount are named by the clause they
 sit in and never by their value — the two figures the owner ruled into the Terms (the liability cap
@@ -20,11 +24,14 @@ writes the scan that holds this over the folder, and the plan makes it this docu
 has not landed yet (the census of 2026-11-07 lists it NOT STARTED), so until it does this document
 holds the rule by construction and the Docs suite is its only test.
 
-**What has moved since the questions were written.** The Terms have changed twice. Counsel
+**What has moved since the questions were written.** The Terms have changed four times since. Counsel
 restructured them on 2026-10-28 into Parts A–G and sections 1 to 34 (they were the draft's sections
-1 to 24), and the owner's rulings that restructure did not carry were applied on 2026-10-29 and
-approved by counsel — the Terms' own list, item 4. So this packet opens with what is already
-settled, and asks the rest.
+1 to 24). The owner's rulings that restructure did not carry were applied on 2026-10-29, with the
+two figures once held back and the provisions counsel's document had marked (the Terms' own list,
+items 1, 3, 4 and 7). The owner filled in the Licensor's name, jurisdiction, address, privacy notice
+URL and notice address on 2026-10-30. And §7.3 was revised on 2026-10-31 so that crash reporting is
+opt-in and off by default (item 5). So this packet opens with what is already settled, and asks the
+rest.
 
 ## How the clauses are numbered
 
@@ -52,8 +59,10 @@ The clauses named below:
 
 ## Settled since the questions were asked
 
-Counsel has applied and approved these, and the Terms' own list for counsel records each one (items
-4, 5 and 7), so this packet asks none of them again:
+Counsel has applied and approved these, so this packet asks none of them again. All but T24 are the
+Terms' own list for counsel, items 4, 5 and 7; T24 is the owner's ruling in
+[reconciliation.md](reconciliation.md#rulings-on-the-tensions-2026-10-27), which left the clauses as
+they stood, the draft having already printed those figures.
 
 - **T12 — read-only use keeps cancel.** After the grace period a User may still cancel a Job and use
   the kill switch, and may not initiate or modify anything else (§9.1); §27.4(a) is where the
