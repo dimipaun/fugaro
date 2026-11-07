@@ -1,6 +1,12 @@
 # The stateless orchestrator: the spec against the code
 
-**Status: reconciliation answered by the owner — D1220-D1243 in full, not only the first draft's D1220-D1240: the round-1 questions D1241, D1242 and D1243 were answered on 2026-11-04, and the last tension the answers left open, T7 (the daemon-unit carve-out of the HARD RULE), was ruled on 2026-11-05, so nothing in this section is still put to the owner. Plan in [implementation-plan.md](implementation-plan.md). Nothing implemented, no task approved.**
+**Status (2026-11-07): two of the plan's tasks are built. Task O0, the state schema, the typed patch and the validator, is merged on `main`** — pull request
+#1823, commit `36abeffc`, merged 2026-11-07, so `internal/orchestrator/state.go`, `patch.go`, `validate.go`, `summary.go` and the two `schemas/` documents
+are on `main`. **Task O1, the deterministic security-sensitive classifier the owner approved as part of the 0.22.0 scope, is written on the branch
+`fugaro/20261107-023015-885d`**, pull request #1822, unmerged and not on `main`. **Nothing else of the plan is built and no other task is approved.** F15's
+reviewer-routing rule is what O1 is code for; the findings below are the reading of the code as it was before that package existed, and they are kept as written.
+
+*The status as first written, kept:* **Status: reconciliation answered by the owner — D1220-D1243 in full, not only the first draft's D1220-D1240: the round-1 questions D1241, D1242 and D1243 were answered on 2026-11-04, and the last tension the answers left open, T7 (the daemon-unit carve-out of the HARD RULE), was ruled on 2026-11-05, so nothing in this section is still put to the owner. Plan in [implementation-plan.md](implementation-plan.md). Nothing implemented, no task approved.**
 Checked against `origin/main` at `5998d67c7` (`feat(config): the workflow_secrets block ... (W0) (#1710)`), merged into this branch,
 on **2026-11-04**. The open pull requests were read with `gh pr list` and `gh pr diff` the same day. Every path and symbol below was
 re-read at that commit; a citation by symbol is held where a line would move.
@@ -166,6 +172,23 @@ CLAUDE.md, AGENTS.md or CI workflows always count as security-sensitive" and is 
 describes itself**. That classifier is deterministic code and must be implemented as code, not as an instruction to the model. The cloud
 senior review design (`docs/cloud-senior-review`, answered, not built) is the existing mechanism for "a fresh Opus agent reads a pushed
 branch and writes a versioned verdict artifact the coordinator acts on" and is the template for a cloud decision agent.
+
+**Amended 2026-11-07 (O1's landing review).** The rule this finding documents sends **docs, tests and design** to the light reviewer and does not name the
+website; the website is on the classifier's allowlist because the plan's O1 puts it there. A review of that task found the tree carries paths that are not copy a
+reader is sent to, and O1 now classes them Sensitive: the npm manifest and its lock (the install scripts CI and the owner's machine run),
+`website/data/install.yaml` (the install commands a reader pastes), `website/content/downloads.json` and `website/data/console-sha256sums.txt` (the URLs and
+checksums a reader checks a build against), and `website/content/security.md` (**`SECURITY.md`** byte for byte **below a generated header**, the one website path
+`.claude/rules/credentials-service.md` scopes as security-sensitive). **The same sweep was owed to `docs/**`, which the rule does put on the light side**, and a
+later round of the same review found it: `docs/release-streams.yaml` is the release gate's own catalogue (read by `internal/streams`, `scripts/release.sh` and the
+CI guard on a bump), the plan graph artifacts — `docs/**/*.graph.json`, the class and not the one file, because a graph is drawn beside its plan at any depth and
+`internal/cli/plan_status.go` walks the tree for the suffix — are what a tool reads rather than what a reader reads, and
+`docs/website/redesign/capture-screenshots.mjs` and `docs/website/redesign/sample-logo-hue.py` are scripts committed to be re-runnable. They are exceptions now, on
+the plan's own line that a file in a routine tree which is not reading matter is Sensitive. **A later round found the folding half of the same boundary**: the exception match
+folds case with `strings.ToLower`, which folds the ASCII range and leaves the case variants Unicode case folding maps to it (`ſ` to `s`) alone, so a guard path spelled that
+way answered Routine while a case-insensitive filesystem resolves it into the guard — and one name in two normal forms is one file on HFS+ as well. A path carrying a byte
+outside ASCII is now Sensitive rather than folded, which is a narrowing like the rest. The rest of `website/**` stays routine as the plan states it. **Still the owner's to
+rule:** whether the site's *code* — its layouts, its client scripts and its build config — is Sensitive too, which would take the whole tree off the allowlist. The
+CSP is not part of that question: the deployed policy is the repository root's `firebase.json`, outside `website/**` and Sensitive already.
 
 **F16. Gap. A local daemon.** There is no background process, service installer or `launchd`/`systemd` unit in the CLI. The closest
 long-running local pieces are `fugaro watch` (a TUI, foreground) and the mailbox consumer (`internal/mailbox`, foreground, with an RTDB

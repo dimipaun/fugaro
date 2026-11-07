@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -857,15 +858,78 @@ func TestUpdateRunsNoBuildWhenTheBuildIsDeclined(t *testing.T) {
 	if res.Failed == nil || !strings.Contains(res.Failed.Error, "not confirmed") {
 		t.Fatalf("a declined build did not stop the checkout: %+v\n%s%s", res, out, refreshOut)
 	}
-	// The refresh's own writer is the command's: atTerminal hands the stage's
-	// steps a buffer of their own, and the question the step asks is the
+	// The refresh's own writer is the stage's: the refresh's run is given what
+	// the stage's steps print through (refreshOptions.out), which atTerminal
+	// hands a buffer of its own, and the question the step asks is the
 	// refresh's. Without seeing it asked, a run that never reached step 4
 	// would pass this test too.
-	if !strings.Contains(refreshOut.String(), "Type aurora to confirm") {
-		t.Fatalf("the stage reached the build without asking for it:\n%s", refreshOut)
+	if !strings.Contains(out.String(), "Type aurora to confirm") {
+		t.Fatalf("the stage reached the build without asking for it:\n%s", out)
 	}
-	if len(fb.specs) != 0 || strings.Contains(refreshOut.String(), "is done") {
-		t.Errorf("a declined build ran: %+v\n%s", fb.specs, refreshOut)
+	if len(fb.specs) != 0 || strings.Contains(out.String(), "is done") {
+		t.Errorf("a declined build ran: %+v\n%s", fb.specs, out)
+	}
+}
+
+// TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver: the same build
+// confirmation, with the converge's own reporter drawing the step in flight.
+// The cloud step is fugaro image refresh run as a command of its own
+// (runImageRefresh -> newInitRun), and that run printed and asked where its own
+// command said — a stream that draws nothing — while the spinner redrew the
+// checkout step over it every 100ms (G1). A billable build's confirmation is
+// the one line in this step a person has to be able to read, and the name typed
+// under it.
+//
+// Mutation (run, restore): drop the stage's writer from the refresh's options
+// (refreshOptions.out), and this test fails on the frame drawn over the banner
+// and on the redraws over the prompt being answered.
+func TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	clearAgentMarkers(t)
+	fakeTerminal(t)
+	writerAsTerminal(t)
+	r, root := upgradeRig(t)
+	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
+	useFakeClaude(t, f)
+	// One workflow whose record names an older base: step 2 has nothing to pin
+	// and step 4 has one build to ask about.
+	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
+	putWorkflowRecordFrom("api", "0.5.1", pinnedRef("base", "0.5.1"))
+	fb := useFakeBuilder(t)
+	// Steps 2 and 3 are stubbed, as in the declined-build test above: the
+	// registry and the Cloud Run Admin API are not what this test is about.
+	real := newRefreshSteps
+	newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+		s := real(run, e, p)
+		s.base = func(context.Context) error { return nil }
+		s.checkJob = func(context.Context, *refreshTarget) error { return nil }
+		s.reload = func(context.Context) (*refreshTarget, error) {
+			return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
+				RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+				Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
+		}
+		return s
+	}
+	t.Cleanup(func() { newRefreshSteps = real })
+
+	e, out := checkoutEngine(t, &initOptions{})
+	// The converge's own shape: the run's writer is a runWriter over the stream
+	// the reporter draws on, and the loop opens the stage's step as it enters it
+	// (initflow's converge).
+	e.r.rep = report.New(report.Options{Out: out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
+	e.r.w = runWriter{r: e.r, out: out}
+	step := e.r.rep.Step(checkoutStageName)
+	st := checkoutStageOf(t, e)
+	answerAQuestionMidStage(t, e.r, out, "⚠ CONFIRM (project "+initProjectName+", GCP project ", func() error {
+		_, err := st.Apply(context.Background(), initflow.Env{Interactive: true})
+		return err
+	})
+	step.Done("")
+	if len(fb.specs) != 1 {
+		t.Errorf("the confirmed build submitted %+v, want the one build that was asked about", fb.specs)
 	}
 }
 

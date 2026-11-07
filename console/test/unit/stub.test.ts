@@ -44,6 +44,11 @@ describe('the stub’s command keys', () => {
       // counters and the spend history's daily documents are the whole read.
       'runs summary',
       'plan status',
+      // The graph plan's CG9a (`graph.read` / `graphRead`): the dependency graph
+      // as one versioned document, spawned with no checkout at all. Its key is
+      // the command word, because `--source` and its value are the row's own
+      // argument and never a word of the key.
+      'graph',
       'diagnose',
       'logs',
       'logs --url',

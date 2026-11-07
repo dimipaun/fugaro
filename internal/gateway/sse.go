@@ -313,6 +313,14 @@ type usageTee struct {
 	stopped        bool     // the stream reached its end: message_stop, or the body decoded clean
 	events         []string // event type names seen, bounded; never a body
 
+	// Diagnostics for a stream that ended before its terminal event, where
+	// the question is how far it got and not why it settled as it did
+	// (streamCut). Both are counts a log line may carry: no event's own
+	// bytes, and no name outside the closed list above.
+	bytes      int64  // bytes the response carried, teed as they were written to the agent
+	eventCount int    // events seen, every one of them; events holds the distinct names alone
+	lastEvent  string // the last event's own type name, through eventTypeValue
+
 	model     string
 	acc       usageAcc
 	errorType string
@@ -348,11 +356,13 @@ func eventTypeValue(typ string) string {
 // unbounded length) reaches the log only as "unrecognized", never as
 // itself.
 func (t *usageTee) noteEvent(typ string) {
-	if typ == "" || len(t.events) >= maxEventsLogged {
+	if typ == "" {
 		return
 	}
 	typ = eventTypeValue(typ)
-	if slices.Contains(t.events, typ) {
+	t.eventCount++
+	t.lastEvent = typ
+	if len(t.events) >= maxEventsLogged || slices.Contains(t.events, typ) {
 		return
 	}
 	t.events = append(t.events, typ)
@@ -406,6 +416,7 @@ func newUsageTee(sse bool) *usageTee {
 }
 
 func (t *usageTee) feed(b []byte) {
+	t.bytes += int64(len(b))
 	if t.sse {
 		t.p.feed(b)
 		return

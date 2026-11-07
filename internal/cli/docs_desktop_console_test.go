@@ -412,6 +412,11 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(modelsModel{}),
 		reflect.TypeOf(modelsRepo{}),
 		reflect.TypeOf(priceCatalog{}),
+		// §6.21, the managed screens' read (the managed-screens plan's CM2):
+		// the document and the bounded subset of the newest audit record,
+		// which is bounded because argv is not in it.
+		reflect.TypeOf(managedStatusDoc{}),
+		reflect.TypeOf(managedStatusAudit{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -671,6 +676,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// §6.20, the write's dry run (the settings-edit plan's C3, CLI 0.16.0):
 		// the one shape its field table is read against.
 		reflect.TypeOf(settingsWriteDoc{}),
+		// §6.21, the managed screens' own document (the managed-screens plan's
+		// CM2): the marks' four facts and the bounded subset of the newest
+		// audit record, which is bounded because argv is not in it.
+		reflect.TypeOf(managedStatusDoc{}), reflect.TypeOf(managedStatusAudit{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1008,6 +1017,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// document and half of them -- `--dry-run` not least -- belong to both.
 	"settings set":   newSettingsSetCmd,
 	"settings unset": newSettingsUnsetCmd,
+	// §6.21 documents the managed screens' read (the managed-screens plan's
+	// CM2), one closed document about one managed project. The console's own
+	// rule 6 row for it is that plan's CM3 and not this task's, so the console
+	// does not spawn it yet — but the document describes its flags, so they are
+	// checked against this constructor like any other command's.
+	"managed status": newManagedStatusCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1281,7 +1296,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-two argvs and nothing else -- the console's one spawn table
+// the twenty-three argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1328,6 +1343,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// The graph screen's per-task state (console v2 plan GV2.1, the
 		// `plan.status` operation): read-only, no path in the argv.
 		"plan status --json",
+		// The dependency graph as one versioned document (the graph plan's
+		// CG9a, the `graph.read` operation): read-only, no path in the argv,
+		// and no checkout either -- its scope is the project's stored view.
+		// Its one argument is the scope, the only argument on this table held
+		// to a closed grammar **and** to what a previous read listed, and it is
+		// optional the way `plan status --json`'s `--all` is: the row's cell
+		// spells the command's argv and names the argument in its parenthesis.
+		"graph --json",
 		// The project view (Bitbucket credentials T1.2, the
 		// `coordinator.status` operation): read-only, no path in the argv.
 		// `--from-store` is what makes it need no host credential at all --
@@ -1502,9 +1525,10 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-one commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-two commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
-	// screen's `plan status --json` (GV2.1), the project view's
+	// screen's `plan status --json` (GV2.1), the dependency graph read
+	// `graph --json` (the graph plan's CG9a), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
 	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
 	// --pr <n>` (coordinator v2 C3), the declarations read
@@ -1515,8 +1539,8 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// plan's C1), the settings write `settings set KEY ...` (the same plan's
 	// C3, and the row that is not a read at all) and the launch `fugaro run`
 	// (V2.5.1a).
-	if len(allowed) != 21 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 21 (logs has two argvs)", path, argvs, len(allowed))
+	if len(allowed) != 22 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 22 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -9623,8 +9647,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is thirty-one operations**") {
-		t.Errorf("%s no longer says the surface is thirty-one operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty and the same plan's C3 to thirty-one), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is thirty-two operations**") {
+		t.Errorf("%s no longer says the surface is thirty-two operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one and the graph plan's CG9a to thirty-two), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string
@@ -9723,6 +9747,31 @@ func TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections(t *testing.T) {
 	if !strings.Contains(never, "the console's first write") {
 		t.Errorf("%s's rule 6 never names the launch as the console's *first* write, so the second write has nothing to be second to", path)
 	}
+	// And the one line number that row carries. `VALUE` is the word after the
+	// `--` terminator rather than an `=` away, and the row proves it by citing
+	// the line of the pair's own `Use:` string — the citation a reader follows
+	// by hand, and the one nothing read: the key list under that command grew
+	// (`--add-entry`, `--remove-entry`), `Use:` moved with it, and the number
+	// stayed where it was, pointing at the list. The line is found in the file
+	// rather than pinned as a number here, so the check says what the row
+	// claims and not what the file happened to be the day the row was written.
+	body, err := os.ReadFile("../../internal/cli/settings_set.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for i, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) == `Use:   "set KEY VALUE",` {
+			want = i + 1
+			break
+		}
+	}
+	if want == 0 {
+		t.Fatalf("internal/cli/settings_set.go no longer declares `Use:   \"set KEY VALUE\"`: rule 6's write row turns on that declaration, so the two move together")
+	}
+	if !strings.Contains(never, fmt.Sprintf("`internal/cli/settings_set.go:%d`", want)) {
+		t.Errorf("%s's rule 6 does not cite internal/cli/settings_set.go:%d, the line that declares the `Use: \"set KEY VALUE\"` the row turns on: what makes `VALUE` a positional and the `--` terminator necessary is that declaration, and a citation to a line of the key list below it is one a reader cannot follow", path, want)
+	}
 
 	// §6.2 item 3, the Project screen: the settings section is the tab's third
 	// read and rule 12's window is where its pencil leads.
@@ -9789,6 +9838,31 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"`widening`",
 		"`changed`",
 		"`refusal`",
+		// The four optional members version 1 has since grown (D1164), off the
+		// four `omitempty` fields of `settingsWriteDoc` and the four rows
+		// `writeSettingsWriteTable` prints below `refusal`. The console's own
+		// row cannot build an entry write, so its reader ignores them — but the
+		// section is the document described member by member, and a reader who
+		// finds ten of the fourteen members is reading a shape the CLI no
+		// longer writes.
+		// `operation` is not only the entry pair's word: the schema's enum has
+		// three values, and `remove-secret` is the one §6.20's own pair never
+		// writes (secretsRmDryRun, D1171).
+		"`operation`",
+		"`remove-secret`",
+		// And the block the entry it takes away lives in: `secrets rm` removes
+		// the entry the NAME has, which is `workflow_secrets.NAME` for a
+		// workflow secret (D1260) — a row that named only `project_secrets`
+		// describes a key the command does not touch (secretsRmWhat).
+		"`workflow_secrets.NAME`",
+		"`entry_key`",
+		"`entry_value`",
+		"`entry_fields`",
+		// And the phase slot's third word. `settingsDryRunFlags` refuses
+		// `--ask` beside `--dry-run` exactly as it refuses `--yes`, so a
+		// section that counts the slot's words and stops at two is short by
+		// one, whatever the console's own argv passes.
+		"`--ask`",
 	} {
 		if !strings.Contains(write, want) {
 			t.Errorf("%s's §6.20 does not state %q: the write's dry run is the document the window and the write are built over, and it is the console's contract to describe", path, want)

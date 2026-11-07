@@ -52,6 +52,13 @@ import (
 // (docSection) rather than out of the whole file, because a claim that lives
 // only in a neighbouring section is not the section's claim — the same rule
 // TestSecurityMdStatesTheCredentialsService was narrowed for.
+//
+// AK2 of docs/api-key-review adds the other side of the same question: with no
+// stage account published, a review runs on the run's OWN Anthropic key
+// through the gateway — billed, capped and attributed — and the design note's
+// Path A "Missing" list named gaps the tree does not have (F4, F9).
+// TestDocsMultiModelNamesTheReviewOnTheRunsOwnKey and
+// TestDocsMixedCredentialsCorrectsTheStaleMissingList are those two pins.
 
 // TestDocsMixedCredentialsRecordsTheRuling: the design note carries the rule
 // as its own section, with the two stages it may serve, the two it may never
@@ -181,6 +188,59 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 	}
 }
 
+// TestDocsMixedCredentialsCorrectsTheStaleMissingList: §3's Path A section
+// ended with a "Missing" list of four gaps, and one of the four was never a
+// gap while two more are written by the work that carries this change (F4,
+// F9). A reader who sizes the in-job half from that list sizes it too large:
+// it named a gateway test with both upstreams in one run that
+// `internal/runner/routing_e2e_test.go`'s TestRoutedSwitchKeepsTheFirstLineLoop
+// already runs, with `internal/runner/layer_claim_test.go`'s
+// TestLayerClaimLeavesADirectCoderStageAlone as its mirror image.
+//
+// The section now names the one gap that is left — the sandbox live check the
+// api-key-review plan writes up as Check 330 — and records, dated, what the
+// list used to claim and where the two written gaps went. Both directions are
+// pinned: the tests the list named as missing are named as existing, and the
+// check it leaves is still the one nobody has run.
+//
+// The correction is read out of §3 alone (docSection), so a claim that drifted
+// into a neighbouring section does not satisfy it.
+//
+// Mutation: restore the original list ("the user docs, the cost guidance, ...
+// a gateway test with both upstreams in one run") and this test fails on the
+// count it states and on the two test names, which is exactly the mistake the
+// list made.
+func TestDocsMixedCredentialsCorrectsTheStaleMissingList(t *testing.T) {
+	const path = "docs/design/mixed-credentials.md"
+	section := flattenDoc(docSection(t, path, readDoc(t, path), "## 3. Path A"))
+	for _, want := range []string{
+		// The corrected list: one gap, and it is the live check.
+		"**Missing:** one sandbox live check",
+		// The correction itself, dated, and the non-gap it corrects.
+		"2026-11-07: this list first named three gaps beside the check",
+		"The third was never missing",
+		"TestRoutedSwitchKeepsTheFirstLineLoop",
+		"TestLayerClaimLeavesADirectCoderStageAlone",
+		"internal/runner/routing_e2e_test.go",
+		"internal/runner/layer_claim_test.go",
+		// The two gaps that were real and are now written, named where the
+		// reader is sent: the user-doc section this change adds.
+		"The first two are written",
+		"The review on the run's own Anthropic key",
+		"multi-model.md",
+		// And the one that is left, with the plan it is written in and the
+		// status an owner-run check carries.
+		"Check 330",
+		"api-key-review/implementation-plan.md",
+		"NOT RUN",
+		"never `belong`",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s §3 never says %q: the Missing list is what a reader sizes the in-job half from, and it named a gap the tree does not have", path, want)
+		}
+	}
+}
+
 // TestDocsMultiModelRecordsTheReviewAccountException: the user doc's refusal
 // list (§5) and its credential section (§3) both carry the exception, because
 // a reader meets the rule in either place: §5 states what is refused, §3 what
@@ -255,6 +315,73 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 	} {
 		if !strings.Contains(key, want) {
 			t.Errorf("%s §3 never says %q: the credential section is where a reader learns what a run may hold", path, want)
+		}
+	}
+}
+
+// TestDocsMultiModelNamesTheReviewOnTheRunsOwnKey is AK2's user-doc half
+// (docs/api-key-review): the configuration §4 shows — `agent.auth: api-key`, a
+// coder a route claims and a Claude reviewer no route claims — is the one whose
+// review the run's own Anthropic key serves, and §3 said only what such a key
+// is for. What the pinned section adds is the answer to the question that
+// configuration leaves open: **which credential the review then runs on** (the
+// run's own `anthropic-api-key`, through the gateway, to Anthropic's own API)
+// and **what it costs** (the table's billed figure, counted against the run's
+// cap and the day's counters, attributed in `cost.model_by` with no notional
+// figure and no route of its own), beside the contrast that decides it — a
+// published `review` stage account takes the stage off the gateway onto the
+// account, notional and uncapped (F7).
+//
+// The cost facts are the reason the section exists rather than a paragraph a
+// reader could infer from the account path's own: a review billed by the
+// gateway and a review billed by nothing look the same in a summary, and the
+// record's own figures are what tells them apart.
+//
+// Red step (AK2): the section is new, so before this change there is nothing to
+// read and this test fails at its first assertion. Its mutation is the same
+// edit in the other direction: revert the credential sentence ("the run's
+// **own Anthropic key**") or the accounting one ("`cost.route_by` carries the
+// coder's stages alone") and this fails without the pin moving.
+func TestDocsMultiModelNamesTheReviewOnTheRunsOwnKey(t *testing.T) {
+	const path = "docs/multi-model.md"
+	const heading = "### The review on the run's own Anthropic key"
+	section := flattenDoc(docSection(t, path, readDoc(t, path), heading))
+	for _, want := range []string{
+		// Which credential the review runs on, and that it is the run's own
+		// rather than a second one the run holds: the gateway already has it.
+		"the run's **own Anthropic key**",
+		"`anthropic-api-key`",
+		"the secret the gateway already holds",
+		"the run's own rather than a second one the run holds",
+		// Which path it takes: one gateway, two upstreams — the coder's stages
+		// to the provider, the review's to Anthropic's own API.
+		"One gateway serves both halves",
+		"Anthropic's own API",
+		// What it costs: the table's price, the cap it counts against, and the
+		// record's own attribution — by model, with no notional figure and no
+		// route, because a routed review would read as a provider-served one.
+		"the table price of their reported usage",
+		"`budget.per_run_usd`",
+		"`run_cap`",
+		"`cost.model_by`",
+		"`cost.model_notional_usd` is absent",
+		"`cost.route_by` carries the coder's stages alone",
+		"`credential` is empty",
+		"`agent.review_rounds`",
+		// The contrast F7 rules, and the one thing that decides between the two
+		// credentials: whether the project published a stage account for the
+		// review — which takes the stage off the gateway, direct to Anthropic,
+		// notional, uncapped, with the credential that says so named.
+		"Nothing prefers the key",
+		"`stages.review.claude_account`",
+		"`default_claude_account`",
+		"`credential: oauth`",
+		"`stage_accounts`",
+		"no cap of the gateway's bounds it",
+		"design/mixed-credentials.md",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s's %q never says %q: the configuration §4 shows runs its review on the run's own key, and the section is where a reader learns which credential pays for it and what that costs", path, heading, want)
 		}
 	}
 }

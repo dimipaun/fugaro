@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -929,6 +930,21 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCatalog = old.ImageCatalog
 	}
 	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
+	// The orchestrator block is kept by the same rule (D1239, D1234), with the
+	// catalog's two spellings collapsed into one: a config that states a block
+	// replaces what the node holds — the daemon's guardrails are the owner's own
+	// figures, and a second machine whose config predates the key must not
+	// publish a node without them — and a config that states none, or states a
+	// block that sets no key, keeps the node's (OrchestratorEffective). There is
+	// no spelling that empties a published block: a guardrail is a ceiling, so
+	// the only direction it moves is down, and a member dropped here would be
+	// every cap back at Fugaro's defaults on a machine nobody meant to change
+	// anything on.
+	var publishedOrchestrator *policy.Orchestrator
+	if old != nil {
+		publishedOrchestrator = old.Orchestrator
+	}
+	orchestrator := lc.OrchestratorEffective(publishedOrchestrator)
 	// The account-choice members are copied rather than derived — there is
 	// nothing to derive them from, they are the owner's own choice — and they
 	// are held to the node's own rules by the decode checkPolicyBytes runs on
@@ -965,6 +981,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,
 		ImageCatalog:         imageCatalog,
+		Orchestrator:         orchestrator,
 	}
 	switch {
 	case !silent:

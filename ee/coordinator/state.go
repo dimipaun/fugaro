@@ -166,6 +166,14 @@ type StoredProjectView struct {
 	Repos []RepoView `json:"repos"`
 }
 
+// ErrUnreadable marks a node the database answered with and this build cannot
+// read: an unknown field, a value of the wrong type. It is the one failure
+// here that is a fact about the stored data rather than about the read, so a
+// caller with a word for it — the graph's `unreadable` source state, contract
+// §6.22, which is a state and never a refusal of the whole read — can tell it
+// from a database it could not reach, which this package returns as it is.
+var ErrUnreadable = errors.New("the stored document is one this build cannot read")
+
 // ReadRepoView reads repo's view and the marker beside it from slug's node,
 // typed rather than raw: this is the read the console and a person's own CLI
 // make (D364), and neither of them holds the credential a sweep uses.
@@ -173,7 +181,8 @@ type StoredProjectView struct {
 // A node that does not decode is refused rather than shown as a view with
 // nothing in it, and an unknown field is a refusal too: this is the strict
 // decoding the tree's other wire formats keep, and a document this reader
-// cannot read is one it must not pass off as empty.
+// cannot read is one it must not pass off as empty. The refusal carries
+// ErrUnreadable, because what failed is the data and not the read.
 func (s *Store) ReadRepoView(ctx context.Context, slug, repo string) (RepoView, error) {
 	out := RepoView{Repo: repo}
 	var raw json.RawMessage
@@ -181,7 +190,7 @@ func (s *Store) ReadRepoView(ctx context.Context, slug, repo string) (RepoView, 
 		return RepoView{}, err
 	} else if found {
 		if err := strictDecode(raw, &out.View); err != nil {
-			return RepoView{}, fmt.Errorf("coordinator: reading /%s: %w", PathView(slug), err)
+			return RepoView{}, fmt.Errorf("coordinator: reading /%s: %w: %w", PathView(slug), ErrUnreadable, err)
 		}
 		out.Stored = true
 	}
@@ -191,7 +200,7 @@ func (s *Store) ReadRepoView(ctx context.Context, slug, repo string) (RepoView, 
 	} else if found {
 		var stale Stale
 		if err := strictDecode(mark, &stale); err != nil {
-			return RepoView{}, fmt.Errorf("coordinator: reading /%s: %w", PathStale(slug), err)
+			return RepoView{}, fmt.Errorf("coordinator: reading /%s: %w: %w", PathStale(slug), ErrUnreadable, err)
 		}
 		out.Stale = &stale
 	}

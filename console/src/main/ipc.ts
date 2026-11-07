@@ -234,6 +234,30 @@ export const RUNS_LIST_MAX_LIMIT = 200
 export const SUMMARY_SINCE_WINDOWS: readonly string[] = Object.freeze(['7d', '1d'])
 
 /**
+ * GRAPH_SCOPE_RE is the closed shape of a `graph.read` scope argument: the two
+ * selector words, and an id-carrying scope whose id is one lower-case letter or
+ * digit followed by up to 39 more of those or a hyphen. It is **the CLI's own
+ * pattern, spelled the same way** (`graph.ParseScope`'s `scopeIDPattern`,
+ * `ee/graph/key.go`), because the value reaches argv from a renderer and both
+ * ends have to refuse the same strings: an id this process admitted and that
+ * command refused would be a child spawned to fail.
+ *
+ * Anchored, so nothing before or after it gets in. A leading `-` (which would
+ * reach argv as a flag, the plan's H1), a path separator, an uppercase letter,
+ * a whitespace character, a `.`, an `@` and a 41-character id are each refused
+ * here -- before a child exists -- and `isSafeArgumentValue` refuses the leading
+ * `-` and the alphabet a second time on the way into the argv.
+ */
+const GRAPH_SCOPE_RE = /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9][a-z0-9-]{0,39})$/
+
+/**
+ * MAX_GRAPH_SCOPE_LENGTH bounds a scope argument before the grammar runs, so a
+ * hostile payload cannot make the regular expression work. It is the longest
+ * value the pattern admits: `orchestrator:` plus a 40-character id.
+ */
+export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
+
+/**
  * ArgumentKind is the closed set of things an operation's argument may be. Every
  * kind is a value the CLI's own flags already accept *in that position*, and
  * none of them is a path, a command, a flag name or a free-form string: a
@@ -336,6 +360,14 @@ export const SUMMARY_SINCE_WINDOWS: readonly string[] = Object.freeze(['7d', '1d
  * is the common one, and `settingsEdit`'s pairing rule in `validateArguments`
  * is what ties the three together: a `set` carries a value and an `unset` does
  * not.
+ *
+ * **`graphSource` is the graph read's one argument** (the graph plan's CG9a):
+ * the scope the document is about, held to `GRAPH_SCOPE_RE` -- the CLI's own
+ * anchored pattern -- and, at the source, to the set a previous read of the same
+ * document listed (F21). It is the one kind here whose *shape* is a closed
+ * grammar and whose *membership* is the read's own answer, which is why the two
+ * checks live apart: this module refuses a spelling no scope could have, and
+ * `createBoundSource` refuses an id the CLI never named.
  */
 export type ArgumentKind =
   | 'repository'
@@ -360,6 +392,7 @@ export type ArgumentKind =
   | 'settingOp'
   | 'settingKey'
   | 'settingValue'
+  | 'graphSource'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -461,7 +494,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty-two operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -478,6 +511,14 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * console-v2 plan's GV1.6 ships the document, GV2.1 is this operation, and
  * `console/docs/json-contract.md` §6.12 describes it). `plan.status`'s own
  * comment below says why the directory it reads in never reaches it.
+ *
+ * **CG9a's `graph --json` is this surface's twenty-first argv** (the graph
+ * plan's CG9a; the CLI half is CG3, `ee/graph/cli/graph.go`, and
+ * `console/docs/json-contract.md` §6.22 describes its document). It is the
+ * Graph screen's other read and the one that needs no checkout, and it is the
+ * only argv here whose one argument is held to a closed grammar *and* to a
+ * membership a previous read of the same document listed (F21) -- its own row
+ * below says why.
  *
  * **T1.2's `coordinator status --from-store --all --json` is this surface's
  * fifteenth argv** (Bitbucket credentials T1.2, D364): the project view, read
@@ -802,6 +843,39 @@ export const CONSOLE_OPERATIONS = [
         kind: 'flag',
         required: false,
         why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. It is the one argument this operation declares, and the design’s §5.1 table has not carried a row for the command yet.',
+      },
+    ],
+  },
+  // The Graph screen's second read (the graph plan's CG9a, `console/docs/
+  // json-contract.md` §6.22): `fugaro graph --json`, the project's dependency
+  // graph, which is the read that needs **no checkout** -- its scope today is
+  // the coordinator's stored view, read from the project's own database through
+  // the caller's own credential -- so an installation that records no directory
+  // still draws it. It sits beside `plan.status` because it is the same screen.
+  //
+  // **Its one argument is the scope, and it is the only argument on this
+  // surface held to a grammar *and* to a membership.** `GRAPH_SCOPE_RE` refuses
+  // every spelling no scope could have (`-x`, `all --source local:o1`,
+  // `orchestrator:../..`, a 41-character id) before a child exists, and
+  // `createBoundSource` refuses a scope the previous document of this read did
+  // not list (F21) -- a value a renderer invented, or one that names a scope
+  // the CLI's own sources array never mentioned, is a refusal and not a spawn.
+  // The read is also the one place the console may name a *paid* command
+  // (`ee/graph`, D1362), which is why it takes no other word: the `--watch`
+  // stream that would hold a child open is a different argv and a later task's
+  // row (CG9b).
+  {
+    name: 'graph.read',
+    method: 'graphRead',
+    command: 'graph',
+    flags: ['--json'],
+    summary: 'the dependency graph as one versioned document, with no checkout needed',
+    args: [
+      {
+        key: 'source',
+        kind: 'graphSource',
+        required: false,
+        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>` for the scopes a later release adds -- both of which today answer "no orchestrator is installed in this build", which is a refusal and not an empty graph. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the default is the read a screen opens on.',
       },
     ],
   },
@@ -2415,6 +2489,20 @@ function validateValue(
     case 'secretScope':
       if (!SECRET_SCOPES.includes(value)) return refuse(`${spec.key} must be ${SECRET_SCOPES.join(' or ')}`)
       return { ok: true, value }
+    case 'graphSource':
+      // The graph read's scope (CG9a): `all`, `coordinator`, or an id-carrying
+      // scope whose id matches the CLI's own pattern. This is the half that
+      // keeps a value from being a path, a flag or another word of the command
+      // -- `-x`, `all --source local:o1`, `orchestrator:../..` and a 41-character
+      // id are all refused here, before a child exists -- and the other half,
+      // that the scope is one a previous read of this document named, is the
+      // source's (`createBoundSource`, F21).
+      if (!GRAPH_SCOPE_RE.test(value)) {
+        return refuse(
+          `${spec.key} must be all, coordinator, or orchestrator:<id> / local:<id> with an id of 1 to 40 characters of a-z, 0-9 and -`,
+        )
+      }
+      return { ok: true, value }
     case 'link': {
       const decision = validateExternalUrl(value)
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
@@ -2604,6 +2692,10 @@ function kindLimit(kind: ArgumentKind): number {
       return MAX_SETTING_KEY_LENGTH
     case 'settingValue':
       return SETTINGS_VALUE_MAX_LENGTH
+    // The graph read's scope (CG9a): the longest value its own pattern admits,
+    // so the grammar never runs on a string longer than one it could accept.
+    case 'graphSource':
+      return MAX_GRAPH_SCOPE_LENGTH
     default:
       return 0
   }
