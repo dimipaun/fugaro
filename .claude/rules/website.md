@@ -14,4 +14,4 @@ paths:
 - Every `docs/releases/vX.Y.Z.md` needs its line in `release-summaries.yaml`.
 - `docs/releases/` may hold only `README.md`, the `vX.Y.Z.md` files and the `console/` and `mobile/` subfolders. `src/lib/changelog.mjs` throws on anything else.
 - `test/privacy.mjs` scans the shipped code for hosts. Only the console files on its allow-list (`onboarding.ts`, `window.ts`) may name fugaro.dev.
-- Deploying is `scripts/deploy-website.sh` or the website-preview/website-promote workflows, and only with the owner's authorisation. Never deploy from an agent run.
+- Deploying is `scripts/deploy-website.sh` or the website-preview/website-promote workflows, and only with the owner's authorisation. Never deploy from an agent run — the one exception is the two dispatches `/new-release`'s step 7 makes at the end of a release the owner has already authorised, which run under that go-ahead and are `docs/release.md`, "After each release, the website", to the letter. Everything else waits for the owner.
