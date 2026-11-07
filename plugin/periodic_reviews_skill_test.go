@@ -98,3 +98,66 @@ func TestWorkingSkillNeverSubmitsOnItsOwn(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace (R3, D962, E1, E8):
+// the cadence is kept only if a reader can tell it lapsed, and a report is
+// generated into the project's runs bucket now rather than into the
+// repository's own docs tree. The skill names `fugaro runs digest --due` --
+// the offline reading of a checkout's own report folder -- and says where a
+// report lands: the bucket by default, `--dir` for a checkout, and the opt-in
+// commit as the way one reaches a repository.
+func TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace(t *testing.T) {
+	files := workingSkillFiles(t)
+	ref, ok := files["skills/working/reference/periodic-reviews.md"]
+	if !ok {
+		t.Fatal("the working skill has no reference/periodic-reviews.md")
+	}
+	// The cadence's own reading, the report's new place and the fifth rule
+	// are the reference's, where the cadence and the rules are described.
+	for _, want := range []struct{ what, text string }{
+		{"the due signal with its command", "fugaro runs digest --due"},
+		{"the report's place, the project's runs bucket", "project's runs bucket"},
+		{"`--dir` as the write into a checkout", "into a checkout"},
+		{"the commit as a separate opt-in run", "opt-in"},
+		{"the fifth rule's name, where the rules are listed", "cost_per_run_rising"},
+	} {
+		if !strings.Contains(ref, want.text) {
+			t.Errorf("reference/periodic-reviews.md never names %s (%q): a reader who never hears of `--due` cannot tell the cadence lapsed, a reader told the old place looks for a report that is not there, and a report prints five rules", want.what, want.text)
+		}
+	}
+	// SKILL.md is what an agent always reads, so the two sentences a reader
+	// acts on are there as well as in the reference.
+	skill, ok := files["skills/working/SKILL.md"]
+	if !ok {
+		t.Fatal("the working skill has no SKILL.md")
+	}
+	for _, want := range []string{"fugaro runs digest --due", "project's runs bucket", "opt-in"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("skills/working/SKILL.md never says %q: the due signal and where a report lands are the two things the review section is read for", want)
+		}
+	}
+}
+
+// TestSetupSkillNamesTheReviewCadence (R3, D965, F18): the reviews are the
+// user's cadence, and setup is the one moment it is cheapest to decide. The
+// skill prints the three ways to schedule a report -- a cron job or a CI
+// workflow of the repository, an agent routine, and a scheduled report run --
+// each with the command it runs, and writes no schedule itself: a workflow or
+// a crontab Fugaro wrote would commit into a repository it does not own,
+// under the user's identity.
+func TestSetupSkillNamesTheReviewCadence(t *testing.T) {
+	skill := setupFiles(t)["skills/setup/SKILL.md"]
+	for _, want := range []struct{ what, text string }{
+		{"a cron job of the repository", "cron job"},
+		{"a CI workflow of the repository", "CI workflow"},
+		{"an agent routine", "agent routine"},
+		{"a scheduled report run", "report run"},
+		{"the cadence's own command", "fugaro runs digest --period"},
+		{"the report run's recipe and its command", `fugaro run --recipe run-digest "periodic run review"`},
+		{"that the schedule is the user's to write, never the agent's", "without the user's word"},
+	} {
+		if !strings.Contains(skill, want.text) {
+			t.Errorf("skills/setup/SKILL.md never names %s (%q): the user installs the cadence, and the setup skill is where the three ways and the command for each are printed once, writing nothing without the user's word", want.what, want.text)
+		}
+	}
+}
