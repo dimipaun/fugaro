@@ -95,6 +95,28 @@ func AllowedForProjectSecret(secrets map[string]ProjectSecret, name, repo string
 	return ok && p.AllowsData(repo)
 }
 
+// ProjectSecretReaches reports whether repo may use the project-wide copy of a
+// reserved secret at all: name's own entry decides where the file carries one
+// ("absent or empty means nobody" stays true of a list someone wrote), and
+// where it carries none, D2's sweep applies to a name that is in project scope
+// by default, which is every repository.
+//
+// It is the eligibility half of infra.ProjectSecretCandidate's answer — the
+// two legs that do not need an InstallationSpec — spelled once here so a
+// second reader gives the same answer the deployer does. That reader is
+// projectpolicy.DeriveAccounts, which decides which repositories the project's
+// own Anthropic API key may serve on the review path
+// (config.AnthropicKeyAccount): the key rides no mount there (the review-only
+// variant mounts nothing, O1), so the deployer's own gate is never consulted
+// for it, and a policy list that admitted a repository this function refuses
+// would be a reach the operator's key entry does not give.
+func ProjectSecretReaches(secrets map[string]ProjectSecret, name, repo string) bool {
+	if _, listed := secrets[name]; listed {
+		return AllowedForProjectSecret(secrets, name, repo)
+	}
+	return ProjectScopeByDefault(name)
+}
+
 // ProjectScopeByDefault reports whether name is one of the reserved secrets
 // D2 swept into project scope (plan Task 2.1 step 2, design
 // docs/design/project-centric.md §6.3): the names the platform itself mounts,

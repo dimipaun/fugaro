@@ -220,6 +220,20 @@ func initStages(e *initEngine) []initflow.Stage {
 	// from (initRun.writeConfig), so the stage is reachable from there too.
 	e.r.policyStage = e.policy
 	stages = append(stages, e.policy)
+	// The workspace record after the policy one: both are documents a run of
+	// `fugaro update` publishes from the local config, and this one is the
+	// workspace OWNER's — the member list and the cap the workspace's own
+	// service rolls up and admits against (update_workspace.go, D1292). A
+	// member's run of the same command registers the stage and skips it without
+	// opening a database: a member holds no grant on the workspace's project at
+	// all.
+	workspace := newWorkspaceStage(e)
+	// The run's own local-config write drops the read this stage's plan is made
+	// from (initRun.writeConfig), so the stage is reachable from there too: the
+	// write is where a run that first names a budget backend gives this stage a
+	// database to publish the record in.
+	e.r.workspaceStage = workspace
+	stages = append(stages, workspace)
 	// The layer stage after the policy one: the project layer this run would
 	// publish is read under the node the policy stage just moved in place, so a
 	// layer whose claims the older node could not carry is judged by the same

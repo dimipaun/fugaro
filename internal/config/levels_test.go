@@ -115,6 +115,50 @@ func TestResolveLevelsPrecedence(t *testing.T) {
 	if !got.L2.On {
 		t.Errorf("l2 = %+v; want it on: `none` on l3 says nothing about l2", got.L2)
 	}
+
+	// The literal model name `none` is the same setting written the other way
+	// (LevelSetting.Off): the level is skipped, and it resolves to no model at
+	// all rather than to the string none. A block built here rather than read
+	// from a document reaches the resolver unfolded — validate is what folds a
+	// document's copy — so this is the reading that covers both.
+	agent.Levels.L3 = &LevelSetting{Model: NoneModel}
+	got, _, err = ResolveLevels(LevelInputs{
+		Config: &Config{Agent: agent}, Mode: rigor.Critical, Recipe: recipe, CatalogDefault: true,
+	})
+	if err != nil {
+		t.Fatalf("ResolveLevels with l3 model: none: %v", err)
+	}
+	if got.L3 != (ResolvedLevel{}) {
+		t.Errorf("l3 = %+v; want the zero level: `model: none` skips it as `none: true` does, and never resolves the model named none", got.L3)
+	}
+	if !got.L2.On {
+		t.Errorf("l2 = %+v; want it on: `model: none` on l3 says nothing about l2", got.L2)
+	}
+
+	// Level 1's model is the one firstSet reads first, and the same fold holds
+	// there: a task naming level 1's model none skips the level
+	// agent.first_line_review: on would otherwise turn on.
+	agent.Levels.L3 = nil
+	agent.FirstLineReview = FirstLineOn
+	on, _, err := ResolveLevels(LevelInputs{
+		Config: &Config{Agent: agent}, Mode: rigor.Pro, Recipe: recipe, CatalogDefault: true,
+	})
+	if err != nil {
+		t.Fatalf("ResolveLevels with first_line_review: on: %v", err)
+	}
+	if !on.L1.On {
+		t.Fatalf("l1 = %+v; want it on: the case below is about the task turning it off", on.L1)
+	}
+	got, _, err = ResolveLevels(LevelInputs{
+		Config: &Config{Agent: agent}, Mode: rigor.Pro, Recipe: recipe, CatalogDefault: true,
+		Task: &ReviewLevels{L1: &LevelSetting{Model: NoneModel}},
+	})
+	if err != nil {
+		t.Fatalf("ResolveLevels with a task naming l1's model none: %v", err)
+	}
+	if got.L1 != (ResolvedLevel{}) {
+		t.Errorf("l1 = %+v; want the zero level: the task named its model none, which is the level's switch", got.L1)
+	}
 }
 
 // TestResolveLevelsFloorRefusesNone is G1: no layer below the owner's floor
@@ -147,6 +191,28 @@ func TestResolveLevelsFloorRefusesNone(t *testing.T) {
 	_, _, err = ResolveLevels(inputs(ReviewLevels{}, &ReviewLevels{L2: &LevelSetting{Off: true}}))
 	if err == nil {
 		t.Fatal("the task turned l2 off under the owner's floor and ResolveLevels refused nothing")
+	}
+
+	// `model: none` is the same switch written the other way (owner,
+	// 2026-11-07), so a layer that skips the level by naming its model none is
+	// refused exactly as the layer that writes none: true is: the floor is a
+	// floor whichever spelling turns the level off.
+	for _, tc := range []struct {
+		name string
+		in   LevelInputs
+	}{
+		{"the configuration layer", inputs(ReviewLevels{L2: &LevelSetting{Model: NoneModel}}, nil)},
+		{"the task", inputs(ReviewLevels{}, &ReviewLevels{L2: &LevelSetting{Model: NoneModel}})},
+	} {
+		if _, _, err := ResolveLevels(tc.in); err == nil {
+			t.Errorf("%s skipped l2 as `model: none` under the owner's floor and ResolveLevels refused nothing", tc.name)
+		} else {
+			for _, want := range []string{"l2", "pro", "floor"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%s: the refusal %q does not name %q", tc.name, err, want)
+				}
+			}
+		}
 	}
 
 	// No floor, the same `none` is honoured: the refusal above is the
