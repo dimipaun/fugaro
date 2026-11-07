@@ -1925,9 +1925,10 @@ describe('the graph screen and its scope', () => {
     // a pull request drawn as **text** with the console's reason and no URL -- the
     // same rule the plan's cards keep (design §5.1 rule 2).
     //
-    // The text is the source's own id rather than the digits alone: this document
+    // The cell is the source's own id rather than the digits alone: this document
     // has no number field (§6.22), the id is the number "as that source writes
-    // it", and an id is identity, so the screen draws what it was given.
+    // it", and an id is identity, so the screen neither cuts it down nor
+    // reformats it.
     //
     // **And what it was given is the sanitizer's answer, which is the class's and
     // not the screen's.** The field goes through `scopeText` with the class the

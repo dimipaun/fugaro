@@ -665,8 +665,8 @@ export interface ScopeSource {
  *
  * `pullRequest` is the node's id **only** for a pull request, drawn as the text
  * it is and with no destination: this document has no number field of its own, so
- * the id *is* the pull request's number "as that source writes it" (§6.22), which
- * for the coordinator is `acme/widgets#42`.
+ * the document's `id` *is* the pull request's number "as that source writes it"
+ * (§6.22), which the coordinator spells `acme/widgets#42`.
  *
  * **What a reader sees there is the class's answer and not this module's.** The
  * field goes through `scopeText` like every other one, with the class the wire key
