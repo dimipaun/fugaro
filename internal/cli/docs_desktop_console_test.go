@@ -1642,6 +1642,43 @@ func consoleArgvWords(argv string) []string {
 	return out
 }
 
+// consoleOperationCount is §5.1 rule 5's size of the dashboard's surface, read
+// off the document rather than remembered in Go: the word its count sentence
+// spells and the number that word is. Both pins that read it -- the comparison
+// against `CONSOLE_OPERATIONS`'s length below and §5.1's own prose in
+// TestDocsDesktopConsoleDesignLaunchIsTheOnlyRunRow -- take the number from
+// here, so the task that lands an operation moves the sentence and no Go line.
+func consoleOperationCount(t *testing.T, text string) (int, string) {
+	t.Helper()
+	m := regexp.MustCompile(`is ([a-z]+(?:-[a-z]+)?) operations`).FindStringSubmatch(text)
+	if m == nil {
+		t.Fatalf("the document no longer says \"The dashboard's surface is … operations\": §5.1 rule 5 states the surface's size in that sentence, and this file's two pins read it from there")
+	}
+	return consoleSpelledNumber(t, m[1]), m[1]
+}
+
+// consoleSpelledNumber reads a number spelled the way this document spells one:
+// a tens word, or a tens word and a ones word joined by a hyphen. A word outside
+// those is a failure rather than a zero, because the number is compared against
+// the constant and a silent zero would read as a surface of no operations.
+func consoleSpelledNumber(t *testing.T, spelled string) int {
+	t.Helper()
+	tens := map[string]int{"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60}
+	ones := map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
+	if n, ok := tens[spelled]; ok {
+		return n
+	}
+	if parts := strings.Split(spelled, "-"); len(parts) == 2 {
+		high, okHigh := tens[parts[0]]
+		low, okLow := ones[parts[1]]
+		if okHigh && okLow {
+			return high + low
+		}
+	}
+	t.Fatalf("the document spells a count %q, which this test cannot read as a number: the count is compared against the constant's length, so add the word here rather than leaving the comparison to a zero", spelled)
+	return 0
+}
+
 // TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource: §5.1 rule 5's count and
 // §5.1 rule 6's table are the design's two claims about what the console can do,
 // and no test in either job read them against the console's source. The
@@ -1659,7 +1696,15 @@ func consoleArgvWords(argv string) []string {
 //   - **rule 5's count is `CONSOLE_OPERATIONS`'s length.** A count of operations
 //     the constant does not carry is a hole a reader cannot close, so the task
 //     that lands an operation moves rule 5's count with it -- CM4's own move of
-//     this count is why the plan marks it SEC.
+//     this count is why the plan marks it SEC. The count's history is the tasks
+//     that moved it, each with its own entry in the constant: V2.5.1a took the
+//     surface to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull
+//     request read to twenty-seven, console 0.119.0's totals read to
+//     twenty-eight, console 0.119.0's models read to twenty-nine, the
+//     settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and
+//     the graph plan's CG9a to thirty-two; the managed screens' plan's CM4 --
+//     `managed.status` and `policy.show`, whose rule 6 rows CM3 already wrote --
+//     is the next, on thirty-four.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table, so a spawn the
 //     design does not allow is a failure here and not only in the console's copy
@@ -1670,22 +1715,24 @@ func consoleArgvWords(argv string) []string {
 // where rule 6's two managed rows stand until CM4), which is the safe direction
 // for a permission, and the console's own test holds its copy that way.
 //
-// Mutations that prove it: add an entry to `CONSOLE_OPERATIONS` and move rule 5's
-// count with it (green), then put the count back (this test fails naming the
-// constant's length); and add a row to `SPAWN_COMMANDS` whose words no row of
-// the table leads (this test fails naming the operation).
+// Mutations that prove it: add an entry to `CONSOLE_OPERATIONS` and leave rule 5's
+// count alone (this test fails naming the constant's length and the word the
+// design spells); move rule 5's count and leave the constant alone (the same
+// failure, from the other side); and add a row to `SPAWN_COMMANDS` whose words no
+// row of the table leads (this test fails naming the operation). None of the
+// three numbers is remembered in Go: the count is read off the design's sentence
+// and the surface's size off the constant, so the task that lands an operation
+// moves the sentence alone and edits nothing here.
 func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
 	ipc := readDoc(t, consoleIpcPath)
 	spawn := readDoc(t, consoleSpawnPath)
 
-	// The design's own words: §5.1 rule 5's count, and the table's argvs.
+	// The design's own words: §5.1 rule 5's count -- read off its sentence
+	// rather than remembered here -- and the table's argvs.
 	rule := consoleNumberedRule(t, consoleReadmeSection(t, doc, "### 5.1 The hard rules"), 5)
-	const claims = "**The dashboard's surface is thirty-two operations**"
-	if !strings.Contains(rule, claims) {
-		t.Errorf("%s's §5.1 rule 5 no longer says %q. The count is the constant's: it moves in the commit that adds the entries to CONSOLE_OPERATIONS (%s), and the managed screens' plan's CM4 -- the task that lands `managed.status` and `policy.show`, whose rule 6 rows are already on the table -- is the next one", path, claims, consoleIpcPath)
-	}
+	count, spelled := consoleOperationCount(t, rule)
 	var admitted []string
 	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
 		if argv := firstBacktick(cells[0]); argv != "" {
@@ -1712,8 +1759,8 @@ func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 	if len(names) == 0 {
 		t.Fatalf("%s's CONSOLE_OPERATIONS carries no `name: '…'` entry this test could read; the entries' shape moved", consoleIpcPath)
 	}
-	if len(names) != 32 {
-		t.Errorf("%s's CONSOLE_OPERATIONS carries %d operations and %s's §5.1 rule 5 says the surface is thirty-two: the count is the constant's, so the two move together -- and a task that lands an operation without moving the count leaves the design describing a console this tree does not have", consoleIpcPath, len(names), path)
+	if len(names) != count {
+		t.Errorf("%s's CONSOLE_OPERATIONS carries %d operations and %s's §5.1 rule 5 says the surface is %s (%d): the count is the constant's, so the two move together -- and a task that lands an operation without moving the count leaves the design describing a console this tree does not have", consoleIpcPath, len(names), path, spelled, count)
 	}
 
 	rows := consoleSpawnRows(t, spawn)
@@ -9824,9 +9871,13 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is thirty-two operations**") {
-		t.Errorf("%s no longer says the surface is thirty-two operations: rule 5's count is the count of `CONSOLE_OPERATIONS`, and it moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and the graph plan's CG9a to thirty-two). The managed screens' plan designs two more and adds them in its CM4, and TestDocsDesktopConsoleDesignOperationCountIsTheConsoleSurface is where the count is held to the constant itself", path)
-	}
+	// §5.1 rule 5's count sentence, read rather than remembered: the number in it
+	// is held to `CONSOLE_OPERATIONS`'s length by
+	// TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource, which is also where
+	// the history of the count is written down, so a task that lands an operation
+	// moves the sentence and no line here. This call is that sentence's own pin
+	// in §5.1's prose.
+	consoleOperationCount(t, doc)
 
 	var neverRows [][]string
 	for _, cells := range docTableAfter(t, path, doc, "| Never (the \"nothing else\" table) |") {
