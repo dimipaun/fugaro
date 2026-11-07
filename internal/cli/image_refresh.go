@@ -216,10 +216,22 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	if ver == "" {
 		return nil, &refusedAsIs{userErr("fugaro image refresh pins this release's base images through the remote repository, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro update --base-image KIND=<tag>", Version)}
 	}
+	// --repo, resolved before the checkout is looked for: where o.repo is a
+	// path -- or is neither owner/name nor one -- the refusal below would
+	// otherwise name the value as it was typed, and a value that reaches a
+	// --repo may have been meant for another flag. o itself is left alone, so
+	// the rerun line (again) repeats the flag as the caller wrote it.
+	repoFlag := o.repo
+	if repoFlag != "" {
+		var err error
+		if repoFlag, err = repoArg(ctx, repoFlag); err != nil {
+			return nil, err
+		}
+	}
 	if _, err := gitRead(ctx, o.checkoutDir(), "rev-parse", "--show-toplevel"); err != nil {
 		target := "the repository"
-		if o.repo != "" {
-			target = o.repo
+		if repoFlag != "" {
+			target = pluginwire.Printable(repoFlag)
 		}
 		dirName := "this directory"
 		if o.dir != "" {
@@ -235,19 +247,15 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	if err != nil {
 		return nil, err
 	}
-	if o.repo != "" {
-		flag, err := repoArg(ctx, o.repo)
-		if err != nil {
-			return nil, err
-		}
-		want, err := task.CanonicalRepo(flag)
+	if repoFlag != "" {
+		want, err := task.CanonicalRepo(repoFlag)
 		if err != nil {
 			// repoArg answers with owner/name either way, so this is the shape
 			// fold and nothing more; its error doesn't quote its input.
 			return nil, userErr("--repo: %v", err)
 		}
 		if got, err := task.CanonicalRepo(repo); err != nil || got != want {
-			return nil, userErr("--repo %s is not %s's origin (%s): run it in a checkout of %s", pluginwire.Printable(o.repo), o.checkoutName(root), pluginwire.Printable(repo), pluginwire.Printable(o.repo))
+			return nil, userErr("--repo %s is not %s's origin (%s): run it in a checkout of %s", pluginwire.Printable(repoFlag), o.checkoutName(root), pluginwire.Printable(repo), pluginwire.Printable(repoFlag))
 		}
 	}
 	// The gate's own read already selected this installation, and it is the

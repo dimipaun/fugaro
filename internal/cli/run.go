@@ -432,6 +432,17 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	defer env.Close()
 	env.noBudgetCheck = o.noBudgetCheck
 
+	// --repo, resolved once for every launch shape below and written back, so
+	// that a path (`.`, a subdirectory, an absolute one) is the owner/name of
+	// its checkout's origin everywhere the option is read: the review branch,
+	// review-run's findings, and the spec builders (newSpec, prSpec, retrySpec
+	// and reviewSpec each read o.repo for themselves). Not higher, because the
+	// flags above refused the launch before this ever ran, and their sentences
+	// are still the ones a caller gets.
+	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+		return err
+	}
+
 	// --pr's second meaning (design generic-tool §3.6, G12): with an
 	// explicit --recipe naming a mode: review recipe, --pr targets any
 	// open pull request of the repository, not only Fugaro's own, and may
@@ -447,9 +458,6 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 		default:
 			repo := o.repo
-			if repo, err = repoArg(ctx, repo); err != nil {
-				return err
-			}
 			if repo == "" {
 				if repo, err = originRepo(ctx); err != nil {
 					return err
@@ -530,9 +538,6 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// text that differs from it by the findings.
 		if o.reviewRun != "" {
 			repo := o.repo
-			if repo, err = repoArg(ctx, repo); err != nil {
-				return err
-			}
 			if repo == "" {
 				if repo, err = originRepo(ctx); err != nil {
 					return err
