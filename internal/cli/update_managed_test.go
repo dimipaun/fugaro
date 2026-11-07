@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1237,6 +1238,147 @@ func TestUpdateManagedPolicyStageRefusesAnEmptyNode(t *testing.T) {
 	run.gate = &initGate{managed: true}
 	s := &policyMigrateStage{e: &initEngine{r: run}}
 	admitted, err := s.gateStep(context.Background(), &policyMigration{moved: []byte{}})
+	if !admitted {
+		t.Errorf("a step with no document was left to its own confirmation: an empty node would be published")
+	}
+	var ge *initflow.GatedError
+	if !errors.As(err, &ge) {
+		t.Fatalf("the refusal is %v, want the gate's own sentence", err)
+	}
+	if ge.Reason != gateUnreadable {
+		t.Errorf("the refusal reads %q, want %q", ge.Reason, gateUnreadable)
+	}
+	if run.gate.g.judged != nil {
+		t.Errorf("the gate judged a document that does not exist: %+v", *run.gate.g.judged)
+	}
+	for _, rec := range audits(t, r) {
+		t.Errorf("a step that was never judged left a record: %+v", rec)
+	}
+}
+
+// The workspace stage is a stage of the managed gate, like the policy one: its
+// document is the node it publishes (docs/workspaces/spec.md §6 — W2's publish
+// "runs under the gate update already opens"), and in a coding agent's session
+// the run therefore converges here rather than stopping with needs-you. The
+// record is the owner's own table in the local config and the gate's questions
+// are the policy stage's two, so what the mark stands in for is the ordinary
+// y/N and never the owner's word about the group itself.
+func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	// The policy node is a release behind, so that stage's own write is the
+	// migration it admits: this test is about the stage after it, and a first
+	// publish there is the one write a session is never admitted (D854).
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	got := out + errOut
+	if err != nil {
+		t.Fatalf("a managed project's agent session did not publish the workspace node (%v):\n%s", err, got)
+	}
+	if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("the admitted workspace step did not say it proceeded:\n%s", got)
+	}
+	node := wsNode(t, db, initProjectName)
+	if v := wsNumber(t, node["version"]); v != projectpolicy.WorkspaceVersion {
+		t.Errorf("the published workspace is version %d, want %d: the admitted step wrote nothing\n%s", v, projectpolicy.WorkspaceVersion, got)
+	}
+	if got := wsMembers(t, db, initProjectName); !slices.Equal(got, []string{"member-b"}) {
+		t.Errorf("the published members are %v, want [%s]", got, "member-b")
+	}
+	// The record is of the node THIS step wrote and not of another step's
+	// document: the rules the stage answered before the write are what tells
+	// the two records apart, both of which a run under the gate leaves.
+	var workspace []managedmode.AuditRecord
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "the published node is one this binary's own may write over") {
+				workspace = append(workspace, rec)
+			}
+		}
+	}
+	if len(workspace) != 1 {
+		t.Fatalf("%d record(s) say the workspace node was judged, want one: %+v", len(workspace), audits(t, r))
+	}
+	if rec := workspace[0]; rec.Verdict != managedmode.AuditAdmitted {
+		t.Errorf("the workspace node's record reads %q, want an admission", rec.Verdict)
+	}
+}
+
+// And the one write the gate never admits: a publish that puts a project in the
+// group the published node does not carry. The record decides who is in the
+// workspace, so the step is initflow.Typed (D846) and D1026 admits no plan
+// gate's answer for a Typed step, whatever the mark says: the node keeps what
+// it had, nothing is written, and nothing is recorded about it. The session
+// reads the gate's sentence and not the session's own — this step's document
+// WAS admitted by the rules the stage answered, so what refused it is the class
+// and not the fact that a coding agent is running it.
+func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	// The local table declares a member the published node does not carry.
+	r.appendConfig(t, wsOwnerTwoMembers+wsOwnerCap)
+	db.Set(projectpolicy.PathWorkspace(initProjectName), map[string]any{
+		"version": projectpolicy.WorkspaceVersion,
+		"name":    initProjectName,
+		"members": []any{wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b")},
+		"cap":     map[string]any{"monthly_micros": 25_000_000},
+	})
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("a managed project's agent session admitted a member to the workspace:\n%s", got)
+	}
+	head := "[needs you]  " + initflow.Workspace
+	if !strings.Contains(got, head) {
+		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
+	}
+	line := got[strings.Index(got, head):]
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	if !strings.Contains(line, managedmode.NotConverged) {
+		t.Errorf("the workspace step is the user's in a sentence that is not the gate's: %s", line)
+	}
+	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
+	}
+	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the workspace step reads the session's own refusal rather than what about the node the gate would not admit: %s", line)
+	}
+	if got := wsMembers(t, db, initProjectName); !slices.Equal(got, []string{"member-b"}) {
+		t.Errorf("the published members are %v, want [%s]: the refused step wrote the local table", got, "member-b")
+	}
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "the published node is one this binary's own may write over") {
+				t.Errorf("a step the gate never judged left a record: %+v", rec)
+			}
+		}
+	}
+}
+
+// TestUpdateManagedWorkspaceStageRefusesAnEmptyNode is the same guard the policy
+// stage has: a node write with no bytes to write is the stage's contract broken,
+// and it is refused before the gate ever judges it rather than handed to a write
+// (the policy stage's own test, for the second document this command puts in a
+// database).
+func TestUpdateManagedWorkspaceStageRefusesAnEmptyNode(t *testing.T) {
+	r := updateManagedRig(t)
+	run := &initRun{o: &initOptions{door: updateDoor.name}, w: io.Discard, cmd: NewRootCmd()}
+	run.gate = &initGate{managed: true}
+	s := &workspaceStage{e: &initEngine{r: run}}
+	admitted, err := s.gateStep(context.Background(), &workspacePublication{})
 	if !admitted {
 		t.Errorf("a step with no document was left to its own confirmation: an empty node would be published")
 	}

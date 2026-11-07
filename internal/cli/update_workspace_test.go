@@ -210,9 +210,9 @@ func (r *wsUpdateRig) apply(t *testing.T, yes bool) (initflow.Outcome, string, e
 }
 
 // wsNode is the node at workspaces/<name> as the database holds it.
-func wsNode(t *testing.T, p *wsUpdateProject, name string) map[string]any {
+func wsNode(t *testing.T, db *gcpfake.RTDB, name string) map[string]any {
 	t.Helper()
-	v := p.db.Value(projectpolicy.PathWorkspace(name))
+	v := db.Value(projectpolicy.PathWorkspace(name))
 	n, ok := v.(map[string]any)
 	if !ok {
 		t.Fatalf("the node at %s is %T (%v), not an object", projectpolicy.PathWorkspace(name), v, v)
@@ -270,9 +270,9 @@ func wsPublishedMember(project string, repos ...string) map[string]any {
 }
 
 // wsRepos is one member's repositories as the node carries them.
-func wsRepos(t *testing.T, p *wsUpdateProject, name, project string) []string {
+func wsRepos(t *testing.T, db *gcpfake.RTDB, name, project string) []string {
 	t.Helper()
-	raw, ok := wsNode(t, p, name)["members"].([]any)
+	raw, ok := wsNode(t, db, name)["members"].([]any)
 	if !ok {
 		t.Fatalf("the node at %s carries no members list", projectpolicy.PathWorkspace(name))
 	}
@@ -300,11 +300,11 @@ func wsRepos(t *testing.T, p *wsUpdateProject, name, project string) []string {
 }
 
 // wsMembers is the member list the node carries, as `project` names in order.
-func wsMembers(t *testing.T, p *wsUpdateProject, name string) []string {
+func wsMembers(t *testing.T, db *gcpfake.RTDB, name string) []string {
 	t.Helper()
-	raw, ok := wsNode(t, p, name)["members"].([]any)
+	raw, ok := wsNode(t, db, name)["members"].([]any)
 	if !ok {
-		t.Fatalf("the node at %s carries no members list: %v", projectpolicy.PathWorkspace(name), wsNode(t, p, name))
+		t.Fatalf("the node at %s carries no members list: %v", projectpolicy.PathWorkspace(name), wsNode(t, db, name))
 	}
 	out := make([]string, 0, len(raw))
 	for _, m := range raw {
@@ -334,14 +334,14 @@ func TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace(t *testing.
 		if !oc.Changed {
 			t.Errorf("the first publish reports no change: %s", oc.Detail)
 		}
-		n := wsNode(t, h.project(t, "workspace-alpha"), "workspace-alpha")
+		n := wsNode(t, h.project(t, "workspace-alpha").db, "workspace-alpha")
 		if got := wsNumber(t, n["version"]); got != int64(projectpolicy.WorkspaceVersion) {
 			t.Errorf("the published node's version is %v, want %d", n["version"], projectpolicy.WorkspaceVersion)
 		}
 		if n["name"] != "workspace-alpha" {
 			t.Errorf("the published node names %v, want workspace-alpha", n["name"])
 		}
-		if got := wsMembers(t, h.project(t, "workspace-alpha"), "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+		if got := wsMembers(t, h.project(t, "workspace-alpha").db, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
 			t.Errorf("the published members are %v, want [member-b]", got)
 		}
 		// The cap is integer micro-dollars from the record onward (W0): the
@@ -397,7 +397,7 @@ func TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace(t *testing.
 		if !oc.Changed {
 			t.Errorf("the migration reports no change: %s", oc.Detail)
 		}
-		n := wsNode(t, p, "workspace-alpha")
+		n := wsNode(t, p.db, "workspace-alpha")
 		if got := wsNumber(t, n["version"]); got != int64(projectpolicy.WorkspaceVersion) {
 			t.Errorf("the migrated node's version is %v, want %d", n["version"], projectpolicy.WorkspaceVersion)
 		}
@@ -552,7 +552,7 @@ func TestMembershipNeedsBothSides(t *testing.T) {
 	}
 	// Neither half wins: the node this run publishes lists the table's member
 	// and not the config that named the workspace.
-	if got := wsMembers(t, h.project(t, "workspace-alpha"), "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+	if got := wsMembers(t, h.project(t, "workspace-alpha").db, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
 		t.Errorf("the published members are %v, want [member-b]: member-c names the workspace here and no table declares it, and a member is in the workspace only when both halves say so", got)
 	}
 }
@@ -598,10 +598,10 @@ func TestUpdateDiffSaysWhatItRemoves(t *testing.T) {
 	if strings.Contains(out, "nothing is removed") {
 		t.Errorf("the diff says nothing is removed while it removes a member and a repository:\n%s", out)
 	}
-	if got := wsMembers(t, p, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
 		t.Errorf("the published members are %v, want [member-b]: member-c is not in this installation's table any more", got)
 	}
-	if got := wsRepos(t, p, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
+	if got := wsRepos(t, p.db, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
 		t.Errorf("member-b's published repositories are %v, want the two the table declares", got)
 	}
 }
@@ -640,7 +640,7 @@ func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 		if _, out, err := r.apply(t, false); err != nil {
 			t.Fatalf("the typed project name did not publish the record: %v\n%s", err, out)
 		}
-		if cap, ok := wsNode(t, p, "workspace-alpha")["cap"]; ok {
+		if cap, ok := wsNode(t, p.db, "workspace-alpha")["cap"]; ok {
 			t.Errorf("the published node still carries the ceiling the record does not state: %v", cap)
 		}
 	})
@@ -657,9 +657,9 @@ func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("--yes was refused a write that BOUNDS the group: %v\n%s", err, out)
 		}
-		cap, ok := wsNode(t, p, "workspace-alpha")["cap"].(map[string]any)
+		cap, ok := wsNode(t, p.db, "workspace-alpha")["cap"].(map[string]any)
 		if !ok {
-			t.Fatalf("the published node carries no ceiling: %v", wsNode(t, p, "workspace-alpha"))
+			t.Fatalf("the published node carries no ceiling: %v", wsNode(t, p.db, "workspace-alpha"))
 		}
 		if got := wsNumber(t, cap["monthly_micros"]); got != 25_000_000 {
 			t.Errorf("the published ceiling is %v micro-dollars, want 25000000 ($25)", cap["monthly_micros"])
@@ -692,7 +692,7 @@ func TestUpdateAdmittingAMemberTakesTheTypedName(t *testing.T) {
 	if !strings.Contains(err.Error(), "member-d is admitted to the workspace") {
 		t.Errorf("the refusal does not name the member this write admits: %v\n%s", err, out)
 	}
-	if got := wsMembers(t, p, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
 		t.Errorf("the published members are %v, want [member-b]: nothing was confirmed", got)
 	}
 	// The session with no terminal is refused with the same sentence inside the
@@ -710,7 +710,7 @@ func TestUpdateAdmittingAMemberTakesTheTypedName(t *testing.T) {
 	if !oc.Changed {
 		t.Errorf("the admitted publish reports no change: %s", oc.Detail)
 	}
-	if got := wsMembers(t, p, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-d"}) {
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-d"}) {
 		t.Errorf("the published members are %v, want [member-b member-d]", got)
 	}
 }
@@ -748,11 +748,11 @@ func TestUpdateRefusesANodeCarryingAKeyThisFugaroDoesNotKnow(t *testing.T) {
 	if !strings.Contains(err.Error(), "rollup") {
 		t.Errorf("the refusal does not name the key it would drop: %v", err)
 	}
-	after := wsNode(t, p, "workspace-alpha")
+	after := wsNode(t, p.db, "workspace-alpha")
 	if _, still := after["rollup"]; !still {
 		t.Errorf("the refusal wrote the node anyway: %v", after)
 	}
-	if got := wsMembers(t, p, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-c"}) {
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-c"}) {
 		t.Errorf("the refused write changed the published members: %v", got)
 	}
 }
