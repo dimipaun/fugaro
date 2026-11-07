@@ -537,6 +537,18 @@ const MODELS: JSONDoc = {
  * rows are the four the screen's rules are about -- a narrowing the generic path
  * writes, a widening it writes, a key another writer owns, and a sensitive one
  * that is drawn nowhere at all (D1111).
+ *
+ * **This document is what the golden tests photograph, so the committed darwin
+ * pair is a picture of the fixture as it was before C4.** The settings table
+ * draws the rows' own words (`settingsRowLine`: the scope, the value, the layer
+ * that won, the state, the owner), so the pair last recorded in `660baae4`
+ * draws `repo`/`set (project)`/`set (local)`/`default` and the sentence "Fugaro
+ * Mailbox" where these rows draw `project`, `stale 3h`, `ok`, `local` and the
+ * local config's compact JSON. Re-recording is the owner's, on macOS, with the
+ * command in this file's header; the frame is the same pixels on every run, so
+ * that recording is the only thing that clears the comparison. The freshness
+ * clock reads the theme directory and not the documents a spec mounts, so this
+ * staleness reaches the comparison rather than `assertGoldenFresh`.
  */
 const SETTINGS: JSONDoc = JSON.parse(
   readFileSync(join(consoleDir, 'test', 'fixtures', 'settings.json'), 'utf8'),
