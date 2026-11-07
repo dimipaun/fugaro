@@ -657,11 +657,49 @@ type initResult struct {
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
-	r := &initRun{cmd: cmd, o: o, w: cmd.OutOrStdout(), in: bufio.NewReader(cmd.InOrStdin())}
+	r := &initRun{cmd: cmd, o: o}
+	r.w = runWriter{r: r, out: cmd.OutOrStdout()}
 	if o.asJSON {
-		r.w = cmd.ErrOrStderr()
+		r.w = runWriter{r: r, out: cmd.ErrOrStderr()}
 	}
+	r.in = bufio.NewReader(answerReader{r: r, in: cmd.InOrStdin()})
 	return r
+}
+
+// runWriter is the run's own writer (initRun.w): every line a person has
+// to read goes through it. The reporter's line in flight is taken down before
+// its first byte, because a frame drawn on the line a prompt is written on
+// swallows the prompt and the answer typed under it (G1) — and the rule is
+// the same one for every other line the run prints: nothing is drawn over
+// something the person is meant to read.
+type runWriter struct {
+	r   *initRun
+	out io.Writer
+}
+
+func (w runWriter) Write(p []byte) (int, error) {
+	if w.r.rep != nil {
+		w.r.rep.Pause()
+	}
+	return w.out.Write(p)
+}
+
+// answerReader is stdin behind the same rule: the answer to a prompt was
+// typed on a line of its own, and the line in flight comes back the moment it
+// arrives, so a stage that prompts in the middle of its work is still one a
+// person watches to the end. A run with no reporter, and a read that is not a
+// prompt, put back nothing.
+type answerReader struct {
+	r  *initRun
+	in io.Reader
+}
+
+func (a answerReader) Read(p []byte) (int, error) {
+	n, err := a.in.Read(p)
+	if n > 0 && a.r.rep != nil {
+		a.r.rep.Resume()
+	}
+	return n, err
 }
 
 func runInit(r *initRun) error {

@@ -166,28 +166,14 @@ func TestUpdateDefaultOutputIsShort(t *testing.T) {
 		t.Errorf("the default view streamed Terraform's own output:\n%s%s", out, errOut)
 	}
 	lines := reportLines(out)
-	first := -1
-	for i, l := range lines {
-		if stepName(l) != "" {
-			first = i
-			break
-		}
+	if n := len(stepNames(out)); n < 6 {
+		t.Fatalf("the run printed %d steps, want update's own list:\n%s", n, out)
 	}
-	if first < 0 {
-		t.Fatalf("the run printed no step at all:\n%s", out)
-	}
-	account := lines[first:]
-	last := account[len(account)-1]
-	if !strings.HasPrefix(last, "Done in ") || !strings.HasSuffix(last, " steps") {
+	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Done in ") || !strings.HasSuffix(last, " steps") {
 		t.Errorf("the closing line is %q, want the reporter's summary", last)
 	}
 	seen := map[string]bool{}
-	for _, l := range account[:len(account)-1] {
-		name := stepName(l)
-		if name == "" {
-			t.Errorf("the account holds a line that is not a step: %q\n%s", l, out)
-			continue
-		}
+	for _, name := range stepNames(out) {
 		if seen[name] {
 			t.Errorf("%s is reported twice:\n%s", name, out)
 		}
@@ -196,12 +182,9 @@ func TestUpdateDefaultOutputIsShort(t *testing.T) {
 	if !seen["installation"] || !seen["preflight"] {
 		t.Errorf("the account does not name the stages the run ran: %v\n%s", seen, out)
 	}
-	if len(seen) < 6 {
-		t.Errorf("the account is %d stages, want update's own list:\n%s", len(seen), out)
-	}
 	// The rig has something to apply, so the installation's step is a tick
 	// carrying what it did, not a skip or a plan.
-	if l := stepLineOf(account, "installation"); !strings.HasPrefix(l, markDone+" installation ") || !strings.Contains(l, "creates") {
+	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" installation ") || !strings.Contains(l, "creates") {
 		t.Errorf("the stage that applied does not say so: %q\n%s", l, out)
 	}
 	path, log := onlyLog(t, "update")
@@ -546,6 +529,38 @@ func TestConfirmPromptsAreNeverSuppressed(t *testing.T) {
 	if !strings.Contains(out, markDone) {
 		t.Errorf("the run's steps are not the reporter's:\n%s", out)
 	}
+}
+
+// TestTheRunsOwnWriterTakesTheLineInFlightDown: the converge's own writer is
+// where a person's lines go, and the reporter's line in flight is down before
+// the first byte of one — a frame drawn on the line a prompt is written on
+// swallows the prompt and the answer typed under it (G1). The answer puts the
+// line back: a stage that prompts in the middle of its minutes is still a
+// stage somebody is watching, and one is open across every stage (the loop).
+func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	var out bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetIn(strings.NewReader("aurora\n"))
+	run := newInitRun(cmd, &initOptions{})
+	run.rep = report.New(report.Options{Out: &out, Getenv: os.Getenv,
+		IsTerminal: func(io.Writer) bool { return true }})
+	step := run.rep.Step("installation")
+	if _, err := fmt.Fprint(run.w, "Type aurora: "); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.HasSuffix(got, "\r\x1b[KType aurora: ") {
+		t.Errorf("the run's own line was written over the line in flight: %q", got)
+	}
+	if _, err := run.in.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.HasSuffix(got, "installation") {
+		t.Errorf("the answer did not put the line in flight back: %q", got)
+	}
+	step.Done("")
 }
 
 // stepNames is the stages a run's steps name, in the order the account gives
