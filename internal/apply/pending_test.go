@@ -222,7 +222,9 @@ func TestPendingFileVersioned(t *testing.T) {
 	}
 
 	p := EmptyPending()
-	p.LastApply = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	// The stamp is the caller's: a placeholder here, and nothing in this
+	// package reads or compares it (D1575).
+	p.LastApply = "sha256:0"
 	p.Add(PendingStep{
 		Step:       CatalogBuild,
 		Project:    "workspace-a",
