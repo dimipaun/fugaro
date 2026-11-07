@@ -208,7 +208,7 @@ func TestBudgetSetDefaultIsShort(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	reported(t, out, nodeCG)
-	if !strings.Contains(out, "daily $60") {
+	if !strings.Contains(stepLineOf(reportLines(out), nodeCG), "$60") {
 		t.Errorf("the step does not carry the value that was written:\n%s", out)
 	}
 }

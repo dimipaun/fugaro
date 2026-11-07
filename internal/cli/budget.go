@@ -1286,6 +1286,13 @@ func namedRepo(ctx context.Context, repo string) (string, error) {
 
 func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	ctx := cmd.Context()
+	rep, sink := reporterFor(cmd, "budget-set", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	// The run's closing line, on every way out of it: a step's own line is the
+	// account and the summary is what says how the run ended (G3).
+	defer rep.Summary()
 	p, err := parsePlan(cmd, o)
 	if err != nil {
 		return err
@@ -1326,7 +1333,7 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 			changed = changed || !e.noop
 		}
 		if !changed {
-			fmt.Fprintln(out, "nothing changed")
+			rep.Step("budget").Skipped("nothing changed")
 			return nil
 		}
 		if raise {
@@ -1358,11 +1365,15 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 				if len(written) > 0 {
 					err = fmt.Errorf("%w\nthe update was only partly applied. written: %s; not written: %s", err, strings.Join(written, ", "), strings.Join(pending, ", "))
 				}
+				// The node's own step, so the failure names which write it was
+				// (G8): a partly applied budget is read off the screen, not
+				// inferred from the paths in the sentence under it.
+				rep.Step(e.path).Failed(err, nil)
 				return err
 			}
 			written = append(written, e.path)
 			pending = pending[1:]
-			fmt.Fprintf(out, "set %s\n", e.path)
+			rep.Step(e.path).Done(oneLine(strings.Join(e.lines, "; ")))
 		}
 		if !stale {
 			return nil
@@ -1413,8 +1424,23 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	return cmd
 }
 
+// budgetKillLogName is the name kill and resume file their logs under: one
+// builder is two commands, and the log is filed under the name a person types
+// (CL3's rule is the command's own name).
+func budgetKillLogName(kill bool) string {
+	if kill {
+		return "budget-kill"
+	}
+	return "budget-resume"
+}
+
 func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	ctx := cmd.Context()
+	rep, sink := reporterFor(cmd, budgetKillLogName(kill), nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	// The flag's presence names the scope, not the string it carries: a bare
 	// --repo is a scope with an empty value (see parsePlan).
 	if o.all == cmd.Flags().Changed("repo") {
@@ -1475,18 +1501,23 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		return err
 	}
 	cur := res.Previous
+	// One step for the switch this run moved, in one state or the other: the
+	// scope is the step's own name, so a killed project and a resumed
+	// repository read the same way (G3's three outcomes, and "already killed"
+	// is a skip rather than a tick).
+	s := rep.Step(what)
 	if res.Already {
 		if kill {
-			fmt.Fprintf(out, "%s is already killed (by %s at %s: %s); nothing changed\n", what, oneLine(cur.By), ms(cur.At), oneLine(cur.Reason))
+			s.Skipped(fmt.Sprintf("is already killed (by %s at %s: %s); nothing changed", oneLine(cur.By), ms(cur.At), oneLine(cur.Reason)))
 		} else {
-			fmt.Fprintf(out, "%s is not killed; nothing changed\n", what)
+			s.Skipped("is not killed; nothing changed")
 		}
 		return nil
 	}
 	if kill {
-		fmt.Fprintf(out, "killed %s (by %s). Running runs halt within seconds; undo with fugaro budget resume\n", what, oneLine(me))
+		s.Done(fmt.Sprintf("killed (by %s). Running runs halt within seconds; undo with fugaro budget resume", oneLine(me)))
 	} else {
-		fmt.Fprintf(out, "resumed %s (by %s)\n", what, oneLine(me))
+		s.Done(fmt.Sprintf("resumed (by %s)", oneLine(me)))
 		if !o.all {
 			var g budget.Kill
 			if _, err := db.Get(ctx, budget.PathKillGlobal, &g); err == nil && g.On {
