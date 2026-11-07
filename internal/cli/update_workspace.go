@@ -544,9 +544,13 @@ func (workspaceStage) Left() initflow.Left {
 // pointed at is not the database the old read was made in, and the client in
 // that read is not the one the node lives in (forget).
 func (s *workspaceStage) plan(ctx context.Context) (*workspacePublication, error) {
+	rec, err := workspaceConfigState(s.e.lc)
+	if err != nil || rec == nil {
+		return nil, err
+	}
 	if !s.planned {
 		s.planned = true
-		s.p, s.err = workspacePublicationFor(ctx, s.e.lc)
+		s.p, s.err = workspacePublicationRead(ctx, s.e.lc, rec)
 	}
 	return s.p, s.err
 }
@@ -579,7 +583,6 @@ func workspaceSkip(err error) (string, bool) {
 // document this Fugaro cannot read is not something the operator finishes by
 // hand, and the message says which of the two it is.
 func (s *workspaceStage) Check(ctx context.Context) (initflow.Status, error) {
-	fmt.Fprintf(os.Stderr, "PROBE check: budget-named=%v planned=%v\n", s.e.lc.Budget != nil && s.e.lc.Budget.RTDBURL != "", s.planned)
 	p, err := s.plan(ctx)
 	if reason, skip := workspaceSkip(err); skip {
 		return initflow.Status{State: initflow.Skipped, Detail: reason}, nil
