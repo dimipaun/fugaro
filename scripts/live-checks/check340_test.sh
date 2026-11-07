@@ -141,6 +141,37 @@ done
 list_clause() { printf '%s' "$1" | sed -n 's/.*objectListPrefix[^"]*startsWith("\([^"]*\)").*/\1/p'; }
 read_clause() { printf '%s' "$1" | sed -n 's/.*resource\.name\.startsWith("\([^"]*\)").*/\1/p'; }
 
+# bindings_in_force: the bindings the bucket acts on. FAKE340_REMOVE_LATE=N
+# models IAM's asynchronous REMOVAL (the same V5 the check's grant retry is
+# about): a removed binding is still enforced while $dir/pending-ttl, decremented
+# once per request of the account's, is above zero. Without the knob a removal
+# takes effect at once, which is the fake applying the bucket's own semantics
+# instantly and not what a real bucket does.
+bindings_in_force() {
+  if [ -f "$dir/bindings" ]; then cat "$dir/bindings"; fi
+  if [ -f "$dir/pending-ttl" ] && [ "$(cat "$dir/pending-ttl" 2>/dev/null || echo 0)" -gt 0 ]; then
+    cat "$dir/pending" 2>/dev/null || true
+  fi
+}
+tick_pending() {
+  local left
+  [ -f "$dir/pending-ttl" ] || return 0
+  left=$(cat "$dir/pending-ttl" 2>/dev/null || echo 0)
+  left=$((left - 1))
+  if [ "$left" -le 0 ]; then
+    rm -f "$dir/pending-ttl" "$dir/pending"
+    return 0
+  fi
+  printf '%s\n' "$left" >"$dir/pending-ttl"
+}
+# readback_denied: a read-back that cannot be READ — the operator's own identity
+# lost the permission, or the call did not come back. FAKE340_READBACK_DENIED
+# turns every owner-identity read-back into an error, but only once something of
+# the run's has been removed, so the guards and the criteria above are unaffected.
+readback_denied() {
+  [ -n "${FAKE340_READBACK_DENIED:-}" ] && [ -f "$dir/removed" ]
+}
+
 allowed_list() { # ATTR
   local attr=$1 bmember brole bexpr btitle candidate
   while IFS=$'\t' read -r bmember brole bexpr btitle; do
@@ -148,7 +179,7 @@ allowed_list() { # ATTR
     candidate=$(list_clause "$bexpr")
     [ -n "$candidate" ] || continue
     case "$attr" in "$candidate"*) return 0 ;; esac
-  done <"$dir/bindings"
+  done < <(bindings_in_force)
   return 1
 }
 allowed_read() { # OBJECT
@@ -158,7 +189,7 @@ allowed_read() { # OBJECT
     candidate=$(read_clause "$bexpr")
     [ -n "$candidate" ] || continue
     case "$object" in "$candidate"*) return 0 ;; esac
-  done <"$dir/bindings"
+  done < <(bindings_in_force)
   return 1
 }
 
@@ -192,13 +223,16 @@ storage)
       fi
     fi
     if [ -n "$impersonate" ]; then
+      tick_pending
       # FAKE340_ROOT_OK and FAKE340_WIDE are the two ways a grant can be wider
       # than R12's: the first lets the root listing through alone, the second
       # lets the account list anywhere, which is what an unconditioned binding
-      # would do.
+      # would do. WIDE reaches only while the account holds a binding at all: it
+      # is a binding of this run's that is wider than R12's, and a removed one
+      # grants nothing.
       if [ -z "$prefix" ] && [ -n "${FAKE340_ROOT_OK:-}" ]; then
         :
-      elif [ -n "${FAKE340_WIDE:-}" ]; then
+      elif [ -n "${FAKE340_WIDE:-}" ] && [ -s "$dir/bindings" ]; then
         :
       else
         case "$(cat "$dir/form" 2>/dev/null || echo none)" in
@@ -208,7 +242,7 @@ storage)
         esac
         allowed_list "$attr" || deny storage.objects.list
       fi
-    elif [ -n "${FAKE340_UNREACHABLE:-}" ]; then
+    elif [ -n "${FAKE340_UNREACHABLE:-}" ] || readback_denied; then
       deny storage.objects.list
     fi
     found=0
@@ -327,12 +361,22 @@ storage)
       : >"$tmp"
       while IFS=$'\t' read -r bmember brole bexpr btitle; do
         [ -n "$bmember" ] || continue
-        if [ "$bmember" = "$member" ] && [ "$brole" = "$role" ]; then continue; fi
+        if [ "$bmember" = "$member" ] && [ "$brole" = "$role" ]; then
+          : >"$dir/removed"
+          if [ -n "${FAKE340_REMOVE_LATE:-}" ]; then
+            printf '%s\t%s\t%s\t%s\n' "$bmember" "$brole" "$bexpr" "$btitle" >>"$dir/pending"
+            printf '%s\n' "$FAKE340_REMOVE_LATE" >"$dir/pending-ttl"
+          fi
+          continue
+        fi
         printf '%s\t%s\t%s\t%s\n' "$bmember" "$brole" "$bexpr" "$btitle" >>"$tmp"
       done <"$dir/bindings"
       mv "$tmp" "$dir/bindings"
       ;;
     get-iam-policy)
+      if readback_denied; then
+        deny storage.buckets.getIamPolicy
+      fi
       printf 'bindings:\n'
       while IFS=$'\t' read -r bmember brole bexpr btitle; do
         [ -n "$bmember" ] || continue
@@ -363,6 +407,9 @@ iam)
       ;;
     describe)
       id=${email%%@*}
+      if readback_denied; then
+        deny iam.serviceAccounts.get
+      fi
       if [ -n "${FAKE340_SA_EXISTS:-}" ] || [ -f "$dir/accounts/$id" ]; then
         printf 'displayName: Check 340 throwaway\nemail: %s\n' "$email"
       else
@@ -625,7 +672,8 @@ test_a_restore_that_could_not_delete_is_a_fail() {
   expect_contains "$out" "FACT relative-lists-runs: PASS — " "stuck Restore: the form itself passed"
   expect_contains "$out" "FACT list-prefix: PASS — " "stuck Restore: and the answer was reached"
   expect_contains "$out" "FACT restore: FAIL — " "stuck Restore: the Restore row fails"
-  expect_contains "$out" "could not delete" "stuck Restore: the row says what is still there"
+  expect_contains "$out" "Still there:" "stuck Restore: the row says what is still there"
+  expect_absent "$out" "Not readable" "stuck Restore: and nothing is recorded as unreadable, because every read-back answered"
   expect_contains "$out" "CHECK 340 RESULT END (exit 1)" "stuck Restore: the block does not read as a pass"
   [ -n "$(find "$dir/state/objects" -type f)" ] || fail "stuck Restore: the case did not leave the seeded objects behind"
   expect_contains "$out" "the slug " "stuck Restore: the row names what to delete by hand"
@@ -854,6 +902,95 @@ test_a_refusal_of_another_kind_is_flagged() {
   expect_bucket_clean "another permission"
 }
 
+# A removal that takes effect LATE, between the two forms. A grant propagates
+# asynchronously and so does its removal, and both forms speak for the same
+# throwaway account: if the relative form failed for a reason of its own while
+# its binding was still in force, the full-path form would list and read through
+# the EARLIER clause, pass, and be answered as the form the attribute carries —
+# the one answer this check must never produce. The fake keeps a removed binding
+# in force for a few requests (FAKE340_REMOVE_LATE) and refuses every read
+# (FAKE340_FLAKY_READ), so the relative form fails on its read and the second
+# form is reached — which is the situation the wait exists for. What the run
+# settles here is not the point; what it does NOT settle is.
+test_the_second_form_waits_for_the_first_bindings_to_be_gone() {
+  setup_case lagging-removal relative
+  PROPAGATION=2
+  RUN340_ENV=(FAKE340_FLAKY_READ=999 FAKE340_REMOVE_LATE=3)
+  run340_default
+  expect_status "$status" 1 "lagging removal"
+  expect_contains "$out" "FACT relative-reads-runs: FAIL — " "lagging removal: the relative form failed on its read"
+  expect_absent "$out" "the FULL PATH form passed" "lagging removal: the second form is not answered through the first form's clause"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE: projects/_/buckets/" "lagging removal: and the full path is not printed as the answer"
+  expect_contains "$out" "FACT full-lists-runs: FAIL — " "lagging removal: the second form really was tried, and refused"
+  # The read-back the wait is made of: at least one listing as the account, of
+  # the prefix the first form's clause covered, sits between the first removal
+  # and the second form's grant. Without the wait there is nothing between them,
+  # and the second form's listing is answered by the binding the bucket had not
+  # taken off yet.
+  between=$(awk '/remove-iam-policy-binding/ {seen=1; next} /add-iam-policy-binding/ {if (seen) exit} seen' "$dir/state/calls")
+  expect_contains "$between" "storage ls" "lagging removal: the second form waits for the removal to take effect"
+  expect_contains "$between" "--impersonate-service-account" "lagging removal: and reads that as the account and not as the owner"
+  expect_bucket_clean "lagging removal"
+}
+
+# The same wait, with a bucket that never gets there: the removal is still in
+# force when the window closes, so the second form is never granted and the run
+# stops as could-not-tell. A verdict here would be an answer about the attribute
+# drawn from a bucket that has not finished applying a removal.
+test_a_removal_that_never_takes_effect_stops() {
+  setup_case removal-stuck relative
+  PROPAGATION=1
+  RUN340_ENV=(FAKE340_FLAKY_READ=999 FAKE340_REMOVE_LATE=999)
+  run340_default
+  expect_status "$status" 2 "stuck removal"
+  expect_contains "$out" "FACT aborted: FAIL — " "stuck removal: the abort is recorded"
+  expect_contains "$out" "still in effect" "stuck removal: the row names what was still in effect"
+  expect_contains "$out" "the next form would list and read through the EARLIER clause" "stuck removal: and why that is not an answer"
+  expect_contains "$out" "FACT full-lists-runs: FAIL — not reached" "stuck removal: the second form was never tried"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "stuck removal: and no form is answered"
+  expect_contains "$out" "FACT restore: PASS — " "stuck removal: what the run did make was still torn down"
+  expect_bucket_clean "stuck removal"
+}
+
+# A Restore that cannot READ what it deleted must not read as a pass. The
+# listing, the bucket policy and the account are read back to make the PASS row
+# a reading rather than a claim, and an error from any of them — a 403, a dropped
+# call — says this run cannot tell, not that the thing is gone. The fake denies
+# exactly those reads, and only once something of the run's has been removed,
+# which is when the policy read-back matters most.
+test_a_restore_that_cannot_read_back_does_not_pass() {
+  setup_case readback-denied relative
+  RUN340_ENV=(FAKE340_READBACK_DENIED=yes)
+  run340_default
+  expect_status "$status" 1 "unreadable Restore"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "unreadable Restore: the form itself passed"
+  expect_contains "$out" "FACT list-prefix: PASS — " "unreadable Restore: and the answer was reached"
+  expect_contains "$out" "FACT restore: FAIL — " "unreadable Restore: the Restore row fails"
+  expect_contains "$out" "Not readable, so not confirmed:" "unreadable Restore: the row says what could not be read back"
+  expect_contains "$out" "the listing could not be read back" "unreadable Restore: the four prefixes are named"
+  expect_contains "$out" "could not be read back to check" "unreadable Restore: and so is the account read-back"
+  expect_absent "$out" "were read back: the policy no longer names the account" "unreadable Restore: the pass sentence is not printed on reads that did not answer"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 1)" "unreadable Restore: the block does not read as a pass"
+  expect_bucket_clean "unreadable Restore"
+}
+
+# The policy read-back is the one the PASS row makes a claim about ("The bucket
+# policy no longer names the account"), so a policy that cannot be READ must not
+# be read as one that does not name it. Here the bucket refused the removal
+# between the two forms — which is what leaves the Restore's own remove and its
+# read-back to do the work — and then refuses to be read back.
+test_a_restore_that_cannot_read_the_policy_does_not_pass() {
+  setup_case policy-readback-denied relative
+  RUN340_ENV=(FAKE340_REMOVE_REFUSED=once FAKE340_READBACK_DENIED=yes)
+  run340_default
+  expect_status "$status" 2 "unreadable policy"
+  expect_contains "$out" "FACT restore: FAIL — " "unreadable policy: the Restore row fails"
+  expect_contains "$out" "the bucket policy (it could not be read" "unreadable policy: the policy read-back is named"
+  expect_absent "$out" "the policy no longer names the account" "unreadable policy: the pass sentence is not printed on a policy nothing read"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 2)" "unreadable policy: the aborted run does not read as a pass"
+  expect_bucket_clean "unreadable policy"
+}
+
 # A removal the bucket refuses, between the two forms: the previous form's
 # conditioned binding is still on the bucket, so the full-path attempt would list
 # through the RELATIVE clause and the check would answer the wrong form. It stops
@@ -921,6 +1058,10 @@ t test_neither_form_listing_is_a_fail
 t test_a_grant_wider_than_the_two_prefixes_is_a_fail
 t test_a_root_listing_that_is_allowed_is_a_fail
 t test_a_restore_that_could_not_delete_is_a_fail
+t test_a_restore_that_cannot_read_back_does_not_pass
+t test_a_restore_that_cannot_read_the_policy_does_not_pass
+t test_the_second_form_waits_for_the_first_bindings_to_be_gone
+t test_a_removal_that_never_takes_effect_stops
 t test_a_grant_that_arrives_late_is_not_a_refusal
 t test_a_read_that_arrives_late_is_not_a_refusal
 t test_refusals_are_not_read_when_nothing_held

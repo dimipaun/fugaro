@@ -11348,7 +11348,14 @@ third thing again: the run stops there, with exit `2` and an `aborted` row namin
 permission error as "this form does not list". A refused removal has to stop the run all the same — the previous
 form's conditioned binding is still on the bucket, so the next form would list through the **earlier** clause and the
 answer would name the wrong form — and the flag that says a binding of this run's is on the bucket stays set, so the
-Restore tries the removal again and reads the bucket policy back into its own row either way.
+Restore tries the removal again and reads the bucket policy back into its own row either way. A removal that
+**succeeds** is not yet a removal that has **taken effect**: IAM propagates a removal asynchronously too, and both
+forms speak for the same throwaway account, so if the relative form failed for a reason of its own — a criterion
+read past its 150-second window — the full-path form would list and read through the still-active relative clause
+and be answered as the form the attribute carries. The second form is therefore not granted until the account is
+**refused** the listing the first form allowed, read as the account's own reach and not yours; a bucket that has not
+got there within the same 150-second window stops the run with exit `2`, because that is a could-not-tell and not an
+answer.
 
 **Reading the `CHECK 340 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
 `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry
@@ -11358,8 +11365,8 @@ prints the exact string R12's builder must write, above the block in one line to
 form listed, which is the reading that stops the plan (E4). The bucket-wide `objectViewer` a listing would otherwise
 need is deliberately **not** a fallback here, because it reads `tokens/` and `cache/` too. Exit `0` means a form
 passed every criterion, `1` means none did, and `2` means the run could not tell (a guard stopped it, a tool is
-missing, an internal error ended it) — `2` is not an answer about the attribute, and the block's `aborted` row says
-so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
+missing, a grant or a removal the bucket refused, a removal that had not taken effect in time, an internal error
+ended it) — `2` is not an answer about the attribute, and the block's `aborted` row says so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
 
 **Cost.** Nothing billable and no model call: one throwaway service account, two bucket bindings, one impersonation
 grant of yours on that account alone, and four small objects. It never prints a credential, holds none, and the
@@ -11369,9 +11376,12 @@ grant of yours on that account alone, and four small objects. It never prints a 
 nothing behind: the four slug prefixes are removed, both bucket bindings go with `remove-iam-policy-binding --all`
 (no condition named, so it does not matter which form was granted when the run stopped), your impersonation grant
 goes, and the account is deleted — bindings first, because a deleted account's members read
-`deleted:serviceAccount:…` and the removes then fail. It reads all four prefixes and the account back afterwards
-and says what it found: anything that did not go is a FAILed `restore` row that names the slug and the account to
-delete by hand, never a silent pass.
+`deleted:serviceAccount:…` and the removes then fail. It reads all four prefixes, the bucket policy and the account
+back afterwards and says what it found: anything that did not go is a FAILed `restore` row that names the slug and
+the account to delete by hand, never a silent pass. A read-back that cannot be **read** — a refused listing, a
+policy the operator's identity may no longer read, a dropped call — is a FAILed row too, naming what could not be
+confirmed: only the empty listing and the account's own NOT_FOUND count as gone, because an error read as
+"deleted" is the same silent pass from the other side.
 
 **Paste back:** the whole block into row 340 above and to the coordinator, with the `list-prefix` row's string —
 that string is the `<list prefix>` R12's builder writes into the two listing clauses, and it is the only thing

@@ -27,7 +27,12 @@
 # A grant the bucket refuses is NOT a form that does not list: the run stops with
 # exit 2 and an `aborted` row rather than reading a permission error as the
 # attribute's own answer, because every reading under a grant that never landed
-# would be a refusal for a reason that has nothing to do with the clause.
+# would be a refusal for a reason that has nothing to do with the clause. A
+# removal the bucket refuses, and a removal that has not TAKEN EFFECT yet between
+# the two forms, stop it the same way: both forms speak for the same throwaway
+# account, so the full-path form granted while the relative binding is still in
+# force would list and read through the earlier clause and be answered as the
+# form the attribute carries — the one answer this check must never produce.
 #
 # The register's row and section are docs/gcp-live-checklist.md, "Check 340".
 #
@@ -66,15 +71,17 @@
 #             stopped), your impersonation grant goes, and the service account is
 #             deleted — bindings first, because after the account is deleted its
 #             members read `deleted:serviceAccount:…` and the removes fail. The
-#             Restore reads all four prefixes and the account back afterwards and
-#             says what it found; anything that did not go is a FAILed row, not a
+#             Restore reads all four prefixes, the bucket policy and the account
+#             back afterwards and says what it found; anything that did not go,
+#             and anything it could not read back at all, is a FAILed row, not a
 #             silent pass. The scratch directory is removed with the run.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 340 RESULT,
 #             and one line above it naming the `<list prefix>` R12 must use, to
 #             copy back to the coordinator. Exit 0 when a form passed every
 #             criterion, 1 when none did, 2 when the run could not tell (a guard
-#             stopped it, a grant or a removal the bucket refused, a tool is
-#             missing, an internal error ended it).
+#             stopped it, a grant or a removal the bucket refused, a removal
+#             that had not taken effect in time, a tool is missing, an internal
+#             error ended it).
 #
 # No credential is handled anywhere in it: the account this check creates holds
 # no key and is granted nothing outside the bucket's two prefixes, every read is
@@ -255,17 +262,23 @@ restore_run() {
     return 0
   fi
   say "Restore: deleting what this check created"
-  local bad=""
+  local bad="" unknown="" out="" prefix
   # 1. The four seeded prefixes. `rm -r` names this run's own slug, so no other
   #    repository's or run's objects are ever in its path.
   if [ "$SEEDED" = yes ]; then
     gcloud storage rm -r --project="$P" \
       "gs://$B/runs/$SLUG/" "gs://$B/reports/$SLUG/" \
       "gs://$B/tokens/$SLUG/" "gs://$B/cache/$SLUG/" >&2 || true
-    local prefix
     for prefix in "runs/$SLUG/" "reports/$SLUG/" "tokens/$SLUG/" "cache/$SLUG/"; do
-      if gcloud storage ls --recursive --project="$P" "gs://$B/$prefix" >/dev/null 2>&1; then
+      # Only the empty listing counts as gone. Any other error is recorded as
+      # not-read rather than as deleted: a 403, a dropped connection or a
+      # refused read tells this run nothing about the objects, and reading it as
+      # "gone" would print a PASS on the teardown of a bucket that may still
+      # hold them.
+      if out=$(gcloud storage ls --recursive --project="$P" "gs://$B/$prefix" 2>&1); then
         bad="$bad $prefix"
+      elif ! printf '%s' "$out" | grep -qiE 'matched no objects|not found|404'; then
+        unknown="$unknown $prefix (the listing could not be read back: $(first_line "$out"))"
       fi
     done
   fi
@@ -277,9 +290,16 @@ restore_run() {
       gcloud storage buckets remove-iam-policy-binding "gs://$B" --project="$P" \
         --member="serviceAccount:$SA_EMAIL" --role="$role" --all >&2 || true
     done
-    if gcloud storage buckets get-iam-policy "gs://$B" --project="$P" 2>/dev/null |
-      grep -q "$SA_EMAIL"; then
-      bad="$bad the run's own bucket bindings"
+    # The policy is read into a variable rather than piped into `grep`: a pipe
+    # would make a refused or unreadable policy indistinguishable from one that
+    # does not name the account, and the PASS row below asserts the account is
+    # not in it.
+    if out=$(gcloud storage buckets get-iam-policy "gs://$B" --project="$P" 2>&1); then
+      if printf '%s' "$out" | grep -q "$SA_EMAIL"; then
+        bad="$bad the run's own bucket bindings"
+      fi
+    else
+      unknown="$unknown the bucket policy (it could not be read to check for them: $(first_line "$out"))"
     fi
   fi
   # 3. Your impersonation grant, then the account itself.
@@ -289,15 +309,19 @@ restore_run() {
   fi
   if [ "$ACCOUNT_MADE" = yes ]; then
     gcloud iam service-accounts delete "$SA_EMAIL" --project="$P" --quiet >&2 || true
-    if gcloud iam service-accounts describe "$SA_EMAIL" --project="$P" >/dev/null 2>&1; then
+    # NOT_FOUND is the delete having worked; anything else is this run not being
+    # able to tell, and not-telling is recorded as a FAIL, never as gone.
+    if out=$(gcloud iam service-accounts describe "$SA_EMAIL" --project="$P" 2>&1); then
       bad="$bad the service account $SA_EMAIL"
+    elif ! printf '%s' "$out" | grep -qiE 'not found|404'; then
+      unknown="$unknown the service account $SA_EMAIL (it could not be read back to check: $(first_line "$out"))"
     fi
   fi
-  if [ -n "$bad" ]; then
-    fact restore FAIL "this check's Restore could not delete:$bad. Delete it by hand before running any other check on this bucket: the four seeded prefixes are under the slug $SLUG, and the account is $SA_EMAIL, holding a conditioned objectViewer on runs/ and a conditioned objectUser on reports/. Whatever is not named here was deleted"
+  if [ -n "$bad" ] || [ -n "$unknown" ]; then
+    fact restore FAIL "this check's Restore could not confirm that it deleted everything.${bad:+ Still there:$bad.}${unknown:+ Not readable, so not confirmed:$unknown.} Do this by hand before running any other check on this bucket: the four seeded prefixes are under the slug $SLUG, and the account is $SA_EMAIL, holding a conditioned objectViewer on runs/ and a conditioned objectUser on reports/. Whatever is not named here was deleted"
     return 0
   fi
-  fact restore PASS "this check's own four prefixes (runs/$SLUG/, reports/$SLUG/, tokens/$SLUG/, cache/$SLUG/), its two conditioned bindings and its service account $SA_EMAIL are gone, and all four prefixes and the account were read back. The bucket policy no longer names the account"
+  fact restore PASS "this check's own four prefixes (runs/$SLUG/, reports/$SLUG/, tokens/$SLUG/, cache/$SLUG/), its two conditioned bindings and its service account $SA_EMAIL are gone, and all four prefixes, the bucket policy and the account were read back: the policy no longer names the account"
 }
 
 # ------------------------------------------------------------------ the guards
@@ -405,15 +429,14 @@ grant_bindings() {
   fi
 }
 
-# remove_bindings: both of them, and whichever condition they carry. The next
-# form starts from a bucket policy that holds neither, so a reading under it
-# cannot be a leftover of the attempt before — and that is why a REFUSED removal
-# is a stop and not a `|| true`: with the previous form's conditioned binding
-# still on the bucket, the next form would list through the EARLIER clause, read
-# as a pass, and this check would answer the wrong form with no row saying a
-# teardown had failed. It stops as could-not-tell and leaves BINDINGS_GRANTED
-# set, so the trap's Restore retries and reads the bucket policy back into its
-# own FAIL row.
+# remove_bindings: both of them, and whichever condition they carry. A REFUSED
+# removal is a stop and not a `|| true`: a binding still on the bucket is a grant
+# the next form would list through, and this check would answer the wrong form
+# with no row saying a teardown had failed. It stops as could-not-tell and leaves
+# BINDINGS_GRANTED set, so the trap's Restore retries and reads the bucket policy
+# back into its own FAIL row. A removal that SUCCEEDS is not the same thing as a
+# removal that has taken effect — wait_for_removal, below, is what holds the next
+# form back until it has.
 remove_bindings() {
   local role
   for role in roles/storage.objectViewer roles/storage.objectUser; do
@@ -483,6 +506,31 @@ poll_read() {
     fi
     LAST_ERROR=$(cat "$err" 2>/dev/null || true)
     if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
+# wait_for_removal: hold the second form back until the first form's bindings are
+# really gone. A grant propagates asynchronously (§11 V5) and so does its
+# REMOVAL, and both forms speak for the same throwaway account: between the
+# remove and the bucket catching up, the previous form's clauses are still in
+# force. The relative form can fail for a reason that has nothing to do with the
+# attribute — a criterion read past its ${PROPAGATION_SECONDS}s window — and then
+# the full-path form would list and read through the STILL-ACTIVE relative
+# clause, pass, and be answered as the form the attribute carries. That is the
+# one answer this check must never produce, so the next form is not granted until
+# this account is REFUSED the listing the previous form allowed: a refusal is the
+# reading that says no binding of this run's is left. A bucket that never gets
+# there is a stop (exit 2), never a verdict — the same rule a grant that never
+# arrives follows.
+wait_for_removal() {
+  local deadline
+  deadline=$((SECONDS + PROPAGATION_SECONDS))
+  while :; do
+    if ! list_as_sa "gs://$B/runs/$SLUG/" >/dev/null 2>&1; then return 0; fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      stop "the bindings the form just tried are still in effect ${PROPAGATION_SECONDS}s after the bucket accepted their removal: the bucket still lists runs/$SLUG/ to the throwaway account, so the next form would list and read through the EARLIER clause and this check would answer the wrong form. Nothing was measured under the next form; wait for the removal to propagate and run the check again"
+    fi
     sleep "$POLL_SECONDS"
   done
 }
@@ -668,6 +716,11 @@ step_forms() {
     passed=relative
     not_tried full
   else
+    # The relative form's bindings were removed at the end of try_form, and a
+    # removal propagates like a grant: the second form is granted only once this
+    # account is refused the listing the first form allowed. See
+    # wait_for_removal.
+    wait_for_removal
     try_form full "$(full_prefix runs)" "$(full_prefix reports)"
     if [ "$FORM_OK" = yes ]; then passed=full; fi
   fi
@@ -721,12 +774,13 @@ print_plan() {
   say "    the first carrying $(clause_read runs) || $(clause_list "runs/") and the second $(clause_read reports) || $(clause_list "reports/") under the relative form, and the same two with projects/_/buckets/$B/objects/runs/ and .../objects/reports/ under the full one"
   say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/ (must list, and the listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those three held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/"
   say "  [network, writes] gcloud storage buckets remove-iam-policy-binding ... --all for both roles, between the two forms and again in the Restore"
+  say "  [network, reads, as the account] between the two forms only: ls --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/, retried until the account is REFUSED it (the removal has taken effect, so the next form cannot read through the earlier clause) or for up to ${PROPAGATION_SECONDS}s, which is a stop rather than a verdict"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, deletes] gcloud storage rm -r --project=$P gs://$B/runs/$SLUG/ gs://$B/reports/$SLUG/ gs://$B/tokens/$SLUG/ gs://$B/cache/$SLUG/"
   say "  [network, deletes] gcloud storage buckets remove-iam-policy-binding gs://$B --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectViewer --all, and the same for roles/storage.objectUser"
   say "  [network, deletes] gcloud iam service-accounts remove-iam-policy-binding $SA_EMAIL --project=$P --member=user:<you> --role=roles/iam.serviceAccountTokenCreator --all"
   say "  [network, deletes] gcloud iam service-accounts delete $SA_EMAIL --project=$P --quiet"
-  say "  [network, reads] the four lists and the account describe that read all of it back as gone"
+  say "  [network, reads] the four lists, the bucket policy and the account describe that read all of it back as gone (only an empty listing and a NOT_FOUND count as gone; any other error is a FAILed Restore row, not a silent pass)"
   say "Nothing was created, granted, written or deleted: this dry run made no gcloud call at all."
 }
 
