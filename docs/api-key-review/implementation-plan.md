@@ -29,7 +29,7 @@ a slice the owner does not want is simply not started.
 | Level | Tasks | What it is | Why these can run together |
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
-| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This is code for a launch E7 still refuses** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
+| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This is code for a launch 0.21.0 admits** (**F10**, **U6**: the flip is **CSR11**'s, and it landed with that release) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
 | **L3** | **AK6**, **AK7** | the OpenRouter half: the bundle holds a provider key (**F15**, **F16**, **F24**), and the review run's model path reaches a provider's endpoint | AK6 is `internal/credsvc` and `schemas/`; AK7 is `internal/runner` and `internal/gateway` |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
@@ -586,9 +586,10 @@ The launch is **`fugaro review --pr N`**, or equivalently `fugaro run --pr N --r
 the review-only job, and the fallback the launcher's own refusal names. It is **not**
 `fugaro run --review-run`: that flag carries an existing review's findings into a **fix round's**
 brief (`internal/cli/run.go`) and needs `--pr` besides, which is a different thing entirely.
-**This step cannot be run before E7** (**F10**):
-`reviewJobAdmitted` is `false`, so the launch is refused outright until the service admits the review
-caller, and the check is written to be run *after* that, not instead of it. Read off: the review job
+**This step needs the installation's credentials service, and a launch reaches it from 0.21.0**
+(**F10**): `reviewJobAdmitted` was `false` until **CSR11**'s flip, so a launch used to be refused
+outright, and the check is written to be run on a tree that admits it — an installation without the
+service is refused, in as many words. Read off: the review job
 was launched for the variant the sentinel names; its model calls were served by the project's
 Anthropic key; the job's own environment held no credential of the repository's; and a repository
 whose `agent.auth` is `api-key` **without** the pairing naming the key is still refused, with the
@@ -624,13 +625,12 @@ may not start and the cloud path is not launchable. A reader must take those two
    CLAUDE.md allows an additive field there but not a changed meaning.
 6. **The security review owed before AK4–AK7 land**, not after: each is SEC, and the review is
    mandatory rather than advisory.
-7. **AK4–AK7 are gated on E7, and it is not this plan's to meet** (**F10**, **U6**;
-   `docs/cloud-senior-review` §1): `internal/cli/review.go`'s `reviewJobAdmitted` is `false`, so every
-   `fugaro review --pr N` is refused until the credentials service admits the review job's own
-   caller — **C3.9**'s code, unscheduled — and the constant is flipped by **CSR11** only after the
-   owner's live checks. Those tasks make the cloud path *served by a key*; they do not make it
-   *launchable*, and a plan that implied otherwise would be selling a path nobody can run. Nothing
-   here takes E7, and no release of this design is worth anything to a user until it is met.
+7. **AK4–AK7 were gated on E7, and E7 is met** (**F10**, **U6**; `docs/cloud-senior-review` §1):
+   `internal/cli/review.go`'s `reviewJobAdmitted` was `false` while the credentials service refused
+   the review job's own caller, and **CSR11**'s flip landed with 0.21.0 (the owner's ruling of
+   2026-11-07), so a `fugaro review --pr N` on an installation whose service is enabled reaches the
+   variant. Those tasks make the cloud path *served by a key*; the flip is what makes it
+   *launchable*, and nothing here takes it — it is not this design's.
 8. **AK5 is gated on the sentinel's job shape, and AK4 does not take it.** AK4 makes the sentinel
    publishable and servable; no installation can *deploy* it, and the readers of the account axis that
    must yield — plus the account-choice keys AK4 refuses outright — are listed in AK4's section and

@@ -31,8 +31,8 @@ first, or reject. The job is **read-only on the forge**: it can fetch the head a
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The design: what exists today for a reviewer on an OAuth account, how a cloud review of a pushed branch runs, the output contract, how it differs from the in-job reviewer, the trigger, what the coordinator does with the verdict, the threat model, and the owner-run live check |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E7** (**E7** — the credentials service enabled and admitting a project-scoped job — is a hard precondition, not a task: it blocks CSR7, CSR2 and the coordinator's `ship` → merge path), the owner decisions **D880–D894** — **all of them answered** — D880–D891, then **D892 with option (a)** (the credentials service signs the verdict, over a framed message, O3), **D893 with option (c)** (the read-only token comes from the credentials service, by name) and **D894 with option (a)** (the reviewer's session loads no configuration from the head it reviews, and is given the base's `CLAUDE.md` and `.claude/rules` in its place, O6), and the owner's rulings **O1–O7** of 2026-11-01, which amend the decisions they touch and take no number, with **D895–D899 reserved and unused**. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **CSR1–CSR16** (at most 12 files each), the shared-files table, the first slice, the release slot, and **§6** — the follow-up that carries what CSR1–CSR7 left between the plan and a review that runs (**CSR1–CSR7** in §3, with the command unregistered, the runner unable to place the review job and the launcher unverified until the follow-up lands; **CSR8, the placement, has merged as PR #1761**, so gap 3 is closed, **and CSR9 (PR #1762, the command registered), CSR10 (PR #1764, the launcher's verifying reader) and CSR12 (PR #1771, the live-check switch) have merged since**, closing gaps 2 and 4), with its own levels, its shared-files table, **the five Open items §6 was written with, all answered by the owner on 2026-11-05** (the live-check switch, now CSR12; the launcher's verdict policy, in CSR10's reader; the release, 0.20.0 "Quokka"; the review run's model path, now CSR13, keyed on the class CSR8 merged rather than on a launcher-written marker; and who may verify a verdict — **a dedicated verifier service account, which cannot be a person**: the installation root renders it and one `fugaro update` publishes it, and CSR15 makes the launcher impersonate it) — **and a sixth, the budget mode a review run runs under, found after CSR8 merged and ANSWERED by the owner on 2026-11-05/06: a cloud review does NOT run with the installation's budget off, and the refusal names the setting to turn on, which is CSR13's and its named test's**. **Two further rulings of 2026-11-05/06 cut work from 0.20.0:** the credentials service **stays opt-in** — the default-on change (#1769) is a later release, and the owner opts in on their own installation for the live check, so §6.5's operator sentence stays conditional — and **the api-key review is a named slice outside the release**: 0.20.0 ships the **OAuth** review alone, every 0.20.0 task refuses, in a named sentence, a review whose account or auth is not OAuth, and **CSR17–CSR18 (§6.7)**, the api-key path on OpenRouter or Anthropic, are sketched there and carried by no level, no critical path and no release-notes entry. **The head read is CSR16**: the launcher reads the pull request's current head through the credentials service's **read mint** rather than from its own App ID and key, ordered after CSR15 because the two hold one file, and §6.5's release notes carry the sentence that `fugaro run --review-run` refuses until both exist. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main` and against the open pull requests: findings **F1–F27**, the dependencies **E1–E7** (**E7** — the credentials service enabled and admitting a project-scoped job — is a hard precondition, not a task: it blocked CSR7, CSR2 and the coordinator's `ship` → merge path, and it is **met on `main`** — the service's review class admits a project-scoped caller (**C3.9a–C3.9g** merged) and **CSR11**'s flip admits the launch from 0.21.0 — so what an installation still owes is E7's first half, the service enabled), the owner decisions **D880–D894** — **all of them answered** — D880–D891, then **D892 with option (a)** (the credentials service signs the verdict, over a framed message, O3), **D893 with option (c)** (the read-only token comes from the credentials service, by name) and **D894 with option (a)** (the reviewer's session loads no configuration from the head it reviews, and is given the base's `CLAUDE.md` and `.claude/rules` in its place, O6), and the owner's rulings **O1–O7** of 2026-11-01, which amend the decisions they touch and take no number, with **D895–D899 reserved and unused**. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | The tasks **CSR1–CSR16** (at most 12 files each), the shared-files table, the first slice, the release slot, and **§6** — the follow-up that carries what CSR1–CSR7 left between the plan and a review that runs (**CSR1–CSR7** in §3, with the command unregistered, the runner unable to place the review job and the launcher unverified until the follow-up lands; **CSR8, the placement, has merged as PR #1761**, so gap 3 is closed, **and CSR9 (PR #1762, the command registered), CSR10 (PR #1764, the launcher's verifying reader) and CSR12 (PR #1771, the live-check switch) have merged since**, closing gaps 2 and 4 — and **CSR11, the flip, has landed since as well, for 0.21.0**, under the owner's ruling of 2026-11-07, in the same commit that **takes CSR12's switch, its reader and its tests back out**, and with the owner's live checks running after the tag rather than before it, so **no gap of §6 is open** and what a person owes is E7's first half), with its own levels, its shared-files table, **the five Open items §6 was written with, all answered by the owner on 2026-11-05** (the live-check switch, now CSR12; the launcher's verdict policy, in CSR10's reader; the release, 0.20.0 "Quokka"; the review run's model path, now CSR13, keyed on the class CSR8 merged rather than on a launcher-written marker; and who may verify a verdict — **a dedicated verifier service account, which cannot be a person**: the installation root renders it and one `fugaro update` publishes it, and CSR15 makes the launcher impersonate it) — **and a sixth, the budget mode a review run runs under, found after CSR8 merged and ANSWERED by the owner on 2026-11-05/06: a cloud review does NOT run with the installation's budget off, and the refusal names the setting to turn on, which is CSR13's and its named test's**. **Two further rulings of 2026-11-05/06 cut work from 0.20.0:** the credentials service **stays opt-in** — the default-on change (#1769) is a later release, and the owner opts in on their own installation for the live check, so §6.5's operator sentence stays conditional — and **the api-key review is a named slice outside the release**: 0.20.0 ships the **OAuth** review alone, every 0.20.0 task refuses, in a named sentence, a review whose account or auth is not OAuth, and **CSR17–CSR18 (§6.7)**, the api-key path on OpenRouter or Anthropic, are sketched there and carried by no level, no critical path and no release-notes entry. **The head read is CSR16**: the launcher reads the pull request's current head through the credentials service's **read mint** rather than from its own App ID and key, ordered after CSR15 because the two hold one file, and §6.5's release notes carry the sentence that `fugaro run --review-run` refuses until both exist. **Nothing in it is approved** |
 
 ## The shape in one paragraph
 
@@ -57,8 +57,10 @@ repository, the pull request, the head and the review run, which the coordinator
 acts: `ship`
 means merge, `fix first` launches a fix round whose brief **is** the findings, and `reject` means no
 fix round and a person decides. **The whole chain requires the credentials service to be enabled for
-the installation, and it ships dormant** — D893(c)'s precondition, which is also what keeps CSR7, CSR2 and
-the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
+the installation, and it ships dormant** — D893(c)'s precondition, which blocked CSR7, CSR2 and the
+coordinator's merge path until the service's own admission landed — the review class
+(`internal/credsvc/review.go`'s `pairReview` over `ClassReview`, **C3.9a–C3.9g** merged) and **CSR11**'s
+flip of the launcher's constant, `true` from 0.21.0 (spec §2, §5; reconciliation E7).
 
 ## Numbers this work holds
 
@@ -134,12 +136,14 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   answered — option (c):** the job fetches the token from the **credentials service, by name**, so
   nothing is handed in and no value sits in an execution object. **The service ships dormant**, so the
   cloud senior reviewer **requires it to be enabled for the installation** (`fugaro update
-  --provision-credentials`, the App key in the bundle), **and requires the service to admit the review
-  job's own account** — a project-scoped job, which the service refuses today (its Global Constraint
-  6; **C3.9**, unscheduled, is the task that lifts it). **No `fugaro update` can supply that half**,
-  so **CSR7, CSR2 and the coordinator's `ship` → merge path stay blocked** until it lands; the check that
-  says so is CSR6's, and **E7** records the dependency.
-- **The first slice cannot run until another work stream lands, and that is the critical path.** The
+  --provision-credentials`, the App key in the bundle), **and the service admits the review
+  job's own account** — a project-scoped job, which it refused while its Global Constraint 6 stood and
+  which its own review class now serves (**C3.9a–C3.9g**, merged; `ClassReview`, `pairReview`, CSR14
+  #1778 and CSR15 #1781). **That half was code on another work stream's side and no `fugaro update`
+  supplied it — it landed, and CSR11's flip of the launcher's constant followed for 0.21.0**, so
+  **CSR7, CSR2 and the coordinator's `ship` → merge path are unblocked** once the installation enables
+  the service; the check that says whether it has is CSR6's, and **E7** records the dependency.
+- **The first slice waited on another work stream, and that was the critical path.** The
   first slice is **E1 + CSR1 + CSR7 + CSR2** — `fugaro accounts add` (its own plan's **A1**, the local
   config edit, then **A2**, the converge half, and **A3**, `--claude`) plus the review job and the
   command that launches it, and the shared write helper the converge half uses is the settings
@@ -147,12 +151,14 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   service**: the service admitting a
   **project-scoped review identity**, the **read-only set** its mint must serve for that identity, the
   **review class on `/v1/messages`** O1 routes the reviewer's calls through, and
-  **D892(a)'s sign and verify endpoints**. That is **C3.9** of the credentials service's own Slice 3,
-  **unscheduled** — and split by the credentials-service routing design **#1514** into
-  **C3.9a–C3.9g**, which is the form this design names because that pull request is where the split is
-  written. Until it lands, **0.16.0 ships the command and the job variant and neither can run**: the
-  launch is refused by the service, and **no `fugaro update` and no local step shortens the wait**
-  (E7; spec §2, §5).
+  **D892(a)'s sign and verify endpoints**. That is **C3.9** of the credentials service's own Slice 3 —
+  **unscheduled when this was written**, and split by the credentials-service routing design **#1514**
+  into **C3.9a–C3.9g**, which is the form this design names because that pull request is where the
+  split is written. **That work has landed and the slice runs**: the command is registered (CSR9), the
+  container places the variant (CSR8), the launcher admits the launch (CSR11, for 0.21.0) and the
+  service's own review class serves the caller — what is left to a person is enabling the service on
+  the installation (`fugaro update --provision-credentials`, `fugaro creds set github-app-key`),
+  which is E7's first half and the one an installation can be missing (E7; spec §2, §5).
 
 ## Related
 
