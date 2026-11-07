@@ -428,9 +428,9 @@ What the reading found, and why this block is where it is:
   `docs/periodic-reviews/README.md:125` name as the next free number is **still free on `main`** — no
   decision is written there.
 - **The overlap this round fixes was not with `main`: it is with a claim.**
-  `docs/stateless-orchestrator/reconciliation.md:22` records that "`D1320-D1349`, the block the brief
+  `docs/stateless-orchestrator/reconciliation.md:23` records that "`D1320-D1349`, the block the brief
   named, is therefore free" — the block that design **considered and did not take** (it takes
-  D1220–D1249, `docs/stateless-orchestrator/README.md:44`). A block another document has named, even in
+  D1220–D1249, `docs/stateless-orchestrator/README.md:46`). A block another document has named, even in
   the sentence that declines it, is not a block to write in when a free one exists above it, so this
   design moves rather than arguing the point.
 - **The highest block claimed anywhere, on `main` or in an open pull request, is open PR #1780's
@@ -448,7 +448,7 @@ What the reading found, and why this block is where it is:
 **This work therefore takes D1370–D1389**, writes **D1370–D1383** and reserves **D1384–D1389** unused.
 **Checks:** `main`'s register still has **290** as its highest **written** `## Check` section
 (`docs/gcp-live-checklist.md:11207`), so **291** is free and this work claims it (D1381) — the checks
-claimed above it in open work start at **300** (`docs/stateless-orchestrator/implementation-plan.md:137`,
+claimed above it in open work start at **300** (`docs/stateless-orchestrator/implementation-plan.md:139`,
 Checks 300–305 with 306–309 reserved, and #1780's 311–314), and the register's rule is that whichever of
 two claims merges second renumbers itself. The earlier reading said "no open pull request claims 291 or
 above"; that is no longer true of the neighbours, and the claim is unchanged because no open work writes

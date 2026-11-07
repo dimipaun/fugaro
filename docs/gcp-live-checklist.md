@@ -581,7 +581,7 @@ leaves the rest of the block free: *"this plan takes **no new check number**: 59
 **Checks 290 to 299 stay unused**"* (`docs/plans/2026-10-30-console-auto-update.md:164`). The
 stateless-orchestrator work reads the same area and takes the block **300–309** instead, so it
 leaves 290–299 untouched; its own note that 274–299 "are not free either"
-(`docs/stateless-orchestrator/implementation-plan.md:136`) reads 274–289's reservation as covering
+(`docs/stateless-orchestrator/implementation-plan.md:138`) reads 274–289's reservation as covering
 the whole run of them, and no design has written or reserved a number in **290–299** — so **Check
 290** is the number free at this change's merge, which is the register's rule for a work that
 reserved none, and this paragraph is the record of the one taken. Its subject is **the

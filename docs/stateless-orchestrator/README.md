@@ -1,8 +1,10 @@
 # The stateless orchestrator
 
-**Status (2026-11-07): task O1 of the plan, the deterministic security-sensitive classifier, is written, and the owner approved it as part of the 0.22.0 scope
-— no other task is.** Its four files are on the branch `fugaro/20261107-023015-885d`, pull request #1822, **unmerged and not on `main`**; the rest of the
-[implementation plan](implementation-plan.md) is plan only.
+**Status (2026-11-07): two tasks of the [implementation plan](implementation-plan.md) are written.** Task **O0**, the state schema, the typed patch and the
+validator, is **merged on `main`** (pull request #1823, commit `36abeffc`, merged 2026-11-07): `internal/orchestrator/state.go`, `patch.go`, `validate.go`,
+`summary.go`, their tests, `testdata/state-a.json` and the two `schemas/` documents. Task **O1**, the deterministic security-sensitive classifier the owner
+approved as part of the 0.22.0 scope, is written on the branch `fugaro/20261107-023015-885d`, pull request #1822, **unmerged and not on `main`**. Every other
+task is plan only.
 
 *The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved. Every decision D1220-D1243 and every question the plan raised (Q1-Q4) is answered — Q2 twice — and the last tension the answers left open, T7, was ruled on 2026-11-05, so nothing is left for the owner to rule** (reconciliation section 6).
 
