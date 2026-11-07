@@ -107,7 +107,8 @@ type authorized struct {
 // resolved second, so that a token this installation minted for somebody on
 // neither list reaches no tool and no tool name is even read. The method is
 // checked third: a GET on this path is not a stream this door serves, and the
-// caller is told so rather than left to read a 401 as ""sign in again"".
+// caller is told so rather than left to read a 401 as one that means "sign in
+// again".
 func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 	auth, ok := s.authorize(w, r)
 	if !ok {
