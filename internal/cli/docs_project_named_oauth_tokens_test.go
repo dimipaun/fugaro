@@ -398,23 +398,29 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 			t.Errorf("the guide names the doctor check %q, and internal/cli/doctor.go no longer carries it", id)
 		}
 	}
-	// §9's fix line is doctor's own, and the checks no longer print the
-	// mint-then-store pair for a named account (accounts-add A6): the guide and
-	// the check have to hand the operator the same command, which is what makes
-	// this page worth reading beside the line it describes. Both flags are on
-	// the page's line for a reason of their own — `accounts add` takes the
-	// checkout it happens to run in for --repos (widening allow_data_to with a
-	// repository the account never covered) and refuses to pick a profile for
-	// itself in a project with several — so the page states them where the
-	// operator copies the command from.
+	// §9's fix line is doctor's own, and the page has to hand the operator the
+	// same commands the checks print (accounts-add A6): a named account a
+	// profile serves gets `accounts add`, and one no profile's claude_accounts
+	// lists gets the mint-then-store pair, because `accounts add` would refuse
+	// in a project with several profiles and otherwise serve the account from a
+	// profile that did not. Which is what makes this page worth reading beside
+	// the line it describes. Both flags are on the page's `accounts add` line
+	// for a reason of their own — the command takes the checkout it happens to
+	// run in for --repos (widening allow_data_to with a repository the account
+	// never covered) and refuses to pick a profile for itself in a project with
+	// several — so the page states them where the operator copies the command
+	// from.
 	if want := "`fugaro accounts add <name> --repos <owner/name> --profile <profile>`"; !strings.Contains(doc, want) {
 		t.Errorf("%s does not show the fix project-account-stored prints as %s", projectClaudeAccountsDoc, want)
+	}
+	if want := "`claude setup-token; fugaro secrets set claude-oauth-token-<name>`"; !strings.Contains(doc, want) {
+		t.Errorf("%s does not show the fix for a named account no profile serves as %s: `accounts add` would refuse or adopt a profile for it", projectClaudeAccountsDoc, want)
 	}
 	if want := "`claude setup-token; fugaro secrets set claude-oauth-token --project-wide`"; !strings.Contains(doc, want) {
 		t.Errorf("%s does not show the default account's own fix as %s: its name is reserved, and no `accounts add` form takes it", projectClaudeAccountsDoc, want)
 	}
 	if bad := "claude setup-token; fugaro secrets set claude-oauth-token-<name> --project-wide"; strings.Contains(doc, bad) {
-		t.Errorf("%s still gives a named account the mint-then-store pair %q, which doctor no longer prints", projectClaudeAccountsDoc, bad)
+		t.Errorf("%s gives a named account the default account's own fix %q: a named account's container is stored by its own name, not the reserved one", projectClaudeAccountsDoc, bad)
 	}
 }
 

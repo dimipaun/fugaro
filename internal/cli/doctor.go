@@ -1406,11 +1406,39 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 	return out
 }
 
-// doctorAccountsAdd is the `fugaro accounts add` line both account checks hand
-// an owner whose named account has no stored token: the one command that
-// declares the account, stores the token project-wide — where a job mounts it —
-// and converges the installation, spelled with the two flags that keep it from
-// doing anything else.
+// doctorAccountStore are the commands both account checks hand an owner whose
+// named account has no stored token.
+//
+// A profile whose claude_accounts already lists the account leaves the profile
+// half of `fugaro accounts add` a no-op, and that command is then the whole fix:
+// it declares the account, stores the token project-wide — where a job mounts
+// it — and converges the installation. profile is the caller's own when it knows
+// which profile's job the check is about (project-account-stored names one), and
+// config.ClaudeAccountProfile's answer otherwise.
+//
+// No profile serving the account is the one state where that command is not the
+// fix, and both checks reach it: they fire for an account the config already
+// declares (config.AllowedClaudeAccounts, config.ProjectJobAccounts), and which
+// profile serves it is a separate fact. With several profiles accountsAddProfile
+// refuses outright, and with exactly one it serves the account from a profile
+// that did not, deploying a job for it — neither of which the store-the-token
+// step this replaced ever did. The pair that mints the token and stores it in
+// the container such a job would mount stands there instead.
+func doctorAccountStore(lc *localcfg.Config, account, profile string) []string {
+	if profile == "" {
+		profile = config.ClaudeAccountProfile(lc.Profiles, account)
+	}
+	if profile == "" {
+		return []string{"claude setup-token", selfCommand() + " secrets set " + quoteWord(config.ClaudeAccountSecret(account))}
+	}
+	return []string{doctorAccountsAdd(lc, account, profile)}
+}
+
+// doctorAccountsAdd is the `fugaro accounts add` line doctorAccountStore hands
+// an owner whose named account has no stored token, for an account a profile
+// serves: the one command that declares the account, stores the token
+// project-wide — where a job mounts it — and converges the installation,
+// spelled with the two flags that keep it from doing anything else.
 //
 // --repos is the account's own allow_data_to. Without it the command takes the
 // checkout it happens to run in (accountsAddRepos' default), appends that
@@ -1420,18 +1448,11 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 // nothing more than the directory doctor was run from.
 //
 // --profile is a profile whose claude_accounts already lists the account, which
-// leaves that half of the command a no-op: the caller's own when it knows which
-// profile's job the check is about (project-account-stored names one), and
-// config.ClaudeAccountProfile's answer otherwise. Without it accountsAddProfile
-// refuses outright in a project with several profiles, and with exactly one
-// profile that does not serve the account the command adds the account to it and
-// deploys a job — a change the store-the-token step this replaced never made. It
-// is left off only when no profile serves the account at all, which is a state of
-// the project rather than a choice this line can make.
+// leaves that half of the command a no-op. Without it accountsAddProfile refuses
+// outright in a project with several profiles, and with exactly one profile that
+// does not serve the account the command adds the account to it and deploys a
+// job — which is why doctorAccountStore does not reach this line in that state.
 func doctorAccountsAdd(lc *localcfg.Config, account, profile string) string {
-	if profile == "" {
-		profile = config.ClaudeAccountProfile(lc.Profiles, account)
-	}
 	parts := []string{selfCommand(), "accounts", "add", quoteWord(account)}
 	if repos := lc.ClaudeAccounts[account].AllowDataTo; len(repos) > 0 {
 		parts = append(parts, "--repos", quoteWord(strings.Join(repos, ",")))
@@ -1515,7 +1536,7 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		secret := config.ClaudeAccountSecret(n)
 		if !have[secret] {
 			missing = append(missing, pluginwire.Printable(n))
-			cmds = append(cmds, doctorAccountsAdd(lc, n, ""))
+			cmds = append(cmds, doctorAccountStore(lc, n, "")...)
 		}
 	}
 	if len(missing) == 0 {
@@ -1741,7 +1762,7 @@ func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, pr
 			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(j.Token)+" --project-wide")
 			continue
 		}
-		cmds = append(cmds, doctorAccountsAdd(lc, j.Account, j.Profile))
+		cmds = append(cmds, doctorAccountStore(lc, j.Account, j.Profile)...)
 	}
 	if len(missing) == 0 {
 		return &doctorCheck{ID: "project-account-stored", OK: true, Severity: "info",

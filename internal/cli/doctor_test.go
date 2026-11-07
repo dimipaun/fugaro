@@ -838,7 +838,8 @@ func addClaudeAccounts(t *testing.T, r *doctorRig, yaml string) {
 
 // claudeAccountsRig is a doctor rig inside a checkout of github.com/acme/app,
 // whose local config allows acme/app to choose the named Claude account
-// acme-personal.
+// acme-personal. No profile serves it: that is the state where the fix is not
+// `fugaro accounts add` (doctorAccountStore).
 func claudeAccountsRig(t *testing.T) *doctorRig {
 	t.Helper()
 	r := newDoctorRig(t)
@@ -848,11 +849,21 @@ func claudeAccountsRig(t *testing.T) *doctorRig {
 	return r
 }
 
-// TestDoctorClaudeAccountsStoredMissing: a repository allowed to choose a
-// named Claude account, whose secret was never stored, fails doctor and
-// names the exact commands to run — never the secret's own value.
-func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
+// claudeAccountsServedRig is the rig above with the profile that already
+// serves the account, which leaves the profile half of `fugaro accounts add` a
+// no-op and makes that command the whole fix.
+func claudeAccountsServedRig(t *testing.T) *doctorRig {
+	t.Helper()
 	r := claudeAccountsRig(t)
+	addClaudeAccounts(t, r, "profiles:\n  standard: { provider: github, claude_accounts: [acme-personal] }\n")
+	return r
+}
+
+// TestDoctorClaudeAccountsStoredMissing: a repository allowed to choose a
+// named Claude account a profile serves, whose secret was never stored, fails
+// doctor and names the exact commands to run — never the secret's own value.
+func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
+	r := claudeAccountsServedRig(t)
 	out, _, err := execute(t, "doctor", "--json")
 	if err == nil {
 		t.Fatal("want doctor to fail: the allowed named account has no stored token")
@@ -889,8 +900,59 @@ func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
 	if !strings.Contains(c.Fix, "--repos acme/app") {
 		t.Fatalf("the fix does not name the account's own repositories: %q", c.Fix)
 	}
+	// And it names the profile that already serves the account, which is what
+	// leaves the command's other half a no-op: without it accountsAddProfile
+	// refuses in a project with several profiles, and it adopts the only one
+	// there is otherwise, deploying a job for a profile that did not serve it.
+	if !strings.Contains(c.Fix, "--profile standard") {
+		t.Fatalf("the fix does not name the profile that already serves the account: %q", c.Fix)
+	}
 	if a := r.sm.Accessed(); len(a) != 0 {
 		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredWithoutAProfileServingIt: the check fires for
+// an account the config already declares (config.AllowedClaudeAccounts), and
+// whether a profile serves it is a separate fact. With none serving it,
+// `fugaro accounts add` is not a command this line may hand over: with several
+// profiles it refuses outright (accountsAddProfile), and with exactly one it
+// serves the account from a profile that did not, deploying a job for it —
+// neither of which the store-the-token step it replaced ever did. The pair
+// that mints the token and stores it in the container such a job would mount
+// stands instead (code review, medium).
+func TestDoctorClaudeAccountsStoredWithoutAProfileServingIt(t *testing.T) {
+	for _, profiles := range []string{"", "profiles:\n  standard: { provider: github }\n"} {
+		r := claudeAccountsRig(t)
+		if profiles != "" {
+			addClaudeAccounts(t, r, profiles)
+		}
+		out, _, err := execute(t, "doctor", "--json")
+		if err == nil {
+			t.Fatal("want doctor to fail: the allowed named account has no stored token")
+		}
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+		if !ok || c.OK || c.Severity != "" {
+			t.Fatalf("claude-accounts-stored = %+v", c)
+		}
+		for _, want := range []string{"claude setup-token", "secrets set claude-oauth-token-acme-personal"} {
+			if !strings.Contains(c.Fix, want) {
+				t.Errorf("the fix %q lacks %q, the pair that stores the token where such a job would mount it", c.Fix, want)
+			}
+		}
+		if strings.Contains(c.Fix, "accounts add") {
+			t.Errorf("the fix %q hands over a command that would refuse or adopt a profile for the account", c.Fix)
+		}
+		if strings.Contains(c.Fix, "--repo ") {
+			t.Errorf("the fix asks for a repository copy that would override the project's: %q", c.Fix)
+		}
+		if a := r.sm.Accessed(); len(a) != 0 {
+			t.Fatalf("doctor read a secret value: %v", a)
+		}
 	}
 }
 

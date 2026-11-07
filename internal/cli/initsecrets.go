@@ -604,6 +604,23 @@ func (s *secretsStage) Left() initflow.Left {
 			// reserved, so the command below is the only spelling and the
 			// default account has none.
 			account := strings.TrimPrefix(name, config.ClaudeOAuthTokenPrefix)
+			// The profile whose claude_accounts already lists the account: it
+			// leaves that half of the command a no-op. Without it the command
+			// stops in a project with several profiles (accountsAddProfile), and
+			// it would otherwise take the only one there is — serving the account
+			// from a profile that did not, and deploying a job — where storing
+			// the token was the whole step.
+			profile := config.ClaudeAccountProfile(s.e.lc.Profiles, account)
+			if profile == "" {
+				// No profile serves the account, and the account is one this
+				// config already declares (config.AllowedClaudeAccounts above),
+				// so `accounts add` would have nothing to declare and only a
+				// profile to choose for itself: the pair that mints the token and
+				// stores it in the container such a job would mount is the whole
+				// step, as it was before `accounts add` took it over.
+				cmds = append(cmds, "claude setup-token", set)
+				break
+			}
 			// --repos is this checkout's own repository, which is the one the
 			// command is about: accountsAddRepos defaults it to the origin of
 			// whatever checkout the line is pasted into, so the same line run
@@ -613,17 +630,8 @@ func (s *secretsStage) Left() initflow.Left {
 			// say nothing. It is a union with the list the account already has
 			// (accountsAddWhat reads it back from the config the command would
 			// write), so naming this repository cannot narrow it.
-			add := selfCommand() + " accounts add " + quoteWord(account) + " --repos " + quoteWord(s.tg.repo)
-			// The profile whose claude_accounts already lists the account, for
-			// the reason doctor's own account fixes carry it: without --profile
-			// the command stops in a project with several profiles
-			// (accountsAddProfile), and it would otherwise take the only one
-			// there is — serving the account from a profile that did not, and
-			// deploying a job — where storing the token was the whole step.
-			if profile := config.ClaudeAccountProfile(s.e.lc.Profiles, account); profile != "" {
-				add += " --profile " + quoteWord(profile)
-			}
-			cmds = append(cmds, add)
+			cmds = append(cmds, selfCommand()+" accounts add "+quoteWord(account)+
+				" --repos "+quoteWord(s.tg.repo)+" --profile "+quoteWord(profile))
 		case name == multilineSecret:
 			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:

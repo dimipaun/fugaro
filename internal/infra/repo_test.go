@@ -436,15 +436,17 @@ func TestSecretCommands(t *testing.T) {
 		t.Fatalf("every secret stored, still: %+v", got)
 	}
 
-	// A named account's token is the one command that declares the account,
-	// stores its token project-wide and converges the installation (spec §8):
-	// the mint-then-store pair the default account keeps is the pair the
-	// named account used to get as well, and there is no scope for the owner
-	// to pick — `accounts add` stores this name where the shared job mounts
-	// it. It does carry --repos with this repository, because the command
-	// would otherwise take the origin of whatever checkout it is pasted
-	// into. The default account's own step is unchanged above, because
-	// `fugaro accounts add default` is refused (the name is reserved).
+	// No profile serves the account, so the step is not `accounts add`: the
+	// account is one the config already declares (config.AllowedClaudeAccounts
+	// is where the name in spec.Secrets came from), and the command would have
+	// nothing to declare and only a profile to choose for itself — refusing in
+	// a project with several profiles (accountsAddProfile) and adopting the
+	// only one otherwise, deploying a job for an account that profile did not
+	// serve. The pair that mints the token and stores it in the container such
+	// a job would mount is the whole step, as it was before `accounts add` took
+	// it over (code review, medium). The default account's own step is
+	// unchanged above, because `fugaro accounts add default` is refused (the
+	// name is reserved).
 	named, err := Repo(sandboxInputs(t, m5Additions+"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -452,17 +454,17 @@ func TestSecretCommands(t *testing.T) {
 	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
 	got = SecretCommands(named, stored, "fugaro", func(s string) string { return s })
 	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: named.Secrets["claude-oauth-token-acme-personal"],
-		Commands: []string{"fugaro accounts add acme-personal --repos acme/sandbox"}}}
+		Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token-acme-personal"}}}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("commands for a named account:\n%+v\nwant:\n%+v", got, want)
+		t.Fatalf("commands for a named account no profile serves:\n%+v\nwant:\n%+v", got, want)
 	}
 
-	// A project with more than one profile refuses a bare `fugaro accounts
-	// add` for itself (accountsAddProfile), and one with a single profile that
-	// does not serve the account would have the command add the account to
-	// that profile and deploy a job. The step therefore names the profile
-	// whose claude_accounts already lists it, which leaves that half of the
-	// command a no-op (code review, medium).
+	// A profile that already serves the account leaves that half of the
+	// command a no-op, so the step is `accounts add` — the one command that
+	// declares the account, stores its token project-wide and converges the
+	// installation (spec §8) — spelled with --repos with this repository,
+	// because the command would otherwise take the origin of whatever checkout
+	// it is pasted into, and with the profile (code review, medium).
 	served, err := Repo(sandboxInputs(t, m5Additions+
 		"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"+
 		"profiles:\n  alpha: { provider: bitbucket }\n  zeta: { provider: bitbucket, claude_accounts: [acme-personal] }\n"))
@@ -484,7 +486,9 @@ func TestSecretCommands(t *testing.T) {
 // into, so a line that did not name this repository would bind the account
 // to another one.
 func TestSecretCommandsNamesTheRepositoryItIsFor(t *testing.T) {
-	spec, err := Repo(sandboxInputs(t, m5Additions+"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"))
+	spec, err := Repo(sandboxInputs(t, m5Additions+
+		"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"+
+		"profiles:\n  zeta: { provider: bitbucket, claude_accounts: [acme-personal] }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +496,7 @@ func TestSecretCommandsNamesTheRepositoryItIsFor(t *testing.T) {
 	for _, name := range []string{"acme/sandbox", "acme/other"} {
 		spec.Name = name
 		got := SecretCommands(spec, stored, "fugaro", func(s string) string { return s })
-		want := "fugaro accounts add acme-personal --repos " + name
+		want := "fugaro accounts add acme-personal --repos " + name + " --profile zeta"
 		if len(got) != 1 || len(got[0].Commands) != 1 || got[0].Commands[0] != want {
 			t.Fatalf("steps for %s:\n%+v\nwant one step %q", name, got, want)
 		}

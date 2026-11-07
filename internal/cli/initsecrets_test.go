@@ -546,8 +546,9 @@ func TestSecretsWithoutFugaroYAMLTakesOnlyTheGitCredential(t *testing.T) {
 
 // A repository the local config allows two named Claude accounts for is
 // asked for both, beside the default: the default's own mint-then-store
-// pair, and each named account's one `fugaro accounts add` command. A name
-// that already has a stored version is not asked for again.
+// pair, and each named account's one `fugaro accounts add` command, which
+// names the profile that already serves it. A name that already has a stored
+// version is not asked for again.
 func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
 	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
@@ -555,6 +556,7 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 		"acme-overflow": {AllowDataTo: []string{"acme/app"}},
 		"other-team":    {AllowDataTo: []string{"acme/other"}}, // not this repository
 	}
+	r.e.lc.Profiles = map[string]config.JobProfile{"standard": {ClaudeAccounts: []string{"acme-personal", "acme-overflow"}}}
 	r.store.seed(mustSlug("github", "acme/app"), "claude-oauth-token-acme-overflow", "stored-already-0001")
 	res, err := r.run(t)
 	if err != nil || len(res.Left) != 1 {
@@ -570,7 +572,7 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 		"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE",
 		"claude setup-token",
 		"fugaro secrets set claude-oauth-token --repo acme/app",
-		"fugaro accounts add acme-personal --repos acme/app",
+		"fugaro accounts add acme-personal --repos acme/app --profile standard",
 	}
 	cmds := strings.Join(res.Left[0].Commands, "\n")
 	if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(wantCmds) {
@@ -633,6 +635,7 @@ func TestInitSecretsNamesTheCheckoutsRepositoryInTheAccountsAddLine(t *testing.T
 	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
 		"acme-personal": {AllowDataTo: []string{"acme/app", "acme/other"}},
 	}
+	r.e.lc.Profiles = map[string]config.JobProfile{"standard": {ClaudeAccounts: []string{"acme-personal"}}}
 	res, err := r.run(t)
 	if err != nil || len(res.Left) != 1 {
 		t.Fatalf("%v, left %v", err, res.Left)
@@ -643,6 +646,40 @@ func TestInitSecretsNamesTheCheckoutsRepositoryInTheAccountsAddLine(t *testing.T
 	}
 	if strings.Contains(cmds, "acme/other") {
 		t.Errorf("the account's own list was printed instead of this checkout: %q", cmds)
+	}
+}
+
+// TestInitSecretsLeavesTheMintThenStorePairWhenNoProfileServesTheAccount:
+// the account the stage asks for is one this config already declares
+// (config.AllowedClaudeAccounts), so `fugaro accounts add` would have nothing
+// to declare and only a profile to choose for itself — refusing in a project
+// with several profiles (accountsAddProfile), and with exactly one serving the
+// account from a profile that did not and deploying a job for it. The pair
+// that mints the token and stores it in the container such a job would mount
+// is the whole step, as it was before `accounts add` took it over (code
+// review, medium).
+func TestInitSecretsLeavesTheMintThenStorePairWhenNoProfileServesTheAccount(t *testing.T) {
+	for _, profiles := range []map[string]config.JobProfile{
+		nil,
+		{"standard": {}},
+		{"standard": {}, "review": {}},
+	} {
+		r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+		r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+			"acme-personal": {AllowDataTo: []string{"acme/app"}},
+		}
+		r.e.lc.Profiles = profiles
+		res, err := r.run(t)
+		if err != nil || len(res.Left) != 1 {
+			t.Fatalf("%v, left %v", err, res.Left)
+		}
+		cmds := strings.Join(res.Left[0].Commands, "\n")
+		if !strings.Contains(cmds, "claude setup-token") || !strings.Contains(cmds, "fugaro secrets set claude-oauth-token-acme-personal") {
+			t.Errorf("the account's step is not the pair that stores the token where such a job would mount it: %q", cmds)
+		}
+		if strings.Contains(cmds, "accounts add") {
+			t.Errorf("the step hands over a command that would refuse or adopt a profile for the account: %q", cmds)
+		}
 	}
 }
 
