@@ -233,6 +233,100 @@ func TestRotateDoesNotRevokeWhenItLosesTheRace(t *testing.T) {
 	}
 }
 
+// TestAConsumeThatLosesTheRaceIsSpent is the second half of the same
+// precondition, over the single-use records M5 adds: the generation-matched
+// replace is what makes one binding and one code answer exactly one caller, and
+// the branch that turns a lost compare-and-swap into errConsumed is the whole of
+// it. Without that branch a loser's error is the backend's, and the caller that
+// reads it as "not mine" — TakeRequest answers ErrRequestNotFound and ConsumeCode
+// ErrCodeNotFound — would tell a person their own approval names no pending flow
+// while the record it names is spent, and a code exchange is refused as a code
+// this installation never issued.
+//
+// The race is the same deterministic interleave racingObjects was written for,
+// and the competing caller is a real one: the second store is over the same
+// bucket, so the spend it makes is the fake's own ifGenerationMatch write and
+// the loser's replace is the one that loses it.
+func TestAConsumeThatLosesTheRaceIsSpent(t *testing.T) {
+	ctx := context.Background()
+	b := newFakeBucket(t)
+	inner := newRecords(bucketObjects{b: b})
+
+	requestID, err := NewValue()
+	if err != nil {
+		t.Fatalf("NewValue: %v", err)
+	}
+	if err := inner.PutRequest(ctx, Request{
+		ID:          requestID,
+		Number:      "481920",
+		ClientID:    "client-1",
+		RedirectURI: testClientRedirect,
+		Challenge:   testChallenge(),
+		State:       testState,
+		Scopes:      []string{ScopeTasksRead},
+		ExpiresAt:   testNow.Add(RequestTTL),
+	}); err != nil {
+		t.Fatalf("PutRequest: %v", err)
+	}
+	codeHash := TokenHash("a-code-this-installation-issued")
+	if err := inner.PutCode(ctx, Code{
+		Hash:        codeHash,
+		ClientID:    "client-1",
+		RedirectURI: testClientRedirect,
+		Challenge:   testChallenge(),
+		Identity:    "user:person-1",
+		Scopes:      []string{ScopeTasksRead},
+		ExpiresAt:   testNow.Add(CodeTTL),
+	}); err != nil {
+		t.Fatalf("PutCode: %v", err)
+	}
+
+	for _, tc := range []struct {
+		what string
+		key  string
+		// spend is the read-and-spend under test, run once by the competing
+		// caller (which wins it) and once by the loser.
+		spend func(s Store) error
+		want  error
+	}{
+		{
+			what:  "an approval",
+			key:   requestPrefix + requestID,
+			spend: func(s Store) error { _, err := s.TakeRequest(ctx, requestID); return err },
+			want:  ErrRequestUsed,
+		},
+		{
+			what:  "a code exchange",
+			key:   codePrefix + codeHash,
+			spend: func(s Store) error { _, err := s.ConsumeCode(ctx, codeHash); return err },
+			want:  ErrCodeUsed,
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			raced := &racingObjects{objects: bucketObjects{b: b}, at: tc.key}
+			raced.race = func() {
+				// The other caller holds the same binding, or presents the same
+				// code, and got there first. Its spend is the real one.
+				if err := tc.spend(inner); err != nil {
+					t.Errorf("the competing read of %s: %v", tc.what, err)
+				}
+			}
+
+			err := tc.spend(newRecords(raced))
+			if !errors.Is(err, tc.want) {
+				t.Errorf("the read of %s that lost the race = %v; want %v: a lost compare-and-swap is a record that is spent, not one the store cannot read", tc.what, err, tc.want)
+			}
+
+			// And it really was spent by the other caller, so the refusal above
+			// is about this record rather than about the race alone: the same
+			// read made again is refused the same way.
+			if err := tc.spend(inner); !errors.Is(err, tc.want) {
+				t.Errorf("the second read of a spent %s = %v; want %v", tc.what, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestARevokeTheStoreRefusesIsNotARevoke is D930's one unconditional write
 // held to the answer the read path already refuses to fold. gocloud's GCS
 // driver reports an HTTP 403 as NotFound — the fold ReadStrict exists to undo

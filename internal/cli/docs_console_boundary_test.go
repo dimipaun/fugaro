@@ -168,10 +168,10 @@ var consoleBoundaryAllowList = []string{
 // library the owner answered D921 with (docs/mcp-server/reconciliation.md §4),
 // and its licence -- Apache 2.0 -- is what he confirmed on 2026-11-06 before
 // the dependency could be added at all; the authorization server of
-// ee/coordinator/mcpauth (plan task M5) is built on it. The two indirect
-// entries beside it (`zitadel/schema`, `muhlemmer/gu`) and the version bumps
-// `go mod tidy` made at the same time are the module graph the new require
-// brings, not decisions of their own. The console contributes nothing to any of
+// ee/coordinator/mcpauth (plan task M5) is built on it. The three indirect
+// entries beside it (`zitadel/schema`, `muhlemmer/gu`, `kr/text`) and the
+// version bumps `go mod tidy` made at the same time are the module graph the
+// new require brings, not decisions of their own. The console contributes nothing to any of
 // them either.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
