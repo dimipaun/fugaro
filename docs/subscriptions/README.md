@@ -1,6 +1,8 @@
 # Subscriptions
 
-**Status: plan only; nothing is implemented; no task approved.** D430–D448 and the Terms draft's
+**Status: partly built — 7 of the plan's 51 tasks are done, 7 partial, 27 not started and 10 are
+owner-run — and no task is approved; the task-by-task census against `origin/main` is
+[status-2026-11-07.md](status-2026-11-07.md).** D430–D448 and the Terms draft's
 owner questions B1–B17 were answered by the owner on 2026-10-27 (D432, D443 and D445 partly, and
 D433, D434, D436, D437, D438, D440, D444, B6, B7 and B13 not the recommendation). The owner
 ruled every open tension, T10–T26, O4 and the key binding, the same day (T10, T11, T21 and T25
