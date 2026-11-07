@@ -464,6 +464,17 @@ func TestBitbucketRouteForwardsFetch(t *testing.T) {
 	if got.auth != wantAuth {
 		t.Errorf("the upstream was shown %q as its credential, want the bundle's token as git's own x-token-auth Basic", got.auth)
 	}
+	// Nothing of the caller's own identity travels with the call: the run
+	// identity and the job name are this contract's headers, and the job's
+	// Google ID token is the credential the caller presented — which the
+	// Authorization assertion above reads as overwritten rather than merely
+	// dropped, so the two together are the whole of "the caller's credentials
+	// are dropped" (dropRequestHeaders is the belt to this brace).
+	for _, h := range []string{HeaderRunIdentity, HeaderRunJob} {
+		if v := got.header.Get(h); v != "" {
+			t.Errorf("the upstream was shown %s: %q, and this contract's own headers never leave the process", h, v)
+		}
+	}
 
 	line := s.onlyAuditLine(t)
 	if line["purpose"] != PurposeGit || line["credential"] != config.BitbucketSecret || line["status"] != StatusOK {
