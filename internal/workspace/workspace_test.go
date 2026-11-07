@@ -282,12 +282,15 @@ func TestRecordRoundTripsThroughTheSchema(t *testing.T) {
 	// The cap's bounds are FromUSD's, so the two sides give the same answer
 	// about the amounts a writer can put in the file: above pricing.MaxUSD,
 	// and below the smallest amount that is a whole micro-dollar.
-	cap := wsNode(t, doc, "$defs", "cap", "properties", "monthly").(map[string]any)
-	if cap["maximum"] != float64(pricing.MaxUSD) {
-		t.Errorf("the schema's cap maximum is %v, and pricing.FromUSD refuses anything above %d", cap["maximum"], pricing.MaxUSD)
+	monthly, ok := wsNode(t, doc, "$defs", "cap", "properties", "monthly").(map[string]any)
+	if !ok {
+		t.Fatal("schemas/workspace.schema.json's $defs.cap.properties.monthly is not an object")
 	}
-	if cap["minimum"] != 0.5/1e6 {
-		t.Errorf("the schema's cap minimum is %v, and %v is the smallest amount that is one whole micro-dollar (pricing.Micros)", cap["minimum"], 0.5/1e6)
+	if monthly["maximum"] != float64(pricing.MaxUSD) {
+		t.Errorf("the schema's cap maximum is %v, and pricing.FromUSD refuses anything above %d", monthly["maximum"], pricing.MaxUSD)
+	}
+	if monthly["minimum"] != 0.5/1e6 {
+		t.Errorf("the schema's cap minimum is %v, and %v is the smallest amount that is one whole micro-dollar (pricing.Micros)", monthly["minimum"], 0.5/1e6)
 	}
 	for _, tc := range []struct {
 		monthly string
