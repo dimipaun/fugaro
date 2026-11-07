@@ -421,6 +421,16 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 			next.Terraform.BudgetAdmins = slices.Clone(r.budgetAdmins(lc))
 		}
 	}
+	// The same backfill install() makes, and for the same reason: this door
+	// applies the installation root itself (installRoot above), and
+	// `fugaro update --firebase-project` runs no installation stage at all —
+	// so an installation whose first post-upgrade command is this flag would
+	// keep no per-repository record, and this release's launcher withholds the
+	// service's address from the cascade jobs of every root the earlier apply
+	// already stripped of its model mounts (D143). The record is the switch's
+	// second condition, and the upgrade owes it on every door that writes the
+	// local config.
+	r.backfillCredentialsServiceReady(ctx, c, spec.StateBucket, lc, outs)
 	if err := r.writeConfig(ctx, lc, spec, outs, path, old, confirmed); err != nil {
 		return err
 	}

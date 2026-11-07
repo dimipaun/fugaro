@@ -256,6 +256,11 @@ func (e *initEngine) converge(ctx context.Context) error {
 	stages := initStages(e)
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
 	e.gateEarly(ctx)
+	// The repository this run is about to onboard joins the local config
+	// before the first stage plans, so the installation stage's own apply
+	// names its jobs in the credentials service's table (the same run grants
+	// them roles/run.invoker on that service: makeOnboardingRepoEntry).
+	e.makeOnboardingRepoEntry()
 	// The managed project's read, once for the whole run: it is what the run's
 	// one confirmation and the steps the gate does not judge ask about
 	// (update_managed.go's gateRun), and it is made before the first stage so
@@ -562,11 +567,16 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 	// brought up to date with this machine's config first, because the deploy
 	// is the table's only other writer and a repository onboarded after it
 	// would hold an invoker grant on a service whose table refuses its jobs
-	// (infra.RefreshCredentialsServiceJobAccounts). A refusal there is not a
-	// failure of the run: the block is written exactly as the workdir held it,
-	// which is the fail-closed direction — an installation whose config cannot
-	// describe the table keeps the table it has — and the same shape the deploy
-	// path answers a config that cannot carry the service with.
+	// (infra.RefreshCredentialsServiceJobAccounts). The repository this run
+	// onboards is in the config before this stage plans
+	// (makeOnboardingRepoEntry), so the table names its jobs in the run that
+	// grants them the invoker: a row only a later run would add leaves this
+	// run's own repository refused by the service it was just switched onto.
+	// A refusal there is not a failure of the run: the block is written exactly
+	// as the workdir held it, which is the fail-closed direction — an
+	// installation whose config cannot describe the table keeps the table it
+	// has — and the same shape the deploy path answers a config that cannot
+	// carry the service with.
 	var next = doc
 	if e.lc != nil {
 		refreshed, err := infra.RefreshCredentialsServiceJobAccounts(doc, e.lc)

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -195,6 +197,62 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 		return unreadable(err)
 	}
 	return answer(len(b.Credentials()) > 0)
+}
+
+// makeOnboardingRepoEntry makes the entry of the repository this run is about
+// to onboard, before the first stage plans.
+//
+// The credentials service's job table is composed from the local config by both
+// of its writers — the deploy (infra.Credentials) and the refresh every
+// installation apply makes (infra.RefreshCredentialsServiceJobAccounts) — and
+// the stage that applies the installation root is the third, while a repository
+// joins the config in the repository stage, which is the ninth. So without this
+// the run that onboards a `cascade` repository applies its root with the switch
+// on — mounts dropped, roles/run.invoker granted — into a service whose table
+// names no job of it, and every run of that repository then halts at the
+// service's door: internal/credsvc admits the callers its table holds and
+// refuses the rest, and a `cascade` run has no credential of its own to fall
+// back to (D143). The table carries the row in the same run the grant is made
+// exactly when the entry is here before that run's installation apply plans.
+//
+// It carries the provider and the workflows, and no more: those are the two
+// fields a row is derived from (CredentialsJobAccounts reads one row per
+// workflow of the entry, so an entry with none is a repository whose jobs the
+// service refuses just the same), and both are what the checkout's default
+// branch states. The rest of the entry — the base branch, the app id, the
+// record itself — is the repository door's, which is the one that knows the
+// plan it was built with; it writes over this shell in the same run.
+//
+// It is made only where the gate has authorised the onboarding: a repository
+// the user declined, and one this run cannot ask about at all (a coding agent's
+// session, a pipe, --json), is left alone. A name the config already lists at
+// another host is left alone too: that entry belongs to the other provider's
+// repository, and infra.Repo refuses the disagreement rather than switching it
+// (spec.go's provider check).
+//
+// A run that authorises the onboarding and then stops before the repository
+// stage leaves the row behind, and that is the direction this table fails in:
+// the refresh UNIONS the derived rows with the document's, so an extra row
+// binds an account no token is ever minted for, while a missing one is a job
+// that holds the invoker grant and is refused.
+func (e *initEngine) makeOnboardingRepoEntry() {
+	if e.lc == nil || e.repo == nil {
+		return
+	}
+	tg := e.repo.tg
+	if tg == nil || tg.cfg == nil || repoNameListed(e.lc, tg.origin) {
+		return
+	}
+	if a, err := e.authState(tg.origin); err != nil || a != authOK {
+		return
+	}
+	if e.lc.Repos == nil {
+		e.lc.Repos = map[string]localcfg.Repo{}
+	}
+	e.lc.Repos[repoConfigKey(e.lc, tg.repo)] = localcfg.Repo{
+		Provider:  tg.cfg.Git.Provider,
+		Workflows: slices.Sorted(maps.Keys(tg.cfg.Workflows)),
+	}
 }
 
 // recordCredentialsServiceReady records, on the ONE repository entry whose root
@@ -435,6 +493,13 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // converges on the next run that CAN read the bundle — which is the same door,
 // the next time it works, and never a second command. A state it cannot read
 // is the same shape, one repository at a time.
+//
+// Both doors that apply the installation root and write the local config call
+// it: install (init.go), and initFirebase (init_firebase.go), because
+// `fugaro update --firebase-project <id>` runs no installation stage and
+// applies that root itself — a door that skipped it would leave this upgrade's
+// record to the next plain update, which is the second command the rule above
+// forbids.
 func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.Clients, stateBucket string, lc *localcfg.Config, outs infra.InstallationOutputs) {
 	if lc == nil || len(lc.Repos) == 0 {
 		return

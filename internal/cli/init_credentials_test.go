@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -10,12 +11,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The credentials service's deploy (docs/credentials-service/default-on.md, the
@@ -304,6 +308,20 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	}
 }
 
+// seedCheckoutGitSecret stores repo's git credential as `fugaro secrets set`
+// would leave it, so a converge run from a checkout of repo finds the value its
+// jobs mount and reaches the stages behind the secrets one.
+func seedCheckoutGitSecret(t *testing.T, r *imagesRig, repo string) {
+	t.Helper()
+	slug, err := task.Slug("bitbucket", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.sm.Seed(gcp.SecretID(slug, config.BitbucketSecret), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: config.BitbucketSecret,
+	}, []byte(credsValue(t, "git")))
+}
+
 // TestUpdateRefreshesTheServicesJobTable: the table is the one member of the
 // block `fugaro update` composes rather than carries, and the deploy is its
 // only other writer — so a repository onboarded after that deploy has to enter
@@ -346,6 +364,96 @@ func TestUpdateRefreshesTheServicesJobTable(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("credentials_service.job_accounts = %v, want %v: the config's own repository job enters the table on the next run, and the row the deploy wrote stays — the service refuses a job whose row it does not hold, and nothing else writes this table\n%s", got, want, s)
+	}
+}
+
+// TestAnOnboardingConvergeNamesTheNewRepositoriesJobs: the run that onboards a
+// repository is the run that grants its jobs roles/run.invoker on the
+// credentials service, so its jobs have to enter the table in that same run —
+// the service admits the callers its table holds and refuses every other
+// (internal/credsvc/auth.go), and a `cascade` run has no credential of its own
+// to fall back to (D143).
+//
+// The table is composed out of the local config, and the stage order is what
+// makes this a whole-command test rather than a unit one: the installation
+// stage (third) applies the root and writes the tfvars the table is in, while a
+// repository joins the config in the repository stage (ninth) — so the entry
+// has to be there before the first stage plans (makeOnboardingRepoEntry, called
+// from converge), and it has to carry the workflows, which is what a row is
+// derived from. Without it this run's table names the deploy's stale row and
+// the config's other repository alone, and the checkout's own jobs are refused
+// by the service they were just switched onto until a later update.
+//
+// The workflow is the checkout's own (app, from its fugaro.yaml), not the
+// `web` of the config's other entries: the row is the job the repository's
+// root deploys, and that job is named by the repository's document.
+//
+// Mutation (verified, run and restored): drop the makeOnboardingRepoEntry call
+// from init_stages.go's converge and this fails with the table holding
+// [acme/old, acme/other] — no row for the repository the run onboarded. Drop
+// only the Workflows of the entry it writes and it fails the same way: the row
+// is derived per workflow, so an entry with none is a repository whose jobs the
+// service still refuses.
+func TestAnOnboardingConvergeNamesTheNewRepositoriesJobs(t *testing.T) {
+	r := credentialsRig(t)
+	r.repoReady(t)
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	// The table the deploy left: a repository this machine's config no longer
+	// describes, which is what stands in for "the config has moved on since".
+	setCredentialsJobTable(t, r, []any{map[string]any{
+		"provider": "bitbucket", "repo": "acme/old", "workflow": "web"}})
+	// The bundle holds a model credential, so the repository this run onboards
+	// is the state the finding is about: its root is applied with the switch on
+	// and its jobs are granted the invoker.
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	// The checkout's repository is NOT in the local config: this is its first
+	// onboarding, and the checkout is where its provider comes from.
+	withoutSwitchRepo(t, r.initRig, "acme/other")
+	// Its git credential is stored, so the converge reaches the repository
+	// stage rather than stopping at the secrets one — the stage order is the
+	// whole point of this test, and a run that stopped earlier would prove
+	// nothing about the table the installation apply wrote.
+	seedCheckoutGitSecret(t, r, "acme/sandbox")
+	// The run goes to its end: the layer stage and the checkout stage's cloud
+	// step read the project's bucket, and the rig's endpoints are fakes, so
+	// bucket_url names a directory this machine can read (the layer rigs'
+	// own pattern) rather than a gs:// bucket nothing serves.
+	bucket := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(bucket, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bucket, "fugaro", "project-layer.yaml"), []byte(testProjectLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.appendConfig(t, "bucket_url: file://"+bucket+"\n")
+	r.save(t)
+	// The build records live in the runs bucket, which is the same fake
+	// problem: the checkout's cloud step writes one there.
+	records := t.TempDir()
+	openRecords := openRecordBucket
+	t.Cleanup(func() { openRecordBucket = openRecords })
+	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+records) }
+
+	// The workflow runs the base image directly (checkout: clone), so the
+	// checkout stage's cloud step has no build to submit: what this test is
+	// about is the installation apply and the table it writes, and a billable
+	// build of a fixture's own app would only stand between the two.
+	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", cloneCheckoutYAML("bitbucket", "cascade", "aurora")))
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("the run that onboards the checkout's repository failed: %v\n%s", err, s)
+	}
+	got, _ := credentialsServiceEntry(t, r)["job_accounts"].([]any)
+	want := []any{
+		map[string]any{"provider": "bitbucket", "repo": "acme/old", "workflow": "web"},
+		map[string]any{"provider": "bitbucket", "repo": "acme/other", "workflow": "web"},
+		map[string]any{"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "app"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("credentials_service.job_accounts = %v, want %v: the repository this run onboarded is in the table the same run's installation apply wrote, beside the rows the deploy left and the config's other repository — the service refuses every call from a job account whose row it does not hold, while that job's own root has already been granted roles/run.invoker on it, and the repository's cascade runs then halt with nothing to fall back to (D143)\n%s", got, want, s)
 	}
 }
 
@@ -886,6 +994,61 @@ func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
 	}
 	if r.resolveCalls != 1 || r.arCalls != 1 {
 		t.Errorf("resolve calls %d, read-backs %d, want one of each: the image is pinned only through the step that verifies the signature of the digest it names, once for the run", r.resolveCalls, r.arCalls)
+	}
+}
+
+// TestTheFirebaseProjectDoorBackfillsTheRecordToo: the same door owes this
+// upgrade's per-repository record, because it applies the installation root
+// itself and runs no installation stage — so it never reaches install(), which
+// is the other call site of the backfill (internal/cli/init.go).
+//
+// An installation that took the credentials service before this release and
+// whose FIRST post-upgrade command is `fugaro update --firebase-project <id>`
+// is the state: the earlier apply already dropped its repositories' model
+// mounts and granted their accounts roles/run.invoker, so a record left for
+// the next plain update is a `cascade` run launched with no model credential
+// of its own and no address to call (D143) — the second command CLAUDE.md's
+// HARD RULE forbids.
+//
+// Mutation (verified, run and restored): drop the
+// backfillCredentialsServiceReady call from initFirebase and this fails with
+// acme/sandbox carrying no record after the flag's run.
+func TestTheFirebaseProjectDoorBackfillsTheRecordToo(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := credentialsRig(t)
+	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	r.fs.SetDatabase("us-east5")
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	// The installation's own outputs, as the Firebase stage reads them back: the
+	// credentials block this door re-pins AND the history account the stage
+	// needs (the composed script is TestUpdateFirebaseProjectRepinsTheCredentialsImage's).
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"history_service_account": historyAccount,
+		"history_job":             nil,
+	})}
+	r.save(t)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	// The bundle holds a model credential, and the installation's own state
+	// says this repository's root was applied with the service on: the two
+	// things the backfill judges an entry by.
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	seedRepoStateGrant(t, r.initRig, slug)
+
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the local config does not parse: %v", err)
+	}
+	if !lc.Repos["acme/sandbox"].CredentialsServiceOn() {
+		t.Errorf("acme/sandbox carries no record after `fugaro update --firebase-project`, though its root was applied with the service on and this run read a bundle holding a model credential: this door applies the installation root itself and runs no installation stage, so the backfill install() makes is the one it owes too — without it the upgrade's record waits for a second, plain update, and a cascade run in between is launched with no model mount of its own and no address to call (D143)\n%s", s)
 	}
 }
 
@@ -1524,4 +1687,11 @@ func TestAFailedPolicyReadKeepsTheVerifierList(t *testing.T) {
 	if got := verifierListOf(localConfigOf(t, r)); got != nil {
 		t.Errorf("the local config names verifier_accounts = %v after a run whose policy read failed, want the file as it was (silent): writing the installation's own address here publishes it over the owner's list\n%s", got, readFileString(t, r.cfg))
 	}
+}
+
+// cloneCheckoutYAML is checkoutYAML for a repository whose one workflow runs
+// the base image directly: no build, so a converge that reaches the checkout
+// stage's cloud step has nothing billable to submit.
+func cloneCheckoutYAML(provider, auth, project string) string {
+	return "version: 1\nproject: " + project + "\ngit: { provider: " + provider + " }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"
 }
