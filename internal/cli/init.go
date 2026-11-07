@@ -41,6 +41,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -490,6 +491,13 @@ type initRun struct {
 	o   *initOptions
 	w   io.Writer // the human-readable account: stdout, or stderr with --json
 	in  *bufio.Reader
+	// rep is the run's account when the converge is its shape (CL5b): one line
+	// per stage, the closing line, and the log a failure sends the user to. It
+	// is built for the converge and left nil for the runs that do not go
+	// through the loop (--forget, --config-only, --print-vars), which print as
+	// they always have. repLog is the log it keeps, closed when the run ends.
+	rep    *report.Reporter
+	repLog report.Sink
 	// gcpProject is the GCP project ID every Google call uses;
 	// projectName is the project's name, shown and typed to confirm.
 	gcpProject, projectName string
@@ -780,6 +788,16 @@ func runInit(r *initRun) error {
 		// fact before it prints the result (markCreated, called from
 		// outcome), whatever the loop's outcome — which the run still
 		// returns.
+		//
+		// This run's account and log are the converge's (CL5b): the reporter
+		// prints the steps the loop hands it, and every stage's Terraform
+		// progress goes to its Stream — the log always, the terminal under
+		// --verbose. The log is closed here, on the run's way out, so its last
+		// partial line is written.
+		r.rep, r.repLog = reporterFor(cmd, o.doorName(), e.redaction())
+		if r.repLog != nil {
+			defer func() { _ = r.repLog.Close() }()
+		}
 		return e.converge(cmd.Context())
 	}
 
@@ -1160,8 +1178,21 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 		}
 		return nil, nil, userErr("%v", err)
 	}
-	t.Out = r.cmd.ErrOrStderr()
+	t.Out = r.progress()
 	return wd, t, nil
+}
+
+// progress is where a stage's own output goes: Terraform's progress, and the
+// children that print like it. Under the converge it is the reporter's stream —
+// the log always, the terminal under --verbose — so the default view stays one
+// line per stage and the full output is kept (D1352). A run with no reporter
+// (--forget, --config-only, --print-vars) writes to stderr, which is what
+// every run did before CL5b.
+func (r *initRun) progress() io.Writer {
+	if r.rep != nil {
+		return r.rep.Stream()
+	}
+	return r.cmd.ErrOrStderr()
 }
 
 // gcpOptions are the Google API options of lc's project and endpoints.
