@@ -7,7 +7,7 @@ The spec replaces the fixed "OpenRouter coder, Opus reviewer" setup with **crede
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received (verbatim) |
-| [reconciliation.md](reconciliation.md) | Findings F1–F19, decisions D1620–D1633 (D1634–D1639 reserved), open tensions, UNVERIFIED |
+| [reconciliation.md](reconciliation.md) | Findings F1–F25, decisions D1620–D1637 (D1638–D1639 reserved), open tensions, UNVERIFIED |
 | [implementation-plan.md](implementation-plan.md) | Slices, tasks MC1–MC10, levels, critical path, shared-files table, Checks 420–422 (423–429 reserved) |
 
 **Numbers:** D1620–D1639, Checks 420–429. Siblings: no-prompt (#1906), composite commands (#1907), roles (#1908), diagnose (#1909). **Independent review has not run.**

@@ -1,6 +1,6 @@
 # Model crafts and credentials: implementation plan
 
-Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (D1620–D1633, F1–F19). **Nothing is implemented. No task is approved: each needs the owner's explicit go; answering a decision is not a go.** Owner answers that shaped it (2026-11-07): the word *craft* (D1620); generalise in place and migrate in `update` (D1621); pools ship, a pool of two or more subscription credentials stays off until the D875 switch (D1622); OpenRouter, Anthropic key, Vertex and Claude OAuth now, OpenAI key and Codex OAuth a documented "not yet" (D1623). D1624–D1633 were answered 2026-11-07 as the recommendations (owner delegated reading to the PR); tasks that name one are no longer blocked by it.
+Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (D1620–D1637, F1–F25). **Nothing is implemented. No task is approved: each needs the owner's explicit go; answering a decision is not a go.** Owner answers that shaped it (2026-11-07): the word *craft* (D1620); generalise in place and migrate in `update` (D1621); pools ship, a pool of two or more subscription credentials stays off until the D875 switch (D1622); OpenRouter, Anthropic key, Vertex and Claude OAuth now, OpenAI key and Codex OAuth a documented "not yet" (D1623). D1624–D1633 were answered 2026-11-07 as the recommendations (owner delegated reading to the PR); tasks that name one are no longer blocked by it.
 
 External dependencies (other plans, not built here): composite-commands (#1907: the step registry; a credential or pool change runs publish and update steps), roles-scopes (#1908: who may change), no-prompt (#1906: value entry, owner-only cap raise), diagnose (#1909: credential order).
 
@@ -21,6 +21,9 @@ External dependencies (other plans, not built here): composite-commands (#1907: 
 | The migration is derived from each installation's own keys; a run before and after resolves the same model and credential (F17) | MC4 converge test |
 | `stage_accounts` keeps its meaning; `craft_credentials` is a new additive field (D1629) | MC8 |
 | No craft key turns level 3 on (F14) | MC1 `TestSecurityCraftDoesNotEnableLevel3` |
+| A job receives only the secrets of the crafts it runs; a review-class credential never lands in a coder job; cross-secret failover only at a stage boundary or in credsvc (F20, D1635) | MC5 `TestJobEnvHoldsOnlyItsCraftsSecrets`, MC6 `TestReviewCraftPoolOnlyReviewClass` |
+| A pool is admitted only if every member serves the model ID as written (F23) | MC5 `TestPoolRefusedWhenAMemberDoesNotServeTheModel` |
+| Subscription spread is off by default, its writes refuse in an agent session, and the inert rule holds on the credsvc path too (F22) | MC5 `TestPoolWritesRefuseInAgentSession`, MC6 `TestSubscriptionPoolInertInCredsvc` |
 
 ## Slices and tasks
 
@@ -42,38 +45,38 @@ External dependencies (other plans, not built here): composite-commands (#1907: 
 ### MC3 — layering and policy merge (tightening)
 - **Files:** `internal/policy/craft.go` (new), `internal/policy/merge.go`, `internal/policy/craft_test.go` (new).
 - **Interfaces:** consumes MC1; produces the merge rule of D1628 and a looser value recorded in `Effective.Ignored`.
-- **Tests:** `TestRepoCannotAddCredential`, `TestRepoCanOnlyNarrowPool`, `TestLooserPoolNeverWins`. **Command:** `go test ./internal/policy -run Craft -count=1`.
+- **Tests:** `TestRepoCannotAddCredential`, `TestRepoCanOnlyNarrowPool`, `TestLooserPoolNeverWins`, `TestRepoCannotReorderOrChangeStrategy` (narrow = subsequence of the project's list, order kept; failover is tighter than round-robin, F12). A repository's keys come from the owner-written policy node, never the shared file (F25). **Command:** `go test ./internal/policy -run Craft -count=1`.
 - **Depends on:** MC1; **D1628 answered**. **Red step:** a repository layer adding a credential must fail first. **Tier:** opus + mandatory independent review (spending and egress grant); in-run level 3. **Commit:** `policy: a repository selects and narrows crafts, never adds (MC3)`.
 
 ### MC4 — migration inside `fugaro update`
 - **Files:** `internal/cli/init_craft_migrate.go` (new), `internal/cli/init.go`, `internal/cli/settings_set.go`, `internal/localcfg/localcfg.go`, `internal/cli/testdata/` (previous-version fixtures).
-- **Interfaces:** consumes MC1, MC2; produces the in-place conversion (accounts → credentials; auto list → pool; `agent.models.*` and stage keys → craft keys; route `secret`s → credentials), for the local, project and repository layers.
+- **Interfaces:** consumes MC1, MC2; produces the in-place conversion (accounts → credentials; auto list → pool; `agent.models.*` and stage keys → craft keys; route `secret`s, `agent.oauth_token`, `verifier_accounts`, `review_floor` → credentials and craft keys), with a format-version bump for every JSON document whose fields are removed (`models ls --json`, policy node; F17), for the local, project and repository layers.
 - **Tests:** `TestUpdateConvergesPreviousInstallation` (an installation at the previous version converges and `fugaro run` resolves the same model and credential before and after), `TestUpdateIsIdempotent`, `TestCommittedOldKeysRefuseWithTheFixCommand`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'CraftMigrate|Converges' -count=1`.
 - **Depends on:** MC1, MC2. **Red step:** the converge test fails on an installation with `default_claude_account` set. **Tier:** standard + converge test (HARD RULE); release notes `### For operators`: "run `fugaro update`". **Commit:** `update: migrate accounts, auto list and model keys to credentials, pools and crafts (MC4)`.
 
 ### MC5 — credential commands and pool selection in the runner
 - **Files:** `internal/cli/accounts_add.go`, `internal/cli/accounts.go`, `internal/cli/accounts_pool.go` (new), `internal/runner/routing.go`, `internal/runner/gateway.go`, `internal/config/stage_accounts.go`.
 - **Interfaces:** consumes MC1–MC3; produces `fugaro accounts add --type …`, `fugaro accounts pool add|rm|ls`, the ordered failover of a pool in a run, the D1622 inert rule, the vertex-under-enforce refusal (reuses `runner.VertexBudgetRefusal`), the built-in `vertex` credential (D1624).
-- **Tests:** `TestSubscriptionPoolInertWithoutSwitch`, `TestVertexPoolRefusedUnderEnforce`, `TestPoolFailsOverOnExhaustion` (fake 429/402/529 upstream), `TestMemberOutsideAllowDataToSkipped`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli ./internal/runner -run 'Pool|AccountsAdd|Vertex' -count=1`.
-- **Depends on:** MC1, MC2, MC3; **D1624, D1626, D1627, D1631, D1632 answered**; F5's signal table written first. **Red step:** the failover test fails with a pool of one exhausted credential. **Tier:** opus + mandatory independent review (credentials, egress, selection); level 3. **Commit:** `accounts: typed credentials and pools, failover in a run (MC5)`.
+- **Tests:** `TestSubscriptionPoolInertWithoutSwitch`, `TestVertexPoolRefusedUnderEnforce`, `TestPoolFailsOverOnExhaustion` (fake 429/402/529 upstream), `TestMemberOutsideAllowDataToSkipped`, `TestJobEnvHoldsOnlyItsCraftsSecrets`, `TestPoolRefusedWhenAMemberDoesNotServeTheModel`, `TestPoolWritesRefuseInAgentSession`. The writes (`accounts pool add/rm`, strategy change, the `subscription_spread` flag) refuse under `agentMarker` as `accounts_add.go` does; failover on the runner path happens at a stage boundary with the next secret re-fetched, never by retrying inside `gateway.go` (F20); the `subscription_spread` flag replaces `claude_account_auto` and keeps its refusals (F22). **Command:** `GOFLAGS=-p=1 go test ./internal/cli ./internal/runner -run 'Pool|AccountsAdd|Vertex' -count=1`.
+- **Depends on:** MC1, MC2, MC3; **D1624, D1626, D1627, D1631, D1632, D1634–D1637 answered**; F5's signal table written first. **Red step:** the failover test fails with a pool of one exhausted credential. **Tier:** opus + mandatory independent review (credentials, egress, selection); level 3. **Commit:** `accounts: typed credentials and pools, failover in a run (MC5)`.
 
-### MC6 — the credentials service selects from a pool
-- **Files:** `internal/credsvc/cascade.go`, `internal/credsvc/pool.go` (new), `internal/creds/` (selector input), `internal/credsvc/pool_test.go` (new).
-- **Interfaces:** consumes MC5's pool; produces the candidate ordering the existing cascade (`Select`, `retryPool`, `probeDue`) walks, with back-off and probe unchanged.
-- **Tests:** the cascade's own tests stay green; `TestPoolOrderIsTheCandidateOrder`, `TestExhaustedMemberBackedOffAndProbed`. **Command:** `go test ./internal/credsvc ./internal/creds -run 'Pool|Cascade' -count=1`.
-- **Depends on:** MC5. **Red step:** a pool's second member must be tried only after the first backs off. **Tier:** opus + mandatory independent review; level 3. **Commit:** `credsvc: a pool is the cascade's candidate list (MC6)`.
+### MC6 — the credentials service serves Anthropic-key and OAuth pool members
+- **Files:** `internal/credsvc/cascade.go`, `internal/credsvc/pool.go` (new), `internal/creds/select.go`, `internal/credsvc/pool_test.go` (new).
+- **Interfaces:** consumes MC5's pool; the cascade selects **by tier** (A OAuth before B key, listed order only a tie-break, sticky per run: D154); `TierC` stays reserved and OpenRouter/Vertex members never reach credsvc (they run on MC5's runner path; D1634). Back-off and probe unchanged.
+- **Tests:** the cascade's own tests stay green; `TestPoolMembersAreServedByTierOrder`, `TestOpenRouterAndVertexMembersNeverReachCredsvc`, `TestExhaustedMemberBackedOffAndProbed`, `TestReviewCraftPoolOnlyReviewClass` (F21: `reviewCandidates` keeps "never an entry the cascade could fall to"), `TestSubscriptionPoolInertInCredsvc` (F22). **Command:** `go test ./internal/credsvc ./internal/creds -run 'Pool|Cascade|Review' -count=1`.
+- **Depends on:** MC5. **Red step:** a pool with an API key listed first must still be served OAuth-first. **Tier:** opus + mandatory independent review; level 3. **Commit:** `credsvc: pool members are served by tier order (MC6)`.
 
 ### MC7 — round-robin
 - **Files:** `internal/credsvc/roundrobin.go` (new), `internal/credsvc/pool.go`, `internal/budget/` or `internal/credsvc/state` (the counter, per D1625), tests.
 - **Interfaces:** consumes MC6; produces the strategy `round-robin` (skip failing members).
-- **Tests:** `TestRoundRobinSpreadsAcrossRuns`, `TestRoundRobinSkipsBackedOffMember`, concurrency test with two simultaneous selections. **Command:** `go test ./internal/credsvc -run RoundRobin -count=1`.
+- **Tests:** `TestRoundRobinSpreadsAcrossRuns`, `TestRoundRobinSkipsBackedOffMember`, `TestRoundRobinCompareAndSetUnderConcurrentSelectors` (several Selector instances, one counter written with compare-and-set; F6), `TestRoundRobinNeverMovesAStickyRun` (per run or per stage, never per call: D154, D874). **Command:** `go test ./internal/credsvc -run RoundRobin -count=1`.
 - **Depends on:** MC6; **D1625 answered**. **Red step:** three selections must not all pick member 1. **Tier:** opus + independent review; level 3. **Commit:** `credsvc: round-robin selection over a pool (MC7)`.
 
 ### MC8 — the effective-craft command, the record field and the console read
-- **Files:** `internal/cli/craft.go` (new: `fugaro craft ls [--json]`), `internal/cli/project.go` (`consoleReadPaths` row), `console/src/main/spawn.ts` and its equality test, `internal/runstore/` (additive `craft_credentials`), `schemas/`.
+- **Files:** `internal/cli/craft.go` (new: `fugaro craft ls [--json]`), `internal/cli/project.go` (`consoleReadPaths` row) and `docs/design/desktop-console.md` §5.1's allow-list table (the Go test holds the two equal; not `spawn.ts`), `internal/runstore/` (additive `craft_credentials`), `schemas/`.
 - **Interfaces:** consumes MC2 and MC5/MC6 (what served).
-- **Tests:** golden `craft ls --json` (versioned, no secret value), the exact-argv equality test, `TestRunRecordNamesCraftCredentials`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli ./internal/runstore -run 'Craft|ConsoleRead' -count=1` and `npm run test:unit -- --maxWorkers=2` in `console/` for the equality test.
-- **Depends on:** MC2 (the read ships before the keys are writable: D1633, which **must be answered**); the record part also on MC6. **Red step:** the fence equality test fails when the row is added on one side only. **Tier:** opus + independent review (console spawn/IPC allow-list); level 3. **Commit:** `craft: fugaro craft ls and the record's craft_credentials (MC8)`.
+- **Tests:** golden `craft ls --json` (versioned, no secret value), the §5.1 table equality test, `TestRunRecordNamesCraftCredentials`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli ./internal/runstore -run 'Craft|ConsoleRead|DesktopConsole' -count=1`.
+- **Depends on:** MC2 (the read ships before the keys are writable: D1633, which **must be answered**); the record part also on MC6. **Red step:** the §5.1 equality test fails when the row is added to `consoleReadPaths` only. **Tier:** opus + independent review (console spawn/IPC allow-list); level 3. **Commit:** `craft: fugaro craft ls and the record's craft_credentials (MC8)`.
 
 ### MC9 — docs, skills and website
 - **Files:** `docs/project-claude-accounts.md`, `docs/multi-model.md`, `docs/models-commands/`, `plugin/skills/*`, `README.md`, `docs/releases/` entry, `website/` pages naming the old keys.
