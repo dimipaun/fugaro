@@ -2187,15 +2187,24 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	if err != nil || stop {
 		return err
 	}
-	// No credentials-service record is written here, deliberately: the record
-	// says "THIS repository's root has been applied with the service on", and
-	// the grant that makes the service usable to a repository is made by that
-	// root's own apply (modules/workflow/sa.tf). The installation root applies
-	// no repository root, so a record written from here would tell a launch
-	// the service is ready for a repository whose job accounts hold no
-	// roles/run.invoker, and a `cascade` run has no credential of its own to
-	// fall back to (D143). The repository stage of this same run is the door
-	// that applies a root, and it records there (recordCredentialsServiceReady).
+	// No credentials-service record is written here for a root this run does
+	// not apply, deliberately: the record says "THIS repository's root has been
+	// applied with the service on", and the grant that makes the service usable
+	// to a repository is made by that root's own apply (modules/workflow/sa.tf).
+	// A record written for a repository whose root has not been applied with
+	// the service on would tell a launch the service is ready while its job
+	// accounts hold no roles/run.invoker, and a `cascade` run has no credential
+	// of its own to fall back to (D143). The repository stage of this same run
+	// is the door that applies a root, and it records there
+	// (recordCredentialsServiceReady).
+	//
+	// The one write this door does make is the backfill an UPGRADE owes: a
+	// repository whose root a PREVIOUS release already applied with the service
+	// on carries no record, because the field did not exist then, and this
+	// release's launcher reads the record. The evidence is that root's own
+	// tfvars, so this vouches for a grant that was made and not for one this
+	// run's installation root never makes.
+	r.backfillCredentialsServiceReady(ctx, lc, outs)
 	// 8. The local config.
 	return r.writeConfig(ctx, lc, spec, outs, path, old, r.res.Applied)
 }

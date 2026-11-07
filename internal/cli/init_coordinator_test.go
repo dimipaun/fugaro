@@ -109,8 +109,8 @@ func TestTheCoordinatorJobIsDeployedForABitbucketOnlyInstallation(t *testing.T) 
 	}
 }
 
-// TestTheCoordinatorOptInIsRefusedWhereItCannotBeConfirmed: the opt-in
-// follows --provision-credentials — --yes never covers it, it excludes the
+// TestTheCoordinatorOptInIsRefusedWhereItCannotBeConfirmed: the opt-in is an
+// owner's typed confirmation — --yes never covers it, and it excludes the
 // flags that only read or only stop and --repo — and it needs
 // --firebase-project, which is the run that grants the account's one role.
 func TestTheCoordinatorOptInIsRefusedWhereItCannotBeConfirmed(t *testing.T) {

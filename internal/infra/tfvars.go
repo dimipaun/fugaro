@@ -605,6 +605,41 @@ func CredentialsServiceURLOf(vars []byte) (string, error) {
 	return url, nil
 }
 
+// RepoCredentialsServiceDeployed returns whether a REPOSITORY root's tfvars
+// carry the installation's credentials service: the key
+// installation.credentials_service, present and not null. Unlike the
+// installation root's own credentials_service, which sits at the top level of
+// its document, a repository root carries its copy under installation, the
+// object the workflow module reads (RepoVars, spec.go's RepoInstallation).
+//
+// The key is the whole of the switch's first flip for that root:
+// repoCredentialsService makes it nil for every other answer, and the module
+// reads null as "the service is off for this repository" — with it null the
+// job keeps its model mounts and its App key mount and no account of it is
+// granted roles/run.invoker, and with it set all three are the other way
+// (modules/workflow/sa.tf). So a document that carries it is the record of a
+// root that was applied with the service on, and one that does not is the
+// record of a root that was applied with it off — including the root of an
+// installation that has no service at all.
+//
+// It is the document the last run that applied this root handed Terraform, and
+// it is read where the run's own fugaro.yaml cannot be: a launch from a
+// directory that holds no checkout of the repository has no agent.auth to
+// judge the switch on (internal/cli's credentialsServiceLaunchEnv), and the
+// deployed root is then the fact the job's own containers carry.
+func RepoCredentialsServiceDeployed(vars []byte) (bool, error) {
+	if vars == nil {
+		return false, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return false, fmt.Errorf("the repository's terraform.tfvars.json is not readable: %w", err)
+	}
+	inst, _ := doc["installation"].(map[string]any)
+	svc, ok := inst["credentials_service"]
+	return ok && svc != nil, nil
+}
+
 // SetCredentialsServiceURL returns the installation root's tfvars with
 // credentials_service.url set to url and every other entry — the service's own
 // facts included — unchanged. It is the same read-modify-write of one entry

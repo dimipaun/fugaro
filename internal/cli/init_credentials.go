@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The credentials service's image, and the two names the release publishes it
@@ -204,21 +206,156 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 		// would be a record of a grant this run never made.
 		return
 	}
-	probe := lc
-	if probe.CredentialsService == nil {
-		// The block from the installation's outputs, which is where it is
-		// known on the run that deploys it. A nil one leaves the probe as it
-		// is: with no service anywhere the answer is false without a read,
-		// which is what credentialsBundleReady says of a config that has no
-		// block.
-		if block := credentialsServiceBlock(outs.CredentialsService); block != nil {
-			withBlock := *lc
-			withBlock.CredentialsService = block
-			probe = &withBlock
+	entry.CredentialsServiceReady = r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
+	lc.Repos[key] = entry
+}
+
+// credentialsServiceProbe is the config credentialsBundleReady is read over:
+// lc itself, with the installation's block taken from its own outputs when the
+// local config does not carry one yet. That is the run which deploys the
+// service — the config is written by a step after the one that reads the
+// bundle — and the outputs are the only place the service's existence is known
+// there. A nil block leaves the probe as it is: with no service anywhere the
+// answer is false without a read, which is what credentialsBundleReady says of
+// a config that has no block.
+func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs) *localcfg.Config {
+	if lc == nil || lc.CredentialsService != nil {
+		return lc
+	}
+	block := credentialsServiceBlock(outs.CredentialsService)
+	if block == nil {
+		return lc
+	}
+	withBlock := *lc
+	withBlock.CredentialsService = block
+	return &withBlock
+}
+
+// backfillCredentialsServiceReady records the bundle's readiness on every
+// repository entry whose root THIS MACHINE has already applied with the
+// credentials service on, and whose entry carries no record yet.
+//
+// It is the upgrade path of docs/credentials-service/default-on.md's DON1, and
+// it exists because the record is new in this release: the field's absence and
+// a written false are the same document (localcfg.Repo.CredentialsServiceReady
+// is omitempty on purpose, since false is the shape every earlier config
+// already had), so an installation that opted in under an earlier release is
+// indistinguishable from one that never did. Such an installation's roots were
+// applied with the service on — their jobs mount no model credential and their
+// accounts hold roles/run.invoker — and this release's launcher, which reads
+// the record as the switch's second condition, would withhold the service's
+// address from a `cascade` run of them: a job with no model mount and no
+// address halts at the service's door (D143).
+//
+// The installation door is where it belongs, and not the repository door,
+// because the record has to reach the roots this door does NOT apply: the
+// repository stage applies the checkout's own root and writes that entry from
+// the plan it builds, while the siblings of the installation are roots the
+// next `fugaro update` in THIS checkout never re-applies. Without the backfill
+// the upgrade converges one repository per checkout it is run in, which is an
+// operator step beside `fugaro update` — and CLAUDE.md's HARD RULE is that
+// `fugaro update` is the whole upgrade.
+//
+// The evidence is the deployed root's own document, never a guess
+// (deployedRepoCredentialsService): the tfvars the last apply of that root was
+// built from carry the service exactly when that apply dropped the job's
+// mounts and made its grant. A repository this machine holds no such document
+// for — a sibling never applied here, a first onboarding — is left alone, and
+// so is one whose document says the service is off: the record vouches for a
+// grant, and neither is evidence of one. The value is this run's bundle
+// reading, the same one the repository door writes, and the write is therefore
+// inert where it agrees: a bundle that is empty writes false over an absent
+// field, which is the same document and the same answer to every reader.
+func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs) {
+	if lc == nil || len(lc.Repos) == 0 {
+		return
+	}
+	var switched []string
+	for key := range lc.Repos {
+		if lc.Repos[key].CredentialsServiceReady {
+			continue
+		}
+		on, err := deployedRepoCredentialsService(lc, key)
+		on = true // MUTATION
+		if err != nil {
+			r.warn(fmt.Sprintf("whether %s's repository root carries the credentials service could not be read (%s): its record is left as it is, and a run of it may not be handed the service's address until the next update reads the document", key, oneLineCLI(err.Error())))
+			continue
+		}
+		if on {
+			switched = append(switched, key)
 		}
 	}
-	entry.CredentialsServiceReady = r.credentialsBundleReady(ctx, probe)
-	lc.Repos[key] = entry
+	if len(switched) == 0 {
+		return
+	}
+	ready := r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
+	for _, key := range switched {
+		entry := lc.Repos[key]
+		entry.CredentialsServiceReady = ready
+		lc.Repos[key] = entry
+	}
+}
+
+// deployedRepoCredentialsService reports whether the repository root this
+// machine last applied carries the installation's credentials service: the
+// tfvars the repository door wrote into the repository's own workdir
+// (infra.RepoWorkdir, ReadWorkdirVars, infra.RepoCredentialsServiceDeployed).
+//
+// It answers the one question neither the local config nor the repository's
+// fugaro.yaml can, and it has two readers:
+//
+//   - a launch that cannot read the run's own document at all — `fugaro run
+//     --repo X` from a directory that holds no checkout of X, so there is no
+//     file to read and no ref to read one out of (run.go's launchFileConfig) —
+//     has no agent.auth to judge the switch's third condition on, and the
+//     root's own apply already made that decision: it dropped the job's model
+//     mounts and granted its account roles/run.invoker exactly when this key
+//     is there, and a job is handed the service's address to match the
+//     containers it runs (run.go's credentialsServiceLaunchEnv call site).
+//   - the installation door's backfill on an upgrade
+//     (backfillCredentialsServiceReady): an installation that opted into the
+//     service under an earlier release has roots that carry it and no record
+//     of the fact.
+//
+// A repository the local config does not hold, one it cannot name a slug for,
+// and one whose root was applied with the service off (the key null, which is
+// what repoCredentialsService writes for every other answer) all answer false,
+// and so does a repository this machine holds no tfvars for: "no document" and
+// "a document that says off" are deliberately the same answer, because neither
+// is evidence that a job's account may call the service. A document that is
+// there and cannot be read is the error, which no caller may read as a yes.
+//
+// The residual it leaves: the tfvars are what the run handed Terraform, not
+// the state, so an apply that failed or was refused leaves a document ahead of
+// the state — a root whose document says "on" while the job kept its mounts
+// would be handed an address it cannot use. The authoritative read is the
+// Cloud Run service's IAM policy (doctor_brokering.go's
+// doctorCredentialsServiceDeployed), which costs a permission the operator
+// holds by role and a developer launching a run need not.
+func deployedRepoCredentialsService(lc *localcfg.Config, repo string) (bool, error) {
+	if lc == nil || lc.GCPProject == "" {
+		return false, nil
+	}
+	entry, ok := lc.RepoFor(repo)
+	if !ok {
+		return false, nil
+	}
+	slug, err := task.Slug(entry.Provider, repo)
+	if err != nil {
+		// A repository whose provider this config cannot name has no
+		// repository root's workdir to have written a document into: the
+		// slug is what names it (repoEngine's own derivation).
+		return false, nil
+	}
+	dir, err := infra.RepoWorkdir(os.Getenv, lc.GCPProject, slug)
+	if err != nil {
+		return false, nil
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "repo")
+	if err != nil {
+		return false, err
+	}
+	return infra.RepoCredentialsServiceDeployed(vars)
 }
 
 // deploymentConfig is the checkout's resolved config as this run DEPLOYS the

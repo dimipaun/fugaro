@@ -271,9 +271,10 @@ type Config struct {
 	// name only").
 	Mailbox *Mailbox `yaml:"mailbox,omitempty"`
 	// CredentialsService is the installation's credentials service
-	// (docs/credentials-service, D146/D147), or nil while the installation has
-	// not opted into one — which is every installation until an owner runs
-	// `fugaro setup --provision-credentials`. It is what `fugaro run` reads to
+	// (docs/credentials-service, D146/D147), or nil on an installation whose
+	// `fugaro update` could not deploy one — no Firebase backend for the
+	// service to read, or no repository job for it to admit
+	// (credentials-service/default-on.md). It is what `fugaro run` reads to
 	// put the service's URL on the job's environment, which is the one fact the
 	// runner's cascade upstream and the keyless GitHub path are built on
 	// (internal/runner/gateway.go's credentialsServiceURLEnv,

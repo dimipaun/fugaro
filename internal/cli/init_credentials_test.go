@@ -704,7 +704,6 @@ func TestUpgradeNoteNamesTheStage(t *testing.T) {
 		"note: the deployed job's environment matches the local project config",
 		"agent.auth: cascade",
 		"must mount no model credential at all",
-		"fugaro update --provision-credentials",
 		"fugaro update --firebase-project",
 		"fugaro update --repo .",
 	} {
@@ -732,8 +731,8 @@ func TestUpgradeNoteCredentialsClauseIsSilentWithoutCascade(t *testing.T) {
 	}
 	cfg := &config.Config{}
 	cfg.Agent.Auth = config.AuthCascade
-	if got := jobConfigCopyCredentialsNote(cfg); !strings.Contains(got, "fugaro update --provision-credentials") {
-		t.Errorf("the clause does not name the stage for %s: %q", config.AuthCascade, got)
+	if got := jobConfigCopyCredentialsNote(cfg); !strings.Contains(got, "fugaro update --firebase-project") || !strings.Contains(got, "fugaro update --repo .") {
+		t.Errorf("the clause does not name the steps for %s: %q", config.AuthCascade, got)
 	}
 }
 
@@ -934,9 +933,8 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 // next run reads that as "never opted in", plans the service, its account, its
 // grant and its bundle away, and the bundle container's prevent_destroy
 // refuses the plan. The installation could then never be updated again without
-// --provision-credentials: a transient registry failure would have cost the
-// owner an operator step, and CLAUDE.md's hard rule says the upgrade leaves
-// none.
+// a manual repair: a transient registry failure would have cost the owner an
+// operator step, and CLAUDE.md's hard rule says the upgrade leaves none.
 //
 // The refusal is the other half of the same finding, and the reason this test
 // exists rather than a softer one: the resolve failing must FAIL the run, not

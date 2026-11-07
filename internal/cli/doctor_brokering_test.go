@@ -332,8 +332,8 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		if !strings.Contains(cs[0].Problem, infra.CredentialsServiceName) || !strings.Contains(cs[0].Problem, "proj-1234") {
 			t.Errorf("the warning does not name the service and the project: %q", cs[0].Problem)
 		}
-		if !strings.Contains(cs[0].Fix, "--provision-credentials") {
-			t.Errorf("the fix does not name the opt-in: %q", cs[0].Fix)
+		if !strings.Contains(cs[0].Fix, "update") {
+			t.Errorf("the fix does not name the command that re-applies the installation: %q", cs[0].Fix)
 		}
 	})
 
@@ -1215,7 +1215,7 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		def := doctorDefaultOutput(t, o.Checks)
 		wants(t, def,
 			"warning credentials-service-deployed: the credentials service's callers could not be checked, or a job account it should admit cannot invoke it.",
-			"update --provision-credentials")
+			"fugaro update", "re-applies the installation root")
 	})
 
 	t.Run("the credentials service is deployed and its callers are granted", func(t *testing.T) {
@@ -1370,7 +1370,7 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		def := doctorDefaultOutput(t, o.Checks)
 		wants(t, def,
 			"info model-key-in-agent:", "the gateway holds the key",
-			"update --provision-credentials")
+			"update deploys it")
 		counted(t, def, "`fugaro doctor --security`")
 		wants(t, doctorSecurityOutput(t, o.Checks),
 			"model-key-in-agent", "the gateway holds the key")

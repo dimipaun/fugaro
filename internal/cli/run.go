@@ -2528,8 +2528,8 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 //   - the rules marker (budget/rules, C1.3): the deployed document must carry
 //     the credentials family, or the run's first write of the credential's
 //     name is denied and it halts named (HaltCredsRulesDenied, C1.17). This is
-//     the same read `fugaro update --provision-credentials` makes before it
-//     applies anything and the same pair `fugaro doctor` reports; here it is a
+//     the same read `fugaro update --firebase-project` makes before it applies
+//     anything and the same pair `fugaro doctor` reports; here it is a
 //     refusal, because a launch is the moment it can still save the run. The
 //     marker's generation is wanted to be exactly this binary's, and the two
 //     ways it can miss it are two different problems with two different fixes
@@ -2561,8 +2561,8 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 		return nil
 	}
 	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" {
-		return userErr("agent.auth: cascade cannot run here: this installation has no database, so neither the policy switch that turns the cascade on (%s) nor the credentials rules marker (%s) can be read — and a job of such an installation mounts no model credential at all (C1.20), so this run would have nothing to fall back to (D143). Run 'fugaro update --provision-credentials' in your own terminal to enable the credentials service, or set agent.auth to api-key or oauth in this workflow",
-			projectpolicy.PathShared(), rules.PathCredsRulesMarker())
+		return userErr("agent.auth: cascade cannot run here: this installation has no database, so neither the policy switch that turns the cascade on (%s) nor the credentials rules marker (%s) can be read — and a job of such an installation mounts no model credential at all (C1.20), so this run would have nothing to fall back to (D143). Run 'fugaro update --firebase-project %s' in your own terminal to give this installation the database it lacks: an ordinary `fugaro update` then deploys the credentials service on it, and `fugaro run` is where the address reaches a job. Or set agent.auth to api-key or oauth in this workflow",
+			projectpolicy.PathShared(), rules.PathCredsRulesMarker(), firebaseProjectIDWord(env.lc.GCPProject))
 	}
 	ceiling := ceilingLayer(env.lc)
 	def := defaultBranchPolicyLayer(ctx, spec.Repo)
@@ -3650,11 +3650,30 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// The read is skipped where there is no block to switch to: the answer is
 	// the same nil, and an installation with no service pays nothing for the
 	// gate it cannot pass.
-	svcAuth := ""
+	//
+	// A document this launcher cannot read at all — `fugaro run --repo X` from
+	// a directory that holds no checkout of X, where launchFileConfig finds
+	// neither the run's ref in an object database nor a working tree to fall
+	// back to — leaves the auth unknown, and the switch's third condition
+	// cannot be judged here. The deployed root stands in for it then
+	// (deployedRepoCredentialsService): the run's own repository root was
+	// planned and applied on this machine, and the tfvars that apply was built
+	// from carry the service exactly when it dropped the job's model mounts and
+	// granted its account roles/run.invoker. Withholding the address instead
+	// would start a `cascade` run whose job mounts no model credential and
+	// halts at the service's door (D143) — the state every launch from outside
+	// a checkout was in before the switch was written down.
+	svcAuth, deployed := "", false
 	if env.lc != nil && env.lc.CredentialsService != nil {
 		svcAuth = checkoutAgentAuth(launchFileConfig(ctx, env, spec))
+		if svcAuth == "" {
+			var err error
+			if deployed, err = deployedRepoCredentialsService(env.lc, spec.Repo); err != nil {
+				fmt.Fprintf(launchWarn, "warning: whether %s's repository root carries the credentials service could not be read (%s): this launch hands the job no service address\n", spec.Repo, oneLineCLI(err.Error()))
+			}
+		}
 	}
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth)
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, deployed)
 	if reviewJob {
 		// The marker is the whole fact (internal/runner's EnvReviewJob): the
 		// variant's own deployment carries the credentials service's address,
@@ -3763,7 +3782,16 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // answer for a different reason -- there is no address to hand a job, and the
 // service's revision does not exist yet (fillCredentialsAudience writes it on
 // the apply after the one that created the service).
-func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string) []string {
+// deployed is this machine's record of the repository root itself, read only
+// where the document could not be (see the call site): the tfvars the last
+// apply of that root was built from, which carry the service exactly when that
+// apply dropped the job's mounts and made its grant
+// (deployedRepoCredentialsService). It replaces the record and the auth
+// together, and only there, because it IS the state the job's containers are
+// in: the record is the half that says what the NEXT plan may do, and a record
+// that lags a bundle emptied since the apply would withhold the address from a
+// job whose mounts are already gone.
+func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, deployed bool) []string {
 	if job != "" || lc == nil {
 		return nil
 	}
@@ -3773,7 +3801,15 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string) []
 	// to put on a job's environment either.
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	local, _ := lc.RepoFor(repo)
-	if !infra.CredentialsServiceServes(installed, local.CredentialsServiceReady, auth) {
+	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceReady, auth)
+	if auth == "" {
+		// No document this launcher could read, so the switch's third
+		// condition is judged on the deployed root alone — the same two facts
+		// the module read out of it: the installation has a service, and this
+		// repository's root was applied with it on.
+		serves = installed && deployed
+	}
+	if !serves {
 		return nil
 	}
 	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}

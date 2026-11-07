@@ -298,6 +298,82 @@ func TestTheInstallationDoorRecordsNoRepositoryItDoesNotApply(t *testing.T) {
 	}
 }
 
+// TestAnOptedInInstallationConvergesWithOneUpdate is the UPGRADE path of this
+// release, and the state every installation that took the service before it is
+// in: the local config holds the service's block (the flag that shipped it
+// wrote one), the repository root's tfvars carry installation.credentials_service
+// — the apply that dropped that repository's job mounts and granted its job
+// account roles/run.invoker — and the entry carries NO record, because the field
+// did not exist when all of that happened. The field's absence and a written
+// false are the same document (omitempty, deliberately: false is what every
+// earlier release's config already said), so nothing on the machine tells this
+// installation from one that never opted in.
+//
+// One ordinary `fugaro update` has to finish that upgrade, which is CLAUDE.md's
+// HARD RULE, and that is why the installation door backfills: this release's
+// launcher reads the record, so an entry left unrecorded means a `cascade` run
+// of that repository is handed no service address while its jobs mount no model
+// credential — a run that halts at the service's door (D143). One command, and
+// no pass per checkout: the sibling entries are why the backfill sits in this
+// door, since the repository stage converges the checkout's own root alone.
+//
+// The other half of the test is what keeps the backfill evidence and not a
+// blanket yes. acme/other's root was applied with the service OFF (the key
+// absent, which is what the module writes for a held-off root: its jobs keep
+// their mounts and its accounts hold no grant), and this machine holds no
+// document at all for acme/third (a sibling never applied here, a first
+// onboarding). Recording either ready would hand its launch an address it
+// cannot use.
+//
+// The record's own read — that a true record, a block and a cascade document
+// are what a launch hands the URL for — is pinned by
+// TestTheSwitchTurnsOnForACascadeRepositoryWithAReadyBundle, and the two doors'
+// readings of the bundle by the tests above.
+//
+// Mutation (verified, run and restored): drop the backfillCredentialsServiceReady
+// call from install() (internal/cli/init.go) and this fails on the first
+// assertion — acme/sandbox left unrecorded, a repository whose job lost its
+// model mounts to an address no launch of it is handed.
+func TestAnOptedInInstallationConvergesWithOneUpdate(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := task.Slug("bitbucket", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	credentialsOutputs(t, r)
+	addSwitchRepo(t, r.initRig, "acme/other")
+	addSwitchRepo(t, r.initRig, "acme/third")
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	// The state the previous release left on this machine, one root per
+	// repository the config holds: this one applied with the service on, this
+	// one with it off, and no document at all for the third.
+	seedRepoRootCredentialsService(t, slug)
+	seedRepoRootVars(t, other, `{"installation":{}}`)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the local config does not parse: %v", err)
+	}
+	if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
+		t.Errorf("acme/sandbox carries no record after one ordinary update, though its root was applied with the service on and this run read a bundle holding a model credential: its jobs mount no model credential any more, so a cascade run of it is left with nothing to run on — the record the launcher reads is the only thing that hands it the service's address (D143), and the upgrade owes it without a second command\n%s", readFileString(t, r.cfg))
+	}
+	for _, name := range []string{"acme/other", "acme/third"} {
+		if lc.Repos[name].CredentialsServiceReady {
+			t.Errorf("the update recorded the credentials service as ready for %s, whose root was applied with the service OFF (or was never applied on this machine at all): its jobs keep their model mounts and its accounts hold no roles/run.invoker, so its launch would be handed an address the service refuses it for — a record is a statement about a grant, and neither state is evidence of one\n%s", name, readFileString(t, r.cfg))
+		}
+	}
+}
+
 // TestTheRepositoryDoorReadsTheBundleBeforeItPlansItsRoot is the repository
 // half, driven end to end from the checkout — the whole `fugaro update --repo`
 // command, not a call to writeRepoConfig.

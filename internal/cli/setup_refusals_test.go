@@ -41,11 +41,11 @@ import (
 // either front door": creating the project, linking the billing account, and
 // the Firestore database's location in `setup`.
 //
-// One row has been added since, and it is not a row that moved: the credentials
-// stage (docs/credentials-service, D146; C1.20) is registered behind
-// `--provision-credentials` the way the Batch stage is behind
-// `--provision-batch`, and it is `noYes` — its confirmation is the project's
-// name typed at a real terminal, and `--yes` never covers it.
+// One row has gone since, and it is not one of these: the credentials stage
+// (docs/credentials-service, D146; C1.20) was registered behind
+// `--provision-credentials`, and DON1 removed both the flag and the row — every
+// installation carries the service now, so it deploys inside the installation
+// stage, whose own row above is exactly as it was.
 
 // cliStage is one stage initStages() registers: the constructor it is built
 // with, the flag it is behind, and the three facts the loop decides about it —

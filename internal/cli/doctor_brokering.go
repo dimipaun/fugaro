@@ -126,7 +126,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	unreadable := func(what string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the installation has opted into the credentials service (%s), and %s could not be read: whether it is deployed and whether its callers may invoke it could not be checked", infra.CredentialsServiceName, what),
-			Fix:     "rerun doctor with your credentials and the Cloud Run API available, or check by hand: " + selfCommand() + " update --provision-credentials re-applies the installation and its service"}}
+			Fix:     "rerun doctor with your credentials and the Cloud Run API available, or check by hand: " + selfCommand() + " update re-applies the installation and its service"}}
 	}
 	jobs, err := infra.CredentialsJobAccounts(lc)
 	if err != nil {
@@ -146,7 +146,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 		if errors.As(err, &ge) && ge.Code == http.StatusNotFound {
 			return []doctorCheck{{ID: id, Severity: "warning",
 				Problem: fmt.Sprintf("the local config opted this installation into the credentials service (%s), and Cloud Run has no service %s in project %s, region %s: every run of it would fail to fetch a model credential", infra.CredentialsServiceName, infra.CredentialsServiceName, pluginwire.Printable(lc.GCPProject), pluginwire.Printable(lc.Region)),
-				Fix:     selfCommand() + " update --provision-credentials (re-applies the installation root, which creates the service)"}}
+				Fix:     selfCommand() + " update (re-applies the installation root, which creates the service)"}}
 		}
 		return unreadable("the IAM policy of the Cloud Run service " + infra.CredentialsServiceName + " (" + oneLineCLI(err.Error()) + ")")
 	}
@@ -437,7 +437,7 @@ func doctorBundleChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 	if lc.CredentialsService == nil {
 		return []doctorCheck{{ID: idBundle, Severity: "info",
 			Problem: "the installation has not opted into the credentials service, so it has no bundle for a Bitbucket token to live in: runs of a proxied repository have nowhere to fetch one",
-			Fix:     "to broker the Bitbucket token, opt in first: " + selfCommand() + " update --provision-credentials"}}
+			Fix:     "to broker the Bitbucket token the installation needs its credentials service, which an ordinary " + selfCommand() + " update deploys on every installation that can carry one (it needs the installation's Firebase backend and at least one repository job)"}}
 	}
 	proxied := proxiedBitbucketRepos(lc)
 	unreadable := func(what string) []doctorCheck {
@@ -806,7 +806,7 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile) *doctorCheck {
 	return &doctorCheck{ID: "model-key-in-agent", Severity: "info",
 		Problem: fmt.Sprintf("this repository's workflows (%s) run with agent.auth %s, and the model credential reaches the agent's own environment as %s (%s)",
 			strings.Join(printableNames(slices.Sorted(maps.Keys(rf.Cfg.Workflows))), ", "), auth, env, why),
-		Fix: "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or opt the installation into the credentials service (" + selfCommand() + " update --provision-credentials)"}
+		Fix: "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or put the installation's credentials service in front of it (an ordinary " + selfCommand() + " update deploys it)"}
 }
 
 // proxiedBitbucketRepos are the repositories of this installation's local
