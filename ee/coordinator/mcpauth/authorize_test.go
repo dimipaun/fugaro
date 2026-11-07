@@ -4,6 +4,7 @@
 package mcpauth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
@@ -780,6 +782,126 @@ func TestTheApprovalNeedsTheNumberThePageShowed(t *testing.T) {
 	}
 }
 
+// TestADenyIsAnsweredWithoutANumberOrAToken is RFC 6749 §4.1.2.1's error
+// response stated as a fact about the wire: a deny is an answer to the flow, and
+// it is the answer a person who does not trust the client gives.
+//
+// The page renders one form behind both buttons, so Deny submits the same
+// request as Allow — and nobody refusing a client has a reason to paste the
+// flow's number or an ID token into it. The client is waiting on its own
+// callback, so a deny that ended on a refusal page would be an answer this
+// server never sends. What a deny does have to carry is the flow's binding,
+// which is what makes it an answer to this flow rather than to any other.
+func TestADenyIsAnsweredWithoutANumberOrAToken(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	binding, _ := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+
+	rec := ts.consent(t, url.Values{
+		"request_id": {binding},
+		"decision":   {"deny"},
+	})
+	if rec.Code != http.StatusFound {
+		t.Fatalf("a deny carrying only the flow's binding answered %d (%s); want the redirect the client is waiting on", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	u, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("the redirect is not a URL: %v", err)
+	}
+	if u.Host != redirectHost(testClientRedirect) {
+		t.Errorf("the deny was sent to %q; want the URI the flow was recorded with (%q)", u.Host, testClientRedirect)
+	}
+	if got := u.Query().Get("error"); got != string(oidc.ErrAccessDenied().ErrorType) {
+		t.Errorf("the deny redirect carries error %q; want %q (RFC 6749 §4.1.2.1)", got, string(oidc.ErrAccessDenied().ErrorType))
+	}
+	if got := u.Query().Get("state"); got != testState {
+		t.Errorf("the deny redirect carries state %q; want %q unaltered (D928)", got, testState)
+	}
+	if u.Query().Get("code") != "" {
+		t.Errorf("the deny redirect carries a code: %s", u.RawQuery)
+	}
+	if got := ts.store.objects(t); len(got) != 2 {
+		t.Errorf("the store holds %d objects after a deny; want the client and the spent flow and no code", len(got))
+	}
+
+	// And the deny answered the flow: the same binding is not answered twice.
+	if again := ts.consent(t, url.Values{"request_id": {binding}, "decision": {"deny"}}); again.Code == http.StatusFound {
+		t.Errorf("a deny was answered twice on one binding: one binding answers one approval")
+	}
+}
+
+// TestAnExpiredRequestIsAnsweredWithTheClientsOwnError is RequestTTL stated as a
+// fact about the wire: a page left open past the flow's own lifetime is over,
+// and the client waiting on its callback is told so instead of being left to
+// poll a flow nobody can answer any more.
+//
+// The check is the whole of the bound — the record carries its expiry and the
+// endpoint is the only thing that reads it — so a page whose flow expired but
+// still answered would make RequestTTL a field and not a limit.
+func TestAnExpiredRequestIsAnsweredWithTheClientsOwnError(t *testing.T) {
+	now := testNow
+	ts := newTestServerClock(t, testConfig(), func() time.Time { return now })
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+
+	now = testNow.Add(RequestTTL + time.Second)
+	// The approval is a whole, correct approval: the binding, the number the
+	// page showed and a token that verifies. Only the clock has moved, so the
+	// only thing that can refuse it is the lifetime.
+	rec := ts.approve(t, binding, number)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("an approval of an expired request answered %d (%s); want the redirect the client is waiting on, carrying the flow's own error", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	u, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("the redirect is not a URL: %v", err)
+	}
+	if u.Host != redirectHost(testClientRedirect) {
+		t.Errorf("the expired flow was answered to %q; want the URI the flow was recorded with (%q)", u.Host, testClientRedirect)
+	}
+	if got := u.Query().Get("error"); got != string(oidc.ErrAccessDenied().ErrorType) {
+		t.Errorf("the expired flow carried error %q; want %q", got, string(oidc.ErrAccessDenied().ErrorType))
+	}
+	if got := u.Query().Get("state"); got != testState {
+		t.Errorf("the expired flow carried state %q; want %q unaltered (D928)", got, testState)
+	}
+	if u.Query().Get("code") != "" {
+		t.Errorf("an expired request produced a code: %s", u.RawQuery)
+	}
+	if got := ts.store.objects(t); len(got) != 2 {
+		t.Errorf("the store holds %d objects after an expired request was answered; want the client and the spent flow and no code", len(got))
+	}
+}
+
+// TestAnExpiredCodeIsRefused is CodeTTL stated as a fact about the wire, and
+// the other half of "a code that is spent is spent": a code past its lifetime
+// is refused even when everything else about the exchange is right.
+//
+// The check is the whole of the bound, as above: nothing sweeps a code, so a
+// code's lifetime exists exactly as far as this comparison reaches.
+func TestAnExpiredCodeIsRefused(t *testing.T) {
+	now := testNow
+	ts := newTestServerClock(t, testConfig(), func() time.Time { return now })
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.approve(t, binding, number))
+
+	now = testNow.Add(CodeTTL + time.Second)
+	rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("the exchange of an expired code answered %d (%s); want a refused grant", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if got := refusalOf(t, rec).Error; got != string(oidc.ErrInvalidGrant().ErrorType) {
+		t.Errorf("the exchange of an expired code answered %q; want %q (RFC 6749 §5.2)", got, string(oidc.ErrInvalidGrant().ErrorType))
+	}
+}
+
 // TestAnIDTokenInAQueryStringIsRefused is M-a stated as a fact about the wire:
 // the Firebase ID token is accepted in the body of the approval POST and
 // nowhere else.
@@ -843,6 +965,29 @@ func TestAnIDTokenInAQueryStringIsRefused(t *testing.T) {
 	binding, number = ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
 	if rec := ts.approve(t, binding, number); rec.Code != http.StatusFound {
 		t.Errorf("the same approval with the token in its body alone answered %d (%s); want the code redirect", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	// `access_token` is the other name a caller reaches for when what it carries
+	// is a bearer, and both methods refuse it the same way: a rule kept for one
+	// parameter name and not the other is a rule about which name the caller
+	// chose.
+	q = authorizeQuery(clientID, testClientRedirect)
+	q.Set("access_token", token)
+	if rec := ts.authorizeRequest(t, q); rec.Code == http.StatusOK {
+		t.Errorf("GET %s carrying an access token in its query string rendered the consent page: a bearer in a URL reaches a log line and a browser's history", AuthorizePath)
+	}
+	binding, number = ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	req = httptest.NewRequest(http.MethodPost,
+		AuthorizePath+"?access_token="+url.QueryEscape(token),
+		strings.NewReader(url.Values{
+			"request_id": {binding},
+			"number":     {number},
+			"id_token":   {token},
+			"decision":   {"allow"},
+		}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if rec := ts.do(t, req); rec.Code == http.StatusFound {
+		t.Errorf("an approval carrying an access token in its query string was answered with a code: a token that reached a URL has already been written to a log line")
 	}
 }
 
@@ -959,6 +1104,63 @@ func TestClientSecretBasicIsReadAndRefusedBesideTheForm(t *testing.T) {
 	rec, tokens := ts.exchangeWithAuth(t, codeGrant(), basicAuth(clientID, secret))
 	if rec.Code != http.StatusOK || tokens.AccessToken == "" || tokens.RefreshToken == "" {
 		t.Fatalf("the code grant authenticated by client_secret_basic alone answered %d (%s); want a token pair: the header is one of the two ways a client authenticates, and the form's pair is the other", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestAClientAuthRefusalNamesTheScheme is RFC 6749 §5.2's own rule for the 401
+// this server answers a failed client authentication with: when the client
+// authenticated with the Authorization header, that answer carries a
+// WWW-Authenticate naming the scheme, so a client that guessed one is told
+// which scheme this server reads instead of being left to guess again.
+//
+// The header is there exactly when the client used one, which is the case §5.2
+// makes the MUST: a request whose credentials are in the form used no scheme,
+// and its answer is the one it always was.
+func TestAClientAuthRefusalNamesTheScheme(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+	refused := basicAuth(clientID, "not-the-secret-this-client-registered-with")
+
+	for _, tc := range []struct {
+		what string
+		path string
+		form url.Values
+	}{
+		{"the token endpoint", TokenPath, url.Values{
+			"grant_type":    {string(GrantAuthorizationCode)},
+			"code":          {"not-a-code-this-installation-issued"},
+			"redirect_uri":  {testClientRedirect},
+			"code_verifier": {testVerifier},
+		}},
+		{"the revocation endpoint", RevokePath, url.Values{"token": {tokens.RefreshToken}}},
+	} {
+		rec := ts.postFormWithAuth(t, tc.path, tc.form, refused)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s answered client_secret_basic with a wrong secret as %d (%s); want 401", tc.what, rec.Code, strings.TrimSpace(rec.Body.String()))
+			continue
+		}
+		challenge := rec.Header().Get("WWW-Authenticate")
+		if !strings.HasPrefix(challenge, "Basic ") || !strings.Contains(challenge, testIssuer) {
+			t.Errorf("%s answered 401 with WWW-Authenticate %q; want a Basic challenge naming this installation: the header tells a client which scheme this server reads from the Authorization header, and it is the one place that answer is written", tc.what, challenge)
+		}
+	}
+
+	// The same refusal with the credentials in the form. No scheme was used, so
+	// there is none to name, and the answer names none.
+	form := url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {"not-a-code-this-installation-issued"},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"client_secret": {"not-the-secret-this-client-registered-with"},
+		"code_verifier": {testVerifier},
+	}
+	rec := ts.postForm(t, TokenPath, form)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("the token endpoint answered a wrong client_secret in the form as %d (%s); want 401", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != "" {
+		t.Errorf("a refusal of credentials carried in the form sent WWW-Authenticate %q; want none: the header names the scheme the client authenticated with, and this one authenticated with the form's own two fields", got)
 	}
 }
 
@@ -1091,5 +1293,40 @@ func TestClientCredentialsIsRefused(t *testing.T) {
 		if strings.HasPrefix(key, familyPrefix) || strings.HasPrefix(key, tokenPrefix) {
 			t.Errorf("%s was written by a grant this server refuses: no token and no family may exist for a client credentials request", key)
 		}
+	}
+}
+
+// TestTheAuthorizeDoorRereadsTheURIRule is D928's rule at its second door: a
+// client record this endpoint did not write — an operator's pre-registration,
+// which D929 allows — is judged at the request by the same rule registration
+// applies, so a URI the project does not send codes to is refused here too.
+//
+// The record is written into the store directly, because /oauth/register cannot
+// produce one: it validates before it writes. That is the whole case for the
+// second check — it exists for the door that did not write the record.
+func TestTheAuthorizeDoorRereadsTheURIRule(t *testing.T) {
+	const (
+		clientID     = "a-pre-registered-client"
+		offAllowlist = "https://somewhere.example.org/callback"
+	)
+	ts := newTestServer(t)
+	if err := ts.store.PutClient(context.Background(), Client{
+		ID:           clientID,
+		Name:         "an operator's own client",
+		RedirectURIs: []string{offAllowlist, testClientRedirect},
+	}); err != nil {
+		t.Fatalf("writing the pre-registered client: %v", err)
+	}
+
+	rec := ts.authorizeRequest(t, authorizeQuery(clientID, offAllowlist))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("GET %s named a redirect URI this project does not send codes to, listed by a record this door did not write, and answered %d (%s); want the refusal page: the rule is the project's, not the door's (D928)",
+			AuthorizePath, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// The other URI in the same record is loopback, which the rule always
+	// allows — so the refusal above is the rule and not the record.
+	if rec := ts.authorizeRequest(t, authorizeQuery(clientID, testClientRedirect)); rec.Code != http.StatusOK {
+		t.Errorf("GET %s named the loopback URI the same record lists and answered %d (%s); want the consent page: loopback is always allowed, and the refusal above is therefore about the URI and not about the client",
+			AuthorizePath, rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }

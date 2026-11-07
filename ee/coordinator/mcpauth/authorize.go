@@ -273,8 +273,11 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 // binding that survives a refused approval — is a page a stranger can keep
 // guessing a number against.
 func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("id_token") != "" {
-		refusePage(w, http.StatusBadRequest, "This approval carries its ID token in the URL. A token in a query parameter is a token in a log line, so the approval reads the token from the form body and refuses one presented any other way.")
+	// The same rule the GET keeps, over the same two names: a token in a URL is
+	// a token in a log line, and `access_token` is the name a caller reaches for
+	// when what it carries is a bearer rather than an ID token.
+	if carried := firstOf(r.URL.Query(), "id_token", "access_token"); carried != "" {
+		refusePage(w, http.StatusBadRequest, "This approval carries a token in its URL. A token in a query parameter is a token in a log line, so the approval reads the ID token from the form body and refuses one presented any other way.")
 		return
 	}
 	form, err := readForm(w, r)
@@ -296,6 +299,18 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 			"the authorization request expired before it was answered"))
 		return
 	}
+	// The person's answer is read before the two checks only an approval needs,
+	// because the page renders one form behind both buttons: a Deny is the same
+	// submission as an Allow, and nobody refusing a client has a reason to paste
+	// the flow's number or an ID token into it. The client is waiting on its own
+	// callback, so a deny that ended on a refusal page would be an answer this
+	// server never sends (RFC 6749 §4.1.2.1). The binding is what makes the deny
+	// an answer to this flow, and it is spent by the time this is read.
+	if form.Get("decision") != "allow" {
+		s.redirectError(w, r, pending.RedirectURI, pending.State, oauthError(oidc.ErrAccessDenied(),
+			"the person did not allow this client to call the MCP endpoint"))
+		return
+	}
 	// The number is compared over the whole value and in constant time, before
 	// the token is even read: an approval that did not carry this flow's number
 	// has not answered this flow. It shows that the answer came back from the
@@ -313,11 +328,6 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 		// approval did not verify gets a page telling them what to do, and the
 		// client is not told anything that would let it retry in a loop.
 		refusePage(w, http.StatusUnauthorized, "The sign-in was not verified. Approve this client on a device paired to the installation, and present the Firebase ID token that approval produced in this form's body.")
-		return
-	}
-	if form.Get("decision") != "allow" {
-		s.redirectError(w, r, pending.RedirectURI, pending.State, oauthError(oidc.ErrAccessDenied(),
-			"the person did not allow this client to call the MCP endpoint"))
 		return
 	}
 

@@ -242,9 +242,30 @@ func oauthError(template *oidc.Error, description string) *oidc.Error {
 
 // writeOAuthError answers with the OAuth error body RFC 6749 §5.2 asks for.
 //
-// Nothing here ever carries a value the caller sent: a description is written
-// at the site that refused, and the token, the code and the verifier are the
-// caller's own text.
+// The three values this door must never echo — a token, a code and a PKCE
+// verifier — are in no description it writes: a description is written at the
+// site that refused. Two sites do carry text the caller chose, and both are
+// deliberate: registration names the redirect URI it refused, which is a URI
+// registered to be shown to a person and one a client author could otherwise
+// only guess at among several, and a limits refusal names the scope it will not
+// mint. Neither is a secret and neither is read back out of a store.
 func writeOAuthError(w http.ResponseWriter, status int, e *oidc.Error) {
 	writeJSONStatus(w, status, e)
+}
+
+// clientRefusal answers a client authentication that failed, with the header
+// RFC 6749 §5.2 requires of that answer: a client that authenticated with the
+// Authorization header gets a 401 naming the scheme this server accepts there,
+// instead of a 401 that leaves it to guess the scheme again.
+//
+// Basic is the scheme, and the realm is the issuer: they are the two facts the
+// rule asks for — the scheme the client used, and the protection space it was
+// refused in. A request that carried no header is answered the same way it
+// always was, because §5.2 makes the 401 a MAY outside the header case and the
+// form's own two fields are already the scheme.
+func (s *Server) clientRefusal(w http.ResponseWriter, r *http.Request, description string) {
+	if r.Header.Get("Authorization") != "" {
+		w.Header().Set("WWW-Authenticate", `Basic realm="`+s.cfg.Issuer+`"`)
+	}
+	writeOAuthError(w, http.StatusUnauthorized, oauthError(oidc.ErrInvalidClient(), description))
 }

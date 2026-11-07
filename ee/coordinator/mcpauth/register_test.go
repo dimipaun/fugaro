@@ -207,6 +207,55 @@ func TestRegistrationRefusesAURIWithUserinfo(t *testing.T) {
 	}
 }
 
+// TestRegistrationBoundsWhatItAccepts is the endpoint's three bounds that are
+// not about the shape of a URI: a registration that names no redirect URI, one
+// that names more than the endpoint keeps, and a name that is not printable.
+//
+// Each is a bound on what an unauthenticated caller may make this endpoint
+// write, which is the residual risk §8 accepts: a client that names no redirect
+// URI could never receive a code, the count is what keeps one request from
+// writing an unbounded record, and the name is rendered into the consent page
+// of §3, where a control character is the page lying to the person reading it —
+// html/template escapes markup and escapes nothing else.
+func TestRegistrationBoundsWhatItAccepts(t *testing.T) {
+	ts := newTestServer(t)
+
+	tooMany := make([]string, 0, maxRedirectURIs+1)
+	for i := 0; i <= maxRedirectURIs; i++ {
+		tooMany = append(tooMany, testClientRedirect)
+	}
+	for _, tc := range []struct {
+		what string
+		req  registrationRequest
+	}{
+		{"a registration that names no redirect URI", registrationRequest{RedirectURIs: nil}},
+		{"a registration that names more than the endpoint keeps", registrationRequest{RedirectURIs: tooMany}},
+		{"a name carrying a control character", registrationRequest{RedirectURIs: []string{testClientRedirect}, ClientName: "an editor\x07"}},
+		{"a name carrying a byte no page renders as one", registrationRequest{RedirectURIs: []string{testClientRedirect}, ClientName: "an ‮editor"}},
+		{"a name longer than the endpoint keeps", registrationRequest{RedirectURIs: []string{testClientRedirect}, ClientName: strings.Repeat("a", maxClientNameBytes+1)}},
+	} {
+		rec := ts.postJSON(t, RegisterPath, tc.req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("POST %s accepted %s (%d: %s); want a refusal naming the rule", RegisterPath, tc.what, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+	if got := ts.store.objects(t); len(got) != 0 {
+		t.Errorf("the store holds %d objects after five refused registrations; want none: a registration that is refused writes nothing", len(got))
+	}
+
+	// The boundary itself is admitted, so the refusals above are about the
+	// bounds and not about registrations with a name.
+	if rec := ts.postJSON(t, RegisterPath, registrationRequest{
+		RedirectURIs: []string{testClientRedirect},
+		ClientName:   strings.Repeat("a", maxClientNameBytes),
+	}); rec.Code != http.StatusCreated {
+		t.Errorf("POST %s refused a name of exactly %d bytes (%d: %s); want the registration: the bound is inclusive", RegisterPath, maxClientNameBytes, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if got := ts.store.objects(t); len(got) != 1 {
+		t.Errorf("the store holds %d objects; want the one registration that was accepted", len(got))
+	}
+}
+
 // TestRedirectURIMustBeLoopbackOrAllowlisted is the rule the two doors share,
 // stated as the list of what it admits: the loopback forms a native client
 // receives a code at, and the one hosted callback the project's own

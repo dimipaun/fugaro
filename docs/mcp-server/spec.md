@@ -222,7 +222,10 @@ confirmation rather than a silent apply.
   coordinator's own authorization server.
 - `/.well-known/oauth-authorization-server` — the authorization server's metadata.
 - `POST /oauth/register` — Dynamic Client Registration (RFC 7591).
-- `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke`.
+- `GET /oauth/authorize` — the authorization request, which renders the page a person reads — and
+  `POST /oauth/authorize`, the approve step that page posts its answer to. One path, two methods:
+  M-a's approval is a POST, and the GET verifies nothing.
+- `POST /oauth/token`, `POST /oauth/revoke`.
 
 **Every other request** is the MCP endpoint, and it is the resource server: it reads the bearer
 token, validates it (D920), and only then looks at the JSON-RPC body.
@@ -316,6 +319,16 @@ MCP client registers before any person has signed in. Openness is bound by four 
   sign-in. The owner's spec names a chat client's hosted callbacks as the example of the allowed
   kind; this design keeps the example out of the code, because a vendor's callback URL baked into a
   self-hosted product is a URL that goes stale in somebody else's release cycle.
+
+**The rate limit and the expiry are not built.** The registration endpoint that ships with M5
+refuses nothing by rate and sweeps nothing: it writes one record per registration, so the audit
+holds, but there is no limiter in front of it, no sweep, and no read-time bound either — a
+registration carries the time it was made and nothing compares that against anything, so a
+registration stays a client for as long as the store holds it. Both bounds are **M10's** and the
+plan says so in its own row ("**M5 builds the endpoint and neither bound**"), so this paragraph
+names the gap rather than closing it here. The flow's own two records, the pending request and the
+code, are the pair M5 does bound on read: each endpoint refuses its record once its TTL has passed,
+and the sweep all three shapes are waiting for is what is missing.
 
 **The flow, end to end** (the owner's §"Auth flow", with the places this design changes it — none
 of them the endpoints, all of them what happens at them):
@@ -534,6 +547,14 @@ an error **naming the limit** — the mode the token allows and the mode that wa
 the owner's spec asks for exactly that and because an agent that cannot see which limit it hit will
 retry the same request.
 
+**And nothing in the endpoint M5 ships turns the flag on.** `Limits.Narrow` takes the tighter side,
+so a token can only ever make Hotfix *less* true than the installation already allows, and the
+approval page of §3 carries no control that would make it true: a token minted by the flow that
+exists today carries `Hotfix: false` whatever the project's own `hotfix:` line says, and the window
+it carries is the installation's own, because nothing in an authorization request asks for a
+narrower one. Where a person turns the flag on is a product decision no task in the plan has taken,
+so this paragraph states both rules and says plainly that the way to *use* them is not built yet.
+
 **The spend limit narrows the run's ceiling** (D924, answered as recommended on 2026-11-04). The
 token's spend limit is never sent to the
 agent as its own budget figure. It is applied where the run's ceiling is applied: the run's ceiling
@@ -576,6 +597,12 @@ amendment of 2026-11-04). The limit is an **optional integer in micros** and not
 floating-point zero cannot tell "no limit of its own" from "a limit of zero", and that difference is
 the whole of "only narrows" (D924). An **unknown rigor-mode string is refused**, not ignored — a
 token whose window names a mode this build does not know is refused rather than read as unset.
+
+**The micros half of that is decided here and not built.** The shipped field is still
+`Limits.SpendUSD float64` (`ee/coordinator/mcpauth/limits.go`), so today an unset spend limit and a
+limit of zero are the same value and only the pass-through rule tells them apart; moving the field
+to micros is **M9's** own decision rather than a second one taken here
+([implementation-plan.md](implementation-plan.md), M9; reconciliation.md §4a).
 
 **What is stored, and where** (D922, answered 2026-11-04 — **the recommendation**, **amended the
 same day** by findings H3 and M-c; D935). Only **hashes** — never a token value, never a refresh
@@ -851,6 +878,10 @@ endpoint is reachable by anyone and writes a record, so it is rate-limited and a
 registration is worthless until a person consents (§3). The residual risk the design accepts is
 record growth by an unauthenticated caller, bounded by the rate limit and by registration records
 being expirable; the risk it does not accept is a registration that grants a token by itself.
+**Neither bound is built in M5** (§3, "The rate limit and the expiry are not built"): until M10's
+limiter and its sweep land, the growth this paragraph calls accepted-by-bounds is accepted
+unbounded, and a registration has no lifetime at all — nothing yet bounds how many of them a
+stranger may leave behind.
 
 **An agent caller.** The hardest case, and the reason §7 refuses a token without limits. An agent
 cannot be asked to notice that a tool result looks wrong, and it will happily follow an instruction

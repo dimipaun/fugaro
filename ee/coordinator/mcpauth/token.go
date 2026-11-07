@@ -130,20 +130,18 @@ func (s *Server) serveToken(w http.ResponseWriter, r *http.Request) {
 	}
 	clientID, secret, err := clientAuth(r, form)
 	if err != nil {
-		writeOAuthError(w, http.StatusUnauthorized, oauthError(oidc.ErrInvalidClient(), err.Error()))
+		s.clientRefusal(w, r, err.Error())
 		return
 	}
 	client, err := s.store.GetClient(r.Context(), clientID)
 	if err != nil {
 		// The store's own reason is not repeated: which client ids exist is
 		// not something an unauthenticated caller of a public endpoint learns.
-		writeOAuthError(w, http.StatusUnauthorized, oauthError(oidc.ErrInvalidClient(),
-			"the client id is not one this installation registered"))
+		s.clientRefusal(w, r, "the client id is not one this installation registered")
 		return
 	}
 	if secret != "" && !secretMatches(client.SecretHash, secret) {
-		writeOAuthError(w, http.StatusUnauthorized, oauthError(oidc.ErrInvalidClient(),
-			"the client secret is not the one this client registered with"))
+		s.clientRefusal(w, r, "the client secret is not the one this client registered with")
 		return
 	}
 
@@ -225,6 +223,14 @@ func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request, form url.V
 	// installation's own limits. Nothing else narrows them: the client's record
 	// holds no limits of its own, because the only grant that read them was the
 	// client credentials grant and it is refused.
+	//
+	// The window and the Hotfix flag come from the installation alone, because
+	// the record carries no window: Narrow takes the tighter side, so this
+	// token's Hotfix is false whatever the project allows. Nothing in the flow
+	// turns it on — no control on the approval page sets it — and where a person
+	// would is a product decision the plan has not taken, so the flag is
+	// narrower here than spec.md §6 describes rather than different: a token
+	// that cannot ask for Hotfix is the fail-closed side of that rule.
 	limits, err := Limits{Scopes: code.Scopes}.Narrow(s.cfg.Limits)
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(),
@@ -341,18 +347,16 @@ func (s *Server) serveRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	clientID, secret, err := clientAuth(r, form)
 	if err != nil {
-		writeOAuthError(w, http.StatusUnauthorized, oauthError(oidc.ErrInvalidClient(), err.Error()))
+		s.clientRefusal(w, r, err.Error())
 		return
 	}
 	client, err := s.store.GetClient(r.Context(), clientID)
 	if err != nil {
-		writeOAuthError(w, http.StatusUnauthorized, oauthError(oidc.ErrInvalidClient(),
-			"the client id is not one this installation registered"))
+		s.clientRefusal(w, r, "the client id is not one this installation registered")
 		return
 	}
 	if secret != "" && !secretMatches(client.SecretHash, secret) {
-		writeOAuthError(w, http.StatusUnauthorized, oauthError(oidc.ErrInvalidClient(),
-			"the client secret is not the one this client registered with"))
+		s.clientRefusal(w, r, "the client secret is not the one this client registered with")
 		return
 	}
 	if value := form.Get("token"); value != "" {

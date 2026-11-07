@@ -571,7 +571,13 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   and its one grant) and M7–M10; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, is
-  in the branch this paragraph is read in and not on `main`.
+  in the branch this paragraph is read in and not on `main`. **And one row of an already-merged task
+  is not in the tree either**: M2's entry, and §6's second barrier below, state the **keyed** hash and
+  the **MAC over every record** as what the store does, while the store hashes with a plain unkeyed
+  sha256 (`ee/coordinator/mcpauth/store.go:387`) and writes no MAC at all — so a reader who is not the
+  store's member reads an identity in the clear, and a record written by anybody else is not refused
+  by a mark. That barrier is M2's own row, it is on `main` already and not in this branch, and it is
+  raised as a finding rather than closed by an edit here.
 
 ## 4b. The decision the amendment added
 

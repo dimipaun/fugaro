@@ -59,10 +59,19 @@ func newTestServer(t *testing.T) *testServer {
 
 func newTestServerWith(t *testing.T, cfg Config) *testServer {
 	t.Helper()
+	return newTestServerClock(t, cfg, func() time.Time { return testNow })
+}
+
+// newTestServerClock is newTestServerWith over a clock the caller owns. The two
+// TTLs — the authorization request's and the code's — are bounds nothing but
+// time reaches, so the tests that pin them move a clock instead of waiting for
+// one; every other test takes the pinned one above.
+func newTestServerClock(t *testing.T, cfg Config, now func() time.Time) *testServer {
+	t.Helper()
 	fs := newFakeStore(t)
 	counting := &countingStore{Store: fs.Store, keys: map[string]bool{}}
 	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
-	srv, err := NewServer(cfg, counting, v, WithServerClock(func() time.Time { return testNow }))
+	srv, err := NewServer(cfg, counting, v, WithServerClock(now))
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

@@ -41,8 +41,9 @@ import (
 //
 // It is built from the server's own configuration rather than written as a
 // constant, because the issuer is the project's: the same table over another
-// installation's issuer is that installation's documents, and no path in it is
-// spelled anywhere else in this package.
+// installation's issuer is that installation's documents, and every path in it
+// is the constant the route is mounted at rather than a second spelling of one:
+// the four live in server.go, and this file reads them from there.
 type metadataTable struct {
 	// Issuer is the authorization server's identifier and the origin every
 	// endpoint below is reached on. It is the coordinator's own URL, which is
