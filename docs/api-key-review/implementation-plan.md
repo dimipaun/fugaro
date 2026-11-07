@@ -24,7 +24,7 @@ and a slice the owner does not want is simply not started.
 | Level | Tasks | What it is | Why these can run together |
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
-| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This is code for a launch E7 still refuses** (**F10**, **U6**) | AK4 is `internal/credsvc` and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share no file |
+| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This is code for a launch E7 still refuses** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
 | **L3** | **AK6**, **AK7** | the OpenRouter half: the bundle holds a provider key (**F15**, **F16**, **F24**), and the review run's model path reaches a provider's endpoint | AK6 is `internal/credsvc` and `schemas/`; AK7 is `internal/runner` and `internal/gateway` |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
@@ -42,9 +42,15 @@ grows a level.
 
 ## 2. The shared-files table
 
-**No level has two writers of one file.** A file that two *levels* touch is fine — the levels run in
-order — and the table says which level each is booked in, so a task that wants to move a file between
-levels has to say so here first.
+**No level has two writers of one file, with one exception this plan declares rather than hides.**
+A file that two *levels* touch is fine — the levels run in order — and the table says which level each
+is booked in, so a task that wants to move a file between levels has to say so here first. The
+exception is `internal/infra/projectjobs.go` and its test, which L2 books for **AK4 and then AK5**:
+AK4 fails a profile that names the sentinel with a sentence the operator can act on, and AK5 replaces
+that arm with the route that deploys the variant. AK4 landed first in this branch, so the two never
+edit the file at once; a task that needs another such exception states it here before it starts, and
+the review of AK4's own change asked for exactly this one (the refusal would otherwise prescribe a
+`claude_accounts` key `ValidateClaudeAccounts` refuses, in a file that only AK5 could touch).
 
 | File | Level | Task |
 | --- | --- | --- |
@@ -71,8 +77,8 @@ levels has to say so here first.
 | `internal/runner/routing.go` | L2 | AK5, then AK7 |
 | `internal/runner/routing_internal_test.go` | L2 | AK5, then AK7 |
 | `internal/cli/run.go` | L2 | AK5 |
-| `internal/infra/projectjobs.go` | L2 | AK5 |
-| `internal/infra/projectjobs_test.go` | L2 | AK5 |
+| `internal/infra/projectjobs.go` | L2 | AK4 (the sentinel's refusal), then AK5 |
+| `internal/infra/projectjobs_test.go` | L2 | AK4 (the same), then AK5 |
 | `deploy/terraform/gcp/modules/project/variables.tf` | L2 | AK5 (the `job.account` validation) |
 | `schemas/task.schema.json` | L2 | AK5 (if the axis value reaches a task's `oauth_token`) |
 | `internal/task/task.go` | L2 | AK5 (the same) |
@@ -91,8 +97,10 @@ Three files are booked twice, each across two levels: `internal/credsvc/cascade.
 list, AK6's tier map), `internal/runner/routing.go` (AK5's admission, AK7's upstream) and
 `internal/runner/routing_internal_test.go` (the same two tasks' tests). A fourth is listed once and
 conditionally — `internal/gateway/gateway.go`, AK7 only, and only if the upstream kind moves — put
-here so a later task knows it is taken. A task that needs a file another **level** holds adds itself
-to this table in the same commit.
+here so a later task knows it is taken. Two files are booked twice **within** one level —
+`internal/infra/projectjobs.go` and its test, AK4 and then AK5 — which is the exception the preamble
+above declares. A task that needs a file another **level** holds adds itself to this table in the same
+commit.
 
 ## 3. The tasks
 
@@ -224,14 +232,18 @@ not.
 **Slice:** cloud, Anthropic key (L2). **Depends on:** AK1's slice decided (**D1410**), **D1416** as
 "Anthropic key first", **D1417** as "the project's own key".
 
-**Files (8):** `internal/credsvc/review.go`, `internal/credsvc/review_test.go`,
+**Files (10):** `internal/credsvc/review.go`, `internal/credsvc/review_test.go`,
 `internal/credsvc/cascade.go`, `internal/credsvc/cascade_test.go`,
 `internal/config/claude_accounts.go`, `internal/config/project_secrets.go`,
 `internal/projectpolicy/accounts.go` and the test file of each — the last four because the sentinel has
 to be **publishable**, which no task booked: `projectpolicy.DeriveAccounts` writes the `accounts` block
 every publish, `fugaro update` and the deployer derive from, and the credentials service intersects a
 repository's admission with it (`credsvc`'s `admittedAccounts`), so a sentinel the block cannot carry
-is a class no installation could ever be served by, however AK4 builds the candidate list.
+is a class no installation could ever be served by, however AK4 builds the candidate list — plus
+`internal/infra/projectjobs.go` and its test, §2's declared exception: the sentinel is accepted at
+load and published, so the deployer's answer about it is reachable, and the review of this change
+found that answer naming a `claude_accounts` key `ValidateClaudeAccounts` refuses. AK4 makes that
+refusal honest; AK5 replaces it with the route.
 
 **Interfaces:** the pairing's account axis gains one value that is **not** a Claude account — the
 sentinel the admissions spell for "the project's own Anthropic API key" — resolved in
@@ -253,14 +265,18 @@ small.
 **What AK4 does not make possible — the sentinel's deployment route.** Publishing is not deploying,
 and every reader of the account axis on the way to a job reads a profile's `claude_accounts` as *the
 Claude OAuth tokens this profile's jobs mount*. The sentinel is no job's token, so each of them needs
-an answer AK4 does not write:
+an answer this plan has to write somewhere — the two that are claims about a credential AK4 writes
+here, and the two that are the deployment route itself are AK5's:
 
 - `internal/infra/projectjobs.go`'s `projectAccountMount` refuses an account whose project-wide
   container the installation does not create — for the sentinel with a sentence prescribing
   `claude_accounts.anthropic-api-key--project.allow_data_to`, the one key `ValidateClaudeAccounts`
-  refuses. That is the refusal an installation publishing the sentinel lands in, it is fail-closed,
-  and **AK5** replaces it with the sentinel's own answer (no mount — the review-only variant mounts
-  nothing at all, **O1**).
+  refuses. That is the refusal an installation publishing the sentinel lands in, and it is fail-closed,
+  but its remedy is not reachable, so **AK4 fixes this one too** (§2's declared exception): a sentinel
+  arm ahead of the container lookup refuses the value in words the operator can act on — no job can
+  serve the project's own key in this release, take it off the profile — because the true remedy is
+  that move, not a `claude_accounts` key. **AK5** replaces that arm with the route's own answer (no
+  mount — the review-only variant mounts nothing at all, **O1**).
 - `config.ProjectJobTokenAccount` answered `(sentinel, true)`: a job holding a token no secret exists
   for, where the true answer is `("", false)`. **AK4 fixes this one**, because it is a claim about a
   credential and the launcher's gate and `doctor` both read it.
@@ -277,7 +293,7 @@ profile that names the sentinel gets a coding job at all, what that job's accoun
 what `ReviewJobAccountsFor` and the deployer then agree the review variant's segment is.
 
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/config/ ./internal/projectpolicy/ -run 'TestReviewPairingMayNameTheProjectsAnthropicKey|TestReviewCandidateListIsExactlyOneCredential|TestReviewCallerIsNeverOfferedAProviderKey|TestReviewCandidateListStillOffersThePairingAccount|TestAnthropicKeyAccountIsAReferenceAndNotADefinition|TestAnthropicKeyAccountIsNoJobsToken|TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt|TestProjectSecretReaches|TestDeriveAccountsPublishesTheProjectsAnthropicKey' -count=1`
+`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/config/ ./internal/projectpolicy/ ./internal/infra/ -run 'TestReviewPairingMayNameTheProjectsAnthropicKey|TestReviewCandidateListIsExactlyOneCredential|TestReviewCallerIsNeverOfferedAProviderKey|TestReviewCandidateListStillOffersThePairingAccount|TestAnthropicKeyAccountIsAReferenceAndNotADefinition|TestAnthropicKeyAccountIsNoJobsToken|TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt|TestProjectSecretReaches|TestDeriveAccountsPublishesTheProjectsAnthropicKey|TestAnthropicKeySentinelRefusedWithAReachableRemedy' -count=1`
 
 - `TestReviewPairingMayNameTheProjectsAnthropicKey` — a review caller whose pairing names the
   sentinel is served by the bundle's `config.AnthropicSecret` entry, and the forwarded call carries
@@ -297,6 +313,11 @@ what `ReviewJobAccountsFor` and the deployer then agree the review variant's seg
   with its own sentence (whose named fix is a different account name, never a profile entry that
   `fugaro update` refuses), answers no job's token question, needs no local entry behind it, and the
   reach the derive reads is the deployer's own eligibility rule.
+- `TestAnthropicKeySentinelRefusedWithAReachableRemedy` — the deployer's half of the same honesty, the
+  one the review of this change asked for: a profile that names the sentinel is refused with a
+  `UserError`, and the refusal names neither `claude_accounts.<sentinel>` nor `.allow_data_to` — the
+  keys `ValidateClaudeAccounts` refuses, so naming one would send the operator to a remedy nobody can
+  carry out — while it does name `profiles.<profile>.claude_accounts`, the field they edit.
 
 **Red step:** `TestReviewPairingMayNameTheProjectsAnthropicKey` fails today, for the reason **F13**
 names: `reviewCandidates` offers the pairing's tier-A account and nothing else, so a pairing naming
@@ -330,8 +351,9 @@ new credential — the pairing's sentinel — beside `"oauth"` and `config.AuthC
 `mixedRunAccount` resolve the sentinel to the review variant that is deployed for it; and
 `internal/infra/projectjobs.go` deploys that variant, so an installation that publishes the sentinel
 and no Claude account has a review job at all (**F17**) — where today the same profile is refused by
-`projectAccountMount` (whose sentinel sentence prescribes a `claude_accounts` key
-`ValidateClaudeAccounts` refuses) and, past it, by `modules/project`'s `job.account` validation
+`projectAccountMount` (AK4's sentinel arm, whose sentence now names the move that works — take the key
+off the profile — rather than a `claude_accounts` key `ValidateClaudeAccounts` refuses; AK5 replaces
+the arm with the route's own answer) and, past it, by `modules/project`'s `job.account` validation
 (`ClaudeAccountNameRE`, which the sentinel does not match). **This task takes the decision AK4
 booked in §6 and did not take**: whether a profile naming the sentinel gets a coding job at all, what
 that job's account segment is (the module admits an empty account — a job that runs as no Claude
@@ -562,7 +584,7 @@ any installation whose budget mode is `off` — the review class refuses a run w
    (`modules/project`'s `job.account` validation admits an empty account or a Claude account name,
    and the sentinel is neither), and what `credsvc.ReviewJobAccountsFor` and the deployer then agree
    the review variant's account segment is. An installation that publishes a profile naming the
-   sentinel is refused by `fugaro update` — fail-closed, and with a sentence in
-   `internal/infra/projectjobs.go` that names a `claude_accounts` key this tree refuses, which AK5
-   replaces with the route's own answer — so the state is safe and honest, but it is not a state to
+   sentinel is refused by `fugaro update` — fail-closed, and with AK4's own sentence in
+   `internal/infra/projectjobs.go` that names the move that works (take the key off the profile),
+   which AK5 replaces with the route's own answer — so the state is safe and honest, but it is not a state to
    ship a release on.

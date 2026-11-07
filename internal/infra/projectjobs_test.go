@@ -3,6 +3,7 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -1121,6 +1122,46 @@ profiles:
 				}
 			}
 		})
+	}
+}
+
+// TestAnthropicKeySentinelRefusedWithAReachableRemedy: a local config may now
+// list the sentinel the account axis spells for the project's own Anthropic API
+// key (config.ValidClaudeAccountRef accepts it, config.ValidateProfileClaudeAccounts
+// skips it, and projectpolicy.DeriveAccounts publishes its accounts entry from
+// exactly this profile), and no job of this release serves it. This is the door
+// `fugaro update` closes on such an installation — fail-closed, because a
+// shared job mounts Claude OAuth tokens and the project's own key is no token
+// of any job's, and because the review-only variant that carries the key is not
+// deployed yet.
+//
+// The remedy is the point of the test. Without the sentinel's own arm, the
+// refusal comes from the container lookup below it and prescribes
+// claude_accounts.<sentinel>.allow_data_to — a key config.ValidateClaudeAccounts
+// refuses, so one refusal names what the other forbids and the operator has no
+// move at all. What this refusal names instead is the profile field to edit.
+//
+// Mutation (run, restore): drop the sentinel's arm — the message comes from the
+// container lookup and both assertions below go red.
+func TestAnthropicKeySentinelRefusedWithAReachableRemedy(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+`profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [`+config.AnthropicKeyAccount+`] }
+`)
+	_, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err == nil {
+		t.Fatalf("a profile naming %s deployed jobs: no shared job mounts the project's own key as a Claude token, and the review variant that carries it is not built yet", config.AnthropicKeyAccount)
+	}
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("the refusal is not a UserError (%T): a config this deployer cannot serve must read as a sentence the operator can act on, not as an internal error: %v", err, err)
+	}
+	for _, banned := range []string{"claude_accounts." + config.AnthropicKeyAccount, ".allow_data_to"} {
+		if strings.Contains(err.Error(), banned) {
+			t.Errorf("the refusal names %q: %v — that is the key config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "profiles.standard.claude_accounts") {
+		t.Errorf("the refusal does not name the field the operator edits: %v", err)
 	}
 }
 

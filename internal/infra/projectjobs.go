@@ -645,6 +645,20 @@ func projectAccountMount(lc *localcfg.Config, profile string, pr config.JobProfi
 	if account == "" && !slices.Contains(pr.ClaudeAccounts, config.DefaultClaudeAccount) {
 		return nil
 	}
+	// The project's own Anthropic API key is not a Claude account, and this
+	// deployer serves it no job: its credential is the project's own copy, held
+	// by the platform and attached to a review caller's request by the
+	// credentials service, so there is no token for a mount to add and no
+	// variant of the account axis to build. The refusal has to be this arm's,
+	// ahead of the container lookup, because that lookup's answer for this
+	// value is claude_accounts.anthropic-api-key--project.allow_data_to — a key
+	// ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out.
+	// Taking the key off the profile is the move that works, and the route that
+	// deploys a job for it replaces this arm (the api-key review plan's AK5).
+	if account == config.AnthropicKeyAccount {
+		return userErr("profiles.%s.claude_accounts: %q is the project's own Anthropic API key, not a Claude account, and no job serves it: its credential is the project's own copy, held by the platform, so no shared job mounts a token for it and no review variant is deployed for it in this release. Take the key off profiles.%s.claude_accounts and run fugaro update again — a repository that reads the key for its own model calls mounts it from the project's own copy, which a profile does not have to name",
+			profile, account, profile)
+	}
 	logical := config.ClaudeAccountSecret(account)
 	if _, ok := projectSecretContainers(lc)[logical]; !ok {
 		// The block the operator edits differs by account: the default
