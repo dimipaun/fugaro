@@ -7,9 +7,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -406,6 +409,40 @@ func TestNoAnswerOfThisServerIsCacheable(t *testing.T) {
 	} {
 		if got := answer.rec.Header().Get("Cache-Control"); got != "no-store" {
 			t.Errorf("%s carries Cache-Control %q; want no-store: every answer of this server carries a token, a secret, a code or an address of this installation, and a shared cache holding one is a credential kept, or a client sent, by somebody else", answer.name, got)
+		}
+	}
+}
+
+// TestNoBinaryLinksTheFrontDoorYet is the guard the open registration endpoint
+// owes: it ships with neither of the two bounds spec.md §8 relies on — no
+// per-source rate limit, and no expiry or sweep behind the registration the
+// endpoint writes — so the exposure is latent only while nothing a binary
+// builds reaches this package. A task that wires the front door deliberately
+// deletes this test and carries those bounds with it; until then, a non-test
+// file that names this package fails here rather than turning the exposure
+// reachable in a release nobody re-read the paragraph for.
+func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
+	const pkg = "github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
+	root := filepath.Join("..", "..", "..")
+	for _, dir := range []string{"cmd", "internal", "ee"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(data), pkg) {
+				t.Errorf("%s links the MCP front door, which mounts an open registration endpoint with neither a rate limit nor a sweep; a task that wires it carries those bounds and deletes this guard", path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", dir, err)
 		}
 	}
 }

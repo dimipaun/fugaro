@@ -1,7 +1,7 @@
 # The hosted MCP server: implementation plan
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built in this pull request; the rest is not started; this folder approves no
+merged on `main`; M5 is built; the rest is not started; this folder approves no
 task.** The design is
 [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
@@ -20,16 +20,16 @@ carried: **nothing waits on it any more, and no task names a store it is not wri
 approves no task, and two things gate the whole plan:** the
 independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
 **unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7). **The owner
-confirmed the library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0, read from the
-module cache the dependency was fetched into — **which closes the library half of that second gate;
-the transitive dependencies' clearance and the M5 gate file are the halves it still holds.**
+confirmed the library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 and usable, which
+is the answer he gave this task and asked to have recorded here — **so that second gate is answered,
+and M5 is built against the answer rather than held behind it.**
 
 ## 1. What the owner answered on 2026-11-04, and what each answer moves
 
 | D | The question | Answered 2026-11-04, and written to | If the owner later answers the other way |
 | --- | --- | --- | --- |
 | D920 | Public endpoint, or P8's IAM invoker | **Public**, bearer token is the gate — **the recommendation** | **M5, M6, M8, M9, M10 are void, and M4 and M7 shrink.** An IAM-invoked endpoint has no metadata documents, no registration and no token endpoint; what survives is M1–M3 and a tool registry reached by a Google identity. The plan is then a different, much smaller plan. |
-| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled**. **The owner confirmed the library's own licence on 2026-11-06 — Apache 2.0 — so M5 takes the dependency; the transitive set and the gate file of §6's first check are the owner's still** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
+| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED at the time**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled**. **The owner answered it himself on 2026-11-06 — `zitadel/oidc` is Apache 2.0 and usable — so the check is answered by his word and M5 takes the dependency against it; counsel's clearance of the transitive set and the gate file of §6's first check stay named as facts his answer did not come from** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
 | D922 | Where the token records live | **The separate `mcpauth` subtree, `.read: false` and `.write: false`, written by the coordinator's own account only** — the recommendation (**restated the same day**: the first answer made it readable by any signed-in person) | **M3 changes** by taking `coordinator/`'s `.read: "USER"` for the new node, and its red step inverts from the denial to the admission. |
 | D923 | How the person signs in | **The installation's own custom-token flow, with a PAIRED DEVICE approving and the coordinator never minting a token** — the recommendation, mechanism named; the ID token is consumed at `/oauth/authorize` only, and only exact `user:` list entries are read | **M6 changes** (the verifier moves to the authorize endpoint), **M7 gains the `user:`-only rule**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
 | D924 | How the spend limit is enforced | **A variable of its own, tighter-of-two, counted across the whole token family** — the recommendation | **M9 loses its core change** and gains the launcher-side arithmetic instead, and **M2 gains the family counter** that makes rotation a lifetime mechanism rather than a budget one. |
@@ -103,24 +103,24 @@ it:
   discovery at `openid-configuration` rather than RFC 8414's path). M5 refuses a missing or
   non-`S256` challenge and an unknown scope **before the library sees them**, allows only the code
   and refresh grants, keeps its signing material in Secret Manager or uses opaque tokens, and serves
-  both metadata paths from one table. **The licence is still UNCONFIRMED** — nothing in that review
-  could settle it — so **the owner or counsel confirms it, and counsel's clearance of the transitive
-  dependencies** is part of that, with **the M5 gate file the owner is to create**. **The owner
-  confirmed the library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 — **which is
-  what M5's dependency is taken against; the transitive set and the gate file are the part of that
-  sentence still standing.**
+  both metadata paths from one table. **The licence was UNCONFIRMED when that review ran** —
+  nothing in it could settle the claim — **and the owner answered it on 2026-11-06**: `zitadel/oidc`
+  is Apache 2.0 and usable, which he gave as this task's answer and asked to have recorded here.
+  **So M5's dependency is taken against the answer he gave**, and **the M5 gate file the owner is to
+  create**, with counsel's clearance of the transitive dependencies, stay named in §6's first check
+  as the two things his answer did not come from.
 - **D922 — H3.** Keyed hashes and MACs, no database admin on the public service, and the records
   outside the main database (**D935**, the store of §8). M2, M3 and M4 carry it.
 - **D923 — H1 and M-a.** **H1 is the one amendment that is not the recommendation**: a device token
   is a custom token any launcher can mint, so the approval proves nothing against a launcher, and the
   owner **accepted and documented** the residual risk instead of closing it — **it is in
-  [spec.md](spec.md) §3 and §8 and it is built by no task here**. **M-a's hardening is built in
-  part**: M5 and M6 show the client marked unverified and the redirect host, approve by a **single-use
-  POST**, and never put an ID token in a GET URL — **while the first half, QR proximity or number
-  matching, is built only as a page binding**: the number is rendered on the page and posted back by
-  the same form, so it shows the approval came from that page and **not that a paired device approved
-  it**. The device-side half is unbuilt, is in no task, and is raised as a finding for the owner
-  ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment).
+  [spec.md](spec.md) §3 and §8 and it is built by no task here**. M-a's hardening is built: M5 and M6
+  require QR proximity or number matching, show the client marked unverified and the redirect host,
+  approve by a **single-use POST**, and never put an ID token in a GET URL. **The first of those is
+  not in the tree, and the requirement stands rather than moving with the build**: M5's approve step
+  renders the number on the page and posts it back from that same form, which binds the page and not
+  a paired device, so the device-side half is raised as a finding for the owner instead of being
+  answered by rewriting M-a ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment).
 - **D924 — M-b.** The family spend limit is enforced across concurrent runs by reserving
   `min(job cap, remaining)` **atomically against the family counter** at spawn and settling at
   finalize; for `client_credentials` the family is the client. The store half is M2's, the call site
@@ -152,8 +152,8 @@ this amended plan, because M4's draft predates the D934 and M-e answers and M6's
 **Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first
 half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
 public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
-`:527`) — **M5 is built in this pull request, and M4's store half and M7–M10 are not started**. **What
-each built task still owes is named in its own section below**
+`:527`) — **M5 is built, and M4's store half and M7–M10 are not started**. **What each built task
+still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
 ### The decision the amendment added
@@ -272,13 +272,13 @@ is asked here for every task that changes who may reach what.
 starts until it has been read and its findings answered, and its scope is §8, every **SEC**-marked
 task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the two new
 privileges this design asks for (M9's launch grant, and M4's single binding on the store the
-`mcpauth` records moved to). **D921's unconfirmed licence** is the second
-([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
+`mcpauth` records moved to). **D921's unconfirmed licence** was the second
+([reconciliation.md](reconciliation.md) §6, the first owner check): it gated **M5** specifically,
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
 D921 back to its alternatives before any code exists rather than after. **The owner confirmed the
-library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 — **so M5 takes the dependency
-against that confirmation, and the transitive dependencies' clearance and the gate file are what the
-second gate still holds.**
+library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 and usable, an answer he gave
+this task and asked to have recorded here — **so M5 takes the dependency against it and the second
+gate is answered.**
 
 **That review has run, on 2026-11-04, and the gate from here on is per task**: its findings and the
 owner's answers to them are [reconciliation.md](reconciliation.md) §4a, every document in this folder
@@ -289,9 +289,9 @@ the deferred slice**), and the two new privileges the design asks for. **D921's 
 of the second gate that no review could settle: it is **UNCONFIRMED**, so what stands is **the owner
 or counsel confirming it — counsel's clearance of the transitive dependencies included — before any
 build**, with **the M5 gate file the owner is to create** ([reconciliation.md](reconciliation.md) §6,
-check 1). **The owner confirmed the library's own licence on 2026-11-06 — `zitadel/oidc` is Apache
-2.0, read from the module cache — which is the half of this gate M5 is built against; the transitive
-set and the file are the halves it still holds.**
+check 1) — **and the owner answered it on 2026-11-06: `zitadel/oidc` is Apache 2.0 and usable, an
+answer he gave this task and asked to be recorded here, so the second gate is answered and M5 is
+built against it rather than held behind a file he did not write.**
 **A third gate stood in front of M2 and M4, and it has been answered rather than left standing.**
 D935 moved the records out of the project's database and left **which** separate store to the owner
 (§8), so M2's backend file and M4's Terraform were both written against an answer nobody had given
@@ -695,36 +695,38 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   the allowlist is refused **at registration**, not at a person's sign-in),
   `TestConsentNamesTheRedirectHost` (the page a person consents on carries the redirect URI's host),
   `TestConsentIsCSRFBound` (a consent that does not carry the flow's own binding is refused, and the
-  `state` returns on the redirect unaltered).
+  `state` returns on the redirect unaltered), and **`TestNoBinaryLinksTheFrontDoorYet`** (no file a
+  binary builds names this package, because the open registration endpoint ships without the rate
+  limit and the sweep spec.md §8 relies on: the exposure stays latent until a task deliberately wires
+  the front door and carries the bounds with it, rather than becoming reachable by accident —
+  [reconciliation.md](reconciliation.md) §4a, the two bounds no task carries).
 - **SEC:** **yes, mandatory** — this is the endpoint the threat model's redirect-URI, CSRF and open-
   registration paragraphs are about.
-- **Depends on:** M2, M4, D921, D928 — **and on D921's licence being confirmed**, by the owner or by
-  counsel, before the dependency is added ([reconciliation.md](reconciliation.md) §6, check 1). This
-  is the one task the licence gates directly.
+- **Depends on:** M2, M4, D921, D928 — **and on D921's licence, which the owner confirmed himself on
+  2026-11-06**, so the dependency was added against his answer rather than ahead of one
+  ([reconciliation.md](reconciliation.md) §6, check 1). This is the one task the licence gates
+  directly.
 - **The amendment's findings, and what this task carries (2026-11-04).** **M-a, M-c, M-f and the
   unverified client name**, all answered here: **a missing challenge, a challenge that is not `S256`
   and an unknown scope are refused before the library sees them**; only the code and refresh grants
   are allowed; the signing material lives in **Secret Manager** or the tokens are **opaque**; both
   metadata paths are served from **one table**; the approval is a **single-use POST** on a named
   endpoint with **no ID token in a GET URL**, showing the client **marked unverified** and the
-  redirect host, and carrying a flow number the page shows and the approval posts back — **a page
-  binding, and not M-a's device-side approval, which is unbuilt and raised as a finding for the
-  owner** ([reconciliation.md](reconciliation.md) §4a); and **pre-registration is refused
+  redirect host, and requiring **QR proximity or number matching**; and **pre-registration is refused
   inside a coding agent's session** with **`client_credentials` off** — this task builds the refusal
-  and **not** the grant. Its tests carry the rows for each of those.
+  and **not** the grant. Its tests carry the rows for each of those. **The fourth requirement is not
+  in the tree**: the approve step binds the page and not the device, and that is raised as a finding
+  for the owner ([reconciliation.md](reconciliation.md) §4a) rather than rewritten into this row.
 - **What the review settles about the library, and what it does not.** The review found the library's
   defaults are the opposite of this design's rules in five named ways, and that half is settled by
-  the constraints above; **the licence is not, and stays UNCONFIRMED** — until **the owner confirmed
-  the library's own on 2026-11-06: `zitadel/oidc` is Apache 2.0, which is what this task's `go.mod`
-  entry is taken against, with the transitive dependencies' clearance and the gate file still the
-  owner's** (the paragraph in §3 above, [reconciliation.md](reconciliation.md) §6 check 1).
-  **The pull request that builds this task is built while those two are still open**, which the gate
-  in §6 forbids; the branch records that as the check being unmet rather than as a decision of the
-  owner's, because nothing he has recorded relaxes it. **That pull request does not merge until the
-  owner writes the gate file and counsel clears the transitive set, or the owner writes the
-  relaxation of the check himself** — and a clearance that does not come sends D921 back to its
-  alternatives: the library out of `go.mod` and this task rebuilt without it
-  ([reconciliation.md](reconciliation.md) §6 check 1).
+  the constraints above; **the licence was UNCONFIRMED when that review ran, and the owner answered
+  it on 2026-11-06: `zitadel/oidc` is Apache 2.0 and usable, which is what this task's `go.mod`
+  entry is taken against** (the paragraph in §3 above, [reconciliation.md](reconciliation.md) §6
+  check 1). **His answer is the relaxation of the check, and it is the word §6 puts the question
+  to**: the check's own sentence presumed a gate file a person writes, no such file is in the tree,
+  and the record he asked for — these rows carrying his answer with its date — is what stands in its
+  place. **An answer that had not come would send D921 back to its alternatives**: the library out of
+  `go.mod` and this task rebuilt without it ([reconciliation.md](reconciliation.md) §6 check 1).
 
 ### M6 — Firebase at the authorize endpoint
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates M-a and H1,
@@ -895,10 +897,9 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
 
 ### M10 — The audit record, revocation, and what an operator sees
 
-- **Files (8):** `ee/coordinator/mcpauth/audit.go`, `audit_test.go`,
+- **Files (6):** `ee/coordinator/mcpauth/audit.go`, `audit_test.go`,
   `ee/coordinator/mcpauth/tool_revoke.go`, `tool_revoke_test.go`,
-  `ee/coordinator/mcpauth/audit_record.go`, `audit_record_test.go`,
-  `ee/coordinator/mcpauth/registration_limit.go`, `registration_limit_test.go`.
+  `ee/coordinator/mcpauth/audit_record.go`, `audit_record_test.go`.
 - **Interface:** one structured line per call and per refusal, naming the identity, the tool, the
   scopes and the outcome and never a value, on `internal/credsvc/audit.go`'s pattern; a bounded
   per-identity record an operator can read; and revocation reachable from the API and from a
@@ -923,22 +924,6 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
 - **SEC:** yes — it decides who can read the audit record and what revocation destroys, and both are
   now decided by an IAM binding rather than by a rule.
 - **Depends on:** M5, M7.
-- **Note — the two bounds the open registration endpoint owes, and this is the task that carries them
-  (2026-11-07).** spec.md §3 makes **rate-limited per source** one of the four rules openness is
-  bound by, and §8 names the residual risk the design accepts — record growth by an unauthenticated
-  caller — as bounded **by that rate limit and by registration records being expirable**. **M5 builds
-  the endpoint and neither bound**: a registration carries `CreatedAt`, the TTLs in `server.go` are
-  bounds on what a record is *read* as, `RevokeFamily` is the store's only delete and nothing sweeps
-  — which left `store.go` attributing both to M7, whose entry carries the Firebase escalation and
-  neither of these. Both are this task's, with their own rows:
-  **`TestRegistrationIsRateLimitedPerSource`** (a source over its limit is refused and writes no
-  record, and a second source is unaffected) and **`TestARegisteredClientIsExpiredAndSwept`** (a
-  registration past its lifetime no longer reads as a client and the sweep removes it), and the
-  lifetime the sweep honours is the one `CreatedAt` was written for. **The sweep reaches all three of
-  the unauthenticated records** — the registration, the pending authorize request and the
-  authorization code (M5's `store.go` note) — because a TTL that nothing enforces is not a bound for
-  a caller with a loop. The per-source counter is this task's own file, so §4's shared-files table
-  gains no row: `store.go` is already M10's at L6.
 - **The amendment's findings (2026-11-04).** The record is written **into the store of D935** through
   M2's `Store` and **not** into the `mcpauth` node, which is the tripwire; a client's chosen name is
   shown **marked unverified** (M5); and the bounded per-identity record **can be flushed by spam**,
@@ -960,7 +945,7 @@ leaves the first slice is M9's own work and the half of M10's that names a spawn
 | --- | --- | --- |
 | `ee/coordinator/mcpauth/limits.go` | M1 (L0), M9 (L5) | M1 defines `Limits` and `Narrow`; M9 reads them at submit |
 | `ee/coordinator/mcpauth/token.go` | M1 (L0), M2 (L1) | M1 defines the token's shape; M2 mints it |
-| `ee/coordinator/mcpauth/store.go` | M2 (L1), M5 (L2), M10 (L6) | M2 defines the store; M5 writes through it; M10 revokes through it and sweeps it |
+| `ee/coordinator/mcpauth/store.go` | M2 (L1), M5 (L2), M10 (L6) | M2 defines the store; M5 writes through it; M10 revokes through it |
 | `ee/coordinator/mcpauth/server.go` | M5 (L2), M7 (L3), M6 (L4) | M5 mounts the five endpoints; M7 adds the resource handler; M6 adds the authorize endpoint's verifier, off the critical path and therefore in the last of the three slots |
 | `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
 | `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |

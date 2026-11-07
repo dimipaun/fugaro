@@ -74,8 +74,11 @@ const (
 	// read as a design somebody may build from, which is the one thing this
 	// folder is not. The built half is the five tasks merged on `main` since
 	// the answers: a status line that still said "nothing implemented" would be
-	// the folder's one load-bearing false claim.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built in this pull request; the rest is not started; this folder approves no task."
+	// the folder's one load-bearing false claim. M5's clause is "M5 is built"
+	// and not "M5 is built in this pull request": the line outlives the pull
+	// request, and a phrase that named one would be false on `main` the day it
+	// merged.
+	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built; the rest is not started; this folder approves no task."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -96,8 +99,8 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 		// The two gates the plan states before the first task: the review the
 		// coordinator runs -- which has run, so the gate is the finding each
 		// task now answers -- and the licence, which the review could not settle
-		// and which the owner confirmed for the library itself on 2026-11-06
-		// while the transitive dependencies and his own gate file stay open.
+		// and which the owner answered himself on 2026-11-06, answering the
+		// check rather than leaving M5 held behind a file no one had written.
 		"independent SECURITY review of [spec.md](spec.md) §8",
 		"**run by the coordinator**",
 		"D921's unconfirmed licence",
@@ -105,9 +108,10 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 		"D921's licence",
 		"counsel's clearance of the transitive dependencies",
 		"the M5 gate file the owner is to create",
-		// The confirmation itself, pinned so the folder cannot go back to
-		// reading as though the library's licence were still open: the half the
-		// owner settled, the date he settled it, and the two halves he did not.
+		// The answer itself, pinned so the folder cannot go back to reading as
+		// though the library's licence were still open: the licence, the date,
+		// and the two things the answer did not come from -- counsel's clearance
+		// and the gate file -- which the plan still names as facts.
 		"The owner confirmed the library's own licence on 2026-11-06",
 		"`zitadel/oidc` is Apache 2.0",
 		// And the cuts the amendment made: `spawn_task` out of the first slice,

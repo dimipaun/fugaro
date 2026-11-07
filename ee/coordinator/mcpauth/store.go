@@ -64,9 +64,9 @@ const (
 	// one behind per iteration until its TTL passes. The TTL is a bound on
 	// what the record is *read* as and not on what is stored — nothing in
 	// this tree sweeps an expired request or code, RevokeFamily being the
-	// store's only delete — which is the same deferral Client.CreatedAt
-	// records, and it covers these two records as well as that one: the
-	// lifecycle M10 carries reaches all three of the shapes here.
+	// store's only delete — and that is the deferral Client.CreatedAt records
+	// too. No task of the plan carries it, so it is raised as a finding for
+	// the owner rather than left to look assigned.
 	requestPrefix = PathPrefix + "requests/"
 	codePrefix    = PathPrefix + "codes/"
 )
@@ -151,11 +151,11 @@ type Client struct {
 	// anticipates one: spec.md §8 bounds an open registration endpoint's
 	// residual risk by a per-source rate limit and by these records being
 	// expirable, and neither bound is implemented in this package or anywhere
-	// else in this tree. Both are M10's, with their own tests
-	// (implementation-plan.md, the note in its entry: registration is
-	// rate-limited per source and an expired registration is gone), and until
-	// M10 lands the exposure is latent only because no binary mounts these
-	// routes yet — the record carries the timestamp that lifecycle will read
+	// else in this tree. No task of the plan carries either one — the
+	// M10 entry is the audit record and revocation — so both are recorded in
+	// reconciliation.md §4a as a finding for the owner to assign. Until one
+	// lands the exposure is latent only because no binary mounts these
+	// routes yet: the record carries the timestamp that lifecycle will read
 	// and nothing here enforces it. The flow's two records are in the same
 	// position and are named on requestPrefix above.
 	CreatedAt time.Time `json:"created_at"`

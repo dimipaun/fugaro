@@ -1,7 +1,7 @@
 # The hosted MCP server: the spec
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built in this pull request; the rest is not started; this folder approves no
+merged on `main`; M5 is built; the rest is not started; this folder approves no
 task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
@@ -164,19 +164,14 @@ repository's own rule for a documentation folder says so. **The one licence this
 on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONFIRMED**, and
 **nothing the independent security review of 2026-11-04 read could settle it** (finding M-c,
 [reconciliation.md](reconciliation.md) §4a) — the library's Apache 2.0 claim is the library's own.
-What stands is the check itself, which is why it is a gate rather than a closed item: **the owner or
-counsel confirms the licence, counsel's clearance of the transitive dependencies included, and the
-M5 gate file is the owner's to create** — M5 does not start until a person has written it
-([reconciliation.md](reconciliation.md) §6, check 1). **The owner confirmed the library's own licence
-on 2026-11-06** — `zitadel/oidc` is Apache 2.0, read from the module cache the dependency was
-fetched into — **so M5 takes the dependency against that confirmation, and the transitive
-dependencies' clearance and the gate file are what the check still holds.** **M5 is built while the
-check is unmet, and the branch records it as unmet rather than as a decision of the owner's**: the
-check is a gate and not a note, nothing the owner has recorded relaxes it, and **the pull request
-does not merge until the owner writes the gate file and counsel clears the transitive set, or the
-owner writes the relaxation of the check himself** ([reconciliation.md](reconciliation.md) §6,
-check 1). If counsel's clearance does not come, the answer is D921's alternatives — the library out
-of `go.mod` and M5 rebuilt without it — and not a dependency shipped ahead of its own gate.
+What the owner answered on **2026-11-06** settles it: **he confirmed the licence himself —
+`zitadel/oidc` is Apache 2.0 and usable** — which is the answer M5's `go.mod` entry is taken against,
+and **it is his word rather than a file that closes the check the section below puts to him**
+([reconciliation.md](reconciliation.md) §6, check 1). **Two things his answer did not come from stay
+named as facts**: counsel has not been asked for **the transitive dependencies' clearance**, and the
+gate file the check describes is not in the tree. **His answer is what M5 was held behind and what it
+now has**; if that answer is wrong the alternative is D921's own — the library out of `go.mod` and M5
+rebuilt without it — and not a dependency shipped ahead of its own gate.
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -261,14 +256,13 @@ audience — the coordinator's own URL — so a client's standard check works.
 server is built on **zitadel/oidc** — the first option the owner listed, and the owner's answer —
 with the coordinator supplying two things the library does not: the storage over the project's own
 store (§6), and Dynamic Client Registration, which the owner's spec already expects to be a few
-hundred hand-written lines. **The library's licence is still UNCONFIRMED** — the review settles the
-library's *behaviour* against this design and not its licence; **the owner or counsel confirms it,
-counsel's clearance of the transitive dependencies included**, and **the M5 gate file is the owner's
-to create**, so the gate stands until a person has written it
-([reconciliation.md](reconciliation.md) §6, check 1). **The owner confirmed the library's own licence
-on 2026-11-06 — `zitadel/oidc` is Apache 2.0 — which is the half of that gate M5 takes the dependency
-against; the transitive set and the file are the halves still open.** M5 does not start until it is settled, and a
-licence that turns out to be unusable sends D921 back to its alternatives rather than to a
+hundred hand-written lines. **The library's licence is answered** — the review settles the library's
+*behaviour* against this design and not its licence, and **the owner confirmed the licence himself on
+2026-11-06: `zitadel/oidc` is Apache 2.0 and usable**, which is what M5's dependency is taken
+against ([reconciliation.md](reconciliation.md) §6, check 1). **Two facts his answer did not come
+from stay named**: counsel has not been asked for **counsel's clearance of the transitive
+dependencies included**, and the gate file the check describes is not in the tree. A licence that
+turns out to be unusable sends D921 back to its alternatives rather than to a
 workaround. The alternatives and their costs stay in the reconciliation; the short version is that
 ory/fosite brings the same missing piece and a heavier plugin API for a flow this small, and a
 standalone third-party server is a second resident service in a self-hosted product whose whole
@@ -324,11 +318,11 @@ MCP client registers before any person has signed in. Openness is bound by four 
 refuses nothing by rate and sweeps nothing: it writes one record per registration, so the audit
 holds, but there is no limiter in front of it, no sweep, and no read-time bound either — a
 registration carries the time it was made and nothing compares that against anything, so a
-registration stays a client for as long as the store holds it. Both bounds are **M10's** and the
-plan says so in its own row ("**M5 builds the endpoint and neither bound**"), so this paragraph
-names the gap rather than closing it here. The flow's own two records, the pending request and the
-code, are the pair M5 does bound on read: each endpoint refuses its record once its TTL has passed,
-and the sweep all three shapes are waiting for is what is missing.
+registration stays a client for as long as the store holds it. **Both bounds belong to no task of
+the plan**, M5 builds the endpoint and neither bound, and this paragraph names the gap and raises it
+to the owner rather than closing it here ([reconciliation.md](reconciliation.md) §4a). The flow's
+own two records, the pending request and the code, are the pair M5 does bound on read: each refuses
+its record once its TTL has passed, and the sweep all three shapes wait for is what is missing.
 
 **The flow, end to end** (the owner's §"Auth flow", with the places this design changes it — none
 of them the endpoints, all of them what happens at them):
@@ -878,10 +872,10 @@ endpoint is reachable by anyone and writes a record, so it is rate-limited and a
 registration is worthless until a person consents (§3). The residual risk the design accepts is
 record growth by an unauthenticated caller, bounded by the rate limit and by registration records
 being expirable; the risk it does not accept is a registration that grants a token by itself.
-**Neither bound is built in M5** (§3, "The rate limit and the expiry are not built"): until M10's
-limiter and its sweep land, the growth this paragraph calls accepted-by-bounds is accepted
-unbounded, and a registration has no lifetime at all — nothing yet bounds how many of them a
-stranger may leave behind.
+**Neither bound is built in M5** (§3, "The rate limit and the expiry are not built"), and no task of
+the plan carries either: until a limiter and a sweep land, the growth this paragraph calls
+accepted-by-bounds is accepted unbounded, and a registration has no lifetime at all — nothing yet
+bounds how many of them a stranger may leave behind.
 
 **An agent caller.** The hardest case, and the reason §7 refuses a token without limits. An agent
 cannot be asked to notice that a tool result looks wrong, and it will happily follow an instruction
@@ -1030,10 +1024,11 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   the text ([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
 - **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
-  (§3, D921, answered 2026-11-04 with its licence still **UNCONFIRMED** and confirmed by the owner on
-  2026-11-06 as **Apache 2.0** — so the owner or counsel confirms the transitive set,
-  **counsel's clearance of the transitive dependencies included**, and **the gate file
-  is the owner's to create**); the standalone-server option is not taken; and
+  (§3, D921, answered 2026-11-04 with its licence **UNCONFIRMED** and answered by the owner himself on
+  2026-11-06 — **Apache 2.0 and usable**, which is what M5's dependency is taken against, while
+  **counsel's clearance of the transitive dependencies included** and the gate file
+  stay named in §6's first check as the two things his answer did not come from); the
+  standalone-server option is not taken; and
   re-verification against the live MCP specification and the project's Identity Platform features is
   an owner check before implementation ([reconciliation.md](reconciliation.md) §6). **The
   re-verification could not be done here**: the public specification is not reachable from this
