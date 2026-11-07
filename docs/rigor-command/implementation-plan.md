@@ -265,7 +265,7 @@ installation that has never had one.
   different remedies, so one word for both would send the owner to the wrong one.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
-- **Tests:** `TestStageOrderMatchesDependencies` (`internal/initflow/loop_test.go`: sixteen stages,
+- **Tests:** `TestStageOrderMatchesDependencies` (`internal/initflow/loop_test.go`: seventeen stages,
   with `Layer` between `Policy` and `Checkout` in the order it pins, and `Checkout`'s `needs`
   carrying `Layer` — the slot registration the loop reads),
   `TestUpdateSeedsTheLocalLayerFromThePublishedOne` (no local file, a published layer: the
