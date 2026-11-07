@@ -205,6 +205,41 @@ func TestBacklogAddDefaultIsShort(t *testing.T) {
 	closingLine(t, out, 2)
 }
 
+// TestBacklogAddFailureIsAFailedStep: a filing the folder refuses (the same
+// title filed twice on one day) is the run's failure block (G8) -- the step
+// that failed with the reason it did, the path of the log this run's output is
+// in, and the closing line under it -- where it printed the refusal alone.
+//
+// The item it refuses is written through backlog.Write and not by running
+// `backlog add`: this test's one run of the command is the refused one, and a
+// second run a second later in this process would want the log name of the
+// first (CL3 names a log after the command, the second and the pid).
+func TestBacklogAddFailureIsAFailedStep(t *testing.T) {
+	isolateState(t)
+	dir := filepath.Join(t.TempDir(), backlog.Dir)
+	if _, err := backlog.Write(dir, backlog.New{
+		Title: "Review round 2 left 3 findings open", Mode: "none", Area: "repo",
+		FiledBy: "octocat", FiledIn: "hand", Date: "2026-10-24",
+		Body: backlog.Body("Review round 2 left 3 findings open", "the round's findings are worth addressing, not blocking", "", nil),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, addArgs(dir)...)
+	if err == nil {
+		t.Fatal("a second filing of the same title and day was accepted")
+	}
+	if !strings.Contains(out, markFailed+" filed: ") {
+		t.Errorf("the refusal is not the step that failed:\n%s", out)
+	}
+	path, _ := onlyLog(t, "backlog-add")
+	if !strings.Contains(out, "full output: "+path) {
+		t.Errorf("the failure does not name the log this run's output is in:\n%s", out)
+	}
+	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
+		t.Errorf("the run's closing line is missing, or is not the failure it was:\n%s", out)
+	}
+}
+
 // TestBacklogIndexDefaultIsShort: regenerating the index alone is one step
 // and the closing line.
 func TestBacklogIndexDefaultIsShort(t *testing.T) {
