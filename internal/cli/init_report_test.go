@@ -9,6 +9,7 @@ package cli
 // which is the same one (G11).
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -661,7 +662,7 @@ func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 	// which is what makes this a prompt asked mid-stage and not one before the
 	// first step — the shape TestConfirmPromptsAreNeverSuppressed covers.
 	step := run.rep.Step(initflow.Layer)
-	answerAQuestionMidStage(t, run, r.out, func() error {
+	answerAQuestionMidStage(t, run, r.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
 		_, err := r.s.Apply(context.Background(), initflow.Env{Interactive: true})
 		return err
 	})
@@ -683,7 +684,7 @@ func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 	run := h.s.e.r
 	run.rep = report.New(report.Options{Out: h.out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
 	step := run.rep.Step(initflow.Policy)
-	answerAQuestionMidStage(t, run, h.out, func() error {
+	answerAQuestionMidStage(t, run, h.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
 		_, err := h.s.Apply(context.Background(), initflow.Env{Interactive: true})
 		return err
 	})
@@ -693,17 +694,24 @@ func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 // answerAQuestionMidStage drives ask — the stage's call, which asks one question
 // of the person — from another goroutine and asserts what the screen shows. The
 // answer is on a pipe, so the test decides when the person has read the block
-// and typed their name, and the question is the typed one both these stages ask
-// (confirmTyped's, which confirmRemoval and confirmTypedStrict are).
-func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, ask func() error) {
+// and typed their name, and the question is the typed one these stages ask
+// (confirmTyped's, which confirmRemoval and confirmTypedStrict are). head is the
+// question's own banner as that stage writes it: the converge's stages ask with
+// the project's name alone, and the checkout stage's cloud step asks with the
+// one a run of its own writes (askClass, which names the GCP project too).
+func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, head string, ask func() error) {
 	t.Helper()
 	answer, typed := io.Pipe()
 	defer typed.Close()
+	// The answer is wired in where a question may be read, both of them: the
+	// command's own stdin (the shared confirmation helpers read it there) and
+	// the run's reader, which production builds over that same stdin
+	// (newInitRun) and which a run this one drives is given (refreshOptions.in).
 	run.cmd.SetIn(answer)
+	run.in = bufio.NewReader(answerReader{r: run, in: answer})
 	done := make(chan error, 1)
 	go func() { done <- ask() }()
 
-	head := "⚠ CONFIRM (project " + initProjectName + "): "
 	prompt := "Type " + initProjectName + " to confirm: "
 	waitForOutput(t, out, prompt)
 	shown := out.String()
@@ -719,7 +727,16 @@ func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, ask func(
 	if nl < 0 {
 		t.Fatalf("the confirmation's banner never ended, so the prompt under it cannot be read as its own line:\n%q", rest)
 	}
-	if !strings.HasPrefix(rest, rest[:nl+1]+prompt) {
+	// The banner's line ends, and the run's writer puts the step in flight back
+	// the moment it does (a complete line is a line somebody watches), so one
+	// frame and the clear that takes it down may stand between the banner and
+	// the prompt — erased before the prompt is written. A line of anything else
+	// there is what this refuses: the question is read as one block.
+	between := rest[nl+1:]
+	if i := strings.LastIndex(between, "\r\x1b[K"); i >= 0 && !strings.Contains(between[:i], "\n") {
+		between = between[i+len("\r\x1b[K"):]
+	}
+	if !strings.HasPrefix(between, prompt) {
 		t.Errorf("the confirmation is not the prompt's own line, with nothing drawn between them:\n%q", rest)
 	}
 
