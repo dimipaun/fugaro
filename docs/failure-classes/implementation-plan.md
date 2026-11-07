@@ -430,7 +430,7 @@ standard, with `go test ./plugin/` in the same pull request. **SEC:** no. **Owne
 - **Mutation to hold it:** drop one key from the skill's list → the pin fails, which is the mutation
   that proves the list is now held rather than trusted.
 - **Command:** `go test ./plugin/ -run 'WorkingSkillStatus' -count=1`
-- **Commit:** `plugin: the status skill names the run record's failure class`.
+- **Commit:** `plugin: the working skill's status reference names the failure class`.
 
 ---
 
