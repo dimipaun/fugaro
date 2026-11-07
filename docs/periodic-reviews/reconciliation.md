@@ -14,7 +14,8 @@ then — is kept only where it is still checkable. Each finding is **Exists**, *
 
 The headline: **the loop the owner asked for on 2026-10-25 was designed the next day (D320–D328,
 `docs/task-governance`) and has shipped**, through 0.13.0's recipe and digest step, carried by every
-release since (0.19.0 is the current one). What this design owns is the part that makes a user who is
+release since (**0.20.3** is the current one at §6's 2026-11-07 reading — F32). What this design owns
+is the part that makes a user who is
 not asking keep the cadence, and four smaller gaps. Every finding below is therefore about a claim of
 the request, not about the request's core.
 
@@ -734,11 +735,17 @@ says otherwise, and nothing here is approved.
 | **D1446** | Do the two class rules' thresholds differ for a stored series and a committed one? | **No — one constants block in `internal/digest`** (D7), read by both | A project-level override of a rule's threshold | |
 | **D1447** | Does the stored report's table obey `runs ls --group-by`'s refusals (no page, no window)? | **The table is a total by construction** — a period is closed — so the refusals are the listing's own and the report needs none | The report prints the table's share against a window it names | |
 | **D1448** | Does the aggregate count the reports job's own runs? | **No** (D1433's other half): the aggregate is about the project's work, and the job's runs are the machinery that reports it | Count them | |
-| **D1449** | Where does the rules' document live — FC8's own either/or? | **This folder keeps the prose and `plugin/skills/working/reference/periodic-reviews.md` §3 keeps the reader's list**, so FC8 writes this folder's document and the skill file, not `docs/task-governance/reconciliation.md` | The rules' documents stay split between the two designs' folders | |
+| **D1449** | Where does the rules' document live — FC8's own either/or? | **This folder's reconciliation keeps the prose and `plugin/skills/working/reference/periodic-reviews.md` §3 keeps the reader's list**, so FC8 writes **`docs/periodic-reviews/reconciliation.md`** and the skill file, and neither `docs/task-governance/reconciliation.md` nor this folder's README | The rules' documents stay split between the two designs' folders | |
 
 **Two of the twenty are the plan's own structure rather than a product question** — D1437 (the two
 works ship in one release) and D1438 (the generated file is regenerated twice) — and both are listed
 because the plan acts on them. **One is the only place the union's file table depends on an open
-answer**: D1449 decides whether FC8's fifth file is this folder's document or
-`docs/task-governance/reconciliation.md`, and **either answer is safe** — neither file has another
-writer in the union, so the leveling holds whichever way it is answered (Part II §P4).
+answer**, and it has three candidates rather than two: FC8's own file list says "the periodic-reviews
+folder's own document — the one that owns the rule list, whichever the tree says by then", which can
+be read as **`docs/periodic-reviews/reconciliation.md`** (what the recommendation names),
+**`docs/task-governance/reconciliation.md`**, or **`docs/periodic-reviews/README.md`**. **The first
+two are free and the third is not**: this folder's reconciliation is written by no task of the
+release and neither is the task-governance folder's document, so either of those holds the leveling —
+while this folder's **README is R6's at level 4**, so the answer that sends FC8 there adds a second
+writer to a file, one level above R6, and Part II §P4 lists that as a conditional row rather than
+leaving it implicit.

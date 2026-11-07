@@ -888,7 +888,8 @@ all the tasks it depends on; no level holds two writers of one file. The two wor
 reports job's tasks live in `internal/infra`, `deploy/terraform/**`, `internal/digest` and
 `internal/cli`; the failures report's live in `internal/runner`, `internal/runstore`,
 `internal/runview`, `schemas/` and the same two packages. The two therefore meet in **eighteen files**
-(§P4), and every one of the eighteen already had a level of its own in one work or the other — which
+(§P4) — nineteen with the table's one conditional row — and every one of the eighteen already had a
+level of its own in one work or the other — which
 is why the union adds **no edge that re-levels anything**: the only cross-work edges are **R11 (3) →
 FC7 (4)**, stated in §P6, and the shared files' own ordering. **A union that had to re-level would be
 a union that had to re-cut**, and the point of this table is that it does not.
@@ -912,6 +913,7 @@ and the design's own: **no level holds two writers of one file.**
 | `internal/runner/refused.go` | FC2 (1), FC3 (2) | `endRefused`'s call and the push rejection's class |
 | `internal/infra/tfvars.go` | R13 (0), R7 (1) | the two `paused` settings, then the `reports` node and `reports_days` |
 | `plugin/skills/working/reference/periodic-reviews.md` | R3 (3), R6 (4), and FC8 (5) if D1449 puts the rules' list there | the rule list and the report's place, §7's two sentences, and the two class rules' names |
+| `docs/periodic-reviews/README.md` | R6 (4), and FC8 (5) if D1449 puts the rules' list there | R6 rewrites the status line; this is the one candidate for FC8's fifth file that already has a writer, which is why the row is listed under both answers (D1449) |
 | `docs/recipes.md` | R1 (1), R10 (5) | the `--due` pointer, and the sentence E8 changes |
 | `website/content/cli-reference.md` (generated) | R11 (3), FC6 (4) | `fugaro runs reports` and `runs ls --group-by`, each regenerated in its own commit (F27) |
 
@@ -919,8 +921,11 @@ and the design's own: **no level holds two writers of one file.**
 owning documents' own **file lists**, not from their shared-files tables: a file the rule counts is
 one two or more tasks write, wherever it was first written down, and `schemas/schemas_test.go` —
 FC1's at level 0 and R1's at level 1 — is in both owning lists and in neither of their shared-files
-tables. Every row's levels are distinct; the widest rows — `patterns.go`/`patterns_test.go` and
-`periodic-reviews.md`, three writers each — are the two the union actually creates, and both are
+tables. **Eighteen of the files below are written by two or more tasks unconditionally and the
+nineteenth, `docs/periodic-reviews/README.md`, is one only under the answer to D1449 that sends
+FC8's fifth file there** — the row carries its own condition, and no other row's levels depend on an
+open decision. Every row's levels are distinct; the widest rows — `patterns.go`/`patterns_test.go`
+and `periodic-reviews.md`, three writers each — are the two the union actually creates, and both are
 spread over three levels. **The
 one place a glob could have hidden a collision is the one worth stating plainly:** the design's
 §10.2 row `internal/digest/*.go` (FC7, L4) resolves to FC7's own six files

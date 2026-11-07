@@ -34,9 +34,10 @@ rewritten for it.
 ## What it is
 
 **Most of the request already shipped, under `task-governance` D320–D328** (answered 2026-10-26; the
-recipe and the digest step landed in 0.13.0 and every release since carries them — 0.19.0 is the
-current one). That work shipped the whole loop: `fugaro runs digest` writes one closed period's
-report of one repository — day, week, month or year — with a generated index
+recipe and the digest step landed in 0.13.0 and every release since carries them — **0.20.3** is the
+current one at this folder's 2026-11-07 reading — [reconciliation.md](reconciliation.md) §6, F32).
+That work shipped the whole loop: `fugaro runs digest` writes one closed period's report of one
+repository — day, week, month or year — with a generated index
 (`internal/digest/layout.go:23`); the fixed pattern rules read the reports over time
 (`internal/digest/patterns.go:91`); the `run-digest` recipe has a run write, commit and open the pull
 request (`internal/recipe/catalog/run-digest.yaml`); `--submit-draft` prints a redacted learning draft
@@ -137,7 +138,8 @@ as a docs-only change. `docs/release-streams.yaml` has the CLI stream's `current
 - **The failures report** is `docs/design/failure-classes.md`'s own cut — its **FC1–FC8**, with its
   D1–D9, its O1–O6 and its own levels and shared-files table. **That document is not edited.**
 - **What Part II adds is what neither can state alone:** the union's leveling (Part II §P3), the
-  eighteen files the two meet in (§P4), every task's commit and reviewer tier (§P5), the critical path
+  eighteen files the two meet in (§P4) — nineteen with the table's one conditional row — every
+  task's commit and reviewer tier (§P5), the critical path
   (§P6), the release slot and its `### For operators` text (§P7), and the owner-run checks (§P8).
   **One file list is wrong and Part II corrects it** (F27): R11 registers `fugaro runs reports`, so it
   changes the generated `website/content/cli-reference.md`, which its own file list omits.
@@ -179,5 +181,6 @@ about R12's grants that is listed under Open items rather than decided.
 `internal/runstore/runstore.go`, `internal/runview/runview.go`, `schemas/result.schema.json` and the
 two documents that describe the record are `docs/design/failure-classes.md`'s to change, and this
 folder's plan cites its **FC1–FC8** rather than restating them ([implementation-plan.md](implementation-plan.md)
-Part II §P1). **The two plans meet in eighteen files and Part II §P4 is where that is checked**, so
-neither folder becomes a second plan for the other's feature.
+Part II §P1). **The two plans meet in eighteen files — nineteen with the table's one conditional
+row — and Part II §P4 is where that is checked**, so neither folder becomes a second plan for the
+other's feature.
