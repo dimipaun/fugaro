@@ -8,11 +8,11 @@ them**, its **red step**, the mutation that holds it, its **reviewer tier**, its
 **owner-run** flags, what it depends on and its commit. **Every citation below was resolved against
 the tree of `main` at `56c91f66` on 2026-11-07 while writing it**, and where the design's own citation
 had drifted the reconciliation's line is used and the drift is named (F18, F19). **`main` has since
-moved to `4dc17549` and the citations were re-checked against it**: **two of the files it changed are
+moved to `4dc17549` and the citations were re-checked against it**: **three of the files it changed are
 ones this plan and its reconciliation cite** — `docs/rigor-modes/reconciliation.md`, the census row
-this plan's §7 names and the move itself edited (100 → 101, now `:752`), and the new
-`docs/api-key-review/reconciliation.md`, which did not exist at the base — and no other cited file
-moved, so every other line still resolves. What the move did change — the two number blocks and the
+this plan's §7 names and the move itself edited (100 → 101, now `:752`); the new
+`docs/api-key-review/reconciliation.md`; and `docs/console-managed-screens/reconciliation.md:280`,
+quoted by the reconciliation's §7 — and no other cited file moved, so every other line still resolves. What the move did change — the two number blocks and the
 docs-pin census — is re-read in the reconciliation's §7 and F28.
 
 **Written to:** [spec.md](spec.md) — the design, `docs/design/failure-classes.md`, byte for byte — and
@@ -372,7 +372,7 @@ standard, with the digest's own pins and the weekly-report golden in the same pu
 **SEC:** no. **Owner-run:** no.
 
 - **Files (6):** `internal/digest/digest.go` (`Failures` beside the six flags and `FlagNames`), `internal/digest/render.go` (`FailuresTable` — every cell a figure or a closed vocabulary, the
-  discipline `RunsTable` (`:73`) keeps — and `failures` in the `summary` block, `:91`),
+  discipline `RunsTable` (`:74`) keeps — and `failures` in the `summary` block, `:91`),
   `internal/digest/patterns.go` (the two rules, their constants beside the existing thresholds at
   `:40`–`:42`, and `RuleNames` at `:37`), `internal/digest/digest_test.go`,
   `internal/digest/patterns_test.go`, `internal/digest/testdata/digest.golden.md`.
@@ -495,7 +495,7 @@ standard, with `go test ./plugin/` in the same pull request. **SEC:** no. **Owne
   (`internal/cli/testdata/watch_json_keys.golden`) are another contract with another reader, and a
   key added there is a screen that has not been designed. The **only** watch-side change in this plan
   is the negative one FC6 holds: `groups` never reaches that document.
-- **The history census** (**D1467**): `internal/userstats.Counts` (`:124`, filled at `:196`) counts
+- **The history census** (**D1467**): `internal/userstats.Counts` (`:125`, filled at `:196`) counts
   statuses by person and reads no cause; a class census is a different question.
 - **A backfill, and a second command.** There is nothing to backfill: old records are read through
   `reason` (FC5) and never written back, so **the whole upgrade is `fugaro update`** and no
