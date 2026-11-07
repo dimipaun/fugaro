@@ -224,12 +224,18 @@ func TestHaltedRunCarriesItsHaltsClass(t *testing.T) {
 }
 
 // haltReasonConstants is the closed set of halt reasons, read from runstore's
-// own source in the order it declares them.
+// own source in the order it declares them: every constant of a block whose
+// type is HaltReason, whether the spec spells the type or inherits it from the
+// spec before it — which is Go's own rule for a const block, and the reason a
+// reason added as `HaltProbe = "probe"` under a typed one is still walked here
+// rather than passing unclassed.
 //
 // There is no slice to range over — GovernanceHaltReasons is the governance
 // arm alone — so the source is the only complete list, and reading it is what
 // makes the walk above cover a reason added later rather than the fifteen of
-// today.
+// today. A reason declared in a const block of its own, with no HaltReason
+// type anywhere in it, is the one shape this cannot see: nothing in the source
+// says the value is a halt reason at all.
 func haltReasonConstants(t *testing.T) []runstore.HaltReason {
 	t.Helper()
 	const src = "../runstore/runstore.go"
@@ -243,13 +249,27 @@ func haltReasonConstants(t *testing.T) []runstore.HaltReason {
 		if !ok || gen.Tok != token.CONST {
 			continue
 		}
+		// The block's type, carried the way the compiler carries it: a spec
+		// that spells none repeats the last one.
+		var blockType ast.Expr
 		for _, spec := range gen.Specs {
 			vs, ok := spec.(*ast.ValueSpec)
 			if !ok {
 				continue
 			}
-			if ident, ok := vs.Type.(*ast.Ident); !ok || ident.Name != "HaltReason" {
+			if vs.Type != nil {
+				blockType = vs.Type
+			}
+			if ident, ok := blockType.(*ast.Ident); !ok || ident.Name != "HaltReason" {
 				continue
+			}
+			// A spec with no values repeats the one before it, so its value is
+			// already in out.
+			if len(vs.Values) == 0 {
+				continue
+			}
+			if len(vs.Values) != len(vs.Names) {
+				t.Fatalf("%s: a HaltReason spec names %d constants and gives %d values", src, len(vs.Names), len(vs.Values))
 			}
 			for _, value := range vs.Values {
 				lit, ok := value.(*ast.BasicLit)

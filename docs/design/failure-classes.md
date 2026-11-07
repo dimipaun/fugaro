@@ -48,8 +48,8 @@ the non-test files:
 
 - `artifactMode` (`internal/runner/artifact.go`), `endArtifactCancelled`,
   `endArtifactHalted`, `failArtifactInfra` and `endArtifactFailed`;
-- `storeUnposted` (`internal/runner/followup.go` — a copy of the record, `rec := *r.rec`, for the
-  stored report) and `endUnchanged`;
+- `storeUnposted` (`internal/runner/followup.go` — a copy of the record, for the
+  stored report, rendered by `recordend.go`'s `reportCopy`) and `endUnchanged`;
 - `endWithoutPR` (`internal/runner/gate.go`), `failInfra`, `endCancelled` and `endHalted`, for a run
   whose check gate decided it;
 - `endRefused` (`internal/runner/refused.go`), recording a push the host will never accept;
@@ -68,8 +68,9 @@ Twelve of the functions were the `end*` helpers, three were the `fail*Infra` hel
 functions, and each wrote `Status`, `Outcome` and usually `Reason` in a statement of its own. Every
 one of those statements is now one `recordEnd(…)` call, so the site that already knows why the run is
 stopping is the site that says what class it stopped for, and no reader derives a class, caches one or
-writes one back (§4.1). The one statement that is not a call on the record itself — `storeUnposted`'s
-copy of it — goes through the same writer. The sentence in bold is what the pin in
+writes one back (§4.1). The one ending that is not written to the record itself — `storeUnposted`'s
+copy of it — goes through the same writer, from the file that owns it. The sentence in bold is what
+the pin in
 `internal/cli/docs_pr_state_test.go` applies to the parsed files of `internal/runner`, and what
 `TestRecordEndIsTheOnlyWriterOfATerminalStatus`
 (`internal/runner/failure_class_internal_test.go`) holds inside the package.
@@ -80,8 +81,8 @@ failure, panic and refusal reaches it (`internal/runner/runner.go:3419`–`3837`
 (`internal/runner/halt.go:57`) calls it too, with the halt's own text. `r.failure()` (`halt.go:128`)
 reads it back for the pull request's status section and for the reasons `finalize` decides with. That
 is the *report's* reason and the *record's* reason in most runs — but not in all of them:
-`endHalted` (`gate.go:420`), `endRefused` (`refused.go:320`) and `endUnchanged` (`internal/runner/followup.go:558`)
-overwrite `rec.Reason` after the fact, so the record's reason and `r.failure()` can disagree today.
+`endHalted` (`gate.go:422`), `endRefused` (`refused.go:327`) and `endUnchanged` (`internal/runner/followup.go:561`)
+end the record with a reason of their own, so the record's reason and `r.failure()` can disagree today.
 
 **The agent's own words are already classified, once, narrowly.** `subscriptionUsageLimit`
 (`internal/runner/runner.go:3913`) reads a stage's error text (`res.Text`, set when the result event carries
@@ -169,7 +170,7 @@ knows what to do without reading a sentence:
 | `stage_no_result` | the stage's process ended without writing a result event | infra | yes | yes |
 | `config_invalid` | the resolved configuration was refused before the work could run: a `max_tokens` above the model's maximum, a recipe the runner cannot read | config | no | yes |
 | `git_provider_error` | the forge refused or failed a call the run needed — the GraphQL error marking the pull request ready, a comment that would not post | external | yes | no |
-| `branch_moved` | the branch or the pull request changed under the run: a push race, a pull request merged during the run, a push the host will never accept (`endRefused`, `refused.go:320`) | external | yes | yes |
+| `branch_moved` | the branch or the pull request changed under the run: a push race, a pull request merged during the run, a push the host will never accept (`endRefused`, `refused.go:327`) | external | yes | yes |
 | `infra_error` | the run never got far enough to name anything else: bootstrap failed, the process died, the record was never settled (`internal/runner/runner.go:585`, `runview.ReasonNoFinalRecord`) | infra | yes | yes |
 | `unclassified` | the terminal the run reached has no class of its own (`stage_no_result`'s neighbour: a class the vocabulary does not yet hold). The report prints its count, and that count is the signal to name one. | other | yes | yes |
 
@@ -216,8 +217,9 @@ those statements becomes one `recordEnd(…)` call, and the deferred function in
 `fail*Infra` and two `refuse*` writers all go through it. Its comment states the rule once: *the last
 call wins, and the four fields are written together, so a class can never describe a status the
 record does not carry.* The one statement it must account for rather than absorb is `storeUnposted`
-(`internal/runner/followup.go:522`), which writes a copy of the record into the stored report
-(`rec := *r.rec`) and not the record itself.
+(`internal/runner/followup.go:522`), which renders a copy of the record into the stored report and
+not the record itself, through `reportCopy` — the copy's own write, in `recordend.go`, so that no
+call to `writeEnd` sits in another file either.
 
 **Why this and not `fail`/`failLocked`.** `failLocked` is the one writer of the run's **first**
 failure reason, which is what the pull request's status section and `finalize`'s decision read — and
@@ -620,14 +622,16 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
 - **Interfaces:** `func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string)`.
 - **Tests:** `TestRecordEndIsTheOnlyWriterOfATerminalStatus` — the guard has to see **any** assignment
   of a `runstore.Status` to a record's `Status`, not only `r.rec.Status`: `storeUnposted`
-  (`internal/runner/followup.go:522`) writes a *copy* of the record through a local `rec`, and a guard written for
-  `r.rec.Status` alone would leave exactly that statement, and any like it, free to carry a status
-  past `recordEnd`. So the guard matches `\.Status` assigned a `runstore.Status` anywhere in
-  `internal/runner`, and the task accounts for the copy explicitly rather than excepting it
+  (`internal/runner/followup.go:522`) renders a *copy* of the record through `recordend.go`'s
+  `reportCopy`, and a guard written for `r.rec.Status` alone would leave exactly a statement like
+  that one, and a second writer reaching the writer through a call to `writeEnd` in another file,
+  free to carry a status past `recordEnd`. So the guard matches `\.Status` assigned a
+  `runstore.Status` anywhere in `internal/runner`, and a call to `writeEnd` anywhere but
+  `recordend.go`, and the task accounts for the copy explicitly rather than excepting it
   silently. It reads the **parsed** Go code, not the text: `runstore.Record{Status: …}` in a struct
   literal, `r.rec.Status = st` through a variable, or a status written in a helper and assigned
   later all sit past any pattern matched against lines, and only the parsed form can say whether a
-  statement *calls* `recordEnd` or writes the field itself — the AST is what the rewritten census
+  statement *calls* the writer or writes the field itself — the AST is what the rewritten census
   pin counts too. Also `TestUnclassifiedIsWrittenWhereNoClassIsChosen` and
   `TestHaltedRunCarriesItsHaltsClass` (a failure then a halt ends `halted`/`halted_budget`).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'RecordEnd|Unclassified|HaltedRun' -count=1`.
@@ -640,8 +644,13 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
 
 ### FC3 — the classes the runner knows structurally (D2)
 
-- **Files (6):** `internal/runner/outcome.go` (the four `Decide` refusals),
-  `internal/runner/halt.go` (`haltClass` beside `haltReasonText`), `internal/runner/runner.go`
+- **Files (7 — the plan's five and their test files, plus `recordend.go`, which the move takes the
+  declaration out of):** `internal/runner/outcome.go` (the four `Decide` refusals),
+  `internal/runner/halt.go` (**`haltClass` moves here** — FC2 shipped it in
+  `internal/runner/recordend.go`, where its own file cap left it, together with the walk over the
+  closed `HaltReason` set, which FC2's `TestHaltedRunCarriesItsHaltsClass` already runs; this task
+  moves the one declaration beside `haltReasonText` and declares no second),
+  `internal/runner/runner.go`
   (`verify`, `runCommits`, the `config_invalid` refusals), `internal/runner/refused.go`
   (`branch_moved`), `internal/runner/prflow.go` (`git_provider_error`), and their test files.
 - **Interfaces:** `failure.ClassForVerify(rec verify.Record, sha string)`, `haltClass(HaltReason)`.
@@ -760,6 +769,7 @@ FC2's own test is a guard over the tree and not a fixture per site.
 | `internal/runstore/runstore.go`, `schemas/result.schema.json` | FC1 (L0) |
 | `internal/runner/runner.go` | FC2 (L1), FC3 (L2), FC4 (L3) — three tasks in three levels, each a different function; the implementing runs land them in order and rebase once |
 | `internal/runner/refused.go` | FC2 (L1), FC3 (L2) |
+| `internal/runner/recordend.go` | FC2 (L1), FC3 (L2) |
 | `internal/runner/gate.go`, `followup.go`, `reviewmode.go`, `artifact.go`, `reviewartifact.go`, `shadow.go`, `failure_class_internal_test.go` | FC2 (L1) |
 | `internal/runner/outcome.go`, `halt.go`, `prflow.go` | FC3 (L2) |
 | `internal/runner/stageerror_test.go`, `redaction_test.go` | FC4 (L3) |
@@ -771,11 +781,12 @@ FC2's own test is a guard over the tree and not a fixture per site.
 | `internal/digest/*.go`, `internal/digest/testdata` | FC7 (L4) |
 | `docs/design/v1.md`, `console/docs/json-contract.md`, `docs/task-governance/reconciliation.md`, `plugin/skills/working/reference/diagnose.md`, `internal/cli/docs_desktop_console_test.go`, `docs/releases/vX.Y.Z.md` | FC8 (L5) |
 
-Two files have three writers and two have two, and the table's rule is that a level holds at most
+Two files have three writers and three have two, and the table's rule is that a level holds at most
 one of them: `runner.go` (FC2, FC3, FC4) is spread across L1–L3 and `internal/cli/runs_test.go`
-(FC1, FC5, FC6) across L0 and L3–L4, while `refused.go` (FC2, FC3) is spread across L1–L2 and
-`internal/cli/docs_pr_state_test.go` (FC1, FC2) across L0–L1, so no two runs write one file at
-once. An implementing run that lands two of them at once rebases once, in the order of their levels.
+(FC1, FC5, FC6) across L0 and L3–L4, while `refused.go` (FC2, FC3), `recordend.go` (FC2, FC3 —
+FC2's declaration and FC3's move of it out) and `internal/cli/docs_pr_state_test.go` (FC1, FC2) are
+each spread across two levels, so no two runs write one file at once. An implementing run that lands
+two of them at once rebases once, in the order of their levels.
 
 ### 10.3 The HARD RULE, and the release
 
