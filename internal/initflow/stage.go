@@ -812,13 +812,31 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 	return ConfirmsByGate(class, c, m)
 }
 
+// PersonAtTheTerminal reports whether the conditions put a person at the
+// project's own terminal, there to read a document and answer for it: the
+// owner's own session (no marker), a real terminal, and none of the three
+// things that say nobody can answer a prompt — --ask (the owner asking to be
+// asked again is a question to put, never a licence to skip one),
+// --non-interactive and --json.
+//
+// It is ConfirmsByGate's condition half, named once so that a caller asking
+// the same question about a document the gate's verdict does not cover — the
+// policy node a managed project rewrites, whose loosening takes the Typed
+// class and is admitted by no plan gate — asks it the same way. The terminal
+// is the load-bearing half and the one a caller writing this out again would
+// drop: a pipe carries no marker, so a session nobody is at reads exactly like
+// the owner's own.
+func PersonAtTheTerminal(c Conditions) bool {
+	return !c.Ask && c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
+}
+
 // ConfirmsByGate reports whether the gate's verdict IS the confirmation for a
 // step of the class under the conditions: the owner at their own real
 // terminal, on a managed project, for a document the gate admitted. It is the
 // branch CanConfirmManaged decides on, named so that a caller which is about
 // to show a prompt asks the same question the rule asks rather than writing
 // the conditions out again — a caller that re-derived them is a caller that
-// could drop one, and the one it would drop is the terminal.
+// could drop one, and the one it would drop is the terminal (PersonAtTheTerminal).
 //
 // A coding agent's session is not this case, and deliberately: what replaces
 // the confirmation there is CanConfirmManaged's first branch (Removes), whose
@@ -826,7 +844,7 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 // The two are told apart by the marker, because this branch is about who is
 // there to read the document the gate read.
 func ConfirmsByGate(class ConfirmClass, c Conditions, m Managed) bool {
-	return !c.Ask && c.Agent == "" && m.Removes(class) && c.Terminal && !c.NonInteractive && !c.JSON
+	return PersonAtTheTerminal(c) && m.Removes(class)
 }
 
 // CanConfirm reports whether a step of the class can be confirmed under the
