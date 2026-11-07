@@ -151,6 +151,18 @@ func (ts *testServer) exchange(t *testing.T, form url.Values) (*httptest.Respons
 	return rec, out
 }
 
+// exchangeWithAuth posts one grant to the token endpoint with an Authorization
+// header — client_secret_basic — and decodes a successful answer.
+func (ts *testServer) exchangeWithAuth(t *testing.T, form url.Values, authorization string) (*httptest.ResponseRecorder, tokenResponse) {
+	t.Helper()
+	rec := ts.postFormWithAuth(t, TokenPath, form, authorization)
+	var out tokenResponse
+	if rec.Code == http.StatusOK {
+		decodeBody(t, rec, &out)
+	}
+	return rec, out
+}
+
 // runFlow is one whole authorization: register, authorize, consent, exchange.
 func (ts *testServer) runFlow(t *testing.T, redirect string) (clientID string, tokens tokenResponse) {
 	t.Helper()
@@ -602,6 +614,14 @@ func TestConsentNamesTheRedirectHost(t *testing.T) {
 // choosing still goes where the record says, because the record is the only
 // place any of it is read from. Without that, a binding would be a token an
 // attacker could present beside values of their own.
+//
+// The refusals are 400 and not 500, which is asserted rather than left to the
+// redirect check: this endpoint is a public POST, so every way of naming no
+// pending flow — an absent request_id, an empty one, one that cannot be a key
+// segment, one that names nothing — is the caller's mistake and has to read as
+// one. A 500 here would be the server reporting a stranger's typing as its own
+// fault, and would tell a caller which of its guesses was shaped like a real
+// binding.
 func TestConsentIsCSRFBound(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)
@@ -611,18 +631,21 @@ func TestConsentIsCSRFBound(t *testing.T) {
 
 	for _, form := range []url.Values{
 		{"decision": {"allow"}},
+		{"request_id": {""}, "decision": {"allow"}},
 		{"request_id": {"not-the-binding"}, "decision": {"allow"}},
+		{"request_id": {"a/b"}, "decision": {"allow"}},
+		{"request_id": {".."}, "decision": {"allow"}},
 	} {
 		rec := ts.consent(t, form)
-		if rec.Code == http.StatusFound {
-			t.Errorf("an approval carrying %v was honoured: one that does not carry the flow's own binding is refused rather than answered, or an attacker's client finishes a sign-in the person started for another", form)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("an approval carrying %v answered %d (%s); want 400: an approval that does not carry the flow's own binding is refused as the caller's own mistake, not answered and not reported as the server's", form, rec.Code, strings.TrimSpace(rec.Body.String()))
 		}
 		if loc := rec.Header().Get("Location"); loc != "" {
 			t.Errorf("an approval carrying %v answered with a redirect to %q: nothing is known about the flow, so there is nowhere safe to send an answer", form, loc)
 		}
 	}
 	if got := ts.store.objects(t); len(got) != 2 {
-		t.Errorf("the store holds %d objects after two refused approvals; want the client and the pending request and no code", len(got))
+		t.Errorf("the store holds %d objects after four refused approvals; want the client and the pending request and no code", len(got))
 	}
 
 	// The real approval, with a redirect URI of the caller's own choosing beside
@@ -865,6 +888,75 @@ func TestTokenEndpointRefusesTheWrongClientSecret(t *testing.T) {
 		"client_id":     {clientID},
 	}); rec.Code != http.StatusOK {
 		t.Errorf("the refresh grant with no secret answered %d (%s); want the rotation: the refusal above is about the secret and not about the token", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestClientSecretBasicIsReadAndRefusedBesideTheForm: a client authenticates
+// with the Authorization header or with the form's own pair, both are read, and
+// a request that carries both is refused (RFC 6749 §2.3.1).
+//
+// The header half is not decoration. A standard MCP client sends
+// client_secret_basic, so the header path is the one most callers take, and the
+// rule that the two are exclusive is checked rather than assumed because the two
+// are not equivalent: a proxy that read one of them and this server that read
+// the other would be two parties disagreeing about who is calling.
+//
+// Every refusal below is answered before the grant is read, so the code the
+// success case at the end spends is still unspent when it gets there — which is
+// also what says the checks run in that order.
+func TestClientSecretBasicIsReadAndRefusedBesideTheForm(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, secret := ts.register(t, "an editor", testClientRedirect)
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.approve(t, binding, number))
+
+	codeGrant := func() url.Values {
+		return url.Values{
+			"grant_type":    {string(GrantAuthorizationCode)},
+			"code":          {code},
+			"redirect_uri":  {testClientRedirect},
+			"code_verifier": {testVerifier},
+		}
+	}
+
+	// The header and the form together: refused, and refused as the client
+	// having authenticated twice rather than as one of the two being wrong.
+	both := codeGrant()
+	both.Set("client_id", clientID)
+	both.Set("client_secret", secret)
+	if rec := ts.postFormWithAuth(t, TokenPath, both, basicAuth(clientID, secret)); rec.Code != http.StatusUnauthorized ||
+		refusalOf(t, rec).Error != string(oidc.InvalidClient) {
+		t.Errorf("a request carrying client_secret_basic and the form's own pair answered %d (%s); want 401 %s", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidClient)
+	} else if got := refusalOf(t, rec).Description; !strings.Contains(got, "twice") {
+		t.Errorf("the refusal for authenticating twice says %q; want it to name the rule, so a client is told which of the two it has to drop", got)
+	}
+
+	// A header that is not a Basic credential at all: refused, and never
+	// ignored in favour of the form's own pair, which is valid here — a server
+	// that read one and a proxy that read the other would be two parties
+	// disagreeing about who is calling.
+	malformed := codeGrant()
+	malformed.Set("client_id", clientID)
+	malformed.Set("client_secret", secret)
+	if rec := ts.postFormWithAuth(t, TokenPath, malformed, "Basic not-base64-not-a-credential"); rec.Code != http.StatusUnauthorized ||
+		refusalOf(t, rec).Error != string(oidc.InvalidClient) {
+		t.Errorf("an Authorization header that is not client_secret_basic answered %d (%s); want 401 %s", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidClient)
+	} else if got := refusalOf(t, rec).Description; !strings.Contains(got, "client_secret_basic") {
+		t.Errorf("the refusal for a header that is not a Basic credential says %q; want it to name the credential the header has to be, so a client is told what to send instead of being read as one that sent nothing", got)
+	}
+
+	// A header carrying the wrong secret: the secret is verified wherever it
+	// arrived from.
+	if rec := ts.postFormWithAuth(t, TokenPath, codeGrant(), basicAuth(clientID, "not-the-secret-this-client-registered-with")); rec.Code != http.StatusUnauthorized ||
+		refusalOf(t, rec).Error != string(oidc.InvalidClient) {
+		t.Errorf("client_secret_basic with a wrong secret answered %d (%s); want 401 %s", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidClient)
+	}
+
+	// And the header alone authenticates: the form carries no client_id and no
+	// client_secret, and the grant is answered.
+	rec, tokens := ts.exchangeWithAuth(t, codeGrant(), basicAuth(clientID, secret))
+	if rec.Code != http.StatusOK || tokens.AccessToken == "" || tokens.RefreshToken == "" {
+		t.Fatalf("the code grant authenticated by client_secret_basic alone answered %d (%s); want a token pair: the header is one of the two ways a client authenticates, and the form's pair is the other", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }
 

@@ -660,8 +660,16 @@ func (r records) PutRequest(ctx context.Context, req Request) error {
 }
 
 func (r records) TakeRequest(ctx context.Context, id string) (Request, error) {
-	if err := keySegment(id); err != nil {
-		return Request{}, err
+	if keySegment(id) != nil {
+		// A value that cannot be one segment of a key names no record this
+		// store could hold, so it is answered as a request that is not pending
+		// rather than as the store's own error — and that matters here more
+		// than anywhere else in this file, because this is the one read a
+		// stranger reaches: the consent step takes its request_id straight off
+		// a public POST, and an error the server reports about itself would
+		// answer 500 where the answer is a page telling the caller its approval
+		// carries no binding of a flow this installation is waiting for.
+		return Request{}, ErrRequestNotFound
 	}
 	var req Request
 	switch _, err := r.consume(ctx, requestPrefix+id, &req); {

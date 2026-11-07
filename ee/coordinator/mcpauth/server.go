@@ -34,8 +34,11 @@ const (
 	// AuthorizePath is the authorization endpoint: GET renders the consent a
 	// person reads, POST is that person's answer to it.
 	AuthorizePath = "/oauth/authorize"
-	// TokenPath is the token endpoint: the three grants of D923, D929 and
-	// D930, and no other.
+	// TokenPath is the token endpoint: the two grants of D923 and D930 — the
+	// authorization code and the rotating refresh token — and no other. D929's
+	// client credentials grant is off (the amendment of 2026-11-04, M-f):
+	// ParseGrantType still names it so that serveToken can refuse it as the
+	// grant this server does not serve rather than as a value nobody knows.
 	TokenPath = "/oauth/token"
 	// RevokePath is revocation (RFC 7009): one delete of a token family
 	// (D930).

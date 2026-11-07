@@ -5,6 +5,7 @@ package mcpauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -121,9 +122,25 @@ func (ts *testServer) get(t *testing.T, path string) *httptest.ResponseRecorder 
 // postForm posts a form to one of the server's paths.
 func (ts *testServer) postForm(t *testing.T, path string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
+	return ts.postFormWithAuth(t, path, form, "")
+}
+
+// postFormWithAuth posts a form with an Authorization header, which is how a
+// client authenticates with client_secret_basic (RFC 6749 §2.3.1). The header
+// is passed as its raw text so that a test can present one that is malformed.
+func (ts *testServer) postFormWithAuth(t *testing.T, path string, form url.Values, authorization string) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
 	return ts.do(t, req)
+}
+
+// basicAuth is the Authorization header a client_secret_basic client sends.
+func basicAuth(id, secret string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(id+":"+secret))
 }
 
 // TestNoTokenIsA401NamingTheMetadataURL is M5's red step. A client that reaches

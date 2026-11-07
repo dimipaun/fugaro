@@ -360,7 +360,7 @@ func TestTheTokenEndpointRefusesAFirebaseIDToken(t *testing.T) {
 
 	for _, want := range []GrantType{GrantAuthorizationCode, GrantRefreshToken, GrantClientCredentials} {
 		if got, err := ParseGrantType(string(want)); err != nil || got != want {
-			t.Errorf("ParseGrantType(%q) = %q, %v; the parse admits the three D929 and D930 name, of which the token endpoint refuses client_credentials itself", want, got, err)
+			t.Errorf("ParseGrantType(%q) = %q, %v; the parse names the three D923, D929 and D930 name, of which the token endpoint serves two and refuses client_credentials itself", want, got, err)
 		}
 	}
 	for _, grant := range []string{
@@ -373,7 +373,7 @@ func TestTheTokenEndpointRefusesAFirebaseIDToken(t *testing.T) {
 	} {
 		got, err := ParseGrantType(grant)
 		if err == nil {
-			t.Errorf("ParseGrantType(%s) admitted a grant type that is not one of the endpoint's three: a Firebase ID token presented as a grant is the one thing the endpoint must never read", testMarker)
+			t.Errorf("ParseGrantType(%s) admitted a grant type the parse does not name: a Firebase ID token presented as a grant is the one thing the endpoint must never read", testMarker)
 			continue
 		}
 		if !errors.Is(err, ErrUnsupportedGrant) {
