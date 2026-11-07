@@ -50,11 +50,16 @@ func DecodeState(raw []byte) (State, error) {
 // read back. It is checked on the way out as well as on the way in: the only
 // writer is a program, and a document that fails its own validator is a bug
 // worth stopping at rather than a node worth publishing.
+//
+// It marshals a clone, which is what keeps the published schema honest for a
+// state a caller has just built: a slice or a map nobody has appended to is
+// nil in Go, and a nil one marshals as null, which the schema — every
+// collection an array or an object — refuses. Clone fills them in empty.
 func EncodeState(s State) ([]byte, error) {
 	if err := ValidateState(s); err != nil {
 		return nil, err
 	}
-	return json.Marshal(s)
+	return json.Marshal(s.Clone())
 }
 
 // DecodePatch reads the patch a caller sent. Strict, like DecodeState: an

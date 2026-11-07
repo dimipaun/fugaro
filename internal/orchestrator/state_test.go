@@ -373,8 +373,11 @@ func TestSchemasMatchTheStructs(t *testing.T) {
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			doc := schemaDocument(t, "../../schemas/"+tc.file)
-			compileSchema(t, "../../schemas/"+tc.file)
+			sch := compileSchema(t, "../../schemas/"+tc.file)
 			checkSchemaObject(t, tc.file, doc, tc.root)
+			if tc.file == "orchestrator-state.schema.json" {
+				checkFreshStateMatchesTheSchema(t, sch)
+			}
 			defs := doc["$defs"].(map[string]any)
 			if len(defs) != len(tc.defs)+len(tc.extra) {
 				t.Fatalf("the schema has %d definitions, and this release names %d structs and %v among its shapes", len(defs), len(tc.defs), tc.extra)
@@ -395,6 +398,38 @@ func TestSchemasMatchTheStructs(t *testing.T) {
 				checkSchemaOps(t, tc.file, op)
 			}
 		})
+	}
+}
+
+// checkFreshStateMatchesTheSchema is the writer's half of the contract the
+// schema describes: a state this release writes is a document the schema
+// accepts. The fresh node is where it is not obvious — a Go caller builds one
+// with slices and maps nobody has appended to yet, a nil one marshals as
+// null, and null is neither an array nor an object, so a schema that is only
+// checked against what is already there would describe a document the first
+// write of a new node does not produce.
+func checkFreshStateMatchesTheSchema(t *testing.T, sch *jsonschema.Schema) {
+	t.Helper()
+	fresh := orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		AgentID:       "orchestrator-a",
+		Role:          orchestrator.RoleOrchestrator,
+		Goal:          "keep the repository's pull requests moving without a person watching",
+		WorkItems:     []orchestrator.WorkItem{workItemOf("wi-1")},
+	}
+	raw, err := orchestrator.EncodeState(fresh)
+	if err != nil {
+		t.Fatalf("a fresh state is not one this release writes: %v", err)
+	}
+	if bytes.Contains(raw, []byte("null")) {
+		t.Fatalf("a fresh state carries null where the schema declares an array or an object: %s", raw)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(doc); err != nil {
+		t.Fatalf("a fresh state is not a document the schema accepts: %v", err)
 	}
 }
 
@@ -488,8 +523,68 @@ func TestRetentionKeepsStateUnderTheCap(t *testing.T) {
 	if kept.Decisions[0].Resolved() {
 		t.Fatal("retention dropped the open decision, which is what the node is for")
 	}
+	if _, ok := kept.Decision("ask-counted"); !ok {
+		t.Fatal("retention dropped a resolved decision from inside the window, and the call count is read off the decisions the document carries")
+	}
+	if want, got := orchestrator.DecisionCalls(s, now), orchestrator.DecisionCalls(kept, now); want != got {
+		t.Fatalf("retention moved the call counts from %+v to %+v, and making room must never raise what a cycle has left", want, got)
+	}
 	if len(kept.Facts) >= len(s.Facts) {
 		t.Fatalf("retention kept all %d facts of a node that was over the target", len(kept.Facts))
+	}
+}
+
+// TestRetentionNeverStrandsADependency is what keeps the state retention
+// produces one this release reads back. A work item names its dependencies by
+// id, and the validator refuses a document whose item names an item that is
+// not there, so an item may only leave the list once nothing left in it names
+// it — the finished dependents included, not just the live ones. A chain of
+// finished items therefore comes apart from its end inwards, one pass at a
+// time, rather than a middle link going first and stranding the rest.
+//
+// Mutation: archive on the phase alone (the shape a first pass has) and the
+// retained document names wi-chain-00 while no longer carrying it, which the
+// encode below refuses.
+func TestRetentionNeverStrandsADependency(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	s := stateWithAQueuedItem(t, now)
+	s.WorkItems = append(s.WorkItems, func() []orchestrator.WorkItem {
+		live := workItemOf("wi-live")
+		items := []orchestrator.WorkItem{live}
+		previous := ""
+		for i := range orchestrator.MaxWorkItems / 10 {
+			w := workItemOf(intentItemID(i))
+			w.Phase = orchestrator.PhaseDone
+			if previous != "" {
+				w.DependsOn = []string{previous}
+			} else {
+				// The first link is the one the live item waits on.
+				live.DependsOn = []string{w.ID}
+				items[0] = live
+			}
+			previous = w.ID
+			items = append(items, w)
+		}
+		return items
+	}()...)
+
+	kept := orchestrator.Retain(s, now)
+	if len(kept.WorkItems) >= len(s.WorkItems) {
+		t.Fatalf("retention kept all %d items of a node past its finished-items bound", len(kept.WorkItems))
+	}
+	for _, w := range kept.WorkItems {
+		for _, dep := range w.DependsOn {
+			if _, ok := kept.Item(dep); !ok {
+				t.Fatalf("%s is still there and depends on %s, which retention took away", w.ID, dep)
+			}
+		}
+	}
+	raw, err := orchestrator.EncodeState(kept)
+	if err != nil {
+		t.Fatalf("the state retention produced is not one this release writes: %v", err)
+	}
+	if _, err := orchestrator.DecodeState(raw); err != nil {
+		t.Fatalf("the state retention produced is not one this release reads back: %v", err)
 	}
 }
 
@@ -681,17 +776,31 @@ func bloatedState(t *testing.T, now time.Time) orchestrator.State {
 		At:        now.Add(-time.Hour),
 	}}
 	for i := range 20 {
-		answered := now.Add(-time.Duration(i+1) * time.Hour)
+		// Asked past the window a cap counts over: inside it a resolved
+		// decision is part of the call count and retention may not drop it,
+		// so ageing these out to make room is the last thing a node has room
+		// for, not the first. The one below is inside the window and stays.
+		at := now.Add(-orchestrator.RetentionWindow - time.Duration(i+1)*time.Hour)
+		answered := at.Add(time.Minute)
 		s.Decisions = append(s.Decisions, orchestrator.Decision{
 			ID:         decisionID(i),
 			Question:   strings.Repeat("q", orchestrator.MaxQuestionRunes),
 			WaitingOn:  orchestrator.OnPerson,
-			At:         now.Add(-time.Duration(i+2) * time.Hour),
+			At:         at,
 			Answer:     strings.Repeat("a", orchestrator.MaxAnswerRunes),
 			By:         orchestrator.Person,
 			ResolvedAt: &answered,
 		})
 	}
+	s.Decisions = append(s.Decisions, orchestrator.Decision{
+		ID:         "ask-counted",
+		Question:   "is the sweep the only thing on this node?",
+		WaitingOn:  orchestrator.OnPerson,
+		At:         now.Add(-2 * time.Hour),
+		Answer:     "yes",
+		By:         orchestrator.Person,
+		ResolvedAt: ptr(now.Add(-90 * time.Minute)),
+	})
 	s.Facts = map[string]orchestrator.Fact{}
 	for i := range orchestrator.MaxFacts {
 		s.Facts[factKey(i)] = orchestrator.Fact{Value: strings.Repeat("v", orchestrator.MaxFactValueRunes), By: orchestrator.Daemon}

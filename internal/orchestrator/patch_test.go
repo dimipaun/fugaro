@@ -437,7 +437,16 @@ func TestIntentCarriesTheApprovalItSpends(t *testing.T) {
 
 	failed := mustApply(t, launched, orchestrator.Daemon, "orchestrator-a", now.Add(time.Minute),
 		phaseOp("wi-1", ptr(orchestrator.PhaseFailed), nil))
-	retried := mustApply(t, failed, orchestrator.Daemon, "orchestrator-a", now.Add(time.Minute),
+	// The retry goes back through queued, which is the only way failed and
+	// blocked reach running: committing an intent starts a run, so it moves
+	// the item by the same table a phase op does.
+	if _, err := applyAs(t, failed, orchestrator.Daemon, "orchestrator-a", now.Add(time.Minute),
+		intentDeclareOp("wi-1:2", second, digest, now)); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("an intent started a run on a failed item: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+	requeued := mustApply(t, failed, orchestrator.Daemon, "orchestrator-a", now.Add(time.Minute),
+		phaseOp("wi-1", ptr(orchestrator.PhaseQueued), nil))
+	retried := mustApply(t, requeued, orchestrator.Daemon, "orchestrator-a", now.Add(time.Minute),
 		intentDeclareOp("wi-1:2", second, digest, now))
 
 	if len(retried.Intents) != 2 {
@@ -577,9 +586,12 @@ func TestRetryCountsOnlyIntentsOfTheStandingApproval(t *testing.T) {
 	}
 
 	// The next launch is attempt 2 — the numbering runs on — and it is the new
-	// approval's first, so it does not spend the allowance.
+	// approval's first, so it does not spend the allowance. It comes out of
+	// queued, which is where the failed item is put back before a retry.
 	next := orchestrator.SpecDigest(reapproved.WorkItems[0])
-	retry := mustApply(t, reapproved, orchestrator.Daemon, "orchestrator-a", second,
+	requeued := mustApply(t, reapproved, orchestrator.Daemon, "orchestrator-a", second,
+		phaseOp("wi-1", ptr(orchestrator.PhaseQueued), nil))
+	retry := mustApply(t, requeued, orchestrator.Daemon, "orchestrator-a", second,
 		intentDeclareOp("wi-1:2", "20261107-100000-abcd", next, second))
 	if got := retry.WorkItems[0]; got.Attempts != 2 || got.Approved == nil {
 		t.Fatalf("the re-approved item's first attempt left it at attempt %d with approval %v", got.Attempts, got.Approved)
@@ -590,7 +602,9 @@ func TestRetryCountsOnlyIntentsOfTheStandingApproval(t *testing.T) {
 
 	// Its retry is attempt 3 and it is the one that spends.
 	failedAgain := mustApply(t, retry, orchestrator.Daemon, "orchestrator-a", second, phaseOp("wi-1", ptr(orchestrator.PhaseFailed), nil))
-	spent := mustApply(t, failedAgain, orchestrator.Daemon, "orchestrator-a", second,
+	requeuedAgain := mustApply(t, failedAgain, orchestrator.Daemon, "orchestrator-a", second,
+		phaseOp("wi-1", ptr(orchestrator.PhaseQueued), nil))
+	spent := mustApply(t, requeuedAgain, orchestrator.Daemon, "orchestrator-a", second,
 		intentDeclareOp("wi-1:3", "20261107-110000-abcd", next, second))
 	if spent.WorkItems[0].Approved != nil || spent.WorkItems[0].SpentApprovalAt == nil {
 		t.Fatalf("the new approval's retry left it standing: %+v", spent.WorkItems[0])

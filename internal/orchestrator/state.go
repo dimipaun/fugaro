@@ -380,9 +380,19 @@ func (s State) Clone() State {
 	for k, f := range s.Facts {
 		next.Facts[k] = f
 	}
-	next.Archived = append([]Archived(nil), s.Archived...)
-	next.Intents = append([]Intent(nil), s.Intents...)
+	next.Archived = copyOf(s.Archived)
+	next.Intents = copyOf(s.Intents)
 	return next
+}
+
+// copyOf is a slice's own copy, and never nil: a nil slice marshals as null,
+// and every collection this document carries is an array in its schema, so
+// an empty one — the state a caller has just built — is written as the empty
+// list rather than as something the schema refuses.
+func copyOf[T any](v []T) []T {
+	out := make([]T, len(v))
+	copy(out, v)
+	return out
 }
 
 func (w WorkItem) clone() WorkItem {
@@ -394,7 +404,7 @@ func (w WorkItem) clone() WorkItem {
 		at := *w.SpentApprovalAt
 		w.SpentApprovalAt = &at
 	}
-	w.DependsOn = append([]string(nil), w.DependsOn...)
+	w.DependsOn = copyOf(w.DependsOn)
 	return w
 }
 
@@ -518,6 +528,11 @@ var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attemp
 // function, so what the person was shown and what is about to start cannot
 // drift apart.
 func SpecDigest(w WorkItem) Digest {
+	// Over the item as it is written, so that the empty case has one spelling:
+	// an item built in Go carries a nil slice where the document carries [].
+	// A digest that read those as two specs would revoke an approval by
+	// putting the item through the wire and back.
+	w = w.clone()
 	t := reflect.TypeOf(w)
 	v := reflect.ValueOf(w)
 	h := sha256.New()
@@ -615,6 +630,12 @@ const (
 //   - any intent the item's SpentApprovalAt names, which is the retry that
 //     was already charged, for the same reason.
 //
+// A resolved decision younger than the same window is never evicted either,
+// and for the same reason: the decision-agent call counts are derived from
+// the decisions the document carries, so dropping one inside the window a cap
+// counts over would lower the count — the cap moving the other way, which is
+// the one direction it must never move.
+//
 // An item that has left the work list protects nothing: nothing relaunches
 // under its approval, so its intents age out with the window like any other.
 //
@@ -625,7 +646,7 @@ const (
 // closed, rather than the count moving.
 func Retain(s State, now time.Time) State {
 	s.WorkItems, s.Archived = retainItems(s, now)
-	s.Decisions = retainDecisions(s.Decisions)
+	s.Decisions = retainDecisions(s.Decisions, now)
 	s.Facts = retainFacts(s.Facts)
 	s.Intents = retainIntents(s, now)
 	for OverCap(s) && shrink(&s, now) {
@@ -634,10 +655,10 @@ func Retain(s State, now time.Time) State {
 }
 
 // retainItems archives the finished items past keptTerminal and drops the
-// oldest archived entries past keptArchived. An item another live item
-// depends on is never archived, and neither is one an approval still stands
-// on: the first would strand the work that depends on it, the second would
-// take the approval away with it.
+// oldest archived entries past keptArchived. An item another item still in the
+// list depends on is never archived, and neither is one an approval still
+// stands on: the first would leave the dependent naming an item the document
+// no longer carries, the second would take the approval away with it.
 func retainItems(s State, now time.Time) ([]WorkItem, []Archived) {
 	work, archived := s.WorkItems, s.Archived
 	finished := 0
@@ -646,17 +667,27 @@ func retainItems(s State, now time.Time) ([]WorkItem, []Archived) {
 			finished++
 		}
 	}
-	if finished > keptTerminal {
+	// One pass is not always enough: an item another finished item depends on
+	// becomes archivable only once that dependent has gone, so a chain comes
+	// apart from its end inwards one pass at a time. The loop stops as soon as
+	// a pass drops nothing, which is a set of finished items that depend on
+	// one another — those stay, and shrink and OverCap take it from there.
+	for finished > keptTerminal {
+		dropped := false
 		kept := make([]WorkItem, 0, len(work))
 		for _, w := range work {
-			if finished > keptTerminal && archivable(s, w) {
+			if finished > keptTerminal && archivable(work, w) {
 				archived = append(archived, Archived{ID: w.ID, Outcome: string(w.Phase), At: now})
 				finished--
+				dropped = true
 				continue
 			}
 			kept = append(kept, w)
 		}
 		work = kept
+		if !dropped {
+			break
+		}
 	}
 	if len(archived) > keptArchived {
 		archived = archived[len(archived)-keptArchived:]
@@ -664,28 +695,39 @@ func retainItems(s State, now time.Time) ([]WorkItem, []Archived) {
 	return work, archived
 }
 
-// retainDecisions drops the oldest resolved decisions past keptResolved. An
-// open question is never dropped: it is something a person still owes an
+// retainDecisions drops the oldest resolved decisions past keptResolved, but
+// never more than the ones the call counts are not derived from. An open
+// question is never dropped either: it is something a person still owes an
 // answer to.
-func retainDecisions(decisions []Decision) []Decision {
-	resolved := 0
+func retainDecisions(decisions []Decision, now time.Time) []Decision {
+	drop := 0
 	for _, d := range decisions {
-		if d.Resolved() {
-			resolved++
+		if d.Resolved() && !countedDecision(d, now) {
+			drop++
 		}
 	}
-	if resolved <= keptResolved {
+	drop -= keptResolved
+	if drop <= 0 {
 		return decisions
 	}
 	kept := make([]Decision, 0, len(decisions))
 	for _, d := range decisions {
-		if d.Resolved() && resolved > keptResolved {
-			resolved--
+		if drop > 0 && d.Resolved() && !countedDecision(d, now) {
+			drop--
 			continue
 		}
 		kept = append(kept, d)
 	}
 	return kept
+}
+
+// countedDecision reports whether DecisionCalls counts a decision at now,
+// which is what makes it un-evictable: the count is derived from the
+// decisions the document carries, so losing one inside the window would lower
+// it. The window is RetentionWindow, the longest one a cap counts over, which
+// covers the hour and the day both with room to spare.
+func countedDecision(d Decision, now time.Time) bool {
+	return d.Resolved() && now.Sub(d.At) < RetentionWindow
 }
 
 // retainFacts keeps the facts whose keys sort first past keptFacts. A fact has
@@ -745,10 +787,11 @@ func protectedIntent(s State, it Intent, now time.Time) bool {
 // the loop still works from — a fact it needs again it can write again, but
 // nothing will write it back on its own.
 //
-// It stops at what the node is for: an open decision, a live item, a protected
-// intent and the goal are never dropped, so a node over the target with
-// nothing but those left stays over it and OverCap says so. That is the fail
-// closed direction: the daemon stops spawning rather than a count moving.
+// It stops at what the node is for: an open decision, a resolved one inside
+// the window a call count is derived over, a live item, a protected intent and
+// the goal are never dropped, so a node over the target with nothing but those
+// left stays over it and OverCap says so. That is the fail closed direction:
+// the daemon stops spawning rather than a count moving.
 //
 // A finished item goes whole rather than losing its brief: an item with an
 // empty brief is not a document this release reads back, and the entry it
@@ -759,13 +802,13 @@ func shrink(s *State, now time.Time) bool {
 		return true
 	}
 	for i, d := range s.Decisions {
-		if d.Resolved() {
+		if d.Resolved() && !countedDecision(d, now) {
 			s.Decisions = append(s.Decisions[:i], s.Decisions[i+1:]...)
 			return true
 		}
 	}
 	for i, w := range s.WorkItems {
-		if archivable(*s, w) {
+		if archivable(s.WorkItems, w) {
 			s.WorkItems = append(s.WorkItems[:i], s.WorkItems[i+1:]...)
 			return true
 		}
@@ -784,15 +827,19 @@ func shrink(s *State, now time.Time) bool {
 	return false
 }
 
-// archivable reports whether an item may leave the work list: it is finished,
-// no approval still stands on it, and nothing that is still live depends on
-// it.
-func archivable(s State, w WorkItem) bool {
+// archivable reports whether an item may leave the list it is in: it is
+// finished, no approval still stands on it, and nothing left in the list names
+// it in DependsOn. A dependent that is still live would be stranded by the
+// loss — the loop cannot start an item whose dependency is not there — and a
+// dependent that is finished would be left holding a reference to an item the
+// document no longer carries, which is a document this release does not read
+// back.
+func archivable(work []WorkItem, w WorkItem) bool {
 	if !w.Phase.Done() || w.Approved != nil {
 		return false
 	}
-	for _, o := range s.WorkItems {
-		if o.ID == w.ID || o.Phase.Done() {
+	for _, o := range work {
+		if o.ID == w.ID {
 			continue
 		}
 		if slices.Contains(o.DependsOn, w.ID) {

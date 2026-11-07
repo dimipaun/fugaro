@@ -268,7 +268,7 @@ func applyUpsert(s *State, op WorkItemOp, a Actor) error {
 		w.Note = cleanText(*op.Note, MaxNoteRunes)
 	}
 	if op.DependsOn != nil {
-		w.DependsOn = append([]string(nil), (*op.DependsOn)...)
+		w.DependsOn = copyOf(*op.DependsOn)
 	}
 
 	if SpecDigest(w) != before {
@@ -372,6 +372,12 @@ func commitIntent(s *State, w *WorkItem, op IntentOp, a Actor) error {
 	if approval.SpecDigest != *op.SpecDigest || SpecDigest(*w) != *op.SpecDigest {
 		return fmt.Errorf("%w: the launch spec is not the one the approval covers, so nothing may start under it", ErrDigestMismatch)
 	}
+	if !w.Phase.CanMoveTo(PhaseRunning) {
+		// Committing an intent starts a run, so it moves the item the same way
+		// any other write does: failed and blocked reach running through
+		// queued, which is the path the retry takes (spec's phase table).
+		return fmt.Errorf("%w: %s may not move to %s, and committing an intent starts a run", ErrInvalid, w.Phase, PhaseRunning)
+	}
 	s.Intents = append(s.Intents, Intent{
 		ID:         op.ID,
 		RunID:      *op.RunID,
@@ -424,11 +430,11 @@ func applyApprove(s *State, op ApproveOp, a Actor) error {
 }
 
 // applyArchive moves an item out of the work list. It refuses while the item
-// is running — a run in flight must not vanish from under its intent — and
-// while anything live depends on it, because a dependency that is not there
-// is not done, and an item whose approval still stands, which an edit to its
-// spec clears. It cannot start anything: what it can do is stop work, which
-// is the direction a session should be able to push.
+// is running — a run in flight must not vanish from under its intent — while
+// anything still in the list depends on it, because a dependency that is not
+// there is not done, and while an approval still stands on it, which an edit
+// to its spec clears. It cannot start anything: what it can do is stop work,
+// which is the direction a session should be able to push.
 func applyArchive(s *State, op ArchiveOp, a Actor) error {
 	i, ok := s.indexOf(op.ID)
 	if !ok {
@@ -441,8 +447,8 @@ func applyArchive(s *State, op ArchiveOp, a Actor) error {
 	if w.Approved != nil {
 		return fmt.Errorf("%w: %q still carries an approval: an edit to its spec revokes it, and then it can be archived", ErrActorNotAllowed, safetext.OneLine(w.ID))
 	}
-	if !archivable(*s, w) {
-		return fmt.Errorf("%w: a live work item depends on %q", ErrInvalid, safetext.OneLine(w.ID))
+	if !archivable(s.WorkItems, w) {
+		return fmt.Errorf("%w: a work item still in the list depends on %q", ErrInvalid, safetext.OneLine(w.ID))
 	}
 	outcome := cleanLine(op.Outcome, MaxOutcomeRunes)
 	if outcome == "" {
