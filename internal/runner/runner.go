@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
@@ -583,7 +584,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			// already be recorded; only fall back to infra_error when the
 			// run never got far enough to decide anything else.
 			if r.rec.Status == runstore.StatusRunning {
-				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
+				r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, reason)
 			}
 			d.Log.Error("run failed", "stage", r.rec.Stage, "err", reason)
 		}
@@ -647,13 +648,13 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		case errors.As(err, &halt):
 			// A policy halt before anything was locked, pushed or opened:
 			// an outcome, not a failure, so there is no error to return.
-			r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, &halt.Halt
-			r.rec.Reason = halt.Error()
+			r.rec.Halt = &halt.Halt
+			r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(halt.Halt.Reason), halt.Error())
 			d.Log.Warn("run halted at bootstrap", "reason", string(halt.Halt.Reason), "detail", halt.Halt.Detail)
 			return r.rec, nil
 		case errors.Is(err, ErrCancelled) || errors.Is(context.Cause(runCtx), ErrCancelled):
 			if r.markCancelled() {
-				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, "cancelled during bootstrap"
+				r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, "cancelled during bootstrap")
 			}
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
@@ -4367,16 +4368,16 @@ func (r *run) finalize(ctx context.Context) error {
 		}
 		return err
 	}
-	r.rec.Reason = reason
 	switch {
 	case ready:
-		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeReady
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReady, "", reason)
 	case halt != nil:
-		r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeDraft, halt
+		r.rec.Halt = halt
+		r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), reason)
 	case r.isCancelled():
-		r.rec.Status, r.rec.Outcome = runstore.StatusCancelled, runstore.OutcomeDraft
+		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeDraft, failure.Cancelled, reason)
 	default:
-		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
+		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, failure.Unclassified, reason)
 	}
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
