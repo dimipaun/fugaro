@@ -422,6 +422,180 @@ func TestReviewCallerIsOfferedNoTierBOrCAndNoOtherAccount(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// What a review caller paired with the project's own key is offered (AK4)
+// ---------------------------------------------------------------------------
+
+const (
+	// testSecondPaidKey is a credential set's second tier-B entry: a name a
+	// release that let an installation hold two paid keys would use.
+	testSecondPaidKey = "second-paid-key"
+	// testProviderKey is a third-party provider's key — creds.TierC, the route
+	// this release never selects and a name no bundle can hold yet (AK6).
+	testProviderKey = "provider-key"
+)
+
+// reviewCredentialSet is the set the offering rule is tested over: the
+// fixture's own bundle, a second tier-B credential beside the project's key, and
+// a tier-C provider key.
+//
+// The bundle holds neither of the two added entries — its key set is closed, and
+// widening it is AK6's — and that is why the rule is tested over a set rather
+// than over a document: what a review caller may be served by must not depend on
+// which credentials a later release lets the bundle carry, and the one entry a
+// caller paired with the sentinel is offered has to be the key itself rather
+// than every credential of its tier.
+func reviewCredentialSet(t *testing.T, s *svc) []creds.Credential {
+	t.Helper()
+	b, err := s.server.cfg.Bundles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("loading the fixture's own bundle: %v", err)
+	}
+	all := append([]creds.Credential{}, b.Credentials()...)
+	all = append(all,
+		creds.Credential{Name: testSecondPaidKey, Tier: creds.TierB},
+		creds.Credential{Name: testProviderKey, Tier: creds.TierC},
+	)
+	if !slices.ContainsFunc(all, func(c creds.Credential) bool { return c.Name == config.AnthropicSecret && c.Tier == creds.TierB }) {
+		t.Fatal("the fixture's bundle holds no tier-B credential, so this set has nothing for a sentinel pairing to be offered")
+	}
+	return all
+}
+
+// reportedNotAdmitted is the offerings' other half read as one map: the name a
+// caller was not offered to the row reported for it.
+func reportedNotAdmitted(t *testing.T, skipped []Tried) map[string]Tried {
+	t.Helper()
+	out := make(map[string]Tried, len(skipped))
+	for _, tr := range skipped {
+		if _, dup := out[tr.Name]; dup {
+			t.Errorf("the credential %q was reported twice", tr.Name)
+		}
+		out[tr.Name] = tr
+	}
+	return out
+}
+
+// TestReviewCandidateListIsExactlyOneCredential: the review class's candidate
+// list is one entry long whatever the credential set holds, and the cascade's
+// ladder has nothing to fall to — the property F13 keeps across AK4's widening
+// of WHICH credential the one entry is.
+//
+// The mutation this test is written against is offering the whole tier-B list
+// where the sentinel is spelled: the set's second paid key would then be offered
+// beside the project's key and the length assertion goes red. The end-to-end
+// half reads the same rule off a served call: with the key held the review caller
+// is answered the typed wait and the upstream sees nothing, where the two tier-A
+// accounts of the fixture's bundle are both admitted to the repository and the
+// fixture's policy is `fallback: auto`.
+func TestReviewCandidateListIsExactlyOneCredential(t *testing.T) {
+	s := newAnthropicKeyReviewSvc(t)
+	all := reviewCredentialSet(t, s)
+
+	cands, skipped := reviewCandidates(all, config.AnthropicKeyAccount)
+	if len(cands) != 1 || cands[0].Name != config.AnthropicSecret || cands[0].Tier != creds.TierB {
+		t.Fatalf("the sentinel pairing was offered %v, want exactly the project's key %q at tier B", cands, config.AnthropicSecret)
+	}
+	reported := reportedNotAdmitted(t, skipped)
+	for _, c := range all {
+		if c.Name == config.AnthropicSecret && c.Tier == creds.TierB {
+			continue
+		}
+		got, ok := reported[c.Name]
+		if !ok {
+			t.Errorf("the credential %q (%s) was neither offered nor reported as not admitted", c.Name, wireTier(c.Tier))
+			continue
+		}
+		if got.Reason != ReasonNotAdmitted {
+			t.Errorf("the credential %q was reported as %q, want %q", c.Name, got.Reason, ReasonNotAdmitted)
+		}
+		if got.Tier != wireTier(c.Tier) {
+			t.Errorf("the credential %q was reported at tier %q, want %q", c.Name, got.Tier, wireTier(c.Tier))
+		}
+	}
+
+	s.hold(config.AnthropicSecret, s.now.Add(-time.Minute), s.now.Add(6*time.Hour))
+	resp, body := s.callTokens(t, callBody("review-project-key-held"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusExhaustedUntil {
+		t.Fatalf("the answer is %d, want the typed wait (%d): the review caller paired with the key has nothing to fall to: %s",
+			resp.StatusCode, StatusExhaustedUntil, body)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Fatalf("the upstream saw %d requests, want none: a review call never falls to another credential", n)
+	}
+}
+
+// TestReviewCallerIsNeverOfferedAProviderKey is the negative that keeps AK4 from
+// becoming AK6: a provider's key is a third-party route (creds.TierC), and no
+// review caller is served by one — neither a caller paired with a Claude account
+// nor one paired with the project's own key.
+//
+// It is stated over the credential set rather than over a bundle document
+// because the bundle cannot hold a provider key in this release (the closed key
+// set, AK6): the rule this test holds is the offering rule, and the offering
+// rule is the one place that would have to change for a review call to reach a
+// provider's key — the tier-C entry is in the set the caller is offered from and
+// is refused there, not filtered out before it arrives.
+func TestReviewCallerIsNeverOfferedAProviderKey(t *testing.T) {
+	s := newAnthropicKeyReviewSvc(t)
+	all := reviewCredentialSet(t, s)
+	if !slices.ContainsFunc(all, func(c creds.Credential) bool { return c.Tier == creds.TierC }) {
+		t.Fatal("the set holds no provider key, so this test has nothing to keep the caller away from")
+	}
+	for _, account := range []string{config.AnthropicKeyAccount, testReviewAccount} {
+		cands, skipped := reviewCandidates(all, account)
+		if slices.ContainsFunc(cands, func(c creds.Credential) bool { return c.Name == testProviderKey }) {
+			t.Errorf("a review caller paired with %q was offered the provider key", account)
+		}
+		got, ok := reportedNotAdmitted(t, skipped)[testProviderKey]
+		if !ok {
+			t.Errorf("the provider key was neither offered nor reported as not admitted for %q", account)
+			continue
+		}
+		if got.Reason != ReasonNotAdmitted || got.Tier != wireTier(creds.TierC) {
+			t.Errorf("the provider key was reported as %q at tier %q, want %q at %q", got.Reason, got.Tier, ReasonNotAdmitted, wireTier(creds.TierC))
+		}
+	}
+}
+
+// TestReviewCandidateListStillOffersThePairingAccount is the new rule's second
+// direction: a pairing that names a Claude account is served exactly as it was
+// before the sentinel existed — that account's own tier-A entry, one entry long,
+// even where the credential set also holds the project's key.
+func TestReviewCandidateListStillOffersThePairingAccount(t *testing.T) {
+	s := newReviewSvc(t)
+	all := reviewCredentialSet(t, s)
+
+	cands, skipped := reviewCandidates(all, testReviewAccount)
+	if len(cands) != 1 || cands[0].Name != testReviewAccount || cands[0].Tier != creds.TierA {
+		t.Fatalf("the review caller was offered %v, want exactly the pairing's account %q at tier A", cands, testReviewAccount)
+	}
+	if got, ok := reportedNotAdmitted(t, skipped)[config.AnthropicSecret]; !ok || got.Reason != ReasonNotAdmitted {
+		t.Errorf("the project's key was offered or reported as %+v, want it not admitted: a pairing that names an account is not served by the project's key", got)
+	}
+
+	resp, body := s.callTokens(t, callBody("review-account"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the review caller was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testReviewAccount {
+		t.Errorf("%s = %q, want the pairing's account %q", HeaderCredential, got, testReviewAccount)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q", HeaderTier, got, TierA)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	req := s.up.Seen()[0]
+	if !strings.Contains(req.Header.Get("Authorization"), fakeCred(t, testReviewAccount)) {
+		t.Error("the call did not carry the pairing's account")
+	}
+	if got := req.Header.Get("x-api-key"); got != "" {
+		t.Error("the call carried the project's key to an account's call")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // The credential never reaches the client in the answer's body
 // ---------------------------------------------------------------------------
 
