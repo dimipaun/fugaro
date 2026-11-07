@@ -645,7 +645,7 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
   | `docs/bitbucket-credentials/reconciliation.md` | L231 (F13), L503 (D362), L656 |
   | `docs/bitbucket-credentials/implementation-plan.md` | L95, "`fugaro creds set` and `fugaro update --provision-credentials` are never run by an agent" — the flag half is retired; the `creds set` half **stays true** and the task keeps it, which is why this row is a wording change and not a deletion (added by the review) |
   | `docs/run-without-checkout/{spec,reconciliation}.md` | L80-81; L145, L257, L296 |
-  | `docs/stateless-orchestrator/reconciliation.md` | L32 |
+  | `docs/stateless-orchestrator/reconciliation.md` | L37 |
   | `docs/c39-review-identity/{README,implementation-plan,reconciliation,spec}.md` | L29; L50; L200; L913 |
   | `docs/cloud-senior-review/{README,spec,reconciliation,implementation-plan}.md` | L60, L135, L163, L165; L8, L77, L230, L233, L601, L1066; L136, L413, L589, L590, L812 (E7); L97, L100, L243, L575, L579, L757, L793, L1146, L1167, L1203, L1355 |
   | `docs/ee-reorg/{implementation-plan,reconciliation}.md` | L542; L65 |

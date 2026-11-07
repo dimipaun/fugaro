@@ -378,6 +378,15 @@ func routingText(t *testing.T) string {
 	if start < 0 || end < start {
 		t.Fatalf("%s has no F15 paragraph: the owner's routing rule is what this table is code for", reconciliationDoc)
 	}
+	// An amendment to F15 is not the rule. It is prose written by whoever
+	// amended the finding, and a category word that survives only there would
+	// satisfy the pin below after the rule itself lost it: the amendment of
+	// 2026-11-07 names .claude/rules/credentials-service.md, so a rule sentence
+	// that dropped "credentials" would still be found, and the finding that
+	// closed a hole would have opened one for the category it mentions.
+	if at := strings.Index(doc[start:end], "**Amended"); at >= 0 {
+		end = start + at
+	}
 	return strings.Join(strings.Fields(doc[start:end]), " ")
 }
 

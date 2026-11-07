@@ -176,9 +176,10 @@ branch and writes a versioned verdict artifact the coordinator acts on" and is t
 website; the website is on the classifier's allowlist because the plan's O1 puts it there. A review of that task found the tree carries paths that are not copy a
 reader is sent to, and O1 now classes them Sensitive: the npm manifest and its lock (the install scripts CI and the owner's machine run),
 `website/data/install.yaml` (the install commands a reader pastes), `website/content/downloads.json` and `website/data/console-sha256sums.txt` (the URLs and
-checksums a reader checks a build against), and `website/content/security.md` (**`SECURITY.md`** byte for byte, the one website path
+checksums a reader checks a build against), and `website/content/security.md` (**`SECURITY.md`** byte for byte **below a generated header**, the one website path
 `.claude/rules/credentials-service.md` scopes as security-sensitive). The rest of `website/**` stays routine as the plan states it. **Still the owner's to
-rule:** whether the site's *code* — its layout and the CSP it sets — is Sensitive too, which would take the whole tree off the allowlist.
+rule:** whether the site's *code* — its layouts, its client scripts and its build config — is Sensitive too, which would take the whole tree off the allowlist. The
+CSP is not part of that question: the deployed policy is the repository root's `firebase.json`, outside `website/**` and Sensitive already.
 
 **F16. Gap. A local daemon.** There is no background process, service installer or `launchd`/`systemd` unit in the CLI. The closest
 long-running local pieces are `fugaro watch` (a TUI, foreground) and the mailbox consumer (`internal/mailbox`, foreground, with an RTDB

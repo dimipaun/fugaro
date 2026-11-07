@@ -187,9 +187,11 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   website is this plan's own allowance for a tree that is mostly rendered copy): `website/package.json` and `website/package-lock.json` (the install scripts CI and
   the owner's machine run), `website/content/downloads.json` and `website/data/console-sha256sums.txt` (the URLs and the checksums a reader checks a console build
   against), `website/data/install.yaml` (the install commands a reader pastes) and `website/content/security.md` (the published security policy — `SECURITY.md`
-  byte for byte, and the one website path `.claude/rules/credentials-service.md` scopes as security-sensitive) are Sensitive inside `website/**`, which otherwise
+  byte for byte **below a generated header**, and the one website path `.claude/rules/credentials-service.md` scopes as security-sensitive) are Sensitive inside `website/**`, which otherwise
   stays routine. Narrowing an allowlist is the direction a review may move it in on its own; **open for the owner is the wider half of that finding** — whether the
-  site's *code* (its layout and the CSP it sets, `website/src/layouts/Base.astro`) should be Sensitive too, which would take the whole tree off the allowlist.
+  site's *code* (its layouts, its client scripts and its build config: `website/src/layouts/`, `website/public/scripts/`, `website/astro.config.mjs`) should be
+  Sensitive too, which would take the whole tree off the allowlist. The one security control the site is held to is **already Sensitive and stays so**: the deployed
+  CSP is `firebase.json` at the repository's root, outside `website/**`, and is pinned by `website/test/origins.mjs` and `website/test/brand.mjs`.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestPromptPathsAreAlwaysSensitive`, `TestDescriptionCannotLowerTheClass` (the signature has no description argument; a
   reflective test pins it), `TestEmptyPathListIsSensitive` (fail closed), `TestUnlistedPathIsSensitive`, `TestOnlyAllowlistedPathsAreRoutine`,

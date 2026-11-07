@@ -73,8 +73,9 @@ var routineRules = []rule{
 // its lock, whose install scripts run in CI and on the owner's machine; the
 // download URLs and the checksums a reader checks a console build against; the
 // install commands the getting-started page offers; and the published security
-// policy, which is SECURITY.md byte for byte and the one website path
-// .claude/rules/credentials-service.md scopes as security-sensitive.
+// policy, which is SECURITY.md byte for byte below a generated header and the
+// one website path .claude/rules/credentials-service.md scopes as
+// security-sensitive.
 var sensitiveExceptions = []rule{
 	{name: "CI", prefix: "docs/pending-workflows/"},
 	{name: "the website's dependencies", prefix: "website/package.json"},
