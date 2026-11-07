@@ -485,6 +485,43 @@ func TestBitbucketRouteForwardsFetch(t *testing.T) {
 	}
 }
 
+// TestBitbucketRouteForwardsFetchPack: a fetch's second call — the POST that
+// carries what the run wants and brings the pack back — is forwarded the same
+// way. Its body is git's own negotiation and NOT an update request: this route
+// reads refs in front of a PUSH alone (G2), so a fetch body the update parser
+// would refuse on is neither parsed nor refused, and every byte of it reaches
+// bitbucket.org. A route that read every POST's refs would break every fetch.
+func TestBitbucketRouteForwardsFetchPack(t *testing.T) {
+	s, up, token := proxySvc(t)
+	up.answerWith(http.StatusOK, "PACKDATA")
+
+	body := pktLine("want "+proxyNewOID+" multi_ack_detailed side-band-64k ofs-delta") + "0000" + pktLine("done") + "0000"
+	resp, ans := s.proxyCall(t, http.MethodPost, proxyPath(proxyGitPath("git-upload-pack")), []byte(body))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the fetch's pack call answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	if string(ans) != "PACKDATA" {
+		t.Errorf("the answer = %q, and the pack the upstream sent must be relayed unchanged", ans)
+	}
+	got := up.only(t)
+	if got.method != http.MethodPost {
+		t.Errorf("the upstream saw %s, want POST", got.method)
+	}
+	if want := "/" + proxyGitPath("git-upload-pack"); got.path != want {
+		t.Errorf("the fetch's pack call was addressed to %q, want %q", got.path, want)
+	}
+	if got.query != "" {
+		t.Errorf("the fetch's pack call carried the query %q, want none", got.query)
+	}
+	if !bytes.Equal(got.body, []byte(body)) {
+		t.Errorf("the upstream was sent %q, want the caller's own negotiation %q", got.body, body)
+	}
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(bitbucket.GitUsername+":"+token))
+	if got.auth != wantAuth {
+		t.Errorf("the upstream was shown %q as its credential, want the bundle's token as git's own x-token-auth Basic", got.auth)
+	}
+}
+
 // TestBitbucketRouteStreamsLargePack: a push that IS the run's is forwarded
 // whole — the update request that was read in front of it and then every byte
 // of the pack that follows — because this route holds no pack in memory

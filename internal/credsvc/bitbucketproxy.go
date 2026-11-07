@@ -252,6 +252,19 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		body = bytes.NewReader(raw)
 		contentLength = int64(len(raw))
 		prBody = raw
+	default:
+		// Every other call that arrived with a body carries it unread, and the
+		// one that matters is a fetch's second call: the POST whose body is the
+		// run's wants and whose answer is the pack. Refs are read in front of a
+		// PUSH alone (G2), so these bytes are git's own negotiation and this
+		// route neither parses nor re-encodes them — dropping them would fetch
+		// nothing back and would fail every proxied run. r.ContentLength is the
+		// standard signal of "this request carried a body" (0 means none, and
+		// -1 means the length was not known).
+		if r.ContentLength != 0 {
+			body = r.Body
+			contentLength = r.ContentLength
+		}
 	}
 
 	// The bundle, read before the decision can be acted on: the token this
