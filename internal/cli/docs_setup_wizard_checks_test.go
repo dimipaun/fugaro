@@ -563,7 +563,11 @@ func TestDocsCheck111EveryModeCarriesCreateProject(t *testing.T) {
 	// Every run of the wizard in this section, flag and all. The six are the
 	// seven modes' commands (2(b) is 2(a)'s line again, with the fallback
 	// maimed first, and the two --yes reruns are their own line with --yes).
-	runs := regexp.MustCompile(`(?m)^\s*(?:capture \S+|plain \S+|)\s*fugaro setup [^\n]*`).FindAllString(code, -1)
+	// Modes 3 and 4 carry one more prefix before the binary — `env -u
+	// CLAUDE_CODE_SSE_PORT`, the marker that with no terminal is a coding
+	// agent's session — and they are runs of the wizard as much as the rest:
+	// the prefix is part of the command line, not a wrapper around it.
+	runs := regexp.MustCompile(`(?m)^\s*(?:capture \S+|plain \S+|env -u \S+|)\s*fugaro setup [^\n]*`).FindAllString(code, -1)
 	if len(runs) < 6 {
 		t.Fatalf("Check 111 has %d `fugaro setup` command line(s), want at least 6 — one per mode: %q", len(runs), runs)
 	}

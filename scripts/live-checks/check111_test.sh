@@ -220,6 +220,20 @@ quota=$(sed -n 's/.*"quota_project_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/
   "${CLOUDSDK_CONFIG:?}/application_default_credentials.json")
 link="gcloud billing projects link $proj --billing-account=<billing-account-id>"
 
+# The session this run is, by internal/agentenv.Session's own rule: an agent-set
+# marker is one whatever the terminal, and the IDE extension's marker alone is
+# one only where there is NO terminal (it sets that one in a person's own
+# integrated terminal too, which is a real terminal). The check lets that marker
+# through in this shell for exactly that reason, so a mode with no terminal at
+# all has to take it out of its own child for the child to be the run the mode
+# claims — and this is the rule that says so.
+agent_marker=""
+if [ -n "${AI_AGENT:-}" ]; then
+  agent_marker=AI_AGENT
+elif [ ! -t 1 ] && [ -n "${CLAUDE_CODE_SSE_PORT:-}" ]; then
+  agent_marker=CLAUDE_CODE_SSE_PORT
+fi
+
 # FAKE111_LEAK: the reversal this whole check exists to catch — an account's
 # display name and its id in a run that must list nothing. Only the runs that
 # are not --json's (whose document the check reads on its own) carry it.
@@ -235,7 +249,7 @@ fi
 # only form that file's grep catches), a display name of theirs
 # (FAKE111_LEAK_NAME), and a numbered line that names no account at all
 # (FAKE111_LEAK_NUMBERED).
-if [ ! -t 1 ] && [ "$json" = no ] && [ -z "${AI_AGENT:-}" ]; then
+if [ ! -t 1 ] && [ "$json" = no ] && [ -z "$agent_marker" ]; then
   [ -z "${FAKE111_LEAK_ID:-}" ] || echo "the account billingAccounts/AAAAAA-BBBBBB-CCCCCC could not be read"
   [ -z "${FAKE111_LEAK_BARE_ID:-}" ] || echo "the account AAAAAA-BBBBBB-CCCCCC could not be read"
   [ -z "${FAKE111_LEAK_NAME:-}" ] || echo "the account $DISPLAY_NAME_NAME could not be read"
@@ -246,14 +260,17 @@ fi
 # mode 1(a) under --yes and modes 3, 4 and 5 exist to rule out, and the one
 # failure the check's own "nothing may be asked where nothing can answer" row
 # has to catch. Mode 3 alone carries it here.
-if [ -n "${FAKE111_ASK:-}" ] && [ ! -t 1 ] && [ "$json" = no ] && [ -z "${AI_AGENT:-}" ]; then
+if [ -n "${FAKE111_ASK:-}" ] && [ ! -t 1 ] && [ "$json" = no ] && [ -z "$agent_marker" ]; then
   echo "Billing accounts you can link to $proj (from gcloud billing accounts list):"
   printf 'Billing account (a number, or none to link none now): '
 fi
 
 # The applying stage that belongs to the owner when no terminal can answer it.
-if [ -n "${AI_AGENT:-}" ]; then
-  echo "the project stage is left for you: run this in your own terminal window, not through a coding agent"
+# The wording is internal/initflow's AgentRefusal, marker and all: a mode that
+# meant to run a person's shell and answered with this instead is not that mode,
+# and the marker's own name is what a case reads to tell the two apart.
+if [ -n "$agent_marker" ]; then
+  echo "a coding agent's session is present ($agent_marker is set), so nothing is applied: run this in your own terminal window, not through a coding agent"
   echo "$link"
   exit 0
 fi
@@ -787,6 +804,46 @@ test_a_picker_under_json_is_a_fail() {
   expect_scratch_gone "$dir" "picker under --json"
 }
 
+# Modes 3 and 4 are the runs with NO terminal, and that is the one thing that
+# makes the IDE extension's marker an agent's session where at a terminal it is
+# a person's (internal/agentenv.Session). The check lets CLAUDE_CODE_SSE_PORT
+# through, because the IDE extension sets it in a person's own integrated
+# terminal too — so those two steps have to take it out of their OWN children,
+# or a run started from that terminal answers with mode 5's agent refusal while
+# the rows still pass: a run that never reached this mode's premise satisfies
+# everything mode 5 satisfies. Every case in this suite cleared the variable
+# before this one, and the fake ignored it; the fake now models Session's rule,
+# which is what makes the marker visible to a case at all.
+test_modes_3_and_4_take_the_ide_marker_out_of_their_own_children() {
+  setup_case idemarker
+  sandbox_args
+  RUN111_ARGS+=(--modes 3,4)
+  RUN111_ENV=(CLAUDE_CODE_SSE_PORT=4242 CHECK111_KEEP_SCRATCH=1)
+  run111
+  expect_status "$status" 1 "the IDE marker"
+  expect_contains "$out" "FACT agent-session: PASS — no agent marker is set; CLAUDE_CODE_SSE_PORT is" \
+    "the IDE marker: the shell's own marker is recorded, not refused"
+  expect_contains "$out" "modes 3 and 4 unset it for their own children alone" \
+    "the IDE marker: and the row says what the two no-terminal modes do about it"
+  expect_contains "$out" "FACT picker-3: PASS — " "the IDE marker: mode 3 is still the run with no terminal"
+  expect_contains "$out" "FACT picker-4: PASS — " "the IDE marker: and so is mode 4"
+  expect_contains "$out" "FACT document-4: PASS — " "the IDE marker: mode 4's stdout is its document, not the agent's refusal"
+  local scratch
+  scratch=$(scratch_of "$dir")
+  [ -n "$scratch" ] || fail "the IDE marker: the script did not say where its scratch directory is"
+  [ -f "$scratch/mode-3.log" ] || fail "the IDE marker: mode 3 left no capture at $scratch/mode-3.log"
+  # The wording internal/initflow prints for an agent, by name: a capture that
+  # carries it is mode 5's run wearing mode 3's or mode 4's name, whatever rows
+  # it happens to satisfy — and these two are the runs whose whole point is that
+  # they are NOT an agent's.
+  expect_absent "$(cat "$scratch/mode-3.log" 2>/dev/null || true)" \
+    "a coding agent's session is present" "the IDE marker: mode 3's capture is a person's run"
+  expect_absent "$(cat "$scratch/mode-4.json" 2>/dev/null || true)" \
+    "a coding agent's session is present" "the IDE marker: mode 4's document is not the agent's refusal"
+  expect_absent "$(cat "$scratch/mode-4.err" 2>/dev/null || true)" \
+    "a coding agent's session is present" "the IDE marker: nor is its stderr"
+}
+
 # Criterion 3 reads four forms of a leak, and each of these four cases carries
 # exactly one of them in mode 3 — so a detector that is deleted or inverted
 # fails its own case instead of hiding behind the others.
@@ -1124,6 +1181,7 @@ t test_a_failed_assertion_still_restores
 t test_a_leak_is_a_fail
 t test_a_picker_where_none_may_run_is_a_fail
 t test_a_picker_under_json_is_a_fail
+t test_modes_3_and_4_take_the_ide_marker_out_of_their_own_children
 t test_q_enabled_by_the_run_is_a_fail
 t test_s_disabled_by_the_run_is_a_fail
 t test_criterion_3_detects_an_account_resource_id

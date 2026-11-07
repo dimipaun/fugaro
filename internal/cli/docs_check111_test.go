@@ -68,6 +68,13 @@ func TestDocsCheck111IsOneScriptTheOwnerRuns(t *testing.T) {
 		// rather than once at the end of mode 2: --modes may name 2(a) without
 		// 2(b), and the modes after it must still run as the owner.
 		"putting **yours** back, byte for byte, as soon as each of them is done",
+		// Modes 3 and 4 are the runs with NO terminal, and with no terminal the
+		// IDE extension's marker alone is a coding agent's session
+		// (internal/agentenv.Session): the section has to say that the two runs
+		// take it out of their own children, or a run started from an IDE
+		// terminal answers with mode 5's needs-you text and this mode's rows
+		// pass on it.
+		"it takes the IDE extension's `CLAUDE_CODE_SSE_PORT` out of modes 3 and 4's own children alone",
 		// --dry-run is the first thing the owner runs, because the real run
 		// disables an API in two throwaway projects and repoints their ADC.
 		"`--dry-run` prints every command",
@@ -132,6 +139,12 @@ func TestDocsCheck111ScriptKeepsItsPromises(t *testing.T) {
 		// answerable rather than dangerous.
 		"GOOGLE_APPLICATION_CREDENTIALS",
 		"XDG_CONFIG_HOME",
+		// The two no-terminal runs, each under its own marker removal, and the
+		// guard's own row saying so: the marker is the one thing that would turn
+		// them into mode 5's case, and the register's blocks for modes 3 and 4
+		// carry the same removal.
+		"-- env -u CLAUDE_CODE_SSE_PORT fugaro",
+		"modes 3 and 4 unset it for their own children alone",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("%s lacks %q, which the register's section promises about it", check111Script, want)

@@ -53,7 +53,10 @@
 #             AI_AGENT): modes 1 to 4 assert what a real terminal does, and a
 #             session that is itself an agent's cannot tell them apart from mode
 #             5. Mode 5's marker is set for its one child alone, so it is gone
-#             whatever ends the run.
+#             whatever ends the run, and modes 3 and 4 take CLAUDE_CODE_SSE_PORT
+#             out of THEIR children alone — that marker with no terminal is what
+#             internal/agentenv.Session reads as an agent, and those two runs are
+#             a person's shell whose input is not a terminal.
 # Cleanup:    always, and before the block is printed: if mode 2 swapped the
 #             second login in, your ADC file is your own again, byte for byte,
 #             which is what mode 2 found; the API this check disabled on
@@ -355,7 +358,12 @@ guard_xtrace() {
 # internal/agentenv reads. CLAUDE_CODE_SSE_PORT alone is NOT one of them: the
 # IDE extension sets it in a person's own terminal too, so alone it is a
 # person's session (internal/cli/initsecrets.go) — it is recorded and not
-# refused, and mode 5 sets its own marker for its one child.
+# refused, and mode 5 sets its own marker for its one child. That is a fact
+# about a shell WITH a terminal, and Session is not: it reads the marker with no
+# terminal as an agent's, which is every run modes 3 and 4 make. So those two
+# steps take the marker out of their own children (step_3, step_4): a mode 3 run
+# that answered with the agent's own refusal would be mode 5's case, passing the
+# rows mode 5 passes.
 guard_agent() {
   local marker found=""
   for marker in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
@@ -368,7 +376,7 @@ guard_agent() {
     stop "Check 111 refuses to run in a coding agent's session ($found is set). Run it yourself at your own terminal: bash scripts/live-checks/check111.sh --project <throwaway> --account-names <file>"
   fi
   if [ -n "${CLAUDE_CODE_SSE_PORT:-}" ]; then
-    fact agent-session PASS "no agent marker is set; CLAUDE_CODE_SSE_PORT is (the IDE extension sets it in a person's own terminal too), recorded and not refused — mode 5 sets AI_AGENT for its one child alone"
+    fact agent-session PASS "no agent marker is set; CLAUDE_CODE_SSE_PORT is (the IDE extension sets it in a person's own terminal too), recorded and not refused — modes 3 and 4 unset it for their own children alone, where no terminal is what makes it read as an agent's, and mode 5 sets AI_AGENT for its one child"
   else
     fact agent-session PASS "no agent marker is set, so this is a person's shell and mode 5 can mark its own child"
   fi
@@ -1434,7 +1442,7 @@ assert_unlisted() {
 
 step_3() {
   say "mode 3: NO TTY at all — the picker must never run, and the run must not wait for input"
-  run_plain 3 "$SCRATCH/mode-3.log" "" -- fugaro "${SETUP_ARGS[@]}"
+  run_plain 3 "$SCRATCH/mode-3.log" "" -- env -u CLAUDE_CODE_SSE_PORT fugaro "${SETUP_ARGS[@]}"
   mode_exit 3 "the same line with standard input at /dev/null and no pty — the same case as a pipe, a redirect or --non-interactive" "$SCRATCH/mode-3.log"
   assert_no_picker 3
   assert_line 3 "$SCRATCH/mode-3.log"
@@ -1444,7 +1452,7 @@ step_3() {
 
 step_4() {
   say "mode 4: --json — the picker never runs, and no account list may be in the document"
-  run_plain 4 "$SCRATCH/mode-4.json" "$SCRATCH/mode-4.err" -- fugaro "${SETUP_ARGS[@]}" --json
+  run_plain 4 "$SCRATCH/mode-4.json" "$SCRATCH/mode-4.err" -- env -u CLAUDE_CODE_SSE_PORT fugaro "${SETUP_ARGS[@]}" --json
   mode_exit 4 "the same line with --json, its stdout kept in mode-4.json and its stderr in mode-4.err (the two are kept apart because --json's document is stdout)" "$SCRATCH/mode-4.json" "$SCRATCH/mode-4.err"
   assert_no_picker 4
   assert_document 4
@@ -1698,8 +1706,8 @@ print_plan() {
   fi
   say "  [network, writes] mode 2(a): gcloud auth application-default set-quota-project ${S:-<--api-on-project, required>}, the fallback NOT maimed, then at a real terminal answered 'none' at the picker's prompt: fugaro ${SETUP_ARGS[*]} (the one run where a list is the point)"
   say "  [network] mode 2(b): the fallback maimed, then fugaro ${SETUP_ARGS[*]} — the API refuses and nothing can answer it"
-  say "  [network] mode 3: fugaro ${SETUP_ARGS[*]} with standard input at /dev/null and no pty"
-  say "  [network] mode 4: fugaro ${SETUP_ARGS[*]} --json, its stdout and stderr kept apart, and the check's own jq line on the document"
+  say "  [network] mode 3: env -u CLAUDE_CODE_SSE_PORT fugaro ${SETUP_ARGS[*]} with standard input at /dev/null and no pty (the marker is taken out of this one child: with no terminal it is what internal/agentenv.Session reads as an agent's session, which is mode 5's case and not this one)"
+  say "  [network] mode 4: env -u CLAUDE_CODE_SSE_PORT fugaro ${SETUP_ARGS[*]} --json, its stdout and stderr kept apart, and the check's own jq line on the document — unset for the same reason as mode 3"
   say "  [network] mode 5: env AI_AGENT=1 fugaro ${SETUP_ARGS[*]} (the marker in that one child's environment, never in this shell), then the same line with --yes"
   say "and its Restore (also from the exit trap) would run:"
   if [ -n "$SECOND_ADC" ]; then
