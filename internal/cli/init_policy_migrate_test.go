@@ -1359,40 +1359,79 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 	t.Run("a managed project whose owner asked for the prompts back", func(t *testing.T) {
 		refused(t, "a managed project run with --ask", true, true, true, "")
 	})
-	// The project's FIRST node is the case the note does not reach, and the one
-	// no other subtest here can reach either: they all drive a node that is
-	// already published, where the note's whole justification — the member that
-	// loosens is read in the diff above it — holds. With no node the diff is
-	// rendered against an empty document, so every value on its left is that
-	// document's zero rather than anything the project ever published, and the
-	// write creates the boundary rather than editing it: the decision the
-	// managed gate itself refuses for a publish with no node to replace
-	// (policyReposRefusal: a first publish IS a seed), and the one M3 leaves to
-	// the owner's own hand. The typed name stays, with the sentence written for
-	// it.
+	// A project's FIRST node is the note's case too, and the one no other
+	// subtest here reaches: they all drive a node that is already published.
+	// The write replaces nothing and deletes nothing, its document is entirely
+	// the person's own local config, and the diff above the note is the first
+	// publish's own — every member the node is created with, named against the
+	// empty document it is created from. The first publish that does keep the
+	// typed name is the empty allow-list one, which the last subtest here pins.
 	t.Run("a managed project with no node to publish yet", func(t *testing.T) {
-		f := newProjectFixture(t, catalogConfigYAML)
-		h := newMigrationRig(t, f, &initOptions{})
-		fakeTerminal(t)
-		h.cmd.SetIn(strings.NewReader(""))
-		m, _, err := h.s.plan(context.Background())
-		if err != nil {
-			t.Fatal(err)
+		h, f := firstPublishRig(t, "", true)
+		out := h.out.String()
+		if strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+			t.Errorf("a managed project's first node was asked for by name:\n%s", out)
 		}
-		if !m.firstPublish {
-			t.Fatalf("the rig planned a publish of a node that is there, so this is not the first node")
+		if !strings.Contains(out, "note: this writes the project's first published policy node") {
+			t.Errorf("the note does not say the node is the project's first:\n%s", out)
 		}
-		if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions()); err == nil {
-			t.Fatalf("a managed project's first node was written on a note:\n%s", h.out)
-		}
-		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
-			t.Errorf("the first node was refused without the confirmation being asked for:\n%s", h.out)
-		}
-		if !strings.Contains(h.out.String(), "the project has no published policy node") {
-			t.Errorf("the refusal does not say the node is the project's first:\n%s", h.out)
-		}
-		if v := f.db.Value(projectpolicy.PathShared()); v != nil {
-			t.Errorf("the first node was written without the typed name: %v", v)
+		if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+			t.Errorf("the first node was not written:\n%s", out)
 		}
 	})
+	// The empty allow-list first publish is the one write of that case that
+	// keeps the confirmation: the node it writes admits no repository, so from
+	// the moment it lands every run of the project stops before it starts.
+	t.Run("a managed project with no node and no repository listed", func(t *testing.T) {
+		h, f := firstPublishRig(t, "no-repos", true)
+		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("a node that admits nothing was written without the confirmation:\n%s", h.out)
+		}
+		if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+			t.Errorf("the node that admits nothing was written: %v", v)
+		}
+	})
+	// The note is the person's, so a first publish reached without one keeps
+	// the typed confirmation like every other write here.
+	t.Run("a managed project with no node and nobody at the terminal", func(t *testing.T) {
+		h, f := firstPublishRig(t, "", false)
+		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("a first node was written with nobody at the terminal:\n%s", h.out)
+		}
+		if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+			t.Errorf("the first node was written with nobody at the terminal: %v", v)
+		}
+	})
+}
+
+// firstPublishRig plans the stage over a project that has never published a
+// node — an image_catalog in the local config is what makes that a first
+// publish rather than nothing to do — and runs the tail over it: managed, a
+// person at the terminal unless terminal is false, and nothing on stdin. extra
+// "no-repos" rewrites the config so the node it would write admits no
+// repository, which is the first publish that keeps the typed name.
+func firstPublishRig(t *testing.T, extra string, terminal bool) (*migrationRig, *projectFixture) {
+	t.Helper()
+	f := newProjectFixture(t, catalogConfigYAML)
+	if extra == "no-repos" {
+		setCatalogConfigWithNoRepos(t, f)
+	}
+	h := newMigrationRig(t, f, &initOptions{})
+	if terminal {
+		fakeTerminal(t)
+	} else {
+		noTerminal(t)
+	}
+	h.cmd.SetIn(strings.NewReader(""))
+	m, _, err := h.s.plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.firstPublish {
+		t.Fatalf("the rig planned a publish of a node that is there, so this is not the first node")
+	}
+	if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions()); err != nil {
+		t.Logf("the tail refused the first publish: %v", err)
+	}
+	return h, f
 }

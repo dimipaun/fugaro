@@ -417,11 +417,10 @@ func policyMigrationRefusal(err error) error {
 // flight, so the in-flight guard's count becomes a note and the write proceeds;
 // and it is that a person at a real terminal is not asked to type the project's
 // name to publish the node, so the typed confirmation below is replaced by a
-// note of what is written — for a node that is there. The project's FIRST node
-// keeps the typed name: there is no published document to compare against, and
-// creating the boundary is the decision the gate itself refuses for a publish
-// with no node to replace (the branch below). The upgrade door has no gate and
-// passes false, so it keeps both refusals exactly as they were.
+// note of what is written — for a node that is there and for a project's first
+// one alike, the empty-allow-list first publish above being the only write that
+// keeps the typed name. The upgrade door has no gate and passes false, so it
+// keeps both refusals exactly as they were.
 //
 // c is the run's own conditions, the reading initRun.conditions hands every
 // other confirmation in this package (the marker and the terminal among them):
@@ -481,21 +480,21 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		if err := confirmEmptyAllowList(cmd, m.lc, c.Agent); err != nil {
 			return err
 		}
-	} else if managed && !m.firstPublish && initflow.PersonAtTheTerminal(c) && !admitted {
+	} else if managed && initflow.PersonAtTheTerminal(c) && !admitted {
 		// The owner's ruling of 2026-11-06: no typed prompt for a person at a
 		// real terminal on a managed project, except data loss and secret
 		// values. Rewriting the node from the person's own local config is
 		// neither, so the person is told what is written and it is written.
 		//
-		// The FIRST node is not that case and keeps the typed name (!m.firstPublish,
-		// which falls through to the branch below and its first-publish sentence).
-		// There is nothing to compare the document against, so the diff above it —
-		// which is where this branch's widening is read — is rendered against an
-		// empty document and every value on its left is that document's zero rather
-		// than anything the project ever published; and the write creates the
-		// boundary rather than editing it, which is the decision the managed gate
-		// itself refuses for a publish with no node to replace ("a first publish IS
-		// a seed", policyReposRefusal) and which M3 leaves to the owner's own hand.
+		// A project's FIRST node is this case too, and deliberately: the
+		// document is entirely the person's own local config, nothing is
+		// replaced and nothing is deleted, and the write is the one the project
+		// needs to have a policy at all — the diff above the note is the first
+		// publish's own (printFirstPublishDiff), naming every member the node is
+		// created with, and the note says the node is the project's first. The
+		// first publish that does keep the typed name is the empty allow-list
+		// one handled above, which is the write that would stop every run of
+		// the project (confirmEmptyAllowList, #1674).
 		//
 		// The condition is the gate's own reading of who is there
 		// (initflow.PersonAtTheTerminal, ConfirmsByGate's condition half): a
