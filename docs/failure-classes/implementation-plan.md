@@ -211,7 +211,7 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   unmatched reason reading `unclassified` — is the reader's, FC5's
   `TestLegacyUnmatchedReasonIsUnclassified` (F35). Also `TestHaltedRunCarriesItsHaltsClass` (a
   failure then a halt ends `halted` with the halt's class). And the **rewritten**
-  `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:279`): its
+  `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:303`): its
   `statements == 0` fatal is the state this task produces, so the pin turns from *a census of 36
   statements* into *no statement outside `recordend.go` writes a status*, and the design's §1 sentence
   it holds is rewritten in the same commit (F25).

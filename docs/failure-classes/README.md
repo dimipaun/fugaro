@@ -43,7 +43,7 @@ the digest. `reason` keeps its meaning byte for byte; the field is additive, so 
 in 36 statements, in 24 functions across 8 files** — reproduced statement by statement from
 `grep -rn 'rec\.Status[^=!]*= runstore\.Status' internal/runner --include='*.go' | grep -v _test.go`,
 and held by `TestDocsFailureClassCensusMatchesTheRunner`
-(`internal/cli/docs_pr_state_test.go:279`), which counts it from the tree rather than trusting the
+(`internal/cli/docs_pr_state_test.go:303`), which counts it from the tree rather than trusting the
 document. Everything the design's §1–§5 rests on — the free-text `reason`, `fail`/`failLocked` and the
 three sites that overwrite the record's reason after them, the phrase-table classifier beside
 `oauthLimitPhrases`, the six digest flags, the four pattern rules, the additive-schema precedent —
