@@ -36,12 +36,12 @@ instead of fixing it. The findings and what each changed, in one line each:
 | **M-a** | The "loopback is the attacker's machine" argument **fails when approval happens on a phone** — cross-device phishing | QR proximity or number matching; the phone shows the client (**marked unverified**) and the redirect host; **a single-use POST**, an ID token never in a GET URL, nothing pushed unstarted | D923's amendment; spec.md §3, §8; M5, M6 |
 | **M-b** | The family spend limit was not enforced across **concurrent** runs | Reserve `min(job cap, remaining)` **atomically against the family counter** at spawn, settle at finalize; for `client_credentials` the family is the client | D924's amendment; spec.md §6, §8; M2, M9 (deferred) |
 | **M-c** | The library's defaults contradict the design (PKCE optional, empty challenge = `plain`, unknown scopes dropped, extra grants, a `SigningKey` with no home, non-RFC-8414 discovery) | Refuse a missing or non-`S256` challenge and an unknown scope **before the library**; only the code and refresh grants; opaque tokens or the key in Secret Manager; **the M5 gate file is the owner's to create** | D921's amendment; spec.md §1, §3, §6; M5 |
-| **M-d** | Refresh rotation is a **check-then-write race** | Condition the rotation on the **ETag of the same read**, with a small grace window | D930's amendment; spec.md §6; M2 |
+| **M-d** | Refresh rotation is a **check-then-write race** | Condition the rotation on the **generation of the same read**, with a small grace window | D930's amendment; spec.md §6; M2 |
 | **M-e** | `allUsers` makes **every route** public, including P8's `report_intent`/`record_override` | Every tool maps to a scope and an unmapped tool is refused; **"off" means no `allUsers` binding**; cap `max-instances` and the body size; log unauthenticated refusals and never write them to the database; **M4 must not widen `tf.Cover`** | D920's and D934's amendments; spec.md §2, §5, §8; M4, M7 |
 | **M-f** | Where D933's lists are read from was unspecified, and **nothing owned client pre-registration** | Read a source **only an operator can write**; **refuse pre-registration inside an agent session**; keep `client_credentials` **off until it has an owner** | D929's and D933's amendments; spec.md §4, §7; M5, M7 |
 | **M-g** | `stream_logs`/`get_result` read raw `session/*.jsonl`, which can hold a credential the agent printed | Serve the progress record **redacted through `internal/safetext`** | D932's amendment; spec.md §8, §9; M8 |
 | **Low** | M1's `SpendUSD float64` cannot tell unset from zero — and `+Inf` passes the same test, which the review of 2026-11-05 found at `ee/coordinator/mcpauth/limits.go:298` | Optional **integer micros** and unknown modes refused; the client shown **unverified**; **Cloud Logging is the durable copy** | M1 (as written) and **M9** for the ceiling (deferred); M5, M10 |
-| **Workspaces** | `docs/workspaces` (a parallel run's amendment) now requires a member-bound assertion and an exchange at `/oauth/authorize` that keeps the paired-device approval | The dependency and the **identity mismatch** (a verified email against a device uid read back to an email) are noted; **this folder does not edit `docs/workspaces`** | spec.md §10; [reconciliation.md](reconciliation.md) §6 check 9 |
+| **Workspaces** | `docs/workspaces` (a parallel run's amendment, merged as **#1711** and read here) requires a member-bound assertion and an exchange at `/oauth/authorize` that keeps the paired-device approval | The dependency and the **identity mismatch** (a verified email against a device uid read back to an email) are noted; **this folder does not edit `docs/workspaces`** | spec.md §10; `docs/workspaces/spec.md:209-210`, `:217-219`; [reconciliation.md](reconciliation.md) §4a, the workspaces dependency |
 
 **Two tasks were cancelled by the amendment and will be rerun from the amended plan**: **M4** (its
 draft predates the D934/M-e answers) and **M6** (its predates M-a and H1). **M1 and M3 may
@@ -61,16 +61,17 @@ which is what the owner's answer of the same day picked out of the three candida
 
 **Reconciled against.** `origin/main` at `3d6ed04d`, read on 2026-11-01, **re-read on 2026-11-04 at
 `b41709ea`**, and **re-verified again on 2026-11-04 at `5998d67c`** for the amendment round — every
-citation the review's findings touched was checked against that commit, and the two owner-check and
-amendment citations the review supplied (the `zitadel/oidc` paths, and the parallel `docs/workspaces`
-amendment) are the ones marked **UNVERIFIED** because this container cannot read them. The first
+citation the review's findings touched was checked against that commit, and re-checked at the merge
+with `main`. **The one citation still marked UNVERIFIED is the `zitadel/oidc` paths**, which the
+review read outside this container; the parallel `docs/workspaces` amendment is **in this tree**
+(merged as #1711) and is cited where §10 states the dependency. The first
 reading was taken with the seventeen pull requests open then — most closely #1472
 (`docs/cloud-senior-review`, D880–D899), #1481 (`docs/run-without-checkout`, D901–D919) and #1483
 (`internal/rigor/rounds.go`). Every citation in [reconciliation.md](reconciliation.md) is a path and a
 line at the latest commit, and its §7 records the eight things `main` had overtaken in between:
 **managed mode, the person-class reads, `settings`/`rigor`/`accounts`, the project image catalog and
-#1676, `fugaro upgrade`, the CLI stream moving to 0.20.3, `stray.go`, and the paired device** (`fugaro pair` and the
-device allowlist, which is what D923's answer signs a person in with).
+#1676, `fugaro upgrade`, the CLI stream moving to 0.20.3, `stray.go`, and the paired device**
+(`fugaro pair` and the device allowlist, which is what D923's answer signs a person in with).
 
 **SECURITY-SENSITIVE.** Two things about this folder are not ordinary design text:
 

@@ -278,7 +278,7 @@ answer takes the recommendation, or defers a recommendation the owner judged not
 needs; D921 gains four constraints its defaults would otherwise reverse, with its licence still
 **UNCONFIRMED**; D922 gains the records' marks — keyed hashes, a MAC over each — and loses the
 assumption that a closed rules node is closed to IAM; D923 gains an accepted residual risk and a hardened device approval; D924 gains an atomic
-family reservation; D929 gains a switch, off until it has an owner; D930 gains an ETag-conditioned
+family reservation; D929 gains a switch, off until it has an owner; D930 gains a generation-conditioned
 rotation; D931 loses `spawn_task` to D936; D932 gains redaction; D933 gains the lists' source;
 D934 gains the meaning of "off".
 
@@ -402,8 +402,8 @@ token family would each read the same remaining figure and each be allowed it. T
 which M2 and M9 build:
 
 - at spawn, **reserve `min(the job's cap, the family's remaining)` atomically against the family
-  counter**, with an **ETag PUT** on the same read — `internal/rtdb/client.go:178` is `GetETag`,
-  which exists for exactly this conditional write;
+  counter**, with a conditional write **on the same read** — the generation-matched replace
+  `internal/blobx` gives the bucket the records live in (`internal/blobx/blobx.go:1`, M2);
 - **settle at finalize**, so the reservation returns to the family whatever the run did not spend;
 - **for a `client_credentials` token the family is the client**, which is the only family such a
   caller has (D929, amended).
@@ -476,9 +476,9 @@ refused.
 invokable and the whole handler in the perimeter. The amended answer, built by M4: **off is the
 absence of the `allUsers` binding** on the service, and turning the front door on is what adds it.
 That collides with the installer's own cover rule, and the collision is recorded rather than
-worked around: **`internal/infra/tf/cover.go:867` refuses `allUsers`**, so a plan carrying the
+worked around: **`internal/infra/tf/cover.go:913` refuses `allUsers`**, so a plan carrying the
 binding is **not covered** and its stage asks its **own typed confirmation**
-(`internal/infra/tf/cover.go:865`). **M4 must not widen `tf.Cover`** to make its own plan covered,
+(`internal/infra/tf/cover.go:911`). **M4 must not widen `tf.Cover`** to make its own plan covered,
 and its convergence test must **expect the typed confirmation** rather than a silent apply.
 
 ### The three low findings
@@ -513,8 +513,12 @@ mismatch** — a workspace identity is a **verified email**, while the MCP front
 **device uid read back to an email** — which is the same mismatch H1 is about and is why the
 workspaces amendment and this one have to be read together.
 
-**UNVERIFIED.** The workspaces amendment is a **parallel run's**; this container cannot read it, so
-the sentences above restate what the review reported rather than quoting a line of that folder.
+**Read, not assumed.** The workspaces amendment is a **parallel run's**, merged as **#1711** — and it
+is in this branch's own tree, so the sentences above are checked against its text rather than
+restating what the review reported: the assertion **carries the person's address, the provider that
+signed them in and the workspace's project** (`docs/workspaces/spec.md:209-210`), and the exchange at
+the member's `/oauth/authorize` **keeps the paired-device approval** of the member's own `fugaro
+pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §10 of [spec.md](spec.md).
 
 ### What the running tasks do
 
@@ -537,7 +541,7 @@ whose store is the one every document here now names.
 
 | D | The question | The answer, 2026-11-04 | Why |
 | --- | --- | --- | --- |
-| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**: `get_task_status`, `stream_logs`, `get_result`, `list_tasks`, and `cancel_task` if it can be built without the launch path. **`spawn_task` is its own later design item**, and no task in [implementation-plan.md](implementation-plan.md) starts a run (H2, owner's answer of 2026-11-04 — **DEFER**, not the review's recommendation) | `spawn_task` needs **three privileges, not one**, and the review found the design had priced only the third: `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override **container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and model credentials**. That contradicts the answer's own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing `spawn_task` at all. |
+| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**: `get_task_status`, `stream_logs`, `get_result` and `list_tasks` — and `cancel_task` goes with `spawn_task` into the later design item, because the marker it writes is an object in the runs bucket (`internal/runstore/runstore.go:1315`) and that is the same write the coordinator does not hold. **`spawn_task` is its own later design item**, and no task in [implementation-plan.md](implementation-plan.md) starts a run (H2, owner's answer of 2026-11-04 — **DEFER**, not the review's recommendation) | `spawn_task` needs **three privileges, not one**, and the review found the design had priced only the third: `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override **container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and model credentials**. That contradicts the answer's own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing `spawn_task` at all. |
 
 **What a later `spawn_task` design item has to answer**, written here so the deferral is a plan and
 not a shrug:
@@ -547,8 +551,8 @@ not a shrug:
   caller could otherwise rewrite.
 - **Run-token minting moves out of the public service**, so the service that answers strangers holds
   no signer.
-- **An argument allowlist**: no `--no-budget-check` (`internal/cli/run.go:301`), no `--token`
-  (`:292`), no free-form `--run-id`; and **always pass `mode = max(requested, the token's minimum)`**,
+- **An argument allowlist**: no `--no-budget-check` (`internal/cli/run.go:325`), no `--token`
+  (`:313`), no free-form `--run-id`; and **always pass `mode = max(requested, the token's minimum)`**,
   so a caller cannot ask for less than its token allows.
 
 **What this moves**: M9 and the parts of M10 that depend on it leave the first slice; the shared-files
@@ -677,12 +681,6 @@ code task starts:
    project can answer it. **Which store** it is checked against is no longer open: the plan's §8
    records the owner's answer of 2026-11-05 — the bucket `fugaro-mcpauth-<gcp-project>` — so this
    check is written to it, and M4 creates the bucket it names.
-
-9. **The workspaces dependency is settled in both directions.** The parallel workspaces work requires
-   a member-bound assertion and an exchange at `/oauth/authorize` that keeps the paired-device
-   approval (spec.md §10), and **this container cannot read that folder's amendment**: the two
-   designs have to agree about what approving a sign-in means, and about the identity mismatch
-   between a verified email and a device uid, before M5 is built. **UNVERIFIED here.**
 
 ## 7. What `main` had overtaken, and what was fixed in place
 

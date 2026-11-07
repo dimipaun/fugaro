@@ -199,9 +199,9 @@ acquire a public write endpoint.
 2026-11-04). A public service with a switch inside it is a public service whose whole handler is the
 perimeter; the switch is therefore **the presence or absence of the `allUsers` invoker binding** on
 the service, and `fugaro update` is what adds it. That collides with the installer's own cover rule
-and the collision is recorded rather than worked around: `internal/infra/tf/cover.go:867` refuses
+and the collision is recorded rather than worked around: `internal/infra/tf/cover.go:913` refuses
 `allUsers` in a plan, so the plan that turns the front door on is **not covered** and its stage asks
-its **own typed confirmation** (`internal/infra/tf/cover.go:865`). The task that builds it must
+its **own typed confirmation** (`internal/infra/tf/cover.go:911`). The task that builds it must
 **not** widen that cover rule to make its own plan quiet, and its convergence test expects the
 confirmation rather than a silent apply.
 
@@ -448,7 +448,7 @@ and are enforced in one place, ahead of every handler:
 | `get_task_status` | `tasks:read` | The run's state, from the run record | Must not read the runs bucket outside the project's own prefix |
 | `stream_logs` | `tasks:read` | The run's recorded progress (D932) | Must not stream the project's whole log |
 | `get_result` | `tasks:read` | The outcome, the diff or the pull request link | Must not return a body from the forge that carries a token |
-| `cancel_task` | `tasks:write` | Writes the cancel marker `fugaro cancel` writes | Must not stop a job the project does not own |
+| `cancel_task` | `tasks:write` | Writes the cancel marker `fugaro cancel` writes — **deferred with `spawn_task`** (D936: the marker is an object in the runs bucket, the second privilege the coordinator does not hold) | Must not stop a job the project does not own |
 | `list_tasks` | `tasks:read` | Recent runs of the project, with filters | Must not list another project's runs |
 
 **The tool is `spawn_task`, not the `submit_task` of §0** — the owner's name for it, answered on
@@ -465,12 +465,15 @@ override **container arguments** — the base image's entrypoint is `tini --`
 (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and
 model credentials**. That contradicts D923's own "the coordinator mints nothing" and M6's
 `TestTheCoordinatorMintsNoCustomToken`. **So the first slice is the authorization server plus
-`get_task_status`, `stream_logs`, `get_result`, `list_tasks` — and `cancel_task` if it can be built
-without the launch path.** No task in [implementation-plan.md](implementation-plan.md) starts a run.
+`get_task_status`, `stream_logs`, `get_result` and `list_tasks`; `cancel_task` goes with `spawn_task`
+into the later design item rather than into the first slice**, because the marker it writes is an
+object in the runs bucket (`internal/runstore/runstore.go:1315`, `fugaro cancel`'s own write) and so
+needs the same runs-bucket write the coordinator does not hold — "without the launch path" is not a
+condition it can meet. No task in [implementation-plan.md](implementation-plan.md) starts a run.
 **What a later `spawn_task` design item has to answer** is written in
 [reconciliation.md](reconciliation.md) §4b (D936): no `runWithOverrides`, per-run input under a
 bucket prefix only the coordinator writes, run-token minting moved out of the public service, and an
-**argument allowlist** — no `--no-budget-check` (`internal/cli/run.go:301`), no `--token` (`:292`),
+**argument allowlist** — no `--no-budget-check` (`internal/cli/run.go:325`), no `--token` (`:313`),
 no free-form `--run-id`, and `mode = max(requested, the token's minimum)`.
 
 **And when it is built there is one launch path, not two** (D931, the owner's answer of
@@ -538,9 +541,10 @@ The amended answer, built by M2 and M9 (**M9 is deferred** — D936 — so the r
 it, and M2 carries the counter's shape):
 
 - **At spawn, reserve `min(the job's cap, the family's remaining)` atomically against the family
-  counter**, with an **ETag PUT** on the same read — `internal/rtdb/client.go:178` is `GetETag`,
-  which exists for exactly this conditional write, so exactly one reservation wins and the loser is
-  told what remains rather than being handed the same headroom.
+  counter**, with a conditional write **on the same read** — the generation-matched replace
+  `internal/blobx` gives the bucket the records live in (`internal/blobx/blobx.go:1`, M2) — so
+  exactly one reservation wins and the loser is told what remains rather than being handed the same
+  headroom.
 - **At finalize, settle**: the reservation returns to the family whatever the run did not spend, so
   a run that stops early does not hold the family's headroom for its whole lifetime.
 - **For a `client_credentials` token the family is the client** (D929, amended), which is the only
@@ -628,10 +632,11 @@ or from the CLI; either way it is one delete, and the next call with the revoked
 **The rotation is conditioned on the record it read** (finding M-d). Check-then-write is a race: two
 requests presenting the same refresh token both read it as live and both rotate, so a genuine
 double-submit reads as theft and a theft reads as a double-submit. The amended answer, built by M2:
-**the rotation is written with an ETag PUT on the same read** (`internal/rtdb/client.go:178`), so
-exactly one rotation wins; and the loser inside a **small grace window** is answered with the same
-new pair rather than being read as a replay, so a client on a slow link is not logged out by its own
-retry. A replay **outside** the window revokes the family, exactly as above.
+**the rotation is conditioned on the generation of the same read** — the generation-matched replace
+`internal/blobx` gives the bucket the records live in (`internal/blobx/blobx.go:1`, M2), which is the
+condition an `ETag` PUT gave a store inside the database — so exactly one rotation wins; and the
+loser inside a **small grace window** is answered with the same new pair rather than being read as a
+replay, so a client on a slow link is not logged out by its own retry. A replay **outside** the window revokes the family, exactly as above.
 
 **Only narrowing** (the second rule of this folder). Scopes, the rigor window, the Hotfix flag and
 the spend limit all merge by taking the tighter side against the project's policy, the repository's
@@ -842,7 +847,7 @@ and the run's own ceiling all apply, and the gateway is the enforcer, exactly as
 other run. A token cannot raise any of them, and a refusal names which one it hit. **The amendment
 of 2026-11-04 (finding M-b) is that the family's counter has to be *reserved*, not read**: two runs
 started from one family would otherwise each read the same remaining figure and each be allowed it,
-so the reservation is atomic against the family counter with an ETag PUT at spawn and is settled at
+so the reservation is atomic against the family counter with a generation-matched write at spawn and is settled at
 finalize (§6). Without it the tightest control in the design holds for one run at a time and not
 across concurrent ones.
 
@@ -935,10 +940,10 @@ approving a sign-in is**. The mismatch is one sentence: **a workspace identity i
 while this front door's identity is a device uid read back to an email** — the same fact finding H1
 is about, which is why the two amendments have to be read together and why the accepted risk in §8 is
 not only this folder's problem. **The dependency runs one way** — this design adapts to the
-workspaces decision, not the reverse — and it is **UNVERIFIED here**: this container cannot read
-that folder's new text, so the sentences above restate what the review reported
-([reconciliation.md](reconciliation.md) §4a), and settling it is an owner check
-([reconciliation.md](reconciliation.md) §6, check 9).
+workspaces decision, not the reverse — and **it is read here rather than assumed**: that folder's
+amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and it agrees with §3 and
+§8 of this file about what an approval is
+([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
 
 ## 11. What this design leaves open
 
@@ -966,9 +971,10 @@ that folder's new text, so the sentences above restate what the review reported
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.
 - **What the workspaces exchange and this front door agree an approval is** (§10), and the **identity
-  mismatch** between a workspace's verified email and this front door's device uid: both are
-  **UNVERIFIED here** and are an owner check
-  ([reconciliation.md](reconciliation.md) §6, check 9).
+  mismatch** between a workspace's verified email and this front door's device uid: **the amended
+  workspaces text is in this tree and read here** (`docs/workspaces/spec.md:209-210`, `:217-219`), so
+  what is open is the **implementation** agreement the two designs' tasks have to keep rather than
+  the text ([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
 - **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
   (§3, D921, answered 2026-11-04 with its licence still **UNCONFIRMED** — the owner or counsel

@@ -148,7 +148,7 @@ build.
 
 | D | The question | The answer | What it moves here |
 | --- | --- | --- | --- |
-| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**; `spawn_task` (and `cancel_task`, which writes the runs bucket's marker) is its own **later design item** | **M9 leaves the first slice**, and the M10 rows that depend on it leave with it; §2's order, §4's table and §5's slot are re-cut |
+| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**; `spawn_task` (and `cancel_task`, whose marker is an object in the runs bucket — the second privilege the coordinator does not hold) is its own **later design item** | **M9 leaves the first slice**, and the M10 rows that depend on it leave with it; §2's order, §4's table and §5's slot are re-cut |
 | **D935** | Where do the token records live, now that IAM bypasses the rules? | **Outside the main database** — the store §1's answer of 2026-11-05 picked: the bucket `fugaro-mcpauth-<gcp-project>`, whose only member is the front door's own account `mcp_server`, with the `mcpauth` node a **tripwire** in the rules and **no database admin** on the public service | **M2** builds the store, **M3**'s node becomes a tripwire, and **M4** creates the bucket and its one grant |
 
 **Why `spawn_task` is deferred, in one paragraph.** It needs **three privileges, not one**:
@@ -162,7 +162,7 @@ the answer's own "the coordinator mints nothing" (D923) and M6's
 [reconciliation.md](reconciliation.md) §4b and in §7 below; the four requirements are: no
 `runWithOverrides` (use `run.jobs.run` with per-run input under a bucket prefix only the coordinator
 writes); run-token minting moved out of the public service; an argument allowlist (no
-`--no-budget-check` at `internal/cli/run.go:301`, no `--token` at `internal/cli/run.go:292`, no
+`--no-budget-check` at `internal/cli/run.go:325`, no `--token` at `internal/cli/run.go:313`, no
 free-form `--run-id`); and `mode = max(requested, the token's minimum)` always.
 
 ## 2. The edges, the levels and the critical path
@@ -451,7 +451,7 @@ store D935 moves the records into, which this task creates as a bucket of its ow
 - **The amendment's findings (2026-11-04). The review's findings were H3, M-e and D934's cover
   collision; all three are answered above**: the account holds no `firebasedatabase.admin` over
   anything (H3), **"off" is the absence of the `allUsers` binding** and the stage that adds it asks
-  its **own typed confirmation** (`internal/infra/tf/cover.go:865`), and **M4 must not widen
+  its **own typed confirmation** (`internal/infra/tf/cover.go:911`), and **M4 must not widen
   `tf.Cover`** to make its own plan covered (`:867` refuses `allUsers`).
 
 - **Files (8):** `deploy/terraform/gcp/modules/installation/coordinator.tf`,
@@ -1018,9 +1018,10 @@ here is small enough to pull forward.
   keeps the shape and the four requirements the deferral decided; **how a run is started from outside
   the CLI is not this plan's to write**, and it is not a task here until it is designed and the owner
   approves it. Anything that starts a run from the front door before then is a finding.
-- **The workspaces exchange.** `docs/workspaces` (a parallel run's amendment) requires a
-  **member-bound assertion and an exchange at `/oauth/authorize` that keeps the paired-device
-  approval**, so its exchange and M5's authorize step meet at one endpoint; **this plan does not own
+- **The workspaces exchange.** `docs/workspaces` (a parallel run's amendment, merged as **#1711**)
+  requires a **member-bound assertion and an exchange at `/oauth/authorize` that keeps the
+  paired-device approval**, so its exchange and M5's authorize step meet at one endpoint; **this plan
+  does not own
   that decision and does not edit that folder** — [spec.md](spec.md) §10 states the dependency and
   the **identity mismatch** (a workspace identity is a verified email; this front door's is a device
   uid read back to an email), and it stays a dependency until the workspaces work lands.
