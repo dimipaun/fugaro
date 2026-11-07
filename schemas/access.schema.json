@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/access.schema.json",
+  "title": "fugaro access grants (Realtime Database node config/admin/access)",
+  "description": "The role and scope pairs, at the Realtime Database node config/admin/access (D1585, docs/roles-scopes). Each grant names a member, a role and the scope the role is held at; a person may hold several pairs, so the document is a list rather than a map keyed by member. The scope is stored as the string a person types — `project`, `all-repos`, or a comma-separated list of canonical repository patterns — so the reader re-validates it with the same grammar that admitted it. Unlike a CLI document, this schema is closed (additionalProperties is false at both levels) because the Go reader is strict too: internal/access decodes with DisallowUnknownFields, so a node carrying a field the reader does not know is refused rather than ignored, and a field that is added here without a reader change is a node every installation would halt on. The node is under config/admin, whose `.read` and `.write` are false: no client token reads it, and the CLI reaches it over IAM (F22, F28).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["grants"],
+  "properties": {
+    "grants": {
+      "type": "array",
+      "description": "The stored role and scope pairs, in the order they were written. The cap is internal/access.MaxGrants.",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["user", "role", "scope"],
+        "properties": {
+          "user": {
+            "type": "string",
+            "description": "The member, in the canonical `user:<address>` form internal/access.Member builds: the local part byte for byte and the domain lower-cased. A group, a domain and a service account are refused — the CLI cannot match one against a caller (F25).",
+            "pattern": "^user:[^@\\s]+@[^@\\s]+$"
+          },
+          "role": {
+            "type": "string",
+            "description": "The role granted, one of the closed set internal/access.Roles returns: viewer, operator, admin.",
+            "enum": ["viewer", "operator", "admin"]
+          },
+          "scope": {
+            "type": "string",
+            "description": "What the role covers: `project`, `all-repos`, or a comma-separated list of canonical repository patterns. A lone `*` is refused — it is `all-repos`, which only a project admin grants (D1583).",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
