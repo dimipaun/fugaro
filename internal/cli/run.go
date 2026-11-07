@@ -728,10 +728,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// would drop — is refused here, before the task is written, rather
 		// than by the job it was launched into (G2, D721, D722).
 		// The configuration this launch can read of the run's own — the file
-		// at the ref, with the project layer it resolves over — read once for
-		// both readers below: the levels the launch asks about, and the level
-		// a file writes its model as none (checkNoneModelImage).
-		fileCfg := launchFileConfig(ctx, env, spec)
+		// at the ref, with the project layer it resolves over, or the layer
+		// the task carries where no file can be read — resolved once for both
+		// readers below: the levels the launch asks about, and the level one of
+		// the two writes with its model named none (checkNoneModelImage,
+		// launchLevelsConfig).
+		fileCfg := launchLevelsConfig(ctx, env, spec)
 		levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown)
 		if err != nil {
 			return launchResult{}, err
@@ -837,10 +839,10 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
 				return launchResult{}, err
 			}
-			// The spelling's own gate, on the same file read and beside the
-			// one above: a runner older than noneModelSince reads `model:
-			// none` as a model ID rather than as the level's switch
-			// (checkNoneModelImage).
+			// The spelling's own gate, on the same configuration read and
+			// beside the one above: a runner older than noneModelSince reads
+			// `model: none` as a model ID rather than as the level's switch
+			// (checkCloneNoneModelImage), the task's own layer included.
 			if err := checkCloneNoneModelImage(env.lc, spec, fileCfg, warn); err != nil {
 				return launchResult{}, err
 			}

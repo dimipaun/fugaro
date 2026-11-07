@@ -1551,3 +1551,56 @@ func TestNoneModelSinceHasAReleaseBullet(t *testing.T) {
 		}
 	}
 }
+
+// TestRecipesSkewRefusesTheNoneModelInTheTaskLayerOutsideACheckout: a launch
+// from outside the repository's checkout reads no fugaro.yaml
+// (TestRecipesSkewRefusesResolvedL3OutsideACheckout), and the task then carries
+// the project layer itself (spec.ProjectLayer, embedProjectLayer) — the same
+// configuration launchReviewLevelsAsk resolves over, which is why this gate
+// reads it too (launchLevelsConfig). A layer whose defaults.agent.levels names
+// a level's model none is text no file of the repository has to carry, and a
+// job image between reviewLevelsSince and noneModelSince resolves that level on
+// the model ID none: the level the layer switched off is run, or the run dies
+// at bootstrap under an allowed_models ceiling. Gating on the file alone skips
+// the launch in silence.
+//
+// Mutation (gate on launchFileConfig alone, as the gate was first wired): the
+// 0.20.0 launch below succeeds with the layer's level running.
+func TestRecipesSkewRefusesTheNoneModelInTheTaskLayerOutsideACheckout(t *testing.T) {
+	f := newCloudFixture(t)
+	publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	below := shiftRelease(t, noneModelSince, -1)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+below)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "Fix it.")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.agent.levels (read for acme/app)",
+		"needs a job image whose runner knows " + noneModelKnows,
+		"fugaro " + noneModelSince + " or later",
+		"; or write it as none: true in the project layer's defaults.agent.levels and publish it again",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	// The levels gate above it is not what refused this launch: at 0.20.0 the
+	// block's keys are read by the runner, which is the whole of that gate's
+	// question, so what is left is the spelling.
+	if strings.Contains(err.Error(), "the review levels (review_levels, agent.levels)") {
+		t.Errorf("the levels gate refused a launch whose image acts on levels: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	// And at the release the gate names the same launch stands, layer and all.
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+noneModelSince)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("%s: %v", noneModelSince, err)
+	}
+}

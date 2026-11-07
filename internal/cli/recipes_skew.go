@@ -1282,11 +1282,9 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // refuses (launchPolicyGates), and inventing a floor off it would refuse a
 // launch that works: that read fails towards asking nothing. The file's own
 // absence does not — it is not a file the run's bootstrap refuses, it is a
-// launch made from outside the repository's checkout (launchFileConfig), and
-// what this launch knows without it is resolved rather than skipped: the mode
-// --mode asked for, the owner's floor, and the project layer the task carries
-// (launchLayerConfig), which is the configuration half no checkout was needed
-// to read.
+// launch made from outside the repository's checkout — and the configuration
+// this reads is launchLevelsConfig's, which resolves over the project layer the
+// task carries when there is no file to read, rather than reading none.
 //
 // The mode is the launcher's approximation of the run's: the ref's file with
 // the flag raised over it, as noteRigorRequest reads it, since the
@@ -1296,18 +1294,6 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // first-line step of its own. CatalogDefault is read as false: it decides
 // level 1's own default alone, which this gate does not judge.
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) (string, error) {
-	if cfg == nil {
-		// No configuration file was read, because the launcher stands
-		// outside the repository's checkout and this run's ref is not in one
-		// either. It is not without configuration all the same: the task
-		// carries the project layer itself, and resolving over that layer
-		// keeps the mode the flag asked for (spec.Rigor), the owner's floor,
-		// and the layer's own defaults — a rigor default of its own, an
-		// agent.levels block — which is the part an empty configuration
-		// would hide, and hidden it is a level a runner older than
-		// reviewLevelsSince drops in silence.
-		cfg = launchLayerConfig(spec)
-	}
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
@@ -1326,6 +1312,26 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		return "", userErr("%v", err)
 	}
 	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+}
+
+// launchLevelsConfig is the configuration the launch's review-level gates read:
+// the file the run will check out, resolved over the layer that applies to it
+// (launchFileConfig), and — where no file can be read at all, because the
+// launcher stands outside the repository's checkout and this run's ref is not
+// in one either — the project layer the task carries itself (launchLayerConfig).
+//
+// One function for both readers is the point: the levels ask
+// (launchReviewLevelsAsk) and the gate on a level whose model is the literal
+// none (checkNoneModelImage, checkCloneNoneModelImage) judge the same text, and
+// in this state the task's layer is all of it — the layer's own agent.levels
+// block, and a level in it a runner older than noneModelSince resolves as a
+// model ID rather than skipping. A gate reading launchFileConfig alone sees
+// nothing there and runs the level the layer switched off.
+func launchLevelsConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
+	if cfg := launchFileConfig(ctx, env, spec); cfg != nil {
+		return cfg
+	}
+	return launchLayerConfig(spec)
 }
 
 // launchLayerConfig is the configuration a launch from outside the
@@ -1424,10 +1430,12 @@ func checkCloneReviewLevelsImage(lc *localcfg.Config, spec *task.Spec, subject s
 // noneModelSources reports, for the launch's noneModelSince gate, whether the
 // configuration the run will read names a level's model none: the repository's
 // fugaro.yaml (fromRepo) or the project layer it resolves over (fromLayer).
-// Both are read as the run reads them — the file at the ref, and the layer the
-// published text holds — and both are read off the text rather than off the
-// resolved agent.levels, which the fold leaves without the literal
-// (Config.RepoLevelsNoneModelSet, ProjectLayer.SetsLevelsNoneModel).
+// The configuration is launchLevelsConfig's, so a launch from outside the
+// repository's checkout — no file read at all — is asked of the layer the task
+// carries, which is the same layer that stands in for the levels ask above it.
+// Both are read off the text rather than off the resolved agent.levels, which
+// the fold leaves without the literal (Config.RepoLevelsNoneModelSet,
+// ProjectLayer.SetsLevelsNoneModel).
 //
 // The task's own review_levels is not one of the sources: the launcher writes
 // it, and it writes the level folded into `none: true` (LevelSetting.validate),
@@ -1732,8 +1740,10 @@ func rigorLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fr
 
 // launchFileConfig is the configuration a launch reads the file the run will
 // check out for — the config-key image gates (rigorLaunchSources,
-// governanceLaunchSources) and compressionRequested: from cascadeRefConfig,
-// with the launcher's own checkout standing in when the ref cannot be read.
+// governanceLaunchSources), compressionRequested, and launchLevelsConfig,
+// which resolves the task's own layer over it when this answers nil: from
+// cascadeRefConfig, with the launcher's own checkout standing in when the ref
+// cannot be read.
 func launchFileConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
 	cfg := cascadeRefConfig(ctx, env, spec)
 	if cfg == nil {
