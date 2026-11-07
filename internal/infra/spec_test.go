@@ -3513,10 +3513,12 @@ func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
 
 // TestBakedWorkflowRefusesAPrebuiltCatalogEntry: a checkout: baked job's image
 // has to hold this repository's checkout, and a prebuilt catalog entry is the
-// one source kind nothing guarantees that of (D1191). The refusal is raised
-// where the job spec is built and not by the job: the image is written into the
-// job at deploy time (F14), so a job that started on one would die on its first
-// minute with nothing naming the entry it runs.
+// one source kind nothing guarantees that of (D1191). The refusal belongs where
+// the spec is built, because the entry is chosen and the image written there
+// (F7, F14); a job that started would have to read its own image and object to
+// it. The shape is not one that fails on its own today — a baked job with no
+// checkout clones at launch (unbuiltOnBaked's own comment) — so what this test
+// holds is the rule, not the rescue of a broken job.
 //
 // The three shapes are the three ways an entry reaches a workflow's job — a
 // pin, the tag-cover rule and the project's default — because the refusal reads

@@ -857,9 +857,10 @@ func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry,
 // from (PIC4): a Dockerfile at a repository or inline in the catalog. The list
 // is what is built rather than what is not, so a kind added to the catalog
 // later is refused by D1191's rule until someone states that a build writes it.
-// That is the direction the failure is safe in: an entry this rule let through
-// because nobody had added its kind to a list of prebuilt ones would deploy a
-// job whose first minute fails, and the entry and the job would name nothing.
+// That is the direction the failure is safe in: the list lagging behind a kind
+// the catalog gains refuses a configuration by name, and the sentence names
+// both ways out, where the opposite list would hold a kind to be built that no
+// build in this installation writes — the shape D1191 refuses.
 var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.SourceInline}
 
 // unbuiltOnBaked is D1191's refusal, raised where the job spec is built and not
@@ -871,6 +872,16 @@ var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.Sourc
 // needs: (internal/config's own refusal) — and the entry half says the workflow
 // has to be pointed at the entry, because a pin or the project's default would
 // keep choosing the one being refused.
+//
+// The refusal is a change of behavior and not the end of a broken shape: a baked
+// job whose entry is prebuilt runs today, because the job carries the
+// repository's remote and the runner clones it at launch where the image holds
+// no checkout (runner's openCheckout, gitops.OpenOrClone). What D1191 refuses is
+// the one source kind no build here writes: after the removal baked means the
+// image holds this repository's checkout, and a prebuilt entry cannot keep that
+// meaning. The cost lands on a deployed repository: fugaro setup and fugaro
+// update --repo build its job specs through this path, so one already deployed
+// on such an entry stops on this sentence and edits the workflow or the catalog.
 func unbuiltOnBaked(workflow string, e config.Entry) error {
 	return userErr("workflow %s: the catalog entry %s has source kind %s, which Fugaro builds no image from, so its image holds no checkout of this repository — and a checkout: %s job runs an image that holds one; use checkout: %s, which cannot carry image_name: or needs:, or point the workflow at a catalog entry Fugaro builds (fugaro image add <name> --dockerfile <owner/name:path> --tags <tags>)",
 		workflow, e.Name, e.Source.Kind, config.CheckoutBaked, config.CheckoutClone)
