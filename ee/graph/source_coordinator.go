@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The coordinator scope: the view the coordinator's sweep stored for each of
@@ -56,15 +57,17 @@ type CoordinatorSource struct {
 	// View is every repository's stored view, in the order the caller read
 	// them. A repository with no stored node is the contract's `stored: false`
 	// case — the runs half, which the read answers rather than refusing — and
-	// it is a state of the scope rather than an error.
+	// it is a state of the scope rather than an error. A repository the sweep
+	// could not reconcile carries its marker (`RepoView.Stale`) beside it.
 	View coordinator.StoredProjectView
-	// AsOf is when the sweep stored these views: the sweep's stored time, and
-	// the only age this scope can claim. The stored view carries no time of its
-	// own — it is a function of its inputs (ee/coordinator/sweep.go), which is
-	// why the Coordinator screen already claims no age for it
+	// AsOf is when the sweep stored these views: the age the caller can give,
+	// and never a time the read itself carries. The stored view carries no time
+	// of its own — it is a function of its inputs (ee/coordinator/sweep.go),
+	// which is why the Coordinator screen already claims no age for it
 	// (COORDINATOR_NO_AGE_WORD) — so the time is the caller's to give, and the
 	// zero time is the caller saying it has none: the scope then claims no age
-	// and is never stale by age.
+	// and is never stale by age. The one age fact the read does carry is the
+	// sweep's own marker, and it is not this field: see `marked`.
 	AsOf time.Time
 	// Now is when the caller read the views.
 	Now time.Time
@@ -87,6 +90,15 @@ type CoordinatorSource struct {
 // one the view itself names when a record has no pull request (`Record.Label`).
 // A record with neither a pull request nor a run is the one shape the join
 // never produces, and it draws nothing.
+//
+// The scope's state is the worst fact the read carries, in this order. A
+// repository the sweep could not reconcile — `RepoView.Stale`, the marker the
+// sweep leaves beside a view it could not recompute — makes the scope stale
+// however fresh the caller's own time is, because that repository's records
+// are the last ones a sweep could compute and a coordinator failing for hours
+// is not up; the reason reads the marker's own words. Then a project none of
+// whose repositories has a stored view is down. Then a caller-supplied time
+// older than two sweeps is stale. Otherwise the scope is up.
 //
 // It refuses an identity that sanitising would rewrite — a repository or a run
 // id carrying a control character, a bidi override or a run of spaces — rather
@@ -117,7 +129,18 @@ func (s CoordinatorSource) Nodes() ([]Node, SourceState, error) {
 		}
 	}
 
+	marked := s.marked()
 	switch {
+	case len(marked) > 0:
+		// The marker is the read's own statement that this repository could not
+		// be reconciled, and it outranks the caller's time: it says the data is
+		// known-incomplete, where the caller's time only says when it was
+		// fetched. Its own words are the reason and no age is derived from them
+		// — the marker's Since is when the failures began, not when the view
+		// beside it was stored, and the Coordinator screen draws it exactly as
+		// stored for the same reason.
+		state.State = SourceStale
+		state.Reason = "the sweep has not reconciled " + safetext.FieldListLine(marked)
 	case len(s.View.Repos) > 0 && stored == 0:
 		// Nothing is stored: the coordinator has never reconciled a repository
 		// of this project, which is a state of the scope and not a failed read
@@ -135,6 +158,30 @@ func (s CoordinatorSource) Nodes() ([]Node, SourceState, error) {
 		state.AsOf = &at
 	}
 	return nodes, state, nil
+}
+
+// marked is the repositories the sweep could not reconcile, each one as its
+// marker reads: the repository, the marker's own time and the marker's own
+// reason. It is the one age fact a stored view carries, and it is a statement
+// rather than a measurement — the marker says since when the sweep has been
+// failing, never how old the view beside it is.
+//
+// The marker's reason is another writer's text, so the caller prints these
+// through safetext: they are the values, and FieldListLine is what bounds how
+// many of them one sentence of this program's carries.
+func (s CoordinatorSource) marked() []string {
+	var out []string
+	for _, rv := range s.View.Repos {
+		if rv.Stale == nil {
+			continue
+		}
+		repo := rv.Repo
+		if repo == "" {
+			repo = rv.View.Repo
+		}
+		out = append(out, fmt.Sprintf("%s since %s: %s", repo, rv.Stale.Since.UTC().Format(time.RFC3339), rv.Stale.Reason))
+	}
+	return out
 }
 
 // coordinatorNode is one record as a node, and false for a record with no

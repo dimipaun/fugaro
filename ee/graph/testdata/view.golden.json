@@ -121,26 +121,23 @@
         "records": [
           {
             "pr": {
-              "number": 12,
-              "title": "Index the catalogue nightly",
-              "branch": "fugaro/20261011-090000-bbbb",
-              "state": "open"
+              "number": 12
             },
             "runs": [
               {
-                "id": "20261011-090000-bbbb",
+                "id": "20261106-090000-bbbb",
                 "pr": 12,
                 "status": "succeeded",
                 "outcome": "ready",
                 "terminal": true,
-                "branch": "fugaro/20261011-090000-bbbb",
+                "branch": "fugaro/20261106-090000-bbbb",
                 "base_branch": "main",
                 "declared_by": "other@example.com",
                 "files": []
               }
             ],
-            "branch": "fugaro/20261011-090000-bbbb",
-            "in_flight": true,
+            "branch": "fugaro/20261106-090000-bbbb",
+            "in_flight": false,
             "files": [],
             "services": []
           }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,12 +26,17 @@ import (
 // The fixture says it is the document that command prints, and §6.13 pins two
 // things about that document's records: their order (work still in flight
 // first, then by pull request number, then by run ID) and their `in_flight`.
-// Both are `coordinator.Join`'s own output, so each view here is rebuilt from
-// its own pull requests and runs and must come back identical. A fixture whose
-// records sit in an order the join cannot produce — or whose `in_flight`
-// contradicts it — would otherwise be pinned by the tests below as "the view's
-// own order", and a reader would take a document the command never prints for
-// the shape it prints.
+// Both are `coordinator.Join`'s own output, so each view here is rebuilt the
+// way the command builds it and must come back identical: a repository with a
+// stored view is the join of that view's own pull requests and runs, and one
+// with none is the runs half — `coordinator.Join(repo, nil, runs)`, which is
+// the only shape the fallback produces, so a record there can carry no title,
+// no state and no branch, and its pull request is the number a run names. A
+// fixture that drifts from either — records in an order the join cannot
+// produce, an `in_flight` that contradicts it, a pull request field the runs
+// half never fills — would otherwise be pinned by the tests below as "the
+// view's own order", and a reader would take a document the command never
+// prints for the shape it prints.
 func loadStoredView(t *testing.T) coordinator.StoredProjectView {
 	t.Helper()
 	data, err := os.ReadFile("testdata/view.golden.json")
@@ -45,15 +51,19 @@ func loadStoredView(t *testing.T) coordinator.StoredProjectView {
 	}
 	for _, rv := range v.Repos {
 		var prs []coordinator.PullRequest
+		if rv.Stored {
+			for _, rec := range rv.View.Records {
+				if rec.PR != nil {
+					prs = append(prs, *rec.PR)
+				}
+			}
+		}
 		var runs []coordinator.Run
 		for _, rec := range rv.View.Records {
-			if rec.PR != nil {
-				prs = append(prs, *rec.PR)
-			}
 			runs = append(runs, rec.Runs...)
 		}
 		if want := coordinator.Join(rv.Repo, prs, runs); !reflect.DeepEqual(want, rv.View) {
-			t.Fatalf("testdata/view.golden.json's %s view is not what coordinator.Join makes of its own pull requests and runs, so it is not the document the command prints (json-contract.md §6.13):\n fixture %+v\n command %+v", rv.Repo, rv.View, want)
+			t.Fatalf("testdata/view.golden.json's %s view (stored: %v) is not what the command makes of its own pull requests and runs, so it is not the document the command prints (json-contract.md §6.13):\n fixture %+v\n command %+v", rv.Repo, rv.Stored, rv.View, want)
 		}
 	}
 	return v
@@ -121,7 +131,7 @@ func TestCoordinatorNodesPerRepoAndRelease(t *testing.T) {
 		},
 		{
 			Key: "coordinator:acme/lib#12", Source: "coordinator", Kind: NodePullRequest,
-			ID: "acme/lib#12", Title: "Index the catalogue nightly", Repo: "acme/lib", State: "open",
+			ID: "acme/lib#12", Repo: "acme/lib", State: "succeeded",
 		},
 	}
 	if len(nodes) != len(want) {
@@ -146,50 +156,67 @@ func TestCoordinatorNodesPerRepoAndRelease(t *testing.T) {
 // which is the rule the Coordinator screen already keeps: a view with no time
 // is not a view that is stale.
 //
+// The one age fact the read does carry is the sweep's own marker
+// (`coordinator.RepoView.Stale`), and it outranks the caller's time: a
+// repository the sweep could not reconcile holds the records of the last sweep
+// that could compute them, so the scope is stale however recently it was read
+// — a coordinator that has been failing for hours is not up. The reason reads
+// the marker's own words, and no age is derived from them: the marker says
+// since when the failures began, not how old the view beside it is.
+//
 // Hand mutation this fails on: dropping the age comparison, which makes the
-// two-sweeps case read up; and inverting the boundary to >=, which makes the
-// exact-two-sweeps case stale.
+// two-sweeps case read up; inverting the boundary to >=, which makes the
+// exact-two-sweeps case stale; and ignoring the marker, which reports a
+// repository the sweep has been failing on as up.
 func TestCoordinatorSourceStateIsStaleAfterTwoSweeps(t *testing.T) {
-	view := loadStoredView(t)
 	now := coordinatorAt
+	marker := &coordinator.Stale{Since: now.Add(-6 * time.Hour), Reason: coordinator.StalePullRequests}
 	cases := []struct {
 		name string
 		asOf time.Time
+		mark *coordinator.Stale
 		want string
 	}{
-		{"one sweep old", now.Add(-SweepPeriod), SourceUp},
-		{"exactly two sweeps old", now.Add(-2 * SweepPeriod), SourceUp},
-		{"a second past two sweeps", now.Add(-2*SweepPeriod - time.Second), SourceStale},
-		{"no stored time to claim", time.Time{}, SourceUp},
+		{"one sweep old", now.Add(-SweepPeriod), nil, SourceUp},
+		{"exactly two sweeps old", now.Add(-2 * SweepPeriod), nil, SourceUp},
+		{"a second past two sweeps", now.Add(-2*SweepPeriod - time.Second), nil, SourceStale},
+		{"no stored time to claim", time.Time{}, nil, SourceUp},
+		{"a repository the sweep could not reconcile", now.Add(-time.Minute), marker, SourceStale},
+		{"a repository the sweep could not reconcile, with no age claimed", time.Time{}, marker, SourceStale},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			view := loadStoredView(t)
+			view.Repos[0].Stale = tc.mark
 			_, state, err := CoordinatorSource{View: view, AsOf: tc.asOf, Now: now}.Nodes()
 			if err != nil {
 				t.Fatalf("Nodes: %v", err)
 			}
 			if state.State != tc.want {
-				t.Fatalf("state = %q, want %q (as of %v, read at %v)", state.State, tc.want, tc.asOf, now)
+				t.Fatalf("state = %q, want %q (as of %v, read at %v, marked %v)", state.State, tc.want, tc.asOf, now, tc.mark != nil)
 			}
-			switch tc.want {
-			case SourceStale:
+			if tc.want == SourceStale {
 				if state.Reason == "" {
 					t.Error("a stale scope carries no reason")
 				}
-				if state.AsOf == nil || !state.AsOf.Equal(tc.asOf) {
-					t.Errorf("state.AsOf = %v, want %v (the sweep's stored time)", state.AsOf, tc.asOf)
-				}
-			default:
-				if state.Reason != "" {
-					t.Errorf("an up scope carries the reason %q", state.Reason)
-				}
-				if !tc.asOf.IsZero() && (state.AsOf == nil || !state.AsOf.Equal(tc.asOf)) {
-					t.Errorf("state.AsOf = %v, want %v", state.AsOf, tc.asOf)
-				}
-				if tc.asOf.IsZero() && state.AsOf != nil {
+			} else if state.Reason != "" {
+				t.Errorf("an up scope carries the reason %q", state.Reason)
+			}
+			if tc.asOf.IsZero() {
+				if state.AsOf != nil {
 					t.Errorf("state.AsOf = %v, want nil: the caller claimed no time", state.AsOf)
 				}
+			} else if state.AsOf == nil || !state.AsOf.Equal(tc.asOf) {
+				t.Errorf("state.AsOf = %v, want %v (the caller's time, which the marker does not replace)", state.AsOf, tc.asOf)
 			}
+			if tc.mark != nil {
+				for _, want := range []string{"acme/app", tc.mark.Reason, tc.mark.Since.UTC().Format(time.RFC3339)} {
+					if !strings.Contains(state.Reason, want) {
+						t.Errorf("the reason %q does not name %q: the marker is the age fact the read carries", state.Reason, want)
+					}
+				}
+			}
+			assertClean(t, "state.Reason", state.Reason)
 		})
 	}
 }
@@ -201,6 +228,11 @@ func TestCoordinatorSourceStateIsStaleAfterTwoSweeps(t *testing.T) {
 // run from one that is running, and the nodes the read did produce are still
 // drawn: a scope that is down is a state, not an exit (H3).
 //
+// The record here is the one the runs half can hold: a run that names no pull
+// request, since the fallback joins the runs with no pull requests at all
+// (`coordinator.Join(repo, nil, runs)`), so nothing in it carries the host's
+// answer.
+//
 // Hand mutation this fails on: returning an error for a repository with no
 // stored view, which is what the command's own refusal path would do.
 func TestCoordinatorUnstoredRepoIsAStateNotAnError(t *testing.T) {
@@ -209,8 +241,7 @@ func TestCoordinatorUnstoredRepoIsAStateNotAnError(t *testing.T) {
 		Repo:   "acme/app",
 		Stored: false,
 		View: coordinator.View{Repo: "acme/app", Records: []coordinator.Record{{
-			PR:       &coordinator.PullRequest{Number: 12, Title: "Index the catalogue nightly", State: "open"},
-			Runs:     []coordinator.Run{},
+			Runs:     []coordinator.Run{{ID: "20261106-140000-cccc", Status: "running"}},
 			Files:    []string{},
 			Services: []string{},
 		}}, Collisions: []coordinator.Collision{}},
@@ -228,7 +259,7 @@ func TestCoordinatorUnstoredRepoIsAStateNotAnError(t *testing.T) {
 	if state.AsOf != nil {
 		t.Errorf("state.AsOf = %v, want nil: there is no stored view to date", state.AsOf)
 	}
-	if len(nodes) != 1 || nodes[0].Key != "coordinator:acme/app#12" {
+	if len(nodes) != 1 || nodes[0].Key != "coordinator:acme/app#20261106-140000-cccc" {
 		t.Errorf("the runs half was not drawn: %+v", nodes)
 	}
 }
