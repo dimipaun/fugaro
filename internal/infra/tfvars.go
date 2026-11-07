@@ -266,6 +266,30 @@ type CredentialsServiceSpec struct {
 	// emails here would be a second derivation that can drift from the
 	// accounts the deployer creates.
 	JobAccounts []CredentialsJob `json:"job_accounts"`
+	// ReviewJobAccounts are the installation's REVIEW-ONLY job variants
+	// (CredentialsReviewJob): the review class's admitted set, which is a set
+	// of its own and not a row of JobAccounts above — a review caller is
+	// admitted to one account's model credential and to nothing else
+	// (credsvc's ClassReview), so a deployment that named only the coding
+	// table would refuse every review launch with the fail-closed sentence
+	// internal/cli's credentialsServiceConfig writes for an empty set.
+	//
+	// The rows carry the triple and never the account's email, for the reason
+	// JobAccounts carries its own three fields: a review job's service account
+	// is a hash of (profile, provider, account)
+	// (credsvc.ReviewServiceAccountID), so a list of addresses here would be a
+	// second derivation that can drift from the accounts the deployer creates.
+	// Account is the Claude account the variant's calls are served by, which
+	// the service cannot derive from the triple alone: it is the published
+	// policy's own spelling (config.ProjectJobAccounts' mapping, never empty),
+	// and a revision reads no policy at start-up (D143).
+	//
+	// It is left out of an installation whose local config names no profile,
+	// which is an installation that deploys no review job and whose service
+	// admits no review caller — the fail-closed state, and not an error: the
+	// class is inert until a profile exists (unlike JobAccounts, which the
+	// service refuses an empty version of).
+	ReviewJobAccounts []CredentialsReviewJob `json:"review_job_accounts,omitempty"`
 	// VerifierAccounts are the identities that may ask the service whether a
 	// verdict's signature is its own (C3.9g1, D1068): the installation's own
 	// verifier account when nobody names one, and the owner's list when they
@@ -311,6 +335,26 @@ type CredentialsJob struct {
 	Provider string `json:"provider"`
 	Repo     string `json:"repo"`
 	Workflow string `json:"workflow"`
+}
+
+// CredentialsReviewJob is one review-only variant of the installation's
+// project jobs as the credentials service's environment carries it: the
+// (profile, provider, account) triple the variant's job and service account
+// are derived from (credsvc.ReviewJobName, credsvc.ReviewServiceAccountID),
+// where account is the Claude account the policy's admissions spell — never
+// empty, because the axis spells the profile's no-account job as the empty
+// string and the admissions spell it config.DefaultClaudeAccount
+// (config.ReviewVariantAccount), which is the value the service's own
+// ReviewJobAccount.Account holds and the pairing resolves a call by.
+//
+// It is the review class's own row rather than a ProjectJob: what the service
+// admits a review caller AS is the triple and nothing else, and the variant's
+// image, resources, mounts and grants are the deployment's business (they are
+// the coding job's own twin, internal/infra/projectjobs.go's reviewVariant).
+type CredentialsReviewJob struct {
+	Profile  string `json:"profile"`
+	Provider string `json:"provider"`
+	Account  string `json:"account"`
 }
 
 // The credentials service's singletons. The account is what reads the bundle,
@@ -411,14 +455,19 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 	if err != nil {
 		return CredentialsServiceSpec{}, err
 	}
+	reviews, err := CredentialsReviewJobAccounts(lc)
+	if err != nil {
+		return CredentialsServiceSpec{}, err
+	}
 	return CredentialsServiceSpec{
-		AccountID:       CredentialsAccountID,
-		Service:         CredentialsServiceName,
-		Image:           image,
-		BundleSecret:    gcp.ProjectSecretID(lc.Name, CredentialsBundleName),
-		FirebaseProject: b.FirebaseProject,
-		RTDBURL:         b.RTDBURL,
-		JobAccounts:     jobs,
+		AccountID:         CredentialsAccountID,
+		Service:           CredentialsServiceName,
+		Image:             image,
+		BundleSecret:      gcp.ProjectSecretID(lc.Name, CredentialsBundleName),
+		FirebaseProject:   b.FirebaseProject,
+		RTDBURL:           b.RTDBURL,
+		JobAccounts:       jobs,
+		ReviewJobAccounts: reviews,
 		// The one rule, applied here as the publisher applies it: the owner's
 		// list when the config states one — an explicit empty list included,
 		// which clears the route — and the node's otherwise. The pointer is
@@ -504,6 +553,52 @@ func CredentialsJobAccounts(lc *localcfg.Config) ([]CredentialsJob, error) {
 		return strings.Compare(a.Workflow, b.Workflow)
 	})
 	return out, nil
+}
+
+// CredentialsReviewJobAccounts is the installation's review-only job variants
+// as the module's var.credentials_service carries them: one row per variant
+// the deployer creates, read off the derivation that creates them rather than
+// spelled a second time (ProjectReviewJobs), so the accounts this service
+// admits are the accounts the deployment runs.
+//
+// It is the same axis as CredentialsJobAccounts and one step further along it:
+// the coding table is a row per repository job, this one a row per review
+// variant of the installation's project jobs. An installation whose local
+// config names no profile gets none and no error — it deploys no project job
+// and so no variant, and a service that admits no review caller is the
+// fail-closed state the class is inert in, not the refusal an empty coding
+// table is.
+//
+// The rows are sorted (profile, provider, account) and carry no duplicates.
+func CredentialsReviewJobAccounts(lc *localcfg.Config) ([]CredentialsReviewJob, error) {
+	// No profile, no project job, no variant (ProjectJobs' own first rule) —
+	// and nothing else about the installation is read, not even the runs
+	// bucket, which only a job's own environment needs.
+	if len(lc.Profiles) == 0 {
+		return nil, nil
+	}
+	bucket, err := bucketName(lc)
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	jobs, err := ProjectReviewJobs(lc, bucket, lc.UsesVertex())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CredentialsReviewJob, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, CredentialsReviewJob{Profile: j.Profile, Provider: j.Provider, Account: j.Account})
+	}
+	slices.SortFunc(out, func(a, b CredentialsReviewJob) int {
+		if c := strings.Compare(a.Profile, b.Profile); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Provider, b.Provider); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Account, b.Account)
+	})
+	return slices.Compact(out), nil
 }
 
 // CredentialsServiceURLOf returns the credentials_service.url the installation
