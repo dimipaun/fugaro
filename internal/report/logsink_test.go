@@ -140,54 +140,11 @@ func TestLogPathFollowsUserDir(t *testing.T) {
 	}
 }
 
-func TestLogFileModeAndDirMode(t *testing.T) {
-	// F6a: 0600 in a 0700 directory, and an existing one is tightened.
-	t.Run("a directory this sink creates", func(t *testing.T) {
-		state, env := logStateDir(t)
-		sink, err := OpenLog("update", env, "linux", logFixedNow, nil)
-		if err != nil {
-			t.Fatalf("OpenLog: %v", err)
-		}
-		defer sink.Close()
-		fi, err := os.Lstat(sink.Path())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := fi.Mode().Perm(); got != 0o600 {
-			t.Errorf("the log is mode %04o, want 0600: it is secrets-adjacent and kept for 14 days", got)
-		}
-		di, err := os.Lstat(logDirOf(state))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := di.Mode().Perm(); got != 0o700 {
-			t.Errorf("the logs directory is mode %04o, want 0700", got)
-		}
-	})
-
-	t.Run("an existing directory is tightened", func(t *testing.T) {
-		state, env := logStateDir(t)
-		dir := logDirOf(state)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		sink, err := OpenLog("update", env, "linux", logFixedNow, nil)
-		if err != nil {
-			t.Fatalf("OpenLog: %v", err)
-		}
-		defer sink.Close()
-		di, err := os.Lstat(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := di.Mode().Perm(); got != 0o700 {
-			t.Errorf("an existing 0755 directory stayed %04o, want 0700", got)
-		}
-	})
-}
+// The modes F6a asks for — 0600 and 0700, and an existing directory
+// tightened — are TestLogFileModeAndDirMode in logsink_unix_test.go: they are
+// POSIX modes, and Windows' os.FileMode is not the ACL that decides access
+// there, so asserting them here would fail on a platform this package ships
+// for.
 
 func TestRetention14Days(t *testing.T) {
 	state, env := logStateDir(t)
@@ -550,7 +507,9 @@ func TestRedactsTheLinesOfAMultiLineValue(t *testing.T) {
 	// F6: the sink matches a value inside a line, so a PEM-shaped value is
 	// caught by the lines the caller holds beside it — initsecrets.hold holds
 	// both, and this is the contract between the two: the whole value never
-	// matches, and each line does.
+	// matches, and each line does. The floor on which lines a caller holds is
+	// the caller's, and TestAShortLineOfAMultiLineValueIsNotHeld pins where
+	// that floor leaves the log.
 	_, env := logStateDir(t)
 	pem := "-----BEGIN KEY-----\nMIIabc\n-----END KEY-----"
 	secrets := []string{pem, "MIIabc"}
@@ -567,6 +526,32 @@ func TestRedactsTheLinesOfAMultiLineValue(t *testing.T) {
 	}
 	if !strings.Contains(body, "-----BEGIN KEY-----\n"+Redacted+"\n-----END KEY-----") {
 		t.Errorf("the value's lines are not the redacted ones:\n%q", body)
+	}
+}
+
+// TestAShortLineOfAMultiLineValueIsNotHeld is the boundary the doc comment on
+// Redactor states, and it is here so that a change to it has to be a decision
+// rather than a surprise: initsecrets.hold registers a multi-line value's
+// lines only from minSecretBytes (4) up, so a shorter line of a PEM-shaped
+// value is not a value this sink is ever given and is written to the log as it
+// arrived. The floor is not this package's to lower — a three-byte string is a
+// substring of ordinary output, and matching one would put the marker between
+// the letters of every line — so the test records the limit rather than
+// pretending to close it.
+func TestAShortLineOfAMultiLineValueIsNotHeld(t *testing.T) {
+	_, env := logStateDir(t)
+	pem := "-----BEGIN KEY-----\nabc\n-----END KEY-----"
+	secrets := []string{pem, "-----BEGIN KEY-----", "-----END KEY-----"}
+	sink, err := OpenLog("update", env, "linux", logFixedNow, func() []string { return secrets })
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	if _, err := sink.Write([]byte(pem + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	body := logBody(t, sink)
+	if want := Redacted + "\nabc\n" + Redacted + "\n"; body != want {
+		t.Errorf("the log holds\n%q\nwant\n%q", body, want)
 	}
 }
 
@@ -639,6 +624,10 @@ func TestSinkWithoutASecretsSourceKeepsStageLines(t *testing.T) {
 	}
 }
 
+// The other half of this test's name — the directory owned by another user —
+// is TestLogDirOwnedByAnotherUserMeansNoLog in logsink_unix_test.go: it reads
+// a uid out of the directory's stat, and the platforms that have no such field
+// answer "this user's" rather than refusing (logsink_other.go).
 func TestLogDirSymlinkOrForeignOwnerMeansNoLog(t *testing.T) {
 	// The links in these two cases point inside the state directory on
 	// purpose, and that is the whole point of them: a link out of the state
@@ -725,23 +714,6 @@ func TestLogDirSymlinkOrForeignOwnerMeansNoLog(t *testing.T) {
 		}
 		if names := logNames(t, elsewhere); len(names) != 0 {
 			t.Errorf("the log was written outside the state directory: %v", names)
-		}
-	})
-
-	t.Run("the logs directory belongs to another user", func(t *testing.T) {
-		state, env := logStateDir(t)
-		if err := os.MkdirAll(logDirOf(state), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		was := euid
-		euid = func() int { return was() + 1 }
-		t.Cleanup(func() { euid = was })
-		sink, err := OpenLog("update", env, "linux", logFixedNow, nil)
-		if err == nil {
-			t.Errorf("a directory owned by another user was accepted")
-		}
-		if sink == nil || sink.Path() != "" {
-			t.Errorf("the sink reports a path with no log: %v", sink)
 		}
 	})
 

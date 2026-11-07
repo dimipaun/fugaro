@@ -31,15 +31,20 @@ const Redacted = "[redacted]"
 // carry the agent's dependencies.
 //
 // Three limits follow from matching a value inside a line, and all three are
-// the caller's to know. A value that spans lines is never matched whole: a
-// caller holding one holds its lines too (initsecrets.hold does, for a PEM),
-// and the whole value is then still caught, line by line. A value that is a
-// substring of Redacted — `TED`, `EDACT` — survives inside the marker. And a
-// value that contains the marker — `a[redacted]` — can be put back together by
-// a shorter value's replacement on the same line, as `aXb` becomes
-// `a[redacted]b` when `X` is held. The last two both follow from the marker
-// being written out verbatim, which no fixed marker can avoid, and neither is
-// a shape a slot holds.
+// the caller's to know. A value that contains a newline is never matched
+// whole, and its lines are matched only if the caller holds them as values
+// too: this redactor cuts the stream at every newline, so a value spanning two
+// of them is not a substring of anything it ever sees. initsecrets.hold does
+// register a multi-line value's lines — but only those of at least
+// minSecretBytes (4) bytes, so a shorter line of such a value reaches the log
+// in clear; that floor is the caller's, not this package's, and nothing here
+// can close it, because a value under the floor is one the CLI has already
+// decided not to treat as a secret. A value that is a substring of Redacted —
+// `TED`, `EDACT` — survives inside the marker. And a value that contains the
+// marker — `a[redacted]` — can be put back together by a shorter value's
+// replacement on the same line, as `aXb` becomes `a[redacted]b` when `X` is
+// held. The last two both follow from the marker being written out verbatim,
+// which no fixed marker can avoid, and neither is a shape a slot holds.
 type Redactor struct {
 	out     io.Writer
 	secrets func() []string

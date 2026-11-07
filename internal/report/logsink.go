@@ -23,10 +23,14 @@ const (
 	// logRetention is how long a log is kept: 14 days, the spec's first half.
 	logRetention = 14 * 24 * time.Hour
 	// logKeepPerCommand is how many logs one command name keeps: 50, the
-	// spec's second half. It is per command name because the console polls
-	// (`plan status` about once a minute, `runs ls` and `budget show` per
-	// view) and a single global 50 would evict the `fugaro update` log the
-	// person wants to read after a failure (F6).
+	// spec's second half. It is per command name rather than one 50 for the
+	// directory because commands differ in how much they log: a busy one
+	// would spend a global budget and evict another command's log, and the
+	// log a person wants after a failure is the one the command that failed
+	// wrote — `fugaro update`, or the `run` whose failure block prints the
+	// path. Counting per name bounds one command's appetite without letting
+	// it reach another's (F6). The read commands are not the pressure here:
+	// they write no log at all (D1352, T6).
 	logKeepPerCommand = 50
 	// logDirMode is the mode of the directory the logs live in: 0700, since
 	// a log holds a run's full output and its neighbours have no business in

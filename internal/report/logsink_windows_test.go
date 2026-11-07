@@ -16,9 +16,10 @@ import (
 // `%APPDATA%`, which is where the config goes.
 //
 // What is pinned is the path shape only. Windows has no POSIX mode to assert
-// (`TestLogFileModeAndDirMode` is Unix's, and os.FileMode there is not the
-// ACL), and no uid for the directory ownership rule (logsink_other.go says
-// what that half does instead), so neither is checked here.
+// (`TestLogFileModeAndDirMode` and the ownership case are in
+// logsink_unix_test.go: a mode there is what os.FileMode reports, and a
+// directory's stat carries a uid), and logsink_other.go says what that half
+// does instead, so neither is checked here.
 func TestLogLivesUnderLocalAppData(t *testing.T) {
 	local := t.TempDir()
 	roaming := t.TempDir()
