@@ -202,7 +202,7 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
 **Decisions:** D1455. **Findings:** F7, F17. **Depends on:** FC2. **Reviewer tier:** standard.
 **SEC:** no (the classes come from the runner's own state, not from model output). **Owner-run:** no.
 
-- **Files (6, plus their tests):** `internal/runner/outcome.go` (the four `Decide` refusals),
+- **Files (5, plus the test files that carry the three assertions):** `internal/runner/outcome.go` (the four `Decide` refusals),
   `internal/runner/halt.go` (`haltClass` beside `haltReasonText`, `:159`), `internal/runner/runner.go`
   (`verify`, `runCommits`, the `config_invalid` refusals), `internal/runner/refused.go`
   (`branch_moved`), `internal/runner/prflow.go` (`git_provider_error`), and the test files that carry
@@ -555,6 +555,13 @@ and it is not one of FC1–FC9.
 | **FC9** | FC6 merged, and **D1457** (the skill names the key) answered |
 | **FC2 and FC4** (the SEC half) | their own gates, **plus an independent review that is not waived**: these are the two tasks that touch model output and the one writer, and the design's §10 flags them for exactly that |
 | **Check 350** | FC6 and FC7 deployed on the sandbox; **owner-run, and it gates only the claim that the owner can see the failure classes**, never the release |
+
+**D1451 and D1462 are not gates of any task.** D1451 is this folder's own shape and it is already
+taken ([spec.md](spec.md) *is* the design's verbatim copy, and the README states which copy is
+pinned); D1462 is a rule every task above obeys — the pins go into the existing
+`internal/cli/docs_*_test.go` files, and no task adds one, because the docs-pin census counts them
+(`ls internal/cli/docs_*_test.go | wc -l`, `internal/cli/docs_rigor_modes_test.go:528`) and four other
+folders' reconciliations state the same count in a row their own pins re-run.
 
 **If FC7's second half is dropped** (D1466 = the table alone), FC8 loses one document and one
 sentence and nothing else moves. **If D1460 = no**, FC5's diagnose field and FC8's row and sentence
