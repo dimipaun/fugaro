@@ -362,6 +362,46 @@ func TestGitForwardRefusesWithoutIdentity(t *testing.T) {
 	}
 }
 
+// TestGitForwardUnreachableCarriesNoPath: a forward that could not reach the
+// service is answered a class and logged the transport's own cause — never the
+// *url.Error net/http wraps that cause in, whose text is the URL this listener
+// went to with the caller's escaped path and query on it. That URL is the one
+// way a path could reach a line this listener writes, and the file's own
+// contract, which later tasks read as theirs, is that none does.
+func TestGitForwardUnreachableCarriesNoPath(t *testing.T) {
+	logs := &logBuf{}
+	f := startForward(t, closedPort(t), func(o *GitForwardOptions) {
+		o.Log = slog.New(slog.NewJSONHandler(logs, nil))
+	})
+
+	resp, body := forwardGet(t, f, nil)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("the fetch answered %d, want 502", resp.StatusCode)
+	}
+	if !strings.Contains(body, "unreachable") {
+		t.Errorf("the answer = %q, want the class %q", body, "unreachable")
+	}
+	lines := logs.lines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d log lines, want 1", len(lines))
+	}
+	if got, _ := lines[0]["reason"].(string); got != "unreachable" {
+		t.Errorf("the log line's reason = %q, want %q", got, "unreachable")
+	}
+	// The cause is kept: a line that named nothing would satisfy the check
+	// below and leave the run's operator with a class and no dial.
+	if e, _ := lines[0]["error"].(string); e == "" {
+		t.Errorf("the log line carries no cause: %v", lines[0])
+	}
+	// The whole line, its cause included: what the caller asked for is what a
+	// *url.Error would have said, and it is not here.
+	for _, s := range []string{forwardPath, "/v1/bitbucket/proxy/"} {
+		if text := logs.String(); strings.Contains(text, s) {
+			t.Errorf("the log line carries %q: %s", s, text)
+		}
+	}
+}
+
 // TestGitForwardStreams: the request body is copied through as it arrives and
 // the answer as it is answered — nothing here holds a pack (Check 190's 33 MiB
 // push is what this exists for), and the service sees the first bytes of a body

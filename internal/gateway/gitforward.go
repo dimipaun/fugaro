@@ -41,7 +41,8 @@ package gateway
 //   - It writes no audit line and no line per request: one audit line per
 //     proxied request is the service's (G7), and this listener knows nothing
 //     the line would want. What it logs is a forward it could not make, as a
-//     class — never the path, the headers or a token.
+//     class and the transport's own cause (forwardCause) — never the path, the
+//     headers or a token.
 
 import (
 	"context"
@@ -52,6 +53,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -334,12 +336,32 @@ func copyForwardAnswer(dst, src http.Header) {
 // fail answers a forward this listener could not make. The caller gets a status
 // and the class; the run's log gets the class and the cause, which is the
 // runner's to read and nobody else's. No token, no header and no path of the
-// caller's is in either.
+// caller's is in either: the cause is forwardCause's, which is the transport's
+// own and not the URL net/http wraps it in.
 func (f *GitForward) fail(w http.ResponseWriter, reason string, cause error) {
-	if cause != nil {
-		f.log.Error("gateway: a git forward failed", "reason", reason, "error", cause)
-	} else {
-		f.log.Error("gateway: a git forward failed", "reason", reason)
+	attrs := []any{"reason", reason}
+	if c := forwardCause(cause); c != nil {
+		attrs = append(attrs, "error", c)
 	}
+	f.log.Error("gateway: a git forward failed", attrs...)
 	http.Error(w, "fugaro: this run's git request could not be forwarded to the credentials service ("+reason+")", http.StatusBadGateway)
+}
+
+// forwardCause is the cause of a failed forward as the log line may carry it.
+// net/http answers every failure of client.Do — and of a request's own build —
+// with a *url.Error, whose text is the URL the forward went to with the
+// caller's escaped path and query on it: the one way a path could reach a line
+// this listener promises never carries one. Under it is the transport's error —
+// a dial failure, a TLS failure, a reset — which names the address and no path,
+// and is the whole of what a run's operator can act on. Nothing under it (a
+// *url.Error that is only a URL) is nil, and the class is then the line. An
+// error that is no *url.Error is logged as it is: the other two a forward fails
+// with are a run with no identity and a refused mint, and neither carries the
+// caller's path.
+func forwardCause(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	return ue.Err
 }
