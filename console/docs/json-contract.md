@@ -2679,11 +2679,16 @@ exit** (H3): the read answered, and this entry is its answer.
   that `as_of` — which a one-shot read, `graph --json`'s, does not supply, so for
   it `stale` is the marker alone.
 - `unreadable` — the source answered with something this build cannot read. It
-  is a state of the source, never a refusal of the whole read: the coordinator's
-  scope answers it when the database holds a view, or a stale marker, that its
-  strict decoding refuses — an unknown field, a value of another shape — and
-  `reason` is that refusal's own sentence, so a screen says what it could not
-  read rather than showing a graph with records quietly missing.
+  is a state of the source, never a refusal of the whole read. The coordinator's
+  scope answers it in two cases, and they are one class: the database holds a
+  view, or a stale marker, that its strict decoding refuses — an unknown field, a
+  value of another shape — or it holds a record whose identity this build cannot
+  carry into a `key`, because sanitising it would rewrite it and a rewritten key
+  is one two things can share (D1356, `Sanitise`); the scope says it cannot read
+  the answer rather than printing a key that could merge two nodes. `reason` is
+  the refusal's own sentence, so a screen says what it could not read rather than
+  showing a graph with records quietly missing. The scope's `nodes` is **empty**
+  in both cases: a screen draws the state and the reason, never a partial graph.
 
 **A refused read is the other case, and it is terminal.** An invalid `--source`
 (H1), or a scope this build does not have (`orchestrator:` and `local:` before

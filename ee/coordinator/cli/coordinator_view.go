@@ -56,7 +56,7 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	}
 	// The provider is this command's step and not the read's: it is the field
 	// the document below writes (D814), and resolving it can read a checkout
-	// (env.RepoProvider falls back to the one the repository's fugary.yaml
+	// (env.RepoProvider falls back to the one the repository's fugaro.yaml
 	// declares), which is a thing this command may do and a reader of the same
 	// node may not.
 	coordinatorStatusProviders(ctx, env, repos, project.Repos)
