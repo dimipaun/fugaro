@@ -262,8 +262,11 @@ type CredentialsService struct {
 //     the credential the service must then hand back, and a `cascade` run
 //     has no credential of its own to fall back to (D143). It is read from
 //     localcfg.Repo.CredentialsServiceReady, the per-repository record
-//     `fugaro update` writes from the bundle itself, because this package
-//     reads no cloud.
+//     `fugaro update` writes from the bundle AND the auth its plan was built
+//     with — a record of an apply, so it carries the auth that apply was made
+//     for, and an owner who applies a root before committing the cascade
+//     reads false here until a run of its own applies it again — because this
+//     package reads no cloud.
 //   - auth: the repository's agent.auth is one the service serves, which is
 //     config.AuthCascade alone. It is READ LIVE from the repository's
 //     fugaro.yaml at every build of its spec and never stored: a stored copy

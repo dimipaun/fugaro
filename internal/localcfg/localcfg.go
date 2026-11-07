@@ -1171,19 +1171,37 @@ type Repo struct {
 	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
 	// enables the Vertex AI API. fugaro update sets it.
 	Vertex bool `yaml:"vertex,omitempty"`
-	// CredentialsServiceReady records that the installation's credentials
-	// service holds a model credential this repository's runs can be served
-	// with — the bundle is not empty — so a job of it may stop mounting one
-	// of its own. fugaro update sets it, from one read of the bundle it
-	// already makes with the operator's identity, and writes it on the entry
-	// of the repository whose root IT applies: the grant that makes the
-	// service usable to a repository is made by that root's own apply
+	// CredentialsServiceReady records that this repository's root has been
+	// applied with the installation's credentials service ON — its bundle
+	// held a model credential AND the agent.auth the runs read was the
+	// cascade — so a job of it may stop mounting a credential of its own and
+	// be handed the service's address instead. It is the switch's own answer
+	// as the plan that applied the root was built with it — the writer is
+	// internal/cli's recordCredentialsServiceReady, over
+	// infra.CredentialsServiceServes.
+	//
+	// fugaro update sets it, from one read of the bundle it already makes
+	// with the operator's identity, and writes it on the entry of the
+	// repository whose root IT applies: the grant that makes the service
+	// usable to a repository is made by that root's own apply
 	// (deploy/terraform/gcp/modules/workflow/sa.tf), so a record written for
 	// a repository this run does not apply would vouch for a service its jobs
 	// have no grant to knock with — a `cascade` run has no credential of its
-	// own to fall back to. A bundle that is later emptied switches the
-	// repository back off on the next update, which is what puts its jobs'
+	// own to fall back to. A bundle that is later emptied, or a checkout
+	// edited back to an auth the service does not serve, switches the
+	// repository off again on the next update, which is what puts its jobs'
 	// mounts back, and that is the fail-safe direction.
+	//
+	// The auth is folded in rather than judged again by each reader, and that
+	// is the one state it closes: an owner who fills the bundle and applies
+	// the root while the checkout still says `agent.auth: oauth` gets a
+	// held-off root — mounts kept, no roles/run.invoker — and a record that
+	// said ready over it would make the next launch, on the cascade the owner
+	// commits afterwards, hand that job an address the service refuses for a
+	// grant nobody made. A record is a statement about an apply, so it
+	// carries the auth that apply was made for; the launch still reads the
+	// live auth for the other direction, a cascade repository edited back to
+	// `oauth` being withheld whatever the record says.
 	//
 	// "Writes it" and not "sets it to true": the write is the value the run
 	// read, so clearing it is a write like any other. The member is then
@@ -1195,11 +1213,9 @@ type Repo struct {
 	// It is recorded rather than read where it is used because the reader
 	// is internal/infra's spec builder, which reads no cloud: this is the
 	// half of the switch (infra.CredentialsServiceServes) that the local
-	// config is the only source of. The other two halves — the
-	// installation's own block and the repository's agent.auth — are read
-	// where the spec is built, and the auth is deliberately not stored
-	// here: a stored copy could outlive an edit to the fugaro.yaml it
-	// came from.
+	// config is the only source of. The installation's own block is read
+	// where the spec is built, and the repository's agent.auth is read there
+	// too, live from the fugaro.yaml the runs read.
 	CredentialsServiceReady bool `yaml:"credentials_service_ready,omitempty"`
 }
 

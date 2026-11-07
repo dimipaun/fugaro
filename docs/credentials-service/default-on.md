@@ -44,6 +44,7 @@ that finds every place it is written and every test that pins it.
 | **Reverses** | the "ships dormant / optional" rulings and the `--provision-credentials` opt-in as the *only* way the service is deployed |
 | **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it, because the drop it triggers is auth-blind (§1.4) |
 | **Amended after review** | 2026-11-07 — the readiness record is a **per-repository fact written by the door that applies that repository's root**, and it is written as the value that root's **plan was built with**: a record vouches for a grant, only a root's own apply makes one, and the same rule runs the other way (§3 DON8) — and **neither door writes one in a coding agent's session or in a run's own process**, where the bundle is not read at all |
+| **Amended after review** | 2026-11-07 — the record is the **switch itself**, not the reading of the bundle: the auth its plan was built for is **folded into it** (`infra.CredentialsServiceServes`, not a second copy of its conjunction), so a root applied before its owner committed the cascade is recorded held off and no launch is handed an address whose `roles/run.invoker` grant no apply made. The auth stays **read live** at every build and every launch, which is what honours an edit in the other direction |
 | **The Open item, answered** | **2026-11-05: DEPLOY NOW, SWITCH LATER.** The service deploys everywhere; the switch happens **per repository** and only where the service can serve that repository's runs — its auth mode must be one the service serves **and** the bundle must hold what that mode needs. §1.5 states what the switch flips; §3 DON8 is the task |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
 
@@ -935,7 +936,10 @@ the field. **It needs no second command**, which is the owner's own constraint: 
      (`internal/config/defaults.go:77`), and this is the condition the review's finding is about. **It
      is read live from `c.in.Cfg.Agent.Auth` at every build of the repository root's spec**, not stored:
      the auth mode is in `fugaro.yaml` in the checkout, and a stored copy could outlive an edit to it,
-     which is the one way this switch could break a run that used to work.
+     which is the one way this switch could break a run that used to work. The record below carries a
+     copy of the auth **an apply was made for** — a fact about that apply, not a second source for this
+     condition: the launch reads the live auth whatever the record says, in both directions of an edit
+     (the header's third 2026-11-07 row).
 - **The record, and why there is one.** Conditions 1 and 3 are readable wherever a spec is built, but
   **condition 2 is not**: the bundle is a Secret Manager secret, `internal/infra` is a hermetic spec
   builder that reads no cloud, and `internal/infra/spec.go`'s whole input is the local config, the
@@ -971,7 +975,24 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   same reason in the other direction: a record that says ready for a root whose plan was made held off is
   the same broken state. A repository joining the local config is that case — its spec is built with no
   entry to read — so its first run deploys the held-off root and records `false`, and the run after it,
-  in the same checkout, is the one that switches it on. A bundle that is later emptied switches the
+  in the same checkout, is the one that switches it on. **The record is the SWITCH, not the bundle
+  reading**, and that means the auth of the plan it was built with is folded into it (the header's third
+  2026-11-07 row, which is the round that found the gap): `recordCredentialsServiceReady` writes
+  `infra.CredentialsServiceServes`' own answer, and not a second copy of its conjunction.
+  The state it closes is the natural adoption order — an owner fills the bundle and runs
+  `fugaro update --repo` while the checkout still says `agent.auth: oauth` (that root is planned held
+  off: mounts kept, no `roles/run.invoker`), and commits the cascade afterwards. A record written from
+  bare readiness would say ready there; the next launch reads the cascade from the document, sees the
+  record vouch for the service and hands the job the address — whose grant no apply ever made — so the
+  provider opens GitHub keyless for a mint the private service refuses and a `cascade` run has nothing
+  of its own to fall back to (D143). Folded in, that run records `false`, the launch withholds the
+  address, the job keeps the mounts that apply kept, and the run after the cascade is committed — the
+  one that applies the root with the switch on — is the one that records `true`. The auth is judged as
+  the RUNS read it (`deploymentConfig`: the `fugaro.yaml` at the default branch, else this working
+  tree), the same document the plan above is built from, or the record and the plan are one edit apart.
+  The backfill needs no such fold: its evidence is the deployed root's own tfvars, which carry the
+  service exactly when that apply dropped the mounts and made the grant, so the auth of that apply is
+  already in the document it reads. A bundle that is later emptied switches the
   repository back off on the next `update`, which re-adds the mounts, which is the fail-safe direction
   and not a failure. **Both doors leave the record alone in a coding agent's session and in a run's own
   process** (the header's 2026-11-07 row): the bundle holds every model
@@ -1010,7 +1031,11 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   same installation, `agent.auth: oauth`, **every one of the three flips still off** — the condition the
   review's finding is about); `TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate` (a record that
   says on, a `fugaro.yaml` that now says `oauth`, and the spec holds the switch off — the live read of
-  condition 3); `TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied` (the fail-safe direction); and
+  condition 3); `TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied` (the fail-safe direction);
+  `TestTheRecordFollowsTheAuthTheRunsRead` (the record is the switch: one ready bundle, two auths, and
+  the `oauth` one records nothing — the direction the third review round found, with the held-off apply
+  it belongs to) and `TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService` (that same state at the
+  launch: a cascade document, the block present, no record, and the job is handed no address); and
   `TestNoRepositoryRootGainsAServiceTheBundleCannotServe` (the whole-predicate guard: **no** repository
   root in the fixtures plans `installation.credentials_service` set unless all three conditions hold).
 - **Red step:** `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone` fails the moment DON1 lands and
@@ -1023,7 +1048,9 @@ the field. **It needs no second command**, which is the owner's own constraint: 
 - **Mutation to hold it:** drop condition 2 and switch on readiness by the block alone → the empty-bundle
   test fails, and a `cascade` run in the field stops at the service's named refusal;
   drop condition 3 → the `oauth` test fails, which is the review's finding reintroduced; store the auth
-  mode in the record instead of reading it live → the edit-the-`fugaro.yaml` test fails; make
+  mode in the record instead of reading it live → the edit-the-`fugaro.yaml` test fails; record the
+  bundle's reading alone and leave the auth to the launch → `TestTheRecordFollowsTheAuthTheRunsRead`
+  fails, the `oauth` apply recorded ready over a root it planned held off; make
   `repoCredentialsService` return the block regardless → the no-repository-gains test fails and `sa.tf`
   drops the mounts of a repository nobody switched on; implement the predicate a second time in
   `internal/cli` and let the two disagree → the launch and the plan part company, which is the state

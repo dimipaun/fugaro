@@ -3583,17 +3583,19 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	for _, w := range infra.BaseImageWarnings(lc.BaseImages, outs) {
 		r.warn(w)
 	}
-	// The credentials service's readiness, before the spec is built: the
-	// record is condition 2 of the switch (infra.CredentialsServiceServes),
-	// and the spec below reads it out of the local config. Refreshing it
-	// afterwards would leave this run planning a held-off root — mounts kept,
-	// no invoker grant — while writing a record that tells the next launch
-	// the service is ready, which is the one state the switch exists to make
-	// impossible. The persisted write stays where it is, in writeRepoConfig
-	// after the apply, and it writes THIS value — the one the spec was built
-	// with — so the record cannot claim a grant the plan did not make. Only
-	// this repository's entry moves: it is the only root this door applies.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo)
+	// The credentials service's switch, before the spec is built: the record
+	// is condition 2 of infra.CredentialsServiceServes and carries the third
+	// one with it (the auth below, cfg — the document a RUN reads, not this
+	// working tree), and the spec reads it out of the local config. Refreshing
+	// it afterwards would leave this run planning a held-off root — mounts
+	// kept, no invoker grant — while writing a record that tells the next
+	// launch the service is there to be used, which is the one state the
+	// switch exists to make impossible. The persisted write stays where it is,
+	// in writeRepoConfig after the apply, and it writes THIS value — the one
+	// the spec was built with — so the record cannot claim a grant the plan
+	// did not make. Only this repository's entry moves: it is the only root
+	// this door applies.
+	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Agent.Auth)
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -4463,13 +4465,12 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		next.Repos = map[string]localcfg.Repo{}
 	}
 	key := repoConfigKey(lc, spec.Name)
-	// CredentialsServiceReady is the credentials service's readiness the SPEC
-	// below was built with: recordCredentialsServiceReady
-	// (init_credentials.go) refreshed this repository's entry from this run's
-	// bundle reading a moment before infra.Repo read it, so this value IS the
-	// switch's readiness half as the plan, the launch and this write all see
-	// it — true when the bundle holds a model credential and the root was
-	// deployed to be served by the service, false otherwise.
+	// CredentialsServiceReady is the switch the SPEC below was built with:
+	// recordCredentialsServiceReady (init_credentials.go) refreshed this
+	// repository's entry a moment before infra.Repo read it, from this run's
+	// bundle reading AND the auth that plan is judged by, so this value IS
+	// what the plan, the launch and this write all see — true exactly when
+	// this root was applied to be served by the service.
 	//
 	// It is read back out of the entry and not from the bundle again here on
 	// purpose: the record means "this repository's root has been applied with

@@ -20,10 +20,11 @@ const launchCredsURL = "https://fugaro-credentials-abcde-uc.a.run.app"
 
 // markRepoCredentialsServiceReady writes the record `fugaro update` leaves on
 // a repository's local-config entry (init.go's writeRepoConfig) into the
-// fixture's config: the readiness half of the switch, which is the half a
-// launcher cannot read for itself (infra.CredentialsServiceServes). The
-// fixture's repos block names acme/app with no record, which is what a machine
-// that never ran the update holds.
+// fixture's config: the half of the switch that only an apply can answer
+// (infra.CredentialsServiceServes) — this repository's root was applied with
+// the service on — where the block and the live agent.auth are read where the
+// launch is. The fixture's repos block names acme/app with no record, which is
+// what a machine that never ran the update holds.
 func markRepoCredentialsServiceReady(t *testing.T, f *cloudFixture) {
 	t.Helper()
 	path := os.Getenv("FUGARO_CONFIG")
@@ -131,6 +132,33 @@ func TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable(t *test
 	for _, kv := range secret {
 		if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
 			t.Fatalf("an installation with no credentials service launched with %q in its secret entries", kv)
+		}
+	}
+}
+
+// TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService is the launch's
+// half of the oauth→cascade direction (update_switch_test.go's
+// TestTheRecordFollowsTheAuthTheRunsRead is the record's), and it is the state
+// the record's writer left behind until the review of 2026-11-07: the block is
+// there, the checkout is a cascade one, and the entry carries NO record because
+// the only apply of that root was made while the document still said oauth —
+// the natural adoption order, the cascade committed afterwards.
+//
+// The launch reads the auth live (TestEditingTheAuthModeTakesEffectWithout-
+// AnotherUpdate pins that it must), so the record is the whole of what stands
+// between this launch and a job handed an address whose invoker grant no apply
+// ever made: the run's provider call opens GitHub keyless and the service
+// refuses the mint, and a `cascade` run has nothing of its own to fall back to
+// (D143). Nothing is handed until a run of its own applies the root with the
+// switch on, which is what records true.
+func TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService(t *testing.T) {
+	plain, secret := launchWithCredentialsService(t, cascadeLaunchYAML, launchCredsURL, false)
+	if len(plain) != 0 {
+		t.Fatalf("a cascade repository whose entry carries no record launched with the plain Env %v, want none: the record is the half of the switch only an apply of that root can answer, so a launch that filled it in from what it can see would hand the job an address whose roles/run.invoker grant no apply made — the job opens its git provider keyless for a mint the service refuses\n", plain)
+	}
+	for _, kv := range secret {
+		if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
+			t.Fatalf("the launch carried %q in its secret entries: an installation whose bundle no run has recorded must launch exactly what it launched before the service was deployed", kv)
 		}
 	}
 }
@@ -283,9 +311,9 @@ func seedRepoRootVars(t *testing.T, slug, doc string) {
 // The second half is the same launch with no tfvars of that root on this
 // machine: nothing here says its root carries the service, so the job is handed
 // nothing — the address is also what opens the git provider keyless
-// (internal/gitprov/providers/providers.go), and a record that says the bundle
-// is ready is a fact about the bundle, which an `oauth` repository's entry can
-// carry as well as a cascade one's.
+// (internal/gitprov/providers/providers.go), and the entry's record is not the
+// evidence this branch reads: it is written by an apply of this machine's, and
+// what this launch is missing is the document such an apply would have left.
 //
 // Mutation (verified, run and restored): drop the deployedRepoCredentialsService
 // call at run.go's call site (pass false) and the first half fails with an

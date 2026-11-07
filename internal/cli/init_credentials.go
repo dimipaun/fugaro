@@ -171,18 +171,35 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 	return r.credsReady, true
 }
 
-// recordCredentialsServiceReady records this run's bundle reading on the ONE
-// repository entry whose root this run applies (docs/credentials-service/
-// default-on.md, DON8's record, amended by the review of 2026-11-07).
+// recordCredentialsServiceReady records, on the ONE repository entry whose root
+// this run applies, the switch that root's plan was built with
+// (docs/credentials-service/default-on.md, DON8's record, amended by the review
+// of 2026-11-07).
+//
+// The value is the SWITCH and not the bundle reading alone: the auth that
+// repository's runs are judged by is folded in, through the one predicate
+// (infra.CredentialsServiceServes), so a repository that is served and a
+// repository whose root was applied with the switch OFF are two different
+// records, which bare bundle readiness could not tell apart. The one state it
+// closes is the natural adoption order — an owner fills the bundle, runs
+// `fugaro update --repo` while the checkout still says `agent.auth: oauth` (the
+// root is planned held off: mounts kept, no roles/run.invoker), and only then
+// commits the cascade. Under bare readiness that run recorded true, and the
+// next launch, reading the cascade live and the record as "ready", handed the
+// job the service's address while its account held no grant to knock with: the
+// provider then opens keyless for a mint Cloud Run refuses, and a `cascade` run
+// has no credential of its own to fall back to (D143). Folded in, the record
+// says what happened — this root's last apply was held off — the launch
+// withholds the address, the job keeps the mounts that apply kept, and the run
+// after the cascade is committed is the one that applies the root with the
+// switch on and records true.
 //
 // It is the repository door's (repoEngine, init.go), and it runs before the
 // repository root's spec is built, so the plan that root makes and the record
 // the launch reads are the same answer. Without this the record lags the plan
 // by one run — the plan of a held-off root keeps the job's model mounts and
 // grants its account no roles/run.invoker, while the record written afterwards
-// tells the next launch the service is ready, which is a job handed the
-// service's address with no grant to knock with, and the service refuses it
-// rather than falling back (D143).
+// tells the next launch the service is ready, which is the same broken state.
 //
 // One entry and not every entry the local config holds, which is what this
 // helper did first: the record is read as "this repository's root has been
@@ -199,9 +216,16 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 // at all and so writes no record — which is also why a run outside a checkout,
 // whose repository stage is skipped, leaves every entry as it was.
 //
-// The value is written false as well as true: a bundle that is later emptied
-// switches the repository off again, and that is the fail-safe direction (see
-// writeRepoConfig).
+// The value is written false as well as true: a bundle that is later emptied —
+// or a checkout edited back to an auth the service does not serve — switches
+// the repository off again on the next run, and that is the fail-safe direction
+// (see writeRepoConfig).
+//
+// auth is the repository's agent.auth as the RUN will read it, which is the
+// document the spec below is built from and not this working tree's
+// (deploymentConfig, repoEngine): the record has to be the answer the plan was
+// made with, and a record judged on a working tree the runs never see is the
+// same disagreement one edit away.
 //
 // Nothing is written in a coding agent's session or in a run's own process
 // (credentialsBundleReady's second answer): the bundle is a secret those two
@@ -215,7 +239,7 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 // here — the bundle's container is derived from the project and the
 // installation's name (openBundleStore) — so a URL the first apply could not
 // know yet is not a reason to answer false.
-func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo string) {
+func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, auth string) {
 	if lc == nil || len(lc.Repos) == 0 {
 		return
 	}
@@ -238,7 +262,12 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 		// record the person's last run left on it.
 		return
 	}
-	entry.CredentialsServiceReady = ready
+	// The one predicate, not a second copy of its conjunction: `installed` is
+	// the probe's own answer — a config with no block makes credentialsBundle-
+	// Ready answer false without a read — so what the call adds is exactly the
+	// third condition, and the record cannot come out differently from the
+	// plan it is the record of.
+	entry.CredentialsServiceReady = infra.CredentialsServiceServes(true, ready, auth)
 	lc.Repos[key] = entry
 }
 

@@ -3642,7 +3642,13 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// fugaro.yaml, else this machine's checkout of it (launchFileConfig, the
 	// same document cascadeLaunchRefusal judged a moment ago) — and never a
 	// copy stored when the record was written: an edit to it takes effect
-	// without another update.
+	// without another update, so a repository moved back to an auth the
+	// service does not serve is withheld at once. The record's own half
+	// carries the auth the apply that wrote it was built for, so the other
+	// direction needs no edit at all: a root applied before its owner
+	// committed the cascade is recorded held off, the job keeps the mounts
+	// that apply kept, and the address is never handed to an account that
+	// holds no roles/run.invoker to knock with.
 	jobName := ""
 	if job != nil {
 		jobName = job.Name
@@ -3734,12 +3740,15 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // fugaro.yaml, else the checkout's).
 //
 // THE SWITCH DECIDES, and it is the same function the plan decides with
-// (infra.CredentialsServiceServes): the installation has the block, the bundle
-// holds a model credential (the record `fugaro update` writes into the local
-// config's repository entry, published with the rest of it, so a teammate's
-// `fugaro run` on a machine that never ran the update reads it too, internal/
-// localcfg/shared.go), and this repository's agent.auth is one the service
-// serves. All three, because the URL is not a hint: the same variable is what
+// (infra.CredentialsServiceServes): the installation has the block, the record
+// `fugaro update` wrote for this repository says a root of it was applied with
+// the service on — the bundle held a model credential and the auth was the
+// cascade when that apply was made (localcfg.Repo.CredentialsServiceReady,
+// written into the local config's repository entry and published with the rest
+// of it, so a teammate's `fugaro run` on a machine that never ran the update
+// reads it too, internal/localcfg/shared.go) — and this repository's
+// agent.auth, read live, is one the service serves. All three, because the URL
+// is not a hint: the same variable is what
 // opens the git provider keyless (internal/gitprov/providers/providers.go),
 // which reads no App key at all once it is set. A job that still mounts its
 // own model credential and is handed the address of a service that cannot

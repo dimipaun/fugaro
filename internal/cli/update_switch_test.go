@@ -496,14 +496,21 @@ func TestTheRootIsDeployedForTheAuthTheRunsRead(t *testing.T) {
 // root's spec is built — is pinned by TestTheRepositoryDoorReadsTheBundle-
 // BeforeItPlansItsRoot above, which drives the door itself. The outs value is
 // empty because the rigs here carry the block in the local config already.
-func recordForRepo(t *testing.T, r *initRig) *localcfg.Config {
+//
+// auth is the repository's agent.auth as the door passes it, cfg.Agent.Auth of
+// the document a RUN reads (deploymentConfig): the third condition of the
+// switch, which the record carries with the bundle's readiness. The fixture is
+// the same string in the checkout's fugaro.yaml, since a door that judged one
+// document and planned the root from another is what
+// TestTheRootIsDeployedForTheAuthTheRunsRead pins.
+func recordForRepo(t *testing.T, r *initRig, auth string) *localcfg.Config {
 	t.Helper()
 	e := rigEngine(t, r, &initOptions{yes: true})
-	cfg, problems := config.Parse([]byte(checkoutYAML("bitbucket", "oauth", "aurora", "")))
+	cfg, problems := config.Parse([]byte(checkoutYAML("bitbucket", auth, "aurora", "")))
 	if cfg == nil {
 		t.Fatalf("the fixture's fugaro.yaml does not parse: %v", problems)
 	}
-	e.r.recordCredentialsServiceReady(t.Context(), e.lc, infra.InstallationOutputs{}, "acme/sandbox")
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, infra.InstallationOutputs{}, "acme/sandbox", cfg.Agent.Auth)
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	if err := e.r.writeRepoConfig(t.Context(), e.lc, spec, cfg, r.cfg, e.old); err != nil {
 		t.Fatalf("the repository stage's config write failed: %v", err)
@@ -541,7 +548,7 @@ func TestTheRecordIsWrittenAsThePlanReadIt(t *testing.T) {
 	sibling := switchRig(t)
 	addSwitchRepo(t, sibling, "acme/other")
 	putSwitchBundle(t, sibling, model)
-	lc := recordForRepo(t, sibling)
+	lc := recordForRepo(t, sibling, config.AuthCascade)
 	if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
 		t.Errorf("the record for the converged repository is not set over a bundle holding a model credential: the spec was built from this value, so this run deployed the root for a service the launch will not be told about")
 	}
@@ -552,7 +559,7 @@ func TestTheRecordIsWrittenAsThePlanReadIt(t *testing.T) {
 	fresh := switchRig(t)
 	withoutSwitchRepo(t, fresh, "acme/other")
 	putSwitchBundle(t, fresh, model)
-	lc = recordForRepo(t, fresh)
+	lc = recordForRepo(t, fresh, config.AuthCascade)
 	if lc.Repos["acme/sandbox"].CredentialsServiceReady {
 		t.Errorf("the record says the service is ready for a repository the local config did not hold when the spec was built: that spec kept the job's model mounts and granted its account no roles/run.invoker, so this record would hand the next launch an address its job cannot knock with — the one state the switch exists to make impossible")
 	}
@@ -577,7 +584,7 @@ func TestTheSwitchIsOffUntilTheBundleHoldsAModelCredential(t *testing.T) {
 	// service creates it — and no version has ever been written.
 	r := switchRig(t)
 	putSwitchBundle(t, r, nil)
-	if got := recordForRepo(t, r).Repos["acme/sandbox"].CredentialsServiceReady; got {
+	if got := recordForRepo(t, r, config.AuthCascade).Repos["acme/sandbox"].CredentialsServiceReady; got {
 		t.Errorf("the record says the service is ready for a bundle with no version at all: `fugaro creds set` is the bundle's only writer, so this is the state every installation is in the moment its update deploys the service")
 	}
 
@@ -586,7 +593,7 @@ func TestTheSwitchIsOffUntilTheBundleHoldsAModelCredential(t *testing.T) {
 	// (internal/credsvc's KindGit), so it buys the repositories nothing.
 	git := switchRig(t)
 	putSwitchBundle(t, git, []byte(config.BitbucketSecret+": "+credsValue(t, "git")+"\n"))
-	if got := recordForRepo(t, git).Repos["acme/sandbox"].CredentialsServiceReady; got {
+	if got := recordForRepo(t, git, config.AuthCascade).Repos["acme/sandbox"].CredentialsServiceReady; got {
 		t.Errorf("the record says the service is ready for a bundle whose only entry is a git credential: the service serves model credentials (KindModel), and a job switched onto it would have nothing to run on")
 	}
 
@@ -594,7 +601,7 @@ func TestTheSwitchIsOffUntilTheBundleHoldsAModelCredential(t *testing.T) {
 	// launch read, so this is the half that turns the switch on.
 	model := switchRig(t)
 	putSwitchBundle(t, model, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
-	if got := recordForRepo(t, model).Repos["acme/sandbox"].CredentialsServiceReady; !got {
+	if got := recordForRepo(t, model, config.AuthCascade).Repos["acme/sandbox"].CredentialsServiceReady; !got {
 		t.Errorf("the record does not say the service is ready for a bundle holding a model credential: no repository of this installation would ever be switched on")
 	}
 }
@@ -617,7 +624,7 @@ func TestTheSwitchIsOffUntilTheBundleHoldsAModelCredential(t *testing.T) {
 func TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied(t *testing.T) {
 	r := switchRig(t)
 	putSwitchBundle(t, r, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
-	if got := recordForRepo(t, r).Repos["acme/sandbox"].CredentialsServiceReady; !got {
+	if got := recordForRepo(t, r, config.AuthCascade).Repos["acme/sandbox"].CredentialsServiceReady; !got {
 		t.Fatalf("the fixture is not the state this test starts from: the record does not say the bundle's model credential makes the service ready")
 	}
 
@@ -627,7 +634,7 @@ func TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied(t *testing.T) {
 	// repository's own mounts back on the next apply.
 	r.sm.Seed(credsvc.BundleSecretID(initProjectName), map[string]string{gcp.LabelManaged: gcp.ManagedValue},
 		[]byte(config.BitbucketSecret+": "+credsValue(t, "git")+"\n"))
-	next := recordForRepo(t, r)
+	next := recordForRepo(t, r, config.AuthCascade)
 	if got := next.Repos["acme/sandbox"].CredentialsServiceReady; got {
 		t.Errorf("the record still says the service is ready after the bundle stopped holding a model credential: every run of this repository would be launched against a service that cannot serve it, while its job's own model mounts stay dropped")
 	}
@@ -636,6 +643,53 @@ func TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied(t *testing.T) {
 	// nothing is ready for byte for byte what it was before the release.
 	if raw := readFileString(t, r.cfg); strings.Contains(raw, "credentials_service_ready") {
 		t.Errorf("the local config still carries the key after the record went false:\n%s", raw)
+	}
+}
+
+// TestTheRecordFollowsTheAuthTheRunsRead is the third condition of the switch
+// at the record, and the direction the review of 2026-11-07 found missing: the
+// record's writer answered from the bundle alone, so an entry was recorded
+// ready for a repository the plan that same run made was NOT built to be served
+// by — a held-off root, whose job keeps its model mounts and whose account is
+// granted no roles/run.invoker.
+//
+// The state is the natural adoption order: the owner fills the bundle, runs
+// `fugaro update --repo` while the checkout still says `agent.auth: oauth`, and
+// commits the cascade afterwards. On bare readiness that run recorded true; the
+// next launch reads the cascade from the document (TestEditingTheAuthMode-
+// TakesEffectWithoutAnotherUpdate pins that it must), sees a record that
+// vouches for the service, and hands the job an address whose grant this plan
+// never made. The provider then opens GitHub keyless for a mint the private
+// service refuses, and a `cascade` run has no credential of its own to fall
+// back to (D143) — the run fails as infra_error, with no PR, until somebody
+// runs another `fugaro update --repo`. That is the broken state the switch
+// exists to make impossible, and it is reachable without a second command in
+// any order but the lucky one.
+//
+// Both halves run over ONE rig and ONE ready bundle, so nothing here is about
+// the bundle: the value that moves is the auth, and the record has to move with
+// it. The false half is the direction no test covered — an oauth apply records
+// nothing, the job keeps the mounts that apply kept, and the run works until
+// the cascade is committed and applied, which is the run that records true.
+//
+// Mutation (verified, run and restored): record the bundle reading alone
+// (entry.CredentialsServiceReady = ready) and the second half fails with the
+// record set over a root the plan held off.
+func TestTheRecordFollowsTheAuthTheRunsRead(t *testing.T) {
+	r := switchRig(t)
+	putSwitchBundle(t, r, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+
+	if got := recordForRepo(t, r, config.AuthCascade).Repos["acme/sandbox"].CredentialsServiceReady; !got {
+		t.Fatalf("the fixture is not the state the oauth half moves away from: over a bundle holding a model credential and a repository whose agent.auth the service serves, the record has to say the service is ready — that is the plan this run applied")
+	}
+	if got := recordForRepo(t, r, "oauth").Repos["acme/sandbox"].CredentialsServiceReady; got {
+		t.Errorf("the record says the service is ready for a repository whose agent.auth is oauth, over the bundle the half above recorded: the plan this same run applied kept the job's model mounts and granted its account no roles/run.invoker (the module drops both for the roots the switch is on for), so the record hands the next launch — which reads the auth these runs read — an address the service refuses for the grant nobody made. A cascade committed afterwards must be applied by a run of its own before the service is of any use to this repository")
+	}
+	// The record went back rather than staying where the first half left it:
+	// the member is absent, which is what localcfg.Repo's omitempty writes and
+	// what every earlier release's config already said.
+	if raw := readFileString(t, r.cfg); strings.Contains(raw, "credentials_service_ready") {
+		t.Errorf("the local config still carries the record after the oauth apply:\n%s", raw)
 	}
 }
 
@@ -770,7 +824,7 @@ func TestTheRecordIsKeptUnderARunsProcessMarker(t *testing.T) {
 				[]byte(config.BitbucketSecret+": "+credsValue(t, "git")+"\n"))
 			t.Setenv(marker, "1")
 
-			lc := recordForRepo(t, r)
+			lc := recordForRepo(t, r, config.AuthCascade)
 			if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
 				t.Errorf("the record a person's own run wrote was cleared by a run that read no bundle: the bundle holds no model credential, and that is an answer only a reading may give — written here, it switches the repository off on the word of a process that may not look at the credential it is judging, and the person's next run has nothing to correct it from\n%s", readFileString(t, r.cfg))
 			}
