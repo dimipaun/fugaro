@@ -734,16 +734,21 @@ func reviewJobNotes(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 // `fugaro update`. The note never offers a second command for the admission
 // half — none exists — and it never reads as "deploy the service and the review
 // works": the launch refuses until both hold, and so does this sentence.
+//
+// The second half's sentence names the wiring rather than the class, because
+// the class is in the service (internal/credsvc's ClassReview, ReviewOf and
+// pairReview are on main): what no installation has is a review job account for
+// it to admit, which no update supplies (docs/cloud-senior-review §6's CSR11).
 func reviewPreconditionNote(lc *localcfg.Config) string {
 	const launch = "fugaro review --pr N refuses until it holds"
 	enabled := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	switch {
 	case !enabled && !reviewJobAdmitted:
-		return "a cloud review cannot launch on this installation, and both halves of its precondition are missing. The first is the credentials service itself: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for. The second is the service's own admission of the review job's caller: the review's account belongs to a project-scoped job, which the service refuses whole, and no fugaro update supplies that half, because it is a change to the service's own admission (C3.9) — so " + launch + " either way"
+		return "a cloud review cannot launch on this installation, and both halves of its precondition are missing. The first is the credentials service itself: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for. The second is the service's own admission of the review job's caller: the review's account belongs to a project-scoped job, and the service admits one only through the review job accounts a deployment configures, of which no installation is given any — so no fugaro update supplies that half, because it is the wiring that fills the service's review account table (docs/cloud-senior-review §6's CSR11 is held on it) — and " + launch + " either way"
 	case !enabled:
 		return "a cloud review cannot launch on this installation: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's credentials service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for, and " + launch
 	case !reviewJobAdmitted:
-		return "a cloud review cannot launch on this installation, and the half an update cannot supply is the one missing: the service is enabled, and it does not admit the review job's own caller — the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). No fugaro update supplies this half, because it is a change to the service's own admission (C3.9), which this release ships the command, the gate and the review-only job variant ahead of, and " + launch
+		return "a cloud review cannot launch on this installation, and the half an update cannot supply is the one missing: the service is enabled, and it does not admit the review job's own caller — the review's account belongs to a project-scoped job, and the service admits one only through the review job accounts a deployment configures, of which no installation is given any. No fugaro update supplies this half, because it is the wiring that fills the service's review account table, which this release ships the command, the gate and the review-only job variant ahead of, and " + launch
 	default:
 		return ""
 	}

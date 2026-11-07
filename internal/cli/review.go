@@ -250,13 +250,14 @@ func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr
 }
 
 // checkReviewJobAdmitted is E7's second half, and the half nobody can supply
-// yet: the service is deployed to admit a repository's own job, and admitting
-// a review caller whose job is project-scoped is C3.9, which is not built
-// (Global Constraint 6). The refusal says so in as many words, because the
-// other half's remedy (fugaro update --provision-credentials) is a command and
-// this half has none: no fugaro update reaches it, and the operator who reads
-// "not configured" would spend a while looking for one before concluding that
-// the release they are on cannot launch a review at all.
+// yet: the review class is in the service (its own code is on main), and no
+// deployment configures the service with a review account to admit through it,
+// so a caller of that class is refused while a repository's own job is not.
+// The refusal says so in as many words, because the other half's remedy
+// (fugaro update --provision-credentials) is a command and this half has none:
+// no fugaro update reaches it, and the operator who reads "not configured"
+// would spend a while looking for one before concluding that the release they
+// are on cannot launch a review at all.
 //
 // The environment switch above is the one door the owner may open here, and it
 // is opened in this function and nowhere else: the refusal is the one thing it
@@ -270,7 +271,7 @@ func checkReviewJobAdmitted(getenv func(string) string, stdinTerminal bool, warn
 	}
 	marker := agentMarker(getenv, stdinTerminal)
 	if getenv(reviewSkipAdmissionCheckEnv) == "" {
-		return userErr("this installation's credentials service does not admit the review job's own caller: the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). A review launched now would fail inside the job with the service's answer instead of this sentence. No fugaro update supplies this half — it is a change to the service's own admission, which this release ships the command, the gate and the review-only job variant ahead of (docs/cloud-senior-review §1). Until it lands, review a pull request in the run's own job with fugaro run --pr N --recipe " + reviewOnlyRecipe)
+		return userErr("this installation's credentials service does not admit the review job's own caller: the review's account belongs to a project-scoped job, and the service admits one only through the review job accounts a deployment configures, of which no installation is given any. A review launched now would fail inside the job with the service's answer instead of this sentence. No fugaro update supplies this half — it is the wiring that fills the service's review account table, which this release ships the command, the gate and the review-only job variant ahead of (docs/cloud-senior-review §1, and §6's CSR11 is held on it). Until it lands, review a pull request in the run's own job with fugaro run --pr N --recipe " + reviewOnlyRecipe)
 	}
 	if marker != "" {
 		return userErr("nothing was launched: %s is the owner's own live check's way into a review launch, and a coding agent's session is refused it as it is refused every other door to the owner's installation: %s", reviewSkipAdmissionCheckEnv, initflow.AgentRefusal(marker))

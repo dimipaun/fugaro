@@ -446,13 +446,14 @@ func TestReviewSwitchIsRefusedInAnAgentSession(t *testing.T) {
 // variable unset and no marker, the launch is refused byte for byte as it was
 // before the switch existed, and nothing about the refusal mentions it. The
 // sentence is spelled out here rather than read from the tree, because the
-// claim is that the bytes did not move.
+// claim is about these exact bytes: the unset path answers them, and the
+// switch's name is in none of them.
 func TestReviewStillRefusesWithoutTheSwitch(t *testing.T) {
 	f := newReviewFixture(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 	clearAgentMarkers(t)
 
-	const refusal = "this installation's credentials service does not admit the review job's own caller: the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). A review launched now would fail inside the job with the service's answer instead of this sentence. No fugaro update supplies this half — it is a change to the service's own admission, which this release ships the command, the gate and the review-only job variant ahead of (docs/cloud-senior-review §1). Until it lands, review a pull request in the run's own job with fugaro run --pr N --recipe review-only"
+	const refusal = "this installation's credentials service does not admit the review job's own caller: the review's account belongs to a project-scoped job, and the service admits one only through the review job accounts a deployment configures, of which no installation is given any. A review launched now would fail inside the job with the service's answer instead of this sentence. No fugaro update supplies this half — it is the wiring that fills the service's review account table, which this release ships the command, the gate and the review-only job variant ahead of (docs/cloud-senior-review §1, and §6's CSR11 is held on it). Until it lands, review a pull request in the run's own job with fugaro run --pr N --recipe review-only"
 	before := len(f.run.Executions())
 	out, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
 	if err == nil {
