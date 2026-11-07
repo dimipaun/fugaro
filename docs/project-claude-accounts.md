@@ -224,10 +224,10 @@ they are about to deploy against the same block. The rules, and what a refusal s
   account's key in the credentials bundle resolves back to the bare account name; and that bare name
   is what the policy's blocks and every audit line speak a credential by — so an account taking it
   would leave one name meaning two credentials. The bundle refuses that account's key outright
-  (`internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`), and `fugaro validate` and
-  `fugaro project policy publish` refuse the account name itself, so the clash is met where the
-  account is written rather than at `fugaro creds set` or at the service. **Fix:** rename the
-  account in `claude_accounts` and store its token under the new name. Every *other* name a
+  (`internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`), and `fugaro accounts add`,
+  `fugaro validate` and `fugaro project policy publish` refuse the account name itself, so the clash
+  is met where the account is written rather than at `fugaro creds set` or at the service. **Fix:**
+  rename the account in `claude_accounts` and store its token under the new name. Every *other* name a
   credential of the platform goes by stays an account name — `github-app-key` and
   `anthropic-api-key` among them, since the bundle finds the App key by its kind rather than in the
   index of names, and refuses the paid key only where one document carries both it and an account of
