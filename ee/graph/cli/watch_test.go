@@ -468,6 +468,92 @@ func TestWatchSourceDownIsAStateNotAnExit(t *testing.T) {
 	})
 }
 
+// TestWatchTransientReadFailureIsADownScopeAndIsRetried: the subscription is
+// up and the read behind a document fails — a database answering 503, a bucket
+// that refused a listing — which is a scope that is down and never the end of
+// the child (H3). The last document stays beside the state, the change stays
+// pending so the next floor reads again rather than waiting for something to
+// change, and the same child says up with the next sequence once the database
+// answers again. A long-lived stream is the one output that has to survive
+// this: a console holds it open for as long as the tab is, and a child that
+// exits on a blip takes the graph down with it until someone notices.
+func TestWatchTransientReadFailureIsADownScopeAndIsRetried(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	// A keep-alive inside a test's patience: it is what makes the first
+	// document after the failure due, since nothing about the graph changed.
+	fast(t, testFloor, 60*time.Millisecond)
+
+	sink := newWatchSink()
+	child := startWatch(t, sink, "graph", "--watch", "--json")
+	first := sink.next(t, testPatience)
+	if len(first.Nodes) != 1 || first.Sources[0].State != graph.SourceUp {
+		t.Fatalf("the first document is %+v, want the stored graph up", first)
+	}
+
+	// The database stops answering reads, and the subscription — a connection
+	// that is already open — is untouched by it.
+	f.db.Refuse(http.StatusServiceUnavailable, "503", "Service Unavailable", "the database is down")
+
+	down := sink.next(t, testPatience)
+	if down.Sources[0].State != graph.SourceDown {
+		t.Fatalf("the scope is %+v while its read fails, want it down", down.Sources[0])
+	}
+	if !strings.Contains(down.Sources[0].Reason, "503") {
+		t.Errorf("the down scope's reason is %q, want the read's own failure in it", down.Sources[0].Reason)
+	}
+	if len(down.Nodes) != len(first.Nodes) {
+		t.Errorf("the down document drew %d nodes, want the last known %d", len(down.Nodes), len(first.Nodes))
+	}
+	if down.Seq != first.Seq+1 {
+		t.Errorf("the down document is seq %d, want %d", down.Seq, first.Seq+1)
+	}
+	if down.StreamID != first.StreamID {
+		t.Errorf("the down document's stream_id is %q, want the first's %q: the child did not restart", down.StreamID, first.StreamID)
+	}
+
+	// And it is retried rather than waited on: the next floor reads again, which
+	// is what makes the recovery below the child's own doing and not a change's.
+	before := len(f.db.Requests())
+	retry := sink.next(t, testPatience)
+	if retry.Sources[0].State != graph.SourceDown {
+		t.Errorf("the document after the down one is %+v, want the scope still down until a read succeeds", retry.Sources[0])
+	}
+	if retry.Seq != down.Seq+1 {
+		t.Errorf("the retried document is seq %d, want %d", retry.Seq, down.Seq+1)
+	}
+	if got := len(f.db.Requests()); got == before {
+		t.Errorf("the child wrote another document without reading again: a read that failed is retried, not waited on")
+	}
+	child.stillRunning(t, 20*testFloor)
+
+	// The database answers again, and the same child is up again: the whole
+	// document, the next sequence, and one stream_id throughout.
+	f.db.Refuse(0, "", "", "")
+
+	var back graph.Document
+	for deadline := time.Now().Add(testPatience); time.Now().Before(deadline); {
+		doc := sink.next(t, testPatience)
+		if len(doc.Sources) > 0 && doc.Sources[0].State == graph.SourceUp {
+			back = doc
+			break
+		}
+	}
+	if len(back.Sources) == 0 {
+		t.Fatalf("the scope never came back up; the child wrote:\n%s", sink.text())
+	}
+	if back.StreamID != first.StreamID {
+		t.Errorf("the recovered document's stream_id is %q, want %q", back.StreamID, first.StreamID)
+	}
+	if back.Seq <= retry.Seq {
+		t.Errorf("the recovered document is seq %d, want the next one after the down document's %d", back.Seq, retry.Seq)
+	}
+	if len(back.Nodes) != len(first.Nodes) || back.Nodes[0].Title != first.Nodes[0].Title {
+		t.Errorf("the recovered document drew %+v, want the whole stored graph again %+v", back.Nodes, first.Nodes)
+	}
+	child.stillRunning(t, 20*testFloor)
+}
+
 // TestWatchClosedStdoutEndsTheChild: a console that was killed leaves a child
 // whose next write fails, and that write is the child's last (H5, §10.4). The
 // write that fails is a later one, so what is under test is the exit and not

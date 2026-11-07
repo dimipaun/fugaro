@@ -40,11 +40,12 @@ import (
 //     keeps its runs half here exactly as it does there. The floor bounds the
 //     cost: a burst of events is one read, and at most one a second.
 //   - **A scope that is down is a state, and a refused read is terminal.** A
-//     transport that has fallen over is carried in `sources[].state` and the
-//     child keeps running with the last document's nodes (H3); the server
-//     withdrawing the listen is the one thing that ends it, with a sentence
-//     naming the command, because that is what the console reads as "this CLI
-//     has no graph" (T3).
+//     transport that has fallen over, and a read that failed while it stood —
+//     an unreachable database, a bucket that refused a listing — are both
+//     carried in `sources[].state`, and the child keeps running with the last
+//     document's nodes (H3); a read this CLI is refused is the one thing that
+//     ends it, with a sentence naming the command, because that is what the
+//     console reads as "this CLI has no graph" (T3).
 //   - **A keep-alive, so an orphaned child dies.** A graph that does not change
 //     prints nothing, and a child whose reader was killed notices only on its
 //     next write: the stream writes a document on a timer even when nothing
@@ -145,10 +146,11 @@ func (w *watcher) run(ctx context.Context, db *rtdb.Client) error {
 		if !w.st.Due(now, w.dirty) {
 			continue
 		}
+		// write answers the change; a read that failed sets the flag again, so
+		// the next floor tries the read rather than waiting for a change.
 		if err := w.write(ctx, now); err != nil {
 			return err
 		}
-		w.dirty = false
 	}
 }
 
@@ -223,8 +225,13 @@ func (w *watcher) ended(ctx context.Context) error {
 
 // write builds the document to print now, stamps it as the stream's next and
 // writes it as one line. Its error is the child's: a writer that refuses is a
-// reader that is gone, and a read this build cannot make is a refusal.
+// reader that is gone, and a read this CLI is refused is the one failure of a
+// read that ends it.
 func (w *watcher) write(ctx context.Context, now time.Time) error {
+	// This document answers whatever was pending; a read that failed below is
+	// the one thing that leaves something pending, and it is what the next floor
+	// acts on.
+	w.dirty = false
 	doc, err := w.snapshot(ctx, now)
 	if err != nil {
 		return err
@@ -243,26 +250,71 @@ func (w *watcher) write(ctx context.Context, now time.Time) error {
 }
 
 // snapshot is the document this instant's read makes, or the last one with its
-// sources marked down when the subscription cannot be reached: a scope that is
-// down is a state, and the last thing it said is what a reader still draws
-// beside it (H3).
+// sources marked down when the read cannot be made: a scope that is down is a
+// state, and the last thing it said is what a reader still draws beside it (H3).
+//
+// A read that *fails* is such a state, and never the end of the child: an
+// unreachable database, a bucket that refused a listing, a server that answered
+// 503. The stream is the one output that must survive one — the console holds it
+// open for as long as its tab is — so the failure is carried in the document and
+// the change stays pending, which makes the next floor read again and the graph
+// come back by itself. The floor is the rate limit on that retry, the same one
+// that bounds a burst of changes.
+//
+// A refusal is the other thing, and it is terminal: it is a read this CLI may
+// not make at all, which is exactly the failure `graph --json` exits 1 for (T3),
+// and the classification is the CLI's own — a read the command would exit 2 for
+// is a scope that is down, a read it would exit 1 for is a refusal. A console
+// shows the refusal's sentence as "this CLI has no graph"; a state it draws as a
+// graph that is down.
 func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, error) {
 	if w.down != "" {
-		doc := w.last
-		for i := range doc.Sources {
-			doc.Sources[i].State = graph.SourceDown
-			doc.Sources[i].Reason = w.down
-			// No age is claimed for data that could not be re-read, and none
-			// was ever claimed for the stored view itself (contract §6.22).
-			doc.Sources[i].AsOf = nil
-		}
-		return doc, nil
+		return downDoc(w.last, w.down), nil
 	}
 	var warned bytes.Buffer
 	// The read's own instant is the age the stream can give (contract §6.22):
 	// it is the caller that read the views and knows when (CG7), where the
 	// one-shot read has no such time to hand over.
-	return readGraph(ctx, w.env, now, now, &warned)
+	doc, err := readGraph(ctx, w.env, now, now, &warned)
+	switch {
+	case err == nil:
+		return doc, nil
+	case fcli.ExitCode(err) != fcli.ExitUserError:
+		w.dirty = true
+		return downDoc(w.last, "the graph could not be read: "+err.Error()), nil
+	default:
+		return graph.Document{}, err
+	}
+}
+
+// downDoc is the document of a scope that is down: the last thing the scope
+// said, every source marked down and why, and no age, because nothing was
+// re-read (H3, contract §6.22). The nodes stay, so a screen draws the graph it
+// last had and says beside it that it is not being kept up to date.
+//
+// Before the child has written anything there is no last graph, and the scope
+// itself is still what is known: one source, down, with the read's own words as
+// its reason and no nodes. That is a scope whose first read failed, which is a
+// document a console draws rather than the child ending with no graph at all —
+// which is the whole of H3, at the one instant a child has no last document.
+func downDoc(last graph.Document, reason string) graph.Document {
+	doc := last
+	if len(doc.Sources) == 0 {
+		doc = graph.Document{
+			Version: graph.DocumentVersion,
+			Sources: []graph.SourceState{{Source: graph.Scope{Kind: graph.ScopeCoordinator}.String()}},
+			Nodes:   []graph.Node{},
+			Edges:   []graph.Edge{},
+		}
+	}
+	for i := range doc.Sources {
+		doc.Sources[i].State = graph.SourceDown
+		doc.Sources[i].Reason = reason
+		// No age is claimed for data that could not be re-read, and none was
+		// ever claimed for the stored view itself (contract §6.22).
+		doc.Sources[i].AsOf = nil
+	}
+	return doc
 }
 
 // refusedStream is the refusal that ends the child: the server withdrew the
