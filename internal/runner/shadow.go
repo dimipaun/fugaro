@@ -362,7 +362,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	r.uploadPatch(ctx, sha)
 
 	pol := r.findingsPolicy()
-	ready, reason := Decide(records, sha, r.decidingReview(), pol)
+	ready, reason := Decide(records, sha, r.decidingReview(), pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"

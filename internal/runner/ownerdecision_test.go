@@ -58,8 +58,17 @@ func TestOwnerDecisionStopsTheLoopWithoutAFixRound(t *testing.T) {
 	if d := rec.OwnerDecisions.Decisions[0]; d.File != "LICENSE.md" || !strings.Contains(d.Summary, "counsel") {
 		t.Errorf("decision = %+v, want the file and the reviewer's own sentence", d)
 	}
-	if pr := onlyPR(t, h.provider); !pr.Draft {
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft {
 		t.Errorf("the pull request is not a draft: %+v", pr)
+	}
+	// The status block says what the run is waiting for, under its own line,
+	// with the file and the reviewer's own sentence: a reader of the pull
+	// request must not have to open the transcript to learn what to decide.
+	for _, want := range []string{"**Waiting on you**", "`LICENSE.md`", "the licence text needs counsel's clearance"} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("the status section does not carry %q:\n%s", want, pr.Body)
+		}
 	}
 }
 

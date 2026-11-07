@@ -183,7 +183,7 @@
       "required": ["reason", "scope", "at"],
       "description": "Why the run was halted; set when status is halted.",
       "properties": {
-        "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied", "stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded"] },
+        "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied", "stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded", "owner_decision"] },
         "scope": { "enum": ["run", "repo", "global"] },
         "at": { "type": "string", "format": "date-time" },
         "detail": { "type": "string" }
@@ -444,6 +444,30 @@
         "total": { "type": "integer", "minimum": 0, "description": "How many findings the mode tolerated, so a record whose list was capped still says how many were let through. Never less than the length of findings." }
       }
     },
+    "owner_decisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisions", "total"],
+      "description": "The findings a run's review left that only the repository's owner can settle (OD1), in the reviewer's own order: a licence or legal clearance, a product or policy choice, a step the owner runs. The reviewer marked them needs_owner, no code change could settle them, so the run bought no fix round on them and ended halted with `halt.reason` owner_decision and its pull request a draft. Bounded: at most 100 decisions (runstore.MaxOwnerDecisions), each a path and a sentence of at most 200 runes. Absent — never an empty block — for a run whose review left none, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1.",
+      "properties": {
+        "decisions": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "One entry per pending decision, in the reviewer's order. Never empty: a run with nothing pending carries no block at all. Shorter than total only when the review left more than 100, which the cap makes a record of the first 100 rather than of the whole set.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["summary"],
+            "properties": {
+              "file": { "type": "string", "maxLength": 200, "description": "The path the reviewer read, clipped to 200 runes and redacted by the runner. Absent when it named none: a decision about a licence or a product choice may name no file at all." },
+              "summary": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The reviewer's own sentence for the finding, clipped to 200 runes (runstore.MaxOwnerDecisionText) and redacted by the runner. It is what a person reads to decide, and what `fugaro runs ls`, `fugaro diagnose` and the launcher's refusal print; the whole summary stays in the transcript." }
+            }
+          }
+        },
+        "total": { "type": "integer", "minimum": 0, "description": "How many decisions the review left, so a record whose list was capped still says how many there were. Never less than the length of decisions." }
+      }
+    },
+    "owner_ruled": { "type": "string", "description": "The owner's ruling a follow-up run was launched with (`fugaro run --pr N --owner-ruled`, task.json's owner_ruled), echoed onto the record so a reader can see what the run was told after the decisions above. It is the launcher's own text, appended to that run's brief verbatim. Absent for every run launched without one, which is every record written before this field existed." },
     "review_scope": {
       "type": "object",
       "additionalProperties": false,

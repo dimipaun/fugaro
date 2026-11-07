@@ -198,6 +198,8 @@ func haltReasonText(h runstore.Halt) string {
 		return "the review range covers files this run never changed"
 	case runstore.HaltExpectedExceeded:
 		return "the run passed the cost its tier expected of it"
+	case runstore.HaltOwnerDecision:
+		return "the review left findings only the owner can settle"
 	}
 	return string(h.Reason)
 }

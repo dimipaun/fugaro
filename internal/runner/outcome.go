@@ -43,13 +43,26 @@ const ReasonNoVerifiedTest = "no verified test run on the final commit"
 // still a draft when no review was held at the mode the run ends at, and the
 // reason names the raise — the mode, the rule that raised it and the moment
 // (D22's third moment is the case a run cannot buy rounds with).
-func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy) (bool, string) {
+// owner is what the run's review left for the repository's owner to settle
+// (OD1, runstore.OwnerDecisions), nil for a run that left none. It is checked
+// above the mode's tolerance and above every review verdict: a finding whose
+// only remedies are the owner's is not a finding a mode may let through, and
+// the round it came from is not one the run was read by — the run is waiting
+// for a person, which no configuration can answer.
+func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions) (bool, string) {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
 	case latest == nil:
 		return false, ReasonNoVerifiedTest
 	case !latest.Passed:
 		return false, "tests failing on the final commit"
+	case pendingOwner(owner) > 0:
+		// Above the verdicts, and above the tolerance below: the round that
+		// left these did not fail, it asked a question the run cannot answer,
+		// and the pull request stays a draft until someone does (OD1). The
+		// tests are read first because a failing suite is a thing the run can
+		// still act on; nothing here can act on an owner's decision.
+		return false, ownerWaitingReason(pendingOwner(owner))
 	case last == nil:
 		return false, "no review verdict"
 	case last.Verdict == "none":
