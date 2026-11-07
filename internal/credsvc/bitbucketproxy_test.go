@@ -729,6 +729,46 @@ func TestBitbucketRoutePRWriteChecksSource(t *testing.T) {
 	}
 }
 
+// TestBitbucketRoutePRCreateIsCheckedOnItsBody: a create names a pull request
+// that does not exist yet, so there is no fact for this service to read and the
+// source it names is checked in the body it is about to send (G12). Two things
+// are the whole of it: the upstream sees the create and NO read of a pull
+// request, and a body naming another branch is refused.
+func TestBitbucketRoutePRCreateIsCheckedOnItsBody(t *testing.T) {
+	s, up, _ := proxySvc(t)
+	up.answerWith(http.StatusCreated, "{}")
+
+	create := func(branch string) []byte {
+		body, err := json.Marshal(map[string]any{
+			"title": "the run's work",
+			"source": map[string]any{
+				"branch":     map[string]any{"name": branch},
+				"repository": map[string]any{"full_name": testBitbucketRepo},
+			},
+			"destination": map[string]any{"branch": map[string]any{"name": "main"}},
+		})
+		if err != nil {
+			t.Fatalf("building the create's body: %v", err)
+		}
+		return body
+	}
+
+	resp, ans := s.proxyCall(t, http.MethodPost, proxyPath(proxyRESTPath("/pullrequests")), create("someone-elses-branch"))
+	proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonSourceMismatch)
+	if n := up.count(); n != 0 {
+		t.Fatalf("the upstream saw %d calls, and a create has no pull request to read: %+v", n, up.calls())
+	}
+
+	resp, ans = s.proxyCall(t, http.MethodPost, proxyPath(proxyRESTPath("/pullrequests")), create(s.proxyBranch()))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("the create answered %d, want 201 (%s)", resp.StatusCode, ans)
+	}
+	got := up.only(t)
+	if want := "/2.0/repositories/" + testBitbucketRepo + "/pullrequests"; got.path != want {
+		t.Errorf("the create was addressed to %q, want %q", got.path, want)
+	}
+}
+
 // TestBitbucketRouteBindsJobAccountRepo: the repository a proxied call is
 // judged against is the CALLING JOB ACCOUNT's and never the run identity's
 // alone (review finding N1). A run token of another repository presented by

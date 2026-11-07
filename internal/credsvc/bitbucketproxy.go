@@ -277,14 +277,13 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	if req.Kind == gitproxy.KindREST {
 		switch req.Call {
 		case gitproxy.CallPRCreate, gitproxy.CallPRUpdate, gitproxy.CallPRComment:
-			pr, err := s.readPRFacts(ctx, req, token)
+			pr, err := s.prFacts(ctx, req, token)
 			if err != nil {
 				// The pull request could not be read: a write whose facts are
 				// unknown is refused rather than checked against nothing.
 				s.refuseUnavailable(ctx, w, id, purpose, "the pull request a write names could not be read")
 				return
 			}
-			pr.Call = req.Call
 			if verdict := gitproxy.CheckPRWrite(pr, prBody, gitproxy.Identity{Run: id.Run, Branch: id.Branch, PRs: id.PRs}, canonical); !verdict.Allow {
 				s.refuseProxy(ctx, w, id, purpose, verdict.Reason)
 				return
@@ -341,6 +340,26 @@ type prFactsAnswer struct {
 	Destination struct {
 		Branch struct{ Name string } `json:"branch"`
 	} `json:"destination"`
+}
+
+// prFacts is what the rules are told about the pull request a write names.
+//
+// A create names a pull request that does not exist yet, so there is nothing
+// to read and the facts are PRFacts' zero value beside the call's own name:
+// the source a create names is checked in its own body (checkPRCreate), and a
+// read of "pull requests/0" would be a read of a pull request the run is not
+// making — an answer the API gives as a 404, which this route would turn into a
+// refusal of every create.
+func (s *Server) prFacts(ctx context.Context, req gitproxy.Request, token string) (gitproxy.PRFacts, error) {
+	if req.Call == gitproxy.CallPRCreate {
+		return gitproxy.PRFacts{Call: req.Call}, nil
+	}
+	facts, err := s.readPRFacts(ctx, req, token)
+	if err != nil {
+		return gitproxy.PRFacts{}, err
+	}
+	facts.Call = req.Call
+	return facts, nil
 }
 
 // readPRFacts reads the pull request a write names, with the bundle's token,
