@@ -178,11 +178,18 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Files (4):** `internal/orchestrator/sensitivity/classify.go` (new), `internal/orchestrator/sensitivity/classify_test.go` (new),
   `internal/orchestrator/sensitivity/testdata/paths.txt` (new), `internal/orchestrator/sensitivity/export_test.go` (new).
 - **Interfaces:** `func Classify(changedPaths []string) Class` (`Routine|Sensitive`), by path only. **An allowlist, not a denylist:** `Routine` only
-  when **every** path matches an allowlisted routine prefix (`docs/**` except `docs/pending-workflows/**`, `website/**`; **`mobile/**` and the console renderer are not on it** (`mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js` and `mac.js` hold credentials and MACs); a `_test.go` file is routine only inside an allowlisted tree, so a test edit in `internal/orchestrator`, `internal/initflow`,
+  when **every** path matches an allowlisted routine prefix (`docs/**` except `docs/pending-workflows/**`, `website/**` except the files below; **`mobile/**` and the console renderer are not on it** (`mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js` and `mac.js` hold credentials and MACs); a `_test.go` file is routine only inside an allowlisted tree, so a test edit in `internal/orchestrator`, `internal/initflow`,
   `internal/agentenv`, `internal/managed`, `schemas/`, `ee/` or `.claude/` is Sensitive). **Everything else, and every unknown, unmatched or malformed
   path, is Sensitive**, so the classifier's own package, the daemon and the guards default to Sensitive. The owner's routing rule (credentials, writes
   and guards, the managed gate, Terraform and IAM, the agent environment and gateway, agent prompts, recipes, `CLAUDE.md`, `AGENTS.md`, `.claude/**`,
   plugin skills, CI) is a test fixture the allowlist must never contradict; the fixture also lists `mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js`, `mobile/src/mailbox/mac.js` and the console's pairing and write paths, which must never be Routine. No input but paths: a title or description cannot lower it.
+- **The website's exceptions are files, and the review round of 2026-11-07 added them** (the routing rule gives the light reviewer docs, tests and design, and the
+  website is this plan's own allowance for a tree that is mostly rendered copy): `website/package.json` and `website/package-lock.json` (the install scripts CI and
+  the owner's machine run), `website/content/downloads.json` and `website/data/console-sha256sums.txt` (the URLs and the checksums a reader checks a console build
+  against), `website/data/install.yaml` (the install commands a reader pastes) and `website/content/security.md` (the published security policy — `SECURITY.md`
+  byte for byte, and the one website path `.claude/rules/credentials-service.md` scopes as security-sensitive) are Sensitive inside `website/**`, which otherwise
+  stays routine. Narrowing an allowlist is the direction a review may move it in on its own; **open for the owner is the wider half of that finding** — whether the
+  site's *code* (its layout and the CSP it sets, `website/src/layouts/Base.astro`) should be Sensitive too, which would take the whole tree off the allowlist.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestPromptPathsAreAlwaysSensitive`, `TestDescriptionCannotLowerTheClass` (the signature has no description argument; a
   reflective test pins it), `TestEmptyPathListIsSensitive` (fail closed), `TestUnlistedPathIsSensitive`, `TestOnlyAllowlistedPathsAreRoutine`,

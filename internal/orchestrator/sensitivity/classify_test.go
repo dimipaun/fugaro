@@ -109,6 +109,9 @@ func TestOnlyAllowlistedPathsAreRoutine(t *testing.T) {
 		"website/src/pages/index.astro",
 		"website/content/cli-reference.md",
 		"website/test/cli.test.mjs",
+		// The website's exceptions name files and not a tree, so a path that
+		// merely starts with one of their names is still the website's copy.
+		"website/package.json.bak",
 	}
 	for _, p := range routine {
 		if got := sensitivity.Classify([]string{p}); got != sensitivity.Routine {
@@ -145,6 +148,20 @@ func TestUnlistedPathIsSensitive(t *testing.T) {
 		"docs/pending-workflows",
 		"docs/pending-workflows/shared-tests.yml",
 		"docs/pending-workflows/README.md",
+		// The same tree spelled with a capital: the owner's macOS resolves it
+		// into the folder above, so an exception that read the bytes would call
+		// the CI tree routine on the machine that checks it out.
+		"docs/Pending-Workflows",
+		"docs/Pending-Workflows/evil.yml",
+		"docs/PENDING-WORKFLOWS/evil.yml",
+		// The website's own exceptions: what a reader installs, runs or verifies
+		// rather than copy the site renders.
+		"website/package.json",
+		"website/package-lock.json",
+		"website/content/downloads.json",
+		"website/data/console-sha256sums.txt",
+		"website/data/install.yaml",
+		"website/content/security.md",
 		// Not paths a change can carry: absolute, escaping, uncleaned, empty
 		// of a name, or a directory rather than a file.
 		"",
@@ -287,12 +304,20 @@ func TestRoutingRuleFixtureIsNeverRoutine(t *testing.T) {
 // cannot be invented in the fixture or quietly dropped from the doc.
 var beyondTheRoutingText = map[string]bool{"mobile": true, "the console": true}
 
-// theRoutineTrees and theRoutineException are the allowlist the plan's O1
-// states (D1234), as globs: the two trees a change may be Routine in, and the
-// one tree inside them that is not.
+// theRoutineTrees and theRoutineExceptions are the allowlist the plan's O1
+// states (D1234), as globs: the two trees a change may be Routine in, and what
+// inside them is not — a `/**` suffix is a tree, and a bare path is one file.
 var (
-	theRoutineTrees     = []string{"docs/**", "website/**"}
-	theRoutineException = "docs/pending-workflows/**"
+	theRoutineTrees      = []string{"docs/**", "website/**"}
+	theRoutineExceptions = []string{
+		"docs/pending-workflows/**",
+		"website/package.json",
+		"website/package-lock.json",
+		"website/content/downloads.json",
+		"website/data/console-sha256sums.txt",
+		"website/data/install.yaml",
+		"website/content/security.md",
+	}
 )
 
 // TestRulesTableMatchesTheReviewerRoutingText is the two-way pin between the
@@ -300,9 +325,9 @@ var (
 // category the fixture carries is a category of the owner's routing rule as
 // reconciliation.md F15 documents it for reviewers, and no routine rule admits
 // a path of one. The routine half: the trees the table opens are the ones the
-// plan's O1 names, and the tree it opens and closes again is the exception it
-// names. A table that widened itself, or a doc that lost a category, is red
-// here rather than a cheaper review nobody notices.
+// plan's O1 names, and the trees and files it opens and closes again are the
+// exceptions it names. A table that widened itself, or a doc that lost a
+// category, is red here rather than a cheaper review nobody notices.
 func TestRulesTableMatchesTheReviewerRoutingText(t *testing.T) {
 	text := routingText(t)
 	routine := sensitivity.RoutineRules()
@@ -330,16 +355,16 @@ func TestRulesTableMatchesTheReviewerRoutingText(t *testing.T) {
 	}
 
 	plan := planO1(t)
-	for _, want := range append([]string{theRoutineException}, theRoutineTrees...) {
+	for _, want := range append(append([]string{}, theRoutineExceptions...), theRoutineTrees...) {
 		if !strings.Contains(plan, "`"+want+"`") {
-			t.Errorf("%s's O1 no longer names %s as an allowlisted tree", planDoc, want)
+			t.Errorf("%s's O1 no longer names %s as an allowlisted tree or exception", planDoc, want)
 		}
 	}
 	if got, want := prefixes(routine), prefixesOf(theRoutineTrees); !reflect.DeepEqual(got, want) {
 		t.Errorf("the routine table is %q, want the plan's O1 trees %q", got, want)
 	}
-	if got, want := prefixes(exceptions), prefixesOf([]string{theRoutineException}); !reflect.DeepEqual(got, want) {
-		t.Errorf("the exception table is %q, want the plan's O1 exception %q", got, want)
+	if got, want := prefixes(exceptions), prefixesOf(theRoutineExceptions); !reflect.DeepEqual(got, want) {
+		t.Errorf("the exception table is %q, want the plan's O1 exceptions %q", got, want)
 	}
 }
 
@@ -377,7 +402,8 @@ func prefixes(rows []sensitivity.RuleRow) []string {
 }
 
 // prefixesOf turns the plan's globs into the path prefixes the table matches
-// with: `docs/**` and the prefix `docs/` are the same tree.
+// with: `docs/**` and the prefix `docs/` are the same tree, and a glob that
+// names one file is already the path the table holds.
 func prefixesOf(globs []string) []string {
 	got := make([]string, 0, len(globs))
 	for _, g := range globs {

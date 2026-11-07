@@ -28,8 +28,11 @@ type Class string
 
 const (
 	// Routine is a change whose every path is inside one of the routine trees:
-	// documentation and the website, the same two trees the owner's routing
-	// rule sends to the light reviewer.
+	// documentation, and the website's copy and the pages a reader is sent to.
+	// The owner's routing rule gives the light reviewer docs, tests and design;
+	// the website is the plan's own addition for a tree that is mostly rendered
+	// copy, and the paths under it that carry what a reader installs, runs or
+	// verifies are exceptions below rather than part of it.
 	Routine Class = "routine"
 	// Sensitive is every change the classifier cannot place inside a routine
 	// tree — a credential, a guard, a prompt, a recipe, a workflow, the
@@ -54,12 +57,32 @@ var routineRules = []rule{
 	{name: "website", prefix: "website/"},
 }
 
-// sensitiveExceptions close the one hole the allowlist leaves open: CI is a
-// category of the routing rule, and docs/pending-workflows/ holds the workflow
-// files a person copies into .github/workflows. An exception narrows the
-// allowlist, so the second table can only ever move a path toward Sensitive.
+// sensitiveExceptions close the holes the allowlist leaves open. An exception
+// narrows the allowlist, so this table can only ever move a path toward
+// Sensitive, which is why a line may be added to it from a review rather than
+// from a person deciding a tree: nothing here can make a change cheaper.
+//
+// Two shapes. A prefix that ends in a slash is a tree, and the exception covers
+// it and the files in it: CI is a category of the routing rule, and
+// docs/pending-workflows/ holds the workflow files a person copies into
+// .github/workflows. A prefix that names a file is that one path and nothing
+// else.
+//
+// The website's lines are files because the tree's routine part is its copy:
+// these carry what a reader installs, runs or verifies — the npm manifest and
+// its lock, whose install scripts run in CI and on the owner's machine; the
+// download URLs and the checksums a reader checks a console build against; the
+// install commands the getting-started page offers; and the published security
+// policy, which is SECURITY.md byte for byte and the one website path
+// .claude/rules/credentials-service.md scopes as security-sensitive.
 var sensitiveExceptions = []rule{
 	{name: "CI", prefix: "docs/pending-workflows/"},
+	{name: "the website's dependencies", prefix: "website/package.json"},
+	{name: "the website's dependency lock", prefix: "website/package-lock.json"},
+	{name: "the published downloads", prefix: "website/content/downloads.json"},
+	{name: "the published checksums", prefix: "website/data/console-sha256sums.txt"},
+	{name: "the install commands", prefix: "website/data/install.yaml"},
+	{name: "the security policy", prefix: "website/content/security.md"},
 }
 
 // Classify answers a change's class from its changed paths. Every path decides:
@@ -88,7 +111,7 @@ func routinePath(p string) bool {
 		return false
 	}
 	for _, e := range sensitiveExceptions {
-		if withinTree(p, e.prefix) {
+		if e.covers(p) {
 			return false
 		}
 	}
@@ -115,6 +138,26 @@ func routinePath(p string) bool {
 // the bare `docs` in TestUnlistedPathIsSensitive pins.
 func withinTree(p, prefix string) bool {
 	return p == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(p, prefix)
+}
+
+// covers reports whether an exception line covers p. A prefix ending in a slash
+// names a tree; one that does not names a single file, so an exception for
+// `website/package.json` does not reach `website/package.json.bak`.
+//
+// Exceptions are matched without case, and only they are: a checkout on the
+// owner's macOS, whose filesystem does not distinguish `docs/pending-workflows`
+// from `docs/Pending-Workflows`, resolves the second spelling into the folder a
+// person copies into .github/workflows, so a case-sensitive match would answer
+// Routine for a path that is the CI tree on the machine that reads it. The
+// routine rules are still asked in the bytes they were written in, so `DOCS/x`
+// stays Sensitive. Folding the case of one side only moves paths toward
+// Sensitive, which is the direction this table exists for.
+func (e rule) covers(p string) bool {
+	p, prefix := strings.ToLower(p), strings.ToLower(e.prefix)
+	if strings.HasSuffix(prefix, "/") {
+		return withinTree(p, prefix)
+	}
+	return p == prefix
 }
 
 // cleanRelative reports whether p is a repository-relative path that means
