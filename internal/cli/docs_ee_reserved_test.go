@@ -37,10 +37,25 @@ var eeNotice = [2]string{
 
 // eeRulesFile is the path-scoped rule that loads when a change touches `ee/**`,
 // read from the module root the way every other document this package pins is.
-// The folder's rule lives there and not under `ee/`: it is the core's
-// instruction to an agent, so it is read even in the tree the "core without ee/"
-// workflow tests, where the directory it governs is gone.
+// It sits outside `ee/` because it is the core's instruction to an agent rather
+// than a file of the folder it governs.
 const eeRulesFile = ".claude/rules/ee.md"
+
+// eeRuleCountWords is how `ee/README.md`'s sentence above its rules spells each
+// count, so that the sentence and the bullets under it are one pin rather than
+// two spellings that drift apart. It is a table because English has no rule
+// here -- one rule HOLDS and two rules HOLD -- and a count the table does not
+// carry is one the sentence cannot spell, which the caller reports rather than
+// reading past.
+var eeRuleCountWords = map[int]string{
+	0: "no rules hold for everything placed here",
+	1: "one rule holds for everything placed here",
+	2: "two rules hold for everything placed here",
+	3: "three rules hold for everything placed here",
+	4: "four rules hold for everything placed here",
+	5: "five rules hold for everything placed here",
+	6: "six rules hold for everything placed here",
+}
 
 // eeNoticeExempt are the two paths R3 exempts, matched on the whole path
 // relative to ee/: `ee/README.md` and `ee/LICENSE`. A README.md that lands
@@ -99,9 +114,11 @@ var eeNoticeStylesByName = map[string]eeNoticeStyle{
 // staying MIT -- the licence names the Software, the seats and the SPDX
 // identifier every ee/ file's notice carries, every other file under ee/ is
 // admitted by that notice, and the rule file that loads for ee/ says who may
-// write what lands there and what may never land there (R5 as amended by D440).
+// write what lands there and what may never land there (the subscriptions
+// plan's R5 as amended by D440).
 func TestDocsEELicensed(t *testing.T) {
-	flat := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
+	readme := readRealEE(t, "README.md")
+	flat := strings.ToLower(flattenDoc(readme))
 	for _, want := range []string{
 		"business-licensed features",
 		"moved out of the core",
@@ -111,10 +128,8 @@ func TestDocsEELicensed(t *testing.T) {
 		"not published yet",
 		"nothing outside `ee/` imports anything under `ee/`",
 		"spdx-license-identifier: licenseref-fugaro-subscription",
-		// The key rule, stated for a reader of the folder: the count and the
-		// bullets are read together, so a rule added or removed without the
-		// sentence moving fails here (S0.6, R5 as amended by D440).
-		"four rules hold for everything placed here",
+		// The key rule, stated for a reader of the folder (S0.6, the
+		// subscriptions plan's R5 as amended by D440).
 		"never holds or reaches a signing key",
 		"never operates the service",
 		"the private half of a licence key never enters a file here",
@@ -125,26 +140,40 @@ func TestDocsEELicensed(t *testing.T) {
 		}
 	}
 
+	// The sentence above the rules counts them, so the two are read together:
+	// the count comes off the list and the sentence has to spell it, and a rule
+	// added or removed without the sentence moving fails here rather than
+	// leaving the README claiming four rules over five bullets. S0.6 added the
+	// fourth, which is why the count moved with it.
+	bullets := strings.Count(readme, "\n- **")
+	if word, ok := eeRuleCountWords[bullets]; !ok || !strings.Contains(flat, word) {
+		t.Errorf("ee/README.md holds %d rule bullet(s) and its sentence does not count them: the sentence above the list and the bullets under it are one claim, so a rule added or removed moves both", bullets)
+	}
+
 	// The rule file is the other half of the same statement: what the README
 	// says to a reader of the folder, `.claude/rules/ee.md` says to an agent
-	// whose change touches it. S0.6 moves the licensing plan's R8 to this plan's
-	// R5 as amended by D440, which is three things rather than one -- an agent
-	// writes the code here, no agent holds or reaches a signing key, and no
-	// agent operates the service -- and the old wording's flat "no key material"
-	// becomes "no private half", so that a public key and a signature vector,
-	// which a verifier's tests need, are admitted. Both files are read here
-	// because the two sentences have to say the same thing: one without the
+	// whose change touches it. S0.6 moves the licensing plan's R8 to the
+	// subscriptions plan's R5 as amended by D440, which is three things rather
+	// than one -- an agent writes the code here, no agent holds or reaches a
+	// signing key, and no agent operates the service -- and the flat "no key
+	// material" becomes "no private half", so that a public key and a signature
+	// vector, which a verifier's tests need, are admitted. Both files are read
+	// here because the two sentences have to say the same thing: one without the
 	// other leaves the folder's rule and the folder's public statement apart.
+	//
+	// The plan is named beside the number because this file's neighbours cite
+	// the licensing plan's own R3 and R6: a bare "R5" would resolve there to the
+	// release-notes rule, which has nothing to do with keys.
 	rules := strings.ToLower(flattenDoc(readDoc(t, eeRulesFile)))
 	for _, want := range []string{
-		"r5 as amended by d440",
+		"subscriptions r5 as amended by d440",
 		"never holds or reaches a signing key",
 		"never operates the service",
 		"no private half",
 		"a public key and a signature vector",
 	} {
 		if !strings.Contains(rules, want) {
-			t.Errorf("%s lacks %q: the rule the folder is under is R5 as amended by D440, and an agent that writes here reads it as a rule rather than as the README's sentence (S0.6)", eeRulesFile, want)
+			t.Errorf("%s lacks %q: the rule the folder is under is the subscriptions plan's R5 as amended by D440, and an agent that writes here reads it as a rule rather than as the README's sentence (S0.6)", eeRulesFile, want)
 		}
 	}
 
