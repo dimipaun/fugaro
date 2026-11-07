@@ -66,7 +66,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 - **A failed or halted run is not always a bad one.** Its draft pull request holds the work: look at its CI before deciding.
 - **Two review tiers.** A run may have a first-line review by a cheaper coder model before the senior review. Only the senior review decides readiness.
 - **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed, kept beside the priced figure and never replacing it. Subscription (`oauth`) spend is notional, never billed.
-- **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch working as intended.
+- **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch working as intended, or a review that stopped because what comes next is the owner's decision and not a code change (reason `owner_decision`): then say what is waiting on them and stop, and never launch the follow-up without their ruling (`--owner-ruled`).
 
 ## Look at a run when it passes half its cap
 

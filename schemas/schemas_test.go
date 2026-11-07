@@ -1785,7 +1785,7 @@ func TestResultSchemaHalted(t *testing.T) {
 		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
 		runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
 		runstore.HaltStageBudget, runstore.HaltReviewRatio, runstore.HaltFanout,
-		runstore.HaltReviewScope, runstore.HaltExpectedExceeded,
+		runstore.HaltReviewScope, runstore.HaltExpectedExceeded, runstore.HaltOwnerDecision,
 	} {
 		if err := check(r); err != nil {
 			t.Errorf("schema rejects halt reason %q: %v", r, err)
@@ -1793,6 +1793,71 @@ func TestResultSchemaHalted(t *testing.T) {
 	}
 	if err := check("other"); err == nil {
 		t.Error(`schema accepts halt reason "other"`)
+	}
+}
+
+// TestResultSchemaOwnerDecisions: the block a run that stopped waiting on its
+// owner leaves (OD1) validates — the decisions, the total, and the ruling a
+// follow-up of it was launched with — and the schema refuses the shapes that
+// would let a reader render something the runner did not write: an unknown key
+// inside a decision, a decision with no sentence, a sentence past
+// runstore.MaxOwnerDecisionText, more decisions than the cap, and a total that
+// is not a count. A record with nothing pending writes no key at all, and the
+// empty block is refused too: absent is the fact "this run is not waiting on
+// anything", which an empty block would blur.
+func TestResultSchemaOwnerDecisions(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
+	rec := func(od *runstore.OwnerDecisions, ruled string) runstore.Record {
+		return runstore.Record{
+			Version: 1, RunID: "20261107-100000-abcd", Status: runstore.StatusHalted, Stage: "review", Outcome: runstore.OutcomeDraft,
+			Reason: "review is waiting on 1 owner decision", CostUSD: 1, StartedAt: at,
+			Halt:           &runstore.Halt{Reason: runstore.HaltOwnerDecision, Scope: "run", At: at, Detail: "review is waiting on 1 owner decision"},
+			OwnerDecisions: od, OwnerRuled: ruled,
+		}
+	}
+	validate := func(t *testing.T, r runstore.Record) error {
+		t.Helper()
+		data, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	good := runstore.NewOwnerDecisions([]runstore.OwnerDecision{
+		{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"},
+		{Summary: "the approval flow is a product decision"},
+	})
+	if err := validate(t, rec(good, "Counsel cleared it.")); err != nil {
+		t.Errorf("schema rejects the run's own block: %v", err)
+	}
+	if err := validate(t, rec(good, "")); err != nil {
+		t.Errorf("schema rejects a block with no ruling beside it: %v", err)
+	}
+	bad := map[string]*runstore.OwnerDecisions{
+		"no sentence":   {Decisions: []runstore.OwnerDecision{{File: "a.go"}}, Total: 1},
+		"no decisions":  {Decisions: []runstore.OwnerDecision{}, Total: 1},
+		"over the cap":  {Decisions: good.Decisions, Total: 1},
+		"long sentence": {Decisions: []runstore.OwnerDecision{{Summary: strings.Repeat("x", runstore.MaxOwnerDecisionText+1)}}, Total: 1},
+	}
+	bad["over the cap"].Decisions = make([]runstore.OwnerDecision, runstore.MaxOwnerDecisions+1)
+	for i := range bad["over the cap"].Decisions {
+		bad["over the cap"].Decisions[i] = runstore.OwnerDecision{Summary: "s"}
+	}
+	for name, od := range bad {
+		if err := validate(t, rec(od, "")); err == nil {
+			t.Errorf("schema accepts %s", name)
+		}
+	}
+	// A ruling with no block beside it is a follow-up that answered a run this
+	// record does not describe as waiting: legal on its own, and the field is
+	// the text only.
+	if err := validate(t, rec(nil, "Counsel cleared it.")); err != nil {
+		t.Errorf("schema rejects a ruling with no decisions: %v", err)
 	}
 }
 

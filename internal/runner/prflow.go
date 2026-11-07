@@ -780,10 +780,58 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	line := strings.Join(kept, " · ")
 	id := inlineText(r.rec.RunID)
 	out := line + "\n"
+	out += r.ownerPart()
 	if r.rec.DraftFallback {
 		out += "This host has no draft pull requests: this is a normal pull request marked [DRAFT], so reviews may already have been requested.\n"
 	}
 	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)", id, id)
+}
+
+// ownerWaiting reports whether the run ended waiting on the owner's decisions
+// (OD1), whether its loop stopped on them or its review left them and the run
+// ended a draft. It is what gives the section its own head instead of the
+// halted or draft one — the run is over because a person has to answer, not
+// because a limit stopped it.
+func (r *run) ownerWaiting() bool {
+	// The decisions on the record are the fact the section reads: the run
+	// halted on them (ownerStop) or its review left them and the run ended a
+	// draft that carries them (recordOwnerDecisions) — either way what comes
+	// next is a person's answer, and the head above the list says so. The halt
+	// is still read, so a record whose block could not be stored (a decision
+	// with no sentence is not one) still says the run is waiting.
+	if od := r.rec.OwnerDecisions; od != nil && len(od.Decisions) > 0 {
+		return true
+	}
+	return r.rec.Halt != nil && r.rec.Halt.Reason == runstore.HaltOwnerDecision
+}
+
+// ownerPart is the status section's list of the decisions the run is waiting
+// for (OD1): one line per decision, the file the reviewer named and its own
+// sentence, under the section's own head. "" for a run whose review left none.
+//
+// Both fields are the reviewer's text about an untrusted diff, so both go
+// through inlineText: a sentence carrying a newline would end its own bullet
+// and the line after it would be read as Markdown of the section's, and a
+// mention or a marker in one must not reach the pull request as either.
+func (r *run) ownerPart() string {
+	od := r.rec.OwnerDecisions
+	if od == nil || len(od.Decisions) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, d := range od.Decisions {
+		if d.File != "" {
+			fmt.Fprintf(&b, "- `%s`: %s\n", inlineText(d.File), inlineText(d.Summary))
+			continue
+		}
+		fmt.Fprintf(&b, "- %s\n", inlineText(d.Summary))
+	}
+	if od.Total > len(od.Decisions) {
+		// The list is capped (runstore.MaxOwnerDecisions), and a section that
+		// stopped silently would read as the whole answer.
+		fmt.Fprintf(&b, "- and %s more; the run's record lists %d of them\n", Plural(od.Total-len(od.Decisions), "decision"), len(od.Decisions))
+	}
+	return b.String()
 }
 
 func (r *run) updated(label string) string {
@@ -849,6 +897,11 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	switch {
 	case ready:
 		head, why = "**Ready for review**", ""
+	case r.ownerWaiting():
+		// OD1's own head, above the halted one: the run is over because a
+		// person has to answer, not because a limit stopped it, and the
+		// decisions it is waiting for are listed under this line (ownerPart).
+		head = "**Waiting on you**"
 	case r.rec.Status == runstore.StatusHalted:
 		head = "**Halted**"
 	case r.rec.Status == runstore.StatusCancelled:

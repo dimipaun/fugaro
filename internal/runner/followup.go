@@ -371,6 +371,7 @@ func (r *run) promptData() followup.PromptData {
 		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.diffBase(), StateDir: r.d.StateDir,
 		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: f.restored.Moved,
 		RootTask: f.rootTask, DiffStat: f.diffStat, PreviousAnswer: f.prevAnswer, Nonce: f.nonce, Redact: r.redactor(),
+		OwnerRuled: r.spec.OwnerRuled,
 	}
 }
 

@@ -1,0 +1,5 @@
+The repository's owner has ruled on what this pull request was waiting for. Their ruling is the decision this run works from rather than a request from the person who launched it, and it settles the questions it answers:
+
+    Counsel cleared the MIT text as it stands. Keep the approval flow.
+
+A finding the ruling settles is settled, not open: report it only if the change contradicts the ruling, and never mark it needs_owner.

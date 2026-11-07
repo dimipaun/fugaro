@@ -198,6 +198,8 @@ func haltReasonText(h runstore.Halt) string {
 		return "the review range covers files this run never changed"
 	case runstore.HaltExpectedExceeded:
 		return "the run passed the cost its tier expected of it"
+	case runstore.HaltOwnerDecision:
+		return "the review left findings only the owner can settle"
 	}
 	return string(h.Reason)
 }
@@ -362,6 +364,16 @@ func haltLines(rec *runstore.Record) string {
 		fmt.Fprintf(&b, "To continue: %s once a credential is usable again (`fugaro accounts ls` shows each admitted account's state; the project policy's `credentials` decides whether another tier may be used meanwhile).\n\n", again)
 	case runstore.HaltCredsRulesDenied:
 		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro update --firebase-project <gcp-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
+	case runstore.HaltOwnerDecision:
+		// OD1: there is no limit to raise and nothing to retry. A person
+		// answers the decisions listed above, and the answer is what the next
+		// launcher carries — without it the next review finds the same finding
+		// again and stops in the same place.
+		decisions := "the decisions above"
+		if n := pendingOwner(rec.OwnerDecisions); n > 0 {
+			decisions = Plural(n, "decision") + " above"
+		}
+		fmt.Fprintf(&b, "To continue: the owner answers %s, then %s with `--owner-ruled <text-or-file>` carrying the ruling.\n\n", decisions, again)
 	case runstore.HaltRunCap, runstore.HaltNoCap:
 		if rec.Budget != nil && h.Reason == runstore.HaltNoCap {
 			fmt.Fprintf(&b, "To continue: an admin sets the missing cap with `fugaro budget set`, then %s.\n\n", again)

@@ -94,6 +94,14 @@ const (
 	// HaltExpectedExceeded is a run that passed the cost its tier expected
 	// of it (T8.2, D330).
 	HaltExpectedExceeded HaltReason = "expected_exceeded"
+	// HaltOwnerDecision is a run whose review stopped on findings that only
+	// the repository's owner can settle (OD1): a licence or legal clearance, a
+	// product or policy choice, an owner-run step. It is not a governance
+	// tripwire and carries no checkpoint — no limit was passed and no stage
+	// overran — so it is outside GovernanceHaltReasons; what it says is that
+	// the run is over until a person answers, and no further fix round can
+	// change that.
+	HaltOwnerDecision HaltReason = "owner_decision"
 )
 
 // GovernanceHaltReasons is every reason a governance tripwire stops a run
@@ -546,6 +554,93 @@ func NewTolerated(findings []ToleratedFinding) *ToleratedFindings {
 	return tf
 }
 
+// MaxOwnerDecisions bounds the pending owner decisions a record stores, for
+// the reason MaxTolerated bounds the tolerated findings: the list is a model's
+// output and the record is a small object every listing reads.
+const MaxOwnerDecisions = 100
+
+// MaxOwnerDecisionText bounds one decision's sentence in runes, like
+// MaxToleratedTitle bounds a finding's title.
+const MaxOwnerDecisionText = 200
+
+// OwnerDecisions is the findings a run's review left that only the
+// repository's owner can settle (OD1): one entry per finding a reviewer
+// marked needs_owner, in the reviewer's own order, so the pull request's
+// status block, `fugaro runs ls` and `fugaro diagnose` can all say the same
+// thing about what the run is waiting for, and a launcher can refuse a blind
+// follow-up of the pull request.
+//
+// The findings themselves and not only a count, because a reader has to know
+// what to decide — a count alone sends them to the transcript. It is bounded
+// data: every entry is one path and one clipped line, and the list is capped
+// at MaxOwnerDecisions with Total saying how many the review really left, so a
+// truncated list is never presented as the whole one.
+type OwnerDecisions struct {
+	// Decisions is one entry per pending decision, in the reviewer's order.
+	// Never empty: a run with nothing pending carries no block at all, which
+	// is a different fact from a block that lists none.
+	Decisions []OwnerDecision `json:"decisions"`
+	// Total is how many decisions the review left. Never less than
+	// len(Decisions).
+	Total int `json:"total"`
+}
+
+// OwnerDecision is one finding only the owner can settle: the file the
+// reviewer named, and its own sentence for the finding, clipped.
+type OwnerDecision struct {
+	// File is the path the reviewer read, "" when it named none: a decision
+	// about a licence or a product choice may name no file at all, and an
+	// entry without one is still a decision to make.
+	File string `json:"file,omitempty"`
+	// Summary is the reviewer's own sentence for the finding, clipped to
+	// MaxOwnerDecisionText runes. An entry without one is not stored: a
+	// decision with no sentence is one nobody can answer.
+	Summary string `json:"summary"`
+}
+
+// NewOwnerDecisions bounds the pending decisions a run records and returns the
+// block to store, or nil when there are none — a run with nothing pending
+// carries no block at all, rather than an empty one.
+func NewOwnerDecisions(ds []OwnerDecision) *OwnerDecisions {
+	if len(ds) == 0 {
+		return nil
+	}
+	od := &OwnerDecisions{Decisions: []OwnerDecision{}, Total: len(ds)}
+	for _, d := range ds {
+		if d.Summary == "" {
+			continue
+		}
+		if len(od.Decisions) >= MaxOwnerDecisions {
+			break
+		}
+		d.Summary, d.File = clipRunes(d.Summary, MaxOwnerDecisionText), clipRunes(d.File, MaxOwnerDecisionText)
+		od.Decisions = append(od.Decisions, d)
+	}
+	if len(od.Decisions) == 0 {
+		return nil
+	}
+	return od
+}
+
+// Bounded is od as a reader may show it. The record is an object the job's
+// service account can write, so what is read back is not trusted to be the
+// bounded, honest block NewOwnerDecisions wrote: it is bounded again (empty
+// sentences dropped, the same caps), Total is never less than the decisions it
+// read, and nil stays nil — a record with no block is "nothing is pending",
+// never a block of nothing. A block whose every sentence is unreadable reads
+// as none at all: the run's halt reason still says it is waiting.
+func (od *OwnerDecisions) Bounded() *OwnerDecisions {
+	if od == nil {
+		return nil
+	}
+	out := NewOwnerDecisions(od.Decisions)
+	if out == nil {
+		return nil
+	}
+	out.Total = max(out.Total, od.Total, len(out.Decisions))
+	return out
+}
+
 // StageTiming records how long one stage took, and what its model calls
 // cost (generic-tool plan Task 24). ModelUSD is the gateway's StageReport
 // figure for the stage when the run went through the gateway, and the
@@ -891,6 +986,22 @@ type Record struct {
 	// reader sees the record it always saw and the schema's version stays 1
 	// (F21).
 	Tolerated *ToleratedFindings `json:"tolerated,omitempty"`
+	// OwnerDecisions is what the run's review left for the repository's owner
+	// to settle (OD1): the findings a reviewer marked needs_owner, which no
+	// code change can fix, so the run spent no fix round on them — it stopped
+	// on them where the whole round was theirs, and ended a draft that waits
+	// on them otherwise. Absent — never an empty block — for every run whose
+	// review left none (and for a run that stopped for its own reason), which
+	// is every record written before this field existed: the field is
+	// additive, so an old reader sees the record it always saw.
+	OwnerDecisions *OwnerDecisions `json:"owner_decisions,omitempty"`
+	// OwnerRuled is the owner's ruling a follow-up was launched with
+	// (task.Spec.OwnerRuled, fugaro run --owner-ruled): the launcher's own
+	// text, appended to that run's brief verbatim, echoed onto the record so a
+	// reader can see what the run was told after the decisions above. Absent
+	// for every run launched without one, which is every record written before
+	// this field existed.
+	OwnerRuled string `json:"owner_ruled,omitempty"`
 	// Checkpoint is the report a governance halt left (T6.1, D329, G7):
 	// what stopped the run, why it is over and what it would have done
 	// next, written by the runner as the run stops. Absent — never an empty
