@@ -148,9 +148,13 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 		"**D893(c) is a precondition of the whole design, not a channel**",
 		"**Check 125**",
 		"the read-only token comes from the credentials service, by name",
-		// The gate the design cannot pass from inside itself.
+		// The gate the design cannot pass from inside itself, and the state
+		// E7 is in now: the service's own review admission is code that landed
+		// (C3.9a-C3.9g) and CSR11's flip followed, so what an installation
+		// still owes is the service enabled and no `fugaro update` supplies
+		// what the tree already carries.
 		"requires it to be enabled for the installation",
-		"**No `fugaro update` can supply that half**",
+		"**CSR7, CSR2 and the coordinator's `ship` → merge path are unblocked**",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", csrReadme, want)
@@ -169,8 +173,9 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 		}
 	}
 	// The plan carries the same status in its own words, plus the one gate
-	// that is not a decision at all: E7 blocks CSR7, CSR2 and the coordinator's
-	// merge path. U7 was the other one, and the probe it asked for has returned,
+	// that is not a decision at all: E7 blocked CSR7, CSR2 and the coordinator's
+	// merge path, and the plan says so in the past tense because the gate is met
+	// (C3.9a-C3.9g merged, CSR11's flip for 0.21.0). U7 was the other one, and the probe it asked for has returned,
 	// so the plan's row pins the answer rather than the gate -- a document that
 	// drifted back to "gates CSR4b's launch" would be a gate this design has
 	// already cleared, and CSR4b would be held behind work that is done. The
@@ -179,7 +184,7 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 	for _, want := range []string{
 		"**Nothing here is approved.**",
 		"**The task ids are prefixed `CSR`, and that is deliberate.**",
-		"**E7** (the credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's merge path",
+		"**E7** (the credentials service enabled and admitting a project-scoped job) **blocked** CSR7, CSR2 and the coordinator's merge path, and it is **met on `main`**",
 		"**U7** (the owner-run live observation of the deployed fence) **is ANSWERED (2026-11-01)**",
 		"**CSR4a carries D894(a)'s configuration posture and waits on nothing**",
 		"**CSR4b carries D885's mutation machinery and U7's probe has returned, so it waits on CSR3 alone**",
@@ -308,7 +313,7 @@ func TestDocsCloudSeniorReviewDecisionsAreAnswered(t *testing.T) {
 		"**The seven rulings of 2026-11-01 (O1–O7) take no decision number.**",
 		// The precondition D893(c) turned the answer into, and what it blocks.
 		"**D893(c) makes the credentials service a hard precondition of the whole design**",
-		"**CSR7, CSR2 and the coordinator's `ship` → merge path stay blocked until it is met**",
+		"**CSR7, CSR2 and the coordinator's `ship` → merge path are unblocked on an installation that enables the service**",
 	} {
 		if !strings.Contains(reconciled, want) {
 			t.Errorf("%s lacks %q: this work's block is D880–D894, all of it answered, and the answer to D893 is a precondition rather than a channel", csrReconciled, want)

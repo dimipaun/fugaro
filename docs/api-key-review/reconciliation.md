@@ -26,7 +26,7 @@ reviews, each with its own machinery, its own credential and its own record:
 | Where it is | `internal/runner` (`resolveMixedStages`, `stageAgentEnv`) | `internal/credsvc` (the review class) + `internal/runner/gateway.go` (`reviewClassRun`) |
 | What credential it uses today | a **Claude OAuth account** scoped to the stage, held in the runner's own environment | the credentials service's **review class**, from the installation's Claude OAuth account, held by the service and never by the job |
 | Where its dollars are | **notional** (`runstore.StageTiming.ModelNotionalUSD`, `Credential: "oauth"`), uncapped by the gateway | **real**, charged by the gateway from the service's answer |
-| Whether it can be launched today | **yes** — a stage of a run | **no** — built and not admitted: `reviewJobAdmitted` is `false` (**F10**, **U6**) |
+| Whether it can be launched today | **yes** — a stage of a run | **yes**, from 0.21.0: the flip admits it — it was built and not admitted while `reviewJobAdmitted` was `false` (**F10**, **U6**) |
 | What proves it | **Check 290**, written and **NOT RUN** (**U5**) | the class's own tests |
 
 So the ask is one name for two paths. §1 and §2 read each of them; §4 states the reading this design
@@ -122,22 +122,25 @@ value will size the in-job half too large.
 
 ## 2. The cloud half
 
-**F10 — Exists, merged, and it is the OAuth path — but it is built and not admitted, so no review
-launch reaches it today.** `internal/cli/review.go`'s `reviewJobAdmitted` is a constant `false`, and
-`checkReviewJobAdmitted` refuses every launch of `fugaro review --pr N` with "this installation's
-credentials service does not admit the review job's own caller", naming the way out it can offer:
-`fugaro run --pr N --recipe review-only`, the review in the run's own job. The refusal is not a
-missing feature in the launcher — the credentials service refuses a project-scoped job's caller
-whole (its Global Constraint 6), which is why `docs/cloud-senior-review`'s **CSR11** flips the
-constant only after that is fixed — and `docs/releases/v0.20.2.md`'s known limits say the same
-("the cloud review is built and not admitted", unchanged from `docs/releases/v0.20.0.md`). The one
-door is `reviewSkipAdmissionCheckEnv`, the owner's own C3.9 live check's step 3, off by default and
-refused in an agent's session. So **every statement below about the cloud path is about code that a
-real installation cannot yet reach**, and the prerequisite for reaching it is `docs/cloud-senior-review`
-§1's **E7** — the service enabled *and* the service admitting the review job's own account, which is
-**C3.9**'s work, unscheduled and no `fugaro update` step — followed by the flip of the constant
-(**CSR11**, after the owner's live checks). None of that is in this design's slices, and neither
-**D1410** nor **D1422** is priced with it (**U6**).
+**F10 — Exists, merged, and it is the OAuth path — and it is admitted from 0.21.0, so a review
+launch reaches it on an installation whose credentials service is enabled.** This finding read a tree
+on which `internal/cli/review.go`'s `reviewJobAdmitted` was a constant `false` and
+`checkReviewJobAdmitted` refused every launch of `fugaro review --pr N` with "this installation's
+credentials service does not admit the review job's own caller", naming the way out it could offer:
+`fugaro run --pr N --recipe review-only`. **The flip is CSR11's** — the owner's ruling of 2026-11-07,
+"flip it for 0.21.0", with the live checks (C3.9, Check 125's steps 6 and 7, Check 290's rerun)
+running after the tag and a finding going to 0.21.1 — and what it waited on is on `main`: the
+credentials service admits a project-scoped review caller, as its review class
+(`internal/credsvc/review.go`'s `pairReview` over `internal/credsvc/auth.go`'s `ClassReview`), which
+is the second half of `docs/cloud-senior-review` §1's **E7**. The flip's own commit also deleted the
+environment switch `reviewSkipAdmissionCheckEnv`, the owner's own C3.9 live check's step 3, because a
+switch that outlives the gate it was built for is a hole with no reason left to be open. What an
+installation still needs is **E7**'s first half — the service enabled, `fugaro update
+--provision-credentials` and `fugaro creds set github-app-key` — and a launch on an installation
+without one is refused in as many words. So **every statement below about the cloud path is about
+code a real installation can reach now**; what it cannot do yet, and what this design's slices are
+for, is have that review **served by the project's own Anthropic key** instead of the installation's
+Claude OAuth account (**U6**).
 
 With that said, the class itself is real and merged.
 `internal/runner/gateway.go`'s `reviewClassRun` is the conjunction of the run's mode being `review`
@@ -369,7 +372,7 @@ the class's own credential*, never to let the repository supply one.
 | U3 | Whether a live installation that publishes **no** Claude account has actually deployed the review variant's job | The tree says yes and this design reads it that way (**F17**: the account axis always carries the no-account entry, the deployer builds the twin for it and the service admits it), but that is read from `config.ProjectJobAccounts`, `internal/infra/projectjobs.go` and `internal/credsvc/review.go`; no live installation was inspected |
 | U4 | Whether the credentials service's review class has been exercised live for a repository whose `agent.auth` is `api-key` | The refusal is pinned by a unit test; no live run of the refused shape was found in the register |
 | **U5** | **Whether the mixed run works on a real installation at all** — the in-job account path this design reads as the state of the art | **The owner's ask says Check 290 proved it on 2026-11-06, and the register says otherwise.** `docs/gcp-live-checklist.md`'s summary row for 290 ends "**USER-RUN, NOT RUN**" and its own section is headed "NOT RUN"; `docs/design/mixed-credentials.md` §3, §9 and §11, `docs/multi-model.md` §3 and `docs/releases/v0.20.0.md` all say the check "has not been measured live". So the rule is **built** (tasks B1–B6, 0.19.0) and **unmeasured**: every statement in §1 about the account path's behaviour rests on the code and its tests, and none on a run. This is also why the design's own live check (**Check 330**, implementation-plan §5) carries the contrast case — the same task run with and without a stage account — rather than assuming Check 290's numbers exist |
-| **U6** | **Whether a cloud review launch is reachable at all on this tree** | **It is not.** `internal/cli/review.go`'s `reviewJobAdmitted` is a constant `false` and `checkReviewJobAdmitted` refuses every `fugaro review --pr N` with a sentence naming `fugaro run --pr N --recipe review-only` as the way to review today; `docs/releases/v0.20.2.md`'s known limits carry it forward from 0.20.0 ("the cloud review is built and not admitted"). The gate is `docs/cloud-senior-review` §1's **E7**, whose second half is the service admitting a project-scoped job's caller (**C3.9**, unscheduled), and the constant is flipped by **CSR11** only after the owner's live checks. **No live installation was inspected** — the refusal was read from the code and from the release notes — and the design's cloud slices, **D1410** and **D1422** are priced without this prerequisite because it is not theirs (**F10**) |
+| **U6** | **Whether a cloud review launch is reachable at all on this tree** | **It is, from 0.21.0 — and it was not when this reconciliation was read.** `internal/cli/review.go`'s `reviewJobAdmitted` was a constant `false` and `checkReviewJobAdmitted` refused every `fugaro review --pr N` with a sentence naming `fugaro run --pr N --recipe review-only` as the way to review; **CSR11** flipped it (the owner's ruling of 2026-11-07) and deleted the environment switch that refusal's live check reached the launch with. The gate was `docs/cloud-senior-review` §1's **E7**, and both of its halves now hold: the service admits a project-scoped job's caller (**C3.9**, merged as C3.9a–C3.9g), and an installation enables the service with `fugaro update --provision-credentials`. **No live installation was inspected** — the state was read from the code — and the design's cloud slices, **D1410** and **D1422**, are priced for what is still missing: the review class served by the project's own key (**F10**) |
 
 ## 7. Owner decisions D1410–D1429
 
@@ -394,7 +397,7 @@ approved. Jobmax").
 | **D1419** | How does the service reach a provider's endpoint? | **Not at all in the Anthropic-key slice** (**F12**): `upstreamKindAnthropic` with a `""` base is already the right upstream. A provider endpoint is CSR18's work | **A provider upstream in the service now.** Its cost is a destination rule, a base URL from a non-credential source, and a second way for a credential to leave the service | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1420** | What happens to `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` when the path lands? | **Rewritten, keeping its name** — §6.7's own instruction: the refusal is 0.20.0's answer and the test gains the second direction | **Deleted.** Its cost is losing the one test that holds the fail-closed direction (a repository's own file must never choose the review's credential) | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1421** | Does the Anthropic-key half ship in 0.20.0, in the release after it, or not at all? | **After 0.20.0.** The owner cut the path from 0.20.0 on 2026-11-06, and nothing here found a reason to reopen a cut the owner made with the full picture in front of them | **Into 0.20.0.** Its cost is re-opening a release whose tasks and live checks are already sequenced, for a slice §6.7 deliberately put outside every level | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
-| **D1422** | May `fugaro review --pr N` be launched for a project with no Claude account at all? | **Yes, once the key is a pairing axis** — this is clause 2 (**F17**), and it is the whole point of the Anthropic-key half. **The variant is already deployed and admitted for that project** (the axis always carries the no-account entry, **F17**); what is missing is the credential | **No.** Its cost is that clause 2 is not answered: an installation with only a key still cannot have an independent review. **Either way the question is downstream of E7** (**F10**): every review launch is refused until the service admits the review caller, and **this design's slices do not carry that work** — pricing it here without E7 would price a launch nobody can make | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1422** | May `fugaro review --pr N` be launched for a project with no Claude account at all? | **Yes, once the key is a pairing axis** — this is clause 2 (**F17**), and it is the whole point of the Anthropic-key half. **The variant is already deployed and admitted for that project** (the axis always carries the no-account entry, **F17**); what is missing is the credential | **No.** Its cost is that clause 2 is not answered: an installation with only a key still cannot have an independent review. **Either way the question is downstream of whether a review can be launched at all** (**F10**): every review launch was refused while the flip was pending, and **this design's slices do not carry that work** — the flip landed in 0.21.0 (**CSR11**), and what this design carries is the key the review class is served by | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1423** | Which model does an api-key review run? | **The same model the OAuth review runs** — the class's own model path is unchanged by which credential pays, and the ask is about the credential and not the model | **A separate model choice for the key path.** Its cost is a second model resolution beside `applyLevels` and the class's, for no gain the ask names | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1424** | What is the cost basis of an api-key review? | **`runstore.BasisAPIList`** — `internal/runstore/cost.go`'s `ModelBasis` already answers `api-key` this way, and the review's dollars are list-price dollars like any other api-key run's | **A basis of its own for reviews.** Its cost is a third basis in a contract the console, the history and the mobile app read | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1425** | Is an api-key review held to the service's `budget.allowed_models` gate? | **Yes, unchanged** — the class is already held to it (`internal/runner/routing.go`'s allow-list arm, the owner's ruling of 2026-10-22), and which key pays does not change what may be called | **Exempt the key path.** Its cost is a review that may call a model the project's own policy refuses, which is the one thing the allow-list exists to prevent | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
