@@ -9821,7 +9821,11 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		// section is the document described member by member, and a reader who
 		// finds ten of the fourteen members is reading a shape the CLI no
 		// longer writes.
+		// `operation` is not only the entry pair's word: the schema's enum has
+		// three values, and `remove-secret` is the one §6.20's own pair never
+		// writes (secretsRmDryRun, D1171).
 		"`operation`",
+		"`remove-secret`",
 		"`entry_key`",
 		"`entry_value`",
 		"`entry_fields`",
