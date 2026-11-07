@@ -2,16 +2,19 @@ package cli
 
 // The diagnose-agent plan folder, pinned.
 //
-// docs/diagnose-agent/ is plan-only: the owner's spec verbatim, a
-// reconciliation with decisions D1600-D1614 answered (D1615-D1619 reserved and
-// unused) and a plan whose Checks 410-412 are taken. Nothing in it is a command
-// or a flag yet, so these tests pin only what rots silently: a decision row
-// with an empty answer cell, a row in the reserved tail, a check number the plan
-// no longer holds, and a status line that stops saying nothing is approved.
+// docs/diagnose-agent/ holds the owner's spec verbatim, a reconciliation with
+// decisions D1600-D1614 answered (D1615-D1619 reserved and unused) and a plan
+// whose Checks 410-412 are taken. One task of that plan is written and nine are
+// not, and nothing in the folder is a command or a flag yet, so these tests pin
+// only what rots silently: a decision row with an empty answer cell, a row in
+// the reserved tail, a check number the plan no longer holds, a current status
+// line that stops naming the part that is built, and a first-written status line
+// dropped rather than kept.
 //
 // Mutation (run and restored): empty the answer cell of D1605 -> the decisions
 // test fails naming D1605; add a D1615 row -> fails naming D1615; remove
-// "Check 411" from the plan -> the checks test fails.
+// "Check 411" from the plan -> the checks test fails; take "T-DG5" out of the
+// current status line -> the status test fails naming it.
 
 import (
 	"os"
@@ -22,10 +25,18 @@ import (
 )
 
 const (
-	dgaDir    = "docs/diagnose-agent/"
-	dgaFirst  = 1600
-	dgaLast   = 1614
-	dgaTail   = 1619
+	dgaDir   = "docs/diagnose-agent/"
+	dgaFirst = 1600
+	dgaLast  = 1614
+	dgaTail  = 1619
+	// dgaStatusNow marks the folder's current status line, the one a reader of
+	// the directory sees first. Every folder in this repository dates a later
+	// status line, so the guards below read that line rather than the kept one.
+	dgaStatusNow = "**Status (2026-11-07, later):"
+	// dgaStatus is that line's own first sentence as written before the first
+	// task landed. It is pinned in the line kept below the current one: the
+	// folder's history is kept rather than rewritten, and the claim has to stay
+	// legible as what was true of the moment it describes.
 	dgaStatus = "plan only; nothing is implemented; no task is approved"
 )
 
@@ -71,10 +82,38 @@ func TestDocsDiagnoseAgentDecisionsAreAnswered(t *testing.T) {
 	}
 }
 
+// dgaStatusLine is f's current status line: the one opening with dgaStatusNow.
+func dgaStatusLine(t *testing.T, f string) string {
+	t.Helper()
+	for _, line := range strings.Split(dgaRead(t, f), "\n") {
+		if strings.HasPrefix(line, dgaStatusNow) {
+			return line
+		}
+	}
+	t.Fatalf("%s%s carries no line opening with %q: T-DG5's two files are in the tree, and the folder's status has to say so -- if the line was reworded, move this guard's marker with it", dgaDir, f, dgaStatusNow)
+	return ""
+}
+
+// TestDocsDiagnoseAgentStatusAndChecks: the folder states its own state in one
+// current line per document, and that line has to move with the tree. T-DG5's
+// files landed while both said nothing was implemented, so the current line
+// names the one task that is written and the first-written line is kept below
+// it, still reading as what was true then. The clauses checked here are the two
+// a reader decides on: what is built, and that the rest of the plan is not
+// approved.
 func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 	for _, f := range []string{"README.md", "implementation-plan.md"} {
+		line := dgaStatusLine(t, f)
+		for _, want := range []string{"T-DG5", "no other task is approved"} {
+			if !strings.Contains(line, want) {
+				t.Errorf("%s%s: the current status line does not say %q, so the folder reads as if T-DG5's files were not in the tree, or as if the nine tasks after it were approved: %s", dgaDir, f, want, line)
+			}
+		}
+		if strings.Contains(line, "nothing is implemented") {
+			t.Errorf("%s%s: the current status line still says nothing is implemented, though internal/diagnoseagent/creds.go and creds_test.go are in the tree: %s", dgaDir, f, line)
+		}
 		if !strings.Contains(dgaRead(t, f), dgaStatus) {
-			t.Errorf("%s%s: the status line %q is missing", dgaDir, f, dgaStatus)
+			t.Errorf("%s%s: the status as first written, %q, is gone: the folder keeps the line it was written with below the current one, so the claim stays readable as what was true of that moment", dgaDir, f, dgaStatus)
 		}
 	}
 	plan := dgaRead(t, "implementation-plan.md")

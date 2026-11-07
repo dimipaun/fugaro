@@ -107,7 +107,7 @@ too, since an entry is copied into the run record and into the pull request's st
 one check that bounds text on a wire. F9's rule in this tree — one matcher, one pattern rule — is
 what forbids a fifth spelling here.
 
-**F9 — the dependency is already direct.** `doublestar/v4` is in `go.mod` (`v4.10.2`) and imported
+**F9 — the dependency is already direct.** `doublestar/v4` is in `go.mod` (`v4.10.4`) and imported
 by `internal/rigor`, `internal/config` and others. The allow rule adds no module.
 
 **F10 — `internal/policy.Merge` already knows the direction this key needs.**

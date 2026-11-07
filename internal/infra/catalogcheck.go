@@ -146,8 +146,9 @@ type CatalogCheckRepoSpec struct {
 }
 
 // CatalogCheck is the project's catalog check job for lc, or nil when the
-// project has nothing to check: no effective catalog, or no entry whose
-// repository this installation can build with. bucket is the installation's
+// project has nothing to check: no effective catalog, no entry whose
+// repository this installation can build with, or no base image recorded for
+// the job (and the builds) to run FROM. bucket is the installation's
 // validated runs bucket, and imageBuilds is M5's managed bound — the marker's
 // max_image_builds, or zero when the installation has read none, which the job
 // then holds itself to M5's default of one build per run (the reader's own
@@ -164,13 +165,12 @@ type CatalogCheckRepoSpec struct {
 // this job (and its schedule) or leaves every entry of the project's catalog
 // exactly as it is.
 func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64, paused bool) (*CatalogCheckSpec, error) {
-	cat := lc.ImageCatalogEffective(nil)
-	if cat == nil {
-		return nil, nil
-	}
-	repos, err := catalogCheckRepos(lc, cat)
+	cat, repos, err := catalogCheckFor(lc)
 	if err != nil {
 		return nil, err
+	}
+	if cat == nil {
+		return nil, nil
 	}
 	if len(repos) == 0 {
 		// The catalog's entries all name repositories of this installation, and
@@ -182,7 +182,14 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64, paused 
 	}
 	image := lc.BaseImage(config.BaseKind)
 	if image == "" {
-		return nil, userErr("the local config has no base_images.%s entry, which the project's image catalog needs: the catalog check job runs from that image and every catalog build is built FROM it. Set base_images.%s in the local config to this installation's fugaro image", config.BaseKind, config.BaseKind)
+		// The installation records no base image, and this job runs FROM it:
+		// the module refuses an empty one, and a job whose image this run
+		// guessed would check the catalog from whatever the guess names. The
+		// job is deployed by the first apply after the base image is pinned —
+		// the images stage pins it in the same run and the installation root
+		// is applied again behind it (#1843) — and an installation that stays
+		// without one is the state it was in before the job existed.
+		return nil, nil
 	}
 	if !gcp.ValidBucketName(bucket) {
 		return nil, userErr("the runs bucket %q has a byte outside a-z, 0-9, '.', '_' and '-'", bucket)
@@ -241,6 +248,42 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64, paused 
 		})
 	}
 	return out, nil
+}
+
+// catalogCheckFor is CatalogCheck's own head: the effective catalog and the
+// repositories its entries build in, both nil for a project with nothing to
+// check. CatalogBuilds asks it too, so the two can never disagree about
+// whether this installation's catalog is one it builds.
+func catalogCheckFor(lc *localcfg.Config) (*config.Catalog, []CatalogCheckRepoSpec, error) {
+	cat := lc.ImageCatalogEffective(nil)
+	if cat == nil {
+		return nil, nil, nil
+	}
+	repos, err := catalogCheckRepos(lc, cat)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cat, repos, nil
+}
+
+// CatalogBuilds reports whether the effective image catalog has an entry this
+// installation builds: the condition CatalogCheck deploys its job under, so
+// false exactly when the job is nil for this reason.
+//
+// The run that has to PIN the base image the job runs FROM asks it (the images
+// stage, #1843): the job's spec is built from the local config, and the spec
+// the installation root was planned with was built before that pin, so that
+// run applies the root again once the base image is recorded — and only when
+// the catalog is one this installation builds.
+//
+// The error catalogCheckRepos can return is a repositories key whose clone URL
+// the URL rules refuse, and localcfg's own validation of a repos key rules that
+// out: an error here reads as false. A run that ever reached it failed on that
+// refusal already, with the sentence that belongs to it, in the spec the run
+// builds before its first apply (CatalogCheck).
+func CatalogBuilds(lc *localcfg.Config) bool {
+	_, repos, err := catalogCheckFor(lc)
+	return err == nil && len(repos) > 0
 }
 
 // catalogCheckRepos are the repositories the catalog's entries build in, each

@@ -141,11 +141,13 @@ func NewVerifier(projectID string, keys KeySource, opts ...VerifierOption) (*Ver
 // or ErrUnverifiedIDToken, or ErrUnavailable when the key set could not be read
 // at all (the key source's own sentinel).
 //
-// It is called from GET /oauth/authorize and from nowhere else (D923). The ID
-// token is the proof of the sign-in step, and the single consumer is what makes
-// it safe to run in a service that answers strangers: a token that is never a
-// grant cannot be replayed at the token endpoint, and a token that is never a
-// bearer cannot reach a tool. Any later path that accepts one — a second
+// It is called from the approve step's POST /oauth/authorize and from nowhere
+// else (D923, amended by M-a on 2026-11-04: the token travels in that POST's
+// body and never in a URL, so the GET renders the page and verifies nothing).
+// The ID token is the proof of the sign-in step, and the single consumer is
+// what makes it safe to run in a service that answers strangers: a token that
+// is never a grant cannot be replayed at the token endpoint, and a token that
+// is never a bearer cannot reach a tool. Any later path that accepts one — a second
 // argument, a "just this once" branch — is a finding rather than a convenience,
 // and the token endpoint's own grant vocabulary (ParseGrantType) has no member
 // for it.
@@ -227,15 +229,16 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 }
 
 // ErrUnsupportedGrant is a POST /oauth/token request whose grant_type is not
-// one of the three this endpoint accepts.
+// one of the two this endpoint serves.
 var ErrUnsupportedGrant = errors.New("mcpauth: the token endpoint does not accept that grant type")
 
 // GrantType is the grant a POST /oauth/token request presents.
 //
 // The vocabulary is CLOSED, and it lives here rather than beside the endpoint's
 // dispatch because the rule it encodes is D923's and not a convenience of the
-// endpoint: the Firebase ID token is consumed at GET /oauth/authorize and is
-// never a grant, so the token endpoint has no member for it. A grant the
+// endpoint: the Firebase ID token is consumed at the approve step's POST
+// /oauth/authorize and is never a grant, so the token endpoint has no member for
+// it. A grant the
 // endpoint does not know is refused rather than treated as none — an endpoint
 // that read an unknown type as "no grant" would be one whose refusal a client
 // cannot tell from its own mistake.
@@ -246,20 +249,29 @@ const (
 	GrantAuthorizationCode GrantType = "authorization_code"
 	// GrantRefreshToken is a rotating refresh token (D930).
 	GrantRefreshToken GrantType = "refresh_token"
-	// GrantClientCredentials is the unattended caller's grant (D929).
+	// GrantClientCredentials is the unattended caller's grant (D929). It is
+	// parsed and never served: the amendment of 2026-11-04 (M-f) keeps D929's
+	// grant off, so serveToken refuses it before it reads the client, and it is
+	// named here only so that refusal is about the grant being off rather than
+	// about the value being unknown.
 	GrantClientCredentials GrantType = "client_credentials"
 )
 
-// ParseGrantType reads a presented grant_type. Anything outside the three is
-// refused, and the refusal names the rule and never the value: an ID token
-// pasted into grant_type is the caller's own text, and it is exactly the text a
-// refusal must not repeat.
+// ParseGrantType reads a presented grant_type. Anything outside the three it
+// names is refused, and the refusal names the rule and never the value: an ID
+// token pasted into grant_type is the caller's own text, and it is exactly the
+// text a refusal must not repeat.
+//
+// The three are the vocabulary this endpoint's refusals are built from and not
+// the set it serves: client_credentials parses, so that serveToken can refuse it
+// as D929's grant being off (M-f) instead of as a value nobody knows, which is
+// also why the message below names the two grants the endpoint does serve.
 func ParseGrantType(s string) (GrantType, error) {
 	switch g := GrantType(s); g {
 	case GrantAuthorizationCode, GrantRefreshToken, GrantClientCredentials:
 		return g, nil
 	}
-	return "", fmt.Errorf("%w: this endpoint's grants are the authorization code, the rotating refresh token and a confidential client's own credentials, and a Firebase ID token is consumed at the authorize endpoint and is never a grant", ErrUnsupportedGrant)
+	return "", fmt.Errorf("%w: this endpoint's grants are the authorization code and the rotating refresh token, and a Firebase ID token is consumed at the authorize endpoint and is never a grant", ErrUnsupportedGrant)
 }
 
 // decodeIDToken decodes a compact JWT's header and payload WITHOUT verifying

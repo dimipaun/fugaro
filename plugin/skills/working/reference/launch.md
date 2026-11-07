@@ -27,7 +27,7 @@ A good task is bounded, checkable and needs no local-only context (a local datab
 ## 2. Confirm the target
 
 Find the defaults:
-- the repository: `--repo`, else the checkout's origin. `fugaro runs ls --json` shows the repositories that have runs.
+- the repository: `--repo <owner/name>`, or `--repo .` (any path inside a checkout works the same) for the checkout you are in; else the checkout's origin. `fugaro runs ls --json` shows the repositories that have runs.
 - the workflow: `--workflow`, else the repository's only workflow. A repository with several needs one named; ask which.
 - the base branch: `--ref`, else the branch this checkout is on when origin has it and it is not the base branch (the CLI says so on stderr), else the configuration's `git.base_branch`, else the installation's entry for the repository (the local config's `repos.<r>.base_branch`), else the project's `base_branch` default, else `main`. The run's own branch is `fugaro/<run-id>`, and the pull request goes back to the base branch. A long-lived branch (an `integration-0.9.x`) is named here as well, and so is the file on it: the run takes `git.base_branch` from the `fugaro.yaml` at `--ref`, so a branch whose file still names main gets its pull request against main, retargeted by a person afterwards (SKILL.md's long-lived-branch section says why it matters).
 

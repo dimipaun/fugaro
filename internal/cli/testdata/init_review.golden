@@ -3,7 +3,7 @@ Review: project aurora (GCP proj-1234) is Fugaro's own (created by this run), so
 Will do, each step printing its own exact plan first:
   firebase:       Terraform applies of the installation root (GCP project proj-1234) and of the Firebase root in aurora-fp, then the budget database's marks and rules and Identity Platform (planned when applied)
                   the Firebase project aurora-fp: NOT verified as Fugaro's (another project than proj-1234, with no Fugaro mark): its Terraform apply and database writes each ask their own typed name
-  installation-2: Terraform apply of the installation root again, deploying the history job (planned when applied)
+  installation-2: Terraform apply of the installation root again once the images stage has put the history image and the catalog's base image in place, deploying the jobs that run FROM them (planned when applied)
   repository:     Terraform apply onboarding acme/web (planned when applied)
 Fixed, announced and free, so they need no plan: the Terraform state bucket (cents a month) and the Cloud Resource Manager API when missing, the local config (its diff is shown first).
 IAM changes announced: removes project Viewers' read access to the runs bucket gs://fugaro-runs-proj-1234 and the state bucket gs://fugaro-tfstate-proj-1234 when they have it.

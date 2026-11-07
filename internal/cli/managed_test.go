@@ -822,9 +822,26 @@ var propertyAgentSites = map[string]string{
 	// The second one drives the same function WITHOUT a marker, so the two
 	// together say the skip is the marker's and not a site that does nothing.
 	"init_stages.go pinCredentialsImage": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate (with none)",
+	// The audience fill is the same shape and for the same reason: it applies
+	// from inside the installation stage, so it must not run in a session whose
+	// apply is a plan the owner has not confirmed. Under a marker it returns
+	// without reading anything; without one it is what puts the service's own
+	// URL on the revision, which TestUpdateSetsCredentialsServiceOnEveryInstallation
+	// asserts as the stage's second apply.
+	"init_stages.go fillCredentialsAudience": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateSetsCredentialsServiceOnEveryInstallation (with none)",
 	// The layer stage refuses a marker itself for the same reason: it is
 	// SelfConfirming, so the loop would call it.
 	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
+	// The switch's record is the same shape: credentialsBundleReady opens the
+	// credentials service's bundle with the identity of whoever runs the
+	// update, so a coding agent's session reads nothing there and says so,
+	// and the two doors that write the record leave every entry as the
+	// person's own run left it. The first test drives the repository door end
+	// to end under every marker, the second that door's record write, and the
+	// third the installation door's backfill — under the run markers, which
+	// are the ones that reach it, an agent's session being refused by the
+	// installation step before that door runs at all.
+	"init_credentials.go credentialsBundleReady": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
 }
 
 // The policy tail (init_policy_migrate.go policyMigrationConfirm) is not in
@@ -920,27 +937,26 @@ var initFlagCases = map[string]string{
 	"plan-only":       "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
 	"ask":             "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
 	// Flags whose steps confirm through the paths the property drives.
-	"create-project":        "its creation confirms through the Typed class (askTyped/canType, both covered)",
-	"managed":               "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
-	"link-billing":          "the billing link confirms through the Typed class (askTyped/canType, both covered)",
-	"replace-image":         "names the intent only; replacing confirms through askTyped (covered)",
-	"retire":                "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
-	"repo":                  "the repository's applies confirm through ask/askOrdinary (covered)",
-	"firebase-project":      "its applies confirm through ask, its Firestore location through the Typed class (covered)",
-	"forget":                "its state removals confirm through ask (covered)",
-	"config-only":           "writes the local config; any confirmation is ask's (covered)",
-	"onboard-repo":          "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
-	"anchor":                "OUTSIDE the property: edits only the checkout's fugaro.yaml and honours --yes under a marker by design (fugaro setup --help)",
-	"publish-config":        "OUTSIDE the property: refused under a marker in init.go before any write; no confirmation",
-	"check-github-app":      "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
-	"allow-delete":          "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
-	"allow-job-delete":      "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
-	"allow-fork":            "OUTSIDE the property: lets plugin wiring move a ref; the wiring's apply still confirms through ask",
-	"print-vars":            "no cloud call and no confirmation (canAsk is false under it)",
-	"no-build":              "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
-	"provision-batch":       "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
-	"coordinator":           "the coordinator's opt-in (P5): it is an apply of the installation's own roots whose steps confirm through ask (covered), but --yes is refused beside it (checkCoordinator), and a coding agent's session and a run with no terminal are refused before anything is read (refuseCoordinatorUnattended, an inline site, covered)",
-	"provision-credentials": "the credentials stage (0.10.0, C1.20, init_credentials.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it, and a coding agent's session is refused by the loop's own gate; the confirm table does not drive this stage itself",
+	"create-project":   "its creation confirms through the Typed class (askTyped/canType, both covered)",
+	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
+	"link-billing":     "the billing link confirms through the Typed class (askTyped/canType, both covered)",
+	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
+	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
+	"repo":             "the repository's applies confirm through ask/askOrdinary (covered)",
+	"firebase-project": "its applies confirm through ask, its Firestore location through the Typed class (covered)",
+	"forget":           "its state removals confirm through ask (covered)",
+	"config-only":      "writes the local config; any confirmation is ask's (covered)",
+	"onboard-repo":     "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
+	"anchor":           "OUTSIDE the property: edits only the checkout's fugaro.yaml and honours --yes under a marker by design (fugaro setup --help)",
+	"publish-config":   "OUTSIDE the property: refused under a marker in init.go before any write; no confirmation",
+	"check-github-app": "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
+	"allow-delete":     "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
+	"allow-job-delete": "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
+	"allow-fork":       "OUTSIDE the property: lets plugin wiring move a ref; the wiring's apply still confirms through ask",
+	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
+	"no-build":         "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
+	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
+	"coordinator":      "the coordinator's opt-in (P5): it is an apply of the installation's own roots whose steps confirm through ask (covered), but --yes is refused beside it (checkCoordinator), and a coding agent's session and a run with no terminal are refused before anything is read (refuseCoordinatorUnattended, an inline site, covered)",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	"alert-email": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
