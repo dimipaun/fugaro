@@ -1281,7 +1281,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-two argvs and nothing else -- the console's one spawn table
+// the twenty-three argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1328,6 +1328,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// The graph screen's per-task state (console v2 plan GV2.1, the
 		// `plan.status` operation): read-only, no path in the argv.
 		"plan status --json",
+		// The dependency graph as one versioned document (the graph plan's
+		// CG9a, the `graph.read` operation): read-only, no path in the argv,
+		// and no checkout either -- its scope is the project's stored view.
+		// Its one argument is the scope, the only argument on this table held
+		// to a closed grammar **and** to what a previous read listed, and it is
+		// optional the way `plan status --json`'s `--all` is: the row's cell
+		// spells the command's argv and names the argument in its parenthesis.
+		"graph --json",
 		// The project view (Bitbucket credentials T1.2, the
 		// `coordinator.status` operation): read-only, no path in the argv.
 		// `--from-store` is what makes it need no host credential at all --
@@ -1502,9 +1510,10 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-one commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-two commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
-	// screen's `plan status --json` (GV2.1), the project view's
+	// screen's `plan status --json` (GV2.1), the dependency graph read
+	// `graph --json` (the graph plan's CG9a), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
 	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
 	// --pr <n>` (coordinator v2 C3), the declarations read
@@ -1515,8 +1524,8 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// plan's C1), the settings write `settings set KEY ...` (the same plan's
 	// C3, and the row that is not a read at all) and the launch `fugaro run`
 	// (V2.5.1a).
-	if len(allowed) != 21 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 21 (logs has two argvs)", path, argvs, len(allowed))
+	if len(allowed) != 22 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 22 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -9623,8 +9632,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is thirty-one operations**") {
-		t.Errorf("%s no longer says the surface is thirty-one operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty and the same plan's C3 to thirty-one), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is thirty-two operations**") {
+		t.Errorf("%s no longer says the surface is thirty-two operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one and the graph plan's CG9a to thirty-two), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string

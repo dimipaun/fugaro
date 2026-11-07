@@ -156,7 +156,8 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * console 0.119.0's read-only models panel, `models.list`, the eighteenth, and
  * the settings read, `settings.read`, the nineteenth, and the settings write,
  * `settings.edit`, the twentieth -- the same command's second row, since an edit
- * reads the project's configuration the read does. The
+ * reads the project's configuration the read does -- and the graph plan's read,
+ * CG9a's `graph.read`, the twenty-first. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -172,6 +173,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'runs.stats',
   'runs.summary',
   'plan.status',
+  'graph.read',
   'run.diagnose',
   'run.logs',
   'run.logLink',
@@ -484,11 +486,14 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-two argvs, twenty-one commands, twenty of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-three argvs, twenty-two commands, twenty-one of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
-    // plan GV2.1's `plan status --json` is the fourteenth, and Bitbucket
+    // plan GV2.1's `plan status --json` is the fourteenth -- and the graph
+    // plan's `graph --json` (CG9a) sits beside it, the graph screen's other
+    // read, whose one declared argument is the scope and nothing else, and
+    // whose every word is otherwise the row's own -- and Bitbucket
     // credentials T1.2's `coordinator status --from-store --all --json` the
     // fifteenth, V2.5.1a's launch the sixteenth -- the one row here that is a
     // write, and the one whose words carry `--task-file -` (the literal word
@@ -516,6 +521,7 @@ describe('the spawn table and the argv it builds', () => {
       'runs stats --json',
       'runs summary --json',
       'plan status --json',
+      'graph --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -551,6 +557,7 @@ describe('the spawn table and the argv it builds', () => {
         'runs stats',
         'runs summary',
         'plan status',
+        'graph',
         'diagnose',
         'logs',
         'secrets ls',
@@ -564,7 +571,7 @@ describe('the spawn table and the argv it builds', () => {
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(20)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(21)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -590,6 +597,138 @@ describe('the spawn table and the argv it builds', () => {
       }
     },
   )
+
+  it('graph.read argv is exactly the declared row', () => {
+    // `fugaro graph --json [--source <v>]` (CG9a; the graph plan's H1 and
+    // `console/docs/json-contract.md` §6.22). The row is the whole of what this
+    // console may say to the command, so it is written out here rather than read
+    // back off the table: the words, the one declared argument and its flag, and
+    // the installation's two flags behind them.
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'graph.read')
+    expect(row?.words.join(' ')).toBe('graph --json')
+    expect(row?.takesProject).toBe(true)
+    expect(row?.dirFlag).toBe(false)
+    expect(row?.args).toEqual([{ key: 'source', flag: '--source', kind: 'value' }])
+    // `--source` is on the module's own flag list, which is what `assertArgvFlags`
+    // holds every emitted word to.
+    expect(SPAWN_FLAGS).toContain('--source')
+
+    // With no argument the argv is the command's own default: the CLI reads
+    // `all`, so the console does not have to say it.
+    expect([...argvFor('graph.read', {}, safeContext())]).toEqual(['graph', '--json', '--project', PROJECT])
+    // With one, the value is the word after `--source`, and the installation's
+    // flags follow it.
+    expect([...argvFor('graph.read', { source: 'coordinator' }, safeContext())]).toEqual([
+      'graph',
+      '--json',
+      '--source',
+      'coordinator',
+      '--project',
+      PROJECT,
+    ])
+    // ...and it is a value and never a word of the command: a source spelled as
+    // a flag, or as a flag and a value, is refused by the argv builder's own
+    // whitelist before any child exists. The pattern half is `ipc.ts`'s below.
+    for (const value of ['--watch', '-x', 'all --source local:o1', 'local:o1\n--json']) {
+      expect(() => argvFor('graph.read', { source: value }, safeContext()), value).toThrow()
+    }
+    // An undeclared key cannot smuggle a word in either: the row's arguments are
+    // the whole of what reaches this argv.
+    expect(() => argvFor('graph.read', { watch: true } as never, safeContext())).toThrow(/does not declare/)
+  })
+
+  it('a source value outside the pattern is refused before any spawn', () => {
+    // H1's closed set, checked where the renderer's payload is checked
+    // (`src/main/ipc.ts`): `all`, `coordinator`, and an id-carrying scope whose
+    // id is one lower-case letter or digit then up to 39 more of those or a
+    // hyphen. Everything else is refused **before a child exists** -- so a
+    // string the renderer chose never reaches a path, another flag or a read.
+    const refused = [
+      '../../etc/passwd',
+      'orchestrator:../..',
+      'orchestrator:',
+      'local:',
+      'ALL',
+      'ORCHESTRATOR:o1',
+      'co-ordinator',
+      'orchestrator:O1',
+      'orchestrator:o.1',
+      'orchestrator:-o1',
+      // 41 characters, which the pattern's own ceiling refuses: at `local:`'s
+      // length the value is still shorter than the bound below, so what refuses
+      // it is the grammar and not the length.
+      `local:${'a'.repeat(41)}`,
+      'orchestrator:o1 --watch',
+      'all --source coordinator',
+      '',
+    ]
+    for (const source of refused) {
+      const decision = validateArguments('graph.read', { source })
+      expect(decision.ok, JSON.stringify(source)).toBe(false)
+      // The refusal is this module's own sentence: it names the key and the
+      // grammar, and it is the *same* sentence whatever arrived -- so nothing a
+      // renderer sent is echoed back into a string a screen draws, and no
+      // hostile value can be made to leave a trace of itself in a refusal
+      // (which is why the sentence carries the pattern's own `orchestrator:`).
+      expect(decision.ok ? '' : decision.reason, JSON.stringify(source)).toBe(
+        'source must be all, coordinator, or orchestrator:<id> / local:<id> with an id of 1 to 40 characters of a-z, 0-9 and -',
+      )
+    }
+    // A value longer than the pattern could ever accept is refused by the
+    // bound (`MAX_GRAPH_SCOPE_LENGTH`, the longest value the pattern admits)
+    // rather than by the grammar, so a hostile payload cannot make the regular
+    // expression work; and the bound is not tighter than the pattern, which the
+    // boundary id below is here to say.
+    const overlong = validateArguments('graph.read', { source: `orchestrator:${'a'.repeat(41)}` })
+    expect(overlong.ok).toBe(false)
+    expect(overlong.ok ? '' : overlong.reason).toContain('longer than')
+    // The four the pattern admits, and the boundary id: 40 characters is the
+    // longest the CLI's own pattern takes.
+    for (const source of ['all', 'coordinator', 'orchestrator:o1', 'local:o-1', `local:${'a'.repeat(40)}`]) {
+      expect(validateArguments('graph.read', { source }).ok, source).toBe(true)
+    }
+    // A payload that is not a string at all is refused too.
+    for (const source of [7, null, ['all'], { source: 'all' }, true]) {
+      expect(validateArguments('graph.read', { source }).ok, JSON.stringify(source)).toBe(false)
+    }
+  })
+
+  it('the child env is exactly CHILD_ENV_KEYS', () => {
+    // The graph read opens the project's database through the child's own
+    // credential, and the child is what carries it: this process hands it the
+    // eleven keys and nothing else. The app's own environment -- an Anthropic
+    // key, an ADC path, an ambient project selection -- is not merged in, which
+    // is the rule `CHILD_ENV_KEYS` exists for. The app environment below is
+    // **saturated**: every key of the boundary is present in it (so a key the
+    // module dropped would be a key missing from the answer rather than a key
+    // nothing supplied) beside the four the console must never pass on.
+    const appEnv: Record<string, string> = {
+      ANTHROPIC_API_KEY: 'not-a-real-key',
+      GOOGLE_APPLICATION_CREDENTIALS: '/tmp/not-a-real-adc.json',
+      AWS_SECRET_ACCESS_KEY: 'not-a-real-secret',
+      GITHUB_TOKEN: 'not-a-real-token',
+      FUGARO_PROJECT: 'another-project',
+    }
+    for (const key of CHILD_ENV_KEYS) appEnv[key] = appEnv[key] ?? `/tmp/not-a-real/${key}`
+    const env = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/opt/homebrew/bin/fugaro',
+      appEnv,
+    })
+    expect(Object.keys(env).sort()).toEqual([...CHILD_ENV_KEYS].sort())
+    // The one project fact the child gets is the chosen installation's, never
+    // the app environment's.
+    expect(env['FUGARO_PROJECT']).toBe(PROJECT)
+    for (const forbidden of [
+      'ANTHROPIC_API_KEY',
+      'GOOGLE_APPLICATION_CREDENTIALS',
+      'AWS_SECRET_ACCESS_KEY',
+      'GITHUB_TOKEN',
+    ]) {
+      expect(env[forbidden], forbidden).toBeUndefined()
+    }
+  })
+
 
   it('runs the version handshake bare: `fugaro version` and nothing else', () => {
     // Both halves of the plan's red step are this test and the one above: a
@@ -4879,6 +5018,27 @@ describe('the source scan', () => {
     )
     expect(source).not.toMatch(/stdio:\s*'inherit'/)
     expect(source).not.toMatch(/stdio:\s*\[[^\]]*'inherit'/)
+  })
+
+  it('graph.read never reaches RTDB or a token', () => {
+    // H8, as a property of the whole console rather than a promise about one
+    // row: the database a graph scope reads is reached by the **child's** own
+    // credential, so this process holds no database client and no token of its
+    // own. Both halves are read off the tree: no module under `src/` imports a
+    // database package, so the read cannot be the one that grows a client --
+    // and the graph row's argv carries no credential word for the same reason
+    // every other row's does not (its one argument is a scope name, and
+    // `argvFor` refuses anything outside the renderer's alphabet).
+    const specifiers = srcFiles().flatMap((file) => [
+      ...file.source.matchAll(/from '([^']+)'/g),
+    ])
+    expect(
+      specifiers.map((match) => match[1] ?? '').filter((name) => /firebase|firestore|rtdb|realtime|google-cloud/i.test(name)),
+    ).toEqual([])
+    const argv = argvFor('graph.read', { source: 'coordinator' }, safeContext())
+    for (const word of argv) {
+      expect(word, word).not.toMatch(/token|secret|password|https?:|@/)
+    }
   })
 })
 
