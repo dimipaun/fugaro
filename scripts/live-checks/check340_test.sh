@@ -230,6 +230,17 @@ storage)
     bare=${url#gs://}
     bucket=${bare%%/*}
     path=${bare#*/}
+    if [ -n "$impersonate" ] && [ -n "${FAKE340_FLAKY_READ:-}" ]; then
+      # The read half of a grant that has not taken effect yet: its own counter,
+      # so a case can make the READ arrive late while the listings answer at
+      # once — which is what a single-attempt read would take for a refusal.
+      attempts=$(cat "$dir/flaky-read" 2>/dev/null || echo 0)
+      attempts=$((attempts + 1))
+      printf '%s\n' "$attempts" >"$dir/flaky-read"
+      if [ "$attempts" -le "$FAKE340_FLAKY_READ" ]; then
+        deny storage.objects.get
+      fi
+    fi
     if [ -n "$impersonate" ]; then
       allowed_read "projects/_/buckets/$bucket/objects/$path" || deny storage.objects.get
     fi
@@ -269,6 +280,18 @@ storage)
     case "${argv[2]:-}" in
     add-iam-policy-binding)
       [ -n "$condition_file" ] || unknown "${argv[@]}"
+      if [ -n "${FAKE340_GRANT_REFUSED:-}" ]; then
+        # The grant itself refused — not the listing. A run that swallows this
+        # reads every listing below as "this form does not work" and answers
+        # "NEITHER form listed", which is a verdict about the attribute drawn
+        # from a permission error. FAKE340_GRANT_REFUSED=second refuses only the
+        # reports/ binding, so the runs/ one is really on the bucket and the
+        # Restore has something of this run's to remove.
+        if [ "${FAKE340_GRANT_REFUSED}" != second ] || [ "$role" = roles/storage.objectUser ]; then
+          printf 'ERROR: (gcloud.storage.buckets.add-iam-policy-binding) PERMISSION_DENIED: %s does not have storage.buckets.setIamPolicy access to the bucket.\n' "$account" >&2
+          exit 1
+        fi
+      fi
       # python3's json, so a condition file the script escaped wrongly fails
       # here rather than passing a fake that skimmed it.
       expression=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["expression"])' "$condition_file")
@@ -529,6 +552,11 @@ test_neither_form_listing_is_a_fail() {
   expect_block_keys "neither form"
   expect_contains "$out" "FACT relative-lists-runs: FAIL — " "neither form: the relative form"
   expect_contains "$out" "FACT full-lists-runs: FAIL — " "neither form: the full path form"
+  # The refusal's own words are in the row: a detail that reads "(gcloud said: )"
+  # is a failure recorded without the reason it failed.
+  expect_contains "$out" "gcloud said: ERROR:" "neither form: the row carries gcloud's own words"
+  expect_contains "$out" "storage.objects.list" "neither form: and the permission the refusal names"
+  expect_absent "$out" "(gcloud said: )" "neither form: no row quotes an empty error"
   expect_contains "$out" "FACT list-prefix: FAIL — " "neither form: the answer"
   expect_contains "$out" "NEITHER form listed" "neither form: the row says which reading it is"
   expect_contains "$out" "must NOT land" "neither form: it says what R12 has to do"
@@ -719,6 +747,80 @@ test_usage_and_arguments() {
   expect_no_calls "--help"
 }
 
+# A grant that is REFUSED is not a verdict: the run could not tell. Every listing
+# below it would be refused for a reason that has nothing to do with the
+# attribute, and answering "NEITHER form listed, R12's Terraform must NOT land"
+# from a permission error is the most damaging thing this check could say. The
+# exit is 2, the aborted row says why, and the Restore still runs.
+test_a_refused_grant_is_could_not_tell() {
+  setup_case refused relative
+  RUN340_ENV=(FAKE340_GRANT_REFUSED=yes)
+  run340_default
+  expect_status "$status" 2 "refused grant"
+  expect_contains "$out" "FACT aborted: FAIL — " "refused grant: the abort is recorded"
+  expect_contains "$out" "the bucket refused the roles/storage.objectViewer binding" "refused grant: the row names the grant that was refused"
+  expect_contains "$out" "FACT list-prefix: FAIL — not reached" "refused grant: no answer is given about the attribute"
+  expect_absent "$out" "NEITHER form listed" "refused grant: the run does not claim neither form lists"
+  expect_absent "$out" "must NOT land" "refused grant: and does not stop the plan on a permission error"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 2)" "refused grant: the block ends as could-not-tell"
+  expect_contains "$(cat "$dir/state/calls")" "add-iam-policy-binding" "refused grant: the grant was attempted"
+  # The teardown is not conditional on the run having got anywhere: the account
+  # it made is deleted, and the bucket it touched holds nothing of this run's.
+  expect_contains "$(cat "$dir/state/calls")" "gcloud iam service-accounts delete" "refused grant: the account is deleted"
+  expect_contains "$out" "FACT restore: PASS — " "refused grant: the Restore ran"
+  expect_bucket_clean "refused grant"
+  expect_scratch_gone "refused grant"
+}
+
+# The read half arrives late, like the listing half: a single-attempt read would
+# record the right form as a failure, so the read that must succeed is retried
+# too. The fake refuses the first two reads and answers the listings at once.
+test_a_read_that_arrives_late_is_not_a_refusal() {
+  setup_case late-read relative
+  PROPAGATION=10
+  RUN340_ENV=(FAKE340_FLAKY_READ=2)
+  run340_default
+  expect_status "$status" 0 "late read"
+  expect_contains "$out" "FACT relative-reads-runs: PASS — " "late read: the read was waited for"
+  expect_contains "$out" "FACT list-prefix: PASS — " "late read: the answer is the relative form"
+  expect_bucket_clean "late read"
+}
+
+# And when nothing under a form holds, the four refusals are NOT read as passes:
+# a "refused" here could be this same grant not being in effect yet, so the rows
+# say they were not read. "The grant is narrow" is then an observation the run
+# did not make rather than one it assumed.
+test_refusals_are_not_read_when_nothing_held() {
+  setup_case no-read none
+  PROPAGATION=1
+  RUN340_ENV=(FAKE340_FLAKY_READ=999)
+  run340_default
+  expect_status "$status" 1 "nothing held"
+  expect_contains "$out" "FACT relative-reads-runs: FAIL — " "nothing held: the read is the failure"
+  expect_contains "$out" "FACT relative-lists-runs: FAIL — " "nothing held: and so is the listing"
+  expect_contains "$out" "FACT relative-root-refused: INFO — not read" "nothing held: the refusals are not read"
+  expect_absent "$out" "FACT relative-root-refused: PASS" "nothing held: and are not recorded as passes"
+  expect_absent "$out" "FACT full-tokens-list-refused: PASS" "nothing held: not under either form"
+  expect_contains "$out" "FACT list-prefix: FAIL — " "nothing held: neither form listed"
+  expect_bucket_clean "nothing held"
+}
+
+# The first of the two grants lands and the second is refused: the runs/ binding
+# is really on the bucket, and the Restore still has to take it off. What is
+# asserted is the bucket policy itself — a Restore that ran only when BOTH grants
+# were made would leave the first one behind, which is somebody else's bucket.
+test_a_half_granted_pair_is_still_torn_down() {
+  setup_case half-granted relative
+  RUN340_ENV=(FAKE340_GRANT_REFUSED=second)
+  run340_default
+  expect_status "$status" 2 "half-granted pair"
+  expect_contains "$out" "the bucket refused the roles/storage.objectUser binding" "half-granted pair: the row names the grant that was refused"
+  expect_contains "$out" "FACT list-prefix: FAIL — not reached" "half-granted pair: no answer is given"
+  expect_contains "$(cat "$dir/state/grants")" "roles/storage.objectViewer" "half-granted pair: the first binding really was granted"
+  expect_bucket_clean "half-granted pair"
+  expect_scratch_gone "half-granted pair"
+}
+
 # A bucket named with its gs:// prefix and a trailing slash is the same bucket:
 # the two arguments are the ones a person types.
 test_a_gs_prefix_and_a_trailing_slash_are_accepted() {
@@ -752,6 +854,10 @@ t test_a_grant_wider_than_the_two_prefixes_is_a_fail
 t test_a_root_listing_that_is_allowed_is_a_fail
 t test_a_restore_that_could_not_delete_is_a_fail
 t test_a_grant_that_arrives_late_is_not_a_refusal
+t test_a_read_that_arrives_late_is_not_a_refusal
+t test_refusals_are_not_read_when_nothing_held
+t test_a_refused_grant_is_could_not_tell
+t test_a_half_granted_pair_is_still_torn_down
 t test_belong_is_refused_in_both_places
 t test_a_dry_run_prints_the_plan_and_makes_no_call
 t test_a_dry_run_still_refuses_belong

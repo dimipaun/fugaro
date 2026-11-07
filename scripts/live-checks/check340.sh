@@ -24,6 +24,11 @@
 # the bucket-wide viewer a listing would otherwise need is deliberately NOT a
 # fallback here, because it reads `tokens/` and `cache/` too.
 #
+# A grant the bucket refuses is NOT a form that does not list: the run stops with
+# exit 2 and an `aborted` row rather than reading a permission error as the
+# attribute's own answer, because every reading under a grant that never landed
+# would be a refusal for a reason that has nothing to do with the clause.
+#
 # The register's row and section are docs/gcp-live-checklist.md, "Check 340".
 #
 # Usage:      bash scripts/live-checks/check340.sh --project <project> --bucket <bucket>
@@ -80,6 +85,10 @@
 # own test: they shorten the wait for a fresh grant to take effect, and neither
 # can point the check at another project or another bucket.
 set -euo pipefail
+# -E as well, so the ERR trap below is inherited by the functions: without it a
+# failing command inside one of them ends the run with no fact recorded at all,
+# and the block then reports the abort without the line that caused it.
+set -E
 
 # The owner's own stdout and stderr, kept on 3 and 4: a trap runs with whatever
 # redirection is in effect when the signal arrives, so the RESULT block is
@@ -162,6 +171,9 @@ GRANT_MADE=no
 BINDINGS_GRANTED=no
 SEEDED=no
 PASSED_FORM=""
+# What the form just tried left behind: try_form's answer, and never its exit
+# status — see try_form for why it is not called from a condition.
+FORM_OK=no
 HELPED=no
 
 # rand_hex: four hex digits from bash's own $RANDOM, so this run's names are its
@@ -367,13 +379,25 @@ grant_bindings() {
   condition_json "$COND_RUNS" "$(clause_read runs) || $(clause_list "$lruns")" "fugaro-chk340-runs"
   condition_json "$COND_REPORTS" "$(clause_read reports) || $(clause_list "$lreports")" "fugaro-chk340-reports"
   say "granting roles/storage.objectViewer on runs/ and roles/storage.objectUser on reports/, each with its own listing clause"
-  gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
-    --member="serviceAccount:$SA_EMAIL" --role=roles/storage.objectViewer \
-    --condition-from-file="$COND_RUNS" >&2
-  gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
-    --member="serviceAccount:$SA_EMAIL" --role=roles/storage.objectUser \
-    --condition-from-file="$COND_REPORTS" >&2
+  # Recorded BEFORE the first grant: a first binding that landed and a second
+  # that did not still leaves a binding of this run's on the bucket, and the
+  # Restore has to remove it. Setting this after both calls would leave exactly
+  # that case behind.
   BINDINGS_GRANTED=yes
+  # A grant that is REFUSED is a could-not-tell and never a verdict: the run has
+  # measured nothing about the attribute, and every reading below it would be a
+  # refusal for a reason that is not the listing clause. It stops here, by name,
+  # and the Restore still runs from the exit trap.
+  if ! gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
+    --member="serviceAccount:$SA_EMAIL" --role=roles/storage.objectViewer \
+    --condition-from-file="$COND_RUNS" >&2; then
+    stop "the bucket refused the roles/storage.objectViewer binding on the runs/ prefix (gcloud's own words are the line above), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
+  fi
+  if ! gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
+    --member="serviceAccount:$SA_EMAIL" --role=roles/storage.objectUser \
+    --condition-from-file="$COND_REPORTS" >&2; then
+    stop "the bucket refused the roles/storage.objectUser binding on the reports/ prefix (gcloud's own words are the line above), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
+  fi
 }
 
 # remove_bindings: both of them, and whichever condition they carry. The next
@@ -393,6 +417,7 @@ remove_bindings() {
 # answers is that account's reach and never yours.
 
 LAST_ERROR=""
+LIST_OUT=""
 list_as_sa() { # list_as_sa URL — the recursive listing, as the account
   gcloud storage ls --recursive --project="$P" \
     --impersonate-service-account="$SA_EMAIL" "$1" 2>&1
@@ -410,17 +435,40 @@ cat_as_sa() {
 # poll_list URL: the listing, retried for up to PROPAGATION_SECONDS. A grant that
 # has not taken effect yet answers 403, and a 403 read as a refusal would fail
 # the form that is really the right one — so a listing that MUST succeed is
-# waited for. The output is printed on success; the last refusal's own words are
-# left in LAST_ERROR.
+# waited for. The listing is left in LIST_OUT on success and the last refusal's
+# own words in LAST_ERROR, both in the CALLER's shell: this is never called
+# through `$( )`, because a command substitution runs in a subshell and an
+# assignment made in one dies with it — which is how a FAIL whose detail is
+# supposed to quote gcloud ends up quoting nothing.
 poll_list() {
   local url=$1 out deadline
+  LIST_OUT=""
+  LAST_ERROR=""
   deadline=$((SECONDS + PROPAGATION_SECONDS))
   while :; do
     if out=$(list_as_sa "$url"); then
-      printf '%s\n' "$out"
+      LIST_OUT=$out
       return 0
     fi
     LAST_ERROR=$out
+    if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
+    sleep "$POLL_SECONDS"
+  done
+}
+
+# poll_read URL: the read half of the same grant, waited for the same way. It has
+# to be waited for as well: the read clause and the listing clause ride the same
+# fresh binding, and a read refused because the grant has not arrived yet is the
+# same wrong answer a listing refused too early would be.
+poll_read() {
+  local url=$1 err="$SCRATCH/last-error" deadline
+  LAST_ERROR=""
+  deadline=$((SECONDS + PROPAGATION_SECONDS))
+  while :; do
+    if cat_as_sa "$url" 2>"$err"; then
+      return 0
+    fi
+    LAST_ERROR=$(cat "$err" 2>/dev/null || true)
     if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
     sleep "$POLL_SECONDS"
   done
@@ -439,36 +487,41 @@ missing_permission() {
 }
 
 must_list() { # must_list KEY URL WANT
-  local key=$1 url=$2 want=$3 out named extra=""
-  if out=$(poll_list "$url"); then
-    case "$out" in
-    *"$want"*)
-      fact "$key" PASS "the account listed $url and the listing names $want, so this form's listing clause covers it"
-      return 0
-      ;;
-    *)
-      fact "$key" FAIL "the account listed $url but the listing does not name $want (it answered: $(first_line "$out"))"
-      return 1
-      ;;
+  local key=$1 url=$2 want=$3 named extra=""
+  if ! poll_list "$url"; then
+    named=$(missing_permission "$LAST_ERROR")
+    case "$named" in
+    "" | *storage.objects.list*) ;;
+    *) extra=" — NOTE: the refusal names ${named}and not storage.objects.list, so this listing was refused for a reason other than the clause this check settles: read it before taking it as 'this form does not work'" ;;
     esac
+    fact "$key" FAIL "the account could not list $url: the prefix is not covered by this form's listing clause, or the grant had not taken effect within ${PROPAGATION_SECONDS}s (gcloud said: $(first_line "$LAST_ERROR"))${extra}"
+    return 1
   fi
-  named=$(missing_permission "$LAST_ERROR")
-  case "$named" in
-  "" | *storage.objects.list*) ;;
-  *) extra=" — NOTE: the refusal names ${named}and not storage.objects.list, so this listing was refused for a reason other than the clause this check settles: read it before taking it as 'this form does not work'" ;;
+  case "$LIST_OUT" in
+  *"$want"*)
+    fact "$key" PASS "the account listed $url and the listing names $want, so this form's listing clause covers it"
+    return 0
+    ;;
+  *)
+    fact "$key" FAIL "the account listed $url but the listing does not name $want (it answered: $(first_line "$LIST_OUT"))"
+    return 1
+    ;;
   esac
-  fact "$key" FAIL "the account could not list $url: the prefix is not covered by this form's listing clause, or the grant had not taken effect within ${PROPAGATION_SECONDS}s (gcloud said: $(first_line "$LAST_ERROR"))${extra}"
-  return 1
 }
 
-# must_read KEY URL: the read half of the same grant.
+# must_read KEY URL: the read half of the same grant, and it is retried too.
 must_read() {
-  local key=$1 url=$2
-  if gcloud storage cat --project="$P" --impersonate-service-account="$SA_EMAIL" "$url" >/dev/null 2>&1; then
+  local key=$1 url=$2 named extra=""
+  if poll_read "$url"; then
     fact "$key" PASS "the account read $url, so this form's resource.name clause covers the reads the reports job makes"
     return 0
   fi
-  fact "$key" FAIL "the account could not read $url, which its resource.name clause has to cover: the reports job reads the records it summarises, and a listing half that cannot read an object is half a grant"
+  named=$(missing_permission "$LAST_ERROR")
+  case "$named" in
+  "" | *storage.objects.get*) ;;
+  *) extra=" — NOTE: the refusal names ${named}and not storage.objects.get, so this read was refused for a reason other than the clause this check settles: read it before taking it as 'this form does not work'" ;;
+  esac
+  fact "$key" FAIL "the account could not read $url within ${PROPAGATION_SECONDS}s, which its resource.name clause has to cover: the reports job reads the records it summarises, and a listing half that cannot read an object is half a grant (gcloud said: $(first_line "$LAST_ERROR"))${extra}"
   return 1
 }
 
@@ -533,31 +586,53 @@ step_seed() {
 }
 
 # try_form HOW LIST_RUNS LIST_REPORTS — grant this form's two bindings, run the
-# seven criteria as the account, and take the bindings away again. Returns 0 when
-# every criterion held.
+# seven criteria as the account, and take the bindings away again. The result is
+# left in FORM_OK, and NOT in the exit status: this is called from an `if`
+# NOWHERE, because a function called as a condition has `set -e` and the ERR trap
+# switched off for its whole dynamic extent — and the two bindings it GRANTS are
+# commands that must not be swallowed. A refused
+# `add-iam-policy-binding` swallowed here would leave every reading below refused
+# for a reason that has nothing to do with the attribute, and the run would then
+# answer "NEITHER form listed, R12's Terraform must NOT land" — the strongest
+# claim this check can make — when it should say "I could not tell" (exit 2).
+# The criteria calls below do handle their own status, so they are the only place
+# where a failure is a reading rather than an error.
 try_form() {
-  local how=$1 lruns=$2 lreports=$3 ok=yes
+  local how=$1 lruns=$2 lreports=$3 ok=yes held=no key
+  FORM_OK=no
   say "form '$how': the listing clauses name \"$lruns\" and \"$lreports\""
   grant_bindings "$lruns" "$lreports"
   # Order matters: the two listings and the read that MUST succeed are polled,
   # and the four refusals come after, so a "refused" reading cannot be a grant
   # that has not arrived yet.
-  must_list "$how-lists-runs" "gs://$B/runs/$SLUG/" "runs/$SLUG/" || ok=no
-  must_list "$how-lists-reports" "gs://$B/reports/" "reports/$SLUG/" || ok=no
-  must_read "$how-reads-runs" "gs://$B/$RUN_OBJ" || ok=no
-  # The root listing is the one the two prefixes must NOT reach: a listing of
-  # `gs://$B/` carries an empty prefix (or the bucket's own path), and neither
-  # candidate form may match it.
-  must_refuse "$how-root-refused" "the root listing of gs://$B/" \
-    list_as_sa "gs://$B/" || ok=no
-  must_refuse "$how-tokens-read-refused" "the read of the seeded tokens/ object gs://$B/$TOKEN_OBJ" \
-    cat_as_sa "gs://$B/$TOKEN_OBJ" || ok=no
-  must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/" \
-    list_as_sa "gs://$B/tokens/" || ok=no
-  must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/" \
-    list_as_sa "gs://$B/cache/" || ok=no
+  if ! must_list "$how-lists-runs" "gs://$B/runs/$SLUG/" "runs/$SLUG/"; then ok=no; else held=yes; fi
+  if ! must_list "$how-lists-reports" "gs://$B/reports/" "reports/$SLUG/"; then ok=no; else held=yes; fi
+  if ! must_read "$how-reads-runs" "gs://$B/$RUN_OBJ"; then ok=no; else held=yes; fi
+  if [ "$held" = yes ]; then
+    # The root listing is the one the two prefixes must NOT reach: a listing of
+    # `gs://$B/` carries an empty prefix (or the bucket's own path), and neither
+    # candidate form may match it.
+    if ! must_refuse "$how-root-refused" "the root listing of gs://$B/" \
+      list_as_sa "gs://$B/"; then ok=no; fi
+    if ! must_refuse "$how-tokens-read-refused" "the read of the seeded tokens/ object gs://$B/$TOKEN_OBJ" \
+      cat_as_sa "gs://$B/$TOKEN_OBJ"; then ok=no; fi
+    if ! must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/" \
+      list_as_sa "gs://$B/tokens/"; then ok=no; fi
+    if ! must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/" \
+      list_as_sa "gs://$B/cache/"; then ok=no; fi
+  else
+    # Nothing under this form held, so the grant is either not in effect or not
+    # the grant this form describes — and a "refused" read now would be the
+    # former read as the latter. The four rows are recorded as not read rather
+    # than as passes, which is what keeps "the grant is narrow" an observation
+    # and not an assumption.
+    for key in root-refused tokens-read-refused tokens-list-refused cache-list-refused; do
+      fact "$how-$key" INFO "not read: neither listing and not the read held under this form, so a refusal here could be the fresh grant not being in effect yet rather than the clause refusing it — the form's own failure is the reading, and this row is not one"
+    done
+  fi
   remove_bindings
-  [ "$ok" = yes ]
+  if [ "$ok" = yes ]; then FORM_OK=yes; fi
+  return 0
 }
 
 # not_tried HOW: the form that was not reached, recorded rather than left reading
@@ -572,15 +647,16 @@ not_tried() {
 
 step_forms() {
   local passed=""
-  if try_form relative "$(relative_prefix runs)" "$(relative_prefix reports)"; then
+  FORM_OK=no
+  # Neither call sits under an `if`: see try_form. Both always succeed, and the
+  # answer is the FORM_OK they leave behind.
+  try_form relative "$(relative_prefix runs)" "$(relative_prefix reports)"
+  if [ "$FORM_OK" = yes ]; then
     passed=relative
-  fi
-  if [ -z "$passed" ]; then
-    if try_form full "$(full_prefix runs)" "$(full_prefix reports)"; then
-      passed=full
-    fi
-  else
     not_tried full
+  else
+    try_form full "$(full_prefix runs)" "$(full_prefix reports)"
+    if [ "$FORM_OK" = yes ]; then passed=full; fi
   fi
   PASSED_FORM=$passed
 }
@@ -630,7 +706,7 @@ print_plan() {
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectViewer --condition-from-file=<the runs/ condition>"
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectUser --condition-from-file=<the reports/ condition>"
   say "    the first carrying $(clause_read runs) || $(clause_list "runs/") and the second $(clause_read reports) || $(clause_list "reports/") under the relative form, and the same two with projects/_/buckets/$B/objects/runs/ and .../objects/reports/ under the full one"
-  say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/ (must list, and the listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect); gcloud storage cat of the seeded runs/ object (must read); then the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/"
+  say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/ (must list, and the listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those three held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/"
   say "  [network, writes] gcloud storage buckets remove-iam-policy-binding ... --all for both roles, between the two forms and again in the Restore"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, deletes] gcloud storage rm -r --project=$P gs://$B/runs/$SLUG/ gs://$B/reports/$SLUG/ gs://$B/tokens/$SLUG/ gs://$B/cache/$SLUG/"
