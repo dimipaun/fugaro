@@ -244,10 +244,21 @@ func newestTag(ctx context.Context, o Options) (string, error) {
 // still the wrong answer (D1610).
 func gitTree(ctx context.Context, o Options, root string, w want) (string, error) {
 	dir := filepath.Join(root, treeName)
-	if fi, err := os.Lstat(dir); err == nil && fi.IsDir() {
+	fi, err := os.Lstat(dir)
+	switch {
+	case err == nil && fi.IsDir():
+		// A tree from an earlier run is read-only; git writes into it.
 		if err := chmodTree(dir, true); err != nil {
 			return "", err
 		}
+	case err == nil:
+		// A link or a file at the tree's name decides nothing: it is removed
+		// rather than followed into whatever it names.
+		if err := removeTree(dir); err != nil {
+			return "", err
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", err
 	}
 	if _, err := os.Lstat(filepath.Join(dir, ".git")); errors.Is(err, fs.ErrNotExist) {
 		// A tree from the tarball transport is not a repository to fetch
@@ -589,7 +600,11 @@ func firstOr(ss []string, fallback string) string {
 // readRecord is the record the cache holds, when it holds one that names a
 // transport and a version. Anything else is a miss, and a miss refetches.
 func readRecord(root string) (Record, bool) {
-	data, err := os.ReadFile(filepath.Join(root, recordName))
+	at := filepath.Join(root, recordName)
+	if fi, err := os.Lstat(at); err != nil || !fi.Mode().IsRegular() {
+		return Record{}, false
+	}
+	data, err := os.ReadFile(at)
 	if err != nil {
 		return Record{}, false
 	}

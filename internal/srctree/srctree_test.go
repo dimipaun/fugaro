@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -478,6 +479,110 @@ func TestCacheDirIsChecked(t *testing.T) {
 	if fi.Mode().Perm() != cacheDirMode {
 		t.Fatalf("cache mode = %v", fi.Mode())
 	}
+}
+
+// TestAPlantedRecordIsNotTrusted: the record is the cache's own note about the
+// tree beside it, so it is only read as the regular file this package writes.
+// A link at its name pointing at a note that happens to name the wanted
+// version would otherwise serve the tree the link's author chose, which is
+// the one thing the version check is there to stop.
+func TestAPlantedRecordIsNotTrusted(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	o := options(t, r, "v1.1.0", r.commit["v1.1.0"])
+	o.LookPath = func(string) (string, error) { return "", errors.New("no git here") }
+	o.Fetch = func(context.Context, string) (io.ReadCloser, error) {
+		body := archive(t, "fugaro-x", map[string]string{"VERSION": "v1.1.0\n"})
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	root := cacheRootOf(t, o)
+	if err := os.MkdirAll(filepath.Join(root, treeName), cacheDirMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, treeName, "VERSION"), []byte("v1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planted := filepath.Join(t.TempDir(), "record.json")
+	note := fmt.Sprintf("{\"version\":\"v1.1.0\",\"commit\":%q,\"kind\":\"tarball\"}\n", r.commit["v1.1.0"])
+	if err := os.WriteFile(planted, []byte(note), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(planted, filepath.Join(root, recordName)); err != nil {
+		t.Fatal(err)
+	}
+	dir, _, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.1.0\n" {
+		t.Fatalf("a record planted at the cache was trusted: the tree holds %q", got)
+	}
+}
+
+// TestATreeSymlinkIsNotFollowed is both transports. git fetches and checks out
+// into the tree it finds there, so a link at the tree's name would put the
+// release source into the directory the link names — another checkout of this
+// user's, say — and the tarball path must not write through it either. The
+// directory the link names already holds a .git, which is what a link to a
+// working copy looks like and what stops the "no repository here" path from
+// removing the link on its own.
+func TestATreeSymlinkIsNotFollowed(t *testing.T) {
+	r := newRemote(t, "v1.0.0")
+	for _, git := range []bool{true, false} {
+		name := "tarball"
+		if git {
+			name = "git"
+		}
+		t.Run(name, func(t *testing.T) {
+			o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+			if !git {
+				o.LookPath = func(string) (string, error) { return "", errors.New("no git here") }
+				o.Fetch = func(context.Context, string) (io.ReadCloser, error) {
+					body := archive(t, "fugaro-x", map[string]string{"VERSION": "v1.0.0\n"})
+					return io.NopCloser(bytes.NewReader(body)), nil
+				}
+			}
+			root := cacheRootOf(t, o)
+			if err := os.MkdirAll(root, cacheDirMode); err != nil {
+				t.Fatal(err)
+			}
+			elsewhere := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(elsewhere, ".git"), cacheDirMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(elsewhere, "mine"), []byte("mine\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			before := names(t, elsewhere)
+			if err := os.Symlink(elsewhere, filepath.Join(root, treeName)); err != nil {
+				t.Fatal(err)
+			}
+			dir, _, err := Ensure(context.Background(), o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after := names(t, elsewhere); !slices.Equal(before, after) {
+				t.Fatalf("the tree was written through a link: %v became %v", before, after)
+			}
+			if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.0.0\n" {
+				t.Fatalf("the tree holds %q", got)
+			}
+		})
+	}
+}
+
+// names is what a directory holds, for comparing a directory before and after
+// a call that must not have touched it.
+func names(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	return out
 }
 
 func TestUnpackRefusesAnUnsafeArchive(t *testing.T) {
