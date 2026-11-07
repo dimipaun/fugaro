@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"slices"
@@ -1310,6 +1311,94 @@ func TestProjectJobSentinelLaunchLandsOnItsOwnJob(t *testing.T) {
 	}
 	if got := readSpec(t, f.cloudFixture, run).OAuthToken; got != config.AnthropicKeyAccount {
 		t.Errorf("the run's own account in task.json = %q, want %q: the runner pairs a review by the task's own oauth_token and the job's account segment together", got, config.AnthropicKeyAccount)
+	}
+}
+
+// TestProjectJobSentinelIsAllowedOnlyForAnAPIKeyWorkflow pins the auth half of
+// claudeAccountAllowed's sentinel arm (`auth == "api-key" || auth == ""`), which
+// is the condition the arm's own comment claims and which nothing else in the
+// tree asserts: admitted for every value of config.AgentAuths, it would let a
+// vertex or cascade repository name the project's own key, take the claim, mint
+// the budget token and call Cloud Run for a run the account gate exists to
+// refuse — the class path refuses those two auths (internal/runner's
+// checkReviewClassModelPath), so the run would halt inside the job, past the
+// claim that a refused launch never takes.
+//
+// The whole list is walked rather than the two refused values alone, so a value
+// added to config.AgentAuths is judged here without anyone remembering to add
+// it, and the admitted row is a launch and not only a nil error.
+//
+// Mutation (run, restore): drop the auth condition (`if name ==
+// config.AnthropicKeyAccount`), which is what the missing pin allowed — the
+// vertex row is admitted, with the claim taken, one execution, one jobs.run
+// call and a budget token minted, and the cascade row loses the account gate's
+// sentence to the later cascade gate's, which refuses it past this arm. Both
+// rows go red.
+func TestProjectJobSentinelIsAllowedOnlyForAnAPIKeyWorkflow(t *testing.T) {
+	for i, auth := range config.AgentAuths {
+		t.Run(auth, func(t *testing.T) {
+			f := newProjectJobSentinelFixture(t)
+			isolateCache(t)
+			// The ref's own document carries the auth under test: what the launch
+			// reads is the fugaro.yaml at the ref the run checks out, so the two
+			// halves of the checkout are the same document here.
+			projectJobCheckoutYAML(t, projectJobRefRepoYAML(auth))
+
+			claimed := false
+			launchHooks.beforeClaim = func() { claimed = true }
+			t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+			run := fmt.Sprintf("20261020-1300%02d-%04d", i, i)
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", config.AnthropicKeyAccount, "Add a feature")
+			if auth == "api-key" {
+				// The one auth the class serves the key under (D1417): the launch
+				// runs on the sentinel's own job, which is the row that keeps this
+				// test from passing by refusing everything.
+				if err != nil {
+					t.Fatalf("an api-key launch naming the project's own key: %v", err)
+				}
+				if !claimed {
+					t.Error("the admitted launch took no claim")
+				}
+				if profile, provider, account := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" || account != config.AnthropicKeyAccount {
+					t.Errorf("the launch ran the project job of (%s, %s, %q), want (standard, github, %q)", profile, provider, account, config.AnthropicKeyAccount)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("a %s launch naming the project's own key was admitted", auth)
+			} else {
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("a %s launch naming the project's own key: %v, want a refusal", auth, err)
+				}
+				want := "only applies to a workflow whose agent.auth is oauth"
+				if auth == "oauth" {
+					// The other half of the arm's comment: oauth is no way round it
+					// either, because this value is no claude_accounts entry — the
+					// membership sentence is the one an oauth launch gets.
+					want = "claude_accounts"
+				}
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the %s refusal does not name %q: %v", auth, want, err)
+				}
+			}
+			// Read for every row and not only the refused ones: an arm that
+			// admitted this auth is a launch that took a claim, minted a budget
+			// token and called Cloud Run, and these are the three facts that say
+			// so.
+			if claimed {
+				t.Error("the refusal came after the launch claim")
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions, want none", n)
+			}
+			if calls := f.run.RunRequests(); len(calls) != 0 {
+				t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+			}
+			if tok := readToken(t, f.cloudFixture, run); tok != "" {
+				t.Errorf("the refused launch minted a budget token: %s", tok)
+			}
+		})
 	}
 }
 
