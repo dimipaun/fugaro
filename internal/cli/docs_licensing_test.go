@@ -447,7 +447,7 @@ var licenceKeyDesignGroups = []struct {
 	},
 	{
 		subject: "expiry only (O4)",
-		why:     "the covered-versions date carried the perpetual fallback, which D436 dropped: a key that states a version window is a key the product has no rule for",
+		why:     "the covered-versions date D438 added named a version window that only the perpetual fallback gave a meaning to, and D436 dropped the fallback: a key that states a version window is a key the product has no rule for",
 		phrases: []string{
 			"expiry only",
 			"no covered-versions date",
@@ -555,9 +555,11 @@ func TestDocsLicenceKeyDesign(t *testing.T) {
 // TestDocsLicenceKeyNoteSupersedesL31: the note is licensing task L3.1's
 // successor rather than a second design beside it, and the licensing plan has
 // to say so where a reader of L3.1 arrives. Two notes on one key, neither
-// marked, is how a verifier gets written against the withdrawn text -- the
-// covered-versions date and the release-date stamping L3.1 still carries are
-// exactly what O4 dropped.
+// marked, is how a verifier gets written against the withdrawn text -- and the
+// withdrawal is O4's, which dropped the covered-versions date and the
+// release-date stamping D438 had added to L3.1's three design rules. L3.1's own
+// text carries neither, so the supersession is stated as a ruling rather than
+// as a difference between the two notes.
 //
 // The supersession line has to name the plan that carries the note and the
 // note itself: a bare "superseded" leaves the reader of L3.1 with no later
@@ -575,7 +577,7 @@ func TestDocsLicenceKeyNoteSupersedesL31(t *testing.T) {
 		"licence-key.md",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("%s's L3.1 section never says %q: the note it used to commission is written now by the subscriptions plan's S2.1, and L3.1's text still carries the covered-versions date and the release-date stamping that O4 dropped, so a reader who lands on L3.1 first has to be told where the later text is and that it exists", plan, want)
+			t.Errorf("%s's L3.1 section never says %q: the note it used to commission is written now by the subscriptions plan's S2.1, whose note carries O4's ruling (the covered-versions date and the release-date stamping D438 added to L3.1's rules are dropped), so a reader who lands on L3.1 first has to be told where the later text is and that it exists", plan, want)
 		}
 	}
 }

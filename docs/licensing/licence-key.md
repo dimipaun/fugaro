@@ -9,8 +9,8 @@ builds the tagged image, and `TestRunImagesCarryNoKey` holds it to carrying none
 licensing plan task L3.1** ([implementation-plan.md](implementation-plan.md), "L3.1 — The
 licence-key design note"): that is this note before the owner's rulings of 2026-10-27, and its three
 design rules (the raw bytes before the JSON, the key id, the clock set back) are carried here, while
-the covered-versions date and the release-date stamping it still lists, and O4 dropped, are named
-under "Expiry only" below.
+the covered-versions date and the release-date stamping D438 added to them, which O4 dropped, are
+named under "Expiry only" below.
 
 ## The key
 
@@ -48,9 +48,9 @@ below rather than a check it makes.
 
 `issued` and `expires` are the whole window. There is **no covered-versions date** and **no
 release-date stamping**: the date named a version window that only the perpetual fallback gave a
-meaning to, and D436 dropped the fallback. L3.1's earlier text — the `covers_until` claim and the
-`ReleaseDate` stamped into every build — is withdrawn with it, and a version field is a later
-decision rather than a gap in this one.
+meaning to, and D436 dropped the fallback. Both were D438's — its `covers_until` claim and the
+`ReleaseDate` it stamped into every build — and **O4 dropped them, superseding that part of D438**;
+L3.1's text never carried either. A version field is a later decision rather than a gap in this one.
 
 ## Raw bytes before claims
 
