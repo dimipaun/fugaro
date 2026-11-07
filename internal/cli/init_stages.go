@@ -537,7 +537,26 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 	// recordedCredentialsImage just read (Workdir.PrevVars in an ordinary
 	// update), so the file and the snapshot agree; deleting it here would put
 	// the block back out of reach and repeat the failure above.
-	if err := e.wd.WriteVars(doc); err != nil {
+	//
+	// What goes back is not quite what was read: the block's job table is
+	// brought up to date with this machine's config first, because the deploy
+	// is the table's only other writer and a repository onboarded after it
+	// would hold an invoker grant on a service whose table refuses its jobs
+	// (infra.RefreshCredentialsServiceJobAccounts). A refusal there is not a
+	// failure of the run: the block is written exactly as the workdir held it,
+	// which is the fail-closed direction — an installation whose config cannot
+	// describe the table keeps the table it has — and the same shape the deploy
+	// path answers a config that cannot carry the service with.
+	var next = doc
+	if e.lc != nil {
+		refreshed, err := infra.RefreshCredentialsServiceJobAccounts(doc, e.lc)
+		if err != nil {
+			fmt.Fprintf(e.r.w, "the credentials service's job table was not refreshed: %v\n", err)
+		} else {
+			next = refreshed
+		}
+	}
+	if err := e.wd.WriteVars(next); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
 	// A reference that names NO release is replaced rather than compared: it
@@ -555,7 +574,7 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	updated, err := infra.SetCredentialsServiceImage(doc, pinned)
+	updated, err := infra.SetCredentialsServiceImage(next, pinned)
 	if err != nil {
 		return userErr("setting the credentials service's image in the installation's %s: %v", infra.VarsFile, err)
 	}

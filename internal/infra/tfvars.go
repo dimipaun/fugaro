@@ -501,16 +501,89 @@ func CredentialsJobAccounts(lc *localcfg.Config) ([]CredentialsJob, error) {
 	if len(out) == 0 {
 		return nil, userErr("the installation has no repository job to bind the credentials service to (the local config names no repository with a workflow): the service refuses a table that binds no run to a repository, so an installation with no jobs cannot have it")
 	}
-	slices.SortFunc(out, func(a, b CredentialsJob) int {
-		if c := strings.Compare(a.Provider, b.Provider); c != 0 {
-			return c
-		}
-		if c := strings.Compare(a.Repo, b.Repo); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Workflow, b.Workflow)
-	})
+	slices.SortFunc(out, func(a, b CredentialsJob) int { return strings.Compare(credentialsJobKey(a), credentialsJobKey(b)) })
 	return out, nil
+}
+
+// credentialsJobKey is one row's sort key and its identity: the three fields
+// the service derives a caller's job from, joined so that two rows are the same
+// row exactly when they name the same job. The separator is a NUL, which no
+// provider, repository or variant can hold.
+func credentialsJobKey(j CredentialsJob) string {
+	return j.Provider + "\x00" + j.Repo + "\x00" + j.Workflow
+}
+
+// RefreshCredentialsServiceJobAccounts returns vars with the credentials
+// service's job_accounts brought up to date with the installation the local
+// config names now, and every other member of the block — the image, the URL,
+// the bundle container, the database and the verifier list — exactly what it
+// was.
+//
+// The table is the one member of the block this side composes out of the local
+// config (CredentialsJobAccounts over lc.Repos), and the deploy is its only
+// other writer: Credentials fills it in on the run that CREATES the block, and
+// every later run carries the block as it is found (CarriedCredentialsService).
+// A repository onboarded after that deploy is therefore in the table of
+// nobody — its root still grants its job roles/run.invoker on the service
+// (modules/workflow/sa.tf), and the running service then refuses every call
+// from an account whose row it does not hold, which is the failure
+// CredentialsJobAccounts' own comment calls the one that must not happen. No
+// other command could put the row there: `fugaro update` is the whole upgrade
+// (CLAUDE.md's HARD RULE), so the refresh is part of it or it is nowhere.
+//
+// The rows found in the document are UNIONED with the derived ones rather than
+// replaced by them, which is the fail-closed direction CredentialsJobAccounts
+// already states: a row for a job the config no longer names binds an account
+// no token is ever minted for, while a row a refresh DROPPED is a job that
+// holds an invoker grant and is refused. It is also what keeps an installation
+// whose config has not changed byte for byte what it was, which is what a
+// carried block owes its readers.
+//
+// A config that cannot describe the table at all — a named repository whose
+// provider it does not state, or no repository with a workflow — is refused
+// rather than written around, and so is a document whose rows this program
+// cannot read: the caller then keeps the block it found. Refreshing from a
+// config that is missing a repository is the removal the union is there to
+// prevent, and dropping the member is worse still.
+func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no credentials_service to refresh the job table of")
+	}
+	var found []CredentialsJob
+	if raw, ok := svc["job_accounts"]; ok && raw != nil {
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &found); err != nil {
+			return nil, fmt.Errorf("the installation's credentials_service.job_accounts is not a list of provider, repo and workflow rows: %w", err)
+		}
+	}
+	jobs, err := CredentialsJobAccounts(lc)
+	if err != nil {
+		return nil, err
+	}
+	merged := found
+	seen := make(map[string]bool, len(found)+len(jobs))
+	for _, j := range found {
+		seen[credentialsJobKey(j)] = true
+	}
+	for _, j := range jobs {
+		if seen[credentialsJobKey(j)] {
+			continue
+		}
+		seen[credentialsJobKey(j)] = true
+		merged = append(merged, j)
+	}
+	slices.SortFunc(merged, func(a, b CredentialsJob) int { return strings.Compare(credentialsJobKey(a), credentialsJobKey(b)) })
+	svc["job_accounts"] = merged
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
 }
 
 // CredentialsServiceURLOf returns the credentials_service.url the installation

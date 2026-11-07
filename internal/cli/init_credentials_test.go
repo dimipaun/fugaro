@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -132,6 +133,34 @@ func seedCredentialsServiceWithVerifiers(t *testing.T, r *imagesRig, image strin
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setCredentialsJobTable replaces the job table the installation's tfvars
+// carry, which is the state an installation that converged before this release
+// holds: the deploy wrote the table once and no run has ever revised it.
+func setCredentialsJobTable(t *testing.T, r *imagesRig, rows []any) {
+	t.Helper()
+	path := filepath.Join(r.root(), infra.VarsFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		t.Fatalf("the installation's tfvars carry no credentials_service to set the job table of: %s", b)
+	}
+	svc["job_accounts"] = rows
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -272,6 +301,51 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	}
 	if string(got) != string(expect) {
 		t.Errorf("credentials_service = %s, want %s: the block is carried byte for byte with the image moved to this release's, and nothing else\n%s", got, expect, s)
+	}
+}
+
+// TestUpdateRefreshesTheServicesJobTable: the table is the one member of the
+// block `fugaro update` composes rather than carries, and the deploy is its
+// only other writer — so a repository onboarded after that deploy has to enter
+// the table on the next run, and it never did: every later run carried the
+// block as it found it, and the service then refuses every call from a job
+// account whose row it does not hold (internal/credsvc derives the repository
+// from the row) while that repository's own root has already granted the job
+// roles/run.invoker on the service. No other command could repair it, which is
+// what makes it a HARD RULE failure rather than an inconvenience.
+//
+// The table is refreshed by UNION: rows the deploy wrote are kept, because a
+// dropped row is a refused job while a stale row binds an account no token is
+// ever minted for (infra.CredentialsJobAccounts' own comment, and
+// infra.RefreshCredentialsServiceJobAccounts). So an installation whose config
+// has not changed still converges on the same block, byte for byte, which is
+// what TestUpdateKeepsAnOptedInInstallationsServiceUnchanged pins.
+//
+// Mutation (verified, run and restored): drop the
+// infra.RefreshCredentialsServiceJobAccounts call in init_stages.go's
+// pinCredentialsImage → this fails on the config's own repository, which the
+// table then does not hold.
+func TestUpdateRefreshesTheServicesJobTable(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	// The table the deploy left: a repository this machine's config no longer
+	// describes, which is what stands in for "the config has moved on since".
+	setCredentialsJobTable(t, r, []any{map[string]any{
+		"provider": "bitbucket", "repo": "acme/old", "workflow": "web"}})
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation whose job table is stale failed: %v\n%s", err, s)
+	}
+	got, _ := credentialsServiceEntry(t, r)["job_accounts"].([]any)
+	want := []any{
+		map[string]any{"provider": "bitbucket", "repo": "acme/old", "workflow": "web"},
+		map[string]any{"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("credentials_service.job_accounts = %v, want %v: the config's own repository job enters the table on the next run, and the row the deploy wrote stays — the service refuses a job whose row it does not hold, and nothing else writes this table\n%s", got, want, s)
 	}
 }
 
