@@ -92,6 +92,24 @@ func stepLineOf(account []string, name string) string {
 	return ""
 }
 
+// The things in a run's output that are the run's own and no other run's: the
+// elapsed time in the closing line, and the path under a failure or a step
+// left for the user — a log is named after the second and the pid, and two
+// runs of one process inside one second collide on the name, so the second
+// run has no log at all (CL3's OpenLog). A test that compares two runs of one
+// rig — the plain run and the same run with one flag's line — normalises
+// exactly these and nothing else, because two runs never agree on them.
+var (
+	elapsedRE    = regexp.MustCompile(`(?m)^(Done|Left for you|Failed) in [0-9.]+s,`)
+	fullOutputRE = regexp.MustCompile(`(?m)^ +full output: .*\n`)
+)
+
+// withoutRunOwn is s with those taken out.
+func withoutRunOwn(s string) string {
+	s = elapsedRE.ReplaceAllString(s, "$1 in <the run's own>,")
+	return fullOutputRE.ReplaceAllString(s, "")
+}
+
 // logDir is where a run's log is filed (D1351).
 func logDir(t *testing.T) string {
 	t.Helper()
@@ -376,6 +394,11 @@ func TestConfirmPromptsAreNeverSuppressed(t *testing.T) {
 	applyingRig(t)
 	fakeTerminal(t)
 	writerAsTerminal(t)
+	// The reporter draws a line in flight only where colour is allowed, and a
+	// `TERM=dumb` console is not (G4): without this the "nothing in flight"
+	// half of this test would pass on a machine whose TERM happens to be dumb,
+	// which is what a build box's is.
+	t.Setenv("TERM", "xterm-256color")
 	watch := &promptWatch{at: "Type " + initProjectName + " to apply to GCP project " + initProject + ": "}
 	cmd := NewRootCmd()
 	var errOut bytes.Buffer
