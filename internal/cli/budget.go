@@ -306,7 +306,7 @@ func newBudgetShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetShow(cmd, &o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the database")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	f.BoolVar(&o.compute, "compute", false, "also read each repository's compute dollars from the runs bucket (an estimate; null and n/a where the day's runs recorded none)")
@@ -952,7 +952,7 @@ func newBudgetSetCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&o.global, "global", false, "the project's own caps")
 	f.BoolVar(&o.defaults, "defaults", false, "the default caps of repositories without their own")
-	f.StringVar(&o.repo, "repo", "", "one repository's caps, given as owner/name (no value: this checkout's origin)")
+	f.StringVar(&o.repo, "repo", "", "one repository's caps, given as owner/name or a path inside its checkout (no value: this checkout's origin)")
 	f.Float64Var(&o.daily, "daily", 0, "the daily cap, in US dollars")
 	f.Float64Var(&o.perRun, "per-run", 0, "the per-run cap, in US dollars")
 	f.Float64Var(&o.reserve, "max-reserve", 0, "the largest single lease, in US dollars (with --global)")
@@ -1413,7 +1413,7 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.all, "all", false, "the whole project")
-	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name (no value: this checkout's origin)")
+	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin)")
 	f.StringVar(&o.reason, "reason", "", "why (recorded, shown by budget show and watch)")
 	f.BoolVar(&o.yes, "yes", false, "confirm without typing the project's name")
 	addCloudFlags(cmd, &o.cloud)

@@ -264,7 +264,7 @@ func newLsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runLs(cmd, &o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")

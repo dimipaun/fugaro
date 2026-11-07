@@ -111,7 +111,7 @@ func newImageBuildCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.local, "local", false, "build with the local Docker daemon from the checkout you are in")
-	f.StringVar(&o.repo, "repo", "", "owner/name of the repository to build with Cloud Build (default: the checkout's origin, which it must match)")
+	f.StringVar(&o.repo, "repo", "", "owner/name (or a path inside its checkout) of the repository to build with Cloud Build (default: the checkout's origin, which it must match)")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to build; optional when fugaro.yaml defines one")
 	f.StringVar(&o.base, "base", "", "base image (default: for a Cloud Build build the local config's base_images entry for the workflow's base, else the published fugaro-base matching this fugaro version)")
 	f.StringVar(&o.tag, "tag", "", "tag for the built image (default fugaro-<dir>-<workflow>:local)")

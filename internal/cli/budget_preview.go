@@ -123,7 +123,7 @@ func newBudgetPreviewCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.recipe, "recipe", "", "the recipe to preview ("+strings.Join(recipe.CatalogNames(), ", ")+")")
 	f.IntVar(&o.runs, "runs", 0, "how many runs to estimate")
-	f.StringVar(&o.repo, "repo", "", "the repository (owner/name); default: the checkout's origin")
+	f.StringVar(&o.repo, "repo", "", "the repository (owner/name, or a path inside its checkout); default: the checkout's origin")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	for _, name := range []string{"recipe", "runs"} {

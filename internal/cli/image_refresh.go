@@ -417,7 +417,7 @@ func newImageRefreshCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runImageRefresh(cmd, o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "owner/name of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout)")
+	f.StringVar(&o.repo, "repo", "", "owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout)")
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable)")

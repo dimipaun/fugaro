@@ -298,7 +298,7 @@ func newRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
+	f.StringVar(&o.repo, "repo", "", "repository as owner/name, or a path inside its checkout (default: this checkout's origin)")
 	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main))")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")

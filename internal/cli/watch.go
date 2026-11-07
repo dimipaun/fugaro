@@ -209,7 +209,7 @@ func newWatchCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runWatch(cmd, &o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.json, "json", false, "print one JSON document per change instead of a screen")
 	f.BoolVar(&o.once, "once", false, "print one snapshot and exit (with --json or plain text)")
 	f.BoolVar(&o.plain, "plain", false, "print text frames instead of the interactive screen")

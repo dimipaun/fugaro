@@ -89,7 +89,7 @@ and rigor.areas are unions: a lower layer only adds.`,
 	}
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
-	f.StringVar(&o.repo, "repo", "", "read this repository's fugaro.yaml (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "read this repository's fugaro.yaml (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.allRepos, "all-repos", false, "read every repository this machine remembers")
 	f.StringSliceVar(&o.layer, "layer", nil, "read only these layers ("+strings.Join(settings.Layers, ", ")+")")
 	f.StringVar(&o.grep, "grep", "", "show only the rows whose key or a rendered column matches this regexp")
@@ -106,6 +106,10 @@ and rigor.areas are unions: a lower layer only adds.`,
 func runSettings(cmd *cobra.Command, args []string, o settingsOptions) error {
 	if o.repo != "" && o.allRepos {
 		return userErr("--repo and --all-repos are two different reads: name one repository, or every one this machine remembers")
+	}
+	var err error
+	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+		return err
 	}
 	for _, l := range o.layer {
 		if !slices.Contains(settings.Layers, l) {

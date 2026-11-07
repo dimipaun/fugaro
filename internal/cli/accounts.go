@@ -47,7 +47,7 @@ type accountsOptions struct {
 
 func (o *accountsOptions) addFlags(cmd *cobra.Command) {
 	addCloudFlags(cmd, &o.cloud)
-	cmd.Flags().StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
+	cmd.Flags().StringVar(&o.repo, "repo", "", "repository as owner/name, or a path inside its checkout (default: this checkout's origin)")
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 }
 

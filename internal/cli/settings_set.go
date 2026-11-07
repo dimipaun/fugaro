@@ -284,7 +284,7 @@ nearest registry names.`,
 	}
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
-	f.StringVar(&o.repo, "repo", "", "read this repository's fugaro.yaml (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "read this repository's fugaro.yaml (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.jsonOut, "json", false, "print the versioned document")
 	return cmd
 }
@@ -340,7 +340,7 @@ Every write ends with one line: next: fugaro update.`,
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
-	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this write would otherwise get (the y/N, or the typed project name for a widening direction) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
 	f.StringVar(&o.add, "add", "", "add an item to a string-list key")
@@ -386,7 +386,7 @@ Every write ends with one line: next: fugaro update.`,
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
-	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
@@ -1417,6 +1417,10 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
+	var err error
+	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+		return err
+	}
 	edits := 0
 	for _, named := range []bool{o.add != "", o.remove != "", len(o.addEntry) > 0, len(o.removeEntry) > 0} {
 		if named {
@@ -1614,6 +1618,10 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		return err
 	}
 	if err := settingsDryRunFlags(o); err != nil {
+		return err
+	}
+	var err error
+	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
 		return err
 	}
 	if len(args) != 1 {

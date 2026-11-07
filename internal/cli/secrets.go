@@ -95,7 +95,7 @@ func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 	// --repo is the flag that opts OUT of the project default (D2): it names
 	// one repository's own container, and with no value means this checkout's
 	// origin, the repository a missing scope used to mean.
-	cmd.Flags().StringVar(&o.repo, "repo", "", "work on one repository's own copy, given as owner/name (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide")
+	cmd.Flags().StringVar(&o.repo, "repo", "", "work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide")
 	cmd.Flags().BoolVar(&o.projectWide, "project-wide", false, "the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo)")
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 }

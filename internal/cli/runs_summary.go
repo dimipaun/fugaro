@@ -173,7 +173,7 @@ func newRunsSummaryCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRunsSummary(cmd, &o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.StringVar(&o.since, "since", summaryDefaultSince, "the window of UTC days ending today (7d, 36h, 90m; a summary is per day, so 0 is refused)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)

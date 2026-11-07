@@ -131,7 +131,7 @@ func newArtifactsLsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error { return runArtifactsLs(cmd, &o, args[0]) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "the repository RUN belongs to (owner/name; needed only for a bare run ID)")
+	f.StringVar(&o.repo, "repo", "", "the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -171,7 +171,7 @@ func newArtifactsGetCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "the repository RUN belongs to (owner/name; needed only for a bare run ID)")
+	f.StringVar(&o.repo, "repo", "", "the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID)")
 	f.StringVar(&o.out, "out", "", "the directory to create the run's artifact directory in (default: the working directory)")
 	f.BoolVar(&o.force, "force", false, "replace a file that is already at a destination path")
 	addCloudFlags(cmd, &o.cloud)
@@ -248,6 +248,10 @@ func runArtifactsLs(cmd *cobra.Command, o *artifactsLsOptions, ref string) error
 		return err
 	}
 	defer env.Close()
+	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+		return err
+	}
+
 	s, err := artifactsRun(ctx, env, ref, o.repo)
 	if err != nil {
 		return err
@@ -365,6 +369,10 @@ func runArtifactsGet(cmd *cobra.Command, o *artifactsGetOptions, ref, name strin
 		return err
 	}
 	defer env.Close()
+	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+		return err
+	}
+
 	s, err := artifactsRun(ctx, env, ref, o.repo)
 	if err != nil {
 		return err
