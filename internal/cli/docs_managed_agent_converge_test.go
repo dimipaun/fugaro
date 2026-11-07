@@ -146,6 +146,35 @@ func TestDocsManagedAgentConvergeSkillParagraphIsAHandoff(t *testing.T) {
 	if !strings.Contains(readDoc(t, macDocSkill), "**never write that label yourself**") {
 		t.Errorf("%s no longer says the label is the user's own write: the note hands the paragraph over, and the file's own sentence is what the paragraph is read against", macDocSkill)
 	}
+	// The paragraph's two halves say what the gate covers, and one command of
+	// the gate's own set is refused in a session whatever the walk found:
+	// `accounts rm` deletes a credential and answers a question about origin
+	// out of documents the session itself writes (accounts_rm.go's session
+	// rule), so it belongs in the never-list and not in the admission. That
+	// is a fact about the command and not about the gate, which is why the
+	// paragraph carries it rather than row 28 alone: a skill that listed it
+	// with the admitted commands would send its reader to a refusal.
+	paragraph := ""
+	for _, line := range strings.Split(readDoc(t, macDocHandoffs), "\n") {
+		if strings.HasPrefix(line, "> **What you may run in a managed project") {
+			paragraph = line
+		}
+	}
+	if paragraph == "" {
+		t.Fatalf("%s carries no line opening the skill's paragraph", macDocHandoffs)
+	}
+	admitted, refused, ok := strings.Cut(paragraph, "**Nothing else changes**")
+	if !ok {
+		t.Fatalf("the paragraph does not carry its never-list: %q", paragraph)
+	}
+	if !strings.Contains(admitted, "`accounts add`") {
+		t.Errorf("the paragraph's admission does not name `accounts add`, which the gate admits: %q", admitted)
+	}
+	// Both spellings the admission could carry it as: the command's own name,
+	// and the bare `rm` it sat beside `accounts add` as before the row moved.
+	if strings.Contains(admitted, "accounts rm") || strings.Contains(admitted, "`rm`") || !strings.Contains(refused, "`fugaro accounts rm`") {
+		t.Errorf("the paragraph lists `accounts rm` somewhere other than its never-list, and a session is refused it outright: %q", paragraph)
+	}
 }
 
 // TestDocsManagedAgentConvergeCensusRowMovedForItsPin: docs/rigor-modes/
