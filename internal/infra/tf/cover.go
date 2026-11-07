@@ -2549,11 +2549,14 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 			// container for the same reason, a value the module never set, and
 			// a plan that kept gs://<this run's bucket> here and added a source
 			// would point the job's records wherever the secret says while this
-			// check read the literal.
+			// check read the literal. The source block is read as the literal
+			// is: one the plan leaves to apply is a value this run cannot show
+			// either, and after carries an empty list for it, so it is the
+			// unknown path and not the non-empty one that refuses it.
 			if refs := objects(e["value_source"]); len(refs) > 0 {
 				return "a " + bucketEnv + " whose value comes from a secret rather than the module"
 			}
-			if unknownAt(unk, append(slices.Clone(ep), "value")...) {
+			if unknownAt(unk, append(slices.Clone(ep), "value")...) || unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
 				return "a " + bucketEnv + " that is not known"
 			}
 			if v := str(e["value"]); !c.bucketEnvOK(v) {
