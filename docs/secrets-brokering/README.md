@@ -1,6 +1,8 @@
 # Secrets and credential brokering
 
-**Status: plan only; nothing is implemented; no task approved.** The owner answered D490–D506 on
+**Status: S0 and every inert piece of S1 are on `main`, the proxy chain and the flip are not, and no
+task is approved** — [status-2026-11-07.md](status-2026-11-07.md) reads every task of the plan, one
+row each, against the merged tree, and says which can launch now. The owner answered D490–D506 on
 2026-10-27: all as recommended except **D501** (the service keeps scaling to zero: not the recommendation;
 D502, staying opt-in, was relayed with it), and **D494**, which follows the recommendation and
 **departs from the owner's spec** (no RTDB token store). **D497a is amended after review** (the
@@ -26,6 +28,7 @@ forward before the PR.
 | [reconciliation.md](reconciliation.md) | What exists (§2); who reads Secret Manager today (§3); findings F1–F28 (§4); decisions D490–D506 with the owner's answers and resolutions R1–R4 (§5); 0.12.1 meanwhile (§6); tensions T1–T6 as the rulings handle them and open items O1–O8 (§7); UNVERIFIED U1–U8 (§9). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices S0–S5; tasks B0.1–B0.6, B1.0 (conditional) and B1.1–B1.16 with files, tests, red steps, commands and reviewer tiers; the re-planned Bitbucket S2; levels, critical path, shared files; Checks 190–192. **Nothing in it is approved** |
 | [secret-readers.md](secret-readers.md) | The S0 audit (task B0.1, as a tested doc): one row per reader of a Secret Manager value today, each carrying the decision that keeps it reading and the slice that ends it. Its `E<number>` IDs are the key B0.2's guard lists in its own exceptions table, so a hit with no row and a row with no hit both fail the build |
+| [status-2026-11-07.md](status-2026-11-07.md) | The census of 2026-11-07 (the owner's 0.23.0 scope names this work): every task of the plan, DONE, PARTIAL, NOT STARTED or OWNER-RUN, with the merged commit and the test that proves it, what blocks it, and the tasks that can launch now. **It approves no task** |
 | [check190-steps.md](check190-steps.md) | The owner's own steps for Check 190 (written by task B0.4, run by the owner in task B0.5): the token file at mode `0600`, the `--dry-run`, the run, the block to paste back and the `rm`. The script is `scripts/live-checks/check190.sh` and the register's section is `docs/gcp-live-checklist.md`, "Check 190" |
 
 ## Typos fixed in the spec
