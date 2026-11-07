@@ -9,7 +9,7 @@ and what could not be resolved at all is in §8.
 **Where this file and [spec.md](spec.md) disagree about the code, this file wins.** Where they
 disagree about what the design *says*, spec.md wins. Where a task in
 [implementation-plan.md](implementation-plan.md) and this file disagree, this file's findings
-(**F1–F31**) and decisions (**D1450–D1469**) win, and the task is wrong.
+(**F1–F33**) and decisions (**D1450–D1469**) win, and the task is wrong.
 
 **The design's decisions are not this file's.** §8 D1–D9 and §9 O1–O6 of the design are the owner's,
 and **nothing here answers one of them** — not one row of §6 re-asks one, and §9 repeats them as the
@@ -254,7 +254,7 @@ the stage timings (`:313`), the review lines (`:373`), the tolerated findings (`
 
 ## 4. Findings
 
-Twenty-eight, each labelled **Wrong** (the design says something the tree contradicts), **Exists** (a
+Thirty-three, each labelled **Wrong** (the design says something the tree contradicts), **Exists** (a
 claim the tree bears out, recorded so the plan can be held to it), **Gap** (true, and the design leaves
 something out that a task needs), **Rule** (a repository rule the design obeys, restated so a task can
 be held to it) or **Open** (the design leaves it to the owner).
@@ -288,6 +288,10 @@ be held to it) or **Open** (the design leaves it to the owner).
   against today's tree. The design was read on 2026-11-05 and `main` moved after it; the maps are in
   §3.1. The citation pin does not catch it by design (it checks a line exists, never a symbol), so a
   reader following the design's anchor reads a comment.
+- **F33 — a count that does not match its own list.** Design §10's FC4 says **"Files (4)"** and then
+  names **three**: `internal/runner/runner.go`, `internal/runner/stageerror_internal_test.go` (or the
+  existing `stageerror_test.go`) and `internal/runner/redaction_test.go`. The tree has both stageerror
+  files, so the task's diff is three files: the plan says three and names the file it writes.
 - **F20 — one function, two names.** Design §5 names the legacy reader
   `legacyClass(rec *runstore.Record) failure.Class`; §10 FC5 names it
   `ClassOf(rec *runstore.Record) failure.Class`. One of the two is the function and the other is a
@@ -354,6 +358,15 @@ be held to it) or **Open** (the design leaves it to the owner).
   `recordEnd` produces; `TestDocsFailureClassDesignPinsTheVocabulary` (`:138`) pins sentences of the
   design FC2 rewrites. So FC2 edits the design **and its pin**, and `spec.md`'s copy is a snapshot of
   the pre-FC2 document. Nothing in the tree pins this folder's copy, and nothing should.
+- **F32 — the contract's rows land with the Go keys, not two tasks later.** The design's §10.2 gives
+  `console/docs/json-contract.md` to **FC8 alone**. But the forward pin
+  `TestDocsDesktopConsoleContractNamesTheOtherShapesFields`
+  (`internal/cli/docs_desktop_console_test.go:353`) reflects over `runview.Row{}` and asserts the whole
+  document contains the literal `` `failure_class` ``, and its walker promotes an embedded struct's
+  keys into the shape that embeds it (`:284`), so `watchDegradedDoc{}` (`:611`) makes `lsDoc`'s keys —
+  `groups` — the same requirement. **A task that adds the Go key and no contract row turns the Docs run
+  red**, so the §5 row is FC5's and the `groups` row is FC6's, and FC8's remaining row is diagnose's
+  (D1460). → **FC5**, **FC6**, **§2** of the plan.
 - **F26 — the plan's own gate.** The design has no decision about **whether the two digest rules ship
   in the same work as the field** (§8 D7 recommends they do, with thresholds), and a rule that reads
   only blocks carrying the new key cannot fire in its first week (the design says this). Whether the
