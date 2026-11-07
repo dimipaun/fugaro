@@ -22,6 +22,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -707,6 +708,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
+		// The closed cause beside the free text, which is the pair the record
+		// carries from the failure classes on (docs/design/failure-classes.md
+		// §3): the reason stays the sentence a person reads and the class is
+		// what the report counts.
+		FailureClass: failure.TestsFailed,
 		// D876's additive per-stage accounts (docs/accounts-add spec §11.5):
 		// the account that served each stage, beside the scalar oauth_account
 		// that names the account the run used last.
@@ -2007,6 +2013,66 @@ func TestResultSchemaHaltReasonsAgreeWithGo(t *testing.T) {
 	}
 	if !sameStrings(got, want) {
 		t.Errorf("result.schema.json halt.reason = %v, internal/runstore's HaltReason constants = %v", got, want)
+	}
+}
+
+// TestResultSchemaFailureClassesAgreeWithGo pins result.schema.json's
+// failure_class enum to failure.Classes(), which is the one place the
+// vocabulary is written: the enum and the design's table are both read from it,
+// so a class the runner can write but the enum lacks is a result.json every
+// consumer validating against the published schema refuses, and a value only
+// the enum knows is a class no run can produce.
+//
+// The order is compared too, unlike the halt-reason pin's order-free
+// sameStrings: the vocabulary's printed order is the design's table's, and the
+// report prints the classes in it, so a class inserted in the middle of one
+// list alone is two renderings a reader compares by eye.
+//
+// The field is also held out of the schema's required list here, because that
+// is the same claim from the other side: a run that succeeded has no cause to
+// name, so a record carrying no failure_class is valid.
+//
+// Mutation (run, restored): drop a value from Classes(), add one to the enum,
+// or list the field as required, and this names the side that has it.
+func TestResultSchemaFailureClassesAgreeWithGo(t *testing.T) {
+	classes := failure.Classes()
+	if len(classes) == 0 {
+		t.Fatal("failure.Classes() is empty: this test would pass against any enum, including no enum")
+	}
+	want := make([]string, len(classes))
+	for i, c := range classes {
+		want[i] = string(c)
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	props, _ := doc["properties"].(map[string]any)
+	node, _ := props["failure_class"].(map[string]any)
+	raw, ok := node["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: failure_class has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: failure_class enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("result.schema.json failure_class = %v, internal/failure's Classes() = %v", got, want)
+	}
+	required, _ := doc["required"].([]any)
+	for _, v := range required {
+		if v == "failure_class" {
+			t.Error("result.schema.json requires failure_class: a succeeded run has no cause to name, so a record carrying none is valid")
+		}
 	}
 }
 
