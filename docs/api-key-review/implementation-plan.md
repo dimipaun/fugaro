@@ -1,9 +1,12 @@
 # The api-key review path — implementation plan
 
 **Status: plan only; nothing is implemented; D1410–D1429 are answered 2026-11-07 and all tasks are
-approved 2026-11-07 (owner: "All tasks approved. Jobmax").** Every gate this plan carried is
-satisfied: the answers are in [reconciliation.md](reconciliation.md) §7 and §9, and §6 below records
-what each one settled. Where this file and
+approved 2026-11-07 (owner: "All tasks approved. Jobmax").** Every gate this plan carried that a
+decision or an approval could settle is satisfied: the answers are in
+[reconciliation.md](reconciliation.md) §7 and §9, and §6 below records what each one settled. **Two
+gates in that list are not of that kind and still stand** — the mandatory security review owed before
+AK4–AK7 land (item 6) and **E7**, which item 7 states is not met — so **the cloud path is not
+launchable and AK4–AK7 may not start yet**. Where this file and
 [reconciliation.md](reconciliation.md) disagree about the code, the reconciliation wins.
 
 **Read with:** [spec.md](spec.md) (the owner's ask) and [reconciliation.md](reconciliation.md) (what
@@ -32,7 +35,8 @@ is the provider key the OpenRouter half needs, AK7 is the runner's path to it, a
 result on a real installation. **AK2 and AK3 are off the critical path** — AK2 is documentation and
 AK3 is the record — and either may land at any point in L1 without moving it.
 
-**D1410, D1421 and the gates in §6 are settled as of 2026-11-07, before any task starts.** **D1410**
+**D1410, D1421 and the gates in §6 that a decision settles are settled as of 2026-11-07, before any
+task starts; §6's items 6 and 7 are not decisions and still stand.** **D1410**
 is answered **both slices**, so L1, L2 and L3 all stand and the plan does not end after AK3.
 **D1416** is answered **the Anthropic key first**, so AK6 and AK7 stay two tasks rather than one SEC
 task.
@@ -472,7 +476,10 @@ any installation whose budget mode is `off` — the review class refuses a run w
 
 ## 6. The gates a task may not start without
 
-**Every gate below is satisfied as of 2026-11-07**, and each records what the owner's answer settled.
+**Items 1–5 below are satisfied as of 2026-11-07**, each recording what the owner's answer settled or
+the approval of that day gave. **Items 6 and 7 are not the owner's answers to give and are not
+satisfied**: the security review is owed before AK4–AK7 land, and E7 is not met, so those four tasks
+may not start and the cloud path is not launchable. A reader must take those two as standing.
 
 1. **D1410 answered: both slices** — the plan is about all three (reconciliation §9.1).
 2. **D1421 answered: after 0.20.0** — the release for AK8 and for any release note.

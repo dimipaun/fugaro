@@ -7,9 +7,12 @@ in-job half and the cloud half; **D1411 and D1412 Path A, and no second Anthropi
 key wins when the owner asks for it explicitly**; **D1414 no** — an `oauth` run's review does not
 move onto an API key; and **D1415 a new additive field** on `StageTiming`, never a new value on
 `credential`. This is a design for the owner to read. It adds no code, no schema, no config key and
-no Terraform; it edits no file outside `docs/`. **Nothing in it waits on the owner any more**: the
-answers of 2026-11-07 and the approval of the same day are the last word the plan needed, and the
-gates in [implementation-plan.md](implementation-plan.md) §6 are satisfied.
+no Terraform; it edits no file outside `docs/`. **Nothing in it waits on a further decision from the
+owner**: the answers of 2026-11-07 and the approval of the same day are the last word the plan
+needed, and items 1–5 of [implementation-plan.md](implementation-plan.md) §6 are satisfied. **The
+two gates that remain are not decisions and are named there**: the mandatory security review owed
+before **AK4–AK7** land, and **E7** — not met — so the cloud half stays unlaunchable and those four
+tasks may not start.
 
 **Asked by:** the repository owner, in a message of **2026-11-07** — "the api-key review path: let's
 start a design". The role is the one the ask's own clauses describe: the person who owns the
@@ -64,7 +67,7 @@ and says plainly that no installation can reach it yet.
 | --- | --- |
 | [spec.md](spec.md) | The owner's ask of **2026-11-07**, verbatim, with a header naming the owner by role and the status line. Where this file and the others disagree about what the ask *says*, this file wins |
 | [reconciliation.md](reconciliation.md) | Every clause of the ask against the code on `main`, read by path and symbol: the findings **F1–F24** (Wrong / Exists / Gap / Rule / Open), what the **in-job** path does today end to end (§1), what the **cloud** path does today end to end (§2), the two readings of "the api-key review" (§4), **the security analysis as an attacker would see it** (§5), an **UNVERIFIED** section (§6), the decisions **D1410–D1429** each with a recommendation, an alternative and **the owner's answer of 2026-11-07** (§7), the number block and how it was read (§8), and the owner's **Open items**, each with the answer it now carries (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK8**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot — **after 0.20.0**, from D1421 (§4) — the owner-run live check **Check 330** (§5) and the gates a task may not start without, each with the answer that satisfies it (§6) |
+| [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK8**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot — **after 0.20.0**, from D1421 (§4) — the owner-run live check **Check 330** (§5) and the gates a task may not start without — the five the answers of 2026-11-07 satisfy, and the two that stand (§6) |
 | `README.md` | This file: the status, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
 ## The two things to read first

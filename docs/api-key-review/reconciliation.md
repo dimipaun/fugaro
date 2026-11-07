@@ -437,8 +437,10 @@ no number any other work reads.
 ## 9. Open items
 
 These were the owner's. The recommendation and the cost of each are in §7; this is the index, with
-the reason each one existed and **the answer it carries since 2026-11-07**. Every one takes the
-recommendation, and all tasks were approved the same day.
+the reason each one existed and **the answer it carries since 2026-11-07**. **Items 1–8 are the
+owner's decisions and every one of them takes the recommendation**; **item 9 is not** — **U1** and
+**U2** are outside the tree (an owner/counsel question and the owner's own figures), so no answer
+here settles them and none is recorded. All tasks were approved the same day.
 
 1. **D1410 — answered: both slices.** The ask names one path and the tree has two reviews (§4), so
    the answer decides which slice the plan is about; the gate it carried — no task may start before
