@@ -271,7 +271,11 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 	// each through the reporter this command opened, and the run's own output —
 	// Terraform's above all — goes to the log this command keeps. A converge
 	// invoked here with a reporter of its own would file a log the command
-	// never names and close it behind the command's back.
+	// never names and close it behind the command's back. The engine's own
+	// redaction list is not handed over with them: the three stages this door
+	// selects hold no value (initEngine.hold's one caller is the secrets stage),
+	// and what keeps the command's own token out of the log is the run's own
+	// hold (stepRun.hold).
 	r.rep, r.repLog = run.rep, run.log
 	r.setProject(lc)
 	spec, err := installOptions(o, lc)
@@ -287,12 +291,6 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 	// captures in this file do it, so stdout is the answer alone.
 	answer := cmd.OutOrStdout()
 	cmd.SetOut(cmd.ErrOrStderr())
-	// The engine's own live redaction list joins this command's: a stage holds
-	// what it prompts for in slots of its own (initEngine.hold), and the run's
-	// log — which is this command's log — has to hold what the run holds at the
-	// moment a line was written, exactly as `fugaro update` filters the same
-	// Terraform output with it (F6).
-	run.shareRedaction(e.redaction())
 	opts := e.options()
 	// The reporter is this command's (ReportBorrowed): the loop's steps are
 	// three of the eight this command accounts for, and the closing line is

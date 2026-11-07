@@ -28,14 +28,11 @@ type stepRun struct {
 	rep *report.Reporter
 	log report.Sink
 
-	// The redaction source the log reads at each line, guarded because a step
-	// of the run and the goroutine the log is written from are not the same
-	// one. held is what this run holds (hold); also is a converge's own live
-	// list, borrowed for the length of a run whose steps are three of a bigger
-	// command's (shareRedaction).
+	// The redaction source the log reads at each line is guarded because a
+	// step of the run and the goroutine the log is written from are not the
+	// same one. held is what this run holds (hold).
 	mu   sync.Mutex
 	held []string
-	also func() []string
 }
 
 // stepRunFor opens the run for the command name the log is filed under (D1351)
@@ -68,12 +65,7 @@ func stepRunFor(cmd *cobra.Command, name string, out io.Writer) *stepRun {
 func (s *stepRun) redaction() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := slices.Clone(secretsHeld())
-	out = append(out, s.held...)
-	if s.also != nil {
-		out = append(out, s.also()...)
-	}
-	return out
+	return append(slices.Clone(secretsHeld()), s.held...)
 }
 
 // hold registers value with this run's own redaction for the rest of the run:
@@ -89,17 +81,6 @@ func (s *stepRun) hold(value []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.held = append(s.held, vals...)
-}
-
-// shareRedaction adds a live list to this run's redaction: a command whose
-// steps are invoked converge stages borrows the engine's own list — the one
-// `fugaro update` filters the same Terraform output with — so a value a stage
-// holds (the secrets stage's, on a door that runs it) is kept out of this
-// command's log too.
-func (s *stepRun) shareRedaction(src func() []string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.also = src
 }
 
 // close ends the run: the closing line, and then the log shut. It is deferred
