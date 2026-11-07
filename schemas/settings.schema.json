@@ -950,6 +950,24 @@
         "name": {
           "default": "unset = the file is refused (name: is required)"
         },
+        "orchestrator.batch_size": {
+          "default": "unset = 10 (policy.DefaultBatchSize)"
+        },
+        "orchestrator.decision_model_per_class": {
+          "default": "unset = each class's floor: haiku for a routine decision and opus for a sensitive one"
+        },
+        "orchestrator.max_running": {
+          "default": "unset = the person's max_parallel"
+        },
+        "orchestrator.spawn_per_day": {
+          "default": "unset = 60 (policy.DefaultSpawnPerDay)"
+        },
+        "orchestrator.spawn_per_hour": {
+          "default": "unset = 12 (policy.DefaultSpawnPerHour)"
+        },
+        "orchestrator.spawn_per_minute": {
+          "default": "unset = 2 (policy.DefaultSpawnPerMinute)"
+        },
         "policy_generation": {
           "default": "unset = none: no generation is recorded; the next update adopts the published one"
         },

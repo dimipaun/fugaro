@@ -565,6 +565,10 @@ export class FixtureSource implements FugaroSource {
     return this.#document('plan.status', args)
   }
 
+  graphRead(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('graph.read', args)
+  }
+
   coordinatorStatus(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('coordinator.status', args)
   }

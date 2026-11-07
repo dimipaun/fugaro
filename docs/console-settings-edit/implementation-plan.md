@@ -1,7 +1,18 @@
 # Editing the Project tab's settings from the console: implementation plan
 
-**Nothing here is approved.** Every task below starts only when the owner approves it, and an answer
-to a decision in [reconciliation.md](reconciliation.md) is not an approval. The owner answered
+**Status (2026-11-07, later): every task below has been approved and has landed.** Each one needed
+the owner's go by name — the rule the paragraph kept below states — and the prerequisites **P1–P4**
+and the console tasks **C1–C6** are all on `main`, so the flags, files and argv named here are what
+the CLI and the console now do. Two of the plan's predictions did not survive the build, and each is
+named where it sits: **C6**'s release number, because the notes shipped as console 0.120.0 and not
+0.119.0, and the operation counts in **C1**'s and **C3**'s lines, because the live number is the
+design document's own. **This line records what the tree holds; it approves no task and it changes
+no sentence below.** Everything under it is the state as it was written on its own date, kept as
+written.
+
+*The status as first written, kept:* **Nothing here is approved.** Every task below starts only when
+the owner approves it, and an answer to a decision in [reconciliation.md](reconciliation.md) is not
+an approval. The owner answered
 **every one of D1100–D1121 on 2026-11-01** ([spec.md](spec.md)): D1102–D1106 and D1108–D1121 as
 recommended, and **D1107 in his own words — `fugaro settings set|unset` accepts `--yes` for a
 widening outside an agent session**, and the console gets no hook and no marker. Only the shape of
@@ -37,7 +48,7 @@ rather than the new flag and the new child-environment key the design had propos
         │
         C5                                       ← the documents the fences live in
         │
-        C6                                       ← the release notes, console 0.119.0
+        C6                                       ← the release notes, console 0.120.0
 ```
 
 **Why P1 is first and is not optional.** `fugaro settings` registers no `--project` and no
@@ -46,6 +57,11 @@ rather than the new flag and the new child-environment key the design had propos
 environment beyond `CHILD_ENV_KEYS` (**F4**). Until P1 lands, **every** `settings` argv the console
 could spawn is refused on a machine with two installations, and on a machine with one it silently
 reads the only installation — which is the worse failure, because it looks like it worked.
+*(Amended 2026-11-07: **F12** and **F4** corrected two of these sentences against the tree — the
+selection takes `Project` from `$FUGARO_PROJECT`, which the read and the write both pass, and the
+console's child carries that key — so a console spawn was aimed by the environment rather than
+unaimed, and the refusal above is the one a spawn that has lost the variable meets. P1 is what puts
+the installation in the argv instead, and it has landed.)*
 
 **Why P2 is first and not later.** The console's row set is the CLI's answer and it keeps no list of
 its own (**D1102**), so there is no pencil to draw before the read carries `writable`, `owner` and
@@ -366,6 +382,16 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   names a behaviour the code does not have is worse than no rule 12.
 
 ### C6. The release notes, console 0.119.0 (D1120). **size S**
+
+*(Amended 2026-11-07: **this task landed as console 0.120.0.** The console's version moved past
+0.119.0 while the design was being built — 0.119.0 "Pomelo" shipped first, without this feature — so
+the notes are `docs/releases/console/v0.120.0.md` ("Quince"), written by **#1645** (`660baae4`) with
+the version bump beside them, and the tag is **`console-v0.120.0`**. `website/data/release-summaries.yaml`
+needed no line from this task: it is keyed by the **CLI's** tags and carries no `console-v*` entry at
+all. What the notes say is what the task asked for: the tick described as the console's own extra
+confirmation and not a security control, **Known limits** carrying both the second write and the
+`next: fugaro update` sentence, and **"Nothing to run after this release."** for the operator step
+there is none of. The file name and the tag live only below, in what the plan predicted.)*
 
 - **Files:** `docs/releases/console/v0.119.0.md` (new) and `website/data/release-summaries.yaml`
   (one line, no backticks).

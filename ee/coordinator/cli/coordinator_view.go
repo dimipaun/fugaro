@@ -31,35 +31,9 @@ import (
 // a project has.
 const coordinatorViewRepos = 4
 
-// `fugaro coordinator status --from-store` (D364): the read of the view the
-// sweep already stored, which is what makes the project view the same for
-// GitHub and Bitbucket and gives the console and a person's own CLI a read
-// that holds no key.
-//
-// Three properties are the read rather than niceties around it:
-//
-//   - It is the person's own database read. The client is newBudgetClient's —
-//     the caller's ADC, on the project's budget.rtdb_url, which is the
-//     database the coordinator's subtree lives in — and what admits it is
-//     roles/firebasedatabase.viewer, the IAM role launchers and operators
-//     hold. It is an IAM read and not a rules read: the rules' reader on
-//     /coordinator is a device user, so a teammate's ADC is admitted by the
-//     project's IAM and by nothing else.
-//   - It reads NO credential of the host's. No App ID, no App key, no
-//     Bitbucket token, and no provider is opened: with the installation's
-//     credentials service in the environment the command still succeeds,
-//     where the project-wide read (coordinatorReader) refuses. Everything a
-//     stored view says about a pull request is what the sweep read once.
-//   - A repository with no stored node is the runs half with "stored": false,
-//     never a failure: the coordinator is off on most installations, and a
-//     console that had to know which before it picked an argv would be the
-//     one place that has to. What it consults to decide is the database, and
-//     never the local config: the config a teammate's machine holds is the
-//     published shared one, and localcfg.Config.Shared drops Terraform, which
-//     is where the coordinator's switch lives — so a read gated on it would
-//     report the coordinator off on every machine but the owner's.
-
-// runCoordinatorStatusFromStore is --from-store's whole path.
+// runCoordinatorStatusFromStore is --from-store's whole path: the read
+// (StoredProject), the provider this command's own document carries, and the
+// output.
 func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) error {
 	ctx := cmd.Context()
 	window, err := fcli.ParseSince(o.since)
@@ -76,16 +50,87 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	if err != nil {
 		return err
 	}
-	store, err := openCoordinatorStore(ctx, env.Config())
+	project, err := StoredProject(ctx, env, repos, coordinatorSince(window), cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
+	// The provider is this command's step and not the read's: it is the field
+	// the document below writes (D814), and resolving it can read a checkout
+	// (env.RepoProvider falls back to the one the repository's fugaro.yaml
+	// declares), which is a thing this command may do and a reader of the same
+	// node may not.
+	coordinatorStatusProviders(ctx, env, repos, project.Repos)
+	out := cmd.OutOrStdout()
+	if o.all {
+		if o.asJSON {
+			return writeCoordinatorJSON(out, project)
+		}
+		return writeCoordinatorStoredProject(out, project.Repos)
+	}
+	if o.asJSON {
+		return writeCoordinatorJSON(out, project.Repos[0])
+	}
+	return writeCoordinatorStored(out, project.Repos[0])
+}
+
+// StoredProject is the read `fugaro coordinator status --from-store` makes
+// (D364): every named repository's stored view, in the order the names were
+// given. It is the view the sweep already stored, which is what makes the
+// project view the same for GitHub and Bitbucket and gives the console and a
+// person's own CLI a read that holds no key.
+//
+// It is exported because a second command reads the same node for the same
+// reason — `fugaro graph`'s coordinator scope, whose document is drawn from
+// exactly this data (CG3) — and a node read by two commands is a node with two
+// readers only if they may differ. What they must not differ on is the runs
+// half: a repository with nothing stored is the runs alone and "stored": false,
+// never a failure, and the graph's `down` state is that same fallback seen from
+// one step further away.
+//
+// Three properties are the read rather than niceties around it:
+//
+//   - It is the person's own database read. The client is newBudgetClient's —
+//     the caller's ADC, on the project's budget.rtdb_url, which is the
+//     database the coordinator's subtree lives in — and what admits it is
+//     roles/firebasedatabase.viewer, the IAM role launchers and operators
+//     hold. It is an IAM read and not a rules read: the rules' reader on
+//     /coordinator is a device user, so a teammate's ADC is admitted by the
+//     project's IAM and by nothing else.
+//   - It reads NO credential of the host's. No App ID, no App key, no
+//     Bitbucket token, and no provider is opened: with the installation's
+//     credentials service in the environment it still succeeds, where the
+//     project-wide read (coordinatorReader) refuses. Everything a stored view
+//     says about a pull request is what the sweep read once.
+//   - A repository with no stored node is the runs half with "stored": false,
+//     never a failure: the coordinator is off on most installations, and a
+//     console that had to know which before it picked an argv would be the
+//     one place that has to. What it consults to decide is the database, and
+//     never the local config: the config a teammate's machine holds is the
+//     published shared one, and localcfg.Config.Shared drops Terraform, which
+//     is where the coordinator's switch lives — so a read gated on it would
+//     report the coordinator off on every machine but the owner's.
+//
+// It stamps no provider of its own: RepoView.Provider is a field of the
+// document `coordinator status` writes and not part of this read, so that
+// command stamps it (coordinatorStatusProviders) and a caller with no use for a
+// host — the graph names none — never reaches for one. What the read does
+// resolve is the slug, because the node it reads is keyed by it: repoSlug,
+// which takes the provider from the repository's repos entry in the local
+// config and falls back to a checkout's fugaro.yaml only when the working
+// directory is that repository's checkout. A repository with neither is refused
+// there, naming the entry to set, and that is the one case in which this read
+// is not checkout-free.
+func StoredProject(ctx context.Context, env *fcli.Cloud, repos []string, since time.Time, warn io.Writer) (coordinator.StoredProjectView, error) {
+	store, err := openCoordinatorStore(ctx, env.Config())
+	if err != nil {
+		return coordinator.StoredProjectView{}, err
+	}
 	// Every repository's view is read in one pass, a few at a time: a project
 	// with twenty of them costs one repository's read per round rather than
-	// their sum, which is the whole of this command's cost. Each read writes
-	// its own slot, so the document is in the repository order coordinatorRepos
-	// names whatever order they finish in, and the first failure in that order
-	// is the one reported.
+	// their sum, which is the whole of this read's cost. Each read writes its
+	// own slot, so the result is in the order the repository names were given
+	// whatever order they finish in, and the first failure in that order is the
+	// one reported.
 	//
 	// What a read warns about is buffered per repository rather than written as
 	// it is made: written as it is made, twenty reads at once put one
@@ -96,31 +141,32 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	views := make([]coordinator.RepoView, len(repos))
 	errs := make([]error, len(repos))
 	pool.Run(len(repos), coordinatorViewRepos, func(i int) {
-		views[i], errs[i] = coordinatorStoredView(ctx, env, store, repos[i], coordinatorSince(window), &warns[i])
+		views[i], errs[i] = coordinatorStoredView(ctx, env, store, repos[i], since, &warns[i])
 	})
 	// The flush stops at the first failure, and stops there for good: the
 	// repository that failed is one the read did not finish, so neither its own
 	// warnings nor any later repository's are about anything a person can act
-	// on, and the error it returns is what the command says instead.
+	// on, and the error it returns is what the caller says instead.
 	for i, err := range errs {
 		if err != nil {
-			return err
+			return coordinator.StoredProjectView{}, err
 		}
 		// stderr is best effort everywhere else in this path, and a terminal
 		// that would not take a warning is not a failed read.
-		_, _ = cmd.ErrOrStderr().Write(warns[i].Bytes())
+		_, _ = warn.Write(warns[i].Bytes())
 	}
-	out := cmd.OutOrStdout()
-	if o.all {
-		if o.asJSON {
-			return writeCoordinatorJSON(out, coordinator.StoredProjectView{Repos: views})
-		}
-		return writeCoordinatorStoredProject(out, views)
+	return coordinator.StoredProjectView{Repos: views}, nil
+}
+
+// coordinatorStatusProviders stamps each repository's provider onto the view
+// read for it, in the same order: the field is the caller's answer and not the
+// read's (the node is keyed by a slug of the provider, so the node cannot give
+// it back), and it is what the command's document and the console's Coordinator
+// pane build a pull request's URL from (D814).
+func coordinatorStatusProviders(ctx context.Context, env *fcli.Cloud, repos []string, views []coordinator.RepoView) {
+	for i, repo := range repos {
+		views[i].Provider = env.RepoProvider(repo, fcli.CheckoutOf(ctx, repo)())
 	}
-	if o.asJSON {
-		return writeCoordinatorJSON(out, views[0])
-	}
-	return writeCoordinatorStored(out, views[0])
 }
 
 // coordinatorStoredView reads one repository's stored view, and falls back to
@@ -141,11 +187,6 @@ func coordinatorStoredView(ctx context.Context, env *fcli.Cloud, store *coordina
 	if err != nil {
 		return coordinator.RepoView{}, coordinatorStoredErr(env.Config(), err)
 	}
-	// The provider is the caller's answer and not the read's: the node is
-	// keyed by a slug of it, so the node cannot give it back, and a reader
-	// that needed one for a pull request's URL would otherwise have to take
-	// it from the URL the sweep stored.
-	view.Provider = env.RepoProvider(repo, fcli.CheckoutOf(ctx, repo)())
 	if view.Stored {
 		return view, nil
 	}

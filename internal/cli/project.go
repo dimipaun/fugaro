@@ -299,6 +299,12 @@ var consoleReadPaths = map[string]bool{
 	// own repository's runs) and writes nothing, the remembered checkouts
 	// included.
 	"fugaro plan status": true,
+	// The dependency graph read (the graph plan's CG9a; the command is CG3's,
+	// on D1356): one versioned document per scope, and the read is the
+	// caller's own database node -- which is why it needs **no checkout at
+	// all** -- so the resolver this list goes through has nothing to add to it
+	// beyond `--project`. It writes nothing, the remembered checkouts included.
+	"fugaro graph": true,
 	// The project view (Bitbucket credentials T1.2): `--from-store` reads the
 	// caller's own database node and no host credential, and the command
 	// writes nothing -- but it is a cloud read like the rest, so it goes

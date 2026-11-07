@@ -97,9 +97,14 @@ const (
 	// may pay for one behaves.
 	policyRoutingRule     = "routing is unchanged (spec §4.2)"
 	policyCredentialsRule = "the credentials block is unchanged (spec §4.2)"
-	// policyCapRule is §4.1 rule 6: no increase of a budget cap, whichever
-	// command it is.
-	policyCapRule = "no budget cap is raised (spec §4.1 rule 6)"
+	// policyCapRule is §4.1 rule 6: no increase of a cap, whichever command it
+	// is. The rule's own words are the spec's body sentence, and it reads the
+	// budget block's four ceilings and the orchestrator's guardrails together
+	// (policyCeilingMembers): the spawn rates, the batch size and the running
+	// cap bound how much work a project's orchestrator sets going at once, which
+	// is a cap this rule refuses to see raised for the same reason a per-run
+	// dollar ceiling is.
+	policyCapRule = "no cap is raised (spec §4.1 rule 6)"
 	// policyUnjudgedRule is §4.1 rule 2's fail-closed half, and the one rule
 	// that reads the whole node rather than one member of it: every member the
 	// rules above do not judge is unchanged, whatever it is. It is what makes
@@ -250,7 +255,11 @@ func policyCredentialsRefusal(old, pol *projectpolicy.Policy) string {
 // comparison `settings set` decides its own typed confirmation with, so a
 // widening this door refuses is a widening that door refuses too — and the
 // refusal names the member, because "a cap was raised" is not an answer an
-// owner can act on.
+// owner can act on. The comparison reads the node's budget block and its
+// orchestrator block (policyCeilingMembers), so a publish that raises a spawn
+// rate or a running cap is refused here rather than left to the unjudged rule
+// below: a member a rule reads is a member this gate judges, and the two doors
+// that write a node then ask the same question about the same member.
 func policyCapRefusal(old, pol *projectpolicy.Policy) string {
 	loosening := policyLoosening(old, pol)
 	if len(loosening) == 0 {
@@ -351,8 +360,16 @@ func unjudgedMemberChanges(old, pol *projectpolicy.Policy) ([]string, error) {
 // compares), the node's own allow_repos, each profile's allow_repos, the
 // accounts block (an entry carries nothing but the list that rule reads), the
 // bitbucket token's allow_repos — and not its proxy switch, which no rule reads
-// and which is therefore still held to equality below — the routing block and
-// the credentials block.
+// and which is therefore still held to equality below — the routing block, the
+// credentials block and the orchestrator block (its five counts and the two
+// class models, the guardrails policyLoosening compares as caps).
+//
+// The orchestrator block is taken out whole and not member by member because
+// every member it can carry is judged: the two class models are one member each
+// (policyDecisionModelMember) and the five counts are the rest, so there is no
+// member of the block left for this comparison to hold on its own — the node's
+// decoder and the local config's loader both hold it to policy.ValidOrchestrator,
+// which knows the two classes and refuses a third.
 //
 // A nil node is the zero policy: a project with nothing published has no member
 // for any of them to be unchanged, which is the answer policyReposRefusal gives
@@ -370,6 +387,7 @@ func policyWithoutJudgedMembers(p *projectpolicy.Policy) projectpolicy.Policy {
 	out.BitbucketToken = bitbucketTokenWithoutAllowRepos(p.BitbucketToken)
 	out.Routing = nil
 	out.Credentials = nil
+	out.Orchestrator = nil
 	return out
 }
 

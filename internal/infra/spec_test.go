@@ -3601,16 +3601,18 @@ func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
 	}
 }
 
-// Two of #1752's spec-side tests stood here: that a prebuilt entry's job
-// carries FUGARO_REMOTE and no FUGARO_CHECKOUT, and that its remote is the
-// repository's own credential-free clone URL. Both built their spec through
-// Repo, which refuses a baked workflow's prebuilt entry before a job exists
-// (D1191, TestBakedWorkflowRefusesAPrebuiltCatalogEntry below), so the shape
-// they were about is one no configuration produces: the remote those runs
-// clone from is written for a spec the deploy path no longer builds, and the
-// tests that remain about it are the ones that read a deployed job's own spec
-// — internal/runner's provisioning, and readiness_catalog_test.go, which
-// states the mark by hand for the same reason.
+// A prebuilt catalog entry used to reach a job here, and #1752's two tests —
+// TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv and
+// TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree — pinned the clone shape
+// that job carried (FUGARO_REMOTE and no FUGARO_CHECKOUT). R1 (#1698, D1191)
+// refuses a prebuilt entry on a baked workflow where the spec is built, and
+// the only two checkout kinds that leave the catalog inert — clone and shared
+// — make catalog.Applies false, so catalogJobImage returns an empty entry for
+// them and WorkflowSpec.CatalogPrebuilt is never set from this path: the
+// remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
+// configuration exercises it. The behaviour those tests were about — the
+// remote on a job whose image holds no checkout, credential-free — stays
+// covered by TestSpecCloneSetsRemoteEnv and TestSpecSharedRemoteIsCredentialFree.
 
 // TestSpecBuiltCatalogEntryCarriesNoRemoteEnv (#1752): the remote is for a job
 // whose image bakes no checkout, and a built entry's image is this

@@ -297,7 +297,7 @@ run "max_retries_zero_job" {
   assert {
     condition = [for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.name] == [
       "CLAUDE_CODE_OAUTH_TOKEN", "FUGARO_BACKEND", "FUGARO_BITBUCKET_TOKEN", "FUGARO_BUCKET",
-      "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION", "FUGARO_SECRET_ENVS", "SANDBOX_PROBE",
+      "FUGARO_GCP_PROJECT", "FUGARO_IMAGE_ENTRY", "FUGARO_PROJECT", "FUGARO_REGION", "FUGARO_SECRET_ENVS", "SANDBOX_PROBE",
     ]
     error_message = "the env must be exactly the plain and secret variables, sorted by name"
   }

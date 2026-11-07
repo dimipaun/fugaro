@@ -2,13 +2,17 @@ package cli
 
 // The Project-tab settings-edit docs package, pinned.
 //
-// docs/console-settings-edit/ is a design-only folder: README.md (the index),
-// spec.md (the owner's ask, verbatim, with his rulings on the design),
-// reconciliation.md (findings F1-F16 against the tree and against the
-// settings-write command, and this work's decisions D1100-D1121) and
-// implementation-plan.md (the CLI prerequisites P1-P4 and the console tasks
-// C1-C6). It adds no code, and no task in it is approved, so nothing here pins
-// a command, a flag or a console operation.
+// docs/console-settings-edit/ is a design folder whose every task has since
+// landed. It is README.md (the index), spec.md (the owner's ask, verbatim, with
+// his rulings on the design), reconciliation.md (findings F1-F16 against the
+// tree and against the settings-write command, and this work's decisions
+// D1100-D1121) and implementation-plan.md (the CLI prerequisites P1-P4 and the
+// console tasks C1-C6). The folder still adds no code of its own -- the tasks
+// did, in their own pull requests -- and its status lines now say what landed,
+// with the design-only status they were first written with kept below them.
+// Nothing here pins a command, a flag or a console operation: a command that
+// landed has its own tests, and what these hold is the documents' own sentences
+// and the lines their findings cite.
 //
 // What it does pin is the half of these documents that rots silently: the
 // decision block, and the citations the findings rest on. A reconciliation
@@ -17,9 +21,9 @@ package cli
 // drifted line is exactly the failure a reader cannot see.
 //
 //  * TestDocsConsoleSettingsEditIsWritten -- the four files exist, the index
-//    carries the status line and the owner as the spec owner, and the plan
-//    states the dependency that orders every task in it: the settings-write
-//    pull request, which has to be on `main` before any of them.
+//    keeps the status line it was written with and the owner as the spec owner,
+//    and the plan keeps the dependency that ordered every task in it: the
+//    settings-write pull request, which had to be on `main` before any of them.
 //  * TestDocsConsoleSettingsEditDecisionsAreInRange -- D1100-D1121 are written,
 //    each exactly once and in order; every one is answered, and an answered one
 //    cites the ask it was answered in; and D1122-D1139, the reserved tail, is

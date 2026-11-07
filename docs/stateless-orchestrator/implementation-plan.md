@@ -1,6 +1,14 @@
 # The stateless orchestrator: the implementation plan
 
-**Status: plan only; nothing is implemented; no task approved.** Written 2026-11-04 against `origin/main` at `5998d67c7`. **Rounds 1 and 2 of the independent
+**Status (2026-11-07): two tasks of this plan are written.** **Task O0, the state schema, the typed patch and the validator, is merged on `main`** on
+2026-11-07 — pull request #1823, commit `36abeffc` — whose eleven files `internal/orchestrator/state.go`, `patch.go`, `validate.go`, `summary.go`, their tests,
+`testdata/state-a.json` and the two `schemas/` documents are on `main`. **Task O1, the deterministic security-sensitive classifier, is written on the branch
+`fugaro/20261107-023015-885d`**, pull request #1822, **unmerged and not on `main`**, and the owner approved it as part of the 0.22.0 scope: its four files —
+`internal/orchestrator/sensitivity/classify.go`, `classify_test.go`, `export_test.go` and `testdata/paths.txt` — carry the interface, the allowlist, the eight
+tests, the red step and the commit message the O1 section below states. **Every other task, file and step below is plan only, and no other task is approved**:
+this line records what `main` and that branch hold and nothing more.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** Written 2026-11-04 against `origin/main` at `5998d67c7`. **Rounds 1 and 2 of the independent
 security review (verdict "fix first") are applied in this revision** (round 2: the launch claim is per run id and is the fence, an approval covered one attempt only (**superseded below by the owner's 2026-11-04 retry ruling**: one approval covers the first attempt and at most one automatic retry), the Routine allowlist, the lease versus the state compare-and-swap; the round-1 corrections follow): the corrections are in reconciliation section 3 (the rules do not bind a person's
 write; person-only is a mitigation; the launch claim is per run id, so it is the fence), in G2, G4, G5, G11, O0-O12 below, and in D1241-D1243.
 
@@ -172,11 +180,29 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Files (4):** `internal/orchestrator/sensitivity/classify.go` (new), `internal/orchestrator/sensitivity/classify_test.go` (new),
   `internal/orchestrator/sensitivity/testdata/paths.txt` (new), `internal/orchestrator/sensitivity/export_test.go` (new).
 - **Interfaces:** `func Classify(changedPaths []string) Class` (`Routine|Sensitive`), by path only. **An allowlist, not a denylist:** `Routine` only
-  when **every** path matches an allowlisted routine prefix (`docs/**` except `docs/pending-workflows/**`, `website/**`; **`mobile/**` and the console renderer are not on it** (`mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js` and `mac.js` hold credentials and MACs); a `_test.go` file is routine only inside an allowlisted tree, so a test edit in `internal/orchestrator`, `internal/initflow`,
+  when **every** path matches an allowlisted routine prefix (`docs/**` and `website/**`, each minus the tree's and the files' exceptions named below; **`mobile/**` and the console renderer are not on it** (`mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js` and `mac.js` hold credentials and MACs); a `_test.go` file is routine only inside an allowlisted tree, so a test edit in `internal/orchestrator`, `internal/initflow`,
   `internal/agentenv`, `internal/managed`, `schemas/`, `ee/` or `.claude/` is Sensitive). **Everything else, and every unknown, unmatched or malformed
-  path, is Sensitive**, so the classifier's own package, the daemon and the guards default to Sensitive. The owner's routing rule (credentials, writes
+  path, is Sensitive** — a path carrying a byte outside ASCII included, because `strings.ToLower` folds the ASCII range and not the case
+  variants a case-insensitive filesystem folds (`ſ` is `s`), and because one name's composed and decomposed spellings are one file on HFS+ — so the classifier's own package, the daemon and the guards default to Sensitive. The owner's routing rule (credentials, writes
   and guards, the managed gate, Terraform and IAM, the agent environment and gateway, agent prompts, recipes, `CLAUDE.md`, `AGENTS.md`, `.claude/**`,
   plugin skills, CI) is a test fixture the allowlist must never contradict; the fixture also lists `mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js`, `mobile/src/mailbox/mac.js` and the console's pairing and write paths, which must never be Routine. No input but paths: a title or description cannot lower it.
+- **The exceptions inside the two routine trees are what a reader does not read: a file, or the class of files a tool reads, and the review rounds of 2026-11-07 added them.** Both trees are on the allowlist for what a reader reads, so
+  a path under one that is not reading matter is the path an exception names — the same reason `docs/pending-workflows/**` was already one. **In `website/**`** (the
+  routing rule gives the light reviewer docs, tests and design, and the website is this plan's own allowance for a tree that is mostly rendered copy):
+  `website/package.json` and `website/package-lock.json` (the install scripts CI and the owner's machine run), `website/content/downloads.json` and
+  `website/data/console-sha256sums.txt` (the URLs and the checksums a reader checks a console build against), `website/data/install.yaml` (the install commands a
+  reader pastes) and `website/content/security.md` (the published security policy — `SECURITY.md` byte for byte **below a generated header**, and the one website path
+  `.claude/rules/credentials-service.md` scopes as security-sensitive). **In `docs/**`**: `docs/release-streams.yaml` (the release gate's own catalogue —
+  `internal/streams` refuses a file that breaks it, `scripts/release.sh` takes the CLI stream's name and version from it, and a CI guard fails on a bump that leaves
+  its `current` behind), `docs/**/*.graph.json` (**the class** of plan graph artifacts rather than the one file it is written for today — a tool draws a graph
+  beside the plan it belongs to, `internal/cli/plan_status.go` walks the whole `docs/` tree for that suffix and reads what it finds, so an entry naming only
+  `docs/console-dependency-graph/implementation-plan.graph.json` would leave the next artifact, here or in a repository that took Fugaro, in the cheap class until
+  somebody remembered to extend this list; a guard that depends on remembering is not one),
+  `docs/website/redesign/capture-screenshots.mjs` and `docs/website/redesign/sample-logo-hue.py` (scripts, committed to be re-runnable). Narrowing an allowlist is the
+  direction a review may move it in on its own; **open for the owner is the wider half of that finding** — whether the site's *code* (its layouts, its client scripts
+  and its build config: `website/src/layouts/`, `website/public/scripts/`, `website/astro.config.mjs`) should be Sensitive too, which would take the whole tree off
+  the allowlist. The one security control the site is held to is **already Sensitive and stays so**: the deployed CSP is `firebase.json` at the repository's root,
+  outside `website/**`, and is pinned by `website/test/origins.mjs` and `website/test/brand.mjs`.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestPromptPathsAreAlwaysSensitive`, `TestDescriptionCannotLowerTheClass` (the signature has no description argument; a
   reflective test pins it), `TestEmptyPathListIsSensitive` (fail closed), `TestUnlistedPathIsSensitive`, `TestOnlyAllowlistedPathsAreRoutine`,

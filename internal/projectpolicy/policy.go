@@ -344,6 +344,36 @@ type Policy struct {
 	// member existed.
 	ImageCatalog *ImageCatalog `json:"image_catalog,omitempty"`
 
+	// Orchestrator is the project's block of the orchestrator's guardrails
+	// (D1239): how many runs the daemon may have running, how many one cycle
+	// may launch and how fast, and the model each decision class runs on
+	// (D1234). It travels this node for every member's reason — the owner
+	// writes it and it is read as a ceiling, never a key of the shared config
+	// in the runs bucket, which any launcher can write — and for its own,
+	// which is review_floor's: the block exists to stop one looping cycle
+	// launching runs nobody approved, so a launcher who could write it could
+	// set the caps that bind it. `sharedForbidden` refuses the key there and
+	// localcfg.Config.Shared nils it. `fugaro project policy publish` copies it
+	// from the owner's local config, which is its only store.
+	//
+	// Its reader is the orchestrator daemon (plan task O8), not the runner: a
+	// run's job reads this node for the policy it enforces, and this block is
+	// the daemon's own ceiling. The daemon merges it over the local config's
+	// block (internal/policy's Merge), so a person may only tighten what the
+	// project published here and the project may only tighten the defaults
+	// Fugaro ships (policy.Orchestrator.WithDefaults).
+	//
+	// It is a pointer so that a project that sets none writes no member at all
+	// — omitempty is a no-op on a struct, and a written "orchestrator":{} for
+	// every project would make the key's skew every launcher's — and an absent
+	// member and a written empty one are the same block: nothing is set, so
+	// every key takes its default (D1239). No member of this node refuses a
+	// reader for it: the block is additive and optional, and the version stays
+	// Version for the keys added before it (verifier_accounts, review_floor,
+	// image_catalog), because what a *runner* must enforce does not change with
+	// it — the daemon that enforces it ships in the same release.
+	Orchestrator *policy.Orchestrator `json:"orchestrator,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -367,6 +397,7 @@ var knownTopLevelKeys = map[string]bool{
 	"review_floor": true, "verifier_accounts": true,
 	"image_catalog":          true,
 	"default_claude_account": true, "claude_account_stages": true,
+	"orchestrator": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -594,6 +625,13 @@ type Backoff struct {
 var (
 	credentialsMembers = carrierMembers(reflect.TypeOf(Credentials{}))
 	backoffMembers     = carrierMembers(reflect.TypeOf(Backoff{}))
+	// orchestratorMembers is the block's own names, and the class names of
+	// policy.Orchestrator.DecisionModelPerClass are inside it as map keys: a
+	// class that is not one of the two, or one written twice in another case,
+	// is refused by policy.ValidOrchestrator below rather than here, because a
+	// map's keys are values and not member names this decoder can hold to a
+	// list.
+	orchestratorMembers = carrierMembers(reflect.TypeOf(policy.Orchestrator{}))
 )
 
 // FallbackValue is the paid-fallback policy in force: FallbackOAuthOnly when
@@ -707,6 +745,45 @@ func checkCredentialsMembers(raw json.RawMessage) error {
 		return fmt.Errorf("projectpolicy: %w", err)
 	}
 	return nil
+}
+
+// checkOrchestratorMembers holds the block's member names to the names the
+// carrier is spelled with (orchestratorMembers, read from the tags), and the
+// class names inside decision_model_per_class to being written once each.
+//
+// A member the carrier does not have at all is refused by the strict decode
+// that follows (DisallowUnknownFields), and this is what refuses one that is a
+// modelled member in another case: encoding/json folds a member name by Unicode
+// simple case folding before it matches it, so a node writing Max_Running sets
+// max_running, and which member this Fugaro read would depend on the order the
+// keys were written in.
+//
+// The class names are map keys, which encoding/json matches exactly and folds
+// no case of — a class this Fugaro does not know is refused by
+// policy.ValidOrchestrator below — but a class written twice would be read as
+// the last of the two models, so the duplicate half is checked here
+// (checkNoDuplicateNames).
+func checkOrchestratorMembers(raw json.RawMessage) error {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: orchestrator: %w", err)
+	}
+	if err := checkMemberNames("orchestrator", names, orchestratorMembers); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return fmt.Errorf("projectpolicy: orchestrator: %w", err)
+	}
+	m, ok := members["decision_model_per_class"]
+	if !ok || IsNull(m) {
+		return nil
+	}
+	classes, err := objectMemberNames(m)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: orchestrator.decision_model_per_class: %w", err)
+	}
+	return checkNoDuplicateNames("orchestrator.decision_model_per_class", classes)
 }
 
 // validCredentials holds the block's values to their rules: D152's fallback
@@ -908,6 +985,32 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.Credentials = &c
+	}
+
+	// The orchestrator block is judged on its own (D1239): no member of it is
+	// read against another block, and the two documents that carry the same
+	// block — this node and the local config — are held to the same rules by
+	// policy.ValidOrchestrator.
+	if oraw, ok := doc["orchestrator"]; ok && !IsNull(oraw) {
+		if err := checkOrchestratorMembers(oraw); err != nil {
+			return nil, true, err
+		}
+		dec := json.NewDecoder(bytes.NewReader(oraw))
+		dec.DisallowUnknownFields()
+		var o policy.Orchestrator
+		if err := dec.Decode(&o); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: orchestrator: %w", err)
+		}
+		if err := policy.ValidOrchestrator(&o); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: %w", err)
+		}
+		// A block that sets nothing is no block (SetsNothing): nil is what the
+		// decoder answers for an absent member, so the two spellings of "this
+		// project sets no guardrail" are one answer and a writer that round
+		// trips this policy writes no member for it.
+		if !o.SetsNothing() {
+			p.Orchestrator = &o
+		}
 	}
 
 	if araw, ok := doc["allow_repos"]; ok && !IsNull(araw) {

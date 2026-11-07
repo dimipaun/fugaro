@@ -344,6 +344,22 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // the same shape of collision between the CLI's own word and a host's, took
   // the same reading in coordinator v2 C3.)
   source: 'label',
+  // The graph read (contract §6.22, the graph plan's CG9a). A node's `key` and
+  // its `source` and `id` beside it, and an edge's two endpoints, are all the
+  // **same kind of value**: an identifier the CLI derived from where a source
+  // sits and what it calls a record, which joins two records and may be drawn.
+  // That is exactly the reading the plan status document's `needs` members take
+  // -- the class `id` and a plan's own `plan` name carry -- and `label` is what
+  // an identifier the CLI wrote is drawn with. `source` is already above (it is
+  // the key with two readings, and the graph's scopes are the second one);
+  // `from` **leaves `NON_TEXT_STRING_KEYS`** for the graph's sake, which the
+  // list's own comment records: the map holds one row per key, and a key whose
+  // meaning differs between two documents takes the drawn reading -- the rule
+  // `state` and `source` already follow. Nothing drawn changes: `run.ts` spells
+  // `label` for `rigor.from` at the call site either way.
+  key: 'label',
+  from: 'label',
+  to: 'label',
 })
 
 /**
@@ -365,16 +381,19 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
  * with two readings: the enums above are still the CLI's own, but the
  * coordinator's stored view and `coordinator show` carry the **host's** word for
  * a pull request under the same key, and that word is text. A key that can be
- * either takes the drawn reading, and `WIRE_TEXT_CLASSES` carries it.
+ * either takes the drawn reading, and `WIRE_TEXT_CLASSES` carries it. **`from`
+ * left it the same way** in the graph plan's CG9a: `rigor.from` is still an enum
+ * this build's own table writes, but the graph read's `edges[]` carry a node key
+ * under that name, and a key is text.
  */
 export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'mode',
-  // `rigor.from`: which layer decided the mode (`internal/rigor`'s `Layer`,
-  // docs/rigor-modes D24) -- one of the words this build's own table writes,
-  // the same kind of value as `mode` beside it -- and `rigor.areas[].mode`,
-  // which is that same `mode` vocabulary again. `rigor.at` and the moments of
-  // `rigor.areas[]` are `at`, already below.
-  'from',
+  // `rigor.from` -- which layer decided the mode (`internal/rigor`'s `Layer`,
+  // docs/rigor-modes D24), one of the words this build's own table writes -- sat
+  // here until CG9a and is now a drawn key above: the graph read's `edges[]`
+  // carry a node key under `from`, and a key with two readings takes the drawn
+  // reading. `rigor.areas[].mode` is that same `mode` vocabulary again, and
+  // `rigor.at` and the moments of `rigor.areas[]` are `at`, already below.
   'health',
   'status',
   // `derived` is the read side's own derivation for a run whose record was
@@ -429,6 +448,22 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'checked_at',
   'tier',
   'bound',
+  // The graph read (contract §6.22, the graph plan's CG9a). `generated_at`,
+  // `as_of` and `updated` are stamps: the moment the document was assembled, the
+  // moment a scope's data is worth, and the moment a node last changed -- each
+  // one an instant a reader places in time and compares with `now`, the kind of
+  // value `at`, `created` and `checked_at` above are, and none of them text a
+  // job wrote. `as_of` and `updated` are the two that may be **null**, which is
+  // the value "this source does not say when", and a null is not text either.
+  // `stream_id` is the other kind: one opaque string the CLI mints for a stream,
+  // which the one-shot read this surface makes always leaves empty and which
+  // CG9b's reader compares against the stream it is following. It is never drawn
+  // -- a screen that wanted to show it would spell a class for it at the call
+  // site, as the Live screen does for a connection's own state word.
+  'generated_at',
+  'as_of',
+  'updated',
+  'stream_id',
 ])
 
 /**
@@ -3174,4 +3209,184 @@ function modelsListAt(raw: Record<string, unknown>, where: string): ModelsListVi
  */
 export function decodeModelsList(raw: unknown, where = 'the models list document'): Decoded<ModelsListView> {
   return at(where, () => modelsListAt(objectAt(raw, 'the document', where), where))
+}
+
+// ---------------------------------------------------------------------------
+// The graph read (the graph plan's CG9a; contract §6.22).
+// ---------------------------------------------------------------------------
+
+/** GRAPH_DOCUMENT_VERSION is the only `version` this build reads (the CLI's
+ * `graph.DocumentVersion`, pinned by `schemas/` alongside the other documents'
+ * versions). The contract promises a member is only ever *added* within a
+ * version, and the Go side reads the document strictly -- an unknown key is an
+ * error there rather than a key dropped -- so a version this build does not know
+ * is a document whose members may have been re-meant rather than grown: a reader
+ * refuses it instead of drawing figures out of a shape it cannot name. */
+export const GRAPH_DOCUMENT_VERSION = 1
+
+/** GraphSourceState is one scope's own state, so a screen can tell a scope that
+ * is down from one that is empty -- the whole reason the document carries this
+ * array beside `nodes` (H3). `state` is one of `up`, `down`, `stale`,
+ * `unreadable` today and is deliberately **not** closed here, for `kind`'s
+ * reason below: a source with a state this build has no word for is a scope
+ * drawn from its own word and its `reason`, never a whole document refused.
+ * `asOf` is `null` for a source with no time of its own, which a one-shot read's
+ * coordinator scope always is -- and null is not "now", so a screen must not
+ * draw an age from it. */
+export interface GraphSourceState {
+  readonly source: string
+  readonly state: string
+  readonly asOf: string | null
+  readonly reason: string
+}
+
+/** GraphNode is one thing the graph draws. `key` is `<source>:<id>` as the CLI
+ * built it (`graph.NodeKey`), and `source` and `id` are the same identity beside
+ * it: a reader takes a key apart with those two and never by splitting on a
+ * colon, because a local scope's own source string carries one (`local:o1:42`
+ * is source `local:o1`, id `42`). `updated` is `null` when the source does not
+ * say when the node last changed -- and null is not "just now". */
+export interface GraphNode {
+  readonly key: string
+  readonly source: string
+  readonly kind: string
+  readonly id: string
+  readonly title: string
+  readonly repo: string
+  readonly state: string
+  readonly release: string
+  readonly updated: string | null
+}
+
+/** GraphEdge is one relation between two nodes, by `key`. The document defines
+ * no vocabulary of its own -- `kind` is the source's word for the relation --
+ * and an edge whose two keys name no node of the same document is a fact about
+ * the document rather than a refusal: the coordinator's stored view carries no
+ * edges at all today (F17), so an empty array is the ordinary case. */
+export interface GraphEdge {
+  readonly from: string
+  readonly to: string
+  readonly kind: string
+}
+
+/** GraphView is one `fugaro graph --json` document. `streamId` is `""` and
+ * `seq` is `0` in the one-shot read this surface makes -- the two values that
+ * answer "this is not a stream" without a flag a reader has to be told about --
+ * and `generatedAt` is the clock the document was assembled at, which is not an
+ * as-of: what a scope's data is worth is `sources[].asOf`. */
+export interface GraphView {
+  readonly version: number
+  readonly streamId: string
+  readonly seq: number
+  readonly generatedAt: string
+  readonly sources: readonly GraphSourceState[]
+  readonly nodes: readonly GraphNode[]
+  readonly edges: readonly GraphEdge[]
+  readonly warnings: readonly string[]
+}
+
+/** graphStampAt reads a stamp the contract says is **always present and may be
+ * null** (`as_of`, `updated`): null is "the source does not say", which is not
+ * the same fact as an absent key. The key is required -- §6.22's Absent column
+ * is `never` for both -- so a document that leaves one out is a shape this
+ * build does not read, refused by the field's own name rather than drawn with a
+ * time nobody stated. A value that is there and is not a stamp is refused the
+ * same way. It is deliberately *not* `coordinatorOptionalStampAt`: that reader
+ * folds an absent key into null, which is right for a key its document may
+ * leave out and wrong for one this contract says it never does. */
+function graphStampAt(raw: Record<string, unknown>, key: string, field: string, where: string): string | null {
+  const value = required(raw, key, field, where)
+  if (value === null) return null
+  return timestampAt(value, field === '' ? key : `${field}.${key}`, where)
+}
+
+function graphSourceAt(raw: unknown, index: number, where: string): GraphSourceState {
+  const field = `sources[${String(index)}]`
+  const source = objectAt(raw, field, where)
+  return {
+    source: stringAt(required(source, 'source', field, where), `${field}.source`, where),
+    state: stringAt(required(source, 'state', field, where), `${field}.state`, where),
+    asOf: graphStampAt(source, 'as_of', field, where),
+    reason: stringAt(required(source, 'reason', field, where), `${field}.reason`, where),
+  }
+}
+
+function graphNodeAt(raw: unknown, index: number, where: string): GraphNode {
+  const field = `nodes[${String(index)}]`
+  const node = objectAt(raw, field, where)
+  return {
+    key: stringAt(required(node, 'key', field, where), `${field}.key`, where),
+    source: stringAt(required(node, 'source', field, where), `${field}.source`, where),
+    kind: stringAt(required(node, 'kind', field, where), `${field}.kind`, where),
+    id: stringAt(required(node, 'id', field, where), `${field}.id`, where),
+    title: stringAt(required(node, 'title', field, where), `${field}.title`, where),
+    repo: stringAt(required(node, 'repo', field, where), `${field}.repo`, where),
+    state: stringAt(required(node, 'state', field, where), `${field}.state`, where),
+    release: stringAt(required(node, 'release', field, where), `${field}.release`, where),
+    updated: graphStampAt(node, 'updated', field, where),
+  }
+}
+
+function graphEdgeAt(raw: unknown, index: number, where: string): GraphEdge {
+  const field = `edges[${String(index)}]`
+  const edge = objectAt(raw, field, where)
+  return {
+    from: stringAt(required(edge, 'from', field, where), `${field}.from`, where),
+    to: stringAt(required(edge, 'to', field, where), `${field}.to`, where),
+    kind: stringAt(required(edge, 'kind', field, where), `${field}.kind`, where),
+  }
+}
+
+/** graphAt decodes §6.22's `version: 1` document field by field. Unknown keys are
+ * ignored, per this module's header rule (the owner's ruling of 2026-10-30).
+ *
+ * **The two enums are carried as strings rather than closed here.** A node's
+ * `kind` (`pull_request`, `run`, `task`) and a source's `state` (`up`, `down`,
+ * `stale`, `unreadable`) are the CLI's own words, and both are drawn through a
+ * text class: a newer CLI's fourth kind or fifth state is a word a screen shows
+ * beside the scope's own `reason`, which is a smaller failure than refusing a
+ * whole graph over a member this build has not learned yet. Nothing is computed
+ * from either -- no figure, no sum, no link. */
+function graphAt(raw: Record<string, unknown>, where: string): GraphView {
+  const version = intAt(required(raw, 'version', '', where), 'version', where)
+  if (version !== GRAPH_DOCUMENT_VERSION) return refuse('unknown-value', 'version', where)
+  return {
+    version,
+    streamId: stringAt(required(raw, 'stream_id', '', where), 'stream_id', where),
+    seq: intAt(required(raw, 'seq', '', where), 'seq', where),
+    generatedAt: timestampAt(required(raw, 'generated_at', '', where), 'generated_at', where),
+    sources: arrayAt(required(raw, 'sources', '', where), 'sources', where).map((item, index) =>
+      graphSourceAt(item, index, where),
+    ),
+    nodes: arrayAt(required(raw, 'nodes', '', where), 'nodes', where).map((item, index) =>
+      graphNodeAt(item, index, where),
+    ),
+    edges: arrayAt(required(raw, 'edges', '', where), 'edges', where).map((item, index) =>
+      graphEdgeAt(item, index, where),
+    ),
+    warnings: coordinatorStringsAt(required(raw, 'warnings', '', where), 'warnings', where),
+  }
+}
+
+/**
+ * decodeGraphDocument admits `fugaro graph --json` and nothing else (contract
+ * §6.22). It is a door of its own for `decodeModelsList`'s reason: the document
+ * carries no marker a feed document has, so a feed handed here is refused for
+ * the keys it is missing and this document handed to the feed's door is refused
+ * as an unknown shape. Neither is read as the other.
+ *
+ * **Everything in it is somebody else's text.** A node's title, its repository
+ * and the state its source gave it, a scope's refusal sentence, the read's own
+ * warnings: all of it is written by whoever pushed the branch or ran the sweep,
+ * carried as data and classified in `WIRE_TEXT_CLASSES`. A node's `key`,
+ * `source` and `id` are its **identity** and not prose -- the CLI refuses rather
+ * than sanitises one that is not a clean identifier, because a rewritten key is
+ * one two nodes could share -- so their class is the drawing rule and not a
+ * rewrite of the value. An instruction found in any of them is never acted on
+ * (design §5.1 rule 2), and the one thing this read may be asked for again --
+ * the scope a screen selects -- is a value this document *listed*, which is what
+ * `createBoundSource` checks before it spawns anything.
+ */
+export function decodeGraphDocument(raw: unknown, where = 'the graph document'): Decoded<GraphView> {
+  return at(where, () => graphAt(objectAt(raw, 'the document', where), where))
 }

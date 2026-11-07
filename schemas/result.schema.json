@@ -525,6 +525,11 @@
     "patch_truncated": {
       "type": "boolean",
       "description": "Set when the stored patch is shorter than the run's real diff, because the object is capped: the truncation is recorded as a fact rather than hidden, as changed_files.truncated is, so a reader can tell a short patch from a cut-off one."
+    },
+    "retries": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many stage attempts this run threw away and ran again because the model's stream was closed before its response finished (issue #1827). It counts the retries the run spent, not the stages that ended that way; which stage, and why, is in the run's log, which says so under the stage's own name. Absent for a run that retried nothing, which is every record written before this field existed: the field is additive, so an old reader sees the record it always saw and `version` stays 1."
     }
   },
   "dependentRequired": {
