@@ -792,6 +792,40 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 	}
 }
 
+// The workspace publish is the one step of the run the shared confirmation does
+// not cover, and the list at the end of the review names it in both of the
+// run's cases: the ordinary project's y/N with the typed name for a widening,
+// and the managed project's widening alone, which the gate refuses by class. The
+// control is a preview where the stage has nothing to do, which is the case the
+// entry exists for: without it the screen printed the typed-name prompt's own
+// stage nowhere and could say nothing else was waiting.
+func TestReviewScreenNamesTheWorkspacePublish(t *testing.T) {
+	screen := func(t *testing.T, gate bool, state initflow.State) string {
+		var b strings.Builder
+		r := &initRun{cmd: &cobra.Command{}, o: &initOptions{}, w: &b, projectName: initProjectName, gcpProject: initProject}
+		if gate {
+			r.gate = &initGate{managed: true}
+		}
+		e := &initEngine{r: r, lc: &localcfg.Config{Name: initProjectName}, spec: infra.InstallationSpec{RunsBucket: initRunsBucket, StateBucket: initStateBucket}}
+		e.previewed = []initflow.StageResult{{Name: initflow.Workspace, State: state}}
+		e.reviewScreen(t.Context(), "test")
+		return b.String()
+	}
+	ordinary := "publishing the workspace record (its own y/N, and the project's name typed when it admits more to the group than the published record does)"
+	gated := "publishing the workspace record when it admits more to the group than the published record does, which takes the project's name"
+	if out := screen(t, false, initflow.Todo); !strings.Contains(out, ordinary) {
+		t.Errorf("an ordinary project's review does not name the workspace publish:\n%s", out)
+	}
+	if out := screen(t, true, initflow.Todo); !strings.Contains(out, gated) {
+		t.Errorf("a managed project's review does not name the workspace widening:\n%s", out)
+	}
+	for _, gate := range []bool{false, true} {
+		if out := screen(t, gate, initflow.Done); strings.Contains(out, "publishing the workspace record") || !strings.Contains(out, "nothing else is waiting in this run") {
+			t.Errorf("a preview with nothing to publish (gate %v) neither falls quiet nor keeps the stage's name out of the list:\n%s", gate, out)
+		}
+	}
+}
+
 // Through the command: a plan that grants a role to someone the review did not
 // list stops that step, which asks its own typed name.
 func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {

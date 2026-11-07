@@ -749,6 +749,12 @@ func TestUpdateRefusesANodeCarryingAKeyThisFugaroDoesNotKnow(t *testing.T) {
 		},
 		"cap":    map[string]any{"monthly_micros": 25_000_000},
 		"rollup": map[string]any{"spend_micros": 1},
+		// A key whose own name carries an escape and a bell, because these
+		// names are another release's and reach the terminal: they are printed
+		// through pluginwire.Printable like every other cloud-derived name in
+		// this package, and a refusal that echoed them raw would let a document
+		// this binary refuses to read rewrite the line that refuses it.
+		"evil\x1b]52;c;x\x07": map[string]any{"spend_micros": 1},
 	})
 
 	r := newWSUpdateRig(t, h)
@@ -758,6 +764,9 @@ func TestUpdateRefusesANodeCarryingAKeyThisFugaroDoesNotKnow(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "rollup") {
 		t.Errorf("the refusal does not name the key it would drop: %v", err)
+	}
+	if !strings.Contains(err.Error(), `\u001b`) || strings.ContainsAny(err.Error()+out, "\x1b\x07") {
+		t.Errorf("the unknown key's name reached the terminal unescaped: %v\n%s", err, out)
 	}
 	after := wsNode(t, p.db, "workspace-alpha")
 	if _, still := after["rollup"]; !still {
