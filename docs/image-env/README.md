@@ -1,12 +1,18 @@
 # An image's `ENV` reaches a run, for operator-owned catalog images — and the runs say what is dropped
 
-**Status: design only; nothing is implemented; no task approved.** This is a design for the owner to
-read. It adds no code, no schema, no command and no Terraform; it edits no file outside `docs/`. The
-owner ruled on **2026-11-05** on the two questions this design could not open with — the scope
-(below) and the release (**0.20.0**, a number `main` has since tagged and this work did not ship in:
-the slot is the owner's to re-take, and no task waits on it) — and everything else in it is a
-**recommendation** that the owner has not answered: an answer is not an approval, and **no task in
-[implementation-plan.md](implementation-plan.md) starts before the owner approves it**.
+**Status: the design is approved and IE1 is implemented (one branch, not merged); IE2, IE3 and IE4
+are not.** The design adds no config key, no wire field, no command and no Terraform; the one schema
+edit it does make is IE2's and it comes with the Go change, never alone (`BATCH_`, O4's answer, joins
+the refused names in `schemas/fugaro.schema.json`'s `env` pattern as well as in
+`config.ReservedEnvPrefixes`, and a test holds the two together). IE1 adds code, and it is the only
+implemented task. The owner ruled on **2026-11-05** on the two questions this design could not open
+with — the scope (below) and the release (**0.20.0**, a number `main` has since tagged and this work
+did not ship in: the slot is the owner's to re-take, and no task waits on it) — and **on 2026-11-06**
+on the three that were still open: **O3** (names only, no redaction of what the passthrough carries),
+**O4** (`BATCH_` joins `config.ReservedEnvPrefixes`) and **O5** (the report is `fugaro doctor --all`),
+each the answer its decision recommended, recorded in [reconciliation.md](reconciliation.md) §8 and in
+[implementation-plan.md](implementation-plan.md)'s head. The owner's approval of the plan is what let
+IE1 start.
 
 **Asked by:** issue **#1755** ("runs: an image's ENV variables never reach a run (allowlist); pass
 them through the secrets denylist, or add a plain env map", opened by the issue's reporter, 2026-11-05,
@@ -26,14 +32,14 @@ sets is printed: the runs report **names, never values**. Per-repository images 
 map on a workflow stay **out** (§"Considered and declined"). The load-bearing fact the reconciliation
 had to settle first is that **nothing in the job tells the runner where its image came from**
 (reconciliation F5) — so the operator's catalog entry is stamped into the job's own environment at
-deploy, where the entry is already known (F6), and a run whose job carries no stamp **passes
+deploy, where the entry is already known (F6), and a run whose job carries no stamp (empty or absent) **passes
 nothing** (D1371).
 
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | Issue **#1755**, verbatim: the problem, the three asks in the issue's own order of preference, and the checklist line. Where this file and the others disagree about what the issue *says*, this file wins |
 | [reconciliation.md](reconciliation.md) | Every claim of the issue and of this design against the code on `main` and against the open pull requests: findings **F1–F18**, the **attacker probe** (§4: can a repository steer which names pass; `PATH`/`HOME`; proxies and CA bundles; `JAVA_TOOL_OPTIONS`/`MAVEN_OPTS`-style hooks; a variable that looks like a secret; the gateway's credential; the logging), the decisions **D1370–D1383** with a recommendation each (§5), what is considered and declined (§6), the number block and how it was read (§7), and the **Open items** that are the owner's (§8). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **IE1–IE4**, each with its files (at most six, per commit), its interfaces, its named tests, its **red step**, its **mutation**, its **reviewer tier** and its commit; the order and the shared-files table (§2), what is deliberately not in the plan (§4), the **release slot 0.20.0** (§5), the owner-run live check **Check 291** (§6) and the gates a task may not start without (§7) |
+| [implementation-plan.md](implementation-plan.md) | The tasks **IE1–IE4**, each with its files (IE2's is the longest at eight, and one of them is the schema mirror of the list `BATCH_` joins), its interfaces, its named tests, its **red step**, its **mutation**, its **reviewer tier** and its commit; the order and the shared-files table (§2), what is deliberately not in the plan (§4), the **release slot 0.20.0** (§5), the owner-run live check **Check 291** (§6) and the gates a task may not start without (§7) |
 | `README.md` | This file: the status, the ruling, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
 ## The owner's ruling (2026-11-05, `AskUserQuestion`, both answers the recommendation)
@@ -51,7 +57,7 @@ Three consequences follow, and they are requirements of this design rather than 
 1. **The scope is the catalog, and the code has to prove it.** An image the operator's
    `image_catalog` chose passes its variables; a **per-repository** image does not, and neither does
    `checkout: clone`'s base image. Today nothing in the container distinguishes them (F5), so the
-   distinction has to be **created at deploy** (D1371) — and a job with no stamp passes nothing,
+   distinction has to be **created at deploy** (D1371) — and a job with an empty or absent stamp passes nothing,
    which is the fail-closed direction.
 2. **The denylist is reused, not invented.** `config.ReservedEnv` (`internal/config/validate.go:85-88`)
    is Fugaro's Go implementation of the names a workflow secret's variable may not take; it is
@@ -80,7 +86,8 @@ Three consequences follow, and they are requirements of this design rather than 
   redaction by default: the recommendation (D1376) is that the **names** are reported and the values
   are not, and the trust statement that carries it is in reconciliation §4. The alternative —
   registering every passed value with the redactor — is stated with its cost, and **what it does to
-  transcripts is a product decision, so it is put to the owner** (Open item **O3**).
+  transcripts was a product decision, so it was put to the owner** (Open item **O3**): the answer of
+  2026-11-06 is **names only**, the recommendation, so no value this work passes is registered.
 - **It does not touch the per-repository image path**, which another design removes
   ([docs/repo-image-removal/](../repo-image-removal/README.md), a design whose slot is **0.20.0** and
   which is **not built** on `main`; the re-slot that moved it there is **#1709, which merged**): the
@@ -95,6 +102,6 @@ Three consequences follow, and they are requirements of this design rather than 
 | Block | State |
 | --- | --- |
 | **D1370–D1389** | **this work's block, moved here by the fix round of 2026-11-06, and read above every claim rather than inside one.** `main`'s highest written decision is `docs/workspaces`' **D1290–D1305** (its block is D1290–D1309), and **D1310** — the number `docs/mcp-server/README.md:111`, `docs/workspaces/reconciliation.md:665` and `docs/periodic-reviews/README.md:125` name as the next free one — is still free; but `docs/stateless-orchestrator/reconciliation.md:17` names **D1320–D1349** as a block it considered and did not take, so a block written there would sit inside another document's claim. Open PR **#1780** reads it the same way and takes **D1350–D1369**, saying of this pull request that *"that overlap is not this work's to fix; it is why this block starts above D1349."* Nothing claims **D1370** or above: a `git grep` for `D13[7-9][0-9]` and `D14[0-9]{2}` over `origin/main` and over every fetched open pull request head returns nothing. This work writes **D1370–D1383** and reserves **D1384–D1389** unused. The reading is taken in [reconciliation.md](reconciliation.md) §7 with the commands |
-| **Check 291** | this work's live check (implementation-plan §6), the first number free above the register's highest written `## Check` section, **290** (`docs/gcp-live-checklist.md:11207`). The checks other work claims start at **300** (`docs/stateless-orchestrator`'s 300–309 and #1780's 311–314), so 291 is **claimed, not reserved**: the register's rule is that a claim above the highest written section is settled at its merge, and whichever of two claims merges second renumbers itself. The register's own row and section are written by the task that implements the check, under the number free **at that merge** |
+| **Check 291** | this work's live check (implementation-plan §6), **291**: the first number free above the register's highest written `## Check` section at the claim's merge, **290** the mixed-credentials run (`docs/gcp-live-checklist.md`'s `## Check 290`, named by content and not by line) — and the register's highest written section since this work's own `## Check 291` was written, by the task that implemented it. The checks other work claims start at **300** (`docs/stateless-orchestrator`'s 300–309 and #1780's 311–314), so 291 is **claimed, not reserved**: the register's rule is that a claim above the highest written section is settled at its merge, and whichever of two claims merges second renumbers itself. The register's own row and section are written by the task that implements the check, under the number free **at that merge** |
 | **Findings F1–F18** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §3, and taking no number any other work reads |
-| **O1–O6** | the **Open items** of [reconciliation.md](reconciliation.md) §8: O1 and O2 are the two the owner answered on 2026-11-05 (the scope and the release); **O3**, **O4** and **O5** are still open, and O3's answer changes what the code does; **O6** is not a question — it is the owner-run live check, which is theirs to run. An answer takes no decision number of its own — it picks an option — which is the convention `docs/cloud-senior-review/README.md:67` records for the same situation |
+| **O1–O6** | the **Open items** of [reconciliation.md](reconciliation.md) §8: O1 and O2 are the two the owner answered on 2026-11-05 (the scope and the release), and **O3**, **O4** and **O5** are answered on 2026-11-06 — names only, no redaction of what the passthrough carries; `BATCH_` joins `config.ReservedEnvPrefixes`; the report is `fugaro doctor --all` — each the answer its decision recommended. **O6** is not a question — it is the owner-run live check, which is theirs to run. An answer takes no decision number of its own — it picks an option — which is the convention `docs/cloud-senior-review/README.md:67` records for the same situation |

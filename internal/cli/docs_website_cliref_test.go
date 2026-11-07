@@ -64,8 +64,9 @@ var cliRefFlagTokenRE = regexp.MustCompile("`(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)`")
 
 // cliRefRoot is the tree the reference is generated from: NewRootCmd() with
 // cobra's own defaults filled in -- the `help` command, the `completion`
-// command, the root's `-v, --version` flag and the `-h, --help` flag of every
-// command, all of which cobra adds inside Execute. The generator makes the same
+// command, the root's `-v, --verbose` and `--version` flags and the `-h,
+// --help` flag of every command, all of which cobra adds inside Execute. The
+// generator makes the same
 // calls (internal/clidoc/cliref's Prepare), and it has to: a test that read the un-executed tree would call
 // `fugaro completion` invented, because the reference names it and this walk
 // would not have seen it. A walk that skipped them would instead agree with a
@@ -191,6 +192,13 @@ func TestCliReferenceNamesEveryCommandAndFlag(t *testing.T) {
 	sections := cliRefSections(doc)
 	documented := cliRefDocumented(cliRefRoot())
 	for _, path := range slices.Sorted(maps.Keys(documented)) {
+		// A paid name the released tree does not hold is not a name this build
+		// may require the file to carry: the reference documents the tagged
+		// tree, and the core holds the name as a stub for a command that tree
+		// answers to only once the code registers it (cliRefPaidSection).
+		if cliRefPaidSection(path) {
+			continue
+		}
 		lines, ok := sections[path]
 		if !ok {
 			t.Errorf("%s does not name command %q", cliRefPath, path)
@@ -211,16 +219,19 @@ func TestCliReferenceNamesEveryCommandAndFlag(t *testing.T) {
 	}
 }
 
-// cliRefPaidSection reports whether path is a section the reference carries and
-// this build cannot judge: a paid command's name at the root, or a command
-// under one, that the released tree does not itself hold.
+// cliRefPaidSection reports whether path is one this build cannot judge, in
+// either direction: a paid command's name at the root, or a command under one,
+// that the released tree does not itself hold.
 //
 // The reference is generated from the tagged tree, so once a paid command's
 // code moves out of the core its section ships in full while this build knows
 // the name only as a stub with no flags of its own -- which is not what the
 // section documents, and not something to hold it to. Before the move the
 // released tree holds the command itself, and the section is judged like any
-// other. The tagged generator's own test holds the whole file either way.
+// other. The other direction is the same rule: a paid name the released tree
+// does not hold yet (graph, until CG3 registers it) has no section in the file,
+// and the core's own stub for it is not a name to require one for. The tagged
+// generator's own test holds the whole file either way.
 func cliRefPaidSection(path string) bool {
 	fields := strings.Fields(path)
 	if len(fields) < 2 || !slices.Contains(paidCommandNames, fields[1]) {

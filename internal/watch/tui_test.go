@@ -21,6 +21,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -834,6 +835,39 @@ func TestUseASCIIAndNoColor(t *testing.T) {
 		if got := UseNoColor(c.flag, env(c.env)); got != c.want {
 			t.Errorf("%v: %v", c.env, got)
 		}
+	}
+}
+
+// TestUseNoColorMatchesReport pins that the watch screen and the reporter
+// answer the colour question the same way on every row of the reporter's rule
+// (CL1's TestNoColorRule). One binary has one answer (T4(a)): a row that
+// drifted on either side would colour one command's output and not another's,
+// and the divergence would show only as a screen that looks wrong beside a
+// converge that looks right.
+func TestUseNoColorMatchesReport(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	for _, c := range []struct {
+		name string
+		flag bool
+		env  map[string]string
+	}{
+		{"an empty environment", false, nil},
+		{"--no-color", true, nil},
+		{"NO_COLOR, any value", false, map[string]string{"NO_COLOR": "1"}},
+		{"NO_COLOR=0 is still a value", false, map[string]string{"NO_COLOR": "0"}},
+		{"NO_COLOR empty is unset", false, map[string]string{"NO_COLOR": ""}},
+		{"TERM=dumb", false, map[string]string{"TERM": "dumb"}},
+		{"TERM=xterm-256color", false, map[string]string{"TERM": "xterm-256color"}},
+		{"CLICOLOR_FORCE is ignored", false, map[string]string{"CLICOLOR_FORCE": "1"}},
+		{"CLICOLOR is ignored", false, map[string]string{"CLICOLOR": "0"}},
+		{"NO_COLOR wins over CLICOLOR_FORCE", false, map[string]string{"NO_COLOR": "1", "CLICOLOR_FORCE": "1"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			getenv := env(c.env)
+			if got, want := UseNoColor(c.flag, getenv), report.NoColor(c.flag, getenv); got != want {
+				t.Errorf("UseNoColor(%v, %v) = %v, report.NoColor = %v: the watch screen and the reporter must agree on colour", c.flag, c.env, got, want)
+			}
+		})
 	}
 }
 

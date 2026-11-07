@@ -832,19 +832,20 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 }
 
 // PersonAtTheTerminal reports whether the conditions put a person at the
-// project's own terminal, there to read what a step prints and answer for it:
-// the owner's own session (no marker), a real terminal, and none of the three
+// project's own terminal, there to read a document and answer for it: the
+// owner's own session (no marker), a real terminal, and none of the three
 // things that say nobody can answer a prompt — --ask (the owner asking to be
 // asked again is a question to put, never a licence to skip one),
 // --non-interactive and --json.
 //
 // It is ConfirmsByGate's condition half, named once so that a caller asking
-// the same question about a step the gate's verdict does not cover — the
-// owner's ruling of 2026-11-06 reaches steps the gate has no document for, a
-// step that loses no data and takes no secret value — asks it the same way. A
-// caller asks this beside its own read of the marks (the gate's own read,
-// never a second one) and prints OwnerProceeded's sentence; it is not a
-// verdict about any plan, and it admits nothing on its own.
+// the same question about a document the gate's verdict does not cover — the
+// policy node a managed project rewrites, whose loosening takes the Typed
+// class and is admitted by no plan gate; the ordinary steps of the converge
+// the run's one confirmation covered, the owner's ruling of 2026-11-06 — asks
+// it the same way. A caller asks this beside its own read of the marks (the
+// gate's own read, never a second one) and prints OwnerProceeded's sentence;
+// it is not a verdict about any plan, and it admits nothing on its own.
 //
 // The terminal is the load-bearing half and the one a caller writing this out
 // again would drop: a pipe carries no marker, so a session nobody is at reads

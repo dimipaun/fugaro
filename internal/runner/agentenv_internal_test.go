@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -331,6 +332,100 @@ func TestMixedRunManagedSettingsFollowTheStage(t *testing.T) {
 	for _, gone := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", gatewayToken} {
 		if strings.Contains(raw(), gone) {
 			t.Errorf("the review stage's managed settings still carry %s: %s", gone, raw())
+		}
+	}
+}
+
+// imageEnvRun is the minimal run imageEnv reads: the job's own environment.
+// Nothing else about the run is consulted — whether the job carries the stamp
+// and which mounted secret names the run declares are what decide the answer.
+func imageEnvRun(env []string) *run { return &run{d: Deps{Env: env}} }
+
+// TestImageEnvIsNilWithoutTheStamp is the load-bearing test of the
+// passthrough: a job that carries no FUGARO_IMAGE_ENTRY passes nothing,
+// whatever its environment holds (D1371's fail-closed). That is every job
+// whose image the operator's catalog did not choose — a repository-built
+// image, checkout: clone's base image — and every job deployed before the
+// stamp existed; an EMPTY stamp is the same fact as an absent one, because the
+// deploy writes the key on every job so a repository's own Dockerfile cannot
+// supply one.
+func TestImageEnvIsNilWithoutTheStamp(t *testing.T) {
+	for _, env := range [][]string{
+		{
+			"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
+			"MAVEN_OPTS=-Dmaven.repo.local=/opt/m2",
+		},
+		{
+			ImageEntryEnv + "=",
+			"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
+		},
+	} {
+		if got := imageEnvRun(env).imageEnv(nil); got != nil {
+			t.Errorf("imageEnv = %v, want nil: a job with no stamp passes nothing, whatever its environment holds", got)
+		}
+	}
+}
+
+// TestImageEnvDropsTheJobsUndeclaredSecrets: a job mounts every secret its
+// workflow declares (F8), so a name in FUGARO_SECRET_ENVS that this run did not
+// declare never arrives through the image arm — the run reaches it through the
+// declared-secret path or not at all — while a declared one does, and the
+// image's own names pass beside it. Nothing of the dropped value is registered
+// with the redactor by this arm (D1376, the owner's O3 answer): a passed value
+// is not a secret.
+func TestImageEnvDropsTheJobsUndeclaredSecrets(t *testing.T) {
+	r := imageEnvRun([]string{
+		ImageEntryEnv + "=base",
+		SecretEnvsVar + "=NPM_TOKEN,DEPLOY_KEY",
+		"NPM_TOKEN=npm-token-placeholder",
+		"DEPLOY_KEY=deploy-key-placeholder",
+		"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
+	})
+	got := r.imageEnv([]string{"NPM_TOKEN"})
+	if got["NPM_TOKEN"] != "npm-token-placeholder" {
+		t.Errorf("a declared secret name is absent from the passthrough: %v", got)
+	}
+	if _, ok := got["DEPLOY_KEY"]; ok {
+		t.Errorf("a secret name the run did not declare reached the passthrough: %v", got)
+	}
+	if got["NEXUS_BASEURL"] != "https://example.invalid/repository/maven-public/" {
+		t.Errorf("the image's own name is absent: %v", got)
+	}
+	if secrets := r.secretList(); len(secrets) != 0 {
+		t.Errorf("the passthrough registered %v with the redactor, want nothing: a passed value is not a secret", secrets)
+	}
+	// A review run declares none of the workflow's secrets (bootstrap's
+	// secretEnvs is empty for it), so every mounted name is dropped there.
+	if got := r.imageEnv(nil); got["NPM_TOKEN"] != "" || got["DEPLOY_KEY"] != "" {
+		t.Errorf("a run that declares nothing still passes a mounted secret name: %v", got)
+	}
+}
+
+// TestImageEnvDropsThePlatformNames: the installation's own five and the
+// launcher's names are the deployment's, and the agent sees none of them
+// through the image arm — the value the job set is the one that stands.
+func TestImageEnvDropsThePlatformNames(t *testing.T) {
+	env := []string{
+		ImageEntryEnv + "=base",
+		"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
+		"FUGARO_RUN=acme-app/20260927-100000-abcd",
+		"FUGARO_BUDGET_TOKEN=sealed-placeholder",
+		"FUGARO_CREDENTIALS_SERVICE_URL=https://creds.invalid",
+		"FUGARO_REVIEW_JOB=1",
+		"CLOUD_RUN_JOB=fugaro-acme-app-web",
+		"CLOUD_RUN_EXECUTION=fugaro-acme-app-web-x7k2p",
+	}
+	for _, name := range backend.PlatformEnvNames {
+		env = append(env, name+"=us-east5")
+	}
+	got := imageEnvRun(env).imageEnv(nil)
+	for _, name := range env {
+		k, _, _ := strings.Cut(name, "=")
+		if k == "NEXUS_BASEURL" {
+			continue
+		}
+		if _, ok := got[k]; ok {
+			t.Errorf("%s reached the passthrough from the image arm: %v", k, got)
 		}
 	}
 }

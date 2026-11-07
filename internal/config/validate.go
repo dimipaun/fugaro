@@ -62,7 +62,7 @@ var (
 	ReservedEnvPrefixes = []string{
 		"FUGARO_", "ANTHROPIC_", "CLAUDE_CODE_", "GIT_", // Fugaro, Claude Code and git
 		"LD_", "DYLD_", "PYTHON", "BASH", "LC_", // the loader, Python and the shell
-		"DOCKER_", "BUILDKIT_", "CLOUDSDK_", "CLOUD_RUN_", "VERTEX_REGION_", // the build, gcloud and the job
+		"DOCKER_", "BUILDKIT_", "CLOUDSDK_", "CLOUD_RUN_", "BATCH_", "VERTEX_REGION_", // the build, gcloud, and the job's own variables on either compute backend
 		"GOOGLE_", "GCE_", "GRPC_", "STORAGE_EMULATOR_", // the Google clients: credentials, metadata server, gRPC, storage endpoint
 	}
 	ReservedEnvNames = []string{
@@ -75,6 +75,8 @@ var (
 		"JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS",
 		"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_SDK_GO_LOGGING_LEVEL", "CLOUD_ML_REGION",
 		"GCE_METADATA_HOST", "GCE_METADATA_IP",
+		// Where Claude Code keeps its user-level settings, CLAUDE.md and sessions: a review run's fresh home (D894(a)) and session resume both assume $HOME/.claude.
+		"CLAUDE_CONFIG_DIR", "CLAUDE_ENV_FILE",
 		// The image build step's own variables (images/derived/cloudbuild.yaml).
 		"IMAGE", "SECRET_ENVS", "WORKFLOW", "REPO_URL", "BASE_BRANCH",
 	}
@@ -937,3 +939,14 @@ func ReservedClaudeAccountName(name string) bool { return reservedClaudeAccountN
 // same words whichever file they wrote the name in, and the sentence never
 // echoes the name, which is untrusted text printed to a terminal.
 const ReservedClaudeAccountNameMessage = reservedAccountNameMessage
+
+// EnvNameRE is what an environment variable name looks like, exported for the
+// runner's subtraction, which applies the same shape rule the workflow-secret
+// check does and must not spell the pattern a second time (docs/image-env,
+// reconciliation D1372): a name a shell cannot express is dropped rather than
+// passed on as an environment entry.
+//
+// It is declared at the end of this file rather than beside the name patterns
+// at its head, for the same reason ReservedClaudeAccountName is: several docs
+// cite this file by line.
+var EnvNameRE = envNameRE

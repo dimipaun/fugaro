@@ -1212,6 +1212,39 @@
         },
         "workflows.*.timeouts.verify": {
           "default": "unset = 30m, or the total when it is shorter"
+        },
+        "workspace": {
+          "default": "unset = this project is a member of no workspace"
+        },
+        "workspace_cap.monthly": {
+          "default": "unset = the workspace states no cap"
+        },
+        "workspace_members.*.exchange_url": {
+          "default": "unset = none"
+        },
+        "workspace_members.*.firebase_project": {
+          "default": "unset = none"
+        },
+        "workspace_members.*.fp": {
+          "default": "unset = none"
+        },
+        "workspace_members.*.job_service_accounts": {
+          "default": "unset = no job service account is declared for the member"
+        },
+        "workspace_members.*.repos": {
+          "default": "unset = the member contributes no repository"
+        },
+        "workspace_pin.assertion_key": {
+          "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.firebase_project": {
+          "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.issuer": {
+          "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.service_account": {
+          "default": "unset = no workspace is pinned"
         }
       }
     }

@@ -86,6 +86,17 @@ const (
 	// "this job has no repository to clone", a prebuilt entry's with "no git
 	// checkout and no remote to clone" (#1752, review C1).
 	RemoteEnv = runner.RemoteEnv
+	// ImageEntryEnv, set to the name of the project image_catalog entry a
+	// job's image was deployed from, on a job whose image the catalog chose
+	// — prebuilt and built alike — and on no other (docs/image-env,
+	// reconciliation F5/F6, D1371). It is the fact that says where the run's
+	// image came from: a catalog entry built from a Dockerfile is
+	// indistinguishable from a repository's own derived image, so the
+	// deploy's knowledge of the entry (WorkflowSpec.CatalogEntry, which is
+	// json:"-" and stays in this process) has to travel into the container
+	// for the runner to have it. The runner reads it, so the constant lives
+	// there (runner.ImageEntryEnv), the way CheckoutEnv and RemoteEnv do.
+	ImageEntryEnv = runner.ImageEntryEnv
 )
 
 // The installation-identity env vars platformEnv and the vertex branch of
@@ -821,12 +832,13 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 // instead of being refused, and the two refusals of §3.3 are conditions of
 // the project's configuration rather than of one run.
 //
-// The repository's own image: or dockerfile: block is the override and never
-// reaches the catalog (D1155 item 1): its job runs the per-repository image
-// this spec builds, exactly as it did before the catalog existed, which is
-// what catalog.Applies decides for it — and what the same predicate decides
-// for the launcher, so the two cannot disagree about which jobs are the
-// catalog's.
+// Which workflows reach this at all is catalog.Applies, the same predicate the
+// launcher judges the deployed job's image by, so the two cannot disagree about
+// which jobs are the catalog's.
+//
+// The entry the rule chose is then held to D1191: a baked job's image has to
+// hold this repository's checkout, which only an entry a Fugaro build writes
+// can promise, so a prebuilt one is refused here rather than deployed.
 //
 // The backend is the installation's own, read from the config and not written
 // as a constant: the docker rule is a rule about the backend the job will run
@@ -846,11 +858,58 @@ func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry,
 	if err != nil {
 		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
 	}
+	// Which jobs carry a baked checkout is asked as the pair's complement and
+	// not as equality with baked: clone and shared are the two kinds whose
+	// image holds no repository source — the same pair the clone shape's own
+	// writer asks below — and every other value, the empty one a config that
+	// never met the loader's defaults carries included, is a job the runner
+	// provisions as baked. Asking it as equality would leave that value
+	// unjudged here and deploy the job this rule exists to stop.
+	bakedCheckout := w.Checkout != config.CheckoutClone && w.Checkout != config.CheckoutShared
+	if bakedCheckout && !slices.Contains(builtSourceKinds, choice.Entry.Source.Kind) {
+		return config.Entry{}, nil, false, unbuiltOnBaked(name, choice.Entry)
+	}
 	var warnings []string
 	if choice.Warn != "" {
 		warnings = append(warnings, choice.Warn)
 	}
 	return choice.Entry, warnings, true, nil
+}
+
+// builtSourceKinds are the catalog source kinds a Fugaro build writes an image
+// from (PIC4): a Dockerfile at a repository or inline in the catalog. The list
+// is what is built rather than what is not, so a kind added to the catalog
+// later is refused by D1191's rule until someone states that a build writes it.
+// That is the direction the failure is safe in: the list lagging behind a kind
+// the catalog gains refuses a configuration by name, and the sentence names
+// both ways out, where the opposite list would hold a kind to be built that no
+// build in this installation writes — the shape D1191 refuses.
+var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.SourceInline}
+
+// unbuiltOnBaked is D1191's refusal, raised where the job spec is built and not
+// by the job (F14). It names the entry, what it is built from and the two ways
+// out, because that is the choice the person reading it is making: run a
+// clone-shaped job, which clones the repository at launch instead of carrying
+// it, or give the workflow an entry this installation can build. The clone half
+// says which keys it costs — a clone workflow may carry neither image_name: nor
+// needs: (internal/config's own refusal) — and the entry half says the workflow
+// has to be pointed at the entry, because a pin or the project's default would
+// keep choosing the one being refused.
+//
+// The refusal is the design's premise (reconciliation §D1191), and not a claim
+// about one job: what such a job does is decided by the same writer that marks
+// its checkout kind, and this tree's writer gives the remote to clone and shared
+// only, so a baked job whose entry is prebuilt holds no checkout and no remote
+// and its first minute fails at bootstrap (gitops.OpenOrClone: "has no git
+// checkout and no remote to clone"). A tree that also writes the remote for a
+// prebuilt entry makes the same shape run by cloning at launch. Either way what
+// the refusal costs is not that job's: fugaro setup and fugaro update --repo
+// build the repository's job specs through this path, so a repository whose
+// workflows carry such a pin meets this sentence there and edits the workflow or
+// the catalog.
+func unbuiltOnBaked(workflow string, e config.Entry) error {
+	return userErr("workflow %s: the catalog entry %s has source kind %s, which Fugaro builds no image from, so its image holds no checkout of this repository — and a checkout: %s job runs an image that holds one; use checkout: %s, which cannot carry image_name: or needs:, or point the workflow at a catalog entry Fugaro builds (fugaro image add <name> --dockerfile <owner/name:path> --tags <tags>)",
+		workflow, e.Name, e.Source.Kind, config.CheckoutBaked, config.CheckoutClone)
 }
 
 // Workflow is the spec of one workflow of the repository, its default
@@ -1106,6 +1165,21 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
 	}
+	// The image's origin, written for the run on EVERY workflow job: the
+	// catalog entry this job's image came from, and empty on a job the
+	// catalog did not choose (a repository-built image, a checkout: clone or
+	// shared job, whose entry is empty, catalog.Applies refusing both). The
+	// key is written even when empty because the runner reads os.Environ,
+	// which includes a derived image's own ENV: a repository Dockerfile that
+	// sets FUGARO_IMAGE_ENTRY would otherwise run with a stamp the deploy
+	// never wrote, whereas a key the job sets overrides whatever the image
+	// holds. A run reads an empty stamp as "no entry" and passes none of its
+	// image's own variables, which is the fail-closed direction; a job
+	// deployed before this variable existed behaves as it did, and stays open
+	// to that forgery, until its next `fugaro update --repo .` redeploys it:
+	// the repository stage, which a plain `fugaro update` does not run
+	// (docs/image-env, reconciliation D1371).
+	ws.Env[ImageEntryEnv] = entry.Name
 	// One writer for the job's clone shape: a job whose image holds no
 	// checkout of this repository carries the markers the run needs to fetch
 	// the source itself, and the value of the kind marker is the workflow's
