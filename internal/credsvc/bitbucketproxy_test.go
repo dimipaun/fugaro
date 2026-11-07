@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -646,16 +647,54 @@ func TestBitbucketRouteFlushOnlyProbeIsForwarded(t *testing.T) {
 // is refused before it is parsed. Nothing in this service decompresses (B1.3's
 // contract says the caller decides this), so a gzip body is not a pkt-line
 // stream and a rule that read one would be deciding on bytes it cannot see.
+//
+// The header is a LIST, and the guard reads all of it: one value, several
+// values and a comma-separated value are each a push that was compressed, and
+// the case that matters most is "identity" followed by "gzip" — a guard reading
+// the header's first value alone would read that body as pkt-lines and forward
+// it to bitbucket.org compressed. The other side is on the same body below:
+// identity, in either spelling, is admitted.
 func TestBitbucketRouteGzipPushRefused(t *testing.T) {
-	s, up, _ := proxySvc(t)
+	for _, values := range [][]string{
+		{"gzip"},
+		{"identity", "gzip"},
+		{"gzip, identity"},
+		{"identity, gzip"},
+	} {
+		t.Run(strings.Join(values, " then "), func(t *testing.T) {
+			s, up, _ := proxySvc(t)
 
-	resp, ans := s.proxyCall(t, http.MethodPost, proxyPath(proxyGitPath("git-receive-pack")), []byte("\x1f\x8b\x08\x00gzip-ish"),
-		func(r *http.Request) { r.Header.Set("Content-Encoding", "gzip") })
-	proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, refusalEncodedBody)
+			resp, ans := s.proxyCall(t, http.MethodPost, proxyPath(proxyGitPath("git-receive-pack")), []byte("\x1f\x8b\x08\x00gzip-ish"),
+				func(r *http.Request) {
+					for _, v := range values {
+						r.Header.Add("Content-Encoding", v)
+					}
+				})
+			proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, refusalEncodedBody)
 
-	if n := up.count(); n != 0 {
-		t.Fatalf("the upstream saw %d calls, and an encoded push must forward no byte", n)
+			if n := up.count(); n != 0 {
+				t.Fatalf("the upstream saw %d calls, and an encoded push must forward no byte", n)
+			}
+		})
 	}
+
+	t.Run("identity is admitted", func(t *testing.T) {
+		s, up, _ := proxySvc(t)
+		up.answerWith(http.StatusOK, "0000")
+		body := proxyUpdateRequest("refs/heads/"+s.proxyBranch()) + "PACK"
+
+		resp, ans := s.proxyCall(t, http.MethodPost, proxyPath(proxyGitPath("git-receive-pack")), []byte(body),
+			func(r *http.Request) {
+				r.Header.Add("Content-Encoding", "identity")
+				r.Header.Add("Content-Encoding", "IDENTITY")
+			})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("an identity-encoded push answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		if n := up.count(); n != 1 {
+			t.Fatalf("the upstream saw %d calls, want the one admitted push", n)
+		}
+	})
 }
 
 // TestBitbucketRouteUpstreamURLRebuilt is G13's property: the upstream URL is
@@ -1129,6 +1168,59 @@ func (refusingTransport) RoundTrip(*http.Request) (*http.Response, error) {
 // not proxy it refuses the call without ever reading the bundle. It is the
 // fail-closed half of the route: the token is not offered to a repository the
 // block does not name.
+// TestBitbucketRouteUnauditedIssuesNothing: a proxied call whose own line
+// cannot be written is answered with a refusal and the upstream's answer is
+// DROPPED rather than relayed (D143, the rule refuseCall keeps for every
+// refusal on this route). The call itself has already reached bitbucket.org —
+// the service cannot unmake it — so what the run must not get is the answer of
+// an act no operator can see.
+//
+// The handler fails the FIRST line and records the next: the call's own line is
+// the one that fails, and the refusal that follows is audited through the same
+// auditor, so the line the operator does need — the call that got no answer —
+// is the one line this test reads. A route that relayed the upstream's body, or
+// that returned before refuseCall, would leave that line unwritten.
+func TestBitbucketRouteUnauditedIssuesNothing(t *testing.T) {
+	failed := false
+	auditLog := &logBuf{}
+	s, up, token := proxySvc(t, func(_ *svc, cfg *Config) {
+		cfg.AuditLog = &failFirstHandler{inner: slog.NewJSONHandler(auditLog, nil), failed: &failed}
+	})
+	up.answerWith(http.StatusOK, "the trunk's own advertisement")
+
+	resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+	proxyRefused(t, resp, ans, StatusUnavailable, ErrorStateUnavailable, "could not record it")
+
+	if !failed {
+		t.Fatalf("the call's own line was written, and this test is about a line that could not be")
+	}
+	if n := up.count(); n != 1 {
+		t.Fatalf("the upstream was reached %d times, want the one call whose answer was withheld", n)
+	}
+	if strings.Contains(string(ans), "the trunk's own advertisement") {
+		t.Errorf("the refusal relays the upstream's answer: %s", ans)
+	}
+
+	lines := auditLines(t, auditLog)
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly the one it owes the operator: %v", len(lines), lines)
+	}
+	if lines[0]["status"] != ErrorStateUnavailable || lines[0]["purpose"] != PurposeGit {
+		t.Errorf("the line = %v, want the refusal under the git purpose", lines[0])
+	}
+	for _, where := range []struct{ what, text string }{
+		{"the refusal", string(ans)},
+		{"the service's log", s.logs.String()},
+	} {
+		if strings.Contains(where.text, token) {
+			t.Errorf("%s carries the bundle's token", where.what)
+		}
+	}
+	if !strings.Contains(s.logs.String(), "could not be audited") {
+		t.Errorf("the service's log does not report the line it could not write: %s", s.logs.String())
+	}
+}
+
 func TestBitbucketRouteProxyOffReadsNoBundle(t *testing.T) {
 	s, up, _ := proxySvc(t, func(_ *svc, cfg *Config) {
 		cfg.Policy = &fakePolicy{

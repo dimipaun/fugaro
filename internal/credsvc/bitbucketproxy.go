@@ -202,7 +202,13 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	// forwarded as the no-op it is.
 	var pushHead []byte
 	if req.Kind == gitproxy.KindPush {
-		if enc := r.Header.Get("Content-Encoding"); enc != "" && !strings.EqualFold(enc, "identity") {
+		// Every value of the header and not its first (Header.Get): the header
+		// is a list, a caller may send it more than once, and forwardHeaders
+		// copies all of them — so a push that spelled "identity" and then
+		// "gzip" would pass a Get, be read here as pkt-lines, and reach
+		// bitbucket.org compressed. The header itself is left alone: a fetch
+		// legitimately arrives encoded and is forwarded unparsed.
+		if !identityEncoded(r.Header.Values("Content-Encoding")) {
 			s.refuseProxy(ctx, w, id, purpose, refusalEncodedBody)
 			return
 		}
@@ -320,6 +326,22 @@ func classifyProxy(r *http.Request) (gitproxy.Request, error) {
 		return gitproxy.Request{}, &gitproxy.Refusal{Reason: gitproxy.ReasonPathMalformed}
 	}
 	return gitproxy.Classify(r.Method, "/"+rest, r.URL.Query())
+}
+
+// identityEncoded reports whether every encoding a request named is identity:
+// the body may be read as pkt-lines only when nothing compressed it, and
+// Content-Encoding is a comma-separated list that may arrive as one value or as
+// several. A header that names nothing (no value, or an empty one) names no
+// encoding and so leaves the body as it is.
+func identityEncoded(values []string) bool {
+	for _, value := range values {
+		for _, enc := range strings.Split(value, ",") {
+			if enc = strings.TrimSpace(enc); enc != "" && !strings.EqualFold(enc, "identity") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // readBoundedBody reads a body this route holds whole (a pull-request write),

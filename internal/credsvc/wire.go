@@ -80,8 +80,10 @@ const (
 // whose meaning depends on the order two conditions happen to be written in.
 //
 // internal/gateway's loopback forwarder (B1.6) is what puts this prefix on, and
-// the run's own clients never see it: its copy of the string is held to this
-// one by TestGitForwardMirrorsCredsvc.
+// the run's own clients never see it: that forwarder's copy of the string is a
+// second spelling of this route, and B1.6 owes the test that holds the two
+// together (TestGitForwardMirrorsCredsvc, the plan's own name for it). Nothing
+// in this package can pin a spelling that does not exist yet.
 const BitbucketProxyPrefix = "/v1/bitbucket/proxy/"
 
 // The response headers.
