@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -271,12 +272,16 @@ func TestATestNeverWritesTheDeveloperStateHome(t *testing.T) {
 	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(testStateRoot, home+string(filepath.Separator)) {
 		t.Fatalf("TestMain's state home %q is inside the developer's home %q", testStateRoot, home)
 	}
-	base, err := localcfg.UserDir(os.Getenv, runtime.GOOS, localcfg.DirState)
+	// Opened the way a step-printing command opens its own: what is checked is
+	// the path the sink reports, not the arithmetic of the directory rule, so
+	// a change to either one moves this test's failure with it.
+	sink, err := report.OpenLog("devhome", os.Getenv, runtime.GOOS, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(testStateRoot, "fugaro"); base != want {
-		t.Fatalf("a run's log would be filed under %s, want %s", base, want)
+	t.Cleanup(func() { _ = sink.Close() })
+	if dir, want := filepath.Dir(sink.Path()), filepath.Join(testStateRoot, "fugaro", "logs"); dir != want {
+		t.Fatalf("a run's log is filed under %s, want %s", dir, want)
 	}
 }
 

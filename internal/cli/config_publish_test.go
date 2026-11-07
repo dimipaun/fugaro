@@ -59,7 +59,9 @@ func TestPublishWritesAndCopies(t *testing.T) {
 	noAgentSession(t)
 	out, _, err := execute(t, "config", "publish", "--executable-changes", layerFile(t, testProjectLayer))
 	if err != nil || !strings.Contains(out, "published the project layer of aurora to gs://fugaro-runs-proj-1234/fugaro/project-layer.yaml") ||
-		!strings.Contains(out, "acme/app: copied to "+config.LayerCopyKey(appSlug)) {
+		// The copy is the repository's own step now, so the name and what it
+		// says are one line rather than the indented "  acme/app: …" prose.
+		!strings.Contains(out, "acme/app copied to "+config.LayerCopyKey(appSlug)) {
 		t.Fatalf("out %q, err %v", out, err)
 	}
 	if bucketText(t, f, config.LayerKey) != testProjectLayer || bucketText(t, f, config.LayerCopyKey(appSlug)) != testProjectLayer {
