@@ -362,6 +362,34 @@ const reviewLevelsSince = "0.16.0"
 // on levels reads.
 const reviewLevelsKnows = "the review levels (review_levels, agent.levels)"
 
+// noneModelSince is the first fugaro release whose runner reads a level's
+// `model: none` as the level's own switch (config.NoneModel) rather than as a
+// model ID: LevelSetting.validate folds the literal into `none: true`, so the
+// level is skipped and the string is never resolved as a model name. Every
+// release that acts on levels knows the keys — one older than
+// reviewLevelsSince drops the whole block in silence, which is the gate beside
+// this one — so between reviewLevelsSince and this release a runner decodes
+// the block and resolves the level on the model `none`: a run whose
+// allowed_models refuses that ID dies at bootstrap, and one with no ceiling
+// runs the level the owner switched off, on a model which is not one. Neither
+// skips the level, which is the silence this gate exists for.
+//
+// Like artifactsSince it carries no shipped flag: refusing every image that
+// predates the release is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same as
+// for every other *Since constant here — a refusal there would name a release
+// nothing can compare it with, and the spelling is the file's own to keep off
+// such an image. It names 0.21.0, the release this work is slotted for, which
+// is not tagged yet: docs/release.md's Before-you-tag list verifies the number
+// against the tag actually cut, the way reviewLevelsSince's bullet records.
+const noneModelSince = "0.21.0"
+
+// noneModelKnows names, for this gate's messages, what the job image's runner
+// has to know: a level whose model is the literal none, which a runner at
+// noneModelSince or later reads as the level's own switch. The message reads
+// "needs a job image whose runner knows <this>".
+const noneModelKnows = "a level's model named none as the level's own switch"
+
 // reviewJobSince is the first fugaro release that deploys and launches the
 // review-only job variant (design docs/cloud-senior-review, CSR7): the second
 // job per (profile, provider, account), with its own service account and no
@@ -1391,6 +1419,73 @@ func checkCloneReviewLevelsImage(lc *localcfg.Config, spec *task.Spec, subject s
 		return nil
 	}
 	return checkCloneImageSince(lc, spec, reviewLevelsSince, subject, reviewLevelsKnows, reviewLevelsAlt, warn)
+}
+
+// noneModelSources reports, for the launch's noneModelSince gate, whether the
+// configuration the run will read names a level's model none: the repository's
+// fugaro.yaml (fromRepo) or the project layer it resolves over (fromLayer).
+// Both are read as the run reads them — the file at the ref, and the layer the
+// published text holds — and both are read off the text rather than off the
+// resolved agent.levels, which the fold leaves without the literal
+// (Config.RepoLevelsNoneModelSet, ProjectLayer.SetsLevelsNoneModel).
+//
+// The task's own review_levels is not one of the sources: the launcher writes
+// it, and it writes the level folded into `none: true` (LevelSetting.validate),
+// so no runner ever reads the spelling there.
+func noneModelSources(cfg *config.Config) (fromRepo, fromLayer bool) {
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoLevelsNoneModelSet, cfg.Layer.SetsLevelsNoneModel()
+}
+
+// noneModelSubject names, for the gate's messages, which file names a level's
+// model none, and the way out that file's author has: the other spelling of
+// the same switch in that same file, which every runner that acts on levels
+// reads — a level written `none: true` is skipped by 0.16.0 and later, so
+// rewriting the level is a way out with no image to move. The distinction is
+// rigorSubject's: the layer's literal reaches every repository of the project
+// and only its operator can rewrite it.
+func noneModelSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
+	const (
+		repoAlt  = "write it as none: true in fugaro.yaml"
+		layerAlt = "write it as none: true in the project layer's defaults.agent.levels and publish it again"
+		same     = ": it is the same switch, and every runner that acts on levels reads it, from " + reviewLevelsSince + " on"
+	)
+	switch {
+	case fromRepo && fromLayer:
+		return "fugaro.yaml's agent.levels and the project layer's defaults.agent.levels of " + repo,
+			"write them as none: true in both" + same
+	case fromLayer:
+		return "the project layer's defaults.agent.levels (read for " + repo + ")", layerAlt + same
+	}
+	return "fugaro.yaml's agent.levels of " + repo, repoAlt + same
+}
+
+// checkNoneModelImage refuses a launch whose job image runs a fugaro older
+// than noneModelSince while the configuration the run reads names a level's
+// model none: a runner before that release reads the literal as a model ID, so
+// the level the file switched off is run — or the run dies at bootstrap on an
+// allowed_models refusal — rather than skipped. The judge is the build record's
+// base_ref, as every checkImageSince gate's is.
+func checkNoneModelImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := noneModelSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := noneModelSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, noneModelSince, subject, noneModelKnows, "; or "+alt, warn)
+}
+
+// checkCloneNoneModelImage is checkNoneModelImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneNoneModelImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := noneModelSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := noneModelSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(lc, spec, noneModelSince, subject, noneModelKnows, "; or "+alt, warn)
 }
 
 // reviewJobKnows names, for the gate's messages, what the job image's runner

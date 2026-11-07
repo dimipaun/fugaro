@@ -376,3 +376,119 @@ l3:
 		t.Errorf("model: none beside a merged none: false = %v, want a refusal naming both keys", err)
 	}
 }
+
+// TestLevelsNoneModelSetReadsTheText: RepoLevelsNoneModelSet and
+// ProjectLayer.SetsLevelsNoneModel are the launch gate's read of the spelling
+// (noneModelSince), and they have to read the text, because the resolved
+// configuration cannot answer: LevelSetting.validate folds the literal into
+// Off, so a level written `model: none` resolves exactly as one that wrote
+// `none: true` and nothing downstream says which of the two the file used,
+// while a runner older than the release reads the literal as a model ID
+// instead of a switch. The two flags follow the fields beside them
+// (RepoRigorSet, SetsRigor): they read the value, never the merged one, and
+// carry nothing into the file, SHA256 or the resolved levels.
+func TestLevelsNoneModelSetReadsTheText(t *testing.T) {
+	layer := mustLayer(t, testLayer)
+	for _, c := range []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"the literal, one line", minimalRepo + "agent: { levels: { l2: { model: none } } }\n", true},
+		{"the literal, at another level", minimalRepo + "agent:\n  levels:\n    l3:\n      model: none\n", true},
+		{"the literal beside a level that runs", minimalRepo + "agent: { levels: { l1: { model: claude-haiku-4-5 }, l3: { model: none } } }\n", true},
+		{"the other spelling", minimalRepo + "agent: { levels: { l2: { none: true } } }\n", false},
+		{"a model that is not the literal", minimalRepo + "agent: { levels: { l2: { model: claude-opus-5-5 } } }\n", false},
+		{"a level that is not a mapping", minimalRepo + "agent: { levels: { l2: } }\n", false},
+		{"no levels at all", minimalRepo, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, _, ps := Resolve([]byte(c.text), layer)
+			if len(ps) > 0 {
+				t.Fatalf("Resolve: %v", ps)
+			}
+			if cfg.RepoLevelsNoneModelSet != c.want {
+				t.Errorf("RepoLevelsNoneModelSet = %v, want %v for\n%s", cfg.RepoLevelsNoneModelSet, c.want, c.text)
+			}
+			// And never the merged levels: a layer's level does not set a
+			// repository's flag, and a repository's does not set a layer's.
+			if cfg.Layer.SetsLevelsNoneModel() {
+				t.Errorf("the layer sets the flag, and its text names no level for\n%s", c.text)
+			}
+		})
+	}
+
+	// The fold is why the flag exists: the resolved level reads as the switch
+	// and carries no model, so a gate reading agent.levels could not tell this
+	// document from one that wrote none: true.
+	cfg, _, ps := Resolve([]byte(minimalRepo+"agent: { levels: { l2: { model: none } } }\n"), layer)
+	if len(ps) > 0 {
+		t.Fatalf("Resolve: %v", ps)
+	}
+	if l2 := cfg.Agent.Levels.L2; l2 == nil || !l2.Off || l2.Model != "" {
+		t.Errorf("the resolved l2 = %+v, want the level off with no model, exactly as none: true resolves", l2)
+	}
+
+	// The layer's half: defaults.agent.levels is the other text the launch
+	// reads, and it is read the same way. The fixture is testLayer with the
+	// levels written under its own defaults.agent, so the rest of the layer
+	// still resolves and the two flags can be told apart below.
+	layerWith := func(levels string) string {
+		with := strings.Replace(testLayer, "    recipe: claude-solo\n", "    recipe: claude-solo\n    levels:\n"+levels, 1)
+		if with == testLayer {
+			t.Fatal("testLayer no longer writes defaults.agent.recipe: the levels would land nowhere")
+		}
+		return with
+	}
+	for _, c := range []struct {
+		name   string
+		levels string
+		want   bool
+	}{
+		{"the literal", "      l2:\n        model: none\n", true},
+		{"the other spelling", "      l2:\n        none: true\n", false},
+		{"a model that is not the literal", "      l2:\n        model: claude-opus-5-5\n", false},
+	} {
+		t.Run("layer, "+c.name, func(t *testing.T) {
+			l := mustLayer(t, layerWith(c.levels))
+			if l.SetsLevelsNoneModel() != c.want {
+				t.Errorf("SetsLevelsNoneModel() = %v, want %v for\n%s", l.SetsLevelsNoneModel(), c.want, c.levels)
+			}
+			// The layer says nothing about a repository's own file: the
+			// launch reads the two texts separately for exactly this reason.
+			repo, _, ps := Resolve([]byte(minimalRepo), l)
+			if len(ps) > 0 {
+				t.Fatalf("Resolve: %v", ps)
+			}
+			if repo.RepoLevelsNoneModelSet {
+				t.Errorf("a file that names no level set RepoLevelsNoneModelSet over\n%s", c.levels)
+			}
+		})
+	}
+	if mustLayer(t, testLayer).SetsLevelsNoneModel() {
+		t.Error("testLayer names no level and sets the flag")
+	}
+	var nilLayer *ProjectLayer
+	if nilLayer.SetsLevelsNoneModel() {
+		t.Error("a nil layer sets the flag")
+	}
+
+	// The door the launch's own file read uses (launchFileConfig, Parse):
+	// the flag is set on the configuration a launcher gets back, needs no
+	// layer, and is not part of what the file's SHA256 covers — it is a
+	// reading of the text, not a setting of it.
+	parsed, ps := Parse([]byte(minimalYAML + "agent: { levels: { l1: { model: none } } }\n"))
+	if len(ps) > 0 {
+		t.Fatalf("Parse: %v", ps)
+	}
+	if !parsed.RepoLevelsNoneModelSet {
+		t.Error("Parse lost the flag: the launch gate reads the file through this door")
+	}
+	bare, ps := Parse([]byte(minimalYAML + "agent: { levels: { l1: { none: true } } }\n"))
+	if len(ps) > 0 {
+		t.Fatalf("Parse: %v", ps)
+	}
+	if bare.RepoLevelsNoneModelSet {
+		t.Error("the other spelling set the flag")
+	}
+}

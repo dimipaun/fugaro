@@ -727,7 +727,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// level turned off under the owner's floor, an effort a provider route
 		// would drop — is refused here, before the task is written, rather
 		// than by the job it was launched into (G2, D721, D722).
-		levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, launchFileConfig(ctx, env, spec), levelsRecipe, levelsRecipeUnknown)
+		// The configuration this launch can read of the run's own — the file
+		// at the ref, with the project layer it resolves over — read once for
+		// both readers below: the levels the launch asks about, and the level
+		// a file writes its model as none (checkNoneModelImage).
+		fileCfg := launchFileConfig(ctx, env, spec)
+		levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown)
 		if err != nil {
 			return launchResult{}, err
 		}
@@ -832,6 +837,13 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The spelling's own gate, on the same file read and beside the
+			// one above: a runner older than noneModelSince reads `model:
+			// none` as a model ID rather than as the level's switch
+			// (checkNoneModelImage).
+			if err := checkCloneNoneModelImage(env.lc, spec, fileCfg, warn); err != nil {
+				return launchResult{}, err
+			}
 		} else {
 			if needsRecipeImage(spec, agentRecipe) {
 				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -921,6 +933,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// The review levels' gate, the same as the clone branch's above
 			// and for the same reason: see reviewLevelsAsk.
 			if err := checkReviewLevelsImage(ctx, env, slug, spec, kind, levelsAsk, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The same gate as the clone branch's above, and for the same
+			// reason: see checkNoneModelImage.
+			if err := checkNoneModelImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The digest drift, last of this branch's image reads, and the

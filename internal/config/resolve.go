@@ -112,6 +112,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoRigorSet = setsRigor(tree)
 		repo.RepoGovernanceSet = setsGovernance(tree)
 		repo.RepoGitAuthorSet = setsGitAuthor(tree)
+		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -158,6 +159,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoRigorSet = setsRigor(tree)
 	c.RepoGovernanceSet = setsGovernance(tree)
 	c.RepoGitAuthorSet = setsGitAuthor(tree)
+	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -455,6 +457,40 @@ func setsGitAuthor(tree map[string]any) bool {
 	}
 	_, ok = git["author"]
 	return ok
+}
+
+// setsLevelsNoneModel is ProjectLayer.SetsLevelsNoneModel for a repository
+// file's own tree: whether the text names a level's model with the literal
+// none. It reads the tree and not the resolved agent.levels for the reason
+// setsRigor states — LevelSetting.validate folds the literal into the level's
+// switch, so the resolved block reads the same as one that wrote `none: true`
+// and cannot say which spelling the file used, while the gate needs it: a
+// runner older than noneModelSince reads the literal as a model ID. Its answer
+// becomes Config.RepoLevelsNoneModelSet.
+func setsLevelsNoneModel(tree map[string]any) bool {
+	return levelsNoneModel(tree["agent"])
+}
+
+// levelsNoneModel reports whether an agent block names a level's model with
+// the literal none, which both trees — the repository file's and the project
+// layer's defaults — read the same way: the level's own mapping, with a model
+// leaf that decodes to NoneModel. A level the block writes as something other
+// than a mapping is refused by the block's own decode, so it is not one.
+func levelsNoneModel(agent any) bool {
+	a, ok := agent.(map[string]any)
+	if !ok {
+		return false
+	}
+	levels, ok := a["levels"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, lv := range levels {
+		if m, ok := lv.(map[string]any); ok && levelModelNone(m) {
+			return true
+		}
+	}
+	return false
 }
 
 // docTree is a YAML document as Resolve merges it (nodeTree).
