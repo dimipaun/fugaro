@@ -144,7 +144,7 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // a failure.
 func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 	const id = "credentials-service-deployed"
-	if false {
+	if lc.CredentialsService == nil {
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
 			Problem: fmt.Sprintf("the installation has not converged on the credentials service (%s): the credentials stage of %s deploys it on every installation, and until that run has been made this installation has no service for a run to fetch a model credential from", infra.CredentialsServiceName, selfCommand()+" update --provision-credentials"),
 			Fix:     selfCommand() + " update --provision-credentials (its credentials stage is the only writer of the block, and this release runs it behind that flag)"}}
