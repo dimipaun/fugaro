@@ -942,12 +942,22 @@ function readsOf(where: string): readonly SpawnLogEntry[] {
 /** SETTINGS_KEY is the row the narrowing below edits, and SETTINGS_WIDENING_KEY
  * the one the widening edits: both are rows of `test/fixtures/settings.json`,
  * whose `target_layer` the console takes the `--layer` word from (D1102). The
- * first writes the `repo` layer the read names as that row's target -- narrower
- * than the `project` layer that wins it, so the window draws the one sentence
- * the difference earns -- and the second a layer the CLI's dry run classifies as
- * a widening (`DRY_RUNS` below, which is the stub's answer and not a comparison
- * this spec makes), which is the whole of the difference between the two
- * windows. */
+ * first writes the `repo` layer the read names as that row's target, and that is
+ * **not** the `project` layer that wins it: the repository's own `fugaro.yaml`
+ * overlays the project layer's defaults (`internal/config/resolve.go`,
+ * `TestResolveTable`'s "a repository scalar beats the project"), so this write
+ * does change what a run reads, while D1113's comparison -- two printed layer
+ * names, equal or not -- draws the sentence that says it will not. That is the
+ * limit `settingsview.ts` records where the sentence is built, and not something
+ * this fixture earns: comparing two names cannot tell a write that loses to the
+ * winner from one that outranks it, the layers' order is the CLI's (D1102), and
+ * the fix is the plan's own escape hatch -- a `shadowed` field in the dry run's
+ * document (D1113) -- rather than a second copy of that order here. The spec
+ * drives this row for the argv it writes, which is the property this spec exists
+ * for, never for the sentence. The second writes a layer the CLI's dry run
+ * classifies as a widening (`DRY_RUNS` below, which is the stub's answer and not
+ * a comparison this spec makes), which is the whole of the difference between
+ * the two windows. */
 const SETTINGS_KEY = 'agent.review_rounds'
 const SETTINGS_WIDENING_KEY = 'claude_account_auto'
 
