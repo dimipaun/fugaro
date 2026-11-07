@@ -728,6 +728,33 @@ func wordMacro(m string, depth int) (string, error) {
 // test reads out of this file to resolve a pinned citation.
 const PathMCPAuth = "mcpauth"
 
+// PathOrchestrator is the stateless orchestrator's own subtree
+// (docs/stateless-orchestrator/implementation-plan.md's O2; D1220, D1241
+// answered on 2026-11-04): one state document per orchestrator id, plus its
+// lease and its audit, under `orchestrator/<id>/`.
+//
+// The template carries it with `.read: "USER"` and `.write: false`, and the
+// write is the half that matters: the person's own credential writes the node
+// (D1241's answer), and IAM bypasses `.write` and `.validate` entirely
+// (reconciliation.md, "What the rules do and do not bind"), so the rules bind
+// no writer here — what they do is refuse every identity they *do* evaluate. A
+// run-scoped job token, a custom token the launcher's `signJwt` minter made
+// (`iam.tf`'s `minter` grant) and the phone's own `mu` claim are all refused,
+// and the refusal is a flat `false` rather than a denylist of run-scoped jobs
+// with a shape check behind it, because a shape check is O0's client-side
+// validator and never the rules' business: a value that validates is still a
+// write this subtree refuses.
+//
+// The read is `USER`, the paired phone's `mu` claim (D166) — the same reader
+// the coordinator's state has — so the person can read the node over a client
+// token; the CLI's own read is the person's OAuth Bearer, which no rule here
+// binds either.
+//
+// It sits below the macro table for PathMCPAuth's reason: a constant added
+// above it would move the lines internal/cli's voice-switch test reads out of
+// this file to resolve a pinned citation.
+const PathOrchestrator = "orchestrator"
+
 // boundedMatch is a non-empty string of at most max characters, every one of
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {

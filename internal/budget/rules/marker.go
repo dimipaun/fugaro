@@ -75,3 +75,59 @@ func PathCredsRulesMarker() string { return "config/limits/credsRules" }
 // deploy this binary's rules over it (internal/infra's DB.Plan), exactly as it
 // does for a `policyRules` marker above `projectpolicy.RulesVersion`.
 const CredsRulesVersion = 1
+
+// PathOrchestratorRulesMarker is the stateless orchestrator's own generation
+// marker, `config/limits/orchestratorRules`, on the credentials cascade's
+// precedent above.
+//
+// The orchestrator's subtree ships in the same generated document as
+// everything else, and it is deliberately *not* a `projectpolicy.RulesVersion`
+// bump, for the credentials marker's reason: `RulesVersion` records which
+// document the database runs under, and every reader of it turns a mismatch
+// into a refusal, so a bump would drop every published project policy — caps,
+// allow_repos, routing, prices — on any installation whose owner has not
+// redeployed the rules yet, and make `fugaro project policy publish` refuse
+// there (projectpolicy.Read answers "not found" below the marker). The
+// coordinator's read grant moved that number to 4 because a client holding the
+// older marker would not know the family is there; this subtree is read by the
+// person over their own credential and written by them over IAM, and no reader
+// of `RulesVersion` gates on it, so nothing about it needs the document
+// generation to move.
+//
+// What replaces the bump is this marker, written by the same owner-run deploy
+// (`fugaro update --firebase-project`, O2) in the same place and in the same
+// way as `projectpolicy.PathRulesMarker()` and `PathCredsRulesMarker()`: after
+// the rules PUT succeeds, and also when no deploy is planned because the
+// deployed document already equals the generated one. The daemon's start-up
+// (O3) and the CLI (O5) read it and refuse to write the state node on an
+// installation whose rules predate the subtree, before a write is attempted
+// rather than as a permission error in the middle of one.
+//
+// KNOWN GAP — a rules downgrade, the same one the credentials marker records.
+// An older Fugaro running `fugaro update --firebase-project` reads
+// `config/limits/policyRules` at its own `RulesVersion`, so its downgrade
+// refusal does not fire; it redeploys its older document, which lacks the
+// orchestrator node, and leaves this marker at 1, which that release does not
+// know. A write then fails as a permission error instead of a named refusal.
+// The refusal below of a marker *above* `OrchestratorRulesVersion` guards only
+// future releases; a release that shipped before this one cannot be taught to
+// write this marker.
+//
+// It sits under `config/limits`, whose `.read: TOKEN` grant every run token of
+// the project already has, so the location is cheap to read and impossible to
+// write from a run: no location under `/config` carries a write a client could
+// satisfy, and the deploy writes the marker as the operator, over IAM, which
+// bypasses the rules.
+func PathOrchestratorRulesMarker() string { return "config/limits/orchestratorRules" }
+
+// OrchestratorRulesVersion is the generation of the orchestrator rules this
+// Fugaro carries: the first document with the top-level /orchestrator subtree.
+// It is 1 because the family is new, and it counts *this family's* changes
+// only — a later orchestrator change bumps it without touching
+// `projectpolicy.RulesVersion`, which is the whole point of keeping them apart.
+//
+// A marker above this is a newer Fugaro's; `fugaro update --firebase-project`
+// refuses to deploy this binary's rules over it (internal/infra's DB.Plan),
+// exactly as it does for a `policyRules` marker above
+// `projectpolicy.RulesVersion`.
+const OrchestratorRulesVersion = 1
