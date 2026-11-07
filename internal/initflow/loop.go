@@ -309,6 +309,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 		if l.cancelled(ctx, name) {
 			return nil
 		}
+		l.pastStops(s, name, stops)
 		st, err := checkStage(ctx, s)
 		if err != nil {
 			l.fail(name, err)
@@ -347,10 +348,13 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			} else if paused != "" && NeedsBilling(name) {
 				r.After = paused
 			} else {
-				if waiting != "" && RunsPastStop(name, waiting) {
+				if waiting != "" && stoppedYours(waiting, stops) {
 					// The stage the view was waiting for is a stop this one
 					// does not read: it is not what this stage waits for, so
-					// the stages after it are not waiting for it either.
+					// the stages after it are not waiting for it either. Only
+					// a stop is cleared this way: a stage with something to do
+					// is one the run applies first, and this stage waits for
+					// it like every other stage behind it.
 					waiting = ""
 				}
 				if waiting != "" {
@@ -457,6 +461,37 @@ func blocker(name string, stops []stop) *stop {
 	return nil
 }
 
+// stoppedYours is whether name is one of the stops of stops that is the user's
+// to clear: the only kind a later stage's row runs past (RunsPastStop). A
+// stage with something to do is not one of them, however close the row's
+// tolerance comes to it.
+func stoppedYours(name string, stops []stop) bool {
+	for _, s := range stops {
+		if s.name == name && s.yours {
+			return true
+		}
+	}
+	return false
+}
+
+// pastStops tells a stage the stops it is running past (PastStops), before the
+// loop reads anything of it. They are the run's own, and a stage whose own
+// steps are not all alike about a stop has no other way to them: the world
+// records what the stopped stage left behind, never that the run stopped.
+func (l *loop) pastStops(s Stage, name string, stops []stop) {
+	x, ok := s.(PastStops)
+	if !ok {
+		return
+	}
+	var out []string
+	for _, st := range stops {
+		if st.yours && RunsPastStop(name, st.name) {
+			out = append(out, st.name)
+		}
+	}
+	x.PastStops(out)
+}
+
 // converge applies, in order, each stage that is not done, re-checking it
 // right before and verifying it right after, and stops at the first stage
 // that needs the user or fails: nothing after it runs, except the stages that
@@ -477,6 +512,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 			l.record(StageResult{Name: name, State: WaitingForBilling, Detail: "waiting for billing"})
 			continue
 		}
+		l.pastStops(s, name, stops)
 		// The line in flight goes up before the stage is looked at: its check
 		// and its plan are seconds, and the apply behind them is minutes.
 		l.openStep(name)

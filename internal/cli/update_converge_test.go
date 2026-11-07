@@ -250,6 +250,15 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	if !strings.Contains(out, convergeRelease) {
 		t.Errorf("the run never names the release it converged to:\n%s", out)
 	}
+	// The checkout's cloud step is the third step of its stage, and this run
+	// onboarded the repository itself (it is the run the anchor writes
+	// fugaro.yaml's gcp_project: line in, which leaves the working tree
+	// different from the default branch): the job images are built here, from
+	// the repository this run converged, and a skipped cloud step would be a
+	// run refusing to build from a file it did onboard.
+	if n := len(r.builder.specs); n != 2 {
+		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows: the job images of a repository this run onboarded are refreshed here\n%s", n, out)
+	}
 }
 
 // stoppedStage is the stage `fugaro update`'s own summary names as the one it

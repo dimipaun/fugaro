@@ -215,9 +215,10 @@ var order = []slot{
 	// The three stages before it publish the installation every run of the
 	// project is admitted by, which is why none of them is here: a run with a
 	// stage left for the user does not write that (accounts_add_converge_test.go
-	// is the door that says so). The cloud step does need the repository, and
-	// keeps every refusal of its own: it is the step that skips itself where
-	// the checkout's file is not this run's to build for.
+	// is the door that says so). The cloud step does need the repository the
+	// stop is about — its job images are built from it — so it is dropped
+	// rather than run past that stop, and the loop tells the stage the stops
+	// it is running past for exactly that (PastStops).
 	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
@@ -409,6 +410,24 @@ type SelfConfirming interface {
 // user's own session makes with fugaro upgrade, on files it reads anyway — and
 // the cloud half of that stage keeps its refusal, in the step that makes it.
 type LocalUnderAgent interface{ LocalUnderAgent() }
+
+// PastStops is implemented by a stage whose own steps are not all alike about
+// the stop its row tolerates (pastStops, RunsPastStop): the loop hands it the
+// stops it is running past before it checks, plans and applies it. They are
+// the run's own stops and not a reading of the world — a stage that asked the
+// world instead would be answering with its own guess at a verdict the loop
+// already has, and would be wrong about it wherever the state moved after the
+// stopped stage answered (the run's own writes move it: the repository stage's
+// anchor edits the checkout's fugaro.yaml in the run that onboarded it).
+//
+// It exists for one stage: the checkout's inside fugaro update (internal/cli/
+// init_checkout_upgrade.go). Its pin and its plugin read no repository file and
+// run past a repository stop, which is what its row is for; its cloud step
+// builds the job images from the very repository that stop is about, so it is
+// dropped rather than run past it, and it is every needs-you stop of that stage
+// the cloud step is dropped for — the repository stage's are not all about its
+// file (#1836).
+type PastStops interface{ PastStops(stops []string) }
 
 // StageError is a failure that carries the one-line fix.
 type StageError struct {

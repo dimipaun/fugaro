@@ -38,11 +38,26 @@ import (
 // order, minus the policy step the converge already runs as its own stage.
 var checkoutSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}}
 
-type checkoutStage struct{ e *initEngine }
+type checkoutStage struct {
+	e *initEngine
+	// pastStops are the stops this run is running past this stage
+	// (initflow.PastStops), the repository stage's needs-you stop when it has
+	// one: the stage splits on it, because its pin and its plugin read no
+	// repository file and its cloud step builds from the repository the stop
+	// is about.
+	pastStops []string
+}
 
 func newCheckoutStage(e *initEngine) *checkoutStage { return &checkoutStage{e: e} }
 
 func (*checkoutStage) Name() string { return initflow.Checkout }
+
+// PastStops is the run's own answer to whether the repository stage stopped
+// (initflow.PastStops): what this stage's row tolerates is a stop the run is
+// at, and which stop it is cannot be read off the world — the run's own writes
+// move the world, and the repository stage's anchor edits this very checkout's
+// fugaro.yaml in the run that onboarded it.
+func (s *checkoutStage) PastStops(stops []string) { s.pastStops = stops }
 
 // SelfConfirming: the steps keep their own confirmations — the cloud step's
 // per-step and per-build ones, and the pin's diff — exactly as they do under
@@ -108,10 +123,10 @@ type plannedStep struct {
 // not the failure fugaro upgrade makes of that read, because there the user
 // asked for the refresh by name and here the step is one of a run. A checkout
 // whose fugaro.yaml names another project is not this run's to touch, and
-// neither is one whose fugaro.yaml is not the file the repository stage
-// onboards (yamlNotOnboarded): the images are built from that file, so a build
-// from one the run refused to onboard is a billable image from a config no
-// cloud run of the project reads.
+// neither is one whose repository this run did not onboard
+// (repositoryStopped): the job images are that repository's, so a build where
+// the run refused to onboard it is a billable image from a config no cloud run
+// of the project reads.
 //
 // Everything else is the steps' own: every other reason the refresh skips (no
 // fugaro.yaml, a teammate checkout, one not onboarded, a development build, a
@@ -137,9 +152,9 @@ func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc plugi
 		if origin {
 			// The origin is read first, as it always was: a checkout git
 			// cannot read is a failure of the stage and not a reason to drop
-			// a step, so the file is asked about only where there is one to
-			// drop over it.
-			cloudSkip = s.yamlNotOnboarded(ctx)
+			// a step, so the run's own stop is asked about only where there is
+			// a refresh to drop.
+			cloudSkip = s.repositoryStopped()
 		}
 	}
 	steps := make([]plannedStep, 0, len(checkoutSteps))
@@ -175,30 +190,29 @@ func (s *checkoutStage) namesAnotherProject(loc pluginwire.Location) (string, er
 	return "", nil
 }
 
-// yamlNotOnboarded is why this checkout's fugaro.yaml is not one the cloud step
-// may build for: the repository stage's own resolution of this checkout —
-// resolveRepoTarget, the same call, the same file and the same verdict — stops
-// needs-you over it. This stage runs past that stop for the pin and the plugin,
-// which read no repository file; the cloud step is the half that may not,
-// because it builds the repository's job images from that very file, so
-// building them where the run refused to onboard the repository is a billable
-// image from a config no cloud run of the project reads (#1836).
+// repositoryStopped is why the cloud step is dropped: this run stopped at the
+// repository stage for the user, and the job images this step builds are that
+// stage's — built for the repository it onboards, off the layer and the
+// fugaro.yaml it just touched — so a run that did not get it onboarded builds
+// nothing. The stop is the run's own (PastStops), never a fresh look at the
+// checkout: the repository stage's own answers move the world under it — its
+// anchor writes gcp_project: into this checkout's fugaro.yaml in the very run
+// that onboarded it, which leaves the working tree different from the default
+// branch — and a stage that re-derived the stop from that would drop the
+// refresh of a repository the run had just onboarded, on that run and on every
+// run until the edit is merged (#1836).
 //
-// Asking that stage's resolution and not the file's own parse is the point:
-// the repository stage stops needs-you for two drifts of this file — the
-// default branch's does not resolve, or the working tree's is not the default
-// branch's — and a working tree that is valid but behind is the second, which
-// reading the working tree's file alone calls current.
+// It is every needs-you stop of that stage, not only the ones about the file:
+// a repository the run may not onboard — an unlisted one, an agent's refusal,
+// a missing GitHub App ID — is one whose job images may not be built either,
+// and the build submitted over it fails at the job's own steps and leaves the
+// user a second command this door may not name.
 //
-// Its other answers are not this: a checkout with no origin to onboard, no
-// default branch ref, no fugaro.yaml on it, or another project's is a skip, and
-// the cloud step's own check decides there, as it did before this door had the
-// tolerance at all. So is a file the run cannot read: unknown is not the same
-// as not onboarded, and namesAnotherProject has already failed the stage for
-// it.
-func (s *checkoutStage) yamlNotOnboarded(ctx context.Context) string {
-	if tg, st := resolveRepoTarget(ctx, s.e.lc.Name); tg == nil && st.State == initflow.NeedsYou {
-		return "this checkout's fugaro.yaml is not the one the repository stage onboards, so its job images are not refreshed here: that stage's own line leaves the fix for it, and rerunning " + s.e.r.o.doorProgram() + " runs the refresh once it is made"
+// The stage still runs its pin and its plugin: those read no repository state,
+// and the plugin is what clears the staleness line every command prints.
+func (s *checkoutStage) repositoryStopped() string {
+	if slices.Contains(s.pastStops, initflow.Repository) {
+		return "the repository stage stopped for the user in this run, and this checkout's job images are built for the repository it onboards: they are not refreshed here, and the next " + s.e.r.o.doorProgram() + " that gets past that stage refreshes them"
 	}
 	return ""
 }

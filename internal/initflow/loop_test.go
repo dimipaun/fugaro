@@ -1409,14 +1409,7 @@ func TestPlanViewPausedForBillingHoldsOnlyWhatNeedsBilling(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	lineOf := func(stage string) string {
-		for _, l := range outputLines(got) {
-			if slices.Contains(strings.Fields(l), stage) {
-				return l
-			}
-		}
-		return ""
-	}
+	lineOf := func(stage string) string { return planLine(got, stage) }
 	if l := lineOf(Plugin); l == "" || strings.Contains(l, Project) {
 		t.Errorf("the plan view has the plugin waiting for the billing-pending %s, which converge runs it past: %q\n%s", Project, l, got)
 	}
@@ -1426,6 +1419,55 @@ func TestPlanViewPausedForBillingHoldsOnlyWhatNeedsBilling(t *testing.T) {
 	if l := lineOf(Repository); !strings.Contains(l, Project) || strings.Contains(l, "1 to onboard") {
 		t.Errorf("the stage that needs billing is %q, want it waiting for the billing-pending %s and not planned:\n%s", l, Project, got)
 	}
+}
+
+// TestPlanViewWaitsForAStageWithSomethingToDo: the plan view stops waiting for
+// a stage only when that stage is a stop this one's row runs past
+// (RunsPastStop) — a stop the run is not going to clear by applying anything.
+// A stage with something to do is one this run applies, and the checkout, the
+// one row with a tolerance, waits for a repository that is merely will-do like
+// every stage behind the repository does. Read the tolerance alone (without
+// asking whether the stage waited for is a stop at all), --plan-only plans the
+// checkout's own steps ahead of the repository and layer stages the run
+// applies first.
+func TestPlanViewWaitsForAStageWithSomethingToDo(t *testing.T) {
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Repository, Layer, Checkout)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).planSummary = "1 to onboard"
+	stages[2].(*fake).planSummary = "1 to publish"
+	stages[3].(*fake).planSummary = "2 to write"
+	opts := yesOpts()
+	opts.PlanOnly, opts.Out = true, &out
+	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if l := planLine(got, Repository); !strings.Contains(l, "1 to onboard") {
+		t.Errorf("--plan-only did not plan the %s stage, the first with something to do: %q\n%s", Repository, l, got)
+	}
+	if l := planLine(got, Layer); !strings.Contains(l, Repository) || strings.Contains(l, "1 to publish") {
+		t.Errorf("the %s stage is %q, want it waiting for the %s stage the run applies first:\n%s", Layer, l, Repository, got)
+	}
+	// The checkout is the row with the tolerance, and it tolerates a stop: a
+	// stage with something to do is not one, and its own steps wait for it.
+	if l := planLine(got, Checkout); !strings.Contains(l, Repository) || strings.Contains(l, "2 to write") {
+		t.Errorf("--plan-only planned the checkout ahead of the %s stage, which the run applies first: %q\n%s", Repository, l, got)
+	}
+}
+
+// planLine is the plan view's line for one stage, "" when the view has none:
+// the line whose own fields name the stage.
+func planLine(view, stage string) string {
+	for _, l := range outputLines(view) {
+		if slices.Contains(strings.Fields(l), stage) {
+			return l
+		}
+	}
+	return ""
 }
 
 // convergeStages is a run with one stage already done, one to apply, one the

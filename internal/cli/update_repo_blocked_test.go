@@ -158,6 +158,94 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 	}
 }
 
+// TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile (#1836,
+// review): the checkout's row tolerates a repository stop (pastStops,
+// RunsPastStop) for its two local steps, and the repository stage has needs-you
+// stops that are about no file at all — the GitHub App's ID, an unenrolled or
+// declined repository, an agent's refusal. Those leave the stages that publish
+// the installation (rules, policy, layer) behind them, and the checkout's cloud
+// step builds the job images from what those stages publish: run past a stop
+// like that it would build out of order, from a repository this run never
+// onboarded, and the build it submits fails at the job's own third step —
+// leaving the user a line pointing at `fugaro upgrade`, the second command the
+// HARD RULE forbids.
+//
+// The fixture is the converge rig with the repository's recorded GitHub App ID
+// removed: the repository stage's own Check is Todo (nothing about the file is
+// wrong) and the stop is the ID, asked for at the apply.
+//
+// Mutation (run, restore): make the checkout stage's cloud skip follow the stop
+// unconditionally (drop the PastStops split in planFor,
+// init_checkout_upgrade.go) and this test fails: the checkout runs its cloud
+// step, submits the job image builds and fails on them.
+func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	currentRelease(t)
+	skillWarned.Store(false)
+	t.Cleanup(func() { skillWarned.Store(false) })
+	dropAppID(t, r)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err == nil {
+		t.Fatalf("the run reported success while the repository stage needs the GitHub App's ID:\n%s", out)
+	}
+	var res convergeJSON
+	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
+		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
+	}
+	if got := res.state(initflow.Repository); got != "needs-you" {
+		t.Fatalf("the repository stage is %q, want needs-you: the run has no terminal to ask for the App ID at\n%s", got, out)
+	}
+
+	// The stop is behind the checkout, and the cloud step is the one step of
+	// its stage that may not be run past it.
+	if got := res.state(initflow.Checkout); got == "failed" {
+		t.Errorf("the checkout stage failed over the repository stage's stop: its pin and its plugin read no repository state, and its cloud step belongs after the repository is onboarded\n%s", out)
+	}
+	if d := res.stageDetail(t, initflow.Checkout); strings.Contains(d, "cloud") {
+		t.Errorf("the checkout stage ran its cloud step past a repository stop that is not about the file: %q\n%s", d, out)
+	}
+	if n := len(r.builder.specs); n != 0 {
+		t.Errorf("%d job image(s) reached Cloud Build past a repository stop this run did not clear: %+v\n%s", n, r.builder.specs, out)
+	}
+	// The half the tolerance is for still moved: the two local steps are what
+	// the user's stuck plugin line is about, whatever the repository stage
+	// stopped over.
+	if got := claudeListVersion(t, r); got != convergeRelease {
+		t.Errorf("Claude Code lists the plugin as %q after the run, want %q: the pin and the plugin are what the tolerance is for\n%s", got, convergeRelease, out)
+	}
+	// And nothing this stage did sends the user to a second command: the fix a
+	// failed cloud step carries names `fugaro upgrade`, because the step is
+	// upgrade's own, and that is the second command the HARD RULE forbids. The
+	// stage's "ran fugaro upgrade's plugin" is its account of which steps ran,
+	// never a command to run.
+	if i := strings.Index(out, "rerun "+selfCommand()+" upgrade"); i >= 0 {
+		t.Errorf("the run sends the user to a second command for the checkout:\n%s", out[i:])
+	}
+}
+
+// dropAppID removes the checkout's repository's recorded GitHub App ID from the
+// local config this run reads, both copies of it (the rig's own and the project
+// file the CLI reads), so the repository stage asks for it: needs-you, over no
+// file at all.
+func dropAppID(t *testing.T, r *convergeRig) {
+	t.Helper()
+	const recorded = `, github_app_id: "12345"`
+	for _, path := range []string{r.cfg, filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initProjectName+".yaml")} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := strings.ReplaceAll(string(data), recorded, "")
+		if out == string(data) {
+			t.Fatalf("the fixture's local config records no GitHub App ID to remove: %s", path)
+		}
+		if err := os.WriteFile(path, []byte(out), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind (#1836c): the
 // staleness line and the plugin stage's line are about the two halves of the
 // plugin — the copy Claude Code holds and the pin in .claude/settings.json —
