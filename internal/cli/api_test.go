@@ -148,7 +148,9 @@ func TestAPIParseSinceAnswersTheCoresParse(t *testing.T) {
 
 // TestAPILsClockAnswersTheCoresClock: the coordinator's default window is
 // ls's, and a fixed clock is what its tests pin it with, so the published
-// reader has to read the same variable rather than a copy of its value.
+// reader has to read the same variable rather than a copy of its value. The
+// window a moved command measures back is the same rule, so it is pinned here
+// beside the clock it is measured from.
 func TestAPILsClockAnswersTheCoresClock(t *testing.T) {
 	if got, want := LsDefaultSince(), lsDefaultSince; got != want {
 		t.Errorf("LsDefaultSince() = %q, want %q", got, want)
@@ -159,6 +161,12 @@ func TestAPILsClockAnswersTheCoresClock(t *testing.T) {
 	defer func() { lsNow = old }()
 	if got := LsNow(); !got.Equal(fixed) {
 		t.Errorf("LsNow() = %v, want the clock the core's tests installed, %v", got, fixed)
+	}
+	if got, want := LsSince(7*24*time.Hour), fixed.Add(-7*24*time.Hour); !got.Equal(want) {
+		t.Errorf("LsSince(7d) = %v, want the window back from the core's clock, %v", got, want)
+	}
+	if got := LsSince(0); !got.IsZero() {
+		t.Errorf("LsSince(0) = %v, want the zero instant: 0 is no bound at all", got)
 	}
 }
 
