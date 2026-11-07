@@ -640,10 +640,15 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 		l.needsYou(name, ag.Error(), s.Left())
 		return false, nil
 	case errors.As(err, &ge):
-		// The gate's sentence is the detail, and the stage's own Left is where
-		// the user is told to run it: the step is theirs to confirm, at their
-		// own terminal, and the gate says nothing a session could act on.
-		l.needsYou(name, ge.Error(), s.Left())
+		// The gate's sentence is the detail, and a refusal is not a step the
+		// reader can take up: nothing was written, and no typed confirmation
+		// reaches past the gate (D1012), so the Left is the refusal's own
+		// (GateRefused) rather than the stage's. The stage's Left would ask
+		// this reader to type the project's name at a prompt that does not
+		// come — the run has already stopped in the gate's sentence — which is
+		// the loop telling them to do the one thing the gate exists to make
+		// impossible.
+		l.needsYou(name, ge.Error(), GateRefused(ge.Error()))
 		return false, nil
 	case errors.As(err, &ny):
 		l.needsYou(name, "", ny.Left)

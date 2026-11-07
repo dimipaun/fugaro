@@ -1140,6 +1140,110 @@ func TestAgentErrorFromAStageIsNeedsYou(t *testing.T) {
 	}
 }
 
+// A step the managed gate refused is left for the user as a refusal and NEVER
+// as the stage's own prompt. The stage's Left is the one thing this reader
+// must not be handed: it asks them to type the project's name at a prompt that
+// does not come, in a run that has already stopped in the gate's sentence, and
+// no confirmation reaches past a refusal (D1012) — the reader who followed it
+// would be sent to do the one thing the gate exists to make impossible, which
+// is the deadlock CV1 is about (every new repository of the project blocked,
+// with a prompt nobody can answer).
+//
+// Both sessions the gate is asked in are driven, because they are two paths to
+// the same Left: a coding agent's session (agentStage) and the owner's own
+// terminal (the ruling of 2026-11-01). The control beside them is the other
+// half of the rule — a step that is genuinely the user's (a NeedsYouError with
+// a prompt) keeps the stage's own text, its kind and its command, so a change
+// that turned every left into a refusal fails here too.
+func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
+	const reason = `the managed gate did not admit this step: nothing is written here (D1012) — refused by cover: module.installation.google_storage_bucket_iam_member.catalog_check_records["acme-app-1"]`
+	gate := func(string) bool { return true }
+	for _, tc := range []struct {
+		name string
+		opts func(*Options)
+	}{
+		{"a coding agent's session", func(o *Options) { o.Agent = "CLAUDECODE"; o.Yes = true }},
+		{"the owner's own terminal", func(o *Options) { o.Terminal = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var log []string
+			var out bytes.Buffer
+			f := &fake{name: Installation, log: &log,
+				left:     Left{Kind: LeftPrompt, Text: "type the project's name to apply", Commands: []string{"fugaro update"}},
+				applyErr: &GatedError{Reason: reason, Err: errors.New(reason)}}
+			o := Options{Out: &out, ManagedGate: gate}
+			tc.opts(&o)
+			res, err := Run(context.Background(), []Stage{f}, o)
+			if err != nil || res.Failed != nil {
+				t.Fatalf("err %v res %+v", err, res)
+			}
+			if len(res.Left) != 1 {
+				t.Fatalf("the refused step left %d left-for-you, want one: %+v", len(res.Left), res.Left)
+			}
+			lf := res.Left[0]
+			if lf.Kind != LeftRefused {
+				t.Errorf("the refused step is a %q, want %q: the stage's own kind asks this reader for a confirmation the gate never reaches", lf.Kind, LeftRefused)
+			}
+			if cmds := lf.PrintedCommands(); len(cmds) != 0 {
+				t.Errorf("the refused step printed the commands %q: no command helps, so listing one is the same mistake as the prompt", cmds)
+			}
+			// What the reader has to be told: which gate refused it, the
+			// gate's own sentence (the resource it would not admit is what an
+			// issue needs), that there is nothing to type, and that the cause
+			// is the cover and not their project.
+			if !strings.Contains(lf.Text, "managed gate refused this step") {
+				t.Errorf("the refusal does not say the gate refused it: %q", lf.Text)
+			}
+			if !strings.Contains(lf.Text, reason) {
+				t.Errorf("the refusal does not quote the gate's own sentence, so nothing in it names what was refused:\n%q", lf.Text)
+			}
+			if !strings.Contains(lf.Text, "Nothing here is yours to type") {
+				t.Errorf("the refusal does not say there is nothing to type: %q", lf.Text)
+			}
+			for _, bad := range []string{"type the project's name", "fugaro update"} {
+				if strings.Contains(lf.Text, bad) {
+					t.Errorf("the refusal tells the reader to %q, which is what the gate makes impossible: %q", bad, lf.Text)
+				}
+			}
+			// And it is what the run printed, under the kind that says so.
+			want := "left for you (" + Installation + ", " + string(LeftRefused) + "): "
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("the printed block is not %q:\n%s", want, out.String())
+			}
+			if strings.Contains(out.String(), "left for you ("+Installation+", prompt)") {
+				t.Errorf("the refused step printed the stage's own prompt:\n%s", out.String())
+			}
+			if n := count(log, "apply"); n == 0 {
+				t.Error("the stage never reached its apply, so nothing here was judged")
+			}
+		})
+
+		// The control: the same gate, a step that IS the user's.
+		t.Run(tc.name+" — a step that is the user's keeps its own text", func(t *testing.T) {
+			prompt := Left{Kind: LeftPrompt, Text: "type the project's name at the review to apply all of its steps", Commands: []string{"fugaro update"}}
+			var log []string
+			var out bytes.Buffer
+			f := &fake{name: Installation, log: &log, left: prompt, applyErr: &NeedsYouError{Left: prompt}}
+			o := Options{Out: &out, ManagedGate: gate}
+			tc.opts(&o)
+			res, err := Run(context.Background(), []Stage{f}, o)
+			if err != nil || res.Failed != nil || len(res.Left) != 1 {
+				t.Fatalf("err %v res %+v", err, res)
+			}
+			lf := res.Left[0]
+			if lf.Kind != LeftPrompt || lf.Text != prompt.Text {
+				t.Errorf("a step left to the user was rewritten to %+v, want the stage's own %+v", lf, prompt)
+			}
+			if cmds := lf.PrintedCommands(); len(cmds) != 1 || cmds[0] != "fugaro update" {
+				t.Errorf("the user's own step lost the command that finishes it: %q", cmds)
+			}
+			if !strings.Contains(out.String(), "left for you ("+Installation+", prompt): "+prompt.Text) {
+				t.Errorf("the printed block is not the stage's own prompt:\n%s", out.String())
+			}
+		})
+	}
+}
+
 func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
 	plain := (&NoTerminalError{Stage: "installation"}).Error()
 	if !strings.Contains(plain, "--yes") {

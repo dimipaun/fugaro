@@ -519,6 +519,42 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 			if strings.Contains(got, initflow.GateProceeded()) {
 				t.Errorf("the step took the gate's verdict after the gate had refused it:\n%s", got)
 			}
+
+			// And the step's left-for-you is the refusal's own, never the
+			// stage's prompt (CV1): the stage's Left asks this reader to type
+			// the project's name at a prompt the gate never reaches, in a run
+			// that has already stopped in the gate's sentence, so the person
+			// the gate is there to protect is sent to the one act it makes
+			// impossible — every new repository of the project blocked behind
+			// a confirmation nobody can give.
+			lines := strings.Split(got, "\n")
+			refused := ""
+			for i, line := range lines {
+				if !strings.HasPrefix(line, "left for you (") || !strings.Contains(line, ", "+string(initflow.LeftRefused)+"): ") {
+					continue
+				}
+				refused = line
+				if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "    ") {
+					t.Errorf("the refused step lists the command %q: no command gets a refused plan written", strings.TrimSpace(lines[i+1]))
+				}
+			}
+			if refused == "" {
+				t.Fatalf("a step the gate refused left the user no refusal to read:\n%s", got)
+			}
+			if !strings.Contains(refused, managedmode.NotConverged) {
+				t.Errorf("the refusal does not quote the gate's own sentence:\n%s", refused)
+			}
+			if !strings.Contains(refused, "Nothing here is yours to type") {
+				t.Errorf("the refusal does not say there is nothing to type:\n%s", refused)
+			}
+			for _, bad := range []string{"type the project's name", "fugaro update"} {
+				if strings.Contains(refused, bad) {
+					t.Errorf("the refused step tells the person at the terminal to %q, which cannot help them:\n%s", bad, refused)
+				}
+			}
+			if strings.Contains(got, "left for you ("+initflow.Installation+", prompt)") {
+				t.Errorf("the refused installation step printed the stage's own prompt:\n%s", got)
+			}
 		})
 	}
 

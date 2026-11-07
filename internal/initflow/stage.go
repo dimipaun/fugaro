@@ -240,6 +240,13 @@ const (
 	LeftCommand LeftKind = "command" // one line to run
 	LeftPrompt  LeftKind = "prompt"  // a prompt fugaro shows in a terminal
 	LeftConsole LeftKind = "console" // something done in a web console
+	// LeftRefused is a step the managed gate refused (D1012): nothing was
+	// written, and nothing the reader types or runs writes it. It is a kind of
+	// its own rather than a command or a prompt because that is the whole of
+	// what the reader has to be told, and because the command a stage's own
+	// Left carries beside it would ask for exactly what the gate has just
+	// made impossible.
+	LeftRefused LeftKind = "refused"
 )
 
 // Left is one thing only the user can do: a single line of text, never a
@@ -263,6 +270,36 @@ func (l Left) PrintedCommands() []string {
 		return []string{l.Text}
 	}
 	return nil
+}
+
+// GateRefused is the left-for-you of a step the managed project's gate refused
+// (D1012), and it is built from the gate's own sentence rather than from the
+// stage's. The stage's Left is the one thing this refusal must not print: it
+// asks the reader to type the project's name at a prompt the gate never
+// reaches, in a run whose whole point is that no typed confirmation overrides
+// a refusal — the reader who followed it would be told to do the one thing
+// that cannot help, and to do it again.
+//
+// So the text says the four things this reader needs and nothing they can act
+// on in this terminal: the step was refused and nothing was written, the
+// gate's own sentence for why (quoted, because that sentence names the
+// resource or the member the cover would not admit, which is what an issue
+// needs), that there is nothing to type and no command that helps, and that
+// the cause is a plan outside what the cover knows — a fact about Fugaro's own
+// tables, fixed by a person filing an issue with that sentence. Commands is
+// empty on purpose: a refused step has no command, and a Left that listed one
+// would be the same mistake in another spelling.
+//
+// This is deliberately a shape of its own (LeftRefused) rather than a
+// command's or a prompt's: the printed line reads "left for you (install,
+// refused)", which is what tells a reader — and a test — that nothing is
+// expected of them here.
+func GateRefused(reason string) Left {
+	return Left{
+		Kind: LeftRefused,
+		Text: "the managed gate refused this step and nothing was written: " + reason +
+			". Nothing here is yours to type or to run, because no confirmation reaches past a refusal: what the gate would not admit is a plan outside what it covers, which is fixed in Fugaro and not in your project — a person files an issue with the sentence above, and the next release reads it",
+	}
 }
 
 // NoTerminalAdvice is what to do when a typed confirmation or a hidden prompt
