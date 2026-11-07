@@ -63,7 +63,7 @@ and a new IPC operation, and a write is not on the table** (F5, F6).
 - **Two writes, and this work adds none.** `run.launch` (rule 11) and `settings.edit` (rule 12);
   `console/docs/json-contract.md` §9 states the rule and both exceptions.
 - **Untrusted text is drawn as text.** Every string from a document goes through `putText` with the
-  class its wire key declares; `TEXT_CLASSES` (`console/src/shared/sanitize.ts:84`) is the closed
+  class its wire key declares; `TEXT_CLASSES` (`console/src/shared/sanitize.ts:100`) is the closed
   list, and rule 7 forbids `innerHTML`, a `dangerouslySetInnerHTML` equivalent and an `href` built
   from it.
 - **Sections, not a redraw.** The owner's rule of 2026-10-31 (`.claude/rules/console.md`): every tab
@@ -171,7 +171,7 @@ one as the other (D1483).
 | **F4** | The policy panel has no operation, so the console cannot read the policy node at all | **Gap** | `POLICY_SOURCE_LINE` (`projects.ts:122`) names the command and no `CONSOLE_OPERATIONS` row carries it; the panel's `operation` is null and it says what it cannot read. The fallback it would otherwise take is `PROJECTS_SOURCE_LINES[operation] ?? \`fugaro ${operation}\`` (`projects.ts:567`, `:587`), which for an operation named `policy.show` spells `fugaro policy.show` — an argv no CLI answers, which is why CM10 settles the row rather than letting the fallback draw one |
 | **F5** | The console's surface is a closed list and its spawn allow-list is exact argv | **Rule** | `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`), `argvFor` (`console/src/main/spawn.ts:1334`), rule 6's table (`docs/design/desktop-console.md` §5.1) |
 | **F6** | Exactly two operations write, and neither is this work's | **Rule** | `run.launch` (rule 11) and `settings.edit` (rule 12); `console/docs/json-contract.md` §9 states the rule and both exceptions |
-| **F7** | Every string from a document is drawn as text, through a class the wire key declares | **Rule** | `TEXT_CLASSES` (`console/src/shared/sanitize.ts:84`), `putText`; rule 7 forbids `innerHTML` |
+| **F7** | Every string from a document is drawn as text, through a class the wire key declares | **Rule** | `TEXT_CLASSES` (`console/src/shared/sanitize.ts:100`), `putText`; rule 7 forbids `innerHTML` |
 | **F8** | A section has its own read, its own busy state and its own refusal, and independent reads run in parallel | **Rule** | The owner's rule of 2026-10-31 (`.claude/rules/console.md`); `sectionRead`, `renderBusy`, `renderStamp` (`console/src/renderer/section.ts`) |
 | **F9** | A view showing spend, caps or the kill controls must withhold in a reduced console | **Rule** | `hidesView` (`console/src/shared/version.ts:689`), `REDUCED_VIEWS` (`version.ts:392`) |
 | **F10** | `doctor --json` prints a closed document of checks, and a check carries prose rather than fields | **Exists** | `doctorOutput` and `doctorCheck` (`internal/cli/doctor.go`) |
