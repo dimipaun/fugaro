@@ -1256,6 +1256,65 @@ func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsRetries: a run that retried a stage because its model
+// stream was closed before the response finished (issue #1827) says so where
+// a reader looks for why a run took longer or cost more than its stages
+// suggest, and a run that retried nothing says nothing -- the count is
+// additive (runstore.Record.Retries) and absent, not zero, when it is 0.
+func TestDiagnosePrintsRetries(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		retries int
+		want    string
+	}{
+		{0, ""},
+		{1, "Retries:  1 (the model's stream was closed before a stage finished, so that stage was run once more)"},
+		{2, "Retries:  2 (the model's stream was closed before a stage finished, so that stage was run once more)"},
+	} {
+		id := fmt.Sprintf("20260927-21000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		s := runstore.Open(b, appSlug, id)
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, Retries: tc.retries}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := 0
+		for _, ln := range strings.Split(human, "\n") {
+			if strings.HasPrefix(ln, "Retries:") {
+				lines++
+			}
+		}
+		if tc.want == "" {
+			if lines != 0 {
+				t.Fatalf("a run that retried nothing printed a retries line:\n%s", human)
+			}
+		} else if lines != 1 || !strings.Contains(human, tc.want+"\n") {
+			t.Fatalf("%d retries: want exactly %q:\n%s", tc.retries, tc.want, human)
+		}
+		js, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(js), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Retries != tc.retries {
+			t.Fatalf("%d retries: json retries = %d", tc.retries, d.Retries)
+		}
+		if tc.retries == 0 && strings.Contains(js, `"retries"`) {
+			t.Fatalf("a run that retried nothing carries a retries key in --json: the field is additive and absent at 0:\n%s", js)
+		}
+	}
+}
+
 // TestDiagnoseRendersTheServiceTierCounter: a run that came back at more
 // distinct unpriced tiers than the record names carries the gateway's own
 // "+N more" entry as the last element of cost.service_tiers (it is
