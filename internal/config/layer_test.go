@@ -918,3 +918,69 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 		})
 	}
 }
+
+// TestProjectLayerJobsPausedDefaultsTrue: the two schedules the layer's jobs:
+// block carries default to paused, so an installation whose owner writes
+// nothing about them — and one whose project publishes no layer at all —
+// deploys both jobs stopped. The direction is the whole point: paused: false
+// is what makes a schedule run, and a default of false would start the reports
+// job and the catalog check on every project that upgraded without asking.
+func TestProjectLayerJobsPausedDefaultsTrue(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	for _, tc := range []struct{ name, text string }{
+		{"no jobs: block", head},
+		{"no jobs: key", head + "jobs: {}\n"},
+		{"a job with no paused:", head + "jobs:\n  reports: {}\n"},
+		{"a job written as null", head + "jobs:\n  catalog_check:\n"},
+		{"paused: true written out", head + "jobs:\n  reports: { paused: true }\n  catalog_check: { paused: true }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := mustLayer(t, tc.text)
+			if !l.ReportsPaused() || !l.CatalogCheckPaused() {
+				t.Errorf("reports paused = %v, catalog check paused = %v, want both true", l.ReportsPaused(), l.CatalogCheckPaused())
+			}
+		})
+	}
+	// A caller holding no layer is the same answer as one holding a layer that
+	// wrote nothing: the default belongs to the read, not to the file, so a
+	// resolve with no project layer cannot start a schedule either.
+	var none *ProjectLayer
+	if !none.ReportsPaused() || !none.CatalogCheckPaused() {
+		t.Error("a nil layer is not paused: the value nobody wrote must be the safe one")
+	}
+	if !(&ProjectLayer{}).CatalogCheckPaused() {
+		t.Error("a zero ProjectLayer is not paused")
+	}
+	// The one direction that starts a schedule, read from the same block: it
+	// is here rather than in a test of its own because the default above is
+	// exactly what it must not swallow.
+	l := mustLayer(t, head+"jobs:\n  reports: { paused: false }\n  catalog_check: { paused: true }\n")
+	if l.ReportsPaused() || !l.CatalogCheckPaused() {
+		t.Errorf("reports paused = %v, catalog check paused = %v, want false and true", l.ReportsPaused(), l.CatalogCheckPaused())
+	}
+}
+
+// TestProjectLayerRefusesAJobsKeyItDoesNotKnow: the block is the layer's own
+// and decoded strictly, like every other one, so a jobs: key a later release
+// defines is refused today rather than read as the absence of a schedule. The
+// defaults: case is the placement rule: the block is top-level, where a
+// repository's file can never replace the operator's value.
+func TestProjectLayerRefusesAJobsKeyItDoesNotKnow(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	for _, tc := range []struct{ name, text, want string }{
+		{"an unknown job", head + "jobs:\n  digests: { paused: false }\n", "field digests not found"},
+		{"an unknown job key", head + "jobs:\n  reports: { pause: false }\n", "field pause not found"},
+		{"the block under defaults", head + "defaults:\n  jobs:\n    reports: { paused: false }\n", "defaults.jobs: is not a fugaro.yaml key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := ParseProjectLayer([]byte(tc.text), testAnchor)
+			var msgs []string
+			for _, p := range ps {
+				msgs = append(msgs, p.String())
+			}
+			if got := strings.Join(msgs, "; "); !strings.Contains(got, tc.want) {
+				t.Fatalf("problems %q, want one containing %q", got, tc.want)
+			}
+		})
+	}
+}
