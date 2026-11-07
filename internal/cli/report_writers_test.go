@@ -109,28 +109,49 @@ func hasAStepLine(s string) bool {
 	return false
 }
 
-// screenWatch is a run's screen, watched as it is written: it keeps what was on
-// it just before the first block the run printed itself, once a step's line has
-// been drawn. The line in flight is written with a leading carriage return and
-// a command's own lines are not, so "the first write that is not a frame, after
-// a frame" is that block — and where the frame was left underneath it is
-// exactly what a person would have seen.
+// clearLine is the reporter's own write that takes the line in flight down
+// (stopSpinner), and the one a command's writer makes for it before printing a
+// block (Pause).
+const clearLine = "\r\x1b[K"
+
+// screenWatch is a run's screen, watched as it is written. It reads the two
+// writes the reporter makes to its own line — a frame, which draws the step in
+// flight with a carriage return, and clearLine, which takes it down — and
+// everything else is a block the run printed itself. It keeps what was on the
+// screen just before the first of those, and every block that landed on a line
+// that was still up: the second is what a person would have seen drawn through
+// (G1).
 type screenWatch struct {
-	mu     sync.Mutex
-	buf    bytes.Buffer
+	mu  sync.Mutex
+	buf bytes.Buffer
+	// frame is whether the line in flight is up on the screen right now, and
+	// drew whether one ever was (the blocks before that are not a step's).
 	frame  bool
+	drew   bool
 	before string
 	found  bool
+	over   []string
 }
 
 func (w *screenWatch) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	switch {
+	case bytes.HasPrefix(p, []byte(clearLine)):
+		w.frame = false
 	case bytes.HasPrefix(p, []byte("\r")):
-		w.frame = true
-	case w.frame && !w.found:
-		w.found, w.before = true, w.buf.String()
+		w.frame, w.drew = true, true
+	default:
+		if w.frame {
+			block := string(p)
+			if len(block) > 80 {
+				block = block[:80] + "…"
+			}
+			w.over = append(w.over, block)
+		}
+		if w.drew && !w.found {
+			w.found, w.before = true, w.buf.String()
+		}
 	}
 	return w.buf.Write(p)
 }
@@ -166,6 +187,20 @@ func notDrawnOver(t *testing.T, w *screenWatch, what string) {
 		before = before[len(before)-60:]
 	}
 	t.Errorf("the line in flight was left on the screen under %s: the screen just before it holds %q", what, before)
+}
+
+// nothingDrawnOver is G1's assertion for a whole run: not one block the run
+// printed landed on a line that was still up. The fixtures it is used with
+// write inside an open step — terraform's own stream, the question an apply
+// asks — and each of those has to take the line down first, which is a
+// property of the run rather than of one block in it.
+func nothingDrawnOver(t *testing.T, w *screenWatch) {
+	t.Helper()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, block := range w.over {
+		t.Errorf("this was written onto the line in flight: %q", block)
+	}
 }
 
 // ---------------------------------------------------------------- publish
@@ -220,6 +255,30 @@ func TestAllowDeleteWritesALog(t *testing.T) {
 	log := writesALog(t, "allow-delete")
 	if !strings.Contains(log, webApproval.address) {
 		t.Errorf("the log does not hold the list the step says it wrote:\n%s", log)
+	}
+}
+
+// TestAllowDeleteDroppedEntriesAreInTheLog: the entries a write leaves out are
+// what the person is agreeing to lose, and they are the run's own account of
+// what it is about to write rather than a question to whoever is at the
+// terminal. They go through the run's own writer, so a run read back afterwards
+// holds what was removed and not only that something was (D1352).
+func TestAllowDeleteDroppedEntriesAreInTheLog(t *testing.T) {
+	r := allowDeleteRig(t)
+	// Seeded rather than left by an earlier command: two runs of one command in
+	// one second are two logs of one name, and onlyLog wants one.
+	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(allowDeleteJSON(initProject, dataApproval, webApproval)))
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProjectName+"\n", allowDeleteArgs(webApproval)...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, dataApproval.arg()) {
+		t.Fatalf("the run never named the approval it drops:\n%s", out)
+	}
+	log := writesALog(t, "allow-delete")
+	if !strings.Contains(log, dataApproval.arg()) || !strings.Contains(log, "this list leaves out 1 of them") {
+		t.Errorf("the log holds the step and not the entry the write drops:\n%s", log)
 	}
 }
 
@@ -388,6 +447,21 @@ func managedApplyOnScreen(t *testing.T, root string) (*screenWatch, error) {
 	return watch, cmd.Execute()
 }
 
+// tfStream is the fake terraform's own progress: the stream a person watches
+// while an apply's step is open, and the one write of the run that is not the
+// run's own account of anything (tf.TF.Out, not Request.Out).
+const tfStream = "fake terraform: planning the root\n"
+
+// managedApplyStream makes the fake terraform print tfStream on its init: the
+// rig's plan carries the exit code the gate's "changed" is read from, and init
+// is a stream of terraform's like any other — the one that runs first, with the
+// apply's step already open.
+func managedApplyStream(t *testing.T, r *initRig) {
+	t.Helper()
+	r.script["init"] = map[string]any{"stderr": tfStream}
+	r.save(t)
+}
+
 // TestManagedApplyAsksOnItsOwnLine: the managed apply's question is asked in
 // the middle of its one step, after the plan has been gated, so the line in
 // flight is taken down before the question is written and drawn again once it
@@ -395,23 +469,34 @@ func managedApplyOnScreen(t *testing.T, root string) (*screenWatch, error) {
 // can answer, and this is the question that decides whether a plan is applied.
 func TestManagedApplyAsksOnItsOwnLine(t *testing.T) {
 	noAgentSession(t)
-	_, root := inventoryApplyRig(t)
+	r, root := inventoryApplyRig(t)
 	stubManagedAssets(t, &fakeManagedAssets{assets: []managedmode.Asset{
 		{Name: "//storage.googleapis.com/" + initRunsBucket, Type: "storage.googleapis.com/Bucket"},
 		{Name: "//storage.googleapis.com/fmgd-data", Type: "storage.googleapis.com/Bucket"},
 	}})
+	managedApplyStream(t, r)
 	terminal(t, true)
 	watch, err := managedApplyOnScreen(t, root)
-	notDrawnOver(t, watch, "the question it asks the person at the terminal")
-	if after := watch.after(); !strings.Contains(after, "Type "+initProjectName+" to confirm: ") {
-		t.Fatalf("the command never asked the person at the terminal (err %v):\n%s", err, watch.String())
+	// Everything this run writes with the step open — terraform's own stream,
+	// which is not the run's own lines, and the question — takes the line down
+	// first, so the progress reads as terraform printed it rather than through
+	// a frame.
+	nothingDrawnOver(t, watch)
+	question := "Type " + initProjectName + " to confirm: "
+	out := watch.String()
+	at := strings.Index(out, question)
+	if at < 0 {
+		t.Fatalf("the command never asked the person at the terminal (err %v):\n%s", err, out)
 	}
 	// The answer puts the line back, so the apply is still the one step the
 	// person is watching while it runs: Resume is the only thing that draws
 	// again — the frames are stopped until it does — so a redraw after the
 	// question is what says it happened.
-	if after := watch.after(); !strings.Contains(after, "\r") {
+	if after := out[at+len(question):]; !strings.Contains(after, "\r") {
 		t.Errorf("the answer did not put the line in flight back:\n%q", after)
+	}
+	if !strings.Contains(out, tfStream) {
+		t.Errorf("terraform's own progress never reached the screen:\n%s", out)
 	}
 }
 
@@ -423,19 +508,29 @@ func TestManagedApplyAsksOnItsOwnLine(t *testing.T) {
 // is said, and it is a sentence every session reads (Request.confirm).
 func TestManagedApplyDoesNotDrawOverItsOwnOutput(t *testing.T) {
 	noAgentSession(t)
-	_, root := inventoryApplyRig(t)
+	r, root := inventoryApplyRig(t)
 	const foreign = "//compute.googleapis.com/projects/" + initProject + "/zones/us-east5-a/instances/somebody-elses"
 	stubManagedAssets(t, &fakeManagedAssets{assets: []managedmode.Asset{
 		{Name: "//storage.googleapis.com/" + initRunsBucket, Type: "storage.googleapis.com/Bucket"},
 		{Name: foreign, Type: "compute.googleapis.com/Instance"},
 	}})
+	managedApplyStream(t, r)
 	watch, err := managedApplyOnScreen(t, root)
 	if err == nil {
 		t.Fatalf("the command applied without a confirmation:\n%s", watch.String())
 	}
-	notDrawnOver(t, watch, "the apply's own output")
-	if !strings.Contains(watch.after(), "this run falls back to confirmations") || !strings.Contains(watch.after(), foreign) {
+	nothingDrawnOver(t, watch)
+	if !strings.Contains(watch.String(), "this run falls back to confirmations") || !strings.Contains(watch.String(), foreign) {
 		t.Fatalf("the run never said the read fell back (err %v):\n%s", err, watch.String())
+	}
+	// Terraform's own progress is watched and not kept: this command has no
+	// redaction source, so D1352 gives it a log of the stage lines only
+	// (streamThrough), and what the failure's "full output:" points at is the
+	// run's own account of itself.
+	if _, log := onlyLog(t, "managed-apply"); strings.Contains(log, tfStream) {
+		t.Errorf("terraform's raw stream is in the run's log:\n%s", log)
+	} else if !strings.Contains(watch.String(), tfStream) {
+		t.Errorf("terraform's own progress never reached the screen:\n%s", watch.String())
 	}
 }
 
@@ -461,7 +556,13 @@ func TestRestoreWritesALog(t *testing.T) {
 	if _, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root); err != nil {
 		t.Fatal(err)
 	}
-	writesALog(t, "restore")
+	log := writesALog(t, "restore")
+	// D66's list is the lines under the step line that names it, and the run's
+	// log is where the step line points a failure: a step line ending in
+	// "NOT restored:" with nothing under it is a list nobody can read.
+	if !strings.Contains(log, "NOT restored:") || !strings.Contains(log, "\n  - the runs that were in flight") {
+		t.Errorf("the log ends at the step line's list and holds none of the list:\n%s", log)
+	}
 }
 
 // ------------------------------------------------------------ budget writes

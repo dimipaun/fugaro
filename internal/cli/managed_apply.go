@@ -279,7 +279,7 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, rep *r
 		// identity need not, so init, plan, the show the gate reads and the
 		// apply are one identity's.
 		Terraform: func(cred managedmode.Credential) (*tf.TF, func(), error) {
-			return managedTerraform(cmd, lc, wd, bin, cache, cred)
+			return managedTerraform(cmd, lc, wd, bin, cache, cred, rep)
 		},
 		Cover: managedCover(lc, bucket),
 		// The addresses the owner approved and nothing else.
@@ -314,18 +314,23 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, rep *r
 		// own member: the account is assumed by the identity the grant is
 		// on, and an assumption that cannot be made applies nothing.
 		Impersonator: imp,
-		// The run's own output — the D59 warning this project's inventory
-		// raised, the gate's verdict and terraform's progress — stays on stderr,
-		// which is where it was before this command had a step of its own: the
-		// gate's warning is documented as one every session reads
-		// (Request.confirm), so it reaches the terminal in every session and not
-		// only under --verbose the way Stream does. It is kept in the run's log
-		// beside that (sayThrough): the log is the run's full output and a
-		// failure prints its path, so terraform's progress has to be in it.
-		// Every write takes the line in flight down around it (G1): the apply's
-		// step is open across the whole of it, and a spinner's carriage return
-		// over this output would mangle exactly the sentences an owner reads to
-		// decide whether a project is still managed.
+		// What this command itself says — the D59 warning this project's
+		// inventory raised, the gate's verdict, what is about to be applied —
+		// stays on stderr, which is where it was before this command had a step
+		// of its own: the gate's warning is documented as one every session
+		// reads (Request.confirm), so it reaches the terminal in every session
+		// and not only under --verbose the way Stream does. It is kept in the
+		// run's log beside that (sayThrough): it is the run's own account, and
+		// a failure prints the log's path. Every write takes the line in flight
+		// down around it (G1): the apply's step is open across the whole of it,
+		// and a spinner's carriage return over these sentences would mangle
+		// exactly what an owner reads to decide whether a project is managed.
+		//
+		// Terraform's progress is the other writer, and it is not this one: it
+		// goes to cmd.ErrOrStderr() through managedTerraform, shown and not
+		// kept (streamThrough — D1352's rule for a command with no redaction
+		// source, whose log holds the stage lines only, and terraform's stream
+		// is raw).
 		Out: sayThrough(rep, cmd.ErrOrStderr()),
 	})
 	if err != nil {
@@ -500,7 +505,7 @@ func managedCover(lc *localcfg.Config, bucket string) tf.ManagedCover {
 // workdir — the root's parent, which an agent-written configuration names as
 // ".." — and the managed preflight refuses every function that could read a
 // file anyway.
-func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir, bin, cache string, cred managedmode.Credential) (*tf.TF, func(), error) {
+func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir, bin, cache string, cred managedmode.Credential, rep *report.Reporter) (*tf.TF, func(), error) {
 	none := func() {}
 	want := managedmode.DeployerAccount(lc.GCPProject)
 	ic, ok := cred.(impersonatedCredential)
@@ -538,7 +543,11 @@ func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir
 		}
 		return nil, none, userErr("%v", safetext.FieldErr(err))
 	}
-	t.Out = cmd.ErrOrStderr()
+	// init, plan, apply and state rm all stream here, and the apply's step is
+	// open across them: the line in flight comes down around each write so the
+	// progress reads as terraform printed it (G1). The stream is not kept —
+	// streamThrough — because this command has no redaction source (D1352).
+	t.Out = streamThrough(rep, cmd.ErrOrStderr())
 	return t, cleanup, nil
 }
 

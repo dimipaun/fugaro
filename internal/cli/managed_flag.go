@@ -363,8 +363,9 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	}
 	// What was written, and the undo, go through the run's own writer: they are
 	// the account the step above ends on, so they are kept in the log beside
-	// the step's line (D1352), and the step is still in flight while the first
-	// of them is written (sayThrough takes the line down for it).
+	// the step's line (D1352). They are printed after the step ended — the
+	// step's line is what the read-back says, and these two say what it wrote
+	// and how to undo it — so nothing is in flight over them.
 	out := sayThrough(rep, w)
 	fmt.Fprintf(out, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
 		wrote, amount, safetext.Field(currency))

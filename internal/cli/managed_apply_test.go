@@ -872,7 +872,9 @@ func TestManagedTerraformRunsWithTheDeployerCredentialAlone(t *testing.T) {
 	cmd := newManagedApplyCmd()
 	cmd.SetErr(&strings.Builder{})
 	bin := filepath.Join(r.dir, "bin", "terraform")
-	tfr, cleanup, err := managedTerraform(cmd, lc, wd, bin, cache, testCredential{account: account, url: u})
+	// No reporter: this is the build and its environment, and a run with none
+	// writes to the writer it was given and draws nothing (through).
+	tfr, cleanup, err := managedTerraform(cmd, lc, wd, bin, cache, testCredential{account: account, url: u}, nil)
 	if err != nil {
 		t.Fatalf("building terraform for the deployer: %v", err)
 	}
@@ -916,7 +918,7 @@ func TestManagedTerraformRunsWithTheDeployerCredentialAlone(t *testing.T) {
 		{"a terraform that does not start", filepath.Join(t.TempDir(), "absent"), testCredential{account: account, url: u}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, cleanup, err := managedTerraform(cmd, lc, wd, tc.bin, cache, tc.cred); err == nil {
+			if _, cleanup, err := managedTerraform(cmd, lc, wd, tc.bin, cache, tc.cred, nil); err == nil {
 				cleanup()
 				t.Fatal("accepted")
 			}

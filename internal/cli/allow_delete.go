@@ -296,14 +296,21 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 	// giving. The entries this write drops are named, and a list that drops any
 	// of them is written only after the project's name is typed.
 	dropped := droppedFrom(current, approved)
+	// What this write replaces is the run's own account of it — the entries it
+	// leaves out are what the person below is agreeing to lose, and the
+	// addresses the step ends on are what a later refusal is read against — so
+	// it goes through the run's own writer: the screen and the log both
+	// (D1352). The screen's bytes are the ones from before, and the writer is
+	// the one that takes a line in flight down around them.
+	out := sayThrough(rep, w)
 	if len(dropped) > 0 {
-		fmt.Fprintf(w, "gs://%s/%s approves %d entry(ies) now, and this list leaves out %d of them:\n", safetext.Field(bucket), managed.AllowDeleteObject, len(current), len(dropped))
-		printEntries(w, dropped)
+		fmt.Fprintf(out, "gs://%s/%s approves %d entry(ies) now, and this list leaves out %d of them:\n", safetext.Field(bucket), managed.AllowDeleteObject, len(current), len(dropped))
+		printEntries(out, dropped)
 	}
 	// An object that is there but is not a list this command reads is
 	// replaced only on the same typed confirmation: what it held is unknown.
 	if state.Unreadable {
-		fmt.Fprintf(w, "gs://%s/%s is there but is not a list this command reads (an object written by an older Fugaro, whose addresses carry no identities, is one of these): writing replaces it\n", safetext.Field(bucket), managed.AllowDeleteObject)
+		fmt.Fprintf(out, "gs://%s/%s is there but is not a list this command reads (an object written by an older Fugaro, whose addresses carry no identities, is one of these): writing replaces it\n", safetext.Field(bucket), managed.AllowDeleteObject)
 	}
 	if len(dropped) > 0 || state.Unreadable {
 		// Strict rather than confirmTyped: this command has no --yes (it
@@ -336,12 +343,12 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 	}
 	step.Done(fmt.Sprintf("wrote gs://%s/%s: %s may now delete or replace %d object(s), at the addresses below and no others:",
 		safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), len(approved)))
-	// The addresses the step ends on go through the run's own writer: they are
-	// the list the step's line points at, so they belong in the log beside it
-	// (D1352), not only on the screen. The reader above prints the same list
-	// through the command's writer alone: it is a read, and a read keeps no log
-	// at all (T6).
-	printEntries(sayThrough(rep, w), approved)
+	// The addresses the step ends on go through the same writer as the block
+	// above: they are the list the step's line points at, so they belong in
+	// the log beside it (D1352), not only on the screen. The reader above
+	// prints the same list through the command's writer alone: it is a read,
+	// and a read keeps no log at all (T6).
+	printEntries(out, approved)
 	return nil
 }
 

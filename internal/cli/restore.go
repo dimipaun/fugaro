@@ -1028,33 +1028,54 @@ func (rr *restoreRun) say(format string, args ...any) {
 // it was given — a person's stdout, or the stderr a warning belongs on — and
 // the run's log beside it (D1352, Reporter.Log), so the log is the run's full
 // output and not only its steps, and a failure's "full output:" path holds the
-// sentences the run printed under its step. Every write takes the line in
-// flight down around it and draws it again after (G1): a spinner redraws its
-// own line with a carriage return, so a block written while a step is open is
-// drawn over — the two halves of an unflag, a managed apply's terraform
-// progress — unless the line comes down first.
-//
-// A nil reporter is a run with no log and nothing drawn: the writer itself.
+// sentences the run printed under its step.
 func sayThrough(rep *report.Reporter, w io.Writer) io.Writer {
+	return through(rep, w, true)
+}
+
+// streamThrough is the writer for a child's own stream — a managed apply's
+// terraform progress — which a person watches and the run does not keep: D1352
+// gives a command with no redaction source a log of its stage lines only, and
+// this stream is raw (the converge's is sunk because the converge hands the
+// sink its live redaction slots, CL5b, and a log keeps what it holds for 14
+// days). What it is not is unguarded: the apply's step is open across the
+// whole of it, so its writes take the line in flight down and draw it again
+// after, exactly as a command's own lines do.
+func streamThrough(rep *report.Reporter, w io.Writer) io.Writer {
+	return through(rep, w, false)
+}
+
+// through is both writers: the writer the command was given, the run's log
+// when the stream is one the run keeps, and the line in flight taken down
+// around every write and drawn again after (G1) — a spinner redraws its own
+// line with a carriage return, so a block written while a step is open is
+// drawn over unless the line comes down first. A nil reporter is a run with no
+// log and nothing drawn: the writer itself.
+func through(rep *report.Reporter, w io.Writer, log bool) io.Writer {
 	if rep == nil {
 		return w
 	}
-	return &throughWriter{rep: rep, w: w}
+	return &throughWriter{rep: rep, w: w, log: log}
 }
 
-// throughWriter is sayThrough's writer: one line out to a person, one into the
-// log. It writes through to the log whatever the human write does, and it
-// never fails the command (G5): a closed pipe or a log that cannot be written
-// changes no exit code, and the returned length is the caller's bytes either
-// way, so an io.Writer that checks errors — terraform's — is not stopped by
-// either of them.
+// throughWriter is through's writer: one block out to a person, one into the
+// log when the run keeps it. It writes through to the log whatever the human
+// write does, and it never fails the command (G5): a closed pipe or a log that
+// cannot be written changes no exit code, and the returned length is the
+// caller's bytes either way, so an io.Writer that checks errors — terraform's
+// — is not stopped by either of them.
 type throughWriter struct {
 	rep *report.Reporter
 	w   io.Writer
+	// log is whether this stream is the run's own account of itself: a
+	// command's own lines are kept, a child's raw output is not.
+	log bool
 }
 
 func (t *throughWriter) Write(p []byte) (int, error) {
-	_, _ = t.rep.Log().Write(p)
+	if t.log {
+		_, _ = t.rep.Log().Write(p)
+	}
 	t.rep.Pause()
 	_, _ = t.w.Write(p)
 	t.rep.Resume()
@@ -1369,10 +1390,12 @@ func restoreNotRestored(old *localcfg.Config, newID string) []string {
 // report ends the run with D66's list. It is the last thing the command does,
 // after the apply, so a reader takes away what the new project has and what it
 // does not in one place: the step line says the restore finished and names what
-// the list below is, and the list is the lines under it.
+// the list below is, and the list is the lines under it — printed through the
+// run's own writer, so the list is in the log the step's line is in, and not
+// only on the screen the step's line points away from (D1352).
 func (rr *restoreRun) report() error {
 	rr.rep.Step("account").Done(fmt.Sprintf("%s is restored into %s. NOT restored:", rr.lc.Name, rr.newID))
-	w := rr.cmd.OutOrStdout()
+	w := sayThrough(rr.rep, rr.cmd.OutOrStdout())
 	for _, l := range restoreNotRestored(rr.lc, rr.newID) {
 		fmt.Fprintf(w, "  - %s\n", l)
 	}
