@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -325,5 +326,108 @@ func TestInstallOptionsReadsTheJobsPausedSettingFromTheLayer(t *testing.T) {
 				t.Errorf("the installation's catalog check carries paused %v, want %v: the layer is what decides it", spec.CatalogCheck.Paused, tc.paused)
 			}
 		})
+	}
+}
+
+// TestTheInstallationTakesTheJobsSettingFromThePublishedLayer: the half of R13's
+// setting a machine with no local layer file cannot answer from the file. The
+// installation stage applies before the layer stage seeds that file from the
+// published object (D830), so reading the file alone would apply paused — and
+// stop a project-wide schedule the layer the run is about to seed from has
+// started — until the next update put it back. The published object is the
+// project's answer there, and a file that IS there always wins, whatever it
+// says: it is the one this run publishes.
+//
+// The read is the layer stage's own (layerPublishedRead), so the two agree about
+// the bucket and a config whose endpoints are fakes reads nothing here either.
+func TestTheInstallationTakesTheJobsSettingFromThePublishedLayer(t *testing.T) {
+	const (
+		starts = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n"
+		silent = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+	)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	lc, err := localcfg.Parse([]byte(catalogProducerLocal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		what      string
+		file      string // "" writes no local layer file, "unreadable" one this CLI does not read
+		published string // "" publishes no layer at all
+		readErr   bool
+		want      bool
+		reads     bool // whether the run reads the bucket at all
+	}{
+		{"no local file, the published layer starts the check", "", starts, false, false, true},
+		{"no local file, the published layer says nothing", "", silent, false, true, true},
+		{"no local file, no published layer", "", "", false, true, true},
+		{"no local file, the bucket cannot be read", "", starts, true, true, true},
+		{"no local file, a published layer this CLI does not read", "", "version: 1\njobz: {}\n", false, true, true},
+		{"the local file says nothing, the published one starts the check", silent, starts, false, true, false},
+		{"the local file starts the check, the published one says nothing", starts, silent, false, false, false},
+		{"the local file is one this CLI does not read", "unreadable", starts, false, true, false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			path := localLayerPath(t)
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			switch tc.file {
+			case "":
+			case "unreadable":
+				unreadableLayerFile(t, path, "symlink")
+			default:
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(tc.file), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The installation's spec as the door builds it — from this file —
+			// and then the run's own correction of it, in that order.
+			spec, err := installOptions(&initOptions{}, lc)
+			if err != nil {
+				t.Fatalf("installOptions: %v", err)
+			}
+			if spec.CatalogCheck == nil {
+				t.Fatal("the installation plans no catalog check, and this local config produces one")
+			}
+			var read bool
+			old := layerPublishedRead
+			t.Cleanup(func() { layerPublishedRead = old })
+			layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+				read = true
+				if tc.readErr {
+					return nil, 0, false, errors.New("the bucket answered with a refusal")
+				}
+				if tc.published == "" {
+					return nil, 0, false, nil
+				}
+				return []byte(tc.published), 7, true, nil
+			}
+			got := (&initRun{}).publishedJobsPaused(context.Background(), lc, spec)
+			if read != tc.reads {
+				t.Errorf("the bucket was read: %v, want %v", read, tc.reads)
+			}
+			if got.CatalogCheck == nil {
+				t.Fatal("the spec lost its catalog check")
+			}
+			if got.CatalogCheck.Paused != tc.want {
+				t.Errorf("the installation applies paused %v, want %v", got.CatalogCheck.Paused, tc.want)
+			}
+		})
+	}
+
+	// An installation with no catalog check reads nothing: there is no value to
+	// correct, and the read would be a bucket call this run does not owe.
+	old := layerPublishedRead
+	t.Cleanup(func() { layerPublishedRead = old })
+	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+		t.Fatal("the bucket was read for an installation with no catalog check")
+		return nil, 0, false, nil
+	}
+	if got := (&initRun{}).publishedJobsPaused(context.Background(), lc, infra.InstallationSpec{}); got.CatalogCheck != nil {
+		t.Errorf("a spec with no catalog check came back with one: %+v", got.CatalogCheck)
 	}
 }

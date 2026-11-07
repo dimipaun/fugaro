@@ -1578,6 +1578,11 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 // the layer stage refuses it moments later with the message that names it —
 // while the one thing neither direction may do is start a schedule the owner
 // never asked for.
+//
+// The installation's own apply does not stop at that silence: with no local
+// layer file at all, the published object is the project's answer and
+// publishedJobsPaused takes it, because the stage that would seed the file
+// from it runs later.
 func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
 	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
 	if err != nil {
@@ -1593,6 +1598,47 @@ func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
 	}
 	reports, catalog := l.ReportsPaused(), l.CatalogCheckPaused()
 	return &reports, &catalog
+}
+
+// publishedJobsPaused completes the installation's jobs: state from the
+// published project layer, for the one machine that has no local layer file to
+// read: the layer stage seeds that file FROM that object and it runs after the
+// installation stage, so without this a `fugaro update` on such a machine
+// would apply the silence of a file it does not have (paused) and stop a
+// schedule the project's own layer has started, until the next update.
+//
+// A local layer file settles the question by itself, whatever it says: it is
+// the file the owner edits and the one the layer stage publishes, so silence in
+// it is its answer — paused — and nothing the published object says may
+// overrule a file this run is about to publish. A bucket that cannot be read, a
+// layer this CLI does not read and a spec that carries no catalog check all
+// leave the spec exactly as installOptions built it: paused, which is also what
+// the module defaults the value to, and the layer stage names the read that
+// failed a moment later.
+func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec) infra.InstallationSpec {
+	if spec.CatalogCheck == nil {
+		return spec
+	}
+	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
+	if err != nil {
+		return spec
+	}
+	if _, err := readLayerFile(path); err == nil || !errors.Is(err, os.ErrNotExist) {
+		// A file that is there settles it, and one this CLI cannot read at all
+		// is not an answer to take from somewhere else: the layer stage refuses
+		// it, with the message that names the file.
+		return spec
+	}
+	data, _, exists, err := layerPublishedRead(ctx, lc, recordReadURL(lc))
+	if err != nil || !exists {
+		return spec
+	}
+	l, ps := projectLayerProblems(data, lc)
+	if len(ps) > 0 || l == nil {
+		return spec
+	}
+	spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	return spec
 }
 
 // checkManagedStateBucket refuses a managed creation whose installation state
@@ -2213,6 +2259,10 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 // fugaro update --firebase-project runs it twice more, as the first and third of its
 // applies.
 func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (outs infra.InstallationOutputs, stop bool, err error) {
+	// The project's schedules, read before anything of this run is planned or
+	// applied: see publishedJobsPaused, which is the half of the setting the
+	// local layer file cannot answer on a machine that has none.
+	spec = r.publishedJobsPaused(ctx, lc, spec)
 	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
 		return outs, false, err
 	}
