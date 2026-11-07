@@ -1,6 +1,8 @@
 # Licensing (open core)
 
-**Status: plan only; nothing is implemented; no task approved.** Every decision was answered by the
+**Status 2026-11-07: the plan is built, in part — [status-2026-11-07.md](status-2026-11-07.md)
+censuses every task of it against `origin/main` and is this folder's state, and it approves none of
+them.** Every decision was answered by the
 owner on 2026-10-24, and the same day the owner ruled on T1 (`ee/` ships reserved, no licence
 file) and O2 (`LICENSE` stays pure MIT; the scope statement is a new `LICENSING.md`; this amends
 D301, not the recommendation), and amended D303 (not the recommendation): one released binary,
