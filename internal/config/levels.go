@@ -220,7 +220,7 @@ func (r *resolver) one(s levelSpec, fallback bool) {
 		return
 	}
 	lv := ResolvedLevel{
-		Model:  firstSet(s.def, s.cfg, s.task, func(l *LevelSetting) string { return l.Model }),
+		Model:  firstSet(s.def, s.cfg, s.task, levelModel),
 		Effort: firstSet("", s.cfg, s.task, func(l *LevelSetting) string { return l.Effort }),
 		Focus:  firstSet("", s.cfg, s.task, func(l *LevelSetting) string { return l.Focus }),
 	}
@@ -266,7 +266,7 @@ func (r *resolver) reviewOnlyLevel(s levelSpec) {
 		if !writesLevel(l) {
 			continue
 		}
-		if !l.Off {
+		if !levelOff(l) {
 			r.errf("%s is on, and recipe %s is mode: review, which allows exactly one review step and nothing else: level %s has no step to run in", s.name, r.in.Recipe.Name, s.name)
 		}
 		return
@@ -277,13 +277,14 @@ func (r *resolver) reviewOnlyLevel(s levelSpec) {
 // the task's block, else the merged configuration's, else the mode's row, and
 // otherwise fallback — skipping a block that writes no key, which says nothing
 // rather than turning the level on (writesLevel). wroteNone reports whether the
-// layer that decided it wrote `none` rather than merely leaving the level off.
+// layer that decided it wrote the level's own switch (`none: true`, or its
+// model named none — levelOff) rather than merely leaving the level off.
 func (r *resolver) layerAnswer(s levelSpec, fallback bool) (on, wroteNone bool) {
 	switch {
 	case writesLevel(s.task):
-		return !s.task.Off, s.task.Off
+		return !levelOff(s.task), levelOff(s.task)
 	case writesLevel(s.cfg):
-		return !s.cfg.Off, s.cfg.Off
+		return !levelOff(s.cfg), levelOff(s.cfg)
 	}
 	switch s.row {
 	case rigor.LevelOn:
@@ -305,7 +306,26 @@ func (r *resolver) layerAnswer(s levelSpec, fallback bool) (on, wroteNone bool) 
 // (LevelSetting.Off): a block that writes one, and so is really turning the
 // level back on, is the one a task cannot tell apart from an empty one.
 func writesLevel(l *LevelSetting) bool {
-	return l != nil && (l.Off || l.Model != "" || l.Effort != "" || l.Focus != "")
+	return l != nil && (levelOff(l) || l.Model != "" || l.Effort != "" || l.Focus != "")
+}
+
+// levelOff is whether a block says the level does not run: `none: true`, or
+// the level's model named none, which is the same switch written the other way
+// (NoneModel). A block read from a document arrives here folded — validate is
+// what folds `model: none` into Off — and this is the same rule for a block
+// built in Go, which no document's rules have been over.
+func levelOff(l *LevelSetting) bool { return l != nil && (l.Off || l.Model == NoneModel) }
+
+// levelModel is a block's model as the resolver reads it: the exact ID that
+// runs the level, "" when the block names none. The literal none is the
+// level's own switch rather than a model (NoneModel), so a block that writes
+// it says nothing about which model the level runs — a layer beside one that
+// turns the level back on with an effort must not run a model called none.
+func levelModel(l *LevelSetting) string {
+	if l.Model == NoneModel {
+		return ""
+	}
+	return l.Model
 }
 
 // firstLineDefault is level 1's answer when no layer names it. Level 1 is not

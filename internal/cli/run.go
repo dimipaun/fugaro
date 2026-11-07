@@ -759,7 +759,14 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// level turned off under the owner's floor, an effort a provider route
 		// would drop — is refused here, before the task is written, rather
 		// than by the job it was launched into (G2, D721, D722).
-		levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, launchFileConfig(ctx, env, spec), levelsRecipe, levelsRecipeUnknown)
+		// The configuration this launch can read of the run's own — the file
+		// at the ref, with the project layer it resolves over, or the layer
+		// the task carries where no file can be read — resolved once for both
+		// readers below: the levels the launch asks about, and the level one of
+		// the two writes with its model named none (checkNoneModelImage,
+		// launchLevelsConfig).
+		fileCfg := launchLevelsConfig(ctx, env, spec)
+		levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown)
 		if err != nil {
 			return launchResult{}, err
 		}
@@ -864,6 +871,13 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The spelling's own gate, on the same configuration read and
+			// beside the one above: a runner older than noneModelSince reads
+			// `model: none` as a model ID rather than as the level's switch
+			// (checkCloneNoneModelImage), the task's own layer included.
+			if err := checkCloneNoneModelImage(env.lc, spec, fileCfg, warn); err != nil {
+				return launchResult{}, err
+			}
 		} else {
 			if needsRecipeImage(spec, agentRecipe) {
 				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -953,6 +967,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// The review levels' gate, the same as the clone branch's above
 			// and for the same reason: see reviewLevelsAsk.
 			if err := checkReviewLevelsImage(ctx, env, slug, spec, kind, levelsAsk, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The same gate as the clone branch's above, and for the same
+			// reason: see checkNoneModelImage.
+			if err := checkNoneModelImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The digest drift, last of this branch's image reads, and the
@@ -1250,9 +1269,10 @@ func titleFlag(cmd *cobra.Command, o *runOptions) error {
 // task stores, in o.reviewLevels, and nil when the flag is not given: the
 // document is read (the file, or stdin for -) and decoded by
 // config.ParseReviewLevelsYAML — strictly, and validated — so an unknown key,
-// an effort outside the closed set, a focus over its bound or `none: true`
-// beside another key is refused here, by the launcher, rather than by the
-// runner at bootstrap after the launch was paid for.
+// an effort outside the closed set, a focus over its bound or the level's own
+// switch (`none: true`, or its model named none) beside another key is refused
+// here, by the launcher, rather than by the runner at bootstrap after the
+// launch was paid for.
 //
 // The flag's absence is not a block, and leaves o.reviewLevels nil: the
 // launch writes no field and the run resolves its levels from its own

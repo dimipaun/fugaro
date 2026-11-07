@@ -2,10 +2,13 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -35,6 +38,15 @@ func ValidEffort(e string) bool { return slices.Contains(Efforts, e) }
 // keeps one level's line from crowding out the rest of the instructions.
 const MaxLevelFocusBytes = 500
 
+// NoneModel is the literal model name that says a level does not run: `model:
+// none` is exactly `none: true` (owner, 2026-11-07) — the level's own switch
+// written the other way — and it is refused beside any other key for the same
+// reason. LevelSetting.validate folds it into Off, and the readers that hold a
+// block no document's rules have been over read the same thing (levelOff,
+// levelModel, resolve.go's mergeLevel), so a level written that way is skipped
+// wherever a level is read and the string is never resolved as a model name.
+const NoneModel = "none"
+
 // LevelSetting is one review level's settings (D722): which model runs it,
 // at which effort, whether it runs at all, and what it is asked to focus on.
 // It is the task's own per-level block and the same type a configuration
@@ -48,7 +60,9 @@ type LevelSetting struct {
 	// Model is the exact model ID this level runs. Empty leaves the level on
 	// the model its own layer resolves, which is agent.models.reviewer for a
 	// senior level, and it is bounded by allowed_models as every other model
-	// setting is.
+	// setting is. The literal none is not an ID: it is the level's own switch
+	// (NoneModel), and validate folds it into Off rather than reading it as a
+	// model.
 	Model string `json:"model,omitempty" yaml:"model"`
 	// Effort is a value of Efforts, or empty for the model's own default.
 	// It is refused for a provider route (D725), where it would be a setting
@@ -69,6 +83,14 @@ type LevelSetting struct {
 	// L4.2 puts it in the reviewer's prompt as quoted text, and it is never
 	// put through a shell or joined into a path.
 	Focus string `json:"focus,omitempty" yaml:"focus"`
+	// noneFalse records that a document wrote the `none` key with the value
+	// false. A plain bool cannot tell that from the absent key — everywhere
+	// else the two are the same setting, which is what Off's own rule says —
+	// but it is the one key that says "this level runs" beside a `model:
+	// none`, and a block that says both things is refused rather than read
+	// (validate). Only the mapping node can tell them apart, the way
+	// JobProfile.allowReposWritten does for allow_repos.
+	noneFalse bool
 }
 
 // ReviewLevels is a task's or a layer's per-level settings: L1 is the first
@@ -102,14 +124,228 @@ func (r *ReviewLevels) Validate() error {
 	return errors.Join(errs...)
 }
 
+// levelSettingType is LevelSetting's own type name, for the unknown-key
+// refusal below: UnmarshalYAML has to build the message yaml.v3's strict mode
+// would have built, and that mode names the type it was decoding into.
+var levelSettingType = reflect.TypeOf(LevelSetting{})
+
+// levelSettingYAMLKeys are the yaml keys a level block accepts, read from the
+// struct's own tags so a new field is picked up without a second list (the
+// same thing providerKeys does for a providers entry).
+var levelSettingYAMLKeys = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeOf(LevelSetting{})
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
+}()
+
+// levelSettingJSONKeys are the keys a level block accepts when a task's spec
+// spells it, read from the json tags the same way. The two vocabularies are
+// the same by the type's own rule — a setting means one thing wherever it is
+// written — but each decoder is checked against its own tags, so a field that
+// ever diverged would not be refused in one spelling and read in the other.
+var levelSettingJSONKeys = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeOf(LevelSetting{})
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ","); tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
+}()
+
+// UnmarshalYAML decodes one level block, refuses a key it does not know, and
+// records a written `none: false` (noneFalse), which no plain bool can tell
+// from the absent key.
+//
+// The refusal is normally the decoder's own (Decoder.KnownFields), but known
+// fields are a property of a Decoder while decoding through a Node — the only
+// way to see the `none` key itself, written true or false — is always lenient,
+// so the check is repeated here, with the same message (JobProfile.UnmarshalYAML
+// does the same for a profiles entry). Both it and the `none` key are read from
+// the mapping the decoder itself decodes from: a block that merges an anchor
+// (`<<: *base`) ends up with the anchor's keys, so they are keys of the block
+// and are checked like the written ones.
+func (s *LevelSetting) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return levelNotAMapping(node)
+	}
+	keys, err := levelKeys(node)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if !levelSettingYAMLKeys[k.name] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.line, k.name, levelSettingType)}}
+		}
+	}
+	type plain LevelSetting // no methods: decodes the fields without recursing into this one
+	var v plain
+	if err := node.Decode(&v); err != nil {
+		return err
+	}
+	*s = LevelSetting(v)
+	for _, k := range keys {
+		if k.name == "none" {
+			s.noneFalse = !s.Off
+			break
+		}
+	}
+	return nil
+}
+
+// levelKey is one key a level block ends up with and the line it is written
+// on.
+type levelKey struct {
+	name string
+	line int
+}
+
+// levelKeys are the keys a level block ends up with, the ones a merge key
+// brings in included. yaml.v3 expands `<<` into the mapping before it sets a
+// field, so a block that merges an anchor ends up with that anchor's keys, and
+// this reads the block the same way: `<<` is not a field of a level, and a key
+// an anchor brings in is one. The order is the one a refusal names them in —
+// the keys written in the block, then the merged ones by line — and a merged
+// key's line is the one it is written on in the anchor, which is the line
+// yaml.v3's own refusal named.
+func levelKeys(node *yaml.Node) ([]levelKey, error) {
+	var out []levelKey
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if k := node.Content[i]; !levelMergeKey(k) {
+			out = append(out, levelKey{k.Value, k.Line})
+		}
+	}
+	var merged map[string]yaml.Node
+	if err := node.Decode(&merged); err != nil {
+		return nil, err
+	}
+	var rest []levelKey
+	for name, n := range merged {
+		if !slices.ContainsFunc(out, func(k levelKey) bool { return k.name == name }) {
+			rest = append(rest, levelKey{name, n.Line})
+		}
+	}
+	slices.SortFunc(rest, func(a, b levelKey) int {
+		if a.line != b.line {
+			return a.line - b.line
+		}
+		return strings.Compare(a.name, b.name)
+	})
+	return append(out, rest...), nil
+}
+
+// levelMergeKey reports whether k is the YAML merge key, in the decoder's own
+// terms (isMerge, yaml.v3): `<<` tagged as the merge key, and not a quoted
+// "<<" that is a field name of its own, which no level has.
+func levelMergeKey(k *yaml.Node) bool {
+	return k.Kind == yaml.ScalarNode && k.Value == "<<" && (k.Tag == "" || k.Tag == "!" || k.Tag == "!!merge")
+}
+
+// levelNotAMapping is the refusal for a level written as something other than
+// a block of keys, in yaml.v3's own words: a custom unmarshaler replaces the
+// message the decoder builds for a value of the wrong shape, and this is that
+// message (its terror), so `l1: claude-haiku-4-5` reads here exactly as it
+// read before one was installed.
+func levelNotAMapping(node *yaml.Node) error {
+	tag, value := node.ShortTag(), node.Value
+	if tag == "!!map" || tag == "!!seq" {
+		value = ""
+	} else if len(value) > 10 {
+		value = " `" + value[:7] + "...`"
+	} else {
+		value = " `" + value + "`"
+	}
+	return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: cannot unmarshal %s%s into %s", node.Line, tag, value, levelSettingType)}}
+}
+
+// UnmarshalJSON is UnmarshalYAML for a task's spec, whose block is decoded by
+// encoding/json: the decoder's DisallowUnknownFields no longer reaches inside
+// a type that decodes itself, so the unknown-key refusal is repeated here, and
+// a written `"none": false` is recorded for the same reason as above.
+func (s *LevelSetting) UnmarshalJSON(data []byte) error {
+	type plain LevelSetting
+	var v plain
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	keys, err := levelJSONKeys(data)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if !levelSettingJSONKeys[k] {
+			return errors.New("json: unknown field " + strconv.Quote(k))
+		}
+	}
+	*s = LevelSetting(v)
+	for _, k := range keys {
+		if k == "none" {
+			s.noneFalse = !s.Off
+			break
+		}
+	}
+	return nil
+}
+
+// levelJSONKeys are the keys a level block writes, in the order the document
+// writes them, and nil for a block that is not an object (a null level, which
+// carries no keys). The order is the point: encoding/json names the first
+// field it does not know, in that order, so a refusal that read the keys off a
+// Go map would name an arbitrary one of them instead.
+func levelJSONKeys(data []byte) ([]string, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	first, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := first.(json.Delim); !ok || d != '{' {
+		return nil, nil
+	}
+	var out []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		k, ok := tok.(string)
+		if !ok {
+			return nil, fmt.Errorf("json: object key %v is not a string", tok)
+		}
+		out = append(out, k)
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // validate checks one level's settings under name.
 func (s *LevelSetting) validate(name string) error {
 	var errs []error
 	if s.Effort != "" && !ValidEffort(s.Effort) {
 		errs = append(errs, fmt.Errorf("%s.effort %q must be one of %s", name, s.Effort, strings.Join(Efforts, ", ")))
 	}
-	if s.Off && (s.Model != "" || s.Effort != "" || s.Focus != "") {
+	switch {
+	case s.Off && (s.Model != "" || s.Effort != "" || s.Focus != ""):
 		errs = append(errs, fmt.Errorf("%s has none: true beside another key: a level that is off has no settings", name))
+	case s.Model == NoneModel:
+		// The literal model name none is the level's own switch written the
+		// other way, so it is refused beside any other key exactly as
+		// `none: true` is, and by a sentence naming them both. Alone it is
+		// folded into the switch, so no reader of the block ever sees the
+		// string none as a model name.
+		if beside := s.besideNoneModel(); len(beside) > 0 {
+			errs = append(errs, fmt.Errorf("%s has model: none beside %s: a level that is off has no settings", name, strings.Join(beside, " and ")))
+		} else {
+			s.Off, s.Model = true, ""
+		}
 	}
 	if len(s.Focus) > MaxLevelFocusBytes {
 		errs = append(errs, fmt.Errorf("%s.focus is longer than %d bytes (%d)", name, MaxLevelFocusBytes, len(s.Focus)))
@@ -128,6 +364,23 @@ func (s *LevelSetting) validate(name string) error {
 	return errors.Join(errs...)
 }
 
+// besideNoneModel are the keys a `model: none` was written beside, in the
+// order the refusal about it names them: the settings a level that does not
+// run has none of, and a written `none: false`, which says the level does run.
+func (s *LevelSetting) besideNoneModel() []string {
+	var out []string
+	if s.Effort != "" {
+		out = append(out, "effort")
+	}
+	if s.Focus != "" {
+		out = append(out, "focus")
+	}
+	if s.noneFalse {
+		out = append(out, "none: false")
+	}
+	return out
+}
+
 // ParseReviewLevelsYAML decodes a review-levels document — fugaro run
 // --review-levels's file, and a configuration layer's agent.levels block —
 // under this package's rules, and returns either the block or the reason it
@@ -138,11 +391,14 @@ func (s *LevelSetting) validate(name string) error {
 // object rather than dropped, a second YAML document in the same file is
 // refused rather than ignored, and the decode is followed by
 // ReviewLevels.Validate, so an effort outside Efforts, a focus over its
-// bound or beside a control character, and `none: true` beside another key
-// are all refused here. The task's own copy of the block is decoded by
-// internal/task's Parse, which is strict the same way (its
-// DisallowUnknownFields reaches every nested object) and applies the same
-// Validate through Spec.Validate.
+// bound or beside a control character, and the level's own switch — `none:
+// true`, or its model named none — beside another key are all refused here.
+// The task's own copy of the block is decoded by
+// internal/task's Parse, which is strict the same way — an unknown key inside
+// a level is refused by the block's own decoder, since a type that decodes
+// itself is past the decoder's DisallowUnknownFields, and every object around
+// the block is still the decoder's — and applies the same Validate through
+// Spec.Validate.
 func ParseReviewLevelsYAML(data []byte) (*ReviewLevels, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)

@@ -121,6 +121,21 @@ func (l *ProjectLayer) SetsRigor() bool {
 	return ok
 }
 
+// SetsLevelsNoneModel reports whether the layer's text names a review level's
+// model with the literal none (NoneModel), the level's own switch written the
+// other way. It reads the tree and not the parsed defaults.agent.levels, which
+// the decode and validate fold the literal out of, for the reason SetsRigor
+// reads its own: the question is what the text says, and the gate needs it
+// because a runner older than noneModelSince reads the literal as a model ID
+// rather than skipping the level.
+func (l *ProjectLayer) SetsLevelsNoneModel() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	return levelsNoneModel(d["agent"])
+}
+
 // SetsGovernance reports whether the layer's text writes governance:, at any
 // value: a runner before governanceSince decodes the layer with KnownFields,
 // so the key alone is what it refuses, and Governance's zero value cannot
