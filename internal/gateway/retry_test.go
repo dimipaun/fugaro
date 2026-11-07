@@ -2,9 +2,12 @@ package gateway
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -239,6 +242,75 @@ func TestRetryKeepsOneReservationAndOneSettlement(t *testing.T) {
 	l.mu.Unlock()
 	if released != 0 {
 		t.Errorf("the lease was released %d times before Close, want 0: the retry releases nothing", released)
+	}
+}
+
+// retryDialFails is an upstream the gateway reaches once and cannot dial
+// again: the first request goes to the fake as usual, and the second fails
+// before anything is written -- the shape of a retry that never leaves the
+// client, whatever the first attempt did.
+type retryDialFails struct {
+	tries atomic.Int32
+}
+
+func (d *retryDialFails) RoundTrip(r *http.Request) (*http.Response, error) {
+	if d.tries.Add(1) > 1 {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// A retry that never left the client is not an attempt: the call is answered
+// for as the first attempt left it. The first attempt's own flag decides the
+// charge -- an attempt the upstream may have received is charged the whole
+// reservation even though the retry after it never got out of the client --
+// and the status the upstream did send is the agent's, not a gateway error put
+// in its place. Either mistake would be a fact this gateway does not have.
+func TestARetryThatNeverLeftTheClientIsNotAnAttempt(t *testing.T) {
+	fastRetry(t)
+	for _, c := range []struct {
+		name        string
+		reply       anthropicfake.Reply
+		wantStatus  int
+		wantCharged bool
+	}{
+		{"a dropped connection", anthropicfake.Reply{DropBeforeHeaders: true}, http.StatusBadGateway, true},
+		{"a 503", anthropicfake.Error(http.StatusServiceUnavailable, "api_error", "busy"), http.StatusServiceUnavailable, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dial := &retryDialFails{}
+			h := newHarnessWith(t, func(o *Options) { o.Client = &http.Client{Transport: dial} }, c.reply)
+			body := msg(sonnet, 1000, `"stream":true`)
+			resp, b := h.post(body)
+			if resp.StatusCode != c.wantStatus {
+				t.Fatalf("the agent got %d %q, want %d", resp.StatusCode, b, c.wantStatus)
+			}
+			if n := dial.tries.Load(); n != 2 {
+				t.Fatalf("the gateway made %d requests, want 2: the call and its one retry", n)
+			}
+			if n := h.fake.Count(); n != 1 {
+				t.Fatalf("the upstream saw %d requests, want 1: the retry never left the client", n)
+			}
+			onlyRetryLine(t, h.logs)
+			w := worst(t, sonnet, body, 1000, "")
+			rep := h.gw.EndStage()
+			call := h.logs.lastCall(t)
+			if c.wantCharged {
+				if rep.Used != w || rep.Unreconciled != w {
+					t.Errorf("report %+v, want the reservation %d charged: the first attempt may have reached the upstream", rep, w)
+				}
+				if call["settled"] != "reserved" {
+					t.Errorf("log %v, want settled reserved", call)
+				}
+				return
+			}
+			if l := h.gw.Ledger(); l.Used != 0 || l.Reserved != 0 {
+				t.Errorf("ledger %+v, want nothing charged: the upstream answered the first attempt", l)
+			}
+			if call["settled"] != "zero" || num(call["status"]) != int64(c.wantStatus) {
+				t.Errorf("log %v, want the upstream's own %d settled zero", call, c.wantStatus)
+			}
+		})
 	}
 }
 

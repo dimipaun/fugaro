@@ -937,10 +937,17 @@ var upstreamRetryDelay = 250 * time.Millisecond
 // charging the reservation twice for one client request -- would bill the run
 // for an answer no one received.
 //
-// It returns the attempt that answered, or the last one that failed, exactly
-// as a single attempt's would be: the request the caller reads the credential
-// and the run's identity off, the flag that says whether anything may have
-// reached the upstream, the response, and the error.
+// The four values it returns are one attempt's own -- the request the caller
+// reads the credential and the run's identity off, the flag that says whether
+// anything of it may have reached the upstream, the response and the error --
+// and which attempt they belong to is decided by whether the retry happened
+// at all: the retry's when it left the client, the first attempt's when it did
+// not (it could not be built again, or it never got out of the client). A
+// retry that never left is not an attempt, and answering the call with its
+// failure would say something this gateway does not know: it would either
+// leave an attempt the upstream may have received uncharged (the reservation
+// the ledger keeps for exactly that) or hand the agent a gateway error in
+// place of the status the upstream did send.
 func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string) (*http.Request, *atomic.Bool, *http.Response, error) {
 	resp, err := s.client.Do(up)
 	reason, status := upstreamRetryReason(resp, err)
@@ -950,22 +957,30 @@ func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *a
 	if !sleepUpstreamRetry(ctx) {
 		return up, sent, resp, err // cancelled while waiting: the failed attempt is the call's answer
 	}
-	if resp != nil {
-		// The failed attempt's answer is the gateway's to discard: not one
-		// byte of it reached the agent, and it is read no further.
-		_ = resp.Body.Close()
-	}
 	nup, nsent, nerr := next()
 	if nerr != nil {
 		// A call the gateway cannot build again (a Vertex token that went
-		// away between the two attempts) is not sent again: the attempt that
-		// failed is the call's answer, and the second build's failure is what
-		// it is answered with.
-		return up, sent, nil, nerr
+		// away between the two attempts) is not sent again: no retry
+		// happened, so the call's answer is the first attempt's.
+		return up, sent, resp, err
 	}
 	s.logUpstreamRetry(model, reason, status, 1)
-	resp, err = s.client.Do(nup)
-	return nup, nsent, resp, err
+	nresp, nerr := s.client.Do(nup)
+	if nerr != nil && !nsent.Load() {
+		// The retry never left the client -- a dial, a DNS or a TLS failure,
+		// not one byte of it written anywhere -- so it is not an attempt, and
+		// the call's answer is the first attempt's, answered for exactly as it
+		// would have been without a retry: the status the upstream gave, and
+		// the reservation charged if that attempt may have reached it.
+		return up, sent, resp, err
+	}
+	if resp != nil {
+		// The retry left the client, so the call's answer is the retry's now,
+		// and the first attempt's is the gateway's to discard: not one byte of
+		// it ever reached the agent, and it is read no further.
+		_ = resp.Body.Close()
+	}
+	return nup, nsent, nresp, nerr
 }
 
 // upstreamRetryReason is why an attempt may be sent again, from a closed set:
