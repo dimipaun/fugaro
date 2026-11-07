@@ -534,18 +534,22 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
 // consoleMovedSections are the document's headings whose command and shapes
 // live under ee/: the coordinator's moved there with E2.1b, the report's with
-// E2.2b, and the graph's never lived in the core at all (D1362 puts `fugaro
-// graph` in ee/ from its first line, the graph plan's CG3). This build can name
-// no field or flag of any of them — an untagged build compiles neither the
-// command nor the shapes — so the checks below would be reading a package they
-// cannot import. The same checks run over these sections against the tagged
-// tree, where the code is in the build
-// (ee/coordinator/cli/console_contract_test.go, ee/report/cli/console_contract_test.go;
-// §6.21's own pin arrives with the graph command, CG3). §6.15 is the
-// coordinator's too — coordinator v2 C3's `coordinator show`, whose document and
-// command are both under ee/ — and it is a heading of its own rather than a part
-// of §6.13 because the two document different reads of different shapes. §6.16
-// is coordinator v2 C4's `coordinator intents`, under ee/ for the same reason.
+// E2.2b, and the graph's never lived in the core at all — D1362 puts `fugaro
+// graph` in ee/ from its first line, so its section was written (CG8) with its
+// code under ee/ from the start. This build can name no field or flag of any of
+// them — an untagged build compiles neither the command nor the shapes — so the
+// checks below would be reading a package they cannot import. For the two moved
+// ones the same checks run against the tagged tree, where the code is in the
+// build (ee/coordinator/cli/console_contract_test.go,
+// ee/report/cli/console_contract_test.go); §6.21 has no such counterpart yet,
+// and that is a fact of its age rather than a decision: the graph command (CG3)
+// and the console read of its document (CG9a) are the tasks that will carry one,
+// and until then the section stands on the plan's H1 to H5 and on the review
+// that read it against `ee/graph/document.go`. §6.15 is the coordinator's too —
+// coordinator v2 C3's `coordinator show`, whose document and command are both
+// under ee/ — and it is a heading of its own rather than a part of §6.13 because
+// the two document different reads of different shapes. §6.16 is coordinator v2
+// C4's `coordinator intents`, under ee/ for the same reason.
 var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "### 6.16 ", "### 6.21 ", "## 4. `fugaro report --json`"}
 
 // consoleMovedRows are the document's individual lines that name a flag of a
