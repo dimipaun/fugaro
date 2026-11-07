@@ -402,6 +402,7 @@ func unpack(body io.Reader, dest string, max int64) error {
 	}
 	defer rt.Close()
 	tr := tar.NewReader(gz)
+	real := map[string]bool{}
 	top, total, entries := "", int64(0), 0
 	for {
 		h, err := tr.Next()
@@ -423,6 +424,9 @@ func unpack(body io.Reader, dest string, max int64) error {
 		}
 		switch h.Typeflag {
 		case tar.TypeDir:
+			if err := inside(rt, real, h.Name, rel); err != nil {
+				return err
+			}
 			if err := rt.MkdirAll(rel, treeWritable); err != nil {
 				return fmt.Errorf("writing %q: %w", h.Name, err)
 			}
@@ -431,12 +435,18 @@ func unpack(body io.Reader, dest string, max int64) error {
 				return fmt.Errorf("refusing %q: the archive unpacks to more than %d bytes", h.Name, max)
 			}
 			total += h.Size
+			if err := inside(rt, real, h.Name, rel); err != nil {
+				return err
+			}
 			if err := writeEntry(rt, rel, h, tr); err != nil {
 				return err
 			}
 		case tar.TypeSymlink:
 			if escapes(rel, h.Linkname) {
 				return fmt.Errorf("refusing %q: its link target %q leaves the source tree", h.Name, h.Linkname)
+			}
+			if err := inside(rt, real, h.Name, rel); err != nil {
+				return err
 			}
 			if err := mkdirFor(rt, rel); err != nil {
 				return fmt.Errorf("writing %q: %w", h.Name, err)
@@ -511,6 +521,46 @@ func mkdirFor(rt *os.Root, rel string) error {
 		return nil
 	}
 	return rt.MkdirAll(dir, treeWritable)
+}
+
+// inside refuses an entry that would be written through a link an earlier
+// entry planted. escapes compares the entry's path in the tree with its link
+// target, and both are resolved by the filesystem, not by that comparison: a
+// directory of the path that is itself a link resolves wherever it points, so
+// "a" -> "." followed by "a/link" -> "../outside" puts a link at the tree's
+// root that leaves it, with every check above passing (internal/cache refuses
+// the same archive for the same reason). A directory this unpack created is
+// remembered, so the walk runs once per directory rather than once per entry.
+func inside(rt *os.Root, real map[string]bool, name, rel string) error {
+	dir := filepath.Dir(rel)
+	if dir == "." || real[dir] {
+		return nil
+	}
+	at := ""
+	for _, c := range strings.Split(dir, string(filepath.Separator)) {
+		at = filepath.Join(at, c)
+		if real[at] {
+			continue
+		}
+		fi, err := rt.Lstat(at)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// The rest of the path does not exist yet: MkdirAll builds it out
+			// of directories of this unpack's own.
+			real[dir] = true
+			return nil
+		case err != nil:
+			return fmt.Errorf("checking %q: %w", name, err)
+		case fi.Mode()&fs.ModeSymlink != 0:
+			return fmt.Errorf("refusing %q: %s on its path is a link, and a link resolves where it points", name, filepath.ToSlash(at))
+		case fi.IsDir():
+			real[at] = true
+		default:
+			return fmt.Errorf("refusing %q: %s on its path is not a directory", name, filepath.ToSlash(at))
+		}
+	}
+	real[dir] = true
+	return nil
 }
 
 // entryMode masks an entry's mode to 0755 when any execute bit is set and

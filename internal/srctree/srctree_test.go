@@ -763,6 +763,43 @@ func names(t *testing.T, dir string) []string {
 	return out
 }
 
+// TestUnpackRefusesAnEntryThroughALink: the directory an entry is written in
+// is resolved by the filesystem, not by the check that compares the entry's
+// path with its link target, so a link an earlier entry planted turns a later
+// entry's own directory into the link's target. Both archives below pass every
+// other check -- "." and "../outside" are each local to the directory they name
+// -- and together they write at the tree's top level a name the archive never
+// put there: a link out of the tree, which is the link Read would follow, and a
+// file where the tree's own root is. The entries that do it are what this
+// package must refuse, because the tree it serves is read-only (F8, F9).
+func TestUnpackRefusesAnEntryThroughALink(t *testing.T) {
+	const top = "fugaro-abc"
+	planted := &tar.Header{Name: top + "/a", Typeflag: tar.TypeSymlink, Linkname: "."}
+	cases := []struct {
+		name string
+		hdrs []*tar.Header
+		want string
+	}{
+		{"a link under a link", []*tar.Header{planted,
+			{Name: top + "/a/link", Typeflag: tar.TypeSymlink, Linkname: "../outside"}}, "link"},
+		{"a file under a link", []*tar.Header{planted,
+			{Name: top + "/a/evil", Typeflag: tar.TypeReg}}, "evil"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			body := archiveOf(t, top, nil, tc.hdrs...)
+			err := unpack(bytes.NewReader(body), dest, 1<<20)
+			if err == nil {
+				t.Fatalf("the archive was unpacked into %v: %s is a name it never wrote at the tree's top level", treeNames(t, dest), tc.want)
+			}
+			if _, err := os.Lstat(filepath.Join(dest, tc.want)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("the refused archive left %s (%v)", filepath.Join(dest, tc.want), err)
+			}
+		})
+	}
+}
+
 func TestUnpackRefusesAnUnsafeArchive(t *testing.T) {
 	const top = "fugaro-abc"
 	cases := []struct {
