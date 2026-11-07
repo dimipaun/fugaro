@@ -208,6 +208,30 @@ if [ -n "${FAKE111_LEAK:-}" ] && [ "$json" = no ]; then
   echo " 1. $DISPLAY_NAME_NAME (billingAccounts/AAAAAA-BBBBBB-CCCCCC)"
 fi
 
+# One form of a leak at a time, in mode 3 alone (the no-TTY, non---json run that
+# carries no agent marker), so each of the check's criterion-3 detectors is
+# pinned on its own rather than as a union: the API's own resource form
+# (FAKE111_LEAK_ID), one of the ids the owner wrote into --account-ids
+# (FAKE111_LEAK_BARE_ID — the same id WITHOUT the resource prefix, which is the
+# only form that file's grep catches), a display name of theirs
+# (FAKE111_LEAK_NAME), and a numbered line that names no account at all
+# (FAKE111_LEAK_NUMBERED).
+if [ ! -t 1 ] && [ "$json" = no ] && [ -z "${AI_AGENT:-}" ]; then
+  [ -z "${FAKE111_LEAK_ID:-}" ] || echo "the account billingAccounts/AAAAAA-BBBBBB-CCCCCC could not be read"
+  [ -z "${FAKE111_LEAK_BARE_ID:-}" ] || echo "the account AAAAAA-BBBBBB-CCCCCC could not be read"
+  [ -z "${FAKE111_LEAK_NAME:-}" ] || echo "the account $DISPLAY_NAME_NAME could not be read"
+  [ -z "${FAKE111_LEAK_NUMBERED:-}" ] || echo "  1. an account you already have"
+fi
+
+# FAKE111_ASK: the picker running in a run that cannot answer it — the reversal
+# mode 1(a) under --yes and modes 3, 4 and 5 exist to rule out, and the one
+# failure the check's own "nothing may be asked where nothing can answer" row
+# has to catch. Mode 3 alone carries it here.
+if [ -n "${FAKE111_ASK:-}" ] && [ ! -t 1 ] && [ "$json" = no ] && [ -z "${AI_AGENT:-}" ]; then
+  echo "Billing accounts you can link to $proj (from gcloud billing accounts list):"
+  printf 'Billing account (a number, or none to link none now): '
+fi
+
 # The applying stage that belongs to the owner when no terminal can answer it.
 if [ -n "${AI_AGENT:-}" ]; then
   echo "the project stage is left for you: run this in your own terminal window, not through a coding agent"
@@ -457,6 +481,99 @@ test_a_leak_is_a_fail() {
   expect_scratch_gone "$dir" "leak"
 }
 
+# The picker's own prompt in a run that cannot answer it: mode 1(a) under --yes
+# and modes 3, 4 and 5 are the runs whose whole point is that nothing is asked
+# where nothing can answer, and an ask is not a leak — so this is the one case
+# that reads that row as a FAIL, and it leaves the leak rows alone.
+test_a_picker_where_none_may_run_is_a_fail() {
+  setup_case asked
+  sandbox_args
+  RUN111_ENV=(FAKE111_ASK=1)
+  run111
+  expect_status "$status" 1 "picker where none may run"
+  expect_contains "$out" "FACT picker-3: FAIL — the picker ran where it must not: Billing account (a number, or" "picker where none may run: mode 3's own row"
+  expect_contains "$out" "FACT picker-4: PASS — " "picker where none may run: --json's run asks nothing"
+  expect_contains "$out" "FACT picker-5: PASS — " "picker where none may run: and neither does an agent's session"
+  expect_contains "$out" "FACT leak-3: PASS — " "picker where none may run: a prompt is not a leak"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "picker where none may run: the verdict"
+  expect_scratch_gone "$dir" "picker where none may run"
+}
+
+# Criterion 3 reads four forms of a leak, and each of these four cases carries
+# exactly one of them in mode 3 — so a detector that is deleted or inverted
+# fails its own case instead of hiding behind the others.
+test_criterion_3_detects_an_account_resource_id() {
+  setup_case leakid
+  sandbox_args
+  RUN111_ENV=(FAKE111_LEAK_ID=1)
+  run111
+  expect_status "$status" 1 "resource id"
+  expect_contains "$out" "FACT leak-3: FAIL — a leak: an account resource id: billingAccounts/AAAAAA-BBBBBB-CCCCCC" "resource id: the API's own resource form"
+  expect_absent "$out" "a display name of yours: $DISPLAY_NAME" "resource id: no display name was read"
+  expect_absent "$out" "numbered line" "resource id: and no numbered line was counted"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "resource id: the verdict"
+  expect_scratch_gone "$dir" "resource id"
+}
+
+test_criterion_3_detects_one_of_the_owners_ids() {
+  setup_case leakbareid
+  printf 'AAAAAA-BBBBBB-CCCCCC\n' >"$dir/ids.txt"
+  sandbox_args
+  RUN111_ARGS+=(--account-ids "$dir/ids.txt")
+  RUN111_ENV=(FAKE111_LEAK_BARE_ID=1)
+  run111
+  expect_status "$status" 1 "one of your ids"
+  expect_contains "$out" "FACT account-ids: PASS — $dir/ids.txt (1 id(s)" "one of your ids: --account-ids was read"
+  expect_contains "$out" "FACT leak-3: FAIL — a leak: one of YOUR account ids: AAAAAA-BBBBBB-CCCCCC" "one of your ids: the ids file's own grep"
+  expect_absent "$out" "an account resource id:" "one of your ids: a bare id is not the API's resource form, so that detector must not claim it"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "one of your ids: the verdict"
+  expect_scratch_gone "$dir" "one of your ids"
+}
+
+test_criterion_3_detects_a_display_name() {
+  setup_case leakname
+  sandbox_args
+  RUN111_ENV=(FAKE111_LEAK_NAME=1)
+  run111
+  expect_status "$status" 1 "display name"
+  expect_contains "$out" "FACT leak-3: FAIL — a leak: a display name of yours: $DISPLAY_NAME" "display name: the names file's own grep"
+  expect_absent "$out" "an account resource id:" "display name: no id was read"
+  expect_absent "$out" "numbered line" "display name: and no numbered line was counted"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "display name: the verdict"
+  expect_scratch_gone "$dir" "display name"
+}
+
+# The numbered-line detector is the one that reads a list of anything: what it
+# counts is not the account's own name or id, so it is pinned by a line that
+# carries neither.
+test_criterion_3_detects_a_numbered_line() {
+  setup_case leaknumbered
+  sandbox_args
+  RUN111_ENV=(FAKE111_LEAK_NUMBERED=1)
+  run111
+  expect_status "$status" 1 "numbered line"
+  expect_contains "$out" "FACT leak-3: FAIL — the capture carries 1 numbered line(s)" "numbered line: the numbered-line detector"
+  expect_absent "$out" "FACT leak-3: FAIL — a leak:" "numbered line: neither an id nor a name was read"
+  expect_contains "$out" "FACT leak-4: PASS — " "numbered line: mode 3 alone carried it"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "numbered line: the verdict"
+  expect_scratch_gone "$dir" "numbered line"
+}
+
+# --account-ids that names a file which is not there stops the run before a tool
+# is called: without it the ids cannot be grepped for, and a check that cannot
+# read one of its own criterion-3 detectors must not run.
+test_a_missing_ids_file_stops() {
+  setup_case idsmissing
+  sandbox_args
+  RUN111_ARGS+=(--account-ids "$dir/no-such-ids.txt")
+  run111
+  expect_status "$status" 2 "missing ids file"
+  [ -s "$dir/calls" ] && fail "missing ids file: a tool was called: $(tr '\n' ';' <"$dir/calls")"
+  expect_contains "$(cat "$dir/err")" "does not exist or is empty" "missing ids file: the stop says which file"
+  expect_absent "$out" "CHECK 111 RESULT: PASS" "missing ids file: no verdict"
+  expect_scratch_gone "$dir" "missing ids file"
+}
+
 # An unrun mode is not a pass: with --modes naming one run, the other six read
 # FAIL — not run and the verdict is FAIL, whatever the one run that did run said.
 test_an_unrun_mode_is_not_a_pass() {
@@ -650,6 +767,12 @@ t() {
 t test_all_seven_runs_pass
 t test_a_failed_assertion_still_restores
 t test_a_leak_is_a_fail
+t test_a_picker_where_none_may_run_is_a_fail
+t test_criterion_3_detects_an_account_resource_id
+t test_criterion_3_detects_one_of_the_owners_ids
+t test_criterion_3_detects_a_display_name
+t test_criterion_3_detects_a_numbered_line
+t test_a_missing_ids_file_stops
 t test_an_unrun_mode_is_not_a_pass
 t test_mode_2s_premise_missing_is_not_run
 t test_a_blocking_run_is_a_fail
