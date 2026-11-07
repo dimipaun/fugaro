@@ -949,8 +949,16 @@ apart in time rather than a level apart, and §P7 is the second one's text.
 
 **Each block is the union's own summary of a task its owning document states in full**, and the
 fields this part adds are the **level** (§P3), the **commit** — which Part I does not state per task —
-and the file **F27** corrects. **The owning section wins on everything else**, and the file lists here
-are abbreviated to what the union needs: the owning section is the list of record.
+and the file **F27** corrects. **The owning section wins on everything else.** Two rules keep that
+from being a formality:
+
+- **The FC blocks' files and commands are the design's own §10 lines, quoted rather than restated.**
+  A restatement that drops one file or narrows one `-run` pattern makes a gate pass vacuously — a
+  command that names the wrong test matches nothing and still exits zero — which is the one failure a
+  plan's commands must not have. Where a block below departs from the design's wording, it says so.
+- **The P blocks' commands are this part's**, because Part I states each task's named tests but no
+  command per task; each pattern below is checked against that task's own list in Part I, and the
+  owning section remains the list of record for the files.
 
 #### Level 0 — R0, R12, R13, FC1
 
@@ -991,15 +999,19 @@ are abbreviated to what the union needs: the owning section is the list of recor
   with no row. **Reviewer:** opus + mandatory independent review. **Commit:**
   `feat(config): jobs.reports.paused and jobs.catalog_check.paused`.
 
-**FC1 — the vocabulary and the record's field (slice F).** `docs/design/failure-classes.md`, `### FC1`.
-- **Files (4):** `internal/runstore/runstore.go`, `schemas/result.schema.json`,
-  `internal/cli/runs_test.go`, `internal/cli/docs_pr_state_test.go`.
-- **Interfaces:** `failure.Class` and its nineteen values, the record's `failure_class`.
-- **Tests, and the command:** the design's own list — `GOFLAGS=-p=2 go test ./internal/runstore
-  ./internal/cli -run 'FailureClass|Docs' -count=1`.
-- **Depends on:** nothing. **Red step:** the schema and the vocabulary tests fail with no class.
-  **Reviewer:** standard. **Commit:** `feat(runstore): the failure_class vocabulary and the record's
-  field`.
+**FC1 — the vocabulary, the field and its schema (slice F).** The design, `### FC1`.
+- **Files (6), the design's list:** the new `failure` package (or `internal/runstore/failure.go`),
+  `internal/runstore/runstore.go`, `schemas/result.schema.json`, `internal/cli/runs_test.go`,
+  **`schemas/schemas_test.go`**, `internal/cli/docs_pr_state_test.go`. **This is the list §P1 and
+  §P4 rely on**: `schemas/schemas_test.go` is in it, and §P4 has a row for it.
+- **Interfaces:** `failure.Class` (a string type), `failure.Classes()` (the one slice), and the
+  per-class properties read from one table.
+- **Tests, and the command — the design's, verbatim:** `TestResultSchemaFailureClassesAgreeWithGo`,
+  `TestResultSchemaAcceptsRunnerRecords`;
+  `GOFLAGS=-p=2 go test ./internal/runstore ./schemas -run 'FailureClass|Accepts' -count=1`.
+- **Depends on:** nothing. **Red step:** the design's — write the schema's enum from the Go slice
+  before the slice exists. **Reviewer:** standard. **Commit:**
+  `feat(runstore): the failure_class vocabulary and the record's field`.
 
 #### Level 1 — R1, R7, FC2
 
@@ -1007,8 +1019,10 @@ are abbreviated to what the union needs: the owning section is the list of recor
 - **Files (5):** `internal/cli/runs_digest.go`, `internal/cli/runs_digest_due_test.go` (new),
   `schemas/runs-digest-due.schema.json` (new), `schemas/schemas_test.go`, `docs/recipes.md`.
 - **Interfaces:** `--due` and `--json` on the shipped subcommand, and the due document's schema.
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli ./schemas -run 'RunsDigestDue|Schema'
-  -count=1`.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli ./schemas -run 'RunsDigestDue'
+  -count=1` — Part I's eight named tests, and the schema test the file list's
+  `schemas/schemas_test.go` adds for the due document, which is the one package `-run` pattern that
+  reaches both.
 - **Depends on:** R0. **Red step:** `TestRunsDigestDueNamesTheMissingPeriods` fails while the flag
   does not exist. **Reviewer:** standard. **Commit:**
   `feat(cli): runs digest --due names the closed periods a checkout has no report for`.
@@ -1028,16 +1042,19 @@ are abbreviated to what the union needs: the owning section is the list of recor
   `feat(infra): fugaro update plans the reports job, paused`.
 
 **FC2 — one writer for the terminal status and class (slice F).** The design, `### FC2`.
-- **Files (10):** `internal/runner/runner.go`, `refused.go`, `gate.go`, `followup.go`,
-  `reviewmode.go`, `artifact.go`, `reviewartifact.go`, `shadow.go`,
-  `failure_class_internal_test.go`, and `internal/cli/docs_pr_state_test.go`.
-- **Interfaces:** `recordEnd(status, outcome, class, reason)` — the one writer the thirty-six
-  statements become.
-- **Tests, and the command:** the design's own guard over the tree —
-  `GOFLAGS=-p=2 go test ./internal/runner ./internal/cli -run 'FailureClass|Docs' -count=1`.
-- **Depends on:** FC1. **Red step:** the census test fails while a second writer remains.
-  **Reviewer:** **independent (SEC)** — the reviewer asks whether a class or a reason can carry a
-  message. **Commit:** `feat(runner): one writer for a run's terminal status and class`.
+- **Files (11, under the plan's twelve-file cap), the design's list:** `internal/runner/runner.go`,
+  `gate.go`, `refused.go`, `followup.go`, `reviewmode.go`, `artifact.go`, `reviewartifact.go`,
+  `shadow.go`, `failure_class_internal_test.go`, **`docs/design/failure-classes.md`** (§1's census
+  sentence is rewritten) and `internal/cli/docs_pr_state_test.go`.
+- **Interfaces:** `func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class
+  failure.Class, reason string)` — the one writer the thirty-six statements become.
+- **Tests, and the command — the design's, verbatim:** `TestRecordEndIsTheOnlyWriterOfATerminalStatus`,
+  `TestUnclassifiedIsWrittenWhereNoClassIsChosen`, `TestHaltedRunCarriesItsHaltsClass`;
+  `GOFLAGS=-p=2 go test ./internal/runner -run 'RecordEnd|Unclassified|HaltedRun' -count=1`.
+- **Depends on:** FC1. **Red step:** the design's — the guard fails the moment the field is added
+  beside the thirty-six statements. **Reviewer:** **independent (SEC)** — the reviewer asks whether a
+  class or a status can be written anywhere else, and whether the last-writer rule is the only rule.
+  **Commit:** `feat(runner): one writer for a run's terminal status and class`.
 
 #### Level 2 — R2, R4, FC3
 
@@ -1061,14 +1078,17 @@ are abbreviated to what the union needs: the owning section is the list of recor
   the rule does not exist. **Reviewer:** standard. **Commit:**
   `feat(digest): cost_per_run_rising, the fifth rule`.
 
-**FC3 — the classes the runner knows from its own state (slice F).** The design, `### FC3`.
-- **Files (6):** `internal/runner/runner.go`, `refused.go`, `outcome.go`, `halt.go`, `prflow.go`,
-  and the internal test.
-- **Interfaces:** the structural classes — the ones no message can decide.
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'FailureClass' -count=1`.
-- **Depends on:** FC2. **Red step:** the structural cases fail while the classes are unset.
-  **Reviewer:** standard. **Commit:** `feat(runner): the classes the runner knows from its own
-  state`.
+**FC3 — the classes the runner knows structurally (slice F).** The design, `### FC3`.
+- **Files (6), the design's list:** `internal/runner/outcome.go` (the four `Decide` refusals),
+  `halt.go` (`haltClass`), `runner.go` (`verify`, `runCommits`, the `config_invalid` refusals),
+  `refused.go` (`branch_moved`), `prflow.go` (`git_provider_error`), and their test files.
+- **Interfaces:** `failure.ClassForVerify(rec verify.Record, sha string)` and `haltClass(HaltReason)`.
+- **Tests, and the command — the design's, verbatim:** `TestDecideRefusalsCarryTheirClass`,
+  `TestHaltReasonsMapToTheirFamily`, `TestConfigRefusalIsConfigInvalid`;
+  `GOFLAGS=-p=2 go test ./internal/runner -run 'DecideRefusals|HaltReasons|ConfigRefusal' -count=1`.
+- **Depends on:** FC2. **Red step:** the design's — every class assertion fails against a tree where
+  the class is `unclassified`. **Reviewer:** standard. **Commit:**
+  `feat(runner): the classes the runner knows from its own state`.
 
 #### Level 3 — R3, R11, FC4, FC5
 
@@ -1104,24 +1124,32 @@ are abbreviated to what the union needs: the owning section is the list of recor
   not exist. **Reviewer:** opus + mandatory independent review. **Commit:**
   `feat(cli): runs reports --job, and the reader the rules read`.
 
-**FC4 — classify a stage's own error message (slice F).** The design, `### FC4`.
-- **Files (3):** `internal/runner/runner.go`, `internal/runner/stageerror_test.go`,
-  `internal/runner/redaction_test.go`.
-- **Interfaces:** `stageFailureClass(auth string, res agent.Result) failure.Class` and its phrase
-  table.
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'StageError|Redaction'
-  -count=1`.
-- **Depends on:** FC2. **Red step:** the phrase table's cases fail with no classifier. **Reviewer:**
-  **independent (SEC)** — the reviewer asks whether every byte of the message stays outside the
-  record. **Commit:** `feat(runner): classify a stage's own error message, without copying it`.
+**FC4 — the classifier over the agent's own message (slice F).** The design, `### FC4`.
+- **Files (4), the design's list:** `internal/runner/runner.go` (`stageFailureClass`, the phrase
+  tables, the `res.IsError` case), `internal/runner/stageerror_internal_test.go` (or the existing
+  `stageerror_test.go`), and — for the security property — `internal/runner/redaction_test.go`.
+- **Interfaces:** `func stageFailureClass(auth string, res agent.Result) failure.Class`.
+- **Tests, and the command — the design's, verbatim:** `TestStageFailureClassNamesTheAuthRefusal`,
+  `TestStageFailureClassNamesTheStreamFailure`, `TestStageFailureClassFallsBackWithoutText`,
+  **`TestStageFailureClassCopiesNoText`** (the class, printed, contains no byte of the message);
+  `GOFLAGS=-p=2 go test ./internal/runner -run 'StageFailureClass' -count=1`.
+- **Depends on:** FC2. **Red step:** the design's — the three tests fail against a classifier that
+  reads no text. **Reviewer:** **independent (SEC)** — the reviewer asks whether every byte of the
+  message stays outside the record, and whether anything acts on the class. **Commit:**
+  `feat(runner): classify a stage's own error message, without copying it`.
 
-**FC5 — read a legacy record's class from its reason (slice F).** The design, `### FC5`.
-- **Files (3):** `internal/runview/runview.go`, its own test file, and `internal/cli/runs_test.go`.
-- **Interfaces:** `legacyClass`/`ClassOf` — a reading, never written back.
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/runview ./internal/cli -run
-  'LegacyClass|ClassOf' -count=1`.
-- **Depends on:** FC1, FC3. **Red step:** the legacy cases fail while the reader returns nothing.
-  **Reviewer:** standard. **Commit:** `feat(runview): read a legacy record's class from its reason`.
+**FC5 — the legacy reader (slice F).** The design, `### FC5`.
+- **Files (4), the design's list:** `internal/runview/runview.go` (`FailureClass` on the row,
+  `legacyClass`), its test file, `internal/runview/launched_by_test.go`'s neighbour for the guard
+  (`TestRowCarriesTheClassTheRecordHolds`), and `internal/cli/runs_test.go`.
+- **Interfaces:** `func ClassOf(rec *runstore.Record) failure.Class` — the one function the row and
+  the digest both call: the field when it is there, the fixed table when it is not.
+- **Tests, and the command — the design's, verbatim:** `TestLegacyClassFromReasonTable`,
+  `TestLegacyUnmatchedReasonIsUnclassified`, `TestLegacyClassIsNeverWrittenBack` (the record's bytes
+  after a read are unchanged); `GOFLAGS=-p=2 go test ./internal/runview -run Legacy -count=1`.
+- **Depends on:** FC1, FC3. **Red step:** the design's — the table's own tests fail against a
+  function that returns the class only when the field is present. **Reviewer:** standard. **Commit:**
+  `feat(runview): read a legacy record's class from its reason`.
 
 #### Level 4 — R6, R8, R9, FC6, FC7
 
@@ -1151,25 +1179,34 @@ design item (E6), so it has **no commit message and no file list of record yet**
 only path in this design that writes into a repository). **Commit:** none until E6 is answered; the
 release does not wait for it (§P6).
 
-**FC6 — group `runs ls` by failure class (slice F).** The design, `### FC6`.
-- **Files (5):** `internal/cli/runs.go`, `runid_test.go`, the `internal/cli/testdata` golden,
-  `website/content/cli-reference.md`, and `internal/cli/runs_test.go`.
-- **Interfaces:** `--group-by failure_class`, and the two refusals (no page, no window).
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'RunsLsGroupBy' -count=1`,
-  then `go run ./ee/clidoc` and the CLI-reference test.
-- **Depends on:** FC5. **Red step:** the grouping cases fail while the flag is unknown. **Reviewer:**
-  standard. **Commit:** `feat(cli): group runs ls by failure class`.
+**FC6 — `runs ls --group-by failure_class` (slice F).** The design, `### FC6`.
+- **Files (6), the design's list:** `internal/cli/runs.go` (the flag, `lsOptions`, `lsDoc.Groups`,
+  the refusals), `internal/cli/runview`-facing helpers, `internal/cli/runs_test.go`,
+  `internal/cli/runid_test.go`, a golden under `internal/cli/testdata`, and
+  `website/content/cli-reference.md` (**regenerated, not edited**).
+- **Interfaces:** the `groups` block of `lsDoc`, and `--group-by`'s closed value list.
+- **Tests, and the command — the design's, verbatim:** `TestRunsGroupByFailureClassNamesEveryClass`,
+  `TestRunsGroupByRefusesAPage`, and the JSON case — one test per property, named in the task's own
+  commit; `GOFLAGS=-p=2 go test ./internal/cli -run 'RunsGroupBy' -count=1`, then
+  `go run ./ee/clidoc` and the CLI-reference test (F27).
+- **Depends on:** FC5. **Red step:** the design's — the grouping test fails against a listing with no
+  block. **Reviewer:** standard. **Commit:** `feat(cli): group runs ls by failure class`.
 
 **FC7 — the Failures table and the two rules (slice F).** The design, `### FC7`.
-- **Files (6):** `internal/digest/digest.go`, `render.go`, `patterns.go`, `digest_test.go`,
-  `patterns_test.go`, `internal/digest/testdata`. **Not `internal/digest/store.go`** — see §P4.
+- **Files (6), the design's list:** `internal/digest/digest.go` (`Failures`), `render.go`
+  (`FailuresTable`, the summary block), `patterns.go` (the two rules and their constants),
+  `digest_test.go`, `patterns_test.go`, `internal/digest/testdata`. **Not `internal/digest/store.go`**
+  — see §P4.
 - **Interfaces:** `FailuresTable`, the summary's `failures` block, and `failure_class_high` and
   `failure_class_new` with their constants.
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/digest -run
-  'DigestFailuresTable|FailureClass' -count=1`.
+- **Tests, and the command — the design's, verbatim:** `TestDigestFailuresTableIsClosed`,
+  `TestFailureClassHighNeedsItsWeeks`, `TestFailureClassNewIgnoresBlocksWithoutTheField`;
+  `GOFLAGS=-p=2 go test ./internal/digest -count=1` (the whole package, which is what the design's
+  own line says).
 - **Depends on:** FC5 — **and, in the union, R11 (3)**, because the series these two rules read comes
-  from R11's stored reader (E7). **Red step:** the two rule tests fail with the four rules alone.
-  **Reviewer:** standard. **Commit:** `feat(digest): a period's failures by class, and two rules`.
+  from R11's stored reader (E7). **Red step:** the design's — the two rule tests fail with the four
+  rules alone. **Reviewer:** standard. **Commit:**
+  `feat(digest): a period's failures by class, and two rules`.
 
 #### Level 5 — R10, FC8
 
@@ -1185,13 +1222,16 @@ target's own change.
   review. **Commit:** `feat(cli): runs digest generates to the bucket by default`.
 
 **FC8 — the documents, the contract and the skills (slice F).** The design, `### FC8`.
-- **Files (6):** `docs/design/v1.md`, `console/docs/json-contract.md`,
-  `docs/task-governance/reconciliation.md` **or** the periodic-reviews folder's own document (D1449),
-  `plugin/skills/working/reference/diagnose.md` (only if O1's answer wants a person to use the
-  grouping), `internal/cli/docs_desktop_console_test.go`, and `docs/releases/vX.Y.Z.md`'s
-  `### For operators`.
+- **Files (6), the design's list:** `docs/design/v1.md` (§4.6's field), `console/docs/json-contract.md`
+  (two rows), `docs/task-governance/reconciliation.md` **or** `docs/periodic-reviews/reconciliation.md`
+  — the one that owns the rule list, which **D1449** names as this folder's, so the recommendation is
+  the second — `plugin/skills/working/reference/diagnose.md` (one sentence, only if O1's answer wants
+  a person to use the grouping), `internal/cli/docs_desktop_console_test.go` (the contract's pins, if
+  a row moves), and `docs/releases/vX.Y.Z.md`'s `### For operators`.
 - **Interfaces:** none — it writes no behaviour.
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`.
+- **Tests, and the command — the design's, verbatim:** the pins that already read those documents
+  (`TestDocsDesktopConsoleContractNames…`, `TestDocs` over the changed design);
+  `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`.
 - **Depends on:** FC6, FC7. **Red step:** none of its own; its gate is the Docs run. **Reviewer:**
   standard. **Commit:** `docs: the failure class on the record, the contract and the report`.
 
