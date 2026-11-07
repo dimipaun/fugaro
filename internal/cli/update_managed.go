@@ -84,6 +84,13 @@ import (
 // (`noYes` in the stage table today and under a managed project), the layer
 // stage and the checkout's own steps.
 //
+// The workspace stage is not here either, and it is the one of them that is
+// deliberately a write the gate could have admitted: its document is the node
+// it publishes, exactly as the policy stage's is. What the gate would be
+// standing in for there is the owner's own word about who is in their group —
+// an admitted write would admit a member on a mark's say-so, which is the one
+// thing rule 1 forbids (SEC, update_workspace.go).
+//
 // The policy stage's own two branches that write NO node are outside the gate
 // as well, and they are the ones this map cannot express: D854's bare re-seed
 // writes this machine's file alone and the generation-record step writes it

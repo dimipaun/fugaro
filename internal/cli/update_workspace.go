@@ -464,7 +464,11 @@ func (s *workspaceStage) Check(ctx context.Context) (initflow.Status, error) {
 // workspaceNoRecordReason is the skip for a project that declares no workspace:
 // not a member, not a workspace's own, and not a state to act on.
 func workspaceNoRecordReason(lc *localcfg.Config) string {
-	return fmt.Sprintf("the project %s declares no workspace: it has no workspace_members table and no workspace_cap, so it publishes no workspace record — a member's config names the workspace it joined (workspace: and workspace_pin:) and never publishes one", lc.Name)
+	project := "this project"
+	if lc != nil {
+		project = "the project " + lc.Name
+	}
+	return fmt.Sprintf("%s declares no workspace: it has no workspace_members table and no workspace_cap, so it publishes no workspace record — a member's config names the workspace it joined (workspace: and workspace_pin:) and never publishes one", project)
 }
 
 // recordSummary names what the record this run would publish holds, for the
