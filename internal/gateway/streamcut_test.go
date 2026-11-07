@@ -7,7 +7,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -81,11 +83,11 @@ func TestProviderStreamCutIsLoggedAndCounted(t *testing.T) {
 	if line["cut"] != cutUpstream {
 		t.Errorf("cut = %v, want %q: the upstream's body ended, not the agent's read", line["cut"], cutUpstream)
 	}
-	// The read that failed said why, in the transport's own words: without
-	// them the line names the side that ended the stream but not what the
-	// connection did, which is the half an operator is looking for.
-	if e, _ := line["error"].(string); !strings.Contains(e, "EOF") {
-		t.Errorf("error = %q, want the failed read's own text (the connection was dropped mid-body)", e)
+	// The read that failed is named from the closed set: without it the
+	// line says which side ended the stream but not what the connection
+	// did, which is the half an operator is looking for.
+	if line["error"] != endUnexpectedEOF {
+		t.Errorf("error = %v, want %q: the connection was dropped mid-body", line["error"], endUnexpectedEOF)
 	}
 }
 
@@ -108,8 +110,8 @@ func TestClaudeStreamCutIsLoggedAndCounted(t *testing.T) {
 	if line["terminal_event_seen"] != false {
 		t.Error("terminal_event_seen is true for a stream cut before message_stop")
 	}
-	if e, _ := line["error"].(string); e == "" {
-		t.Error("error is empty: the read that ended this stream failed, and it said why")
+	if line["error"] != endUnexpectedEOF {
+		t.Errorf("error = %v, want %q", line["error"], endUnexpectedEOF)
 	}
 }
 
@@ -159,14 +161,14 @@ func TestClientCutStreamIsNotCounted(t *testing.T) {
 	}
 	// Which read or write failed here is the race this test starts on
 	// purpose -- the agent's cancel reaches the upstream read and this
-	// gateway's write at once -- so the words are not pinned, only that the
-	// line carries what failed and keeps it on one line.
+	// gateway's write at once -- so the value is not pinned, only that it
+	// is one of the closed set's words and not a sentence.
 	e, ok := line["error"].(string)
-	if !ok {
-		t.Errorf("the line carries no error text: %v", line)
+	if !ok || e == "" {
+		t.Errorf("the line carries no failure kind: %v", line)
 	}
-	if strings.ContainsAny(e, "\n\r\t") {
-		t.Errorf("the error text leaves its one line: %q", e)
+	if strings.ContainsAny(e, " \n\r\t") {
+		t.Errorf("error = %q, want a name from the closed set, not a sentence", e)
 	}
 }
 
@@ -188,9 +190,7 @@ func TestWholeStreamIsNotACutOne(t *testing.T) {
 // The line names the call and carries no content, no header and no
 // credential: neither the run's own token (the caller's, scrubbed from every
 // forwarded call) nor the provider's key, and not one byte of the request or
-// of the response the upstream sent. The error text is the one part of the
-// line this gateway did not write itself, so it is checked here on the same
-// terms as the rest.
+// of the response the upstream sent.
 func TestStreamCutLineCarriesNoContent(t *testing.T) {
 	const nonce = "NONCE-PROMPT-f3a1c9"
 	reply := anthropicfake.Compat{OmitCacheFields: true}.StreamOK(dsModel, pricing.Usage{Input: 2000, Output: 5})
@@ -201,10 +201,8 @@ func TestStreamCutLineCarriesNoContent(t *testing.T) {
 		t.Fatalf("%d %s", resp.StatusCode, b)
 	}
 	line, raw := streamCutLine(t, r.logs)
-	// This one is the provider route's, whose key the call carried: the
-	// line says the read failed and never says what the key was.
-	if e, _ := line["error"].(string); e == "" {
-		t.Errorf("the line's error text is missing: %s", raw)
+	if line["error"] != endUnexpectedEOF {
+		t.Errorf("error = %v, want %q: the connection was dropped mid-body", line["error"], endUnexpectedEOF)
 	}
 	secrets := map[string]string{
 		"the prompt":          nonce,
@@ -213,10 +211,6 @@ func TestStreamCutLineCarriesNoContent(t *testing.T) {
 		"the run's token":     r.gw.Token(),
 		"the token's prefix":  r.gw.Token()[:16],
 	}
-	// The error text is the one part of this line this gateway did not
-	// write itself, so the secrets are checked against every line the stage
-	// logged, not only the warning's: a transport's words are exactly where
-	// a key quoted out of a URL or a header would arrive.
 	for _, bad := range []string{"x-api-key", "authorization", "anthropic-version"} {
 		secrets[bad] = bad
 	}
@@ -226,32 +220,143 @@ func TestStreamCutLineCarriesNoContent(t *testing.T) {
 			t.Errorf("the log holds %s: %q", name, s)
 		}
 	}
+	if !strings.Contains(raw, "stream ended before its terminal event") {
+		t.Errorf("the line checked was not the stream-cut one: %s", raw)
+	}
+}
+
+// quotingTransport answers exactly as the fake upstream would, then hands
+// the gateway a body whose first read fails with an error that quotes
+// everything the call carried. That is what an HTTP/2 GOAWAY does: the
+// transport prints the peer's own debug data into its message, verbatim, so
+// the error value itself is text the peer wrote. A test can only see that
+// by making the peer write it.
+type quotingTransport struct {
+	base http.RoundTripper
+	text func(*http.Request) string
+}
+
+func (t quotingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = failingBody{closer: resp.Body, err: errors.New(t.text(r))}
+	return resp, nil
+}
+
+type failingBody struct {
+	closer io.Closer
+	err    error
+}
+
+func (b failingBody) Read([]byte) (int, error) { return 0, b.err }
+func (b failingBody) Close() error             { return b.closer.Close() }
+
+// peerMarker is a word only the peer wrote: nothing in this gateway can
+// produce it, so finding it in a log line is finding the peer's text there.
+const peerMarker = "PEER-WROTE-THIS-7b21"
+
+// peerWords is what this case's GOAWAY says: the credentials the call
+// carried, read back out of the request the gateway sent, and a marker of
+// the peer's own. debug is %q in the real message, so it is quoted here too.
+func peerWords(r *http.Request) string {
+	return "http2: server sent GOAWAY and closed the connection; LastStreamID=1, ErrCode=NO_ERROR, debug=" +
+		strconv.Quote(strings.Join([]string{
+			keyFrom(r.Header), r.Header.Get(HeaderRunIdentity), r.Header.Get("Authorization"), peerMarker,
+		}, " "))
+}
+
+// No word of the transport's message reaches the stream-cut line, on either
+// route, with the credentials both of them carry quoted into that message on
+// purpose. This is what the closed set buys: the line says the peer sent a
+// GOAWAY and which code, and never says what else the peer wrote -- so a
+// provider cannot name anything in a log line, and cannot put a key it was
+// sent into one either.
+func TestStreamCutLineDropsTheTransportsWords(t *testing.T) {
+	quoting := func(*Options) *http.Client {
+		return &http.Client{Transport: quotingTransport{base: http.DefaultTransport, text: peerWords}}
+	}
+	check := func(t *testing.T, h *harness) {
+		t.Helper()
+		line, raw := streamCutLine(t, h.logs)
+		if line["error"] != endGoAway+":NO_ERROR" {
+			t.Errorf("error = %v, want %q: the code is the transport's, and the debug beside it is not ours to log",
+				line["error"], endGoAway+":NO_ERROR")
+		}
+		all := h.logs.String()
+		for _, bad := range append(secrets(h, t), providerKey, testKey, peerMarker) {
+			if bad != "" && strings.Contains(all, bad) {
+				t.Errorf("the log carries %q: %s", bad, raw)
+			}
+		}
+	}
+
+	t.Run("the provider route", func(t *testing.T) {
+		_, psrv := anthropicfake.New(t, anthropicfake.Compat{OmitCacheFields: true}.StreamOK(dsModel, pricing.Usage{Input: 2000, Output: 5}))
+		h := newHarnessWith(t, func(o *Options) {
+			o.Client = quoting(o)
+			o.Routes = []Route{{
+				Name: "openrouter", Models: dsRoute, BaseURL: psrv.URL + "/api", Auth: "bearer",
+				Credential: func() (string, error) { return providerKey, nil },
+			}}
+		})
+		h.gw.BeginStage(routedStage)
+		if resp, b := h.post(msg(dsModel, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("%d %s", resp.StatusCode, b)
+		}
+		check(t, h)
+	})
+
+	t.Run("the service route", func(t *testing.T) {
+		h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+			rep := anthropicfake.StreamOK(sonnet, pricing.Usage{Input: 2000, Output: 5})
+			rep.Header = http.Header{HeaderTier: []string{TierA}, HeaderCredential: []string{"repo-a"}}
+			return rep
+		}, func(o *Options) { o.Client = quoting(o) })
+		if resp, b := h.post(msg(sonnet, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("%d %s", resp.StatusCode, b)
+		}
+		check(t, h)
+	})
 }
 
 // streamEndError is the whole guard between a transport's words and a log
-// line, so it is pinned on its own: no error is no text, a credential the
-// call carried never survives, an error message cannot fold the line, and
-// the length is bounded like every other logged value.
-func TestStreamEndErrorScrubsAndFolds(t *testing.T) {
-	if got := streamEndError(nil); got != "" {
-		t.Errorf("streamEndError(nil) = %q, want no text: a body that ended cleanly has nothing to report", got)
+// line, so it is pinned on its own, value by value: the failure is named
+// from the closed set, and nothing the transport or the peer wrote survives
+// into it -- a GOAWAY's debug data, which is the peer's text, least of all.
+func TestStreamEndErrorIsAClosedSet(t *testing.T) {
+	// A GOAWAY's message is the case that matters: Go prints the peer's own
+	// debug data into it, verbatim and up to the peer's own length, so the
+	// debug here is what a provider could try to say in this line.
+	goAway := errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=7, " +
+		`ErrCode=ENHANCE_YOUR_CALM, debug="` + providerKey + ` says ` + agentSecret + `"`)
+	cases := []struct {
+		name string
+		end  pumpEnd
+		want string
+	}{
+		{"a body that simply ended", pumpEnd{eof: true}, ""},
+		{"the body ended mid-message", pumpEnd{readErr: true, err: io.ErrUnexpectedEOF}, endUnexpectedEOF},
+		{"the call was cancelled", pumpEnd{readErr: true, err: context.Canceled}, endCanceled},
+		{"its clock ran out", pumpEnd{readErr: true, err: context.DeadlineExceeded}, endDeadline},
+		{"the peer's end is gone", pumpEnd{writeErr: true, err: syscall.EPIPE}, endReset},
+		{"a GOAWAY keeps its code and drops its debug", pumpEnd{readErr: true, err: goAway}, endGoAway + ":ENHANCE_YOUR_CALM"},
+		{"a GOAWAY with no code the transport knows", pumpEnd{readErr: true, err: errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=1, ErrCode=unknown error code 0x1f, debug=\"\"")}, endGoAway},
+		{"a stream error and its code", pumpEnd{readErr: true, err: errors.New("stream error: stream ID 5; REFUSED_STREAM")}, endStreamError + ":REFUSED_STREAM"},
+		{"a stream error whose cause is the peer's text", pumpEnd{readErr: true, err: errors.New("stream error: stream ID 5; PROTOCOL_ERROR; " + providerKey)}, endStreamError + ":PROTOCOL_ERROR"},
+		{"a write nobody named", pumpEnd{writeErr: true, err: errors.New("write: " + providerKey)}, endWriteFailed},
+		{"anything else", pumpEnd{readErr: true, err: errors.New("something " + providerKey)}, endOther},
 	}
-	// The key travels in a URL and a header of the error message, which is
-	// how a transport quotes the request it failed on.
-	err := errors.New(`Get "https://openrouter.ai/api?key=` + providerKey + `": unexpected EOF (x-api-key: ` + testKey + `)`)
-	got := streamEndError(err, providerKey, testKey)
-	for _, bad := range []string{providerKey, testKey} {
-		if strings.Contains(got, bad) {
-			t.Errorf("streamEndError kept %q: %s", bad, got)
+	for _, c := range cases {
+		got := streamEndError(c.end)
+		if got != c.want {
+			t.Errorf("%s: streamEndError = %q, want %q", c.name, got, c.want)
 		}
-	}
-	if !strings.Contains(got, "unexpected EOF") || !strings.Contains(got, redacted) {
-		t.Errorf("streamEndError = %q, want the message with the credentials replaced", got)
-	}
-	if got := streamEndError(errors.New("a\nb\tc")); strings.ContainsAny(got, "\n\t") {
-		t.Errorf("streamEndError kept a control character: %q", got)
-	}
-	if got := streamEndError(errors.New(strings.Repeat("x", 4*maxLogValue))); len(got) > maxLogValue {
-		t.Errorf("streamEndError kept %d bytes, want at most %d", len(got), maxLogValue)
+		for _, bad := range []string{providerKey, agentSecret, testKey, "debug"} {
+			if strings.Contains(got, bad) {
+				t.Errorf("%s: streamEndError kept %q: %s", c.name, bad, got)
+			}
+		}
 	}
 }
