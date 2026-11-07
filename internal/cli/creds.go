@@ -589,6 +589,13 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate && (!reviewSigning || previous) {
 		return credsGenerateNameRefusal()
 	}
+	// The run's own account (CL7a): one line per step and the log beside it
+	// (D1352). The step is abandoned by every refusal from here on — a
+	// container with no version, a document the loader refuses, a lost update —
+	// because none of them wrote anything, and a refused write is not a step
+	// that happened (G3).
+	run := stepRunFor(cmd, "creds-set", cmd.OutOrStdout())
+	defer run.close()
 	_, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -600,6 +607,8 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if err := store.check(ctx); err != nil {
 		return remoteErr(err, nil)
 	}
+	st := run.rep.Step("Writing " + safetext.Field(store.id))
+	defer st.Abandon()
 	// What the document holds now, and what this write replaces. A container
 	// with no version is the first write's starting point; a document the
 	// loader refuses is refused here, before anything of ours is written, so
@@ -621,7 +630,14 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate {
 		value, err = generateReviewSigningValue()
 	} else {
-		value, err = readBundleValue(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, kind)
+		// The hidden prompt is read with the line in flight taken down: a
+		// frame drawn on the line the prompt is written on swallows it and the
+		// answer typed under it (G1).
+		err = run.ask(func() error {
+			var rerr error
+			value, rerr = readBundleValue(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, kind)
+			return rerr
+		})
 	}
 	if err != nil {
 		return err
@@ -700,18 +716,22 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 		enc.SetIndent("", "  ")
 		return enc.Encode(credsSetResult{Project: lc.Name, Secret: store.id, Version: version, Replaced: replaced, Disabled: retired, Window: window})
 	}
+	detail := "version " + safetext.Field(version)
 	switch {
 	case replaced == "":
-		_, err = fmt.Fprintf(w, "wrote %s, version %s (the bundle's first version)\n", safetext.Field(store.id), safetext.Field(version))
+		detail += " (the bundle's first version)"
 	case retired:
-		_, err = fmt.Fprintf(w, "wrote %s, version %s (replaced version %s, now disabled)\n", safetext.Field(store.id), safetext.Field(version), safetext.Field(replaced))
+		detail += " (replaced version " + safetext.Field(replaced) + ", now disabled)"
 	default:
-		_, err = fmt.Fprintf(w, "wrote %s, version %s (replaced version %s, which is still ENABLED: see the warning on stderr)\n", safetext.Field(store.id), safetext.Field(version), safetext.Field(replaced))
+		detail += " (replaced version " + safetext.Field(replaced) + ", which is still ENABLED: see the warning on stderr)"
 	}
-	if err == nil && window != "" {
+	st.Done(detail)
+	if window != "" {
 		// The window is named for the operator: the value this run replaced is
 		// still ACCEPTED, and a rotation whose window nobody knows about is one
 		// that reads as a key that retired when the first signature verifies.
+		// It is a line of its own and not the step's tail, because it is the
+		// one fact of the run a person may not read past.
 		_, err = fmt.Fprintf(w, "%s now holds the value this run replaced, which the service verifies against and never signs with\n", safetext.Field(window))
 	}
 	return err
