@@ -144,6 +144,12 @@ func TestRunPRFollowUpAfterARulingIsNotRefused(t *testing.T) {
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--owner-ruled", "ship it", "go on"); err != nil {
 		t.Fatalf("repeating the same launch must be idempotent: %v", err)
 	}
+	// A launch that gives no ruling makes no claim about one, exactly as a
+	// launch that gives no --title makes no claim about the title: the stored
+	// ruling stands and the repeat is the same task, not a different one.
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "go on"); err != nil {
+		t.Fatalf("a repeat without --owner-ruled is the same task, not a different one: %v", err)
+	}
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--owner-ruled", "hold on", "go on"); err == nil || !strings.Contains(err.Error(), "already holds a different task") {
 		t.Fatalf("a repeated --run-id with a different ruling must be refused, got %v", err)
 	}
