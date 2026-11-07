@@ -179,6 +179,11 @@ func TestDocsCheck180StatesWhatOnlyATokenSettles(t *testing.T) {
 		"`GET /2.0/user`",
 		// U4: approve and merge, which only the scopes settle.
 		"approve and merge",
+		// How the run's own row is read: `fugaro run` returns at launch, so
+		// the script has to wait for a final row rather than read the row the
+		// launch left behind — the reading the check exists for is the run's,
+		// and an in-flight row has no push and no pull request in it.
+		"it polls the listing until the row for the run it just launched",
 		// U3: a repository created in the Bitbucket project after the
 		// allow-list was written.
 		"added to the Bitbucket project afterwards",

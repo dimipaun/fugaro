@@ -126,23 +126,47 @@ update)
   exit 0
   ;;
 run)
+  # The launch result: `fugaro run` RETURNS AT LAUNCH, and what it names is the
+  # run the check then waits for. Every launch mints its own run_id and resets
+  # the poll counter the listing below reads.
   [ "$mode" = run-fails ] && { echo "run: the execution ended before finalizing" >&2; exit 1; }
-  echo '{"run_id":"run-0001","status":"succeeded","repo":"sandbox/one"}'
+  n=$(cat "$state/launches" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  printf '%s' "$n" >"$state/launches"
+  printf '0' >"$state/polls"
+  printf '{"run_id":"run-%04d","status":"launched","repo":"sandbox/one"}\n' "$n"
   exit 0
   ;;
 runs)
-  n=$(cat "$state/ls-calls" 2>/dev/null || echo 0)
+  # The listing the check polls. Two things about it are the regressions this
+  # fake exists to catch: the FIRST poll after a launch answers an in-flight row
+  # for the run just launched (status running, terminal=false, nothing pushed),
+  # which is what `fugaro runs ls` really says while a run is going — and the
+  # row for the launched run is never first in the list, an older unrelated run
+  # is. So a check that read the listing once would read an in-flight row, and
+  # one that read rows[0] or asked for --limit 1 would read another run's row or
+  # no row at all, instead of picking this run's row out by run_id.
+  launches=$(cat "$state/launches" 2>/dev/null || echo 0)
+  n=$(cat "$state/polls" 2>/dev/null || echo 0)
   n=$((n + 1))
-  printf '%s' "$n" >"$state/ls-calls"
-  if [ "$mode" = no-push ]; then
-    echo '{"project":"sandbox","runs":[{"run_id":"run-0001","status":"succeeded","pushed":false,"pr":0}]}'
-    exit 0
+  printf '%s' "$n" >"$state/polls"
+  ours=$(printf 'run-%04d' "${launches:-0}")
+  status=running
+  terminal=false
+  pushed=false
+  pr=0
+  if [ "$n" -gt 1 ]; then
+    status=succeeded
+    terminal=true
+    pushed=true
+    pr=7
+    case "$mode" in
+    no-push) pushed=false; pr=0 ;;
+    rotation-no-push) if [ "${launches:-0}" -ge 3 ]; then pushed=false; pr=0; fi ;;
+    esac
   fi
-  if [ "$mode" = rotation-no-push ] && [ "$n" -ge 3 ]; then
-    echo '{"project":"sandbox","runs":[{"run_id":"run-0002","status":"succeeded","pushed":false,"pr":0}]}'
-    exit 0
-  fi
-  echo '{"project":"sandbox","runs":[{"run_id":"run-0001","status":"succeeded","pushed":true,"pr":7,"base_branch":"fugaro/check180-run"}]}'
+  printf '{"project":"sandbox","runs":[{"run_id":"run-9000","status":"running","terminal":false,"settled":false,"pushed":false,"pr":0},{"run_id":"%s","status":"%s","terminal":%s,"settled":%s,"pushed":%s,"pr":%d,"base_branch":"fugaro/check180-run"}]}\n' \
+    "$ours" "$status" "$terminal" "$terminal" "$pushed" "$pr"
   exit 0
   ;;
 esac
@@ -385,7 +409,7 @@ run180() {
   out=""
   env PATH="$dir/bin:$PATH" TMPDIR="$dir/tmp" \
     CHECK180_API_URL="http://127.0.0.1:$FAKE_PORT/2.0" \
-    CHECK180_CURL_SECONDS=20 CHECK180_RUN_SECONDS=30 \
+    CHECK180_CURL_SECONDS=20 CHECK180_RUN_SECONDS=30 CHECK180_RUN_POLL_SECONDS=1 \
     FAKE180_MODE="${RUN180_MODE:-ok}" FAKE180_TOKEN="$TOKEN_SENTINEL" \
     FAKE180_STATE="$dir/state" FAKE180_LOG="$dir/fugaro.log" \
     ${RUN180_ENV[@]+"${RUN180_ENV[@]}"} \
@@ -451,6 +475,24 @@ expect_store_argv() {
   [ "${lines:-0}" -eq "$want" ] || fail "$what: the run made $lines store call(s), want $want"
 }
 
+# expect_runs_polled DIR WHAT LAUNCHES — how the check read each run's row.
+# `fugaro run` returns at launch (the fake's own answer says status
+# "launched"), so the listing has to be polled until that run reached a final
+# status: one read per run would be an in-flight row (terminal=false, nothing
+# pushed), which is what the fake answers first on purpose. And the read has to
+# be the window's own listing with the row picked out by run_id: --limit would
+# leave the row out of the listing altogether, and the fake keeps an unrelated,
+# newer run first in it so a positional read is another run's row.
+expect_runs_polled() {
+  local dir=$1 what=$2 launches=$3 calls bad
+  calls=$(grep -c '^runs ls' "$dir/fugaro.log" 2>/dev/null || true)
+  if [ "${calls:-0}" -lt $((launches * 2)) ]; then
+    fail "$what: the check made ${calls:-0} 'runs ls' call(s) for ${launches} launch(es), fewer than the two per run a check that waits for the run to finish has to make: fugaro run returns at launch, and the first poll answers an in-flight row"
+  fi
+  bad=$(grep '^runs ls' "$dir/fugaro.log" | grep -e '-limit' -e '-after' | tr '\n' ';' || true)
+  [ -z "$bad" ] || fail "$what: a 'runs ls' call reads '$bad': the row of the run being waited for has to be in the listing, so the check reads the window's own and picks the row out by run_id"
+}
+
 # --------------------------------------------------------------- the tests
 test_happy_path() {
   run180 happy
@@ -482,6 +524,7 @@ test_happy_path() {
   # command's environment.
   expect_contains "$(cat "$work/happy/fugaro.log")" "token=matches" "happy path: the token reached the live test"
   expect_store_argv "$work/happy" "happy path: the store" 1
+  expect_runs_polled "$work/happy" "happy path" 2
 
   assert_no_secret "$work/happy" "happy path"
 
@@ -647,6 +690,9 @@ test_rotation() {
   # Two stores, the original and the rotated value, and both are the same value
   # write: the rotation's first half is a new version of the same secret.
   expect_store_argv "$work/rotation" "the rotation: the stores" 2
+  # Three launches, and the rotation's reading is the row of the THIRD one: the
+  # polling is what makes that run's row the one read.
+  expect_runs_polled "$work/rotation" "the rotation" 3
   assert_no_secret "$work/rotation" "the rotation"
 
   RUN180_MODE=rotation-no-push

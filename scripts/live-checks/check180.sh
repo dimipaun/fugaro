@@ -79,12 +79,13 @@
 # reach the block. And no trace: `bash -x` prints every command as it runs, so
 # guard_xtrace REFUSES a run whose shell arrived with tracing on.
 #
-# CHECK180_API_URL, CHECK180_CURL_SECONDS, CHECK180_RUN_SECONDS and
-# CHECK180_DRY_RUN exist for this script's own test: the first may only name a
-# loopback address of exactly the form http://127.0.0.1:<port> (the test's fake
-# Bitbucket), so no environment can send the token anywhere but Bitbucket
-# Cloud's own API; the others shorten the two caps and plan a run without
-# touching anything.
+# CHECK180_API_URL, CHECK180_CURL_SECONDS, CHECK180_RUN_SECONDS,
+# CHECK180_RUN_POLL_SECONDS and CHECK180_DRY_RUN exist for this script's own
+# test: the first may only name a loopback address of exactly the form
+# http://127.0.0.1:<port> (the test's fake Bitbucket), so no environment can send
+# the token anywhere but Bitbucket Cloud's own API; the others shorten the two
+# caps, the interval the runs are polled at, and plan a run without touching
+# anything.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: the commands below pass
@@ -499,20 +500,43 @@ def rows_of(path):
     die("the listing carries no rows")
 
 
-def newest_row(path):
-    rows = [r for r in rows_of(path) if isinstance(r, dict)]
-    if not rows:
-        die("the listing carries no run rows")
-    # Newest first is the listing's own contract (register check 1b); the row
-    # this check reads is the one it just launched.
-    return rows[0]
+def row_for(path, wanted):
+    """The listing's row for ONE run, or None.
+
+    The listing answers newest first (register check 1b), and the row this check
+    reads is the one it launched -- which is not the first: the check launches
+    several runs, a follow-up or another operator's run can be newer than this
+    one, and the window holds every run of the last days. Picking by run_id is
+    what makes the reading this run's own; the first row is somebody else's run,
+    and `--limit 1` is a listing the row may not be in at all.
+    """
+    if not isinstance(wanted, str) or not wanted:
+        return None
+    for row in rows_of(path):
+        if isinstance(row, dict) and row.get("run_id") == wanted:
+            return row
+    return None
 
 
-def cmd_row(path):
-    row = newest_row(path)
-    run_id = row.get("run_id")
-    print("run_id=%s" % (run_id if isinstance(run_id, str) and RUNID.fullmatch(run_id) else ""))
+def cmd_row(path, wanted):
+    row = row_for(path, wanted)
+    print("found=%s" % ("yes" if row is not None else "no"))
+    if row is None:
+        print("status=")
+        print("terminal=no")
+        print("settled=no")
+        print("pushed=no")
+        print("pr=0")
+        print("branch=absent")
+        return
     print("status=%s" % safe(row.get("status")))
+    # Terminal is the listing's word for a run that reached a final status, and
+    # settled its word for a row nothing will move again (settled also covers a
+    # run nothing ever launched, which is not a reading of this check's run).
+    # Both are what tell a finished run from one still going: `fugaro run`
+    # returns at LAUNCH, so the first listing after it holds an in-flight row.
+    print("terminal=%s" % ("yes" if row.get("terminal") is True else "no"))
+    print("settled=%s" % ("yes" if row.get("settled") is True else "no"))
     print("pushed=%s" % ("yes" if row.get("pushed") is True else "no"))
     pr = row.get("pr")
     print("pr=%d" % pr if isinstance(pr, int) and not isinstance(pr, bool) and pr > 0 else "pr=0")
@@ -612,7 +636,7 @@ def main():
         "tokenfile": (cmd_tokenfile, 2),
         "gitconfig": (cmd_gitconfig, 2),
         "doctor": (cmd_doctor, 1),
-        "row": (cmd_row, 1),
+        "row": (cmd_row, 2),
         "runid": (cmd_runid, 1),
         "user": (cmd_user, 1),
         "repo": (cmd_repo, 1),
@@ -787,6 +811,13 @@ step_update() {
 
 # U2's second half, and U4's approve: one run per repository, then the pull
 # request it opened, read with the token.
+#
+# `fugaro run` RETURNS AT LAUNCH, with the launch result (status launched, or
+# already-launched for a run that was already going): the run itself goes on in
+# the cloud. Its row in `fugaro runs ls` is therefore an in-flight one for a
+# while — no push, no pull request, terminal=false — and the check polls the
+# listing until that run reached a final status before it reads the push and the
+# pull request out of its row (wait_for_run below).
 step_run() { # step_run LABEL REPO PATH
   local label=$1 repo=$2 path=$3 rc=0
   local task="$SCRATCH/task-${label}.md" json="$SCRATCH/run-${label}.json" log="$SCRATCH/run-${label}.log"
@@ -801,19 +832,14 @@ TASK_EOF
   run_call "$RUN_SECONDS" "$json" "$log" fugaro run --repo "$repo" --project "$INSTALLATION" \
     --title "Check 180: one token for many repositories (${repo})" \
     --task-file "$task" --json || rc=$?
-  local run_id status pushed pr
+  local run_id row
+  # The run the check waits for is the one THIS launch named: the listing is
+  # newest-first and holds the runs of the whole window, so the row is picked by
+  # run_id and never by position.
   run_id=$(field_of run_id "$(reader runid "$json" 2>/dev/null || true)")
-  local row
-  row=$(fugaro runs ls --repo "$repo" --project "$INSTALLATION" --limit 1 --json >"$SCRATCH/rows-${label}.json" 2>>"$log" \
-    && reader row "$SCRATCH/rows-${label}.json" 2>/dev/null) || true
-  status=$(field_of status "$row")
-  pushed=$(field_of pushed "$row")
-  pr=$(field_of pr "$row")
-  case "$label" in
-  run-a) PR_A=${pr#pr=} ;;
-  run-b) PR_B=${pr#pr=} ;;
-  esac
-  set_run_result "$label" "$run_id" "${pr#pr=}" "$pushed" "$status" "$rc" "$repo" "$log"
+  say "the run in ${repo} is launched and now goes on in the cloud; waiting up to ${RUN_SECONDS}s for that run to finish"
+  row=$(wait_for_run "$label" "$repo" "$run_id" "$log")
+  set_run_result "$label" "$run_id" "$row" "$rc" "$repo" "$log"
 }
 
 # run_pr LABEL: the pull request the run of that label opened, or 0. A number
@@ -825,23 +851,80 @@ run_pr() {
   esac
 }
 
-# set_run_result: the fact for one run, from the row's own reading. Kept apart
-# so the rotation's run is read exactly the way the two are.
-set_run_result() { # set_run_result LABEL RUNID PR PUSHED STATUS RC REPO LOG
-  local label=$1 run_id=$2 pr=$3 pushed=$4 status=$5 rc=$6 repo=$7 log=$8
+# wait_for_run LABEL REPO RUNID LOG — the final row of one run, as the reader
+# prints it, with a `poll=` word saying how the wait ended.
+#
+# `fugaro run` returns AT LAUNCH: the listing read straight after a launch holds
+# an in-flight row for that run — status=running, no push, no pull request,
+# terminal=false — and a reading taken from it is a FAIL the run never earned,
+# on a check whose whole point is what the run recorded. So the check waits for
+# the row of THIS run_id to be TERMINAL, the listing's own word for a run in a
+# final status, and reads the push and the pull request only then. The budget is
+# the same RUN_SECONDS the launch was given, and the interval is
+# CHECK180_RUN_POLL_SECONDS (20s outside this check's test): one poll reads the
+# runs bucket and the backend of every run in the window, so a second-by-second
+# poll would be a load of its own.
+wait_for_run() { # wait_for_run LABEL REPO RUNID LOG
+  local label=$1 repo=$2 run_id=$3 log=$4 waited=0 row=""
+  [ -n "$run_id" ] || { printf 'poll=norunid\n'; return 0; }
+  while :; do
+    row=""
+    # No --limit: the row being waited for is one run out of the window, so the
+    # listing read is the window's own and the row is picked out of it by
+    # run_id. A --limit 1 listing is one this run's row may not be in at all.
+    if fugaro runs ls --repo "$repo" --project "$INSTALLATION" --json \
+      >"$SCRATCH/rows-${label}.json" 2>>"$log"; then
+      row=$(reader row "$SCRATCH/rows-${label}.json" "$run_id" 2>>"$log" || true)
+    fi
+    if [ "$(field_of found "$row")" = yes ] && [ "$(field_of terminal "$row")" = yes ]; then
+      printf 'poll=terminal\n%s\n' "$row"
+      return 0
+    fi
+    if [ "$waited" -ge "$RUN_SECONDS" ]; then
+      printf 'poll=timeout\n%s\n' "$row"
+      return 0
+    fi
+    sleep "$RUN_POLL_SECONDS"
+    waited=$((waited + RUN_POLL_SECONDS))
+  done
+}
+
+# set_run_result: the fact for one run, from the row wait_for_run settled on.
+# Kept apart so the rotation's run is read exactly the way the two are.
+set_run_result() { # set_run_result LABEL RUNID ROW RC REPO LOG
+  local label=$1 run_id=$2 row=$3 rc=$4 repo=$5 log=$6
+  local status terminal pushed pr poll
+  status=$(field_of status "$row")
+  terminal=$(field_of terminal "$row")
+  pushed=$(field_of pushed "$row")
+  pr=$(field_of pr "$row")
+  pr=${pr#pr=}
+  poll=$(field_of poll "$row")
+  case "$label" in
+  run-a) PR_A=$pr ;;
+  run-b) PR_B=$pr ;;
+  esac
   if [ "$pushed" = yes ] && [ -n "$pr" ] && [ "$pr" != 0 ]; then
-    fact "$label" PASS "the run in ${repo}${run_id:+ (${run_id})} pushed its branch and opened pull request #${pr} (the row's pushed=yes and pr=${pr}), status=${status:-unread}. One run per repository is what makes the push, the pull request and their author a reading of THIS token rather than of the credentials a single repository holds"
+    fact "$label" PASS "the run in ${repo}${run_id:+ (${run_id})} pushed its branch and opened pull request #${pr} (the row's pushed=yes, pr=${pr}, terminal=${terminal:-no}), status=${status:-unread}. One run per repository is what makes the push, the pull request and their author a reading of THIS token rather than of the credentials a single repository holds"
     return 0
   fi
-  if [ "$rc" -ne 0 ] && [ "$pushed" != yes ]; then
-    fact "$label" FAIL "the run in ${repo} did not finish (fugaro run exited ${rc}${run_id:+, run ${run_id}}; the row reads status=${status:-unread}): $(last_line "$log"). Nothing about the clone, the push or the pull request is settled by it"
+  if [ "$rc" -ne 0 ]; then
+    fact "$label" FAIL "the run in ${repo} was never launched: fugaro run exited ${rc}${run_id:+, and named run ${run_id}} before the launch was confirmed, so there is no run of this check's to read: $(last_line "$log"). Nothing about the clone, the push or the pull request is settled by it"
+    return 0
+  fi
+  if [ "$poll" = norunid ]; then
+    fact "$label" FAIL "fugaro run --json named NO run id for the run in ${repo}, so which row of the listing belongs to this run cannot be read — and the row is the reading, not the launch: fugaro run returns as soon as the run is launched, so nothing about the push or the pull request is known until that run's own row settles"
+    return 0
+  fi
+  if [ "$poll" != terminal ]; then
+    fact "$label" FAIL "no row in a FINAL status for the run in ${repo}${run_id:+ (${run_id})} appeared in its listing within ${RUN_SECONDS}s (poll=${poll:-nolisting}; the last row read: found=$(field_of found "$row" || true), status=${status:-unread}, pushed=${pushed:-unread}, pr=${pr:-unread}). fugaro run returns at launch, so the check waits for the listing's own terminal=true — a run in a final status — before it reads anything: a row that is not terminal is a run still going at the cap, and the register's section is where that run's state belongs. The log ends with the last listing: $(last_line "$log")"
     return 0
   fi
   if [ "$pushed" = yes ]; then
-    fact "$label" FAIL "the run in ${repo} pushed its branch but the row names no pull request (pr=0, status=${status:-unread}): the token could push and could not open a pull request, which is the pair the scopes are chosen for"
+    fact "$label" FAIL "the run in ${repo} pushed its branch but its row names no pull request (pr=0, status=${status:-unread}): the token could push and could not open a pull request, which is the pair the scopes are chosen for"
     return 0
   fi
-  fact "$label" FAIL "the run in ${repo} did not push (the row reads pushed=no, status=${status:-unread}): $(last_line "$log"). A run that does not push settles nothing about the token"
+  fact "$label" FAIL "the run in ${repo} did not push (its final row reads pushed=no, status=${status:-unread}): $(last_line "$log"). A run that does not push settles nothing about the token"
 }
 
 # The pull request's author, and (with --merge) U4's second half: only the
@@ -1004,14 +1087,22 @@ TASK_EOF
   run_call "$RUN_SECONDS" "$SCRATCH/rotation.json" "$SCRATCH/rotation.log" fugaro run --repo "$REPO_A" --project "$INSTALLATION" \
     --title "Check 180: the run after the rotation (${REPO_A})" \
     --task-file "$task" --json || run_rc=$?
-  local row pushed pr status
-  row=$(fugaro runs ls --repo "$REPO_A" --project "$INSTALLATION" --limit 1 --json >"$SCRATCH/rows-rotation.json" 2>>"$SCRATCH/rotation.log" \
-    && reader row "$SCRATCH/rows-rotation.json" 2>/dev/null) || true
+  # The run after the rotation is read exactly the way step_run's two are: the
+  # launch's own run_id, then the listing polled until THAT run reached a final
+  # status.
+  local row pushed pr status run_id poll
+  run_id=$(field_of run_id "$(reader runid "$SCRATCH/rotation.json" 2>/dev/null || true)")
+  say "the run after the rotation is launched; waiting up to ${RUN_SECONDS}s for that run to finish"
+  row=$(wait_for_run rotation "$REPO_A" "$run_id" "$SCRATCH/rotation.log")
   pushed=$(field_of pushed "$row")
   pr=$(field_of pr "$row")
+  pr=${pr#pr=}
   status=$(field_of status "$row")
-  if [ "$pushed" = yes ] && [ "${pr#pr=}" != 0 ] && [ "${pr#pr=}" != "" ]; then
-    fact rotation PASS "the new token is a new ENABLED version of the project-wide container (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), and a run launched AFTER the store pushed its branch and opened pull request #${pr#pr=} (status=${status:-unread}): the next run uses the new version, which is what F3's order is written for — the old token is revoked only after that"
+  poll=$(field_of poll "$row")
+  if [ "$pushed" = yes ] && [ -n "$pr" ] && [ "$pr" != 0 ]; then
+    fact rotation PASS "the new token is a new ENABLED version of the project-wide container (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), and a run launched AFTER the store pushed its branch and opened pull request #${pr} (status=${status:-unread}, terminal=$(field_of terminal "$row"), run ${run_id}): the next run uses the new version, which is what F3's order is written for — the old token is revoked only after that"
+  elif [ "$poll" != terminal ]; then
+    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) but the run launched after it never reached a final status within ${RUN_SECONDS}s (poll=${poll:-nolisting}, run_id=${run_id:-none}, the last row read: status=${status:-unread}, pushed=${pushed:-unread}, pr=${pr:-unread}; fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value, and a run still going at the cap has not been read"
   else
     fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) but the run after it did not push and open a pull request (pushed=${pushed:-unread}, pr=${pr:-unread}, status=${status:-unread}, fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value"
   fi
@@ -1110,7 +1201,9 @@ What the run will do, in this order:
   5. 'fugaro secrets set bitbucket-token --project-wide' with the token on stdin (the store, and
      the allow-list entry behind it) — a value write, which takes no --yes (D1171);
   6. 'fugaro update --repo' in ${PATH_A} and ${PATH_B} with stdin at /dev/null, expecting NO prompt;
-  7. one run in ${REPO_A} and one in ${REPO_B}, then each pull request's author and an approve
+  7. one run in ${REPO_A} and one in ${REPO_B} — each launch returns at once, so the check then
+     polls 'fugaro runs ls' until that run reached a final status (up to ${RUN_SECONDS}s) rather
+     than reading an in-flight row — then each pull request's author and an approve
      (and, with --merge, a merge) on the sandbox repositories;
   8. the probe repository, for U3;
   9. TestLiveBitbucket in ${SOURCE} with the token in that one command's environment;
@@ -1237,6 +1330,7 @@ main() {
   API_ROOT=${API_ROOT%/}
   CURL_SECONDS=${CHECK180_CURL_SECONDS:-60}
   RUN_SECONDS=${CHECK180_RUN_SECONDS:-5400}
+  RUN_POLL_SECONDS=${CHECK180_RUN_POLL_SECONDS:-20}
   REPO_A_URL="https://bitbucket.org/${REPO_A}.git"
   if [ "${CHECK180_DRY_RUN:-}" = yes ]; then DRY_RUN=yes; fi
   guard_belong

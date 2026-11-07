@@ -11218,7 +11218,12 @@ launcher of an allow-listed repository hold the token's value (F7), which is why
    push, which authenticate as `x-token-auth` with the token's value (U1); the pull request it opens,
    and the author's **name**, which is the token's (U2, D472 — every enrolled repository's pull
    requests carry that one author); and the run's own `fugaro runs ls --repo <owner/name> --json` row,
-   where `pushed`, `branch` and `pr` say the push and the pull request happened.
+   where `pushed`, `branch` and `pr` say the push and the pull request happened. `fugaro run` returns
+   as soon as the run is **launched**, so the script does not read that row at launch: it polls the
+   listing until the row for the run it just launched — picked out by the run's own id, since the
+   listing is newest-first and holds other runs — is in a **final status**, up to the cap the plan
+   prints. Waiting for each run is the long part of this check; a run still in flight at the cap is
+   recorded as a FAIL with the status it had, not as a push that did not happen.
 5. **`TestLiveBitbucket` with the token**, and **`GET /2.0/user`** (U2, U7). The live test
    (`internal/gitprov/bitbucket/live_test.go`, build tag `live`) is the harness for the API itself:
    `FUGARO_LIVE_REPO` and `FUGARO_BITBUCKET_TOKEN` set, then
