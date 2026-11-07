@@ -2,6 +2,9 @@ package access
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -519,6 +522,75 @@ func TestCallerIsTheCredentialNotGitConfig(t *testing.T) {
 		if member, err := Caller(ctx); err == nil {
 			t.Errorf("Caller = %q for the credential address %q, want an error: a service account and any value that is not one person's address hold nothing", member, address)
 		}
+	}
+}
+
+// TestCredentialUserinfoRefusesWhatItCannotVouchFor: the reader behind Caller
+// is where the caller's identity is established, and Caller's comment promises
+// what it refuses — an address the provider has not verified, a document that
+// carries no address, and an endpoint that did not answer 200. Every other test
+// here replaces credentialEmail with a stub, which cannot tell any of those
+// guards apart from a deletion: this one answers over a real connection (a
+// loopback test server, so still no network) and lets the status, the body and
+// the JSON be the reader's own inputs.
+//
+// The four refusals say different things on purpose. A caller that reads the
+// error out loud — RS5 prints one — must be able to tell "the provider has not
+// confirmed this address" from "the credentials were made without the scope",
+// and a test that only checked for an error would let one sentence stand for
+// both.
+func TestCredentialUserinfoRefusesWhatItCannotVouchFor(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		body    string
+		want    string
+		wantErr string
+	}{
+		{"a verified address", http.StatusOK, `{"email":"alice@example.com","email_verified":true}`, "alice@example.com", ""},
+		{"an unverified address", http.StatusOK, `{"email":"alice@example.com","email_verified":false}`, "", "not verified"},
+		{"a document with no address", http.StatusOK, `{"email_verified":true}`, "", "no email"},
+		{"a body that is not the endpoint's", http.StatusOK, "<html>sign in</html>", "", "no email"},
+		{"a refusal from the endpoint", http.StatusForbidden, `{"email":"alice@example.com","email_verified":true}`, "", "403"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				asked++
+				if r.Method != http.MethodGet {
+					t.Errorf("the reader asked with %s, want %s: the userinfo endpoint answers a GET", r.Method, http.MethodGet)
+				}
+				w.WriteHeader(tc.status)
+				if _, err := io.WriteString(w, tc.body); err != nil {
+					t.Errorf("writing the answer: %v", err)
+				}
+			}))
+			defer server.Close()
+
+			got, err := credentialUserinfoEmail(context.Background(), &http.Client{Timeout: credentialTimeout}, server.URL)
+			if asked != 1 {
+				t.Errorf("the endpoint was asked %d times, want 1: the reader asks once, and a reader that retried a refusal would be asking a person's identity again after being told no", asked)
+			}
+			if tc.want != "" {
+				if err != nil {
+					t.Fatalf("credentialUserinfoEmail = %q, %v, want %q: the endpoint answered 200 with the address and the provider's verification, which is the one answer the reader accepts", got, err, tc.want)
+				}
+				if got != tc.want {
+					t.Errorf("credentialUserinfoEmail = %q, want %q", got, tc.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("credentialUserinfoEmail = %q with no error, want a refusal: a caller that trusts this value holds the credential's identity on the strength of it", got)
+			}
+			if got != "" {
+				t.Errorf("credentialUserinfoEmail = %q beside its error, want the empty address: an address returned with an error is one a caller that ignores the error would use", got)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("the refusal says %q, want it to say %q: the four refusals are different facts about the credential, and a caller reading one has to tell them apart", err, tc.wantErr)
+			}
+		})
 	}
 }
 
