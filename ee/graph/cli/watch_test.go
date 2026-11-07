@@ -557,12 +557,17 @@ func TestWatchSourceDownIsAStateNotAnExit(t *testing.T) {
 // answers again. A long-lived stream is the one output that has to survive
 // this: a console holds it open for as long as the tab is, and a child that
 // exits on a blip takes the graph down with it until someone notices.
+//
+// The retry is the failed read's own doing and nothing else's: the keep-alive
+// stays at the test's five seconds, so a document a few floors after the down
+// one can only be the pending change that same read left behind. With a
+// keep-alive inside the test's patience the timer alone re-reads, and then a
+// regression that dropped the pending change — recovery slowing from the floor
+// to half a minute — would pass this test.
 func TestWatchTransientReadFailureIsADownScopeAndIsRetried(t *testing.T) {
 	f := newGraphFixture(t)
 	f.writeStoredView(t, storedView())
-	// A keep-alive inside a test's patience: it is what makes the first
-	// document after the failure due, since nothing about the graph changed.
-	fast(t, testFloor, 60*time.Millisecond)
+	fast(t, testFloor, testKeep)
 
 	sink := newWatchSink()
 	child := startWatch(t, sink, "graph", "--watch", "--json")
@@ -571,9 +576,20 @@ func TestWatchTransientReadFailureIsADownScopeAndIsRetried(t *testing.T) {
 		t.Fatalf("the first document is %+v, want the stored graph up", first)
 	}
 
-	// The database stops answering reads, and the subscription — a connection
-	// that is already open — is untouched by it.
-	f.db.Refuse(http.StatusServiceUnavailable, "503", "Service Unavailable", "the database is down")
+	// The database stops answering the view's read, and the subscription — a
+	// connection that is already open — is untouched by it. The refusal is on
+	// the view's own path, so the scope still has changes to report: a write
+	// anywhere in the subtree the subscription watches is one, and the read it
+	// triggers is the one that fails. The change is a declaration the
+	// coordinator's front door wrote, which the graph's own read does not
+	// consume: what the child draws while its read fails is the graph it had and
+	// not the change, and what it draws when the read is answered again is the
+	// stored view, up.
+	intent := coordinator.Intent{DeclaredBy: "someone@example.com", At: fcli.LsNow().UTC(), Files: []string{}, Services: []string{}}
+	f.db.RefusePath(coordinator.PathView(appSlug), http.StatusServiceUnavailable, "503", "Service Unavailable", "the database is down")
+	if err := f.store(t).Write(context.Background(), coordinator.PathIntent(appSlug, coordinator.IntentID(intent)), intent); err != nil {
+		t.Fatal(err)
+	}
 
 	down := sink.next(t, testPatience)
 	if down.Sources[0].State != graph.SourceDown {
@@ -594,8 +610,10 @@ func TestWatchTransientReadFailureIsADownScopeAndIsRetried(t *testing.T) {
 
 	// And it is retried rather than waited on: the next floor reads again, which
 	// is what makes the recovery below the child's own doing and not a change's.
+	// A few floors is the whole of the patience here: the keep-alive is seconds
+	// away, so a document this soon is the pending change and nothing else.
 	before := len(f.db.Requests())
-	retry := sink.next(t, testPatience)
+	retry := sink.next(t, 20*testFloor)
 	if retry.Sources[0].State != graph.SourceDown {
 		t.Errorf("the document after the down one is %+v, want the scope still down until a read succeeds", retry.Sources[0])
 	}
@@ -609,7 +627,7 @@ func TestWatchTransientReadFailureIsADownScopeAndIsRetried(t *testing.T) {
 
 	// The database answers again, and the same child is up again: the whole
 	// document, the next sequence, and one stream_id throughout.
-	f.db.Refuse(0, "", "", "")
+	f.db.RefusePath(coordinator.PathView(appSlug), 0, "", "", "")
 
 	var back graph.Document
 	for deadline := time.Now().Add(testPatience); time.Now().Before(deadline); {
