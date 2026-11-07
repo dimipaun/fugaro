@@ -770,7 +770,6 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return reserved
 	}
 	defer resp.Body.Close()
-
 	if rt.provider != nil && isRedirect(resp.StatusCode) {
 		// Never handed to the agent (its Location is another host's) and
 		// never followed: the provider answered with nothing usable.
@@ -951,6 +950,11 @@ func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *a
 	if !sleepUpstreamRetry(ctx) {
 		return up, sent, resp, err // cancelled while waiting: the failed attempt is the call's answer
 	}
+	if resp != nil {
+		// The failed attempt's answer is the gateway's to discard: not one
+		// byte of it reached the agent, and it is read no further.
+		_ = resp.Body.Close()
+	}
 	nup, nsent, nerr := next()
 	if nerr != nil {
 		// A call the gateway cannot build again (a Vertex token that went
@@ -960,9 +964,6 @@ func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *a
 		return up, sent, nil, nerr
 	}
 	s.logUpstreamRetry(model, reason, status, 1)
-	if resp != nil {
-		_ = resp.Body.Close()
-	}
 	resp, err = s.client.Do(nup)
 	return nup, nsent, resp, err
 }
