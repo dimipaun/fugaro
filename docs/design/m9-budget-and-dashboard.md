@@ -376,7 +376,7 @@ A refused write is re-read and evaluated locally, which tells a stale read (retr
 | An error or disconnect after `message_start` | Input tokens plus the **reserved** output tokens |
 | The client or a stage kill cancels the call | As above, and the upstream request is cancelled |
 | The runner dies | Nothing is released, so the outstanding amount stays counted |
-| Claude Code retries (429, 529, a dropped stream) | Each attempt is a new request with its own reservation. **Amended 2026-11-07 (SC2):** the gateway now sends one call of its own once more, when the attempt failed before any byte of an answer reached the agent — a transport error, or a 5xx/429 — after a short delay, inside the same reservation and with the same credential; Claude Code's retry is still a new request that reserves again (`internal/gateway/forward.go`, `sendRetryingOnce`) |
+| Claude Code retries (429, 529, a dropped stream) | Each attempt is a new request with its own reservation. **Amended 2026-11-07 (SC2):** the gateway now sends one call of its own once more, when the attempt failed before any byte of an answer reached the agent — a transport error, or a 5xx/429 — after a short delay, inside the same reservation and with the same credential; an attempt that was written and then lost before it answered is charged the call's whole reservation whatever the retry answered, because the upstream may have generated for it and nothing here read what that cost; Claude Code's retry is still a new request that reserves again (`internal/gateway/forward.go`, `sendRetryingOnce`) |
 | Parallel subagent calls | Each reserves independently. Top-ups are serialized |
 
 ### 5.6 Other ties between the stages and the gateway

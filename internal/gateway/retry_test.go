@@ -68,8 +68,11 @@ func noRetryLine(t *testing.T, l *logBuf) {
 // A transport error before the upstream said anything is the case the retry
 // exists for: nothing of an answer existed, so the second attempt is the
 // call's first answer as far as the agent is concerned. It is sent once --
-// twice in all -- with the same body, it settles from the attempt that
-// answered, and the one retry is one log line.
+// twice in all -- with the same body, and it is the one retry line. The
+// attempt that failed had its request written, though, so the upstream may
+// have served it and this gateway read nothing of what that cost: the call
+// settles at its reservation, of which the retry's own usage -- still read
+// off its answer, tokens included -- is the part that reconciles.
 func TestRetriesOnceOnAPreByteTransportError(t *testing.T) {
 	fastRetry(t)
 	u := pricing.Usage{Input: 11, Output: 13}
@@ -87,8 +90,14 @@ func TestRetriesOnceOnAPreByteTransportError(t *testing.T) {
 	if first, second := string(h.fake.Body(0)), string(h.fake.Body(1)); first != body || second != body {
 		t.Errorf("the retry's body is not the first attempt's:\n%q\n%q\nwant\n%q", first, second, body)
 	}
-	if rep := h.gw.EndStage(); rep.Calls != 1 || rep.Used != cost(t, sonnet, u) {
-		t.Errorf("the stage recorded %d calls using %d, want 1 call at %d: the call settles once, from the attempt that answered", rep.Calls, rep.Used, cost(t, sonnet, u))
+	w := worst(t, sonnet, body, 100, "")
+	if rep := h.gw.EndStage(); rep.Calls != 1 || rep.Used != w || rep.Unreconciled != w-cost(t, sonnet, u) {
+		t.Errorf("the stage recorded %d calls using %d (%d unreconciled), want 1 call at the reservation %d: the retry's usage reconciles only that much of it", rep.Calls, rep.Used, rep.Unreconciled, w)
+	} else if want := int64(u.Input + u.Output); rep.Tokens != want {
+		t.Errorf("the stage counted %d tokens, want %d: the usage of the attempt that answered is still read", rep.Tokens, want)
+	}
+	if call := h.logs.lastCall(t); call["settled"] != "reserved" {
+		t.Errorf("the call settled %v, want the reservation: an attempt written and lost may have reached the upstream", call["settled"])
 	}
 	line := onlyRetryLine(t, h.logs)
 	if line["retry"] != float64(1) || line["reason"] != "transport" || line["status"] != float64(0) {
@@ -102,9 +111,87 @@ func TestRetriesOnceOnAPreByteTransportError(t *testing.T) {
 	}
 }
 
+// A first attempt dropped after its request had been written, and a retry the
+// upstream answered with a failure status. The 503 is the agent's answer --
+// nothing else of an answer exists -- but it is not what the call cost: the
+// attempt before it may have reached the upstream and generated for it, and
+// this gateway read no status and no usage for it. A 503 generates nothing
+// either, so pricing the call from the retry alone would charge the run for
+// one call out of two that may have been served, and under `enforce` that
+// spend would pass `granted` with nothing in the ledger to explain it: the
+// call settles at its reservation instead, which is what the same attempt
+// costs without a retry at all. The status, the error type and the call
+// itself are still read off the answer the agent got.
+func TestALostAttemptIsChargedWhateverTheRetryAnswered(t *testing.T) {
+	fastRetry(t)
+	drop := anthropicfake.StreamOK(sonnet, smallUsage)
+	drop.DropBeforeHeaders = true
+	h := newHarness(t, drop, anthropicfake.Error(http.StatusServiceUnavailable, "api_error", "overloaded"))
+	body := msg(sonnet, 1000, `"stream":true`)
+	resp, b := h.post(body)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("the agent got %d %q, want the retry's own 503 relayed", resp.StatusCode, b)
+	}
+	if typ, _ := apiError(t, b); typ != "api_error" {
+		t.Errorf("the agent got error type %q, want the retry's api_error", typ)
+	}
+	if n := h.fake.Count(); n != 2 {
+		t.Fatalf("the upstream saw %d requests, want 2: the call and its one retry", n)
+	}
+	w := worst(t, sonnet, body, 1000, "")
+	rep := h.gw.EndStage()
+	if rep.Calls != 1 || rep.Used != w || rep.Unreconciled != w {
+		t.Errorf("report %+v, want 1 call charged the whole reservation %d: the attempt it lost may have reached the upstream", rep, w)
+	}
+	if l := h.gw.Ledger(); l.Used != w || l.Reserved != 0 {
+		t.Errorf("ledger %+v, want %d charged and nothing left reserved", l, w)
+	}
+	if call := h.logs.lastCall(t); call["settled"] != "reserved" || num(call["status"]) != http.StatusServiceUnavailable {
+		t.Errorf("call log %v, want the retry's own 503 settled at the reservation", call)
+	}
+	line := onlyRetryLine(t, h.logs)
+	if line["reason"] != "transport" || num(line["status"]) != 0 {
+		t.Errorf("retry line reason/status = %v/%v, want transport/0: the first attempt answered nothing", line["reason"], line["status"])
+	}
+}
+
+// The same rule where the failed attempt's answer is not the agent's at all:
+// a provider's error is never copied to it, so the call the retry answers is
+// the gateway's own 502 and the attempt the provider may have received is
+// still worth its reservation. A provider route settles in fewer places than
+// the Anthropic one (its non-2xx answer never reaches the pump), which is why
+// the charge is decided once, where the call settles, and not on the way out
+// of any one branch of it.
+func TestALostAttemptOnAProviderRouteIsChargedToo(t *testing.T) {
+	fastRetry(t)
+	body := msg(dsModel, 100)
+	drop := anthropicfake.MessageOK(dsModel, smallUsage)
+	drop.DropBeforeHeaders = true
+	r := feeRouted(t, 0, nil, routedStage, dsRoute,
+		drop, anthropicfake.Error(http.StatusInternalServerError, "api_error", "boom"))
+	resp, b := r.post(body)
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(b, "the provider answered with status 500") {
+		t.Fatalf("the agent got %d %q, want the gateway's own sentence for the retry's 500", resp.StatusCode, b)
+	}
+	if n := r.prov.Count(); n != 2 {
+		t.Fatalf("the provider saw %d requests, want 2: the call and its one retry", n)
+	}
+	w := worst(t, dsModel, body, 100, "")
+	rep := r.gw.EndStage()
+	if rep.Calls != 1 || rep.Used != w || rep.Unreconciled != w {
+		t.Errorf("report %+v, want 1 call charged the whole reservation %d: the provider may have received the lost attempt", rep, w)
+	}
+	if call := r.logs.lastCall(t); call["settled"] != "reserved" {
+		t.Errorf("call log %v, want settled reserved", call)
+	}
+	onlyRetryLine(t, r.logs)
+}
+
 // A 5xx, or a 429: the upstream's own failure, or its answer that the call
 // should come back later. Neither is a fact about the work, and nothing of
-// either reached the agent, so the call goes again.
+// either reached the agent, so the call goes again. Neither is a lost attempt
+// either -- the upstream refused the call and generated nothing for it -- so
+// the retry's own answer is the whole charge.
 func TestRetriesOnceOnAnUpstreamFailureStatus(t *testing.T) {
 	fastRetry(t)
 	for _, status := range []int{http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusTooManyRequests} {

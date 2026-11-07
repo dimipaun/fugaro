@@ -15,7 +15,10 @@
 // nothing a client has already seen is ever replayed, so a stream cut after
 // its first byte is not retried (that is the runner's retry of a whole stage,
 // internal/runner), a 4xx other than 429 is never retried, and a service
-// upstream (KindService) is not retried here at all.
+// upstream (KindService) is not retried here at all. A first attempt that
+// failed after its request had been written and before it answered is
+// charged the call's whole reservation whatever the retry answered: the
+// upstream may have generated for it, and nothing here read what that cost.
 //
 // The credentials service has a retry of its own, one layer out: the helpers
 // this package exports (export.go) are reused by internal/credsvc, which
