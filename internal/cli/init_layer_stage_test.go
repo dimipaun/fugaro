@@ -117,6 +117,60 @@ func TestUpdateSeedsTheLocalLayerFromThePublishedOne(t *testing.T) {
 	}
 }
 
+// TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile: the project's two
+// schedules are the layer's (R13), and the installation stage — which runs
+// before the layer stage — reads them from the local file the owner edits.
+// Every way of having no value reads as no value, which the installation's
+// options then take as paused: the one direction this setting may never take
+// by accident is the one that starts a job.
+func TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No local layer file at all: there is nothing to read, and the run
+	// leaves the schedules as the module deploys them.
+	if reports, catalog := jobsPaused(lc); reports != nil || catalog != nil {
+		t.Fatalf("with no local layer file the options are %v, %v, want no value at all", reports, catalog)
+	}
+	for _, tc := range []struct {
+		what string
+		text string
+		// want is the two values, reports first, or nil for "the file states
+		// nothing this run may take": a file that does not parse, or one with
+		// a jobs: key this release does not know. The layer stage refuses
+		// those a moment later, and the installation stage must not read a
+		// schedule out of a file that is about to be refused.
+		want []bool
+	}{
+		{"the layer states nothing", testProjectLayer, []bool{true, true}},
+		{"the layer writes both out", testProjectLayer + "jobs:\n  reports: { paused: true }\n  catalog_check: { paused: true }\n", []bool{true, true}},
+		{"the owner starts the reports job", testProjectLayer + "jobs:\n  reports: { paused: false }\n", []bool{false, true}},
+		{"the owner starts the catalog check", testProjectLayer + "jobs:\n  catalog_check: { paused: false }\n", []bool{true, false}},
+		{"the owner starts both", testProjectLayer + "jobs:\n  reports: { paused: false }\n  catalog_check: { paused: false }\n", []bool{false, false}},
+		{"a jobs: key this release does not know", testProjectLayer + "jobs:\n  digests: { paused: false }\n", nil},
+		{"a paused: that is not a bool", testProjectLayer + "jobs:\n  reports: { paused: nope }\n", nil},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			recordLayer(t, tc.text, "0")
+			reports, catalog := jobsPaused(lc)
+			if tc.want == nil {
+				if reports != nil || catalog != nil {
+					t.Fatalf("the options took %v, %v from a layer file this run cannot use, want no value at all", reports, catalog)
+				}
+				return
+			}
+			if reports == nil || catalog == nil {
+				t.Fatalf("the layer's jobs: block gave no value: %v, %v", reports, catalog)
+			}
+			if *reports != tc.want[0] || *catalog != tc.want[1] {
+				t.Errorf("reports paused = %v, catalog check paused = %v, want %v and %v", *reports, *catalog, tc.want[0], tc.want[1])
+			}
+		})
+	}
+}
+
 // layerObject is the project layer as the rig's bucket holds it right now, and
 // whether it is there at all.
 func layerObject(t *testing.T, r *layerRig) (string, bool) {

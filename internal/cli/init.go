@@ -1547,6 +1547,7 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	if o.budget > 0 {
 		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
 	}
+	opts.ReportsPaused, opts.CatalogCheckPaused = jobsPaused(lc)
 	spec, err := infra.Installation(lc, opts)
 	if err != nil {
 		return infra.InstallationSpec{}, initErr(err)
@@ -1561,6 +1562,37 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 		}
 	}
 	return spec, nil
+}
+
+// jobsPaused is the project layer's jobs: block (R13) as the installation's
+// options take it: whether each of the project's two scheduled jobs is
+// stopped, and nil for each value the layer does not state, which
+// infra.InstallOptions reads as paused.
+//
+// It reads the LOCAL layer file — the one the owner edits and the run's layer
+// stage publishes — because the installation stage runs before that stage and
+// this is the only copy readable without the runs bucket. Silence is paused
+// along every way of having no value: no file, a file this CLI does not read
+// (a symlink, an oversized one), a file that does not parse. An unreadable
+// file is not silently accepted as an answer — it is not an answer at all, and
+// the layer stage refuses it moments later with the message that names it —
+// while the one thing neither direction may do is start a schedule the owner
+// never asked for.
+func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
+	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
+	if err != nil {
+		return nil, nil
+	}
+	data, err := readLayerFile(path)
+	if err != nil {
+		return nil, nil
+	}
+	l, ps := projectLayerProblems(data, lc)
+	if len(ps) > 0 || l == nil {
+		return nil, nil
+	}
+	reports, catalog := l.ReportsPaused(), l.CatalogCheckPaused()
+	return &reports, &catalog
 }
 
 // checkManagedStateBucket refuses a managed creation whose installation state
