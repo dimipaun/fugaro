@@ -1774,11 +1774,22 @@ Three things about those commands are worth stating rather than leaving to the t
 
 There is no changelog page file and no changelog JSON in this tree: `src/lib/changelog.mjs`
 reads `docs/releases/vX.Y.Z.md` **during the build** and the changelog page (W1.9) renders
-what it returns, with each release's product summary read from `data/release-summaries.yaml`
-through the content pipeline beside it. Nothing is written to disk, so a file that lands on
-`main` before its release leaves no stale copy behind — and no date is taken from a tag,
-because a shallow checkout has no tags and the newest entry a reader sees has none yet
-(D100).
+the three newest of them, with each release's product summary read from
+`data/release-summaries.yaml` through the content pipeline beside it. Nothing is written to
+disk, so a file that lands on `main` before its release leaves no stale copy behind — and no
+date is taken from a tag, because a shallow checkout has no tags and the newest entry a
+reader sees has none yet (D100).
+
+**Three releases, and the whole history one link away** (D1640, D1648). The generator still
+returns every release file — the home page's hero reads the newest published one out of the
+same call — and the cut is the page's: it renders the newest three and, under them, the link
+to this repository's releases page, where every release is stated with the date and the
+artifacts GitHub carries. Beside them the page carries one line for each of the two streams
+that release from this repository (D1641, D1644): the desktop console's latest release,
+linked at its own GitHub release, and the phone app's once the app has a release, whose
+sentence is that app's own `data/mobile-release-summaries.yaml` entry, because the app
+publishes no GitHub release. Both lines are read at build time from those streams' notes and
+package manifests, so no version is written into the page.
 
 **Which releases are published is a file in this repository, not a property of the
 checkout** (the owner's brief of 2026-10-19: *"Changelog: why do I see not yet released?"*).
@@ -1794,11 +1805,16 @@ release.
 whoever runs Fugaro, so they are rendered as they are, inside a `<details>` block that opens
 with no script (D183); the summary above them is the site's own line for that release, and a
 release file with no entry in `data/release-summaries.yaml` stops the build naming the file
-rather than rendering an entry with nothing under its heading. `website/test/changelog.mjs`
-holds the generator to the files, and `website/test/changelog-page.mjs` holds the page to
-both sources: every release file has a summary entry and none is empty, the page renders the
-entry a release's own summary carries, and the page writes no sentence that is neither a
-release file's nor a summary's.
+rather than rendering an entry with nothing under its heading. **That holds for every release
+file, and not only for the three the page renders** (D1647): the page asks for a summary line
+for every entry the generator returns, before it makes its cut, so an older release losing its
+line stops the build rather than going unmentioned. `website/test/changelog.mjs` holds the
+generator to the files, and `website/test/changelog-page.mjs` holds the page to both sources:
+every release file has a summary entry and none is empty, the three entries the page renders
+are the newest three and each one renders the summary its own entry in the data file carries,
+and the page writes no sentence of its own — every sentence on it is a release file's, a
+summary's, or one of the words it adds for the three things beside the entries: the link to
+the full list and the two streams' labels.
 
 ## The console's downloads are derived, never written down
 
