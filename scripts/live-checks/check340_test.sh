@@ -307,6 +307,20 @@ storage)
       printf 'bindings:\n'
       ;;
     remove-iam-policy-binding)
+      if [ -n "${FAKE340_REMOVE_REFUSED:-}" ]; then
+        # The teardown refused: the previous form's conditioned binding stays on
+        # the bucket, which is how the next form would list through the EARLIER
+        # clause and the check would answer the wrong form. =once refuses only the
+        # first removal, which is what a transient refusal looks like and what the
+        # Restore's retry exists for.
+        attempts=$(cat "$dir/remove-attempts" 2>/dev/null || echo 0)
+        attempts=$((attempts + 1))
+        printf '%s\n' "$attempts" >"$dir/remove-attempts"
+        if [ "${FAKE340_REMOVE_REFUSED}" != once ] || [ "$attempts" -le 1 ]; then
+          printf 'ERROR: (gcloud.storage.buckets.remove-iam-policy-binding) PERMISSION_DENIED: %s does not have storage.buckets.setIamPolicy access to the bucket.\n' "$account" >&2
+          exit 1
+        fi
+      fi
       # --all: the member's binding goes whatever condition it carries, which is
       # what lets a Restore that does not know which form was granted clean up.
       tmp=$dir/bindings.$$
@@ -690,7 +704,10 @@ test_a_bucket_that_cannot_be_reached_stops() {
   RUN340_ENV=(FAKE340_UNREACHABLE=yes)
   run340_default
   expect_status "$status" 2 "unreachable bucket"
-  expect_contains "$out" "FACT bucket-reachable: FAIL — " "unreachable bucket: the row fails"
+  # The guard RAN and decided, so its row carries the decision and not the
+  # "not reached" the block reserves for a step that was never measured.
+  expect_contains "$out" "FACT bucket-reachable: FAIL — gs://bkt-sandbox-a/ is not listable by your own identity" "unreachable bucket: the row carries the guard's own reason"
+  expect_absent "$out" "FACT bucket-reachable: FAIL — not reached" "unreachable bucket: the row is not the unmeasured fallback"
   expect_contains "$out" "FACT aborted: FAIL — " "unreachable bucket: the stop is recorded"
   expect_contains "$out" "FACT relative-lists-runs: FAIL — not reached" "unreachable bucket: nothing was measured"
   expect_contains "$out" "FACT list-prefix: FAIL — not reached" "unreachable bucket: no answer is given"
@@ -710,7 +727,8 @@ test_an_account_that_already_exists_stops() {
   RUN340_ENV=(FAKE340_SA_EXISTS=yes)
   run340_default
   expect_status "$status" 2 "account already there"
-  expect_contains "$out" "FACT account: FAIL — " "account already there: the row fails"
+  expect_contains "$out" "FACT account: FAIL — the name this run drew" "account already there: the row carries the guard's own reason"
+  expect_absent "$out" "FACT account: FAIL — not reached" "account already there: the row is not the unmeasured fallback"
   expect_contains "$out" "already exists" "account already there: the row says why it stops"
   expect_absent "$(cat "$dir/state/calls")" "service-accounts create" "account already there: nothing was created"
   expect_bucket_clean "account already there"
@@ -836,6 +854,41 @@ test_a_refusal_of_another_kind_is_flagged() {
   expect_bucket_clean "another permission"
 }
 
+# A removal the bucket refuses, between the two forms: the previous form's
+# conditioned binding is still on the bucket, so the full-path attempt would list
+# through the RELATIVE clause and the check would answer the wrong form. It stops
+# as could-not-tell instead, and the Restore's own read of the bucket policy is
+# what says whether it could take the binding off in the end — here the fake
+# refuses that too, so the Restore row FAILs and says what is still there.
+test_a_refused_removal_stops_instead_of_answering_the_wrong_form() {
+  setup_case remove-refused relative
+  RUN340_ENV=(FAKE340_REMOVE_REFUSED=yes)
+  run340_default
+  expect_status "$status" 2 "refused removal"
+  expect_contains "$out" "FACT aborted: FAIL — " "refused removal: the abort is recorded"
+  expect_contains "$out" "the bucket refused to remove the roles/storage.objectViewer binding" "refused removal: the row names the removal that was refused"
+  expect_absent "$out" "FACT full-lists-runs: PASS" "refused removal: the next form is not tried through the earlier clause"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "refused removal: and no form is answered"
+  expect_contains "$out" "FACT list-prefix: FAIL — not reached" "refused removal: no answer is given"
+  [ -s "$dir/state/bindings" ] || fail "refused removal: the case did not leave the first form's binding on the bucket"
+  expect_contains "$out" "FACT restore: FAIL — " "refused removal: the Restore says the binding is still there"
+  expect_contains "$out" "the run's own bucket bindings" "refused removal: and names what to remove by hand"
+}
+
+# The same refusal, with the removal working again by the time the Restore runs:
+# the trap retries what the form could not do, and the read-back is what makes
+# the Restore a pass rather than a claim. The fake refuses the removal only the
+# first time it is asked, which is what a transient refusal looks like.
+test_a_refused_removal_the_restore_can_still_do() {
+  setup_case remove-once relative
+  RUN340_ENV=(FAKE340_REMOVE_REFUSED=once)
+  run340_default
+  expect_status "$status" 2 "refused removal once"
+  expect_contains "$out" "the bucket refused to remove the roles/storage.objectViewer binding" "refused removal once: the run stops on it"
+  expect_contains "$out" "FACT restore: PASS — " "refused removal once: the Restore took it off"
+  expect_bucket_clean "refused removal once"
+}
+
 # A bucket named with its gs:// prefix and a trailing slash is the same bucket:
 # the two arguments are the ones a person types.
 test_a_gs_prefix_and_a_trailing_slash_are_accepted() {
@@ -874,6 +927,8 @@ t test_refusals_are_not_read_when_nothing_held
 t test_a_refused_grant_is_could_not_tell
 t test_a_half_granted_pair_is_still_torn_down
 t test_a_refusal_of_another_kind_is_flagged
+t test_a_refused_removal_stops_instead_of_answering_the_wrong_form
+t test_a_refused_removal_the_restore_can_still_do
 t test_belong_is_refused_in_both_places
 t test_a_dry_run_prints_the_plan_and_makes_no_call
 t test_a_dry_run_still_refuses_belong

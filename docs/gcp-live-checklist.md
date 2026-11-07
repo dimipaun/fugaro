@@ -11343,8 +11343,12 @@ read only once one of those three has held under that form — if none did, they
 a refusal then could be the fresh grant simply not being in effect yet. IAM propagates a fresh grant and its
 condition asynchronously (V7's neighbour, §11 item **V5**), and reading one as a refusal would pick the wrong form —
 the one thing this check must not do. A refusal that is **allowed** instead is a grant wider than R12's two prefixes,
-and it fails that form. A **grant the bucket refuses** is a third thing again: the run stops there, with exit `2` and
-an `aborted` row naming the binding, rather than reading a permission error as "this form does not list".
+and it fails that form. A **grant the bucket refuses**, and a **removal it refuses** between the two forms, are a
+third thing again: the run stops there, with exit `2` and an `aborted` row naming the binding, rather than reading a
+permission error as "this form does not list". A refused removal has to stop the run all the same — the previous
+form's conditioned binding is still on the bucket, so the next form would list through the **earlier** clause and the
+answer would name the wrong form — and the flag that says a binding of this run's is on the bucket stays set, so the
+Restore tries the removal again and reads the bucket policy back into its own row either way.
 
 **Reading the `CHECK 340 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
 `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry

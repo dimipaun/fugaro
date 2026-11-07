@@ -73,7 +73,8 @@
 #             and one line above it naming the `<list prefix>` R12 must use, to
 #             copy back to the coordinator. Exit 0 when a form passed every
 #             criterion, 1 when none did, 2 when the run could not tell (a guard
-#             stopped it, a tool is missing, an internal error ended it).
+#             stopped it, a grant or a removal the bucket refused, a tool is
+#             missing, an internal error ended it).
 #
 # No credential is handled anywhere in it: the account this check creates holds
 # no key and is granted nothing outside the bucket's two prefixes, every read is
@@ -325,6 +326,9 @@ guard_belong() {
 guard_bucket_reachable() {
   local out
   if ! out=$(gcloud storage ls --project="$P" "gs://$B/" 2>&1); then
+    # The FAIL is recorded before the stop: this guard RAN and decided, and the
+    # block's "not reached" row is reserved for a step that was never measured.
+    fact bucket-reachable FAIL "gs://$B/ is not listable by your own identity, so this check has nothing to measure: every reading below would be a refusal about a bucket that is not there rather than about the listing attribute (gcloud's own line: $(first_line "$out")). Check the bucket name, and that you are signed in as an operator of $P"
     stop "gs://$B/ is not listable by your own identity, so this check has nothing to measure (gcloud's own line is above it). Check the bucket name, and that you are signed in as an operator of $P"
   fi
   fact bucket-reachable PASS "gs://$B/ is there and listable by your own identity, so every reading below is about the throwaway account and not about a bucket that cannot be reached ($(printf '%s' "$out" | grep -c . || true) entries at the root)"
@@ -332,6 +336,7 @@ guard_bucket_reachable() {
 
 guard_account_absent() {
   if gcloud iam service-accounts describe "$SA_EMAIL" --project="$P" >/dev/null 2>&1; then
+    fact account FAIL "the name this run drew, $SA_EMAIL, is already taken in $P: Check 340 never adopts an account it did not create, so it stops rather than reading an account whose grants are somebody else's. Delete that account and its bindings, or run the check again, which picks a fresh name"
     stop "$SA_EMAIL already exists in $P. Check 340 never adopts an account it did not create: delete it and its bindings, or run the check again, which picks a fresh name"
   fi
   fact account PASS "the throwaway account $SA_EMAIL is absent from $P, so the one this run makes is its own"
@@ -402,12 +407,20 @@ grant_bindings() {
 
 # remove_bindings: both of them, and whichever condition they carry. The next
 # form starts from a bucket policy that holds neither, so a reading under it
-# cannot be a leftover of the attempt before.
+# cannot be a leftover of the attempt before — and that is why a REFUSED removal
+# is a stop and not a `|| true`: with the previous form's conditioned binding
+# still on the bucket, the next form would list through the EARLIER clause, read
+# as a pass, and this check would answer the wrong form with no row saying a
+# teardown had failed. It stops as could-not-tell and leaves BINDINGS_GRANTED
+# set, so the trap's Restore retries and reads the bucket policy back into its
+# own FAIL row.
 remove_bindings() {
   local role
   for role in roles/storage.objectViewer roles/storage.objectUser; do
-    gcloud storage buckets remove-iam-policy-binding "gs://$B" --project="$P" \
-      --member="serviceAccount:$SA_EMAIL" --role="$role" --all >&2 || true
+    if ! gcloud storage buckets remove-iam-policy-binding "gs://$B" --project="$P" \
+      --member="serviceAccount:$SA_EMAIL" --role="$role" --all >&2; then
+      stop "the bucket refused to remove the $role binding this form granted (gcloud's own words are the line above), so the next form would list through THIS form's clause and the answer would name the wrong form. The Restore below tries again and reads the bucket policy back"
+    fi
   done
   BINDINGS_GRANTED=no
 }
