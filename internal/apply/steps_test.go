@@ -63,7 +63,11 @@ func TestStepsTableNamesOnlyKnownStages(t *testing.T) {
 // answers each row correctly for its own prefix and leaves every real key with
 // no steps at all, so a change to a key the registry declares would be saved
 // with nothing to make it live. These are keys as `fugaro settings` spells them
-// (internal/settings/registry.go), held to the row that owns them.
+// (internal/settings/registry.go), held to the row that owns them — and the two
+// halves of a membership are held apart here as well, because the workspace
+// stage is the owner's: its keys owe it, and the member's owe nothing, which is
+// the difference between a step that publishes the change and one that can
+// never run on the machine that asked for it.
 func TestStepsMatchesRealSettingKeys(t *testing.T) {
 	for _, tc := range []struct {
 		key   string
@@ -76,11 +80,16 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		// The project layer's keys are published by the layer stage.
 		{"layer.defaults.agent.auth", []string{initflow.Layer}},
 		{"layer.ab.judge_model", []string{initflow.Layer}},
-		// The four workspace families, the bare key among them.
-		{"workspace", []string{initflow.Workspace}},
-		{"workspace_pin.issuer", []string{initflow.Workspace}},
+		// The workspace OWNER's half, which the workspace stage publishes.
 		{"workspace_members.*.repos", []string{initflow.Workspace}},
 		{"workspace_cap.monthly", []string{initflow.Workspace}},
+		// The workspace MEMBER's half, which owes no step: nothing publishes
+		// either key, and the workspace stage skips on a member. The two are
+		// declared rather than missing, so Steps answers true with no steps —
+		// a row mapping them to the workspace stage would queue a step that can
+		// never run on the machine that asked for it.
+		{"workspace", nil},
+		{"workspace_pin.issuer", nil},
 	} {
 		got, ok := Steps(Change{Kind: Setting, Key: tc.key})
 		if !ok {
@@ -91,14 +100,23 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 			t.Errorf("Steps(setting %s) = %v, want %v", tc.key, got, want)
 		}
 	}
+
+	// The member's keys answer empty and true, which is not the same as the
+	// false a key nobody declared answers — the caller prints "live once
+	// written" for one and treats the other as a gap in the table.
+	if steps, ok := Steps(Change{Kind: Setting, Key: "workspace_pin.issuer"}); !ok || len(steps) != 0 {
+		t.Errorf("Steps(workspace_pin.issuer) = %v, %v, want no steps and true: declared, owing nothing", steps, ok)
+	}
 }
 
 // checkStepsRow is one row of the table, held to all three halves.
 func checkStepsRow(t *testing.T, change Change, row string, steps []string) {
 	t.Helper()
-	if len(steps) == 0 {
-		t.Errorf("%s: a declared row with no step: a change that owes nothing declares no row at all", row)
-	}
+	// A row with no steps is a declaration and not an omission: it says the
+	// change is live once the config is written (AP5's "declares its steps, or
+	// none"). The assertions below hold for it — no step to check, an empty
+	// order — and the tail is what tells the two answers apart, since a gap in
+	// the table makes Steps answer false rather than empty.
 	for _, step := range steps {
 		if !KnownStep(step) {
 			t.Errorf("%s: %q is not a step this build can run: the table may name an initflow stage (initflow.Names) or %s, and nothing else",

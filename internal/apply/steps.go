@@ -90,11 +90,15 @@ var resourceSteps = map[string][]string{
 	ResourceWorkspace: []string{initflow.Workspace},
 }
 
-// settingPrefixSteps is the setting-key half of the table. A key is matched by
-// prefix and the prefixes do not overlap: a registry key is a dotted path, and
-// a family of keys is its leading members. A key that matches no row is a gap
-// in the table and not an answer (Steps says so), because every setting a
-// command writes has to declare what it affects (spec rule 2, D1561).
+// settingPrefixSteps is the setting-key half of the table. A key is matched
+// against these rows in order and the first row it starts with is the answer,
+// so a row is also a statement about the rows below it: a family whose prefix
+// is a dotted path comes before the bare key that would otherwise claim it.
+// A key that matches no row is a gap in the table and not an answer (Steps says
+// so), because every setting a command writes has to declare what it affects
+// (spec rule 2, D1561). A row with no steps is a declaration too — it says the
+// change is live once the config is written — and it is a different answer from
+// the gap, which is why the two are not spelled the same way.
 var settingPrefixSteps = []struct {
 	prefix string
 	steps  []string
@@ -106,10 +110,26 @@ var settingPrefixSteps = []struct {
 	// The project layer's keys are published by the layer stage, which is the
 	// only writer of that file's cloud copy (D830).
 	{"layer.", []string{initflow.Layer}},
-	// The four workspace families — `workspace`, `workspace_pin.*`,
-	// `workspace_members.*` and `workspace_cap.*` — are the owner's
-	// declaration, which the workspace stage publishes (D1292).
-	{"workspace", []string{initflow.Workspace}},
+	// The workspace OWNER's half of a membership: the member table and the cap
+	// are the whole of what the workspace stage publishes (D1292, and
+	// update_workspace.go's own comment: the record a run publishes is the one
+	// its own config declares, `workspace_members` and `workspace_cap`). They
+	// are the keys of the project the workspace is named after, and the stage
+	// does nothing on a member's run, where they are absent.
+	{"workspace_members.", []string{initflow.Workspace}},
+	{"workspace_cap.", []string{initflow.Workspace}},
+	// The workspace MEMBER's half — the pin, and the membership key naming the
+	// workspace it trusts — owes no step: nothing publishes either. The
+	// workspace stage is the owner's and skips on a member, no other stage
+	// reads them, and localcfg.Config.Shared nils the pin rather than publishing
+	// it (W1). They are the member's own record, read by its own commands and
+	// verified against its own config, so the change is live when the config is
+	// written — and a row mapping them to the workspace stage would queue a step
+	// that can never run on the machine that asked for it.
+	{"workspace_pin.", nil},
+	// The bare membership key, last of the workspace rows so the two families
+	// above are matched first.
+	{"workspace", nil},
 }
 
 // Steps answers the steps change owes, in the order initflow runs them, and
