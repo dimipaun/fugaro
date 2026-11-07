@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // familyLogs points this test's state directory at one of its own, so the log
@@ -387,6 +388,37 @@ func TestAccountsAddWritesALog(t *testing.T) {
 	if strings.Contains(out+errOut, convergeNoise) {
 		t.Errorf("the default view streamed the run's own output:\n%s%s", out, errOut)
 	}
+}
+
+// TestAccountsAddLogHoldsNoValueTheRunRead: the token is a value this run
+// holds from the moment it reads it, so a child that echoes it back — the
+// stages' own output is streamed into the log, which is what a redaction list
+// is for — puts neither the value nor a line of it in the log, and the marker
+// is there instead. The fixture's Terraform prints the token the person typed,
+// which is the only place one of these runs can leak it: the default view
+// prints no value of its own, and the log is the run's other reader.
+func TestAccountsAddLogHoldsNoValueTheRunRead(t *testing.T) {
+	familyLogs(t)
+	r := newAddRig(t)
+	// The echo a stage may make of what it was given, in the shape a reader of
+	// the log would find it: on its own line, and inside one besides.
+	echo := "credentials: " + addToken() + "\nand the line it came on\n"
+	r.script["plan"] = map[string]any{"exit": 2, "stdout": echo + convergeNoise + "\n"}
+	r.script["apply"] = map[string]any{"exit": 0, "stdout": echo + convergeNoise + "\n"}
+	r.save(t)
+
+	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
+	log := familyLog(t, "accounts-add")
+	if !strings.Contains(log, convergeNoise) {
+		t.Fatalf("the run's own output is not in the log at all, so this test proves nothing:\n%s", log)
+	}
+	if strings.Contains(log, addToken()) {
+		t.Errorf("the log holds the value the run read:\n%s", log)
+	}
+	if !strings.Contains(log, report.Redacted) {
+		t.Errorf("the echo of the value is not in the log in any form:\n%s", log)
+	}
+	assertNoValue(t, out+errOut, addToken())
 }
 
 func TestAccountsRmDefaultIsShort(t *testing.T) {

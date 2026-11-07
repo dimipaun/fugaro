@@ -646,6 +646,9 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 		return err
 	}
 	defer clear(value)
+	// The value this run read is held for the rest of it, so an echo of it
+	// reaches neither the run's own output nor its log (F6).
+	run.hold(value)
 	// A generated write is two entries of one document: the fresh value under
 	// NAME and the value it replaced under the window's name, so the window
 	// exists in the version that retires the old key rather than a version

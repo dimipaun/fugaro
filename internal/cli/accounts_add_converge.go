@@ -287,6 +287,12 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 	// captures in this file do it, so stdout is the answer alone.
 	answer := cmd.OutOrStdout()
 	cmd.SetOut(cmd.ErrOrStderr())
+	// The engine's own live redaction list joins this command's: a stage holds
+	// what it prompts for in slots of its own (initEngine.hold), and the run's
+	// log — which is this command's log — has to hold what the run holds at the
+	// moment a line was written, exactly as `fugaro update` filters the same
+	// Terraform output with it (F6).
+	run.shareRedaction(e.redaction())
 	opts := e.options()
 	// The reporter is this command's (ReportBorrowed): the loop's steps are
 	// three of the eight this command accounts for, and the closing line is

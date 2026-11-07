@@ -13,6 +13,8 @@ package cli
 
 import (
 	"io"
+	"slices"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -25,13 +27,24 @@ import (
 type stepRun struct {
 	rep *report.Reporter
 	log report.Sink
+
+	// The redaction source the log reads at each line, guarded because a step
+	// of the run and the goroutine the log is written from are not the same
+	// one. held is what this run holds (hold); also is a converge's own live
+	// list, borrowed for the length of a run whose steps are three of a bigger
+	// command's (shareRedaction).
+	mu   sync.Mutex
+	held []string
+	also func() []string
 }
 
 // stepRunFor opens the run for the command name the log is filed under (D1351)
-// and its redaction source, which is the process-wide list of values a command
-// may hold (secretsHeld): no value one of these commands reads is ever written
-// to the run's own output, and the list is what keeps a child that echoes one
-// from putting it in the log.
+// and its redaction source: the values the process held from the start
+// (secretsHeld) and the values the run itself registers as it reads them
+// (hold). No value one of these commands reads is ever written to the run's
+// own output, and the list is what keeps a child that echoes one out of the
+// log; it is read at each line rather than copied, so a value registered after
+// the log was opened is still one the log holds (F6).
 //
 // out is where the human lines go: the command's own stdout for a command
 // whose stdout is a person's, and its stderr for one whose stdout is an answer
@@ -45,9 +58,49 @@ func stepRunFor(cmd *cobra.Command, name string, out io.Writer) *stepRun {
 	if out != answer {
 		cmd.SetOut(out)
 	}
-	rep, log := reporterFor(cmd, name, secretsHeld)
+	s := &stepRun{}
+	s.rep, s.log = reporterFor(cmd, name, s.redaction)
 	cmd.SetOut(answer)
-	return &stepRun{rep: rep, log: log}
+	return s
+}
+
+// redaction is what the log is filtered with at the moment a line is written.
+func (s *stepRun) redaction() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := slices.Clone(secretsHeld())
+	out = append(out, s.held...)
+	if s.also != nil {
+		out = append(out, s.also()...)
+	}
+	return out
+}
+
+// hold registers value with this run's own redaction for the rest of the run:
+// the value a command read, and each long enough line of a multi-line one, the
+// way the converge's own slots hold what a stage prompts for (initEngine.hold,
+// heldValues). The run keeps it rather than releasing it at the store call,
+// because the log covers the whole command and a stage behind the store may
+// echo what it was given — what a run no longer needs is released by the run
+// ending. Nothing here fails: a value is either registered in full or not at
+// all, and a registration that cannot be made would be the one failure this
+// could be, so the list grows instead of being capped.
+func (s *stepRun) hold(value []byte) {
+	vals := heldValues(value)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.held = append(s.held, vals...)
+}
+
+// shareRedaction adds a live list to this run's redaction: a command whose
+// steps are invoked converge stages borrows the engine's own list — the one
+// `fugaro update` filters the same Terraform output with — so a value a stage
+// holds (the secrets stage's, on a door that runs it) is kept out of this
+// command's log too.
+func (s *stepRun) shareRedaction(src func() []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.also = src
 }
 
 // close ends the run: the closing line, and then the log shut. It is deferred

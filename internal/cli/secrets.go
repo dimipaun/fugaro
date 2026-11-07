@@ -1474,6 +1474,10 @@ func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptio
 		return "", "", err
 	}
 	defer clear(value)
+	// The run holds what it just read for the rest of the command, so a server
+	// or a child that echoes it back reaches neither the run's own output nor
+	// its log (F6).
+	run.hold(value)
 	version, err := sm.Set(ctx, id, value, labels)
 	if err != nil {
 		// A server may echo what it received, raw or base64 as sent.
