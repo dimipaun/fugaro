@@ -4,7 +4,7 @@
 package cli
 
 // `fugaro graph` (CG3 of docs/cli-output-console-graph/implementation-plan-graph.md):
-// the command the console spawns, and the two boundaries it is:
+// the command the console spawns, and what these tests hold of it.
 //
 //   - TestGraphRefusesAnInvalidScopeBeforeAnyRead is H1. --source reaches argv
 //     from the console's renderer, so every value outside graph.ParseScope's
@@ -16,13 +16,13 @@ package cli
 //   - TestGraphAllIsTheCoordinatorToday: `all` is the union of the scopes that
 //     exist, which today is the coordinator alone, and the document names it as
 //     itself — `coordinator` is the source half of every key it produced and the
-//     value the console sends back (contract §6.22). The subtests are the two
-//     halves of §6.13's read: a stored view, and a project the coordinator has
-//     never reconciled (the runs alone, `down`).
+//     value the console sends back (contract §6.22). Its subtest is §6.13's
+//     other half: a project the coordinator has never reconciled, drawn from
+//     the runs alone and stated as the scope being down.
 //   - TestGraphJSONIsOneVersionedDocument: the shape a reader outside this
 //     binary consumes, read back strictly.
 //   - TestGraphNeedsNoCheckout: the read paints from a directory that is not a
-//     checkout, which is what the plan scope's card is not.
+//     checkout, which is where the console's child runs.
 //   - TestGraphEmptyProjectIsAnEmptyDocument: a project that lists no repository
 //     is an empty document and not a refusal, because the refusal would be read
 //     as "this CLI has no graph".
@@ -47,7 +47,6 @@ import (
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
 	"github.com/dimipaun/fugaro/ee/graph"
-	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -176,7 +175,6 @@ func newGraphFixture(t *testing.T) *graphFixture {
 	f.bucket = "file://" + runs
 	path := f.writeConfig(t, "  acme/app: { provider: github, base_branch: main, workflows: [web] }\n")
 	t.Setenv("FUGARO_CONFIG", path)
-	f.run.AddJob(gcp.JobName(appSlug, "web"), "4", "8Gi")
 	// The installation names its project in the runs bucket, as its Terraform
 	// does; every cloud command checks it.
 	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})

@@ -144,7 +144,8 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	// the caller has none to give: AsOf is the zero time, the document's
 	// `as_of` is null, and the scope claims no age. The one age fact the read
 	// does carry is the sweep's stale marker, and the source reads it itself.
-	src := graph.CoordinatorSource{View: project, Now: time.Now()}
+	now := time.Now()
+	src := graph.CoordinatorSource{View: project, Now: now}
 	nodes, state, err := src.Nodes()
 	if err != nil {
 		// An identity this build cannot key: the database's own data is what a
@@ -154,7 +155,7 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	}
 	doc := graph.Document{
 		Version:     graph.DocumentVersion,
-		GeneratedAt: time.Now(),
+		GeneratedAt: now,
 		Sources:     []graph.SourceState{state},
 		Nodes:       nodes,
 		Edges:       []graph.Edge{},
