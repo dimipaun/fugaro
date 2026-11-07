@@ -11,7 +11,7 @@ which sets the seams the moved features fill; the features themselves move here 
 carries this directory; from 0.13.0 the binaries a release ships (the archives and the Homebrew
 cask) are built with the `ee` tag and carry its code.
 
-Three rules hold for everything placed here:
+Four rules hold for everything placed here:
 
 - **Nothing outside `ee/` imports anything under `ee/`.** The core builds and tests with this
   directory deleted, and `cmd/fugaro/ee_on.go`, a build-tagged assembly file, is the only place any
@@ -19,6 +19,11 @@ Three rules hold for everything placed here:
 - **Every file that lands here starts with the two-line notice**: `SPDX-License-Identifier:
   LicenseRef-Fugaro-Subscription`, and a pointer to `ee/LICENSE`. This file and `ee/LICENSE` are the
   only files exempt from it.
+- **An agent writes what lands here and never holds or reaches a signing key, and never operates the
+  service.** Writing the code is an agent's work; holding the key is not. The private half of a
+  licence key never enters a file here, and minting and running the key service stay the owner's, off
+  every machine an agent reaches — a public key and a signature vector, which a verifier's tests need,
+  are admitted.
 - **A release carries no `ee/` code until it sets the `ee` build tag**, and that tag obliges the
   release to label the binary as carrying code under the Subscription Edition licence.
 

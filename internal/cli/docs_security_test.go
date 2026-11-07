@@ -401,9 +401,12 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// Q6's shape and its cost.
 		"One secret, one grant, one leak",
 		"a read of the bundle is every credential the service holds at once",
-		// Off by default, opt-in, and the flag that opts in.
-		"fugaro update --provision-credentials",
-		"with it off",
+		// Deployed on every installation, and the switch a run reads -- the
+		// posture the owner's ruling of 2026-11-05 replaced "off by default,
+		// opt-in, and the flag that opts in" with (DON1, DON8).
+		"**Deployed for every installation, and reached only where the switch is on (the owner's ruling of 2026-11-05; DON1 and DON8).**",
+		"**`fugaro update` deploys it on every installation**",
+		"the deploy alone changes no run",
 		// The job holds nothing — and the one job that is not reached, named
 		// rather than left to be assumed, because a shared project job keeps
 		// its accessors and its token mount.
@@ -418,7 +421,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// per-repository job, and the shared job is refused rather than served
 		// from its own token.
 		"never falls back",
-		"the mount is the opt-in's, not the outage's",
+		"the mount is the switch's, not the outage's",
 		"refused at the gateway rather than answered from the job's own token",
 		// The stop flag.
 		"fugaro budget kill --all",
@@ -507,7 +510,7 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		"no model credential of their own and nothing yet to replace it",
 		"agent.auth: cascade",
 		"A shared project job is not wired either",
-		"an installation that has not opted in is byte for byte what it was",
+		"a repository whose root has not been re-applied with the switch on is byte for byte what it was",
 		// And the App key's own limit stays: the mount and the grant are
 		// still there, the runner just no longer reads the key.
 		"the release after the owner's live Check 96 proves the deployed service mints",

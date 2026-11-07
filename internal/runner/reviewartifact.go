@@ -1055,7 +1055,7 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 	// open or edit (spec §2), and a caller left to set the ending beside this
 	// one would be a second place that can disagree with it. Only a refusal
 	// is left to the caller, which is what finishReviewJob routes.
-	r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeReviewed
+	r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReviewed, "", r.rec.Reason)
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 	return nil
