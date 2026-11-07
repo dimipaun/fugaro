@@ -1,15 +1,17 @@
 # Periodic run reviews: the reports, the patterns, the practice and the learnings
 
 **Status: design answered by the owner 2026-11-04, ruled on again 2026-11-05, and put in 0.22.0 on
-2026-11-07; plan only; nothing implemented; no task approved.** D960–D971 are written, **D972–D979**
-are reserved and unused, and the plan is written to the owner's answers
+2026-11-07; its decisions D1430–D1449 are answered 2026-11-07 and all tasks are approved 2026-11-07
+(owner: "All tasks approved. Jobmax"); plan only; nothing implemented.** D960–D971 are written,
+**D972–D979** are reserved and unused, and the plan is written to the owner's answers
 ([reconciliation.md](reconciliation.md) §3) **and to the rulings of 2026-11-05 (§5, E1–E8)**, which
 take no decision number and move the reports out of the repositories and into the project's runs
 bucket. **On 2026-11-07 the owner put this work in 0.22.0 "Sloth"**, and the release plan for that
 slot — this folder's work together with the failures report's own design
-(`docs/design/failure-classes.md`) — is **Part II of [implementation-plan.md](implementation-plan.md)**,
-reconciled in [reconciliation.md](reconciliation.md) **§6** (findings F25–F34 and the decisions
-**D1430–D1449**, none answered).
+(`docs/design/failure-classes.md`) — is **Part II of
+[implementation-plan.md](implementation-plan.md)**, reconciled in
+[reconciliation.md](reconciliation.md) **§6** (findings F25–F34 and the decisions **D1430–D1449**,
+none answered).
 
 **Asked by:** the owner, 2026-10-25: "daily, weekly, monthly and yearly run-review reports, each
 committed to the tree; the official skills updated so every Fugaro user does the periodic reviews;

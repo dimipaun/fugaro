@@ -1,13 +1,14 @@
 # A closed failure class on every run record, and a failures report — spec, reconciliation and plan
 
-**Status: plan only; nothing is implemented; no task approved.** This is a plan for the owner to read.
-The design it reads is already merged (`docs/design/failure-classes.md`, pull request **#1746**, docs
-only) and already pinned; what this folder adds is the reconciliation of that design against the code
-on `main`, the reader census it needs and does not carry, and a plan sliced so the tasks can run in
-parallel. It adds no code, no schema, no config key, no command and no Terraform; it edits no file
-outside `docs/`; and **nothing in it is an approval** — every task in
-[implementation-plan.md](implementation-plan.md) needs the owner's own go, and the first of them needs
-the decisions below narrowed to a range first (see **Open items**).
+**Status: plan only; nothing is implemented; the decisions D1450–D1469 are answered 2026-11-07 and
+all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** This is a plan for the
+owner to read. The design it reads is already merged (`docs/design/failure-classes.md`, pull request
+**#1746**, docs only) and already pinned; what this folder adds is the reconciliation of that design
+against the code on `main`, the reader census it needs and does not carry, and a plan sliced so the
+tasks can run in parallel. It adds no code, no schema, no config key, no command and no Terraform;
+it edits no file outside `docs/`; and **nothing in it is an approval** — every task in
+[implementation-plan.md](implementation-plan.md) needs the owner's own go, and the first of them
+needs the decisions below narrowed to a range first (see **Open items**).
 
 **Asked by:** the repository owner, in a message of **2026-11-07** that put the work in the **0.22.0**
 slot. The role is the one the design's own §2 describes: the person who owns the installation and

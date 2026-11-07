@@ -1,11 +1,13 @@
 # The console's managed-project screens — read-only screens for what the CLI does on a managed project
 
-**Status: plan only; nothing is implemented; no task approved.** This is a design-only folder: it adds
-no code, no schema, no console source, no test fixture and no workflow, and it edits no file outside
-`docs/console-managed-screens/`. Every command, flag, field, operation and file below is a proposal.
-**No decision here is answered** ([reconciliation.md](reconciliation.md) §7 carries D1470–D1489, each
-with an empty owner's-answer cell), and **no task in [implementation-plan.md](implementation-plan.md)
-may start before the owner approves it** — an answer is not an approval.
+**Status: plan only; nothing is implemented; the decisions D1470–D1489 are answered 2026-11-07 and
+all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** This is a design-only
+folder: it adds no code, no schema, no console source, no test fixture and no workflow, and it edits
+no file outside `docs/console-managed-screens/`. Every command, flag, field, operation and file
+below is a proposal. **No decision here is answered** ([reconciliation.md](reconciliation.md) §7
+carries D1470–D1489, each with an empty owner's-answer cell), and **no task in
+[implementation-plan.md](implementation-plan.md) may start before the owner approves it** — an
+answer is not an approval.
 
 **Asked by:** the owner, 2026-11-07, in the release planning for **console 0.121.0 (Raspberry)**: put
 "managed-project screens" in that release — **read-only** screens showing what the CLI does on a

@@ -1,9 +1,15 @@
 # The api-key review path — the independent review served by an API key instead of a subscription account
 
-**Status: plan only; nothing is implemented; no task approved.** This is a design for the owner to
-read. It adds no code, no schema, no config key and no Terraform; it edits no file outside `docs/`.
-Nothing in it is an approval: every task in [implementation-plan.md](implementation-plan.md) needs
-the owner's own go, and the first of them needs an answer before it — see **Open items** below.
+**Status: plan only; nothing is implemented; the decisions D1410–D1429 are answered 2026-11-07 and
+all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** Every answer is the
+recommendation, and the ones that decide the shape are worth a line: **D1410 both slices** — the
+in-job half and the cloud half; **D1411 and D1412 Path A, and no second Anthropic key**; **D1413 the
+key wins when the owner asks for it explicitly**; **D1414 no** — an `oauth` run's review does not
+move onto an API key; and **D1415 a new additive field** on `StageTiming`, never a new value on
+`credential`. This is a design for the owner to read. It adds no code, no schema, no config key and
+no Terraform; it edits no file outside `docs/`. Nothing in it is an approval: every task in
+[implementation-plan.md](implementation-plan.md) needs the owner's own go, and the first of them
+needs an answer before it — see **Open items** below.
 
 **Asked by:** the repository owner, in a message of **2026-11-07** — "the api-key review path: let's
 start a design". The role is the one the ask's own clauses describe: the person who owns the
