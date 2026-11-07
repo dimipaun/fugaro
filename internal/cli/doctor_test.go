@@ -2513,6 +2513,14 @@ func TestDoctorProjectAccountStored(t *testing.T) {
 			t.Errorf("the fix %q lacks %q for the default account, which has no accounts-add form", c.Fix, want)
 		}
 	}
+	// And nothing else for it: an `accounts add default` beside the pair is a
+	// command config.ValidateClaudeAccounts refuses, so the operator would be
+	// handed a line that stops on the reserved name. Deleting only the
+	// `continue` above leaves the pair present and every other assertion here
+	// green, which is what this pins.
+	if strings.Contains(c.Fix, "accounts add default") {
+		t.Errorf("the fix %q hands the default account an accounts-add form, and the name is reserved", c.Fix)
+	}
 	if a := r.sm.Accessed(); len(a) != 0 {
 		t.Fatalf("doctor read a secret value: %v", a)
 	}
