@@ -873,6 +873,17 @@ type Record struct {
 	// rather than hidden, as ChangedFiles.Truncated is: a judge or a reader
 	// must be able to tell a short patch from a cut-off one.
 	PatchTruncated bool `json:"patch_truncated,omitempty"`
+	// Retries is how many stage attempts this run threw away and ran again
+	// because the model's stream was closed before its response finished
+	// (issue #1827; the runner's own transient retry, internal/runner). It
+	// counts the retries the run spent, not the stages that ended that way,
+	// and it says nothing about which stage: the run log and the stage
+	// timings say that. Absent — never a zero — for a run that retried
+	// nothing, which is every record written before this field existed, so an
+	// old reader sees the record it always saw: the field is additive and the
+	// format's version stays 1 (schemas/result.schema.json declares the
+	// property, as it does for StageAccounts).
+	Retries int `json:"retries,omitempty"`
 }
 
 // PatchName is a run's patch object under its own prefix:
