@@ -434,7 +434,7 @@ func TestDocsProjectClaudeAccountsOneCommand(t *testing.T) {
 		"`claude_accounts.<name>.allow_data_to`",
 		"`profiles.<p>.claude_accounts`",
 		"stored **project-wide**",
-		"the stages `fugaro update` runs",
+		"stages `fugaro update` runs",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s no longer says %q: the happy path for one new account is one command (docs/accounts-add/spec.md §2), and this is where the page states it", projectClaudeAccountsDoc, want)
