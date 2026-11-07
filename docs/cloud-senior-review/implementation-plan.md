@@ -1646,10 +1646,10 @@ the service opt-in, and they stay correct the day it is not.
       tree rather than assumed: an ordinary `fugaro update` carries the `credentials_service` entry
       forward as it is found (`CarriedCredentialsService`, `internal/infra/tfvars.go:612`, whose own
       comment is that every ordinary run rewrites the tfvars from a spec that never sets the key) — **its
-      one `verifier_accounts` member aside, which the carry writes from the effective list, below** — the stage that
-      recomputes the list is registered only under `--provision-credentials`
-      (`internal/cli/init_stages.go:181`) and reads the node the **previous** update published
-      (`internal/cli/init_credentials.go:433`) — so between those runs the block is frozen **except for the
+      one `verifier_accounts` member aside, which the carry writes from the effective list, below** — the
+      writer that recomputes the list is `prepare`, which every ordinary `fugaro update` runs
+      (`internal/cli/init.go:2089`) and which reads the node the **previous** update published
+      (`internal/cli/init.go:2561`) — so between those runs the block is frozen **except for the
       one member the effective list decides** (the carry's own half, below), and the module
       is the only writer the apply that creates the account has. **The carried-null block converges in one
       ordinary update because of exactly this**: null is the state the default is for, and the account is

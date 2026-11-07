@@ -3270,6 +3270,68 @@ func TestProjectPolicyPublishKeepsCloneURLs(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishKeepsTheCraftMembers: craft_credentials, craft_pools
+// and crafts are read by this Fugaro (the types exist, plan MC1) and written by
+// no command of it yet, so a publish must keep what the node holds instead of
+// rebuilding the node without them. The alternative is not a refusal but a
+// deletion: the publisher marshals the policy it built from the operator's
+// config, and a member no config field feeds is a member that silently goes.
+// The three are copied as typed values rather than patched in as document
+// members, the way the credentials block is (they are strict inside, so
+// publishedPolicyOf refuses an unmodelled key inside them before this point),
+// which is what makes decoding them back here worth asserting.
+func TestProjectPolicyPublishKeepsTheCraftMembers(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// What a later release — or MC4 of this plan, once the config writes them —
+	// leaves on the node.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["craft_credentials"] = []any{map[string]any{"name": "acme-main", "type": "openrouter"}}
+	node["craft_pools"] = []any{map[string]any{"name": "acme-pool", "strategy": "failover", "members": []any{"acme-main", "vertex"}}}
+	node["crafts"] = map[string]any{
+		"coder":           map[string]any{"model": "claude-opus-5-5", "access": "acme-main"},
+		"security-review": map[string]any{"model": "claude-opus-5-5", "access": "acme-pool"},
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.db.Value(projectpolicy.PathShared())
+	for _, path := range [][]string{
+		{"craft_credentials"}, {"craft_pools"},
+		{"crafts", "coder"}, {"crafts", "security-review"},
+	} {
+		if _, ok := nodeAt(got, path...); !ok {
+			t.Errorf("the publish dropped %s:\n%s", strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
+		}
+	}
+	// The decoded policy the rest of this binary reads carries them too: MC2
+	// resolves a craft's access against exactly these definitions.
+	p := publishedPolicy(t, f)
+	if len(p.CraftCredentials) != 1 || p.CraftCredentials[0].Name != "acme-main" {
+		t.Errorf("CraftCredentials = %+v, want acme-main", p.CraftCredentials)
+	}
+	if len(p.CraftPools) != 1 || len(p.CraftPools[0].Members) != 2 {
+		t.Errorf("CraftPools = %+v, want the pool with its two members", p.CraftPools)
+	}
+	if p.Crafts == nil || p.Crafts.Coder.Access != "acme-main" || p.Crafts.SecurityReview.Access != "acme-pool" {
+		t.Errorf("Crafts = %+v, want the two crafts the node held", p.Crafts)
+	}
+	// And a node that carries none is written without any of them: keeping is
+	// not inventing, and a project that uses no craft must not have its node
+	// gain the members (an older CLI refuses a key it does not know).
+	g := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if raw := nodeJSON(t, g, projectpolicy.PathShared()); strings.Contains(raw, "craft") {
+		t.Errorf("a project with no craft publishes a craft member: %s", raw)
+	}
+}
+
 // TestPolicyRefusalsEscapeTheNodesKeyNames: the top-level key names a refusal
 // prints come from the node, which is a hand-writable object
 // (projectpolicy.Policy.UnknownKeys is whatever the strict decode could not

@@ -810,22 +810,44 @@ func levelProblems(path string, r *ReviewLevels) []Problem {
 	return ps
 }
 
+// ModelIDProblem is what a model ID may not be, wherever one is written:
+// agent.model and agent.models.*, a craft's model in fugaro.yaml and the
+// project layer (validateAgentModels) and a craft's model in the local config
+// (localcfg.validate, under the path crafts.<craft>.model). It is one function
+// because the key is one key: the gateway prices and pins a model ID wherever it
+// came from, so a value that is not one is refused at load in every file that
+// may hold it rather than at a run in the files that were missed.
+func ModelIDProblem(model string) string {
+	switch {
+	case len(model) > 100:
+		return "must be at most 100 characters"
+	case strings.ContainsFunc(model, unicode.IsSpace):
+		return "must not contain whitespace"
+	}
+	return ""
+}
+
 // validateAgentModels checks agent.models and the token limits, which hold
 // whether or not a budget is on (the pin rules are CheckPins).
 func validateAgentModels(a Agent) []Problem {
 	var ps []Problem
-	for _, m := range []struct{ path, val string }{
+	// A craft's model is a model ID wherever it is written, so it is held to
+	// the same shape as agent.model and agent.models.*: the gateway prices and
+	// pins it, and a value that is not an ID is refused here rather than at a
+	// run. The crafts' accesses are checked by ValidateCrafts.
+	models := []struct{ path, val string }{
 		{"agent.model", a.Model}, {"agent.models.coder", a.Models.Coder},
 		{"agent.models.reviewer", a.Models.Reviewer}, {"agent.models.background", a.Models.Background},
-	} {
-		switch {
-		case len(m.val) > 100:
-			ps = append(ps, Problem{Path: m.path, Message: "must be at most 100 characters"})
-		case strings.ContainsFunc(m.val, unicode.IsSpace):
-			ps = append(ps, Problem{Path: m.path, Message: "must not contain whitespace"})
+	}
+	for _, name := range CraftNames {
+		models = append(models, struct{ path, val string }{"agent.crafts." + name + ".model", a.Crafts.Of(name).Model})
+	}
+	for _, m := range models {
+		if msg := ModelIDProblem(m.val); msg != "" {
+			ps = append(ps, Problem{Path: m.path, Message: msg})
 		}
 	}
-	return append(ps, validateAgentTokens(a)...)
+	return append(append(ps, ValidateCrafts(a.Crafts)...), validateAgentTokens(a)...)
 }
 
 // validateAgentTokens checks the token limits, which are policy keys.
