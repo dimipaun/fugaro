@@ -526,6 +526,24 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   the operator to remember, or (b) it ships the step and says so in `### For operators`. **Picking
   between them is a new decision, not one of these nineteen**, and no task of the plan may land before
   it is picked.
+- **A published layer whose removed key sits in a flow-style profile has no edit at all, and only the
+  publish door repairs that object.** `yamledit` splices a member out of a flow mapping only while the
+  member's value is a plain value, so a layer written as `svc: { … image: { apt: […] } }` — a shape a
+  release before this one published — holds `image.apt` where no edit of the removal takes it out
+  (`internal/cli/init_layer_migration.go:315`). The local layer file that holds it is the owner's to fix
+  by hand, and `fugaro update` says so and stops; the **published object** is not a file anyone edits,
+  and it is what every repository of the project resolves against, so the run says what repairs it
+  (`internal/cli/init_layer_stage.go:241`) and names the command — a layer published over the object
+  with `fugaro config publish --executable-changes`, the flag being what that gate needs whenever the
+  layer replacing it names commands or image steps, because the object it replaces is a document no
+  reader here parses and so every executable key of the new layer counts as changed (L7). `fugaro
+  update` has no such flag. That is a second operator step beyond `fugaro update` — the second place
+  this design meets the HARD RULE — and, like the `--retire` step above, it is a step this design
+  cannot teach `update` to take, because the edit the removal would need does not exist for that
+  document. The readings are (a) the removal's release carries the step and its refusal names the
+  command, or (b) a later release teaches `yamledit` to cut a collection out of a flow member, and
+  `update` migrates that object in place like every other. **Picking between them is a new decision, not
+  one of these nineteen.**
 - **Unit tests cannot show the deploy path.** The registry, the build account, the job and the run are
   one artefact, and the hermetic fakes are written from the API documentation. That is why the 0.20.0
   tag waits for the owner's live check rather than for a green suite, and why the check is a step of the

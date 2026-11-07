@@ -276,9 +276,20 @@ func spliceRefusal(err error) string {
 	return fmt.Sprintf("this editor will not cut the key out of the document as it is written — %s", reason)
 }
 
+// why is what stopped the removal, for a sentence: the editor's own refusal, or
+// the problems of the document the removal did make. The two are failures on
+// different sides of the write — one is a removal there is none of, the other a
+// removal a reader refuses what it left — and both are told apart from a nil
+// result, which is a document with nothing to take out.
+func (r *layerRemoval) why() string {
+	if r.Refused != "" {
+		return r.Refused
+	}
+	return "what is left is not a project layer this Fugaro reads: " + pluginwire.Printable(layerProblemsText(r.Problems))
+}
+
 // removedKeysFolded is the removal's sentence for the failures that stop it
-// before any write: the keys it would take out of one side, and what stopped it
-// — the editor's own refusal, or the problems of what is left of the document.
+// before any write: the keys it would take out of one side, and what stopped it.
 // What the layer itself supplies (the profile names of the keys, the problems'
 // text) is wrapped printable here rather than the sentence being wrapped whole
 // at the call site: MaxPrintable runes is not enough for the reason and the
@@ -287,10 +298,23 @@ func spliceRefusal(err error) string {
 func removedKeysFolded(r *layerRemoval) string {
 	if r.Refused != "" {
 		return fmt.Sprintf("the repository-image removal takes %s out of it, and this run does not write it: %s; take the key out by hand and run %s again",
-			pluginwire.Printable(r.text()), r.Refused, selfCommand()+" update")
+			pluginwire.Printable(r.text()), r.why(), selfCommand()+" update")
 	}
-	return fmt.Sprintf("the repository-image removal takes %s out of it, and what is left is not a project layer this Fugaro reads: %s",
-		pluginwire.Printable(r.text()), pluginwire.Printable(layerProblemsText(r.Problems)))
+	return fmt.Sprintf("the repository-image removal takes %s out of it, and %s", pluginwire.Printable(r.text()), r.why())
+}
+
+// objectRefusalFolded is the same failure on the published object, and it is a
+// sentence of its own: removedKeysFolded hands the work to the owner because the
+// side it is about is a file of theirs that they can edit, and this side is an
+// object in the project's bucket, where nothing is theirs to edit by hand. What
+// repairs it is a layer published over it, and the door that does that is named
+// with the flag it needs: the published object is a document this Fugaro does
+// not read, so the executable-key gate counts every executable key of the layer
+// that replaces it as changed (L7) and refuses without --executable-changes —
+// which `fugaro update`, the command that brought the reader here, has not got.
+func objectRefusalFolded(r *layerRemoval) string {
+	return fmt.Sprintf("the published project layer holds %s and this run does not take them out of it: %s; it is not a file to edit by hand — publish a layer without them over it with %s, and run %s again",
+		pluginwire.Printable(r.text()), r.why(), selfCommand()+" config publish --executable-changes", selfCommand()+" update")
 }
 
 // layerMigrateWhat is the fourth thing this stage asks before it writes: the

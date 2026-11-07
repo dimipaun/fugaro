@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,45 +210,99 @@ default_profile: svc
 	}
 }
 
-// TestUpdateRefusesALayerTheRemovalCannotCut: the removal has no edit for a
-// removed key written in a flow mapping whose value is a collection, and a run
-// that read that as "nothing to take out" would report the layer converged
-// while the object — and the file seeded from it — still hold a document every
-// reader refuses. Both sides refuse it, and both say which key and why.
-func TestUpdateRefusesALayerTheRemovalCannotCut(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		published string
-		local     string
-	}{
-		{"the published object holds it", flowLayer, ""},
-		{"only the local layer file holds it", "", flowLayer},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := newLayerRig(t, tc.published)
-			path := localLayerPath(t)
-			if tc.local != "" {
-				recordLayer(t, tc.local, "0")
-			}
+// TestUpdateRefusesALayerTheRemovalCannotCutFromTheFile: the removal has no edit
+// for a removed key written in a flow mapping whose value is a collection, and
+// the local layer file is where that side of the refusal is recoverable: the
+// file is the owner's, so the run stops and says which key it could not take out
+// and why.
+func TestUpdateRefusesALayerTheRemovalCannotCutFromTheFile(t *testing.T) {
+	newLayerRig(t, "")
+	path := localLayerPath(t)
+	recordLayer(t, flowLayer, "0")
 
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
-			if err == nil || ExitCode(err) != ExitUserError {
-				t.Fatalf("fugaro update reported a layer converged that still holds a removed key: %v\n%s%s", err, out, errOut)
-			}
-			all := out + errOut + err.Error()
-			if !strings.Contains(all, "profiles.svc.image.apt") || !strings.Contains(all, "flow collection") {
-				t.Errorf("the refusal does not say which key the removal could not take out, and why:\n%s", all)
-			}
-			if got, ok := layerObject(t, r); ok && got != tc.published {
-				t.Errorf("the object was written from a layer this run cannot migrate: %q", got)
-			}
-			if tc.local != "" {
-				if data, rerr := os.ReadFile(path); rerr != nil || string(data) != tc.local {
-					t.Errorf("the local layer file was rewritten with keys still in it: %s%v", data, rerr)
-				}
-			}
-		})
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("fugaro update reported a layer converged that still holds a removed key: %v\n%s%s", err, out, errOut)
 	}
+	all := out + errOut + err.Error()
+	if !strings.Contains(all, "profiles.svc.image.apt") || !strings.Contains(all, "flow collection") || !strings.Contains(all, "by hand") {
+		t.Errorf("the refusal does not say which key the removal could not take out, why, and that the file is the owner's to fix:\n%s", all)
+	}
+	if data, rerr := os.ReadFile(path); rerr != nil || string(data) != flowLayer {
+		t.Errorf("the local layer file was rewritten with the keys still in it: %s%v", data, rerr)
+	}
+}
+
+// TestUpdateHandlesALayerTheRemovalCannotCutInTheObject: the same document on
+// the published side, which is not a file the owner can edit by hand. The
+// removal is not one this run can make, so nothing writes those bytes into this
+// machine's file — a seed and a re-seed both would, and a file holding them is a
+// config no reader resolves — and the run says what repairs the object instead:
+// a layer published over it, which is the door that owns --executable-changes,
+// because the published object cannot be read and the executable-key gate counts
+// every executable key of the layer that replaces it as changed (L7).
+func TestUpdateHandlesALayerTheRemovalCannotCutInTheObject(t *testing.T) {
+	t.Run("a local layer file this Fugaro reads is published over it", func(t *testing.T) {
+		r := newLayerRig(t, flowLayer)
+		recordLayer(t, localOnlyMigrated, "0")
+
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		if err != nil {
+			t.Fatalf("fugaro update refused to publish a layer this Fugaro reads over an object it cannot rewrite: %v\n%s%s", err, out, errOut)
+		}
+		if got, ok := layerObject(t, r); !ok || got != localOnlyMigrated {
+			t.Errorf("the local layer file was not published over the object:\n%q", got)
+		}
+		all := out + errOut
+		if !strings.Contains(all, "config publish --executable-changes") {
+			t.Errorf("the run publishes over a project layer it does not read without naming the door that reviews such a write:\n%s", all)
+		}
+	})
+
+	t.Run("there is no local layer file to publish", func(t *testing.T) {
+		r := newLayerRig(t, flowLayer)
+		path := localLayerPath(t)
+
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		if err != nil {
+			t.Fatalf("fugaro update failed a run whose layer stage has nothing it may write: %v\n%s%s", err, out, errOut)
+		}
+		all := out + errOut
+		for _, want := range []string{"profiles.svc.image.apt", "flow collection", "config publish --executable-changes"} {
+			if !strings.Contains(all, want) {
+				t.Errorf("the run does not say %q:\n%s", want, all)
+			}
+		}
+		if got, ok := layerObject(t, r); !ok || got != flowLayer {
+			t.Errorf("the object was written from a layer this run cannot migrate: %q", got)
+		}
+		if _, rerr := os.Stat(path); !errors.Is(rerr, os.ErrNotExist) {
+			t.Errorf("a local layer file was seeded from an object this Fugaro does not read: %v", rerr)
+		}
+	})
+
+	t.Run("the file was written from another generation", func(t *testing.T) {
+		r := newLayerRig(t, flowLayer)
+		path := localLayerPath(t)
+		recordLayer(t, migratedLayer, "9")
+
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		if err != nil {
+			t.Fatalf("fugaro update failed a run whose layer stage has nothing it may write: %v\n%s%s", err, out, errOut)
+		}
+		all := out + errOut
+		for _, want := range []string{"generation 9", "config publish --executable-changes"} {
+			if !strings.Contains(all, want) {
+				t.Errorf("the run does not say %q:\n%s", want, all)
+			}
+		}
+		if data, rerr := os.ReadFile(path); rerr != nil || string(data) != migratedLayer {
+			t.Errorf("the file was re-seeded from an object this Fugaro does not read: %s%v", data, rerr)
+		}
+		if got, ok := layerObject(t, r); !ok || got != flowLayer {
+			t.Errorf("the object was written from a layer this run cannot migrate: %q", got)
+		}
+	})
 }
 
 // TestRemovedKeysOut pins the strip itself: what it takes out, what it leaves

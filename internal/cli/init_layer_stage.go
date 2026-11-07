@@ -101,6 +101,14 @@ type layerPlan struct {
 	localRemoval  *layerRemoval
 	objectRemoval *layerRemoval
 	objectLayer   *config.ProjectLayer
+	// objectRefusal is the removal of the published object when it is one this
+	// run may not write: the object holds keys the repository-image removal
+	// refuses and has no edit that takes them out of it as it is written, so
+	// its bytes are a document every reader refuses. The states that would
+	// write those bytes into this machine's file are held back, and the ones
+	// that write a layer this Fugaro reads — a publish, which replaces the
+	// object whole — are what this run can still do about it.
+	objectRefusal *layerRemoval
 
 	// recorded is the generation this machine's config records as the one its
 	// layer file was written from ("" when it records none).
@@ -222,14 +230,18 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 			// A removal there is none of is not that same "leave it": the
 			// object still holds the keys, so every repository of the project
 			// keeps resolving against a document no reader accepts, and a run
-			// that carried on would report the layer converged and seed this
-			// machine's file from those very bytes. The run says what it cannot
-			// do instead, the way it does for the local file.
+			// that carried on would report the layer converged and write those
+			// very bytes into this machine's file. It is not the local file's
+			// refusal either, which stops the run because that file is the
+			// owner's to edit: this side is an object in the project's bucket,
+			// so what is left is decided below, with the file and the record in
+			// hand, and said in the words of the door that repairs it.
 			if r := removedKeysOut(data, lc); r != nil {
 				if r.unwritable() {
-					return nil, userErr("%s: %s", config.LayerKey, removedKeysFolded(r))
+					p.objectRefusal = r
+				} else {
+					p.published, p.objectRemoval, p.objectLayer = r.Data, r, r.Layer
 				}
-				p.published, p.objectRemoval, p.objectLayer = r.Data, r, r.Layer
 			}
 		}
 	}
@@ -239,6 +251,13 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 	case !p.exists && !p.pubExists:
 		p.skip = fmt.Sprintf("there is no local layer file at %s and this project has published no layer: there is nothing to seed the file from and nothing to publish", p.path)
 	case !p.exists:
+		if p.objectRefusal != nil {
+			// There is nothing to seed the file from: the object's bytes are
+			// a document every reader refuses, and a seed writes them at the
+			// path this machine's layer is read from.
+			p.skip = fmt.Sprintf("there is no local layer file at %s, and nothing this run can seed it from: %s", p.path, objectRefusalFolded(p.objectRefusal))
+			break
+		}
 		p.seed = true
 	case !p.pubExists:
 		p.publish = true
@@ -265,7 +284,16 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 		// layer this machine cannot account for. The owner decides, and the
 		// remedy is the re-seed, not this file's bytes.
 		if hasRecord && recorded != gen {
-			p.stale = &layerGenerationState{recorded: p.recorded, published: gen}
+			state := &layerGenerationState{recorded: p.recorded, published: gen}
+			if p.objectRefusal != nil {
+				// D854's remedy is the re-seed, and the re-seed writes the
+				// object's own bytes — the document every reader refuses.
+				// Neither side is written, and the sentence names the door
+				// that repairs the object.
+				p.skip = fmt.Sprintf("the published project layer is not the generation this machine's layer file was written from (%s), so neither side of it is written: %s", state.text(), objectRefusalFolded(p.objectRefusal))
+				break
+			}
+			p.stale = state
 			break
 		}
 		p.publish = true
@@ -322,7 +350,7 @@ func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 	case p.migrate:
 		return initflow.Status{State: initflow.Todo, Detail: p.migrateDetail()}, nil
 	case p.publish:
-		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local layer file %s is unpublished: this run publishes it%s, after your confirmation", p.path, p.fileClause())}, nil
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local layer file %s is unpublished: this run publishes it%s%s, after your confirmation", p.path, p.fileClause(), p.objectRefusalClause())}, nil
 	case p.recordGen:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("this machine's config records %s as the generation its layer file was written from: this run records %d", generationText(p.recorded), p.gen)}, nil
 	}
@@ -358,6 +386,21 @@ func (p *layerPlan) fileClause() string {
 	return ", taking the keys the repository-image removal refuses out of your local layer file too"
 }
 
+// objectRefusalClause is the half of a publish's sentence for the object it
+// writes over when that object is one this Fugaro does not read and this run
+// cannot rewrite in place. The write is the whole answer — a publish replaces
+// the layer, removed keys and all — and the door that reviews such a write is
+// named because the published object cannot be read: the executable-key gate
+// counts every executable key of the new layer as changed (L7), and the command
+// that lands it is `fugaro config publish --executable-changes`, not this run.
+func (p *layerPlan) objectRefusalClause() string {
+	if p.objectRefusal == nil || !p.publish {
+		return ""
+	}
+	return fmt.Sprintf(", replacing a published project layer this Fugaro does not read: %s — it is replaced whole, and the commands and image steps of the layer that does it are reviewed by %s",
+		p.objectRefusal.why(), selfCommand()+" config publish --executable-changes")
+}
+
 // Plan is what the run says it is about to do, and it prints the three-way
 // state of D854's refusal before asking: the confirmation for a re-seed is made
 // against both files, and one the operator cannot see is one they cannot judge.
@@ -389,7 +432,7 @@ func (p *layerPlan) planDetail() string {
 		}
 		return fmt.Sprintf("rewrite the published project layer in place without %s, after your confirmation", p.objectRemoval.text())
 	case p.publish:
-		return fmt.Sprintf("publish the project layer from %s%s, after your confirmation", p.path, p.fileClause())
+		return fmt.Sprintf("publish the project layer from %s%s%s, after your confirmation", p.path, p.fileClause(), p.objectRefusalClause())
 	case p.recordGen:
 		return fmt.Sprintf("record the published project layer's generation (%d) in %s", p.gen, p.configPath)
 	}
