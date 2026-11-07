@@ -315,20 +315,22 @@ func MergeShared(published, local *Config) *Config {
 // bundle, or an auth the service does not serve — and it has to travel to the
 // other machines, or a switch-off would never reach anyone.
 //
-// The limit of that rule is an ordering one, and it is stated rather than
-// closed: a record carries no stamp, so a local `false` left by an EARLIER
-// apply outranks a `true` another machine wrote from a later one, and the next
-// publish from the machine holding the `false` writes it to the bucket again,
-// publishSharedConfig putting exactly what MergeShared returns in it. Every
-// launch that reads the published file then hands no address to that
-// repository's cascade runs — whose jobs gave their model mounts up to the
-// later apply — so they halt at the service's door (D143) until a machine
-// holding the newer record updates and publishes it back. The upgrade backfill
-// does not correct it either: it fills the entries that hold NO record and
-// skips a recorded `false` (internal/cli's backfillCredentialsServiceReady).
-// Closing it is a decision and not a merge rule — re-read the installation's
-// own state for a recorded `false` as well, or stamp the record so the newest
-// apply wins.
+// The limit of that rule is an ordering one, and it is the upgrade backfill
+// that closes it rather than this merge: a record carries no stamp, so a local
+// `false` left by an EARLIER apply outranks a `true` another machine wrote from
+// a later one, and the next publish from the machine holding the `false` writes
+// it to the bucket again, publishSharedConfig putting exactly what MergeShared
+// returns in it. Every launch that reads the published file then hands no
+// address to that repository's cascade runs — whose jobs gave their model
+// mounts up to the later apply — so they halt at the service's door (D143).
+// What repairs it is the machine holding the stale false: the backfill re-reads
+// the installation's own state for a recorded `false` as well as for an entry
+// with no record, so that machine's next `fugaro update` — the one command the
+// upgrade promises — writes the record true again when the state shows the
+// grant and that run's bundle holds a model credential, and publishes it back
+// (internal/cli's backfillCredentialsServiceReady). Until that run, the window
+// above is open. Stamping the record would close the window instead of
+// repairing it, and would cost the published shape a field.
 //
 // unionMaps' local-wins rule covers every other field of the entry, and a
 // fresh map is returned, so neither argument is modified.

@@ -475,8 +475,14 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // that failed leaves a document ahead of the state. A repository whose state
 // holds no such grant — never applied anywhere, applied with the service off,
 // or forgotten — is left alone: the record vouches for a grant, and none of
-// those is evidence of one. The value is this run's bundle reading, the same
-// one the repository door writes, and the bundle reading alone: this door fills
+// those is evidence of one. That read is made for an entry recorded `false` as
+// well as for one with no record (the loop below says why), and it is the only
+// thing that repairs a stale false: the record is published whole, so a machine
+// whose own apply predates the grant keeps writing its `false` over the `true`
+// the machine that made the grant published, and no other command would ever
+// correct it (localcfg's mergeRepoRecords). The value is this run's bundle
+// reading, the same one the repository door writes, and the bundle reading
+// alone: this door fills
 // the roots no checkout here applies, so it has neither the installation's
 // outputs nor their files to fold in — and does not need them, the grant that
 // brought a key here being one an apply made with the switch on, while both
@@ -489,10 +495,10 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // on it, and the convergence happens on that person's next `fugaro update` —
 // which is still the one command CLAUDE.md's HARD RULE promises. A failed read
 // costs this door a convergence rather than a wrong write: an entry it cannot
-// judge stays unrecorded, so an installation whose opt-in predates this release
-// converges on the next run that CAN read the bundle — which is the same door,
-// the next time it works, and never a second command. A state it cannot read
-// is the same shape, one repository at a time.
+// judge keeps the record it had, so an installation whose opt-in predates this
+// release converges on the next run that CAN read the bundle — which is the
+// same door, the next time it works, and never a second command. A state it
+// cannot read is the same shape, one repository at a time.
 //
 // Both doors that apply the installation root and write the local config call
 // it: install (init.go), and initFirebase (init_firebase.go), because
@@ -506,19 +512,22 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 	}
 	var switched []string
 	for key := range lc.Repos {
-		// A record at all — either value — is a door's judgement of that root
+		// A record saying on is a door's judgement of that root
 		// (recordCredentialsServiceReady, or a previous backfill), and this one
-		// only fills a gap. The distinction is why the field is a pointer: a
-		// recorded false is an apply that ran with the switch off, so it is
-		// evidence and not an absence, and re-reading the state for it on every
-		// update would be a cloud call per repository per run for an answer the
-		// repository's own door is the one to change. That last claim is what
-		// leaves a stale `false` here: the grant this door is choosing not to
-		// read can be NEWER than the record, made by an apply on ANOTHER
-		// machine, and the merge that publishes records lets this local `false`
-		// outrank the `true` that machine wrote (localcfg's mergeRepoRecords
-		// states the limit and both ways out of it).
-		if lc.Repos[key].CredentialsServiceReady != nil {
+		// has nothing to add to it. Every other entry is read against the
+		// installation's own state: no record at all is an entry written before
+		// the field existed, and a recorded false is an apply that ran with the
+		// switch off — the emptied bundle, or an auth the service does not
+		// serve. Neither is evidence that the grant is absent, and the false in
+		// particular is not: the apply that made the grant can be NEWER than
+		// it, made on another machine from a bundle filled since, and a false
+		// left alone here outranks the true that machine published for every
+		// reader of the published file (localcfg's mergeRepoRecords is where
+		// that happens) — the installation-wide outage of the switch this read
+		// is what keeps `fugaro update` alone able to repair. It costs one
+		// state read per such entry per update, which is the price of that
+		// repair: the alternative is a record that no door can correct.
+		if lc.Repos[key].CredentialsServiceOn() {
 			continue
 		}
 		on, err := appliedRepoCredentialsService(ctx, c, stateBucket, lc, key)
@@ -538,9 +547,10 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 		// Nowhere the bundle was not read — a coding agent's session, a run's
 		// own process, or a read that failed — is there a reading to write, so
 		// every entry keeps the record the person's last run left on it and the
-		// upgrade converges on that person's next `fugaro update`. This door
-		// only ever visited entries it found NOT ready, so a failed read costs
-		// it a convergence and cannot clear a record someone else wrote.
+		// upgrade converges on that person's next `fugaro update`. The entries
+		// this door visits are the ones whose record is not already true, and
+		// the value it would write is this run's own reading, so a failed read
+		// costs it a convergence and cannot clear a record someone else wrote.
 		return
 	}
 	for _, key := range switched {

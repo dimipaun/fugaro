@@ -187,16 +187,19 @@ func TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService(t *testing.T) {
 // key it still mounts would be refused. The shared jobs keep their own
 // credentials until C3.9 moves them.
 //
-// The last row is the DEPLOYED ROOT's own answer, and it is the fifth
-// argument's whole job: an empty auth is a document the launcher could not read
-// (a resolved config always defaults agent.auth, so the empty string never
-// comes from a file), and the repository root's own last apply is what the job
-// runs under then — the tfvars that apply was built from, read at the call site
-// by deployedRepoCredentialsService. It replaces the record and the auth
-// together, so a root applied with the service off hands nothing even over a
-// record that says ready, and a root applied with it on hands the address over
-// a record that says nothing — which is the state an installation that opted in
-// under an earlier release is in until `fugaro update` backfills it.
+// The last rows are what answers where the document cannot be read, and the
+// fifth argument's whole job is one of the two: an empty auth is a document the
+// launcher could not read (a resolved config always defaults agent.auth, so the
+// empty string never comes from a file), and two things stand in for it — the
+// repository's own record, and this machine's tfvars of the root that record
+// describes (deployedRepoCredentialsService, read at the call site). Either one
+// saying on hands the address, because either is written by an apply that
+// dropped the job's mounts and granted its account roles/run.invoker. A machine
+// that holds neither never applied the root, and that is every console launch:
+// console/src/main/launch.ts spawns `fugaro run --repo` from a private empty
+// directory, so the document is never readable there and the record is the only
+// answer — withholding the address on such a machine starts a `cascade` run
+// whose job mounts no model credential and halts at the service's door (D143).
 func TestCredentialsServiceLaunchEnv(t *testing.T) {
 	optedIn := &localcfg.Config{
 		CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL},
@@ -224,8 +227,7 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 			lc:   &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
 			auth: config.AuthCascade,
 		},
-		"a repository the service cannot serve":    {lc: optedIn, auth: "oauth"},
-		"no document, and no root of its own here": {lc: optedIn},
+		"a repository the service cannot serve": {lc: optedIn, auth: "oauth"},
 		"no document, and the root carries no service": {
 			lc:       &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
 			deployed: false,
@@ -236,16 +238,28 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want nil: the switch is the plan's own predicate (infra.CredentialsServiceServes), and a job told where the service is opens its git provider keyless (internal/gitprov/providers/providers.go) for a credential the service cannot hand back", name, got)
 		}
 	}
-	// The deployed root's own answer, both ways: with no document to read, a
-	// root whose tfvars carry the service hands the address — with the record
-	// empty, which is the upgrade's state, and with it already written, which
-	// is an ordinary launch from outside a checkout — and withholding it there
-	// starts a run whose job mounts no model credential and halts (D143).
-	for name, lc := range map[string]*localcfg.Config{
-		"a root applied with the service on, no record":    {CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
-		"a root applied with the service on, and recorded": optedIn,
+	// Both stand-ins, from either side: with no document to read, a root whose
+	// tfvars carry the service hands the address — with the record empty, which
+	// is the upgrade's state, and with it already written, which is an ordinary
+	// launch from outside a checkout — and so does the record alone on a machine
+	// that holds no tfvars of the root, which is every console launch. The last
+	// of those is the regression this pins: it read only this machine's workdir
+	// before, so a teammate's console launch of a switched-on cascade
+	// repository got no address and its run halted at the service's door.
+	for name, tc := range map[string]struct {
+		lc       *localcfg.Config
+		deployed bool
+	}{
+		"a root applied with the service on, no record": {
+			lc:       &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
+			deployed: true,
+		},
+		"a root applied with the service on, and recorded": {lc: optedIn, deployed: true},
+		"the record alone, on a machine that never applied it": {
+			lc: optedIn,
+		},
 	} {
-		got := credentialsServiceLaunchEnv(lc, "", "acme/app", "", true)
+		got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", "", tc.deployed)
 		if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want [%s=%s]", name, got, envCredentialsServiceURL, launchCredsURL)
 		}
@@ -293,48 +307,59 @@ func seedRepoRootVars(t *testing.T, slug, doc string) {
 	}
 }
 
-// TestALaunchOutsideACheckoutReadsTheDeployedRoot is the launch's half of the
-// switch where the run's own DOCUMENT cannot be read at all — the one state
-// neither the record nor the auth can judge. `fugaro run --repo X` from a
-// directory that holds no checkout of X leaves launchFileConfig with nothing to
-// read: no ref in an object database, no working tree to fall back to, so
-// agent.auth is "" and the switch's third condition is unanswerable. Withholding
-// the address there starts a `cascade` run whose job mounts no model credential
-// at all — the mounts were dropped by the apply that switched it on — so the
-// run halts at the service's door (D143), which is what every such launch did
-// before this.
+// TestALaunchOutsideACheckoutReadsTheRecordOrTheDeployedRoot is the launch's
+// half of the switch where the run's own DOCUMENT cannot be read at all — the
+// one state the auth cannot judge. `fugaro run --repo X` from a directory that
+// holds no checkout of X leaves launchFileConfig with nothing to read: no ref
+// in an object database, no working tree to fall back to, so agent.auth is ""
+// and the switch's third condition is unanswerable. Withholding the address
+// there starts a `cascade` run whose job mounts no model credential at all —
+// the mounts were dropped by the apply that switched it on — so the run halts
+// at the service's door (D143), which is what every such launch did before
+// this.
 //
-// What answers in the document's place is the repository root's own tfvars: the
-// document the last apply of that root was built from, which carries the
-// service exactly when that apply dropped the job's mounts and granted its
-// account roles/run.invoker (deployedRepoCredentialsService, over the file
+// Two answers stand in for the document, and either one is enough, because
+// both are written by an apply that dropped the job's mounts and granted the
+// job's account roles/run.invoker: the repository's own record, written by
+// that apply's machine or by the installation-wide backfill that read the
+// installation's state, and this machine's tfvars of the root it was applied
+// from (deployedRepoCredentialsService, over the file
 // seedRepoRootCredentialsService above writes and update_switch_test.go's rig
-// produces for real).
+// produces for real). Reading only the tfvars is what the console's launches
+// cannot survive: console/src/main/launch.ts spawns `fugaro run --repo` from a
+// private empty directory on every machine, so the record is the only answer a
+// teammate's machine has — and a switched-on cascade repository it withholds
+// the address from fails at bootstrap with no PR.
 //
-// The second half is the same launch with no tfvars of that root on this
-// machine: nothing here says its root carries the service, so the job is handed
-// nothing — the address is also what opens the git provider keyless
-// (internal/gitprov/providers/providers.go), and the entry's record is not the
-// evidence this branch reads: it is written by an apply of this machine's, and
-// what this launch is missing is the document such an apply would have left.
+// The last case is the same launch with neither: no record and no tfvars of
+// that root on this machine, so nothing here says its root carries the service
+// and the job is handed nothing — the address is also what opens the git
+// provider keyless (internal/gitprov/providers/providers.go), and that is the
+// fail-closed direction the switch wants.
 //
-// Mutation (verified, run and restored): drop the deployedRepoCredentialsService
-// call at run.go's call site (pass false) and the first half fails with an
-// empty plain list.
-func TestALaunchOutsideACheckoutReadsTheDeployedRoot(t *testing.T) {
-	for name, seeded := range map[string]bool{
-		"the repository root's own tfvars carry the service": true,
-		"no tfvars of that root on this machine":             false,
+// Mutation (verified, run and restored): pass the record out of the empty-auth
+// branch of credentialsServiceLaunchEnv (serves = installed && deployed) and
+// the middle case fails with an empty plain list.
+func TestALaunchOutsideACheckoutReadsTheRecordOrTheDeployedRoot(t *testing.T) {
+	for name, tc := range map[string]struct {
+		rootSeeded bool
+		recorded   bool
+	}{
+		"the repository root's own tfvars carry the service": {rootSeeded: true, recorded: true},
+		"the record alone, with no tfvars of that root here": {recorded: true},
+		"neither the record nor this machine's tfvars":       {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")
 			f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
-			markRepoCredentialsServiceReady(t, f.cloudFixture)
+			if tc.recorded {
+				markRepoCredentialsServiceReady(t, f.cloudFixture)
+			}
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
 			// A directory that is no checkout of the repository: nothing for
 			// launchFileConfig to read the run's document from.
 			t.Chdir(t.TempDir())
-			if seeded {
+			if tc.rootSeeded {
 				seedRepoRootCredentialsService(t, appSlug)
 			}
 			env := memEnv(t, f.cloudFixture)
@@ -343,15 +368,15 @@ func TestALaunchOutsideACheckoutReadsTheDeployedRoot(t *testing.T) {
 			if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			want := envCredentialsServiceURL + "=" + launchCredsURL
-			if !seeded {
+			if !tc.recorded && !tc.rootSeeded {
 				if len(rec.env) != 0 {
-					t.Fatalf("a launch with no document and no tfvars of the repository's root put %v in the plain Env, want none: nothing on this machine says that root was applied with the service on, and the address is what opens the git provider keyless for a mint a job account with no invoker grant is refused", rec.env)
+					t.Fatalf("a launch with no document, no record and no tfvars of the repository's root put %v in the plain Env, want none: nothing on this machine says that root was applied with the service on, and the address is what opens the git provider keyless for a mint a job account with no invoker grant is refused", rec.env)
 				}
 				return
 			}
+			want := envCredentialsServiceURL + "=" + launchCredsURL
 			if len(rec.env) != 1 || rec.env[0] != want {
-				t.Fatalf("the launch's plain Env = %v, want exactly [%s]: the run's document could not be read, and the repository root's own apply is what the job's containers are in", rec.env, want)
+				t.Fatalf("the launch's plain Env = %v, want exactly [%s]: the run's document could not be read, and the repository's record and this machine's tfvars of its root are what stand in for it", rec.env, want)
 			}
 		})
 	}

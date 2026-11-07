@@ -375,8 +375,9 @@ func TestTheInstallationDoorRecordsNoRepositoryItDoesNotApply(t *testing.T) {
 // A NO record and a written false are two different documents since the review
 // of 2026-11-07's fourth round (localcfg.Repo.CredentialsServiceReady is a
 // pointer), and it is the no-record one that tells this installation from one
-// that never opted in: a recorded false is a door's judgement of that root and
-// the backfill leaves it alone.
+// that never opted in: a recorded false is a door's judgement of that root, and
+// the backfill corrects one only where the state shows a grant it does not
+// already say (TestAStaleFalseIsCorrectedByTheInstallationsState is that half).
 //
 // One ordinary `fugaro update` has to finish that upgrade, which is CLAUDE.md's
 // HARD RULE, and that is why the installation door backfills: this release's
@@ -460,6 +461,64 @@ func TestAnOptedInInstallationConvergesWithOneUpdate(t *testing.T) {
 		if lc.Repos[name].CredentialsServiceOn() {
 			t.Errorf("the update recorded the credentials service as ready for %s, whose root was applied with the service OFF (or was never applied on this machine at all): its jobs keep their model mounts and its accounts hold no roles/run.invoker, so its launch would be handed an address the service refuses it for — a record is a statement about a grant, and neither state is evidence of one\n%s", name, readFileString(t, r.cfg))
 		}
+	}
+}
+
+// TestAStaleFalseIsCorrectedByTheInstallationsState is the ordering the record
+// cannot see on its own, driven end to end on the machine that holds the stale
+// value: a record carries no stamp, so a `false` left by an EARLIER apply wins
+// the published merge over a `true` another machine wrote from a later one
+// (localcfg's mergeRepoRecords), and every machine that reads the published
+// file then withholds the service's address from that repository's cascade
+// runs, whose jobs gave their model mounts up to the later apply — so they halt
+// at the service's door (D143). Nothing this machine runs would have repaired
+// it before this: the backfill filled the entries that hold NO record and
+// skipped a recorded `false`.
+//
+// The two machines are in the fixtures the way they are in life. THIS machine
+// holds the record: its own `fugaro update --repo` ran before the bundle held a
+// model credential, so its entry says false. The apply that made the grant is
+// another machine's — the installation's own state bucket, which every machine
+// shares (seedRepoStateGrant), and a bundle the owner has filled since. One
+// ordinary `fugaro update` here has to leave the record true, and the publish
+// it feeds has to carry it: that is CLAUDE.md's HARD RULE — one command, and no
+// second machine's help.
+//
+// Mutation (verified, run and restored): skip a recorded `false` again (leave
+// the loop's `if lc.Repos[key].CredentialsServiceReady != nil { continue }` in
+// place) and both assertions fail, the record still false and the merge still
+// publishing it.
+func TestAStaleFalseIsCorrectedByTheInstallationsState(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	credentialsOutputs(t, r)
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	markSwitchRepoRecord(t, r.initRig, "acme/sandbox", false)
+	seedRepoStateGrant(t, r.initRig, slug)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the local config does not parse: %v", err)
+	}
+	if !lc.Repos["acme/sandbox"].CredentialsServiceOn() {
+		t.Errorf("acme/sandbox is still recorded false after an ordinary update on the machine that held that record, though the installation's own state shows its root applied with the service on and this run read a bundle holding a model credential: the record is published whole, so this machine keeps writing its stale false over the true the machine that made the grant wrote, and every launch that reads the published file withholds the address from a repository whose jobs gave their model mounts up — an installation-wide outage of the switch with no `fugaro update`-only way back (D143)\n%s", readFileString(t, r.cfg))
+	}
+	// The publish half: what this machine's next publish puts in the runs
+	// bucket, merged over the entry the other machine published. A false here
+	// is the finding's outage, installation-wide.
+	published := *lc
+	published.Repos = map[string]localcfg.Repo{"acme/sandbox": {Provider: "bitbucket", CredentialsServiceReady: localcfg.RecordSwitch(true)}}
+	if got := localcfg.MergeShared(&published, lc).Repos["acme/sandbox"].CredentialsServiceOn(); !got {
+		t.Errorf("the shared config this machine publishes records acme/sandbox as not served, over the true the machine that applied its root published: every teammate's launch reads that file, and its cascade runs are handed no address from it (D143)")
 	}
 }
 
@@ -925,7 +984,7 @@ func TestAnOptedOutInstallationRecordsNoSwitch(t *testing.T) {
 func TestAnUnreadableBundleLeavesTheRecordAlone(t *testing.T) {
 	r := switchRig(t)
 	putSwitchBundle(t, r, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
-	markSwitchRepoReady(t, r, "acme/sandbox")
+	markSwitchRepoRecord(t, r, "acme/sandbox", true)
 	if got := recordForRepo(t, r, config.AuthCascade); !got.Repos["acme/sandbox"].CredentialsServiceOn() {
 		t.Fatalf("the fixture is not the state this test starts from: over a readable bundle holding a model credential, the record has to be written")
 	}
@@ -1011,10 +1070,12 @@ func TestAFailedReadIsNotAnsweredByTheRunsSecondDoor(t *testing.T) {
 	}
 }
 
-// markSwitchRepoReady writes the record a person's OWN run leaves on a
-// repository's entry: it read a bundle that held a model credential, so the
-// entry the next run reads already answers the switch.
-func markSwitchRepoReady(t *testing.T, r *initRig, name string) {
+// markSwitchRepoRecord writes the record a person's OWN run leaves on a
+// repository's entry: true where that run read a bundle holding a model
+// credential, so the entry the next run reads already answers the switch, and
+// false where it applied the root with the switch off — an earlier apply, whose
+// value a later apply on another machine can leave behind.
+func markSwitchRepoRecord(t *testing.T, r *initRig, name string, ready bool) {
 	t.Helper()
 	b, err := os.ReadFile(r.cfg)
 	if err != nil {
@@ -1024,12 +1085,16 @@ func markSwitchRepoReady(t *testing.T, r *initRig, name string) {
 	if !strings.Contains(string(b), entry) {
 		t.Fatalf("the rig's local config holds no entry for %s:\n%s", name, b)
 	}
-	ready := strings.Replace(string(b), entry, entry+" credentials_service_ready: true,", 1)
-	if err := os.WriteFile(r.cfg, []byte(ready), 0o600); err != nil {
+	value := "true"
+	if !ready {
+		value = "false"
+	}
+	written := strings.Replace(string(b), entry, entry+" credentials_service_ready: "+value+",", 1)
+	if err := os.WriteFile(r.cfg, []byte(written), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if lc, err := localcfg.Load(r.cfg); err != nil || !lc.Repos[name].CredentialsServiceOn() {
-		t.Fatalf("the record the helper wrote does not read back (err %v): the fixture is not the state this test starts from", err)
+	if lc, err := localcfg.Load(r.cfg); err != nil || lc.Repos[name].CredentialsServiceOn() != ready {
+		t.Fatalf("the record the helper wrote does not read back as %v (err %v): the fixture is not the state this test starts from", ready, err)
 	}
 }
 
@@ -1084,7 +1149,7 @@ func TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess(t *testing.T) {
 			r.repoReady(t)
 			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 			credentialsOutputs(t, r)
-			markSwitchRepoReady(t, r.initRig, "acme/sandbox")
+			markSwitchRepoRecord(t, r.initRig, "acme/sandbox", true)
 			bundle := credsvc.BundleSecretID(initProjectName)
 			r.sm.Seed(bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue},
 				[]byte(config.BitbucketSecret+": "+credsValue(t, "git")+"\n"))
@@ -1136,7 +1201,7 @@ func TestTheRecordIsKeptUnderARunsProcessMarker(t *testing.T) {
 	for _, marker := range managedFlagRunMarkers {
 		t.Run(marker, func(t *testing.T) {
 			r := switchRig(t)
-			markSwitchRepoReady(t, r, "acme/sandbox")
+			markSwitchRepoRecord(t, r, "acme/sandbox", true)
 			bundle := credsvc.BundleSecretID(initProjectName)
 			r.sm.Seed(bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue},
 				[]byte(config.BitbucketSecret+": "+credsValue(t, "git")+"\n"))

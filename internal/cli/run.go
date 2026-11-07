@@ -3762,21 +3762,22 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// a directory that holds no checkout of X, where launchFileConfig finds
 	// neither the run's ref in an object database nor a working tree to fall
 	// back to — leaves the auth unknown, and the switch's third condition
-	// cannot be judged here. The deployed root stands in for it then
-	// (deployedRepoCredentialsService): the run's own repository root was
-	// planned and applied on this machine, and the tfvars that apply was built
-	// from carry the service exactly when it dropped the job's model mounts and
-	// granted its account roles/run.invoker. Withholding the address instead
-	// would start a `cascade` run whose job mounts no model credential and
-	// halts at the service's door (D143) — the state every launch from outside
-	// a checkout was in before the switch was written down.
+	// cannot be judged here. The repository's own record stands in for it then,
+	// and this machine's tfvars of the repository root are the second answer
+	// (credentialsServiceLaunchEnv). Withholding the address instead would
+	// start a `cascade` run whose job mounts no model credential and halt at
+	// the service's door (D143) — the state every launch from outside a
+	// checkout was in before the switch was written down, and the one the
+	// console's own launches would be in on every machine that did not apply
+	// the root itself (console/src/main/launch.ts spawns from a private
+	// directory, so launchFileConfig never answers there).
 	svcAuth, deployed := "", false
 	if env.lc != nil && env.lc.CredentialsService != nil {
 		svcAuth = checkoutAgentAuth(launchFileConfig(ctx, env, spec))
 		if svcAuth == "" {
 			var err error
 			if deployed, err = deployedRepoCredentialsService(env.lc, spec.Repo); err != nil {
-				fmt.Fprintf(launchWarn, "warning: whether %s's repository root carries the credentials service could not be read (%s): this launch hands the job no service address\n", spec.Repo, oneLineCLI(err.Error()))
+				fmt.Fprintf(launchWarn, "warning: whether %s's repository root carries the credentials service could not be read from this machine's tfvars (%s): the launch decides from the repository's record alone\n", spec.Repo, oneLineCLI(err.Error()))
 			}
 		}
 	}
@@ -3896,11 +3897,15 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // where the document could not be (see the call site): the tfvars the last
 // apply of that root was built from, which carry the service exactly when that
 // apply dropped the job's mounts and made its grant
-// (deployedRepoCredentialsService). It replaces the record and the auth
-// together, and only there, because it IS the state the job's containers are
-// in: the record is the half that says what the NEXT plan may do, and a record
-// that lags a bundle emptied since the apply would withhold the address from a
-// job whose mounts are already gone.
+// (deployedRepoCredentialsService). An empty auth is judged on the deployed
+// root OR the repository's own record, never on this machine's tfvars alone:
+// a machine that never applied the root holds no tfvars of it — the console
+// spawns from a private directory, so this is every console launch — while the
+// record is written only alongside the apply it describes, by that apply's
+// machine or by an installation-wide backfill that read the installation's own
+// state, so it agrees with the root wherever it was applied. A record that
+// lags a bundle emptied since the apply cannot withdraw the address on its own
+// here: the deployed root still answers for the machine that applied it.
 func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, deployed bool) []string {
 	if job != "" || lc == nil {
 		return nil
@@ -3914,10 +3919,14 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, de
 	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth)
 	if auth == "" {
 		// No document this launcher could read, so the switch's third
-		// condition is judged on the deployed root alone — the same two facts
-		// the module read out of it: the installation has a service, and this
-		// repository's root was applied with it on.
-		serves = installed && deployed
+		// condition is judged on the two answers that do not need one: the
+		// repository's own record, and this machine's tfvars of the root it
+		// was applied from. Either one saying on is enough — both are written
+		// by an apply that dropped the job's mounts and granted its account
+		// roles/run.invoker, and a launch that withheld the address from a
+		// repository whose mounts are already gone would halt at the service's
+		// door (D143).
+		serves = installed && (local.CredentialsServiceOn() || deployed)
 	}
 	if !serves {
 		return nil
