@@ -14,9 +14,13 @@ import (
 
 // noprompt_lint_test.go is the static half of D1547 (docs/no-prompt-policy):
 // what holds the no-prompt policy while the confirmations are removed is not
-// that every reader was found by hand once, but that a reader added later
-// cannot pass unnoticed. So the rule is deliberately about the SHAPE of a read
-// rather than about a list of callers: a read of stdin for a decision is one of
+// that every reader was found by hand once, but that a read of the shapes this
+// package asks a person with cannot be added unnoticed. The rule is about the
+// SHAPE of a read rather than about a list of callers, and the walk covers
+// every declaration of the package — functions, methods, and the function
+// literals a package-level var is bound to (pair.go's pairTerminal is the shape
+// of that plumbing, so a read written inside one is the same read). A read of
+// stdin for a decision is one of
 //
 //   - bufio.NewReader / bufio.NewScanner — the line reader this package asks a
 //     person with. It is matched by the package the call comes from and not by
@@ -24,17 +28,32 @@ import (
 //     and a function of the same name in this package is not one.
 //   - .ReadString / .ReadBytes / .ReadLine on such a reader: the reading half
 //     of the same reader, and what no data read in the package uses.
+//   - .Read(p) — a byte-level read of a reader, which is how readConfirmLine is
+//     written itself (`n, err := in.Read(b)`) and how the wizard's reader is:
+//     the package's store reads are Read(ctx, key) and a data path reads
+//     through io.ReadAll or a decoder, so one argument on a receiver that is
+//     not an imported package is this shape and not one of those.
 //   - readConfirmLine — the confirmation line itself.
 //   - term.ReadPassword — the hidden read, which is the value entry's engine.
+//   - fmt.Scan/Scanf/Scanln/Fscan/Fscanf/Fscanln — the other way a line of
+//     input becomes a value. This package uses none today; the shape is here so
+//     the first one that appears is a failure rather than a read this rule is
+//     blind to.
 //
-// and it reports where the reading happens, not who called the reader. The
-// alias the plan calls out (`in := cmd.InOrStdin(); bufio.NewReader(in)`) is a
-// row of TestLintCatchesAnAliasedStdinReader: the shape is matched whatever
-// expression the reader was built from, so a rule keyed on the literal
-// cmd.InOrStdin() could not see a reader that arrived through a variable, and
-// the wizard's own reader field is the same read one function away. A comment
-// or a string that mentions a read is not a read, which is what keeps this an
-// AST rule and not a grep.
+// What the rule cannot see is a read that arrives another way: a decoder, a
+// channel, a syscall on fd 0. A read written that way is a data read by the
+// policy's own definition — it fails on EOF and waits for nobody — and the
+// names in dataReadSites are where that was ruled on; the closed-stdin harness
+// (T2) is the half that catches at run time what no lint over calls can.
+//
+// It reports where the reading happens, not who called the reader. The alias
+// the plan calls out (`in := cmd.InOrStdin(); bufio.NewReader(in)`) is a row of
+// TestLintCatchesAnAliasedStdinReader: the shape is matched whatever expression
+// the reader was built from, so a rule keyed on the literal cmd.InOrStdin()
+// could not see a reader that arrived through a variable, and the wizard's own
+// reader field is the same read one function away. A comment or a string that
+// mentions a read is not a read, which is what keeps this an AST rule and not a
+// grep.
 //
 // Three lists hold the answer, and none of them is a promise:
 //
@@ -47,16 +66,23 @@ import (
 //     entry in the same commit and cannot leave the lint blind. It reaches
 //     empty when the confirmations are gone.
 //   - sanctionedSites: the reads the policy keeps — the `--ask` helper (D1544,
-//     the owner's one sanctioned exemption) and the value-entry helper with the
-//     hidden read underneath it (D1540: a value is not a confirmation and
-//     cannot be defaulted, so it stays a terminal read that fails at once
-//     everywhere else). Each is asserted to be found, so the lint says out loud
-//     that it allows a read rather than having lost one. The hidden read is
-//     listed under `secrets.go:readHiddenLine` even though the helper is
-//     readValue: it is one call down — readValue's hidden path is readHidden,
-//     which is readHiddenLine — and T7 changes its door without moving its
-//     hiding, so exempting the helper without its engine would leave the
-//     helper refusing at every terminal.
+//     the owner's one sanctioned exemption) and value entry with the three
+//     reads it is made of (D1540: a value is not a confirmation and cannot be
+//     defaulted, so it stays a terminal read that fails at once everywhere
+//     else). Each is asserted to be found, so the lint says out loud that it
+//     allows a read rather than having lost one. Value entry is a call down from
+//     the helper — readValue reads through readConfirmLine, and its hidden path
+//     through readHidden to readHiddenLine — so the engines are listed by name
+//     rather than the helper alone: an exemption for a helper whose engine was
+//     unlisted would leave the lint reporting the one read the helper is allowed
+//     to make. readHiddenPEM is the fourth, and the one that is not a call down
+//     from readValue: it is the multi-line shape of the same value entry (a PEM
+//     cannot be typed on one line, and the one-line helper cannot take it),
+//     called from the secret store's own door, which T12 owns. Listing it as
+//     debt would be a lie about the policy — D1540 keeps value entry, and no
+//     task of the plan removes this read — so it is sanctioned with its reason
+//     like the other three. None of them is a confirmation: they are how a value
+//     is entered.
 //   - dataReadSites: the reads F1 names as neither confirmations nor values
 //     (`--task-file -`, `--review-levels -`, the exec task file, the
 //     credentials bundle). These are asserted NOT to be found, so a data read
@@ -109,29 +135,70 @@ func decisionReadsInSource(t *testing.T, src string) []decisionRead {
 }
 
 // scanDecisionReads reports every decision read in one parsed file, each under
-// the function declaration it sits in — a closure belongs to the function that
-// writes it, so a read inside the `go func(){…}()` pairReadCode reads its code
-// in is the site of pairReadCode.
+// the declaration it sits in: a function or method by its own name — a closure
+// belongs to the function that writes it, so a read inside the
+// `go func(){…}()` pairReadCode reads its code in is the site of pairReadCode —
+// and a package-level var by the name the literal is bound to, which is the
+// declaration a reader plumbed that way lives in.
 func scanDecisionReads(file *ast.File, name string) []decisionRead {
 	imports := localPackageNames(file)
 	var out []decisionRead
 	for _, decl := range file.Decls {
-		fd, ok := decl.(*ast.FuncDecl)
-		if !ok || fd.Body == nil {
-			continue
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Body == nil {
+				continue
+			}
+			out = append(out, readsIn(d.Body, imports, name, d.Name.Name)...)
+		case *ast.GenDecl:
+			if d.Tok != token.VAR && d.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range d.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, v := range vs.Values {
+					out = append(out, readsIn(v, imports, name, valueName(vs, i))...)
+				}
+			}
 		}
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			if form := decisionReadForm(call, imports); form != "" {
-				out = append(out, decisionRead{file: name, fn: fd.Name.Name, form: form})
-			}
-			return true
-		})
 	}
 	return out
+}
+
+// readsIn walks one body or expression — a function's, or the value a
+// package-level var is bound to — and reports each decision read in it under
+// fn.
+func readsIn(root ast.Node, imports map[string]string, file, fn string) []decisionRead {
+	var out []decisionRead
+	ast.Inspect(root, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if form := decisionReadForm(call, imports); form != "" {
+			out = append(out, decisionRead{file: file, fn: fn, form: form})
+		}
+		return true
+	})
+	return out
+}
+
+// valueName is the name a package-level value's read is reported under: the
+// name that value is bound to, so `var pairTerminal = func(…) io.Reader {…}`
+// belongs to pairTerminal. A value with one name and several values — or, as a
+// var without names cannot have values, the reverse — takes the name at the
+// value's own position where there is one, which is where the read is written.
+func valueName(vs *ast.ValueSpec, value int) string {
+	if len(vs.Names) == 0 {
+		return "var"
+	}
+	if value < len(vs.Names) {
+		return vs.Names[value].Name
+	}
+	return vs.Names[len(vs.Names)-1].Name
 }
 
 // localPackageNames is what each import is called in this file, so the rule
@@ -192,6 +259,11 @@ func decisionReadForm(call *ast.CallExpr, imports map[string]string) string {
 				if fun.Sel.Name == "ReadPassword" {
 					return "term.ReadPassword"
 				}
+			case "fmt":
+				switch fun.Sel.Name {
+				case "Scan", "Scanf", "Scanln", "Fscan", "Fscanf", "Fscanln":
+					return "fmt." + fun.Sel.Name
+				}
 			}
 		}
 		// A reader this package built is read a line at a time here or not at
@@ -201,8 +273,30 @@ func decisionReadForm(call *ast.CallExpr, imports map[string]string) string {
 		case "ReadString", "ReadBytes", "ReadLine":
 			return fun.Sel.Name
 		}
+		// The same reader read a byte at a time is the same read one level
+		// down: readConfirmLine is a loop over in.Read(b), and the wizard's
+		// reader is one too. What separates it from the package's data reads is
+		// the shape of the call and not the type of the receiver — a byte-level
+		// read takes one argument, `Read(p []byte)`, while every store read
+		// here takes a context and a key, and a package function of the same
+		// name (streams.Read) is not a reader at all.
+		if fun.Sel.Name == "Read" && len(call.Args) == 1 && !importedPackage(fun.X, imports) {
+			return "Read"
+		}
 	}
 	return ""
+}
+
+// importedPackage reports whether a selector's left side is a package name —
+// `streams.Read(path)` is a package function, not a reader being read, and the
+// rule must not sweep it in with the byte-level reads.
+func importedPackage(x ast.Expr, imports map[string]string) bool {
+	id, ok := x.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	_, isPackage := imports[id.Name]
+	return isPackage
 }
 
 // TestLintCatchesAnAliasedStdinReader is the not-vacuous half of the lint: it
@@ -257,12 +351,90 @@ func TestLintCatchesAnAliasedStdinReader(t *testing.T) {
 			"import . \"bufio\"\nfunc f(cmd *cobra.Command) { _ = NewReader(cmd.InOrStdin()) }",
 			[]string{"bufio.NewReader"},
 		},
+		{
+			"stdin read a byte at a time",
+			"import \"os\"\nfunc f() { b := make([]byte, 1); _, _ = os.Stdin.Read(b) }",
+			[]string{"Read"},
+		},
+		{
+			"the confirmation line written out by hand",
+			"func f(in io.Reader) { b := make([]byte, 1); _, _ = in.Read(b) }",
+			[]string{"Read"},
+		},
+		{
+			"a formatted read",
+			"import \"fmt\"\nfunc f(cmd *cobra.Command) { var s string; _, _ = fmt.Fscan(cmd.InOrStdin(), &s) }",
+			[]string{"fmt.Fscan"},
+		},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			got := decisionReadsInSource(t, row.src)
 			// The order the shapes are found in is the walk's, not the rule's:
 			// the reader is visited after the read it is the receiver of.
+			if !slices.Equal(slices.Sorted(slices.Values(forms(got))), slices.Sorted(slices.Values(row.want))) {
+				t.Fatalf("the rule found %v in %q, want %v", forms(got), row.src, row.want)
+			}
+		})
+	}
+}
+
+// TestLintWalksEveryDeclaration is the other half of "a reader added later
+// cannot pass unnoticed": the walk covers the declarations a read can hide in
+// and not only the functions, so a read written inside a package-level func
+// literal — pair.go:59 keeps its stdin plumbing that way — is a site like any
+// other, reported under the name the literal is bound to. The last row is that
+// plumbing itself, which hands stdin on and reads nothing: plumbing is not a
+// read, and the lint must not start reporting a door as the room behind it.
+func TestLintWalksEveryDeclaration(t *testing.T) {
+	rows := []struct {
+		name string
+		src  string
+		site string
+		want []string
+	}{
+		{
+			"a read in a package-level literal",
+			"import \"bufio\"\nvar askLater = func(cmd *cobra.Command) { _, _ = bufio.NewReader(cmd.InOrStdin()).ReadString('\\n') }",
+			"row.go:askLater",
+			[]string{"bufio.NewReader", "ReadString"},
+		},
+		{
+			"a read in a literal inside a package-level literal",
+			"import \"bufio\"\nvar askLater = func(cmd *cobra.Command) { f := func() { _, _ = bufio.NewReader(cmd.InOrStdin()).ReadLine() }; f() }",
+			"row.go:askLater",
+			[]string{"bufio.NewReader", "ReadLine"},
+		},
+		{
+			"a method",
+			"import \"bufio\"\ntype r struct{}\nfunc (r) read(cmd *cobra.Command) { _, _ = bufio.NewReader(cmd.InOrStdin()).ReadString('\\n') }",
+			"row.go:read",
+			[]string{"bufio.NewReader", "ReadString"},
+		},
+		{
+			"pair.go's own plumbing, which reads nothing",
+			"var pairTerminal = func(cmd *cobra.Command) io.Reader { return cmd.InOrStdin() }",
+			"",
+			nil,
+		},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			got := decisionReadsInSource(t, row.src)
+			if row.site == "" {
+				if len(got) != 0 {
+					t.Fatalf("the rule reported %v in %q, which hands stdin on and does not read it", forms(got), row.src)
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatalf("the rule found no read in %q: the declaration it is written in is invisible to the lint", row.src)
+			}
+			for _, r := range got {
+				if site := r.file + ":" + r.fn; site != row.site {
+					t.Errorf("the read in %q is reported under %s, want %s", row.src, site, row.site)
+				}
+			}
 			if !slices.Equal(slices.Sorted(slices.Values(forms(got))), slices.Sorted(slices.Values(row.want))) {
 				t.Fatalf("the rule found %v in %q, want %v", forms(got), row.src, row.want)
 			}
@@ -287,6 +459,9 @@ func TestLintLeavesPredicatesAndDataReadsAlone(t *testing.T) {
 		{"a decoder over stdin", "func f(cmd *cobra.Command) { _ = json.NewDecoder(cmd.InOrStdin()) }"},
 		{"stdin handed to a child", "func f(cmd *cobra.Command) { child.SetIn(cmd.InOrStdin()) }"},
 		{"a file read", "func f(path string) { _, _ = os.ReadFile(path) }"},
+		{"a store read", "import \"context\"\nfunc f(ctx context.Context, b *bucket) { _, _, _ = b.Read(ctx, \"k\") }"},
+		{"a package data read", "import \"github.com/dimipaun/fugaro/internal/streams\"\nfunc f(p string) { _, _ = streams.Read(p) }"},
+		{"stdin put in a variable of its own", "func f(cmd *cobra.Command) { in := cmd.InOrStdin(); _ = in }"},
 		{"a call in a string", "func f() { _ = \"bufio.NewReader(cmd.InOrStdin()).ReadString('\\\\n')\" }"},
 		{"a call in a comment", "func f() { // _ = bufio.NewReader(cmd.InOrStdin())\n}"},
 	}
@@ -350,9 +525,11 @@ func TestNoDecisionReadOutsideTheTwoHelpers(t *testing.T) {
 // drives. Each is asserted to be found, so the lint says out loud that it is
 // allowing a read rather than having lost one.
 var sanctionedSites = map[string]string{
-	"managed_ask.go:askConfirm": "the --ask helper, the owner's single sanctioned exemption (D1544, T1)",
-	"valueentry.go:readValue":   "the value-entry helper: a value is not a confirmation and cannot be defaulted (D1540)",
-	"secrets.go:readHiddenLine": "the hidden read readValue's value entry is the engine of (D1540; T7 changes its door, not its hiding)",
+	"managed_ask.go:askConfirm":    "the --ask helper, the owner's single sanctioned exemption (D1544, T1)",
+	"valueentry.go:readValue":      "the value-entry helper: a value is not a confirmation and cannot be defaulted (D1540)",
+	"restore.go:readConfirmLine":   "the line read both sanctioned helpers read through: a value's line is read here, and T6 deletes restore's confirmations, not this",
+	"secrets.go:readHiddenLine":    "the hidden read of the value entry's hidden path, readValue to readHidden to here (D1540; T7 changes its door, not its hiding)",
+	"initsecrets.go:readHiddenPEM": "the multi-line shape of the same value entry: a PEM cannot be typed on one line, and the one-line helper cannot take it (D1540 keeps value entry; T12 owns this file)",
 }
 
 // dataReadSites is neither a confirmation nor a value: a read that fails on
@@ -383,6 +560,7 @@ var pendingSites = map[string]string{
 	"budget.go:runBudgetKill":                "T3",
 	"budget.go:runBudgetSet":                 "T3",
 	"image.go:confirmBuild":                  "T4",
+	"init.go:Read":                           "T7",
 	"init.go:confirmResumedMark":             "T7",
 	"init.go:newInitRun":                     "T7",
 	"init.go:typed":                          "T7",
