@@ -16,14 +16,15 @@ installation and whose own 7-day report the design's arithmetic came from — in
 **2026-11-07** putting the work in the **0.22.0** slot. No `@handle` and no name is recorded anywhere
 in this folder, by this repository's rule.
 
-**This copy is dated, and it has already been overtaken.** The design is not frozen by being copied:
-the design's own pin reads `docs/design/failure-classes.md`, not this file, and the plan has moved the
-design under the copy twice over — **FC1**, which shipped on 2026-11-07 and rewrote the status line
-below and §3's name for the vocabulary's slice (it now reads `failure.Classes()`), and **FC2**, which
-the design's own §10 says rewrites §1's census and that pin in the same commit (reconciliation
-**F25**). So the copy below is a snapshot of the 2026-11-07 document, and
-[reconciliation.md](reconciliation.md) §1 says what has moved since. The design document itself is
-never edited by this folder.
+**This copy is dated, and the design has already moved past it once.** The design is not frozen by
+being copied: the design's own pin reads `docs/design/failure-classes.md`, not this file, and **FC1**
+shipped on 2026-11-07, which moved the **design** under the copy — it rewrote the design's status line
+and §3's name for the vocabulary's slice (it now reads `failure.Classes()`) — while the copy below is
+untouched and keeps the status line it was copied with, byte for byte. **FC2 will falsify the copy in
+turn:** the design's own §10 says FC2 rewrites §1's census and that pin in the same commit
+(reconciliation **F25**), and when that happens the copy below is a snapshot of the 2026-11-07
+document, and [reconciliation.md](reconciliation.md) §1 says what has moved since. The design
+document itself is never edited by this folder.
 
 **Two relative links in the copy below were written for `docs/design/` and do not resolve from this
 folder.** The body stays byte for byte, so they are named here rather than edited in it:

@@ -5,7 +5,7 @@ and names the alternative and what it costs, for every question it takes up; the
 design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions, D1450–D1469, are
 answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's field and the schema's
 enum — is on `main`: `internal/failure`, the `failure.Classes()` slice §3 names, and
-`Record.FailureClass`, which no producer writes yet. **FC2–FC9 are not started.** What is written here
+`Record.FailureClass`, which no producer writes yet. **FC2–FC8 are not started.** What is written here
 was read against `main` on 2026-11-05, and the line citations are taken from that tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
@@ -559,7 +559,7 @@ that is already long; no reader of it is a contract.
 
 ## 10. Tasks
 
-**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC9 are not started.** Each
+**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC8 are not started.** Each
 task is written to fit one run's $5 cap: it names at most twelve files, one command, one commit message
 and one red step. The convention is the one the active plans use
 (`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,

@@ -25,7 +25,7 @@ reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the 
 and this stays a plan (§10 of the design and [README.md](README.md) say so); each task's gate is in
 §7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **One of the
 nine is built** — FC1, which its own heading below says — and **FC2–FC9 are not started**: an approved
-task is still built on its own, in its own run, in the order §2 fixes.
+task is still built on its own, in its own run, in the order §1 fixes.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -604,7 +604,7 @@ and it is not one of FC1–FC9.
 recommended.** The rows keep the shape they were written in; what each one's decisions settled is in
 [reconciliation.md](reconciliation.md) §6. **D1450** included: FC1–FC8 stay and FC9 is added, so the
 plan as a whole starts. **A met gate is not a schedule**: the tasks are still built one at a time, in
-the order §2 fixes, each in its own run.
+the order §1 fixes, each in its own run.
 
 | Task | Gate |
 | --- | --- |
@@ -636,7 +636,7 @@ and FC3–FC9 start when it lands.
 
 **FC1's row is answered in full.** The plan was approved, **D1453** is answered as recommended
 (`internal/failure`), and FC1 is merged — so FC2's first gate (FC1 merged) is met as well. Every other
-row waits on its own run, in the order §2 fixes.
+row waits on its own run, in the order §1 fixes.
 
 **And the plan's own status:** a plan, **every task of it approved on 2026-11-07** (owner: "All
 tasks approved. Jobmax"); the dated answer this plan's decisions share is in

@@ -9,7 +9,7 @@ needs and does not carry, and a plan sliced so the tasks can run in parallel. It
 schema, no config key, no command and no Terraform; it edits no file outside `docs/`; and **every task
 in [implementation-plan.md](implementation-plan.md) is approved** — the owner answered the decisions
 below and approved them all on 2026-11-07 (owner: "All tasks approved. Jobmax"), so no gate here is
-still open, and the tasks are still built one at a time, in the order that file's §2 fixes. **The
+still open, and the tasks are still built one at a time, in the order that file's §1 fixes. **The
 design's own decisions stay the design's:** §8 D1–D9 and §9 O1–O6 of `docs/design/failure-classes.md`
 are the owner's and this folder answers none of them — its decisions are D1450–D1469; the design's
 status line records only that FC1 of its §10 has shipped, which is what its pin holds.
@@ -93,7 +93,7 @@ reconciliation §2 reads **every reader** — the console (`console/docs/json-co
   §6, the dated answer in each row), approving every task in
   [implementation-plan.md](implementation-plan.md) the same day (owner: "All tasks approved.
   Jobmax") — and, of those tasks, **FC1 is built on `main`, while FC2–FC9 are not started**: an
-  approved task is still built on its own, in its own run, in the order that file's §2 fixes.
+  approved task is still built on its own, in its own run, in the order that file's §1 fixes.
 - **It is not a second design.** The design is merged and pinned; this folder does not re-argue it. It
   reads it against the tree, and where a citation drifted or a claim does not match the code, the
   reconciliation says so and the plan is written against the correction.

@@ -141,7 +141,7 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 		"the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his",
 		// §10's own status, in the shape the coordinator plan's parts use: a
 		// line above the tasks saying how far the plan has got.
-		"**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC9 are not started.**",
+		"**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC8 are not started.**",
 		"## 9. Open items (the owner's)",
 		"## 11. What this design does not do",
 	} {
