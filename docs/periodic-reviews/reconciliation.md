@@ -598,7 +598,8 @@ person who wants the files, which is why `--dir` survives rather than being repl
   reports job by the setting and reading its first stored report — are **named and not numbered**;
   the folder holds no check block, so the task that writes each takes the number free at its merge,
   under the register's own rule for a work that reserved none
-  (`docs/run-limit-carry-over/README.md:55` and `docs/project-image-catalog/README.md:99` are the same
+  (`docs/gcp-live-checklist.md:586`; `docs/run-limit-carry-over/README.md:55` and
+  `docs/project-image-catalog/README.md:132` are the same
   shape). The register is still not touched by this design.
 
 ## 6. The 2026-11-07 reconciliation: the reports job and the failures report
@@ -635,14 +636,17 @@ RuleRecipeMedian, RuleHaltsHigh}` at `:37`; R4 adds a fifth, FC7 adds `failure_c
 each carry three writers over three levels, and the union's ordering is what keeps them apart
 (Part II §P4).
 
-**F27. Wrong: R11's file list omits the generated CLI reference its own subcommand changes.**
-`website/content/cli-reference.md` is generated (`go run ./ee/clidoc`, the file's own header) and
-`ee/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` requires the committed file to match the
-command tree. R11 registers `fugaro runs reports` and the design assigns the regeneration to FC6
-(`website/content/cli-reference.md`, L4); **the two are a level apart and so no collision, but R11's
-own list does not name the file**, so `TestCliReferenceIsCurrent` is red from R11's merge until
-FC6's. *Consequence:* R11's file list gains one file and the file is regenerated in each commit
-(Part II §P5).
+**F27. Wrong: three of the generated CLI reference's four writers do not name it in their file
+lists.** `website/content/cli-reference.md` is generated (`go run ./ee/clidoc`, the file's own
+header) and `ee/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` requires the committed file to
+match the command tree, so **every task that adds a command, a flag or a command's own text writes
+it**. Four do: **R1** (`--due` becomes a row in `runs digest`'s flags table), **R11** (`fugaro runs
+reports`), **FC6** (`runs ls --group-by`, which the design's own list does name) and **R10** (`runs
+digest`'s `Short`/`Long`, its stored read's flag and its new default target). **The four are four
+levels apart — 1, 3, 4 and 5 — so no level holds two writers, but R1's, R11's and R10's lists do not
+name the file**, and `TestCliReferenceIsCurrent` is red from the first of those merges until the next
+regeneration. *Consequence:* three file lists each gain one file, and the file is regenerated in each
+of the four commits (Part II §P4, §P5, §P10).
 
 **F28. Exists: the two works interleave into one leveling with no task moved.**
 Part I's levels are 0: R0, R12, R13 — 1: R1, R7 — 2: R2, R4 — 3: R3, R11 — 4: R6, R8, R9 — 5: R10;
@@ -683,30 +687,43 @@ rules' behaviour over the field's first weeks is a decision (D1431), and the yea
 shape rather than a task (D1443).
 
 **F34. Exists: the census the plan's numbers rest on.** The decisions' highest written number on
-`main` is **D1409**; the register's highest written `## Check` section is **290**. *Consequence:*
-§6.3's claims.
+`main` is **D1409** and the register's highest written `## Check` section is **290**, both **at this
+reading** — §6.3 records the two works that were in flight with this one and have merged since.
+*Consequence:* §6.3's claims.
 
 ### 6.3 The numbers this round takes
 
 **Decisions D1430–D1449.** `git grep -E 'D14(3|4)[0-9]'` over `main` at `56c91f66` and over the open
 pull request heads this checkout carries: **nothing writes D1430–D1449 anywhere.** The positive
 controls are that the same grep finds **D1409** written (`docs/catalog-build-context/`, the highest
-on `main`) and **D1410–D1429** written by the open pull request `docs/api-key-review` (the head read
-is commit `c3562215`, which is also the commit that records the census below). Above this folder's
-own **D960–D979** — which stay written and reserved exactly as the README records — the block
-**D1310–D1409** is taken by the plans that merged there, the highest being `docs/catalog-build-context`'s
-D1390–D1409.
+on `main` **at this reading**) and **D1410–D1429** written by `docs/api-key-review`, read as an open
+head at commit `c3562215` — the commit that also records the census below — and **merged to `main`
+since, as `0dd2b5f2` (#1819)**. **The other work in flight beside this one has landed too, and it
+does not move the reading:** the highest number written on `main` now is **D1489**
+(`docs/console-managed-screens`, merged as `7d617d27` (#1830), which holds D1470–D1489 and reserves
+D1490–D1499), and **the one occurrence of any `D143x`/`D144x` on `main` is that document's own §8
+sentence** — "The block is taken **above D1429 rather than at D1430** so that two works in flight
+cannot claim adjacent numbers and collide at their merge" — which **names** D1430 rather than writing
+a decision there, and is the deliberate boundary this block's D1430–D1449 is the other half of. So
+this block is free above every number written, and it is still the block it was read as. Above this
+folder's own **D960–D979** — which stay written and reserved exactly as the README records — the
+block **D1310–D1409** is taken by the plans that merged there, the highest being
+`docs/catalog-build-context`'s D1390–D1409.
 
 **Checks 340–349.** The register's highest written `## Check` section is **290**
 (`docs/gcp-live-checklist.md`, the mixed-credentials run). Claimed above it: **291**
 (`docs/image-env`), **292** (`docs/catalog-build-context`), **300–309**
 (`docs/stateless-orchestrator`), **310–314** (`docs/cli-output-console-graph`) and **330**
-(`docs/api-key-review`, the same open head). **Nothing writes 315–329 or 331–339**, and nothing
-anywhere writes 340 or above. This round takes **340–342** (Part II §P8) and reserves **343–349**.
+(`docs/api-key-review`, read as an open head at `c3562215` and on `main` since as `0dd2b5f2`).
+**Nothing writes 315–329, 331–339 or 343–349**, and the one claim above this block is **360**
+(`docs/console-managed-screens`, which was in flight with this one and has merged to `main` since as
+`7d617d27` (#1830), taking its block above 340–349 rather than inside it). This round takes
+**340–342** (Part II §P8) and reserves **343–349**.
 **The register is
 still not touched**: `docs/gcp-live-checklist.md` is another work stream's file, and the task that
 implements each check writes its row and its section under the number free at that merge — the
-register's own rule for a work that reserved none (`docs/run-limit-carry-over/README.md:55`).
+register's own rule for a work that reserved none (`docs/gcp-live-checklist.md:586`, the same rule
+`docs/run-limit-carry-over/README.md:55` reads from a work that took none).
 
 ### 6.4 Decisions D1430–D1449
 
@@ -724,7 +741,7 @@ says otherwise, and nothing here is approved.
 | **D1435** | What does a class this build does not know print as, in a stored report? | **`unclassified`** — the digest's own closed-cell rule (FC5's last bullet) | The value is echoed | |
 | **D1436** | Is the legacy reader load-bearing for the job's first stored reports? | **Yes** (F31): most records a first report reads predate the field | Store the first reports with the field only | |
 | **D1437** | Does the job's release wait for the whole failures report, or only the field and the table? | **The whole of it, FC1–FC8.** The union's leveling costs neither work a re-cut (§P3), and shipping the job without the rules would put an 18-month retention over a series nothing reads | The job in 0.22.0 and the class in 0.23.0 | |
-| **D1438** | `website/content/cli-reference.md` is generated and both works change it: one regeneration or two? | **Two, each in its own commit and its own level** (R11 at 3, FC6 at 4) — F27 | One task regenerates it last | |
+| **D1438** | `website/content/cli-reference.md` is generated and both works change it: how many regenerations? | **One per writer, each in its own commit and its own level — four** (R1 at 1, R11 at 3, FC6 at 4, R10 at 5) — F27 | One task regenerates it last, and the reference is stale between the others | |
 | **D1439** | Does the console ride this release? | **No.** The contract's two rows are FC8's; a console column or chip is named and left to its own task (the design's §6.3) | The console task rides this release | |
 | **D1440** | Does the stored read of `fugaro runs digest` print the Failures table? | **Yes — the stored read prints what `--stdout` prints**, and after FC7 that includes the table | The stored read prints the report exactly as it was stored, byte for byte | |
 | **D1441** | Does the opt-in commit carry the class into a repository? | **Yes — it commits the stored reports as they are, table and all.** The committed report's reader is the repository's own agent and reviewer (D969), and the table is figures and a closed vocabulary | The committed copy drops the table | |
@@ -738,8 +755,8 @@ says otherwise, and nothing here is approved.
 | **D1449** | Where does the rules' document live — FC8's own either/or? | **This folder's reconciliation keeps the prose and `plugin/skills/working/reference/periodic-reviews.md` §3 keeps the reader's list**, so FC8 writes **`docs/periodic-reviews/reconciliation.md`** and the skill file, and neither `docs/task-governance/reconciliation.md` nor this folder's README | The rules' documents stay split between the two designs' folders | |
 
 **Two of the twenty are the plan's own structure rather than a product question** — D1437 (the two
-works ship in one release) and D1438 (the generated file is regenerated twice) — and both are listed
-because the plan acts on them. **One is the only place the union's file table depends on an open
+works ship in one release) and D1438 (the generated file is regenerated once per writer) — and both
+are listed because the plan acts on them. **One is the only place the union's file table depends on an open
 answer**, and it has three candidates rather than two: FC8's own file list says "the periodic-reviews
 folder's own document — the one that owns the rule list, whichever the tree says by then", which can
 be read as **`docs/periodic-reviews/reconciliation.md`** (what the recommendation names),
