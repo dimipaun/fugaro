@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -129,19 +132,20 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	flat := flattenDoc(doc)
 
 	// The state of the document first: a reader who skims it for a decision
-	// must find the owner's answer, and a reader arriving after FC1 must find
-	// that the vocabulary it describes is in the tree -- a status line that
+	// must find the owner's answer, and a reader arriving after a task of §10
+	// must find that what it describes is in the tree -- a status line that
 	// reads as an open question while the code is on `main` is the defect
-	// TestDocsProjectWorkflowSecretsSaysTheBuildLanded fails a document for.
+	// TestDocsProjectWorkflowSecretsSaysTheBuildLanded fails a document for. FC2
+	// is the second task to move it, so the line names both.
 	for _, want := range []string{
-		"**Status: a design, and its FC1 has shipped; the rest of §10 is not built.**",
+		"**Status: a design, and its FC1 and FC2 have shipped; the rest of §10 is not built.**",
 		// The design's own decisions stay the owner's: the plan's decisions being
 		// answered is not the design's D1–D9 and O1–O6 being answered, which is
 		// what README.md's and the plan's own notes about this document say.
 		"the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his",
 		// §10's own status, in the shape the coordinator plan's parts use: a
 		// line above the tasks saying how far the plan has got.
-		"**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC8 are not started.**",
+		"**Status: a plan, approved to build on 2026-11-07; FC1 and FC2 are built and FC3–FC8 are not started.**",
 		"## 9. Open items (the owner's)",
 		"## 11. What this design does not do",
 	} {
@@ -155,7 +159,7 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	// flip has to fail here rather than read plausibly.
 	for _, gone := range []string{"nothing is built", "no decision below is answered", "no task is approved"} {
 		if strings.Contains(flat, gone) {
-			t.Errorf("%s still says %q: FC1 -- the package, the record's field and the schema's enum -- is on `main`, and the status lines are where a reader checks the document against the build", fcDoc, gone)
+			t.Errorf("%s still says %q: FC1 -- the package, the record's field and the schema's enum -- and FC2 -- the one writer of a terminal status -- are on `main`, and the status lines are where a reader checks the document against the build", fcDoc, gone)
 		}
 	}
 
@@ -279,98 +283,129 @@ func fcCountWord(n int) string {
 // leaves alone: a count of items in each state, whatever the numbers are.
 var fcCensusRE = regexp.MustCompile(`[0-9]+ items: [0-9]+ open, [0-9]+ closed, [0-9]+ dropped\.`)
 
-// fcStatusWriterRE is one statement that assigns a terminal status to a
-// record: the shape §1 of the design counts. The character class around the
-// assignment is what keeps a comparison out of the census -- `rec.Status ==
-// runstore.StatusRunning` and `rec.Status != runstore.StatusSucceeded` are
-// both reads, and the first draft of the design's list was wrong precisely
-// because it was made by eye rather than by this.
-var fcStatusWriterRE = regexp.MustCompile(`\brec\.Status[^=!]*= runstore\.Status`)
+// fcRecordEndFile is the one file of internal/runner that writes a record's
+// terminal status: recordEnd's home, and the file the design's §1 sentence
+// names.
+const fcRecordEndFile = "recordend.go"
 
-// TestDocsFailureClassCensusMatchesTheRunner: the design says how many
-// statements write a run's terminal status, in how many functions and files,
-// and those three numbers are the census of the tree rather than a memory of
-// it.
+// fcStatusSite is one statement that writes a record's Status field, with the
+// file and line a reader can open.
+type fcStatusSite struct {
+	file string
+	line int
+}
+
+// TestDocsFailureClassCensusMatchesTheRunner: the design's §1 says where a
+// run's terminal status is written from -- recordEnd, in
+// internal/runner/recordend.go, and nowhere else -- and that sentence is a fact
+// about the tree rather than a memory of it.
 //
-// The document's counts were wrong when it was written -- it said fifteen
-// places and listed eighteen functions, while fourteen statements and a
-// fourteen-helper list followed two paragraphs later -- and a design whose
-// entire argument is "these fifteen writers become one" is worth nothing if
-// the number is a recollection. Counting here is what makes the claim checkable
-// in both directions: the runner gaining a writer makes the design and this pin
-// fail together, which is the moment somebody has to decide whether the new
-// statement goes through recordEnd.
+// It reads the **parsed** files, the shape the design's own guard
+// (`TestRecordEndIsTheOnlyWriterOfATerminalStatus`, internal/runner) reads them
+// in: a status written through a local copy of the record, through a variable,
+// or as a `Status:` entry of a `runstore.Record` literal reaches no
+// `rec.Status = runstore.Status` pattern at all, and each of those is a second
+// writer. `running` in a literal is the one status that is not an ending -- it
+// is the record's construction, before any writer has seen it.
+//
+// Before FC2 this test counted the statements instead -- thirty-six of them, in
+// twenty-four functions across eight files -- and the design said the same
+// number, so the two failed together whenever the runner gained a writer. That
+// count was wrong twice in the document before it was written down correctly,
+// and a count is what a task that moves one writer has to re-read by hand; the
+// rule below is the one that survives the change. The design's sentence and the
+// tree are checked against each other, and a status written anywhere but
+// recordend.go fails here.
 func TestDocsFailureClassCensusMatchesTheRunner(t *testing.T) {
 	paths, err := filepath.Glob("../../internal/runner/*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	statements := 0
-	files := map[string]bool{}
-	functions := map[string]bool{}
+	fset := token.NewFileSet()
+	inside, outside := 0, []fcStatusSite{}
 	for _, path := range paths {
+		// A test may set a record's status to build the state it asserts on; the
+		// rule is about the runner's own code.
 		if strings.HasSuffix(path, "_test.go") {
 			continue
 		}
-		data, err := os.ReadFile(path)
+		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s does not parse: %v", path, err)
 		}
-		lines := strings.Split(string(data), "\n")
-		for i, line := range lines {
-			if !fcStatusWriterRE.MatchString(line) {
+		for _, site := range fcStatusSitesIn(fset, path, file) {
+			if site.file != fcRecordEndFile {
+				outside = append(outside, site)
 				continue
 			}
-			statements++
-			files[filepath.Base(path)] = true
-			if fn := fcEnclosingFunc(lines[:i+1]); fn != "" {
-				functions[fn] = true
-			}
+			inside++
 		}
 	}
-	if statements == 0 {
-		t.Fatalf("no statement of internal/runner assigns a runstore.Status to a record: the census the design rests on found nothing, so this check passes vacuously")
+	if inside == 0 {
+		t.Fatalf("no statement of internal/runner writes a record's Status, %s included: the rule below would pass over a tree it never read, so this is the reader having stopped seeing the shape rather than the tree having stopped writing one", fcRecordEndFile)
 	}
-	want := fmt.Sprintf("written in %d statements, in %d functions across %d files", statements, len(functions), len(files))
+	for _, site := range outside {
+		t.Errorf("%s:%d writes a record's Status outside %s: every terminal status goes through recordEnd, so that the status, the outcome, the reason and the class describing it are written together and the last call is the only rule",
+			site.file, site.line, fcRecordEndFile)
+	}
+	if len(outside) > 0 {
+		t.Errorf("%d statements write a record's Status outside %s: %s", len(outside), fcRecordEndFile, fcStatusRule)
+	}
 	doc := flattenDoc(readDoc(t, fcDoc))
-	if !strings.Contains(doc, want) {
-		t.Errorf("%s no longer says %q: the design's first paragraph is a census of the runner's terminal-status writers, and %d of them in %d functions across %d files (%s) is what the tree holds",
-			fcDoc, want, statements, len(functions), len(files), strings.Join(fcNames(files), ", "))
+	if !strings.Contains(doc, fcStatusRule) {
+		t.Errorf("%s no longer says %q: the sentence is the one place a reader learns where a run's terminal status is written from, and the parsed files above are what makes it true",
+			fcDoc, fcStatusRule)
 	}
 }
 
-// fcNames is a set's members, sorted, for a failure message a reader can act on.
-func fcNames(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for name := range set {
-		out = append(out, name)
-	}
-	slices.Sort(out)
+// fcStatusRule is the design's §1 sentence this pin holds, kept as one string so
+// the document and the check above cannot drift into saying it two ways.
+const fcStatusRule = "no statement of `internal/runner` outside `internal/runner/recordend.go` assigns a `runstore.Status` to a record's `Status`"
+
+// fcStatusSitesIn is every statement of one parsed file that writes a Status
+// field: an assignment to a selector named Status, and a Status entry of a
+// runstore.Record literal. Both are how a record's status is set, and the
+// second is why this reads the parsed code rather than a pattern over its text.
+func fcStatusSitesIn(fset *token.FileSet, path string, file *ast.File) []fcStatusSite {
+	name := filepath.Base(path)
+	var out []fcStatusSite
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range node.Lhs {
+				if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "Status" {
+					out = append(out, fcStatusSite{file: name, line: fset.Position(sel.Sel.Pos()).Line})
+				}
+			}
+		case *ast.CompositeLit:
+			if !fcSelects(node.Type, "runstore", "Record") {
+				return true
+			}
+			for _, elt := range node.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := kv.Key.(*ast.Ident)
+				if !ok || key.Name != "Status" || fcSelects(kv.Value, "runstore", "StatusRunning") {
+					continue
+				}
+				out = append(out, fcStatusSite{file: name, line: fset.Position(key.Pos()).Line})
+			}
+		}
+		return true
+	})
 	return out
 }
 
-// fcEnclosingFunc is the name of the function the lines end inside: the last
-// top-level declaration above them, "" when there is none. It is how the
-// census counts functions rather than statements -- a count of statements alone
-// would not notice a writer that moved into a helper.
-func fcEnclosingFunc(upto []string) string {
-	for i := len(upto) - 1; i >= 0; i-- {
-		if !strings.HasPrefix(upto[i], "func ") {
-			continue
-		}
-		rest := strings.TrimPrefix(upto[i], "func ")
-		if strings.HasPrefix(rest, "(") {
-			if cut := strings.Index(rest, ")"); cut >= 0 {
-				rest = rest[cut+1:]
-			}
-		}
-		rest = strings.TrimSpace(rest)
-		if cut := strings.Index(rest, "("); cut >= 0 {
-			rest = rest[:cut]
-		}
-		return strings.TrimSpace(rest)
+// fcSelects reports whether expr is the qualified name pkg.name.
+func fcSelects(expr ast.Expr, pkg, name string) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return false
 	}
-	return ""
+	ident, ok := sel.X.(*ast.Ident)
+	return ok && ident.Name == pkg
 }
 
 // TestDocsFailureClassDesignCitationsResolve: every file and line the design

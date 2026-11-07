@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -319,7 +320,7 @@ func (r *run) saveWork(ctx context.Context, kind gitops.RejectKind) string {
 // "Stopped" section.
 func (r *run) endRefused(ctx context.Context, rej *gitops.PushRejected, prNumber int, records []verify.Record) error {
 	reason := r.redact(refusalText(rej) + " (" + r.saveWork(ctx, rej.Kind) + ")")
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, reason)
 	r.d.Log.Warn("the push was refused", "reason", reason)
 	r.storeEnded(ctx, records)
 	if prNumber != 0 && !r.shadow && r.giveUpNoteAllowed(ctx) {

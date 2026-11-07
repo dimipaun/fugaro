@@ -1,12 +1,14 @@
 # Failure classes: a closed vocabulary on the run record, and a failures report
 
-**Status: a design, and its FC1 has shipped; the rest of §10 is not built.** This document recommends,
-and names the alternative and what it costs, for every question it takes up; the owner rules, and the
-design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions, D1450–D1469, are
-answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's field and the schema's
-enum — is on `main`: `internal/failure`, the `failure.Classes()` slice §3 names, and
-`Record.FailureClass`, which no producer writes yet. **FC2–FC8 are not started.** What is written here
-was read against `main` on 2026-11-05, and the line citations are taken from that tree.
+**Status: a design, and its FC1 and FC2 have shipped; the rest of §10 is not built.** This document
+recommends, and names the alternative and what it costs, for every question it takes up; the owner
+rules, and the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions,
+D1450–D1469, are answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's
+field and the schema's enum — and **FC2** — the one writer of a terminal status (§4.1) — are on
+`main`: `internal/failure`, the `failure.Classes()` slice §3 names, `Record.FailureClass`, and
+`recordEnd`, which is what every statement §1 counted writes its ending through now. **FC3–FC8 are
+not started.** What is written here was read against `main` on 2026-11-05, and the line citations are
+taken from that tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
 [artifact-runs.md](artifact-runs.md) (the report a run writes with the digest), the digest's own
@@ -38,33 +40,39 @@ run, none of them a cause. So the owner's own 7-day report had to be built by no
 text with a script: **the vocabulary below exists because the arithmetic that answers "where does the
 money go" was done by hand in a shell.**
 
-**A terminal status is written in 36 statements, in 24 functions across 8 files.** Counting every
-statement of `internal/runner` that assigns a `runstore.Status` to a record's `Status` — the count is
-`grep -rn 'rec\.Status[^=!]*= runstore\.Status' internal/runner`, over the non-test files, which is
-the definition the pin in `internal/cli/docs_pr_state_test.go` applies and the sentence below it
-repeats:
+**A terminal status is written in one place: `recordEnd`, and no statement of `internal/runner`
+outside `internal/runner/recordend.go` assigns a `runstore.Status` to a record's `Status`.** FC2 is
+the task that made it so. Before it the census was **36 statements, in 24 functions across 8 files** —
+every statement of `internal/runner` that assigned a `runstore.Status` to a record's `Status`, over
+the non-test files:
 
-- `artifactMode` (`internal/runner/artifact.go:195`, `:199`, `:213`), `endArtifactCancelled` (`:1478`),
-  `endArtifactHalted` (`:1489`), `failArtifactInfra` (`:1499`) and `endArtifactFailed` (`:1514`);
-- `storeUnposted` (`internal/runner/followup.go:522` — a copy of the record, `rec := *r.rec`, for the
-  stored report) and `endUnchanged` (`:558`, `:562`, `:567`);
-- `endWithoutPR` (`internal/runner/gate.go:380`), `failInfra` (`:392`), `endCancelled` (`:407`) and
-  `endHalted` (`:420`), for a run whose check gate decided it;
-- `endRefused` (`internal/runner/refused.go:322`), recording a push the host will never accept;
-- `writeReviewArtifact` (`internal/runner/reviewartifact.go:905`);
-- `refuseReview` (`internal/runner/reviewmode.go:181`), `reviewMode` (`:703`),
-  `endReviewCancelled` (`:979`), `endReviewHalted` (`:988`), `failReviewInfra` (`:999`),
-  `endReviewFailed` (`:1016`) and `endReviewInvalidVerdict` (`:1029`);
-- `refuseArm` (`internal/runner/shadow.go:164`) and `shadowFinalize` (`:379`–`385`), for a
+- `artifactMode` (`internal/runner/artifact.go`), `endArtifactCancelled`,
+  `endArtifactHalted`, `failArtifactInfra` and `endArtifactFailed`;
+- `storeUnposted` (`internal/runner/followup.go` — a copy of the record, `rec := *r.rec`, for the
+  stored report) and `endUnchanged`;
+- `endWithoutPR` (`internal/runner/gate.go`), `failInfra`, `endCancelled` and `endHalted`, for a run
+  whose check gate decided it;
+- `endRefused` (`internal/runner/refused.go`), recording a push the host will never accept;
+- `writeReviewArtifact` (`internal/runner/reviewartifact.go`);
+- `refuseReview` (`internal/runner/reviewmode.go`), `reviewMode`,
+  `endReviewCancelled`, `endReviewHalted`, `failReviewInfra`,
+  `endReviewFailed` and `endReviewInvalidVerdict`;
+- `refuseArm` (`internal/runner/shadow.go`) and `shadowFinalize`, for a
   challenger arm;
-- `Run` — the deferred fallback (`internal/runner/runner.go:586`) and the two bootstrap terminals
-  (`:650`, `:656`);
-- `finalize`'s switch (`internal/runner/runner.go:4371`–`4380`), which decides
-  succeeded/halted/cancelled/failed and whose four cases are four of the 36.
+- `Run` — the deferred fallback (`internal/runner/runner.go`) and the two bootstrap terminals;
+- `finalize`'s switch (`internal/runner/runner.go`), which decides
+  succeeded/halted/cancelled/failed and whose four cases were four of the 36.
 
-Twelve of the functions are the `end*` helpers, three are the `fail*Infra` helpers and two are the
-`refuse*` writers; the rest write inline, which is why the count is a count of statements and not of
-functions. Each writes `Status`, `Outcome` and usually `Reason` in a statement of its own.
+Twelve of the functions were the `end*` helpers, three were the `fail*Infra` helpers and two were the
+`refuse*` writers; the rest wrote inline, which is why the count was a count of statements and not of
+functions, and each wrote `Status`, `Outcome` and usually `Reason` in a statement of its own. Every
+one of those statements is now one `recordEnd(…)` call, so the site that already knows why the run is
+stopping is the site that says what class it stopped for, and no reader derives a class, caches one or
+writes one back (§4.1). The one statement that is not a call on the record itself — `storeUnposted`'s
+copy of it — goes through the same writer. The sentence in bold is what the pin in
+`internal/cli/docs_pr_state_test.go` applies to the parsed files of `internal/runner`, and what
+`TestRecordEndIsTheOnlyWriterOfATerminalStatus`
+(`internal/runner/failure_class_internal_test.go`) holds inside the package.
 
 **The run's first failure reason has one writer.** `r.fail` (`internal/runner/runner.go:1547`) records the first
 reason the run cannot produce a ready PR and `failLocked` (`internal/runner/runner.go:1554`) keeps it; every stage
@@ -559,9 +567,9 @@ that is already long; no reader of it is a contract.
 
 ## 10. Tasks
 
-**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC8 are not started.** Each
-task is written to fit one run's $5 cap: it names at most twelve files, one command, one commit message
-and one red step. The convention is the one the active plans use
+**Status: a plan, approved to build on 2026-11-07; FC1 and FC2 are built and FC3–FC8 are not
+started.** Each task is written to fit one run's $5 cap: it names at most twelve files, one command,
+one commit message and one red step. The convention is the one the active plans use
 (`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,
 **Interfaces**, **Tests**, **Command**, **Depends on**, **Red step**, **Reviewer**, **Commit**, and a
 **SEC** flag where the change moves a security boundary. **This work is SECURITY-SENSITIVE: the
@@ -589,11 +597,13 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
 
 ### FC2 — one writer for the terminal status (D3)
 
-- **Files (11, under the plan's twelve-file cap):** `internal/runner/runner.go` (`recordEnd`,
-  `finalize`'s switch, the deferred function and the two bootstrap terminals),
+- **Files (12, at the plan's twelve-file cap — `recordend.go` is the twelfth, and it is the file the
+  owner put `recordEnd` in, D1452):** `internal/runner/recordend.go` (new — the writer),
+  `internal/runner/runner.go`
+  (`finalize`'s switch, the deferred function and the two bootstrap terminals),
   `internal/runner/gate.go`, `internal/runner/refused.go`, `internal/runner/followup.go`,
   `internal/runner/reviewmode.go`, `internal/runner/artifact.go`, `internal/runner/reviewartifact.go`,
-  `internal/runner/shadow.go` (the 36 statements of §1 — `reviewartifact.go` is the file the first
+  `internal/runner/shadow.go` (§1's statements — `reviewartifact.go` is the file the first
   draft of this list missed), `internal/runner/failure_class_internal_test.go` — **the internal
   test package, because this is an unexported writer**, and the design recommends that new file over
   extending `record_save_internal_test.go` (an `internal` test file is not one of the
