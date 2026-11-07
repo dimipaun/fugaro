@@ -1,10 +1,11 @@
 package cli
 
-// S0.7 (D448, T17): console 0.113.0 and the mobile app's first release are the
-// first releases of their streams under a business licence, and both wait for
-// counsel's sign-off of D432, D433 and D436 (S8.4) before they ship. They are
-// honour-based -- the release states what the licence requires and checks no
-// key -- and enforcement arrives with the key service in a later release.
+// S0.7 (D448, T17): the first licensed release of each stream sits behind
+// counsel's sign-off of D432, D433 and D436 (S8.4), honour-based, with no key
+// check until the key service ships. Console 0.113.0 was tagged on 2026-10-27
+// (#1149) and went out ahead of that sign-off, so its procedure records the
+// exception instead of a wait that was never kept; the app's first release has
+// not shipped and waits.
 //
 // The gate lives in the licence section of each stream's own README because
 // that is the file a person cutting the release reads, and no workflow refuses
@@ -17,8 +18,9 @@ import (
 	"testing"
 )
 
-// releaseGateDocs is one stream's release procedure and the release the gate
-// holds back, spelled as that README meets it.
+// releaseGateDocs is one stream's release procedure, the release it is about,
+// and the wording that procedure owes its reader beyond the two lines both
+// carry ("honour-based", "checks no key").
 //
 // The console's path is spelled from consoleDirName, the way
 // docs_ee_reserved_test.go spells it: the boundary test's mention scan flags
@@ -27,30 +29,41 @@ import (
 var releaseGateDocs = []struct {
 	path    string
 	release string
+	wants   []string
 }{
-	{"docs/releases/" + consoleDirName + "/README.md", "`0.113.0`"},
-	{"docs/releases/mobile/README.md", "first release"},
-}
-
-// TestDocsLicensedReleasesWaitForCounsel: each release procedure says that its
-// stream's first licensed release waits for counsel's sign-off on the three
-// rulings the licence and its pricing rest on, and that the release is
-// honour-based, with no key check until the key service ships.
-func TestDocsLicensedReleasesWaitForCounsel(t *testing.T) {
-	for _, c := range releaseGateDocs {
-		flat := strings.ToLower(flattenDoc(readDoc(t, c.path)))
-		for _, want := range []string{
+	{
+		// The console's half is the record: the release shipped, and before
+		// the sign-off the gate names.
+		"docs/releases/" + consoleDirName + "/README.md",
+		"`0.113.0`",
+		[]string{"shipped before counsel's sign-off", "2026-10-27", "exception"},
+	},
+	{
+		// The app's half is the gate itself: nothing has shipped under the
+		// app's licence yet, so the wait is still ahead.
+		"docs/releases/mobile/README.md",
+		"first release",
+		[]string{
 			"waits for counsel's sign-off",
 			"(d432)",
 			"(d433)",
 			"(d436)",
-			"honour-based",
-			"checks no key",
 			"enforcement arrives with the key service in a later release",
-			strings.ToLower(c.release),
-		} {
+		},
+	},
+}
+
+// TestDocsLicensedReleasesWaitForCounsel: the console's procedure records that
+// its first licensed release went out ahead of counsel's sign-off, and the
+// app's procedure says its first release waits for it. Both say the release is
+// honour-based, with no key check until the key service ships.
+func TestDocsLicensedReleasesWaitForCounsel(t *testing.T) {
+	for _, c := range releaseGateDocs {
+		flat := strings.ToLower(flattenDoc(readDoc(t, c.path)))
+		wants := append([]string{strings.ToLower(c.release), "honour-based", "checks no key"}, c.wants...)
+		for _, want := range wants {
 			if !strings.Contains(flat, want) {
-				t.Errorf("%s lacks %q: counsel signs off D432, D433 and D436 (S8.4) before the first licensed release of either stream ships, and the release is honour-based with no key check (D448, T17)", c.path, want)
+				t.Errorf("%s lacks %q: counsel signs off D432, D433 and D436 (S8.4) before the first licensed release of either stream ships, the console's release went out ahead of that sign-off and says so, and the app's release still waits (D448, T17)", c.path, want)
 			}
 		}
 	}

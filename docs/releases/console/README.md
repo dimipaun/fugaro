@@ -84,10 +84,12 @@ up to and including `0.112.0` stays under the MIT licence it was released under.
 under the new licence, production use needs a subscription, and the earlier releases stay MIT.
 The licence text is counsel's, and it names Subscription Terms that are not published yet: the
 release waits until the owner has published those terms or replaced that sentence, because until
-then a production user has no way to comply. **It also waits for counsel's sign-off**: console
-`0.113.0` and the mobile app's first release ship under the business licence only once counsel has
-signed off the three rulings the licence and its pricing rest on — the free evaluation seat
-(D432), a seat as anyone who launches jobs (D433) and the read-only state after the grace period
-(D436), which is S8.4's round. Both are **honour-based**: the release states what the licence
-requires and checks no key, and key enforcement arrives with the key service in a later release,
-not with `0.113.0`.
+then a production user has no way to comply. **`0.113.0` shipped before counsel's sign-off.** D448
+and T17 put the first licensed release of each stream behind counsel signing off D432, D433 and
+D436 — S8.4's round — and console `0.113.0` went out on 2026-10-27, the tag `console-v0.113.0`,
+ahead of that sign-off; every release through `0.120.0` has followed it, and S8.4 has not happened.
+The gate still holds the **mobile app's first release**, which has not shipped, so `0.113.0` is an
+exception to it rather than an instance of it; whether the owner records it as one is the owner's
+ruling and is not recorded here. Every licensed release is **honour-based**: it states what the
+licence requires and checks no key, and key enforcement arrives with the key service in a later
+release.

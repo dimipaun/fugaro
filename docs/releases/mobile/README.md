@@ -70,9 +70,11 @@ GitHub release for it.
 (the owner's ruling D311 of 2026-10-26, [`LICENSING.md`](../../../LICENSING.md)), and its notes say
 so. The text is counsel's, and it names Subscription Terms that are not published yet: the first
 release waits until the owner has published those terms or replaced that sentence. **It also waits
-for counsel's sign-off**: it and console `0.113.0` ship under a business licence only once counsel
-has signed off the three rulings the licence and its pricing rest on — the free evaluation seat
-(D432), a seat as anyone who launches jobs (D433) and the read-only state after the grace period
-(D436), which is S8.4's round. Both are **honour-based**: the release states what the licence
-requires and checks no key, and key enforcement arrives with the key service in a later release.
+for counsel's sign-off**: the app's first release ships under the business licence only once
+counsel has signed off the three rulings the licence and its pricing rest on — the free evaluation
+seat (D432), a seat as anyone who launches jobs (D433) and the read-only state after the grace
+period (D436), which is S8.4's round. (Console `0.113.0` went out ahead of that sign-off, on
+2026-10-27; the console's README records it.) It is **honour-based**: the release states what the
+licence requires and checks no key, and key enforcement arrives with the key service in a later
+release.
 How the licence sits beside each store's own end-user terms is an open item for counsel.
