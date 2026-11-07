@@ -1,0 +1,420 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
+// The policy notes: the section the Project tab's policy panel draws once CM10
+// wires this module in (managed-project screens plan CM7; reconciliation D1481,
+// D1482, and §6 rule 3).
+//
+// Three claims of the plan's are what this file is about, and each of them is a
+// rule rather than a cell:
+//
+//   - **the node's members drawn, and only the ones the plan names.** The ask's
+//     "policy notes" is the published node (D1480), the document is
+//     `fugaro project policy show --json` (D1481), and the members the screen
+//     draws are the accounts, `allow_repos`, `base_branch`, the routing and the
+//     image catalog. A node carries more than those -- `budget`'s dollar
+//     figures, `default_claude_account` and `claude_account_stages` -- and the
+//     last two are `settings --json`'s and the settings panel's (D1478, CM6), so
+//     the fixture below carries all of them and the test asserts that none is
+//     drawn.
+//   - **the six `policy-*` checks drawn and no other check.** `doctor --json`
+//     returns around twenty checks; the six the owner's ruling names are the
+//     policy family, and a section that drew the others would be a section whose
+//     subject is doctor rather than the policy (D1482). The fixture's document
+//     carries a `managed-audit` line and two credential lines besides the six,
+//     which is what the plan's mutation ("draw every check `doctor` returns")
+//     makes fail.
+//   - **no line claims what the last update changed.** The change is printed by
+//     `fugaro update` and recorded nowhere (F19), so the section draws the node
+//     as it is and says where the change is printed instead (D1482). The test
+//     reads every cell and holds that the only one about a change is the
+//     console's own sentence saying it draws none.
+//
+// A fourth rule of the owner's is tested here too, because the document tempts a
+// screen into breaking it: reconciliation §6 rule 3 is **"no figure the Spend
+// screen owns. These screens show no dollars and no caps"**, so the node's
+// `budget` block -- which travels in this very document -- reaches no cell.
+//
+// The fake screen below is `projects.test.ts`'s, in this file's own words: the
+// tab's panels are siblings, each declares its own `ScreenElement`, and a test
+// that a factory drawing one draws another is `projects.test.ts`'s job.
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  POLICY_CHECK_IDS,
+  POLICY_CHECKS_SOURCE,
+  POLICY_CHECKS_TITLE,
+  POLICY_CHECK_FAILING_WORD,
+  POLICY_CHECK_OK_WORD,
+  POLICY_CHECK_UNDRAWN_WORD,
+  POLICY_DIRECT_WORD,
+  POLICY_NO_BASE_BRANCH,
+  POLICY_NO_DIFF_NOTE,
+  POLICY_NO_POLICY,
+  POLICY_NODE_ABSENT,
+  POLICY_NODE_SHAPE,
+  POLICY_NODE_SOURCE,
+  POLICY_NODE_TITLE,
+  POLICY_NONE_WORD,
+  POLICY_OTHERS_LEAD,
+  buildPolicyNotes,
+  policyNotesBody,
+} from '../../src/renderer/screens/policynotes'
+import type {
+  PolicyNotesInputs,
+  PolicyNotesModel,
+  ScreenElement,
+  ScreenFactory,
+} from '../../src/renderer/screens/policynotes'
+
+// ---------------------------------------------------------------------------
+// The harness: a fake element that refuses what a screen may not do.
+// ---------------------------------------------------------------------------
+
+/** FakeScreen is the element a screen draws into. It records text, classes and
+ * attributes, and it **throws on the attributes a screen must never set**: the
+ * navigating attribute, a resource, a style and any handler. A screen that
+ * reached for one would fail every test in this file rather than one. */
+class FakeScreen implements ScreenElement {
+  readonly attributes = new Map<string, string>()
+  readonly nodes: FakeScreen[] = []
+  readonly classes: string[] = []
+  textContent: string | null = null
+
+  static readonly FORBIDDEN_ATTRIBUTES = new Set([
+    ['h', 'ref'].join(''),
+    'src',
+    'srcdoc',
+    'style',
+    'formaction',
+    'action',
+  ])
+
+  constructor(readonly tag: string) {}
+
+  setAttribute(name: string, value: string): void {
+    const lowered = name.toLowerCase()
+    if (FakeScreen.FORBIDDEN_ATTRIBUTES.has(lowered) || lowered.startsWith('on')) {
+      throw new Error(`a console screen may not set the ${name} attribute`)
+    }
+    if (lowered === 'class') {
+      this.classes.length = 0
+      this.classes.push(...value.split(/\s+/).filter((one) => one !== ''))
+    }
+    this.attributes.set(name, value)
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null
+  }
+
+  removeAttribute(name: string): void {
+    this.attributes.delete(name)
+  }
+
+  append(child: ScreenElement): void {
+    this.nodes.push(child as FakeScreen)
+  }
+
+  childNodes(): readonly ScreenElement[] {
+    return this.nodes
+  }
+}
+
+/** factory makes fresh fakes, in the shape the renderer hands a screen: one
+ * `create`, because this section draws no SVG. */
+const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+
+/** walk visits every node of a tree, the root first. */
+function walk(node: ScreenElement): readonly FakeScreen[] {
+  const fake = node as FakeScreen
+  const out: FakeScreen[] = [fake]
+  for (const child of fake.childNodes()) out.push(...walk(child))
+  return out
+}
+
+/** all is every node carrying a class, in document order. */
+function all(node: ScreenElement, className: string): readonly FakeScreen[] {
+  return walk(node).filter((one) => one.classes.includes(className))
+}
+
+/** texts is the text of every node carrying a class. */
+function texts(node: ScreenElement, className: string): readonly (string | null)[] {
+  return all(node, className).map((leaf) => leaf.textContent)
+}
+
+/** block is the one block a read is drawn in, found by the operation it came
+ * from. The section has two, and which one a line came from is one of the
+ * plan's own claims. */
+function block(node: ScreenElement, source: string): FakeScreen {
+  const found = all(node, 'policy-notes-block').filter((one) => one.getAttribute('data-source') === source)
+  expect(found, `expected exactly one block for ${source}`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`no block for ${source}`)
+  return first
+}
+
+/** drawn is the whole tree's text, in document order: what a person reading the
+ * screen would read if they read every cell. */
+function drawn(node: ScreenElement): string {
+  return walk(node)
+    .map((leaf) => leaf.textContent ?? '')
+    .filter((text) => text !== '')
+    .join(' ')
+}
+
+/** model is the section's two documents through the builder, which is where
+ * every rule about what a cell may hold is decided. */
+function model(overrides: Partial<PolicyNotesInputs> = {}): PolicyNotesModel {
+  return buildPolicyNotes({ document: POLICY_DOC, doctor: DOCTOR, ...overrides })
+}
+
+/** draw is the whole section, drawn. */
+function draw(overrides: Partial<PolicyNotesInputs> = {}): ScreenElement {
+  return policyNotesBody(factory, model(overrides))
+}
+
+// ---------------------------------------------------------------------------
+// The documents.
+// ---------------------------------------------------------------------------
+
+/** POLICY_DOC is `fugaro project policy show --json`: `{project, policy}`
+ * (F18, D1481), with the five members the plan names **and** the members it does
+ * not -- a `budget` block with a dollar figure, the two review-account keys of
+ * D1478, a price override -- because a screen that drew one of those would pass
+ * a test whose fixture carried only what it draws. */
+const POLICY_DOC = {
+  project: 'example-project',
+  policy: {
+    version: 3,
+    base_branch: 'trunk',
+    allow_repos: ['example-owner/example-repo'],
+    accounts: {
+      'anthropic-api': { allow_repos: ['example-owner/example-repo', 'example-owner/other-repo'] },
+      'claude-ops': { allow_repos: ['example-owner/example-repo'] },
+    },
+    routing: { claude: { via: 'openrouter', models: ['claude-sonnet-5-5'] } },
+    image_catalog: {
+      entries: [
+        {
+          name: 'node-22',
+          tags: ['node'],
+          source: { kind: 'dockerfile', repo: 'example-owner/example-repo', path: 'images/node.Dockerfile' },
+          default: true,
+        },
+        { name: 'postgres', tags: ['postgres'], source: { kind: 'image', image: 'postgres:16' } },
+        { name: 'tools', tags: [], source: { kind: 'inline', inline: 'FROM node:22\n' } },
+      ],
+    },
+    default_claude_account: 'review-pool@example.test',
+    claude_account_stages: { review: 'review-pool@example.test' },
+    budget: { mode: 'enforce', per_run_usd: 8, allowed_models: ['claude-sonnet-5-5'], max_run_tokens: 900000 },
+    model_prices: { 'claude-sonnet-5-5': { input_per_m: 3 } },
+  },
+}
+
+/** DOCTOR is `fugaro doctor --json`: `{ok, checks}`. It carries the five policy
+ * checks a project with a fresh node would have, **not** the sixth
+ * (`policy-rules-skew`, which a database doctor cannot read), and three checks
+ * that are not the policy's at all -- `managed-audit` and two credential lines
+ * (reconciliation, "the checks this screen is not about"). */
+const DOCTOR = {
+  ok: false,
+  checks: [
+    {
+      id: 'policy-published',
+      ok: true,
+      severity: 'info',
+      problem: 'a policy is published at config/policy/shared',
+      fix: '',
+    },
+    {
+      id: 'policy-newer-than-binary',
+      ok: false,
+      severity: 'warning',
+      problem: 'the published policy was written by a newer Fugaro',
+      fix: 'upgrade Fugaro',
+    },
+    {
+      id: 'policy-older-than-binary',
+      ok: true,
+      severity: 'warning',
+      problem: 'the published policy is not older than this binary',
+      fix: '',
+    },
+    {
+      id: 'policy-unknown-keys',
+      ok: false,
+      severity: 'warning',
+      problem: 'the node carries a key this Fugaro does not know: image_catalog',
+      fix: 'run `fugaro project policy publish`',
+    },
+    {
+      id: 'policy-vs-jobs',
+      ok: true,
+      severity: 'warning',
+      problem: 'every job matches the published policy',
+      fix: '',
+    },
+    { id: 'managed-audit', ok: true, severity: 'info', problem: 'the audit trail is readable', fix: '' },
+    { id: 'creds-rules', ok: true, severity: 'info', problem: 'the rules match', fix: '' },
+    { id: 'creds-broken', ok: false, severity: 'warning', problem: 'a credential cannot be read', fix: '' },
+  ],
+}
+
+// ---------------------------------------------------------------------------
+// The node.
+// ---------------------------------------------------------------------------
+
+describe('the policy notes', () => {
+  it('draws every member of the node the plan names', () => {
+    const root = draw()
+    const node = block(root, 'policy.show')
+
+    expect(texts(node, 'policy-notes-value')).toContain('trunk')
+    expect(texts(node, 'policy-notes-repo')).toContain('example-owner/example-repo')
+    expect(texts(node, 'policy-notes-account-name')).toEqual(['anthropic-api', 'claude-ops'])
+    expect(texts(node, 'policy-notes-value')).toContain('openrouter')
+    expect(texts(node, 'policy-notes-model')).toContain('claude-sonnet-5-5')
+    expect(texts(node, 'policy-notes-entry-name')).toEqual(['node-22', 'postgres', 'tools'])
+    expect(texts(node, 'policy-notes-entry-kind')).toEqual(['dockerfile', 'image', 'inline'])
+    expect(texts(node, 'policy-notes-entry-path')).toEqual(['images/node.Dockerfile'])
+    expect(texts(node, 'policy-notes-entry-image')).toEqual(['postgres:16'])
+  })
+
+  it('draws the members the plan does not name nowhere on the screen', () => {
+    const root = draw()
+    const text = drawn(root)
+
+    // The review account keys are `settings --json`'s and the settings panel's
+    // (D1478), and the node's `budget` block is the Spend screen's (rule 3):
+    // this section shows no dollars and no caps.
+    expect(text).not.toContain('review-pool@example.test')
+    expect(text).not.toContain('default_claude_account')
+    expect(text).not.toContain('claude_account_stages')
+    expect(text).not.toContain('$')
+    expect(texts(root, 'policy-notes-number')).not.toContain('8')
+  })
+
+  it('names the read each block came from, on the block itself', () => {
+    const root = draw()
+
+    expect(block(root, 'policy.show').getAttribute('data-state')).toBe('read')
+    expect(block(root, 'environment.report').getAttribute('data-state')).toBe('read')
+    expect(texts(root, 'policy-notes-heading')).toEqual([POLICY_NODE_TITLE, POLICY_CHECKS_TITLE])
+    expect(texts(root, 'policy-notes-source')).toEqual([POLICY_NODE_SOURCE, POLICY_CHECKS_SOURCE])
+  })
+
+  it('reads a node with no base branch as the default, never as an empty cell', () => {
+    const node = block(
+      policyNotesBody(factory, buildPolicyNotes({ document: { project: 'p', policy: { version: 1 } }, doctor: DOCTOR })),
+      'policy.show',
+    )
+    expect(texts(node, 'policy-notes-value')).toContain('n/a')
+    expect(texts(node, 'policy-notes-direct')).toEqual([])
+    expect(drawn(node)).toContain(POLICY_NO_BASE_BRANCH)
+    expect(texts(node, 'policy-notes-empty')).toEqual([POLICY_NONE_WORD, POLICY_NONE_WORD, POLICY_NONE_WORD])
+  })
+
+  it('reads a node whose switch is absent or empty as direct, and draws no model list for it', () => {
+    const node = block(
+      policyNotesBody(
+        factory,
+        buildPolicyNotes({
+          document: { project: 'p', policy: { version: 1, base_branch: 'main', routing: { claude: { via: '' } } } },
+          doctor: DOCTOR,
+        }),
+      ),
+      'policy.show',
+    )
+    expect(texts(node, 'policy-notes-value')).toContain(POLICY_DIRECT_WORD)
+    expect(texts(node, 'policy-notes-model')).toEqual([])
+  })
+
+  it('draws an unpublished policy as its own sentence, and a node it cannot read with its own command', () => {
+    const none = block(policyNotesBody(factory, model({ document: { project: 'p', policy: null } })), 'policy.show')
+    expect(none.getAttribute('data-state')).toBe('no-policy')
+    expect(drawn(none)).toContain(POLICY_NO_POLICY)
+    expect(texts(none, 'policy-notes-entry-name')).toEqual([])
+
+    const refused = block(policyNotesBody(factory, model({ document: null })), 'policy.show')
+    expect(refused.getAttribute('data-state')).toBe('unavailable')
+    expect(drawn(refused)).toContain(POLICY_NODE_ABSENT)
+
+    const wrong = block(policyNotesBody(factory, model({ document: { project: 'p' } })), 'policy.show')
+    expect(drawn(wrong)).toContain(POLICY_NODE_SHAPE)
+    expect(drawn(wrong)).toContain(POLICY_NODE_SOURCE)
+  })
+
+  it('draws the CLI\'s own refusal sentence when the read was refused with one', () => {
+    const refused = block(
+      policyNotesBody(factory, model({ document: null, sentences: { 'policy.show': 'the read needs a cloud project' } })),
+      'policy.show',
+    )
+    expect(drawn(refused)).toContain('the read needs a cloud project')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The checks.
+// ---------------------------------------------------------------------------
+
+describe('the policy checks', () => {
+  it('draws the six policy checks and no other check', () => {
+    const root = draw()
+    const checks = block(root, 'environment.report')
+
+    expect(POLICY_CHECK_IDS).toHaveLength(6)
+    expect(texts(checks, 'policy-notes-check-id')).toEqual(POLICY_CHECK_IDS)
+    const other = walk(checks)
+      .map((leaf) => leaf.textContent ?? '')
+      .filter((text) => /^(?:managed-audit|creds-rules|creds-broken)$/.test(text))
+    expect(other).toEqual([])
+    expect(texts(checks, 'policy-notes-others-lead')).toEqual([POLICY_OTHERS_LEAD])
+  })
+
+  it('says a check the document did not carry, rather than drawing five and passing', () => {
+    const checks = block(draw(), 'environment.report')
+
+    expect(texts(checks, 'policy-notes-check-state')).toEqual([
+      POLICY_CHECK_OK_WORD,
+      POLICY_CHECK_FAILING_WORD,
+      POLICY_CHECK_OK_WORD,
+      POLICY_CHECK_FAILING_WORD,
+      POLICY_CHECK_OK_WORD,
+      POLICY_CHECK_UNDRAWN_WORD,
+    ])
+  })
+
+  it('refuses with doctor\'s own command when the checks document did not arrive', () => {
+    const root = draw({ doctor: null })
+    const checks = block(root, 'environment.report')
+
+    expect(checks.getAttribute('data-state')).toBe('unavailable')
+    expect(drawn(checks)).toContain(POLICY_CHECKS_SOURCE)
+    expect(texts(checks, 'policy-notes-check-id')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The claim the section must not make.
+// ---------------------------------------------------------------------------
+
+describe('the diff', () => {
+  it('claims no diff, and says where the change is printed instead of drawing one', () => {
+    const root = draw()
+    const aboutChange = walk(root)
+      .map((leaf) => leaf.textContent ?? '')
+      .filter((text) => /changed|\bdiff\b|last update/i.test(text))
+
+    expect(aboutChange).toEqual([POLICY_NO_DIFF_NOTE])
+  })
+
+  it('holds no control that writes, and no contenteditable subtree', () => {
+    const root = draw()
+    const controls = walk(root).filter((one) => ['button', 'input', 'select', 'a', 'form'].includes(one.tag))
+
+    expect(controls).toEqual([])
+    expect(walk(root).filter((one) => one.getAttribute('contenteditable') !== null)).toEqual([])
+  })
+})
