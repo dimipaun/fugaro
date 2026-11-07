@@ -64,6 +64,10 @@ func TestDocsCheck111IsOneScriptTheOwnerRuns(t *testing.T) {
 		// are read: the section has to say so, because a picker row read from
 		// the mode-4.log that does not exist is a PASS nothing was read for.
 		"the check's own picker row reads both of them for the same reason",
+		// The swap is mode 2's alone, and the section has to promise it per run
+		// rather than once at the end of mode 2: --modes may name 2(a) without
+		// 2(b), and the modes after it must still run as the owner.
+		"putting **yours** back, byte for byte, as soon as each of them is done",
 		// --dry-run is the first thing the owner runs, because the real run
 		// disables an API in two throwaway projects and repoints their ADC.
 		"`--dry-run` prints every command",

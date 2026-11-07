@@ -535,7 +535,7 @@ guard_second_adc() {
   if mode_2_selected && cmp -s "$SECOND_ADC" "$file"; then
     stop "the ADC at $file is byte for byte the login --second-adc names, so this machine is still logged in as the second account — and modes 1(a), 1(b), 3, 4 and 5 run under YOUR OWN login, which is the premise the checklist writes for them. Run 'gcloud auth application-default login' and choose your own account, then run this check again. Nothing was run"
   fi
-  fact second-adc PASS "$SECOND_ADC (mode 2's runs alone are run with this login: this check copies it over $file before mode 2 and puts your own file back byte for byte after it, and again from its exit trap whatever ends the run)"
+  fact second-adc PASS "$SECOND_ADC (mode 2's runs alone are run with this login: this check copies it over $file for them and puts your own file back byte for byte as soon as each of them is done, so the modes that are not mode 2 run as you whatever --modes selects, and again from its exit trap whatever ends the run)"
 }
 
 mode_2_selected() {
@@ -583,7 +583,7 @@ adc_swap_in() {
   cp -p "$SECOND_ADC" "$live" || stop "this check could not put the second account's login in place for mode 2 ($SECOND_ADC -> $live). Nothing was run"
   cmp -s "$live" "$SECOND_ADC" || stop "the second account's login did not land in $live, so mode 2 would run as the wrong caller. Nothing was run"
   SECOND_ADC_IS=yes
-  say "mode 2's runs use the login in $SECOND_ADC; your own ADC file is copied back byte for byte when they are done, and by the Restore whatever ends this run"
+  say "mode 2's runs use the login in $SECOND_ADC; your own ADC file is copied back byte for byte as soon as each of them is done, and by the Restore whatever ends this run"
 }
 
 adc_swap_out() {
@@ -596,6 +596,18 @@ adc_swap_out() {
   SECOND_ADC_IS=no
   say "your own ADC file is back in place, byte for byte — mode 2 was the only part of this run that used $SECOND_ADC"
   return 0
+}
+
+# adc_swap_out_after MODE: mode 2's login goes back out as soon as THAT mode's
+# run is asserted, and not at the end of mode 2(b) — --modes may name 2(a)
+# without 2(b), and the claim the swap exists for is about the OTHER modes: 1(a),
+# 1(b), 3, 4 and 5 run under the login each of them is written for, whatever the
+# list selects. A swap that cannot be put back is a stop, never a shrug: it is
+# the caller of the rest of the run that is wrong, and the Restore asks again.
+adc_swap_out_after() {
+  local m=$1
+  adc_swap_out && return 0
+  stop "this check could not put your own ADC file back after mode $m ($(adc_file) is still the login in $SECOND_ADC), so the modes after it would run as the wrong caller. The Restore tries again; if it cannot, run 'gcloud auth application-default login' and choose your own account"
 }
 
 # -------------------------------------------------------------------- the runner
@@ -964,15 +976,22 @@ line_info() {
   fi
 }
 
-# assert_api MODE [Q|S]: criterion 2 — no API's state changed. P is read in every
-# mode: no mode here enables an API in it, and where mode 1(a) disabled it itself
-# (its own premise) the Restore enables it again, so the expected count is the one
-# this run's own baseline and its own disable give. Q must read 0 in mode 1(b),
-# and S must read 1 in mode 2: an S whose API is off would take mode 1's path and
-# prove nothing.
+# assert_api MODE: criterion 2 — no API's state changed. P is read in every mode:
+# no mode here enables an API in it, and where mode 1(a) disabled it itself (its
+# own premise) the Restore enables it again, so the expected count is the one this
+# run's own baseline and its own disable give. The mode's OWN extra project is
+# read with it, keyed on the mode — the way the register's own assertion block
+# keys it — rather than on an argument a call site could leave out: Q in mode
+# 1(b), whose premise is Q's API being off and which the run may not enable, and
+# S in mode 2, which must still read 1 because an S whose API is off would take
+# mode 1's path and prove nothing.
 assert_api() {
-  local m=$1 other=${2:-}
-  local n want ok=yes detail=""
+  local m=$1
+  local n want ok=yes detail="" other=""
+  case "$m" in
+  1b) other=Q ;;
+  2a | 2b) other=S ;;
+  esac
   n=$(api_enabled_count "$P")
   if [ "$n" = unreadable ]; then
     ok=no
@@ -1285,7 +1304,7 @@ step_1b() {
   mode_exit 1b "the wizard at a real terminal with neither source able to answer" "$SCRATCH/mode-1b.log"
   assert_refusal 1b
   assert_no_offer 1b
-  assert_mode 1b Q
+  assert_mode 1b
   unmaim
 }
 
@@ -1332,6 +1351,7 @@ step_2a() {
   mode_exit 2a "the wizard at a real terminal, answered 'none' at the picker's prompt (the picker's own way out: it records no account and leaves --link-billing empty)" "$SCRATCH/mode-2a.log"
   assert_source_2a
   assert_mode 2a may-list
+  adc_swap_out_after 2a
 }
 
 s_enabled() { # s_enabled MODE — S's API must be ON before the run, or the mode is
@@ -1392,13 +1412,9 @@ step_2b() {
   run_pty 2b -- fugaro "${SETUP_ARGS[@]}"
   mode_exit 2b "the wizard at a real terminal with the API refusing and the fallback maimed ($([ "$ROLE_REMOVED" = yes ] && echo "the billing role was removed from your own account, so both sources refuse" || echo "ADC is $SECOND_ACCOUNT, which lacks the permission")); route: $([ "$ROLE_REMOVED" = yes ] && echo role-removed || echo second-account)" "$SCRATCH/mode-2b.log"
   assert_unlisted 2b
-  assert_mode 2b S
+  assert_mode 2b
   unmaim
-  # Mode 2 is over, so the second account is put back out of the way before
-  # modes 3, 4 and 5 run: their calls must be yours again, not the second
-  # account's. A swap that cannot be put back is a stop, never a shrug — it is
-  # the caller of the rest of the run that is wrong, and the Restore asks again.
-  adc_swap_out || stop "this check could not put your own ADC file back after mode 2 ($(adc_file) is still the login in $SECOND_ADC), so modes 3, 4 and 5 would run as the wrong caller. The Restore tries again; if it cannot, run 'gcloud auth application-default login' and choose your own account"
+  adc_swap_out_after 2b
 }
 
 # assert_unlisted MODE: what the run must say when neither source answered — one
@@ -1676,7 +1692,7 @@ print_plan() {
   say "  [network, writes] mode 1(a) again with --yes: fugaro ${SETUP_ARGS[*]} --yes (the picker never runs there, so no offer may come)"
   say "  [network, writes] mode 1(b): the same two gcloud calls on ${Q:-<--api-off-project, required>}, then at a real terminal: fugaro ${SETUP_ARGS[*]} with the gcloud fallback maimed — the run must REFUSE and name the enable line"
   if [ -n "$SECOND_ADC" ]; then
-    say "  [local, writes] before mode 2: cp -p $(adc_file) to the scratch directory, cp -p $SECOND_ADC over $(adc_file) — mode 2's runs alone use the second account's login, and your own file is copied back byte for byte when they are done, and again from the exit trap whatever ends the run. Both copies are removed with the scratch directory, never kept"
+    say "  [local, writes] before mode 2: cp -p $(adc_file) to the scratch directory, cp -p $SECOND_ADC over $(adc_file) — mode 2's runs alone use the second account's login, and your own file is copied back byte for byte as soon as each of them is done, so the modes after mode 2 run as you, and again from the exit trap whatever ends the run. Both copies are removed with the scratch directory, never kept"
   else
     say "  [local] no --second-adc was given: mode 2's runs use $(adc_file) as it is, so that login has to be the second account's for the whole run — which only a run of modes 2a,2b alone may be"
   fi

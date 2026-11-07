@@ -278,6 +278,10 @@ fi
 if [ "$quota" = "$FAKE111_Q" ]; then
   # Mode 1(b): the API is disabled on the quota project, which is NOT the one
   # being set up — a refusal that names the line and who to ask, never an offer.
+  # FAKE111_ENABLE_OFF_PROJECT is the reversal this mode exists to catch: the
+  # wizard enabling the API itself instead of refusing. Q's own state is where
+  # the check has to see it — criterion 2 is read from the project, per mode.
+  [ -z "${FAKE111_ENABLE_OFF_PROJECT:-}" ] || gcloud services enable cloudbilling.googleapis.com --project="$FAKE111_Q"
   echo "The Cloud Billing API (cloudbilling.googleapis.com) is disabled on $quota, the quota project of your credentials."
   echo "Run: gcloud services enable cloudbilling.googleapis.com --project $quota"
   echo "then ask the owner of that project to enable it, or link an account you already have."
@@ -286,6 +290,10 @@ if [ "$quota" = "$FAKE111_Q" ]; then
 fi
 
 if [ "$quota" = "$FAKE111_S" ]; then
+  # FAKE111_DISABLE_ON_PROJECT: the other half of criterion 2 — a run that
+  # DISABLES the API on S, which no step of this check may do and which would
+  # take mode 1's path on the next run. S's own state is where that shows.
+  [ -z "${FAKE111_DISABLE_ON_PROJECT:-}" ] || gcloud services disable cloudbilling.googleapis.com --project="$FAKE111_S" --force
   if gcloud billing accounts list >/dev/null 2>&1; then
     # Mode 2(a): the API refused and the fallback answered. The list is the
     # point of this run, and 'none' is the picker's own way out of it.
@@ -563,6 +571,29 @@ test_only_mode_2_runs_under_the_second_login() {
     || fail "the swap, scratch kept: a copy of a login outlived the run: $(find "$scratch" -name 'adc-*.bak')"
 }
 
+# --modes may name 2(a) without 2(b), and the swap is for mode 2's runs alone —
+# not for the rest of the run. Unwinding it at the end of 2(b) alone leaves
+# modes 3, 4 and 5 running as the second account whenever the list names 2(a)
+# and not 2(b), which is the one thing the register's claim about the other
+# modes ("they run under the login each of them is written for") forbids.
+test_the_second_login_goes_out_before_the_modes_after_mode_2() {
+  setup_case swapshort
+  sandbox_args
+  RUN111_ARGS+=(--modes 2a,3,4,5)
+  run111
+  expect_status "$status" 1 "the swap when 2(b) is not selected"
+  [ "$(grep -c '^login second$' "$dir/calls")" = 1 ] \
+    || fail "the swap when 2(b) is not selected: mode 2(a)'s run is the only one the second login may be in place for, got $(grep -c '^login second$' "$dir/calls"): $(grep '^login ' "$dir/calls" | tr '\n' ' ')"
+  [ "$(grep '^login ' "$dir/calls" | tail -n 1)" = "login own" ] \
+    || fail "the swap when 2(b) is not selected: the last run to read the swap was not yours, so a mode after mode 2 ran as the second account: $(grep '^login ' "$dir/calls" | tr '\n' ' ')"
+  cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
+    || fail "the swap when 2(b) is not selected: your own ADC file did not come back byte for byte: $(cat "$dir/cloudsdk/application_default_credentials.json")"
+  expect_contains "$out" "FACT picker-3: PASS — " "the swap when 2(b) is not selected: mode 3 ran, and ran as you"
+  expect_contains "$out" "FACT picker-5: PASS — " "the swap when 2(b) is not selected: and so did mode 5"
+  expect_contains "$out" "FACT api-2a: PASS — " "the swap when 2(b) is not selected: mode 2(a) was still read"
+  expect_scratch_gone "$dir" "the swap when 2(b) is not selected"
+}
+
 # A run that stops while mode 2's login is still in place — its premise failing
 # at the step that sets it — has to put your own ADC file back from the exit
 # trap, byte for byte, or the machine is left logged in as the second account.
@@ -676,6 +707,41 @@ test_a_quota_project_the_adc_cannot_use_stops() {
   expect_changed "enable $P" "quota project the ADC cannot use: the API mode 1(a) disabled is enabled again"
   expect_absent "$out" "CHECK 111 RESULT: PASS" "quota project the ADC cannot use: no verdict"
   expect_scratch_gone "$dir" "quota project the ADC cannot use"
+}
+
+# Criterion 2 is read per mode, and the mode's own extra project with it: Q in
+# mode 1(b), whose premise is that API being OFF (and which the run may not
+# enable — the wizard enabling it itself is exactly the reversal this mode
+# exists to catch), and S in mode 2, which must still read 1 and which nothing
+# here may disable. Each is read from the PROJECT's own state, so each of these
+# two cases is a mode whose premise the run broke.
+test_q_enabled_by_the_run_is_a_fail() {
+  setup_case qon
+  sandbox_args
+  RUN111_ARGS+=(--modes 1b)
+  RUN111_ENV=(FAKE111_ENABLE_OFF_PROJECT=1)
+  run111
+  expect_status "$status" 1 "Q's API enabled by the run"
+  expect_contains "$out" "FACT api-1b: FAIL — " "Q's API enabled by the run: mode 1(b)'s own project is read, not just P"
+  expect_contains "$out" "Q cloudbilling enabled-count 1, must read 0" "Q's API enabled by the run: and the row says what Q reads"
+  expect_contains "$out" "FACT refusal-1b: PASS — " "Q's API enabled by the run: the refusal itself was still there"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "Q's API enabled by the run: the verdict"
+  expect_changed "enable $Q" "Q's API enabled by the run: and the Restore enables it again"
+  expect_scratch_gone "$dir" "Q's API enabled by the run"
+}
+
+test_s_disabled_by_the_run_is_a_fail() {
+  setup_case soff
+  sandbox_args
+  RUN111_ARGS+=(--modes 2a)
+  RUN111_ENV=(FAKE111_DISABLE_ON_PROJECT=1)
+  run111
+  expect_status "$status" 1 "S's API disabled by the run"
+  expect_contains "$out" "FACT api-2a: FAIL — " "S's API disabled by the run: mode 2's own project is read"
+  expect_contains "$out" "S cloudbilling enabled-count 0, must read 1" "S's API disabled by the run: and the row says what S reads"
+  expect_contains "$out" "FACT premise-2a: PASS — " "S's API disabled by the run: S was enabled before the run, which is the premise it broke after it"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "S's API disabled by the run: the verdict"
+  expect_scratch_gone "$dir" "S's API disabled by the run"
 }
 
 # The picker's own prompt in a run that cannot answer it: mode 1(a) under --yes
@@ -1058,6 +1124,8 @@ t test_a_failed_assertion_still_restores
 t test_a_leak_is_a_fail
 t test_a_picker_where_none_may_run_is_a_fail
 t test_a_picker_under_json_is_a_fail
+t test_q_enabled_by_the_run_is_a_fail
+t test_s_disabled_by_the_run_is_a_fail
 t test_criterion_3_detects_an_account_resource_id
 t test_criterion_3_detects_one_of_the_owners_ids
 t test_criterion_3_detects_a_display_name
@@ -1066,6 +1134,7 @@ t test_a_missing_ids_file_stops
 t test_an_unrun_mode_is_not_a_pass
 t test_mode_2s_premise_missing_is_not_run
 t test_only_mode_2_runs_under_the_second_login
+t test_the_second_login_goes_out_before_the_modes_after_mode_2
 t test_the_second_login_is_put_back_when_a_mode_stops
 t test_a_machine_left_on_the_second_login_is_refused
 t test_a_second_account_for_every_mode_is_refused
