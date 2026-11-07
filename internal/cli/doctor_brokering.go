@@ -222,11 +222,20 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 // uses it reads it: the bundle through the container's own version metadata
 // (the value is never touched here, and never is: the document is the
 // service's, and doctor reads a value only behind --check-bitbucket-token),
-// and the verify route through the local config's verifier_accounts, whose
-// three states the module's own rule is — absent means the installation's own
-// verifier account, and a list written EMPTY is the one state that admits
-// nobody, which is why the empty list is what this reports rather than a key
-// nobody wrote.
+// and the verify route through the list the service is deployed with —
+// localcfg's one keep rule for the key, this checkout's verifier_accounts when
+// it states one and the published policy node's otherwise, which is what the
+// credentials stage hands the module's own variable and therefore what the
+// service's verify route holds. Its three states are the module's: absent
+// means the installation's own verifier account, and a list written EMPTY is
+// the one state that admits nobody, which is why the empty list is what this
+// reports rather than a key nobody wrote. The line names the layer that states
+// the empty list, because that is the file an operator has to change.
+//
+// The node is read here and only here, and only when this checkout's config
+// says nothing: an installation with no budget backend answers "nothing
+// published" without a call, and every other state of the service returns
+// before this one.
 //
 // Neither state fails doctor and neither fails --strict: the service is up and
 // answering, and what it refuses is a run it is not switched to yet. They are
@@ -235,16 +244,18 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, id string) []doctorCheck {
 	// A read that did not answer is not a state of the service: it is said, and
 	// it is said as the info note of a read that failed, which no view prints
-	// and every view counts — a bundle nothing could read is never part of a
+	// and every view counts — a document nothing could read is never part of a
 	// screen that says everything checked is ok.
-	unreadable := func(what string) []doctorCheck {
+	unreadable := func(what, question, fix string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "info", unread: true,
-			Problem: fmt.Sprintf("the credentials service %s is deployed and every job account may invoke it, and %s could not be read: whether there is a document for it to serve a run's credential out of could not be checked", infra.CredentialsServiceName, what),
-			Fix:     "rerun doctor with the Secret Manager API available, or read the bundle's names yourself: " + selfCommand() + " creds ls"}}
+			Problem: fmt.Sprintf("the credentials service %s is deployed and every job account may invoke it, and %s could not be read: %s", infra.CredentialsServiceName, what, question),
+			Fix:     fix}}
 	}
 	store, err := openBundleStore(ctx, lc)
 	if err != nil {
-		return unreadable("the bundle (" + oneLineCLI(err.Error()) + ")")
+		return unreadable("the bundle ("+oneLineCLI(err.Error())+")",
+			"whether there is a document for it to serve a run's credential out of could not be checked",
+			"rerun doctor with the Secret Manager API available, or read the bundle's names yourself: "+selfCommand()+" creds ls")
 	}
 	_, err = store.newest(ctx)
 	switch {
@@ -253,14 +264,56 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (%s) holds no version, so the loader fails closed and every model call of a run against it is refused; %s is the writer", infra.CredentialsServiceName, pluginwire.Printable(store.id), selfCommand()+" creds set NAME"),
 			Fix:     selfCommand() + " creds set NAME (the only writer of the bundle: no update writes a credential)"}}
 	case err != nil:
-		return unreadable("the bundle's newest version (" + oneLineCLI(err.Error()) + ")")
+		return unreadable("the bundle's newest version ("+oneLineCLI(err.Error())+")",
+			"whether there is a document for it to serve a run's credential out of could not be checked",
+			"rerun doctor with the Secret Manager API available, or read the bundle's names yourself: "+selfCommand()+" creds ls")
 	}
-	if lc.VerifierAccounts != nil && len(*lc.VerifierAccounts) == 0 {
+	verifiers, published, err := doctorDeployedVerifierAccounts(ctx, lc)
+	if err != nil {
+		return unreadable("the verifier list the service is deployed with ("+oneLineCLI(err.Error())+")",
+			"whether its verify route admits anyone could not be checked, and this checkout's config states no list of its own",
+			"rerun doctor with the Realtime Database available, or state the list in this checkout's config (verifier_accounts) and publish it: "+selfCommand()+" project policy publish")
+	}
+	if verifiers != nil && len(verifiers) == 0 {
+		where, fix := "this checkout's config writes verifier_accounts: []", fmt.Sprintf("name the installation's own verifier account in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update --provision-credentials writes the service's list from this config), or take the key out of the config to keep the module's own account admitted", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand())
+		if published {
+			where = "the published policy's verifier_accounts is an empty list and this checkout's config states none"
+			fix = fmt.Sprintf("name the account the verify route should admit in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update --provision-credentials): a config that states a list is the one the service is deployed with, and %s project policy publish carries that same list into the node the other machines read", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand(), selfCommand())
+		}
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
-			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody on the verify route: every job account may invoke it and its bundle holds a version, and the local config's verifier_accounts is an empty list, so nothing can ask whether a verdict's signature is this service's", infra.CredentialsServiceName),
-			Fix:     fmt.Sprintf("name the installation's own verifier account in the local config (%s@%s.iam.gserviceaccount.com), or take the key out of the config to keep the module's own account admitted", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject))}}
+			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody on the verify route: every job account may invoke it and its bundle holds a version, and the verifier list it is deployed with is empty (%s), so nothing can ask whether a verdict's signature is this service's", infra.CredentialsServiceName, where),
+			Fix:     fix}}
 	}
 	return []doctorCheck{{ID: id, OK: true}}
+}
+
+// doctorDeployedVerifierAccounts is the verifier list the installation's
+// credentials service is deployed with, and whether it came from the published
+// policy node: localcfg's one keep rule for the key (VerifierAccountsEffective,
+// which the publisher and the credentials stage both apply), this checkout's
+// own verifier_accounts when it states one — a written empty list included,
+// which is how the route is turned off on purpose — and the node's otherwise.
+//
+// The node is what keeps the line true on a machine whose config says nothing:
+// such a machine's apply is deployed with the node's list, so reading the file
+// alone would answer for the wrong document — a plain ok for a service the
+// node had emptied, and "admits nobody" for one the node still admits. An
+// installation with no budget backend has no node to read
+// (projectPolicyRead's answer), and nothing published and a node that is not
+// there are both nil, which is the module's own verifier account: the healthy
+// state, and never the empty list.
+func doctorDeployedVerifierAccounts(ctx context.Context, lc *localcfg.Config) (accounts []string, published bool, err error) {
+	if lc.VerifierAccounts != nil {
+		return *lc.VerifierAccounts, false, nil
+	}
+	p, _, err := projectPolicyRead(ctx, lc)
+	if err != nil {
+		return nil, false, err
+	}
+	if p == nil {
+		return nil, false, nil
+	}
+	return p.VerifierAccounts, true, nil
 }
 
 // noteIfAny returns note when any is true, and "" otherwise: a parenthesised

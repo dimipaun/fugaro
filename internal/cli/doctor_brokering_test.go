@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -22,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -239,6 +241,48 @@ func (r *brokeringRig) putEmptyBundle(t *testing.T) string {
 	return id
 }
 
+// publishPolicyNode points the rig's config at a Realtime Database holding the
+// project's published policy node, and returns it: the verifier list the
+// credentials service is deployed with is the node's whenever this checkout's
+// config states none of its own (localcfg.VerifierAccountsEffective), so that
+// is the document the check has to read. The marker, the deployed rules and
+// the project node are doctorPolicyRig's, because projectpolicy.Read gates on
+// the first two and every other policy check reads the same fake. An empty
+// policyNode publishes no node at all — a backend whose policy is not there.
+func (r *brokeringRig) publishPolicyNode(t *testing.T, policyNode string) *gcpfake.RTDB {
+	t.Helper()
+	db := gcpfake.NewRTDB(t)
+	db.Set("fugaro/project", "aurora")
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetRules(gen)
+	if policyNode != "" {
+		db.Set(projectpolicy.PathShared(), json.RawMessage(policyNode))
+	}
+	addLocalLines(t, r.doctorRig, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+" }\n")
+	return db
+}
+
+// policyNodeWithVerifiers is a published policy node an installation could
+// have, with its verifier list written exactly as the test spells it. The
+// member is appended by hand rather than set on the struct: projectpolicy's
+// own encoder drops an empty list (omitempty), and a node holding
+// `verifier_accounts: []` — the document a hand edit or an older writer leaves
+// — is exactly what the check has to be able to read.
+func policyNodeWithVerifiers(t *testing.T, verifiers string) string {
+	t.Helper()
+	base, err := json.Marshal(doctorPolicy(func(p *projectpolicy.Policy) {
+		p.AllowRepos = []string{"bitbucket/workspace-a/repo-a"}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSuffix(string(base), "}") + `,"verifier_accounts":` + verifiers + "}"
+}
+
 // bitbucketAnswer stands in for what an API root answers the token check: one
 // call per proxied repository — GET /repositories/<workspace>/<slug> — and
 // nothing else, which the counter pins.
@@ -450,6 +494,116 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		}
 	})
 
+}
+
+// TestDoctorVerifierListIsTheDeployedOne: the verify route's list is not this
+// checkout's file. It is the list the service is deployed with, which
+// localcfg.VerifierAccountsEffective derives from the file when the file
+// states one and from the published policy node otherwise, so a machine whose
+// config says nothing about the key and a node that holds an empty list is a
+// service that admits nobody — the one answer this line may not give as a
+// plain ok. The other direction is a healthy service: a node that names a
+// verifier is not the empty list, and calling it one would be as wrong as the
+// silence.
+func TestDoctorVerifierListIsTheDeployedOne(t *testing.T) {
+	// deployed is the service itself: up, admitting this installation's one
+	// job account, with a version in its bundle, so the verifier half is the
+	// only question the rig leaves open.
+	deployed := func(t *testing.T) *brokeringRig {
+		t.Helper()
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		return r
+	}
+	verifier := infra.VerifierAccountID + "@proj-1234.iam.gserviceaccount.com"
+
+	t.Run("an empty list in the node is the state, not a plain ok", func(t *testing.T) {
+		r := deployed(t)
+		r.publishPolicyNode(t, policyNodeWithVerifiers(t, "[]"))
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("credentials-service-deployed = %+v, want one info measurement", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "admits nobody on the verify route") {
+			t.Errorf("a config that states no list, on a node that holds an empty one, is reported as a serving service: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Problem, "published policy") {
+			t.Errorf("the line does not name the layer that holds the empty list: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Fix, verifier) {
+			t.Errorf("the fix does not name the account the route should admit: %q", cs[0].Fix)
+		}
+	})
+
+	t.Run("a node that names a verifier is not called empty", func(t *testing.T) {
+		r := deployed(t)
+		r.publishPolicyNode(t, policyNodeWithVerifiers(t, `["`+verifier+`"]`))
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+		if strings.Contains(cs[0].Problem, "admits nobody") {
+			t.Errorf("a node that admits a verifier is reported as a service that admits nobody: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("this checkout's config wins over the node's list", func(t *testing.T) {
+		r := deployed(t)
+		r.publishPolicyNode(t, policyNodeWithVerifiers(t, `["`+verifier+`"]`))
+		addLocalLines(t, r.doctorRig, "verifier_accounts: []\n")
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "admits nobody on the verify route") {
+			t.Errorf("a config that writes an empty list is the list the next apply deploys, and the line does not say it admits nobody: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Problem, "this checkout's config") || strings.Contains(cs[0].Problem, "published policy") {
+			t.Errorf("the line does not name this checkout's config as the layer that emptied the list, or blames the node for it: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("a node that could not be read is a read that did not answer", func(t *testing.T) {
+		r := deployed(t)
+		db := r.publishPolicyNode(t, policyNodeWithVerifiers(t, `["`+verifier+`"]`))
+		db.DenyRead(projectpolicy.PathShared())
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a read that did not answer must not fail doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("credentials-service-deployed = %+v, want one info note about the read", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "could not be read") {
+			t.Errorf("the failed read is not reported as one: %q", cs[0].Problem)
+		}
+		if checksFail(cs, true) {
+			t.Errorf("a read that did not answer fails --strict: %+v", cs[0])
+		}
+		if def := doctorDefaultOutput(t, cs); strings.Contains(def, "credentials-service-deployed") {
+			t.Errorf("a read that did not answer is printed as an item of the default view:\n%s", def)
+		}
+	})
 }
 
 // brokeringServiceState is one row of the owner's table

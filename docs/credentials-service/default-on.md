@@ -822,9 +822,9 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   | state | the line |
   |---|---|
   | no block in the local config | the installation has not converged on the service; `fugaro update --provision-credentials` deploys it (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it) |
-  | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update` re-applies the root |
+  | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update --provision-credentials` re-applies the root (the same flag as the row above, for the same reason) |
   | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer |
-  | deployed, `verifier_accounts` written **empty** | deployed and admitting nobody on the verify route: a list written empty names no verifier account. An absent key is NOT this state — it leaves the module's own account admitted |
+  | deployed, `verifier_accounts` written **empty** | deployed and admitting nobody on the verify route: a list written empty names no verifier account. The list is the one the service is deployed with (`localcfg.VerifierAccountsEffective`): this checkout's `verifier_accounts` when it states one, the published policy node's otherwise, and the line names which of the two holds the empty list. An absent key is NOT this state — it leaves the module's own account admitted |
   | deployed, a job account missing `roles/run.invoker` | the existing half of the check, unchanged |
 
   **And, because the answer made the switch a state of its own, one line per repository — the "why
