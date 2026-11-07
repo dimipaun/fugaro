@@ -59,7 +59,7 @@ func closingLine(t *testing.T, out string, n int) {
 		want = " step"
 	}
 	if !strings.HasPrefix(last, "Done in ") || !strings.HasSuffix(last, want) {
-		t.Errorf("the closing line is %q, want %d steps and the reporter's summary:\n%s", last, n, out)
+		t.Errorf("the closing line is %q, want the reporter's summary ending in %q:\n%s", last, want, out)
 	}
 }
 
