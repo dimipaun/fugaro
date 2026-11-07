@@ -315,6 +315,21 @@ func MergeShared(published, local *Config) *Config {
 // bundle, or an auth the service does not serve — and it has to travel to the
 // other machines, or a switch-off would never reach anyone.
 //
+// The limit of that rule is an ordering one, and it is stated rather than
+// closed: a record carries no stamp, so a local `false` left by an EARLIER
+// apply outranks a `true` another machine wrote from a later one, and the next
+// publish from the machine holding the `false` writes it to the bucket again,
+// publishSharedConfig putting exactly what MergeShared returns in it. Every
+// launch that reads the published file then hands no address to that
+// repository's cascade runs — whose jobs gave their model mounts up to the
+// later apply — so they halt at the service's door (D143) until a machine
+// holding the newer record updates and publishes it back. The upgrade backfill
+// does not correct it either: it fills the entries that hold NO record and
+// skips a recorded `false` (internal/cli's backfillCredentialsServiceReady).
+// Closing it is a decision and not a merge rule — re-read the installation's
+// own state for a recorded `false` as well, or stamp the record so the newest
+// apply wins.
+//
 // unionMaps' local-wins rule covers every other field of the entry, and a
 // fresh map is returned, so neither argument is modified.
 func mergeRepoRecords(published, local map[string]Repo) map[string]Repo {

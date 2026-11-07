@@ -447,7 +447,12 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 		// recorded false is an apply that ran with the switch off, so it is
 		// evidence and not an absence, and re-reading the state for it on every
 		// update would be a cloud call per repository per run for an answer the
-		// repository's own door is the one to change.
+		// repository's own door is the one to change. That last claim is what
+		// leaves a stale `false` here: the grant this door is choosing not to
+		// read can be NEWER than the record, made by an apply on ANOTHER
+		// machine, and the merge that publishes records lets this local `false`
+		// outrank the `true` that machine wrote (localcfg's mergeRepoRecords
+		// states the limit and both ways out of it).
 		if lc.Repos[key].CredentialsServiceReady != nil {
 			continue
 		}
