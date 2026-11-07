@@ -41,9 +41,10 @@ const MaxLevelFocusBytes = 500
 // NoneModel is the literal model name that says a level does not run: `model:
 // none` is exactly `none: true` (owner, 2026-11-07) — the level's own switch
 // written the other way — and it is refused beside any other key for the same
-// reason. LevelSetting.validate folds it into Off, so a level written that way
-// is skipped wherever a level is read and the string is never resolved as a
-// model name.
+// reason. LevelSetting.validate folds it into Off, and the readers that hold a
+// block no document's rules have been over read the same thing (levelOff,
+// levelModel, resolve.go's mergeLevel), so a level written that way is skipped
+// wherever a level is read and the string is never resolved as a model name.
 const NoneModel = "none"
 
 // LevelSetting is one review level's settings (D722): which model runs it,
@@ -299,11 +300,14 @@ func (s *LevelSetting) besideNoneModel() []string {
 // object rather than dropped, a second YAML document in the same file is
 // refused rather than ignored, and the decode is followed by
 // ReviewLevels.Validate, so an effort outside Efforts, a focus over its
-// bound or beside a control character, and `none: true` beside another key
-// are all refused here. The task's own copy of the block is decoded by
-// internal/task's Parse, which is strict the same way (its
-// DisallowUnknownFields reaches every nested object) and applies the same
-// Validate through Spec.Validate.
+// bound or beside a control character, and the level's own switch — `none:
+// true`, or its model named none — beside another key are all refused here.
+// The task's own copy of the block is decoded by
+// internal/task's Parse, which is strict the same way — an unknown key inside
+// a level is refused by the block's own decoder, since a type that decodes
+// itself is past the decoder's DisallowUnknownFields, and every object around
+// the block is still the decoder's — and applies the same Validate through
+// Spec.Validate.
 func ParseReviewLevelsYAML(data []byte) (*ReviewLevels, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)

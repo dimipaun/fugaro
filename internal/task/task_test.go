@@ -1308,8 +1308,9 @@ func TestReviewLevelsNoneModelIsNone(t *testing.T) {
 // written by the launcher, and every key inside it decides which review
 // runs, on which model, at which effort — so an unknown key is refused at
 // every level of the object (the block, a level, and a level's own keys)
-// rather than dropped. The decode does it (DisallowUnknownFields reaches
-// every nested object), and the block's own rules reach a hand-written
+// rather than dropped. The decode does it (DisallowUnknownFields for every
+// object around a level, and the level block's own decoder for its keys), and
+// the block's own rules reach a hand-written
 // task.json through Validate: a spec written straight into the bucket
 // refuses the same documents a launcher would have refused before writing.
 func TestReviewLevelsRefusesUnknownKey(t *testing.T) {

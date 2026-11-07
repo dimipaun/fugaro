@@ -1218,9 +1218,10 @@ func titleFlag(cmd *cobra.Command, o *runOptions) error {
 // task stores, in o.reviewLevels, and nil when the flag is not given: the
 // document is read (the file, or stdin for -) and decoded by
 // config.ParseReviewLevelsYAML — strictly, and validated — so an unknown key,
-// an effort outside the closed set, a focus over its bound or `none: true`
-// beside another key is refused here, by the launcher, rather than by the
-// runner at bootstrap after the launch was paid for.
+// an effort outside the closed set, a focus over its bound or the level's own
+// switch (`none: true`, or its model named none) beside another key is refused
+// here, by the launcher, rather than by the runner at bootstrap after the
+// launch was paid for.
 //
 // The flag's absence is not a block, and leaves o.reviewLevels nil: the
 // launch writes no field and the run resolves its levels from its own
