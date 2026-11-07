@@ -281,6 +281,17 @@ func catalogBuildGate(t *testing.T, w *buildWorld, lc *localcfg.Config) *buildMa
 	return &buildManaged{lc: lc, gate: &gate, s: w.s, crm: w.crm, db: db}
 }
 
+// catalogBuildCredential gives the fixture the project's own Bitbucket
+// credential. The copy of a repository-sourced entry reads it before it opens
+// the provider (catalogProviderEnv, #1871), so a world whose entries are all
+// inline -- which needs no provider at all -- is the only one that can leave
+// it out, and a fake that is not told about the secret fails the read.
+func catalogBuildCredential(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+}
+
 // stubCatalogProviderHook is stubCatalogProvider with a hook that runs the first
 // time the copy's provider is opened: for the one property that needs the
 // project changed WHILE the command runs — D1013's bound and switch are re-read
@@ -443,6 +454,7 @@ const catalogBuildKillsSwitchYAML = `image_catalog:
 func TestImageBuildManagedReadsTheKillSwitchBeforeEachBuild(t *testing.T) {
 	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildKillsSwitchYAML)
 	w := managedBuildWorld(t, f, managedBuildMarker(3))
+	catalogBuildCredential(t, f)
 	stubCatalogProviderHook(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched}, func() {
 		w.db.Set(budget.PathKillRepo(mustSlug("bitbucket", "acme/app")), map[string]any{"on": true, "reason": "the project is being stopped"})
 	})
@@ -666,6 +678,11 @@ func TestImageBuildManagedAcceptsACanonicalRepoSpelling(t *testing.T) {
 			if err != nil {
 				t.Fatalf("--repo %s is this checkout's origin and was refused: %v", repo, err)
 			}
+			// The record is the build's, written after the submission that is
+			// the write (recorded): this call stands in for it.
+			if err := m.recorded(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			oneRecord(t, w, managedmode.AuditAdmitted)
 		})
 	}
@@ -723,9 +740,9 @@ func TestImageBuildManagedDerivedArmStillAsksAtTheTerminal(t *testing.T) {
 			noAgentSession(t)
 			fakeTerminal(t)
 
-			out, errOut, err := executeStdin(t, tc.stdin, "image", "build", "--workflow", "web", "--base", "b:1")
+			out, errOut, err := executeStdin(t, tc.stdin, "image", "build", "--base", "b:1")
 			if !strings.Contains(errOut, "Type "+initProjectName+" to submit the build: ") {
-				t.Fatalf("the derived arm is not a row of the managed gate's, and its person was not asked:\n%s%s", out, errOut)
+				t.Fatalf("the derived arm is not a row of the managed gate's, and its person was not asked (%v):\n%s%s", err, out, errOut)
 			}
 			if strings.Contains(errOut, initflow.GateProceeded()) {
 				t.Errorf("the derived arm printed the gate's own sentence:\n%s", errOut)
