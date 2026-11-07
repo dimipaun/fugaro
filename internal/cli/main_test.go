@@ -31,6 +31,13 @@ var testCacheRoot string
 // create it, which TestATestNeverWritesTheDeveloperConfigHome fails on.
 var testConfigRoot string
 
+// testStateRoot is TestMain's own state directory: the $XDG_STATE_HOME every
+// test that does not isolate one of its own gets, so a test can never file a
+// run's log in the developer's real ~/.local/state/fugaro/logs (see the
+// comment in TestMain). Also never removed. "" when TestMain could not
+// create it, which TestATestNeverWritesTheDeveloperStateHome fails on.
+var testStateRoot string
+
 // TestMain closes the ways a test could reach real Google through a
 // gs:// bucket_url or an unfaked client: no application default
 // credentials (a file that doesn't exist), no metadata server, and every
@@ -74,6 +81,21 @@ func TestMain(m *testing.M) {
 	if dir, err := os.MkdirTemp("", "fugaro-test-config-"); err == nil {
 		testConfigRoot = dir
 		os.Setenv("XDG_CONFIG_HOME", dir)
+	}
+	// The third of them, and the one that bites: $XDG_STATE_HOME/fugaro/logs
+	// is where a run files the log its account points a failure at (D1351),
+	// and every mutating command now opens one — so without this, every test
+	// that drives one of them without isolating a state home of its own files
+	// a log in the developer's real ~/.local/state/fugaro/logs. That is not
+	// noise either: OpenLog prunes the directory it writes into (D1352, 50
+	// files per command name), so a suite run evicts the logs of the
+	// developer's own runs. A test that reads the log back makes its own
+	// (newInitRig isolates one per test, familyLogs does it for the family);
+	// this is the backstop for every other test. Never removed, like the two
+	// above.
+	if dir, err := os.MkdirTemp("", "fugaro-test-state-"); err == nil {
+		testStateRoot = dir
+		os.Setenv("XDG_STATE_HOME", dir)
 	}
 	// init refuses to apply anything in a coding agent's session, and the
 	// tests are often run from one: a test that means to be in one sets a
@@ -229,6 +251,62 @@ func TestATestNeverWritesTheDeveloperConfigHome(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("the recording wrote nothing to its own config home: %v", err)
 	}
+}
+
+// TestATestNeverWritesTheDeveloperStateHome is the state home's half, and it
+// drives the write rather than reading the variable: a run of a migrated
+// command files the log its account points a failure at (D1351), and one that
+// landed in the developer's own directory would be pruned by the next run
+// (D1352). The command is not isolated the way its own tests isolate it —
+// no t.Setenv of its own — so what it does is what every other test in this
+// package does.
+//
+// Mutation (run, restore): delete the XDG_STATE_HOME block from TestMain and
+// this fails twice over — testStateRoot is empty, and the log lands in the
+// developer's own ~/.local/state/fugaro/logs.
+func TestATestNeverWritesTheDeveloperStateHome(t *testing.T) {
+	if os.Getenv("XDG_STATE_HOME") != testStateRoot || testStateRoot == "" {
+		t.Fatalf("XDG_STATE_HOME = %q, TestMain's own = %q: a test that runs a mutating command would file its log in the developer's own state directory", os.Getenv("XDG_STATE_HOME"), testStateRoot)
+	}
+	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(testStateRoot, home+string(filepath.Separator)) {
+		t.Fatalf("TestMain's state home %q is inside the developer's home %q", testStateRoot, home)
+	}
+	secretsFixture(t)
+	logs := filepath.Join(testStateRoot, "fugaro", "logs")
+	before := map[string]bool{}
+	for _, e := range readDirNames(t, logs) {
+		before[e] = true
+	}
+	if _, _, err := executeStdin(t, tokenValue+"\n", "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	// This test's own run left one log, in TestMain's directory: read as the
+	// new names rather than as the whole directory, because the tests that ran
+	// before this one left logs of their own in the same place.
+	var fresh []string
+	for _, name := range readDirNames(t, logs) {
+		if !before[name] {
+			fresh = append(fresh, name)
+		}
+	}
+	if len(fresh) != 1 || !strings.HasPrefix(fresh[0], "secrets-set-") {
+		t.Fatalf("the run left %v in %s, want one secrets-set log of its own", fresh, logs)
+	}
+}
+
+// readDirNames is a directory's entry names, and nothing when it is not there
+// yet (this test's first read is of a directory no test has written to).
+func readDirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 func TestNoRealGCSFromTests(t *testing.T) {

@@ -32,6 +32,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -589,6 +590,15 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate && (!reviewSigning || previous) {
 		return credsGenerateNameRefusal()
 	}
+	// The run's own account (CL7a): one line per step and the log beside it
+	// (D1352). The refusals from here to the write are abandoned — a container
+	// with no version, a document the loader refuses, a value that was not read
+	// — because none of them wrote anything and a refused write is not a step
+	// that happened (G3). The four returns at and after the write are not: a
+	// version of this credential may exist, so they end the step with a cross
+	// (credsStepFailed).
+	run := stepRunFor(cmd, "creds-set", cmd.OutOrStdout())
+	defer run.close()
 	_, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -600,6 +610,8 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if err := store.check(ctx); err != nil {
 		return remoteErr(err, nil)
 	}
+	st := run.rep.Step("Writing " + safetext.Field(store.id))
+	defer st.Abandon()
 	// What the document holds now, and what this write replaces. A container
 	// with no version is the first write's starting point; a document the
 	// loader refuses is refused here, before anything of ours is written, so
@@ -621,12 +633,22 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate {
 		value, err = generateReviewSigningValue()
 	} else {
-		value, err = readBundleValue(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, kind)
+		// The hidden prompt is read with the line in flight taken down: a
+		// frame drawn on the line the prompt is written on swallows it and the
+		// answer typed under it (G1).
+		err = run.ask(func() error {
+			var rerr error
+			value, rerr = readBundleValue(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, kind)
+			return rerr
+		})
 	}
 	if err != nil {
 		return err
 	}
 	defer clear(value)
+	// The value this run read is held for the rest of it, so an echo of it
+	// reaches neither the run's own output nor its log (F6).
+	run.hold(value)
 	// A generated write is two entries of one document: the fresh value under
 	// NAME and the value it replaced under the window's name, so the window
 	// exists in the version that retires the old key rather than a version
@@ -660,7 +682,11 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	}
 	version, err := store.add(ctx, doc)
 	if err != nil {
-		return remoteErr(err, writeForms(doc, value))
+		// An add that failed may still have added a version: Secret Manager
+		// answers what it did, and a timeout says nothing about it. The step is
+		// ended as failed, so the run is not accounted done over a credential
+		// that may exist (G3, G8).
+		return credsStepFailed(st, remoteErr(err, writeForms(doc, value)))
 	}
 	// The version this write landed as has to be the one after the version this
 	// command read. Secret Manager numbers versions in order and never reuses a
@@ -673,14 +699,14 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	// the re-read: this command's document is the newest version, so the re-read
 	// agrees with it and calls the write verified.
 	if want := nextVersion(before.version); want != "" && version != want {
-		return credsLostUpdateBefore(store.id, before.version, version, want)
+		return credsStepFailed(st, credsLostUpdateBefore(store.id, before.version, version, want))
 	}
 	back, err := credsWriteBack(ctx, store)
 	if err != nil {
-		return remoteErr(err, writeForms(doc, value))
+		return credsStepFailed(st, remoteErr(err, writeForms(doc, value)))
 	}
 	if back.version != version || !bytes.Equal(back.raw, doc) {
-		return credsLostUpdate(store.id, version, back.version)
+		return credsStepFailed(st, credsLostUpdate(store.id, version, back.version))
 	}
 	// The version this write replaced is retired, and only after the write is
 	// verified: the new credential is live either way, and a refusal above
@@ -700,18 +726,22 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 		enc.SetIndent("", "  ")
 		return enc.Encode(credsSetResult{Project: lc.Name, Secret: store.id, Version: version, Replaced: replaced, Disabled: retired, Window: window})
 	}
+	detail := "version " + safetext.Field(version)
 	switch {
 	case replaced == "":
-		_, err = fmt.Fprintf(w, "wrote %s, version %s (the bundle's first version)\n", safetext.Field(store.id), safetext.Field(version))
+		detail += " (the bundle's first version)"
 	case retired:
-		_, err = fmt.Fprintf(w, "wrote %s, version %s (replaced version %s, now disabled)\n", safetext.Field(store.id), safetext.Field(version), safetext.Field(replaced))
+		detail += " (replaced version " + safetext.Field(replaced) + ", now disabled)"
 	default:
-		_, err = fmt.Fprintf(w, "wrote %s, version %s (replaced version %s, which is still ENABLED: see the warning on stderr)\n", safetext.Field(store.id), safetext.Field(version), safetext.Field(replaced))
+		detail += " (replaced version " + safetext.Field(replaced) + ", which is still ENABLED: see the warning on stderr)"
 	}
-	if err == nil && window != "" {
+	st.Done(detail)
+	if window != "" {
 		// The window is named for the operator: the value this run replaced is
 		// still ACCEPTED, and a rotation whose window nobody knows about is one
 		// that reads as a key that retired when the first signature verifies.
+		// It is a line of its own and not the step's tail, because it is the
+		// one fact of the run a person may not read past.
 		_, err = fmt.Fprintf(w, "%s now holds the value this run replaced, which the service verifies against and never signs with\n", safetext.Field(window))
 	}
 	return err
@@ -733,6 +763,19 @@ type credsSetResult struct {
 	Replaced string `json:"replaced,omitempty"`
 	Disabled bool   `json:"disabled"`
 	Window   string `json:"window,omitempty"`
+}
+
+// credsStepFailed ends the run's step as failed with the error the command
+// returns, on the four paths a version of the credential may exist: the add
+// that answered an error, the two lost updates, and the re-read that could not
+// be made. The run reached a result for this step — this credential is not
+// where it was — so the account carries the cross, the error and the log's
+// path (G3, G8), and the refusal that wrote nothing keeps its Abandon.
+func credsStepFailed(st *report.Step, err error) error {
+	// One line, whatever the server said: the step's own line is one line, and
+	// a message with newlines in it would break the account in two.
+	st.Failed(errors.New(oneLine(err.Error())), nil)
+	return err
 }
 
 // credsWriteBack is the read a write is verified with. It is a variable so a

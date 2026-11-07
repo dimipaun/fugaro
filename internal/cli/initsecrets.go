@@ -90,12 +90,14 @@ var selfCommand = func() string {
 	return quoteWord(arg)
 }
 
-// hold registers value with the loop's redaction until release: the whole
-// value and each of its lines (a PEM's body lines are as secret as the whole).
-// It fails closed: when a slot is missing for any of them it registers
-// nothing and returns an error, so a value is never held in part. The error
-// does not carry the value.
-func (e *initEngine) hold(value []byte) (release func(), err error) {
+// heldValues is the strings a run registers to keep one value out of its
+// output: the value itself, and — because a redactor that works line by line
+// can never match a value spanning two of them — each of its lines that is
+// long enough to be one. A short line is one the CLI has already decided not
+// to treat as a secret (minSecretBytes), and it is the same answer the
+// converge's slots give, so `fugaro update` and a command's own run hold one
+// value the same way.
+func heldValues(value []byte) []string {
 	vals := []string{string(value)}
 	if bytes.Contains(value, []byte("\n")) {
 		for _, l := range bytes.Split(value, []byte("\n")) {
@@ -104,6 +106,16 @@ func (e *initEngine) hold(value []byte) (release func(), err error) {
 			}
 		}
 	}
+	return vals
+}
+
+// hold registers value with the loop's redaction until release: the whole
+// value and each of its lines (a PEM's body lines are as secret as the whole).
+// It fails closed: when a slot is missing for any of them it registers
+// nothing and returns an error, so a value is never held in part. The error
+// does not carry the value.
+func (e *initEngine) hold(value []byte) (release func(), err error) {
+	vals := heldValues(value)
 	var free []int
 	for i := range e.held {
 		if e.held[i] == "" {
