@@ -54,10 +54,24 @@ func newFakeBucket(t *testing.T) *blobx.Bucket {
 
 func newFakeStore(t *testing.T) *fakeStore {
 	t.Helper()
+	return newFakeStoreOver(t, nil)
+}
+
+// newFakeStoreOver is newFakeStore with one seam: wrap sits between the bucket
+// and the record layer. It is the only place a test can act *inside* a store
+// operation: the record layer's read and its write are the two halves of one
+// method, so a competing writer cannot be interleaved above it — it has to
+// land below, in the bucket the store is over
+// (TestARefreshThatLosesItsRaceIsRefusedWithoutRetryAdvice).
+func newFakeStoreOver(t *testing.T, wrap func(objects) objects) *fakeStore {
+	t.Helper()
 	g := gcpfake.NewGCS(t)
 	g.AddBucket(testBucket(), 1234, nil)
 	b := g.Bucket(t, testBucket())
-	return &fakeStore{Store: newBucketStore(b), bucket: b, gcs: g}
+	if wrap == nil {
+		return &fakeStore{Store: newBucketStore(b), bucket: b, gcs: g}
+	}
+	return &fakeStore{Store: newRecords(wrap(bucketObjects{b: b})), bucket: b, gcs: g}
 }
 
 // objects is every value the store holds, keyed by its own key. It reads
