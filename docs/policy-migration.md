@@ -59,9 +59,15 @@ deleting it:
    terminal is not asked for it**: the stage prints one line saying what the
    write does and the member that loosens is read in the diff above it, because
    the project manages itself without these prompts — the owner's ruling of
-   2026-11-06. Every other session keeps the typed name, `--ask` (the flag that
-   puts the prompts back) and a coding agent's session among them, and a run
-   with no terminal is refused as it always was. The comparison `settings set` makes
+   2026-11-06. The project's **first** node is the exception, and it keeps the
+   typed name: there is no published node for the diff to compare against (it is
+   rendered against an empty document), and creating that node is the decision
+   the managed gate itself refuses for a publish with no node to replace — a
+   first publish is a seed — and the one the explicit door refuses outright.
+   Every other session keeps the typed name as well: `--ask` (the flag that puts
+   the prompts back) and a coding agent's session among them, an unmanaged
+   project, and a run with no terminal, which is refused as it always was. The
+   comparison `settings set` makes
    decides it, so a ceiling raised is asked about the same way whichever of the
    two doors writes it — and `settings set|unset` themselves take `--yes` for
    that widening outside a coding agent's session, the owner's ruling of
