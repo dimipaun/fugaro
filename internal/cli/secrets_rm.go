@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -254,7 +255,9 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	if held {
 		if err := sm.Delete(ctx, id); err != nil {
 			undo := secretsRmUndo(id, sel.Path, block, name, old, next, changed, err)
-			st.Failed(undo, nil)
+			// One line in the step, the whole undo in the error the command
+			// returns: the step's own line is one line.
+			st.Failed(errors.New(oneLine(undo.Error())), nil)
 			return undo
 		}
 		st.Done("deleted the container " + id)

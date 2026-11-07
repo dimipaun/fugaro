@@ -732,7 +732,9 @@ func secretsStoreStep(run *stepRun, name string, store func() (id, version strin
 	defer st.Abandon()
 	id, version, err := store()
 	if err != nil {
-		st.Failed(err, nil)
+		// One line, whatever the server said: the step's own line is one line,
+		// and a message with newlines in it would break the account in two.
+		st.Failed(errors.New(oneLine(err.Error())), nil)
 		return err
 	}
 	st.Done("version " + version + " in " + id)
