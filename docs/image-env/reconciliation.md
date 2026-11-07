@@ -447,7 +447,8 @@ What the reading found, and why this block is where it is:
 
 **This work therefore takes D1370–D1389**, writes **D1370–D1383** and reserves **D1384–D1389** unused.
 **Checks:** `main`'s register still has **290** as its highest **written** `## Check` section
-(`docs/gcp-live-checklist.md:11228`), so **291** is free and this work claims it (D1381) — the checks
+(`docs/gcp-live-checklist.md`'s `## Check 290`, the mixed-credentials run), so **291** is free and this
+work claims it (D1381) — the checks
 claimed above it in open work start at **300** (`docs/stateless-orchestrator/implementation-plan.md:131`,
 Checks 300–305 with 306–309 reserved, and #1780's 311–314), and the register's rule is that whichever of
 two claims merges second renumbers itself. The earlier reading said "no open pull request claims 291 or
