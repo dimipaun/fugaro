@@ -827,8 +827,8 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   |---|---|
   | no block in the local config | the installation has not opted into the service: this release deploys it only behind `fugaro update --provision-credentials` (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it), and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind. Taking the opt-in is what moves the credential out of the jobs: every repository root re-applied after it drops its jobs' model credential in **every** `agent.auth` mode (which is why a project that takes it runs its workflows with `agent.auth: cascade`), the stage asks for its own **typed confirmation** (a `--yes` run does not cover it), and a GitHub run of it refuses to mint until the bundle holds the App's key (`fugaro creds set github-app-key`) |
   | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update --provision-credentials` re-applies the root (the same flag as the row above, for the same reason) |
-  | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer |
-  | deployed, the bundle's newest version is not `ENABLED` | deployed and admitting nobody: the version and its document are there and Secret Manager will not serve them, so the loader's read fails closed. The line names the version and its state; `DISABLED` is the one an operator's incident disable leaves, and the fix names the enable (`gcloud secrets versions enable <version> --secret=<id>`) because `creds set` refuses while the newest version is disabled |
+  | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer. **Warning**: the loader fails closed, so every model call of a run against it is refused |
+  | deployed, the bundle's newest version is not `ENABLED` | deployed and admitting nobody: the version and its document are there and Secret Manager will not serve them, so the loader's read fails closed — the same refused model call as the row above, so the same **warning**. The line names the version and its state; `DISABLED` is the one an operator's incident disable leaves, and the fix names the enable (`gcloud secrets versions enable <version> --secret=<id>`) because `creds set` refuses while the newest version is disabled |
   | deployed, `verifier_accounts` written **empty** | deployed and admitting nobody on the verify route: a list written empty names no verifier account. The list is the one the service is deployed with (`localcfg.VerifierAccountsEffective`): this checkout's `verifier_accounts` when it states one, the published policy node's otherwise, and the line names which of the two holds the empty list. An absent key is NOT this state — it leaves the module's own account admitted |
   | deployed, a job account missing `roles/run.invoker` | the existing half of the check, unchanged |
 
@@ -851,19 +851,20 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   would be the one lying.
 
   **The severity is the state's own, and it is the state's own for the one reason doctor's classes
-  exist: whether a run can work around it.** The two states a run cannot work around — the block
-  written and no service behind it, and a job account the service does not admit — keep the
-  **warning** they already had: they print in the default view, and `--strict` is where they become a
-  failure. The others — not opted in, an empty bundle, a bundle whose newest version is not
-  `ENABLED`, an empty verifier list — are `OK` with
-  severity **info**, which is doctor's measurement class: **an installation that has not taken the
-  opt-in is not broken** (on this release it is running the way it did before the service existed, and
-  DON1 makes it an installation that has not run `update` yet), and **a repository held off is not
-  broken either, it is the answer's own state**, so neither may be an item of doctor's one screen — a
-  clean installation would print an item for merely being behind the release, and `fugaro doctor
-  --strict` in a repository's CI would go red for it. They are the answer §1.4 asks for under `--all`
-  and in `--json`, where a reader who wants the service *used* reads which half is missing, and none of
-  them fails `--strict`.
+  exist: whether a run can work around it.** The four states a run cannot work around keep the
+  **warning** the check already has — the block written and no service behind it, a job account the
+  service does not admit, and the two where the service is deployed and has nothing to serve with (a
+  bundle holding no version, a newest version Secret Manager will not serve) — for the reason the
+  classes exist: they print in the default view, and `--strict` is where they become a failure. A
+  measurement there would print "everything checked is ok" and exit 0 under `--strict` for an
+  installation whose every model call is refused. The two that are states rather than faults are `OK`
+  with severity **info**, doctor's measurement class: **an installation that has not taken the opt-in
+  is not broken** (on this release it is running the way it did before the service existed, and DON1
+  makes it an installation that has not run `update` yet), and **a verify route emptied on purpose is
+  not broken either, it is the answer's own state** — so neither may be an item of doctor's one screen,
+  and a clean installation would print an item for merely being behind the release. They are the answer
+  §1.4 asks for under `--all` and in `--json`, where a reader who wants the service *used* reads which
+  half is missing, and neither of them fails `--strict`.
 - **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the six service states, each producing
   exactly one check with the expected `ID` and severity), `TestDoctorNamesTheMissingHalfNotNotConfigured`
   (the line never reads "not configured": it names the App key, the verifier account, the bundle or the

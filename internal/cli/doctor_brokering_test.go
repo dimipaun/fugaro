@@ -77,7 +77,7 @@ func newBrokeringDirectRig(t *testing.T) *brokeringRig {
 
 // newBrokeringUnoptedRig is the same checkout on an installation that never
 // opted in: no credentials_service block, which is the state the ruling makes
-// the first of the service's five (the check reports it in one line and no
+// the first of the service's six (the check reports it in one line and no
 // longer stays silent about it).
 func newBrokeringUnoptedRig(t *testing.T) *brokeringRig {
 	t.Helper()
@@ -624,9 +624,9 @@ type brokeringServiceState struct {
 	// installation to run a step that can break its workflows.
 	absent   []string
 	severity string
-	// red is what --strict must answer: the two states a run cannot work
-	// around are warnings, and the three that are the installation being
-	// behind the release are measurements, which never fail doctor.
+	// red is what --strict must answer: the four states a run cannot work
+	// around are warnings, and the two that are states rather than faults are
+	// measurements, which never fail doctor.
 	red   bool
 	build func(t *testing.T) *brokeringRig
 }
@@ -673,10 +673,15 @@ func brokeringServiceStates() []brokeringServiceState {
 		{
 			// deployed is this state already: the container its apply creates
 			// is there with no version in it, so the service has no document
-			// to serve a run's credential out of and admits nobody.
+			// to serve a run's credential out of and admits nobody — and every
+			// model call of a run against it is refused, which is why the
+			// state is a warning and not a measurement: doctor may not answer
+			// "everything checked is ok" for an installation whose runs all
+			// fail.
 			name:     "the deployed service's bundle holds no version",
 			names:    []string{"creds set"},
-			severity: "info",
+			severity: "warning",
+			red:      true,
 			build:    deployed,
 		},
 		{
@@ -687,7 +692,8 @@ func brokeringServiceStates() []brokeringServiceState {
 			// a version exists answered the bare ok here.
 			name:     "the deployed service's newest bundle version is disabled",
 			names:    []string{infra.CredentialsServiceName, "DISABLED", "gcloud secrets versions enable"},
-			severity: "info",
+			severity: "warning",
+			red:      true,
 			build: func(t *testing.T) *brokeringRig {
 				t.Helper()
 				r := deployed(t)
@@ -725,9 +731,9 @@ func brokeringServiceStates() []brokeringServiceState {
 // TestDoctorReportsTheServiceStateInOneLine is DON7's headline: whatever the
 // service's state, this one check says it in exactly one line — the check is
 // never silent and never two lines — and the line's severity is the state's
-// own. The two states a run cannot work around fail --strict; the three that
-// follow from an installation that has not taken the release up do not, and
-// they are not items of the default view either: it stays one line.
+// own. The four states a run cannot work around fail --strict and print; the
+// two that are states rather than faults do neither, so the default view stays
+// the one line the owner asked for.
 func TestDoctorReportsTheServiceStateInOneLine(t *testing.T) {
 	for _, state := range brokeringServiceStates() {
 		t.Run(state.name, func(t *testing.T) {
@@ -1670,6 +1676,11 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		r.svcs.AddService(infra.CredentialsServiceName)
 		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
 			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		// A version in the bundle: the rig's container is empty, and an
+		// installation whose service has nothing to serve out of is a warning
+		// of its own (brokeringServiceStates), not the serving state this case
+		// is about.
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 		o, err := r.doctor(t)
 		if err != nil {
 			t.Fatalf("doctor: %v", err)
@@ -1905,6 +1916,10 @@ func TestDoctorBrokeringStrictFailsTheWarnings(t *testing.T) {
 				r.svcs.AddService(infra.CredentialsServiceName)
 				r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{
 					Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+				// The bundle holds a version: a deployed service with nothing
+				// to serve out of is a warning of its own (the row in
+				// brokeringServiceStates), and this case is the serving state.
+				r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 			}},
 		{name: "the bundle holds no token and a repository is proxied", id: "bundle-bitbucket-token", red: true, flag: true,
 			setup: func(t *testing.T, r *brokeringRig) {

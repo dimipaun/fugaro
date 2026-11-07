@@ -112,12 +112,15 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // rather than faults in an installation. On THIS release the opt-in is still
 // the flag DON1 removes, and that is what the first state has to say: nothing
 // there is broken and nothing is behind, an installation that never asked for
-// the service runs the way it did before the service existed. None of them is
-// an item of the default view: they are measurements, one line each, and --all
-// and --json are where a reader who wants the service used finds which half is
-// missing. The two states a run cannot work around — the block written and no
-// service behind it, and a job account the service does not admit — keep the
-// warning they already had, and --strict is where those become a failure.
+// the service runs the way it did before the service existed. That state and
+// the emptied verify route are measurements: one line each, --all and --json
+// are where a reader who wants the service used finds which half is missing,
+// and neither is an item of the default view. The other four are warnings: the
+// block written and no service behind it, a job account the service does not
+// admit, and the two where the installation opted in and the service has
+// nothing to serve with (an empty bundle, a newest version Secret Manager will
+// not serve) all refuse something a run needs, so they print and --strict is
+// where they become a failure.
 //
 // The opt-in state's fix is not an instruction to run something: the flag is
 // the credentials stage's own gate and taking it re-writes this installation's
@@ -249,12 +252,20 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 // published" without a call, and every other state of the service returns
 // before this one.
 //
-// None of these states fails doctor and none fails --strict: the service is up
-// and answering, and what it has nothing to serve with is an operator's own
-// document (a version nobody set, a version switched off, a route nobody was
-// named for) rather than a fault of the installation. They are measurements,
-// and the one line each of them produces is where a reader who wants the
-// service used learns which half is missing.
+// Two of the four are warnings and two are measurements, and the line between
+// them is whether a run can work around them. An installation that opted in and
+// whose bundle holds nothing to serve out of — no version at all, or a newest
+// version Secret Manager will not serve — has every model call of every run
+// refused: a measurement there would print "everything checked is ok" and exit
+// 0 under --strict for an installation whose runs all fail, which is the silent
+// pass in the one place it matters most. Both keep the warning the block's own
+// state has (a legitimate state — the opt-in is taken and the bundle is not
+// ready yet — that is a failure under --strict and never without it). The
+// installation that never opted in and the one whose verify route was emptied
+// are states rather than faults — the first runs the way it did before the
+// service existed, the second is a list someone wrote EMPTY on purpose — so
+// they are measurements, and the one line each of them produces is where a
+// reader who wants the service used learns which half is missing.
 func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, id string) []doctorCheck {
 	// A read that did not answer is not a state of the service: it is said, and
 	// it is said as the info note of a read that failed, which no view prints
@@ -274,7 +285,7 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 	meta, err := store.newest(ctx)
 	switch {
 	case errors.Is(err, errNoBundleVersion):
-		return []doctorCheck{{ID: id, OK: true, Severity: "info",
+		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (%s) holds no version, so the loader fails closed and every model call of a run against it is refused; %s is the writer", infra.CredentialsServiceName, pluginwire.Printable(store.id), selfCommand()+" creds set NAME"),
 			Fix:     selfCommand() + " creds set NAME (the only writer of the bundle: no update writes a credential)"}}
 	case err != nil:
@@ -295,7 +306,7 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 		if meta.state == "DISABLED" {
 			fix = fmt.Sprintf("gcloud secrets versions enable %s --secret=%s (the document is there; Secret Manager will not serve a disabled version), then %s creds set NAME writes a new one", pluginwire.Printable(meta.number), pluginwire.Printable(store.id), selfCommand())
 		}
-		return []doctorCheck{{ID: id, OK: true, Severity: "info",
+		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the newest version of the bundle it serves from (%s, version %s) is %s, so the loader's read of it is refused and every model call of a run against it fails", infra.CredentialsServiceName, pluginwire.Printable(store.id), pluginwire.Printable(meta.number), pluginwire.Printable(meta.state)),
 			Fix:     fix}}
 	}
