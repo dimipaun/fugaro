@@ -29,7 +29,11 @@ product is the orchestrator itself lands under `ee/orchestrator/`**, reached onl
 allow-list admission, the policy and the rules, the caps and the breaker, P3's lease and its two core
 readers — stay in the core, and the Terraform stays in `deploy/terraform/` where the MIT `fugaro
 update` applies it. `implementation-plan.md` carries the ruling and a note under each part saying
-which of the two it is. **#831**, the pull
+which of the two it is, and **two parts' premises have moved since they were written**: P1's
+admission has been made by another root (the credentials service's, D146/C1.18), so what it adds is
+a citation and its managed half is open with the owner, and P0's closest model —
+`internal/cli/docs_rigor_modes_test.go` — is in the tree now rather than in an open pull request.
+Both are recorded in each part's own note rather than by rewriting it. **#831**, the pull
 request that was building P2 (`fugaro orchestrator add|rm|ls`) as core code, **closes as
 superseded** — and that closure is **OWNER-RUN**: the pull request is already closed (2026-10-27,
 per the census of 2026-11-07,
@@ -60,11 +64,19 @@ re-numbered, and no sentence was added. **If a later reader finds a difference b
 ## What this work holds, in one paragraph
 
 **The spec is a good idea whose deployment section describes a surface Fugaro has never
-had, and whose credential section depends on work that does not exist.** There is no Cloud
+had, and whose credential section depends on work that does not exist.** There was no Cloud
 Run **service** anywhere in this repository — every workload is a Cloud Run *job*, and the
-type is not only absent but **refused**: `internal/infra/tf/cover.go`'s `allowedTypes` admits
+type was not only absent but **refused**: `internal/infra/tf/cover.go`'s `allowedTypes` admitted
 only `google_cloud_run_v2_job` and `google_cloud_run_v2_job_iam_member`, and
-`Cover.NotCovered` makes any other type a typed confirmation at `fugaro init` (#1). There is
+`Cover.NotCovered` makes any other type a typed confirmation at `fugaro init` (#1). **Corrected
+2026-11-07:** the first half of that is no longer true — writing at this plan's base commit, the
+reconciliation and this paragraph are right, and today the **installation's** allow-list carries
+`google_cloud_run_v2_service` and its `_iam_member` too, put there by the credentials service's own
+root (D146/C1.18) and deployed by every `fugaro update` (DON1), while a **managed** project's plan
+still refuses the type on purpose: `internal/infra/tf/managed_cover.go`'s `managedDropped` holds
+both rows with a reason each, both ending *"keeping it is the owner's decision"*. That is what this
+work's P1 becomes — a citation rather than an addition, with the managed half recorded open with the
+owner. The rest of the paragraph stands. There is
 no WebSocket in either direction (#3), no lease record of any kind (#6), no merge path that a
 service could use (#22), no public sign-in provider — `internal/cli/init_firebase.go`'s
 `refusePublicSignUp` refuses every one of them (#32) — no notification sender (#34), no alert
@@ -97,7 +109,10 @@ coordinator's own index has recorded since 2026-10-21 that the reading has moved
 **D193–D197** are that work's own, so what is free for a move into the block is **D198 onward**
 ([docs/coordinator/README.md](../coordinator/README.md), §"What still reads this register the old
 way"). The row is otherwise unchanged: **D1–D26 stay folder-local and open**, and D435 answers
-where the code lands rather than numbering anything.
+where the code lands rather than numbering anything. **The check-number row is corrected by the same
+date**: **119** is still the rigor modes work's, but that work is **on `main` now** rather than in
+open PR #773, so 119 is taken rather than proposed — which changes nothing this work holds, since
+it claims no check number either way and takes the next free one at merge time (D24).
 
 ## Related
 

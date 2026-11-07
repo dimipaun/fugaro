@@ -60,7 +60,9 @@ The order is forced by four dependencies, and nothing else in the plan is arbitr
 1. **Nothing can deploy a service until the resource type is admitted.** `internal/infra/tf/cover.go`'s
    `allowedTypes` admits `google_cloud_run_v2_job` and `google_cloud_run_v2_job_iam_member` only,
    and `Cover.NotCovered` refuses everything else (reconciliation #1). That is **P1**, and it is
-   first because every later part stands on it.
+   first because every later part stands on it. **The type has since been admitted, by the
+   credentials service's own root (D146/C1.18) — see P1's note at the end of that part**, which also
+   records the half that is still open with the owner.
 2. **Nothing can be authorised until the access record exists** — and the record has to decide
    what the allowlist *is* (a device node with an email field, per D6), because the phone's
    allowlist and the orchestrator's are the same one in the spec's own words. That is **P2**.
@@ -100,11 +102,11 @@ and what was not).
 `internal/cli/` at `2f8b4dca`, from `internal/cli/docs_artifact_runs_test.go` to
 `internal/cli/docs_windows_cli_test.go`. This folder has none, because the pull request that
 wrote it was docs-only (reconciliation C1). P0 is that guard. **Note for whoever writes it:**
-the rigor modes work's guard (`internal/cli/docs_rigor_modes_test.go`) is *not* in this tree
-to copy — that work is in open PR #773, as the folder's own documents say (README, and C6 of
-the reconciliation) — so the models to follow are
+the rigor modes work's guard (`internal/cli/docs_rigor_modes_test.go`) was *not* in this tree
+to copy when this was written — that work was in open PR #773 then, as the folder's own
+documents say (README, and C6 of the reconciliation) — so the models this part names are
 `internal/cli/docs_coordinator_test.go` and `internal/cli/docs_windows_cli_test.go`, both on
-`main`.
+`main`. **It is a third model now** — see the note at the end of this part.
 
 **Files.** New `internal/cli/docs_central_orchestrator_test.go`, whose tests hold: (a)
 `docs/central-orchestrator/spec.md` byte-for-byte against the owner's text, the way the
@@ -114,8 +116,8 @@ statement that no check number is claimed; (d) every citation in `reconciliation
 names a file in this repository anchored by **content** — the phrase the citation turns on,
 the convention `internal/cli/docs_coordinator_test.go`'s own comment describes — with the
 citation that names a document only in an open pull request (PR #632's
-`docs/mobile/design/always-on-orchestrator.md`, PR #773's `docs/rigor-modes/`) excused **by
-name, with its reason**, in the test itself.
+`docs/mobile/design/always-on-orchestrator.md`) excused **by name, with its reason**, in the
+test itself.
 
 **Red step.** Write the content anchors, then rename the symbol one of them names (for
 example `takeClaim` in `internal/cli/run.go`) in a scratch tree: the test must fail, naming
@@ -130,6 +132,14 @@ TestDocsCentralOrchestrator`.
 **Reviewer tier.** Standard. **Security-sensitive.** No.
 
 **Commit.** `cli: pin the central-orchestrator documents and their content anchors`
+
+**Stays core, and one of its models has arrived (re-planned 2026-11-07, D435/T20).** The guard this
+part writes is `internal/cli/docs_central_orchestrator_test.go` — core code, with no `ee/` half, so
+the re-plan moves nothing here. What it does change is the two sentences above about the rigor modes
+work: `internal/cli/docs_rigor_modes_test.go` **is in this tree now**, so it is a model for this
+guard rather than one to avoid, and `docs/rigor-modes/` resolves, so **Files (d) excuses PR #632's
+`docs/mobile/design/always-on-orchestrator.md` alone** — the only one of the two documents that is
+still only in its pull request.
 
 ---
 
@@ -167,6 +177,29 @@ reviewed by someone who did not write it.** The pull request body must say which
 added, which stayed refused, and that the typed confirmation still fires.
 
 **Commit.** `infra: admit google_cloud_run_v2_service to the installation's plan allow-list`
+
+**Stays core, and half of it has already been done — by another root (re-planned 2026-11-07,
+D435/T20).** The allow-list is core code with no `ee/` half, so the re-plan moves nothing here. What
+it owes the part is a correction, because **the admission this part is built around has been made**:
+`internal/infra/tf/cover.go`'s `allowedTypes` carries `google_cloud_run_v2_service` and its
+`google_cloud_run_v2_service_iam_member` (the credentials service's own root, D146/C1.18, whose
+comment the two rows sit under), so **the red step's "it fails today, because the type is refused"
+no longer fails**, and what the part adds there is a **citation** rather than an addition. Two things
+follow, and the second is not this re-plan's to decide:
+
+- **The managed path is the other half, and `managedTypes` is not where it lands.** This part's Files
+  line sends the type to `internal/infra/tf/managed_cover.go`'s `managedTypes`; the type is not on
+  that map, it is on `managedDropped`, which the reconciliation of the two maps requires a reason
+  for (`TestManagedAllowedTypesIsDecided`) and whose reasons for both rows end *"keeping it is the
+  owner's decision"*. So a plan written to this part as it stands would move a type out of a
+  fail-closed default by editing a list — which is the act the map exists to make deliberate — and
+  the red step has to be rewritten around the entry that is already there.
+- **Whether a **managed** project's plan may carry the service type is open with the owner**, and is
+  recorded here rather than decided: the row's reason is that an agent-authored service in a
+  Fugaro-owned project is a new reachable endpoint, and the deployer holds no `run.services.*`
+  permission to apply one anyway (Task 1.5). The installation's own allow-list — the half this part
+  was really about — is settled; this half is a widening of blast radius with the owner's name on
+  it, and the plan keeps it open.
 
 ---
 
