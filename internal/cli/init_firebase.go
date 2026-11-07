@@ -681,12 +681,16 @@ func (r *initRun) firestoreStep(ctx context.Context, lc *localcfg.Config, fp str
 type idpStep struct {
 	c       *infra.IdentityPlatform
 	missing bool
+	// workspace is whether this run's own config declares a workspace of its
+	// own, which is the one project whose sign-in paths the owner enables
+	// (refusePublicSignUp).
+	workspace bool
 }
 
 // identityPlatform reads the Firebase project's Identity Platform
 // configuration (read-only). One that exists is never changed, and is refused
-// when it enables a public sign-up path: the web API key is public, so only
-// custom tokens signed by our signer may work.
+// when it enables a public sign-up path — unless this installation is a
+// workspace's own (refusePublicSignUp).
 func (r *initRun) identityPlatform(ctx context.Context, lc *localcfg.Config, fp string) (*idpStep, error) {
 	hc := &http.Client{Timeout: 90 * time.Second}
 	if !lc.Endpoints.NoAuth {
@@ -698,14 +702,14 @@ func (r *initRun) identityPlatform(ctx context.Context, lc *localcfg.Config, fp 
 	} else if lc.Endpoints.IdentityToolkit == "" {
 		return nil, userErr("endpoints: no_auth is set but the identity_toolkit endpoint is not")
 	}
-	s := &idpStep{c: &infra.IdentityPlatform{Endpoint: lc.Endpoints.IdentityToolkit, Project: fp, HTTP: hc}}
+	s := &idpStep{c: &infra.IdentityPlatform{Endpoint: lc.Endpoints.IdentityToolkit, Project: fp, HTTP: hc}, workspace: workspaceDeclared(lc)}
 	raw, exists, err := s.c.Config(ctx)
 	if err != nil {
 		return nil, remote(err)
 	}
 	s.missing = !exists
 	if exists {
-		if err := refusePublicSignUp(raw, fp); err != nil {
+		if err := refusePublicSignUp(raw, fp, s.workspace); err != nil {
 			return nil, err
 		}
 	}
@@ -725,15 +729,34 @@ func (s *idpStep) initialize(ctx context.Context) error {
 	case !exists:
 		return remote(fmt.Errorf("Identity Platform was initialized in %s but its configuration is still not found", s.c.Project))
 	}
-	return refusePublicSignUp(raw, s.c.Project)
+	return refusePublicSignUp(raw, s.c.Project, s.workspace)
 }
 
-func refusePublicSignUp(raw []byte, fp string) error {
+// refusePublicSignUp refuses an existing Identity Platform configuration that
+// enables a public sign-up path: the web API key is public, so only custom
+// tokens signed by our signer may work.
+//
+// A workspace's OWN project is the one exception, and it is the config's own
+// owner half that marks it (workspaceDeclared). The workspace's sign-in is the
+// owner's own Firebase project's, and the workspace's spec pins which paths
+// that project has on — email/password and google.com in, every other one out
+// (docs/workspaces/spec.md §3, and the pin the workspace's own service
+// enforces by admitting token hashes and nothing else, D1296) — so the
+// owner enables providers here on purpose, and no provider grants anything on
+// its own: the workspace's database denies every client (internal/budget/rules/
+// workspace.go), and what admits a caller to the workspace is the record's
+// admitted token hashes and not the Firebase project's sign-in methods.
+//
+// Refusing it would make `fugaro update` fail on exactly the project W3's root
+// converges — the HARD RULE — so nothing here polices the providers, in either
+// direction: the pin is read live instead (scripts/live-checks/check361.sh),
+// which is where a project whose providers drifted is named.
+func refusePublicSignUp(raw []byte, fp string, workspace bool) error {
 	public, err := infra.PublicSignUp(raw)
 	if err != nil {
 		return remote(err)
 	}
-	if len(public) == 0 {
+	if len(public) == 0 || workspace {
 		return nil
 	}
 	return userErr("Identity Platform in Firebase project %s has public sign-up enabled (%s). The web API key is public, so only custom tokens signed by Fugaro's signer may work: disable these in the Firebase console (Authentication, Sign-in method) or with the Identity Toolkit config API, then rerun. The converge never changes an existing configuration", fp, strings.Join(public, "; "))

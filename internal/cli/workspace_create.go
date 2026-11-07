@@ -78,8 +78,9 @@ func workspaceAccount(project string) string {
 }
 
 // declared is whether this installation is a workspace's own: the config
-// carries the owner's half of the membership, which is workspaceRecordOf's own
-// predicate (W2's publish stage is built on the same one).
+// carries the owner's half of the membership (workspaceDeclared, which is
+// workspaceRecordOf's own predicate — W2's publish stage and the Identity
+// Platform carve-out are built on the same one).
 //
 // A config that declares a workspace and lists NO member is this project's
 // workspace too, and the stage converges it: the record admits nobody and W2
@@ -95,17 +96,19 @@ func workspaceAccount(project string) string {
 // Everything else workspaceRecordOf refuses IS an error and is returned: a
 // member table that is not a project name, a cap that is not money, a record
 // that does not validate — the config's own problems, which the run must stop
-// on rather than converge a root from a half-read config.
+// on rather than converge a root from a half-read config. The record is read
+// and not just the predicate, so that check happens before anything is planned.
 func (s *workspaceProjectStage) declared() (bool, error) {
-	rec, err := workspaceRecordOf(s.e.lc)
-	var notOurs *workspacePublishNotOurs
-	if errors.As(err, &notOurs) {
-		return true, nil
+	if !workspaceDeclared(s.e.lc) {
+		return false, nil
 	}
-	if err != nil {
-		return false, err
+	if _, err := workspaceRecordOf(s.e.lc); err != nil {
+		var notOurs *workspacePublishNotOurs
+		if !errors.As(err, &notOurs) {
+			return false, err
+		}
 	}
-	return rec != nil, nil
+	return true, nil
 }
 
 // Check cannot know without planning whether the account and the grant are

@@ -173,8 +173,25 @@ func workspaceNoMemberReason(lc *localcfg.Config) string {
 // state is this config's own file, reachable from `fugaro workspace cap set` and
 // from `fugaro workspace member rm` of the last member, and a stage of `fugaro
 // update` that failed the run on it would leave every stage after it blocked.
+// workspaceDeclared is whether THIS installation is a workspace's own: its
+// config carries the OWNER's half of the membership (workspace_members or
+// workspace_cap), which is the predicate workspaceRecordOf is built on. It is
+// one function because the question is one question, and three places ask it:
+// the record's own read, the workspace's own project's root (W3,
+// workspace_create.go) and the Identity Platform carve-out (init_firebase.go's
+// refusePublicSignUp) — a workspace's own project is the one Firebase project
+// whose public sign-up paths the owner enables (docs/workspaces/spec.md §3).
+//
+// A config that declares the cap and lists NO member is still this project's
+// workspace: `fugaro workspace cap set` writes the cap alone, and `workspace
+// member rm` of the last member leaves the table empty (workspaceNoMemberReason
+// is that state's own sentence, and it is a skip and never a "not ours").
+func workspaceDeclared(lc *localcfg.Config) bool {
+	return lc != nil && (lc.WorkspaceMembers != nil || lc.WorkspaceCap != nil)
+}
+
 func workspaceRecordOf(lc *localcfg.Config) (*workspace.Record, error) {
-	if lc == nil || (lc.WorkspaceMembers == nil && lc.WorkspaceCap == nil) {
+	if !workspaceDeclared(lc) {
 		return nil, nil
 	}
 	table := workspaceTable(lc)
