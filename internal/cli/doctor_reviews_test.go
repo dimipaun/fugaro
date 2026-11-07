@@ -96,9 +96,12 @@ func noReviewsBucketReads(t *testing.T) {
 // not a warning.
 func TestDoctorReviewsDueWarnsWhenAClosedPeriodHasNoReport(t *testing.T) {
 	// 2026-11-02 is a Monday, so the week that ended 2026-11-01 (2026-W44) has
-	// closed, and the folder holds day reports and no week report.
+	// closed. The folder holds a week report -- the week before, which is what
+	// makes this a repository that keeps a weekly cadence -- and no report for
+	// W44: the week it lapsed on. The day report of yesterday keeps the newest
+	// report recent, so the warning is the only line this state has.
 	week := t.TempDir()
-	reviewsWrite(t, week, "2026-10-27", "2026-10-26")
+	reviewsWrite(t, week, "2026-W43", "2026-11-01")
 	c := reviewsMiss(t, week, "2026-11-02")
 	if c.ID != "reviews-due" || c.Severity != "warning" {
 		t.Errorf("the line is %s at severity %q, want reviews-due at warning", c.ID, c.Severity)
@@ -114,10 +117,10 @@ func TestDoctorReviewsDueWarnsWhenAClosedPeriodHasNoReport(t *testing.T) {
 	}
 
 	// The month, on the day it closes: 2026-12-01 is a Tuesday, so only the
-	// month that ended 2026-11-30 is due, and the folder's newest report is
-	// the October one.
+	// month that ended 2026-11-30 is due, and the folder holds October's month
+	// report and none for November.
 	month := t.TempDir()
-	reviewsWrite(t, month, "2026-10-15")
+	reviewsWrite(t, month, "2026-10")
 	c = reviewsMiss(t, month, "2026-12-01")
 	if !strings.Contains(c.Problem, "2026-11 (month)") {
 		t.Errorf("the first of December does not name the month that closed: %q", c.Problem)
@@ -180,6 +183,47 @@ func TestDoctorReviewsDueIsSilentWhenNothingIsDue(t *testing.T) {
 	}
 }
 
+// TestDoctorReviewsDueWarnsOnlyForTheCadenceTheFolderKeeps: the warning is an
+// actionable line, so doctor --strict fails on it, and a period of a dimension
+// the repository does not report is not a period it lapsed on. A monthly
+// repository that is perfectly up to date would otherwise be warned every
+// Monday for the week, a weekly one every 1st for the month, and a daily one
+// every Monday -- the same reason the seven catch-up days are not the
+// warning's business.
+func TestDoctorReviewsDueWarnsOnlyForTheCadenceTheFolderKeeps(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		keys []string
+		day  string
+	}{
+		// A monthly cadence, on a Monday that closed a week: the folder has
+		// never held a week report, and the week is not a period it keeps.
+		{name: "a monthly folder on the Monday a week closes", keys: []string{"2026-10"}, day: "2026-11-02"},
+		// A weekly cadence, on the 1st: the month that closed has no report,
+		// and no month report has ever been written here.
+		{name: "a weekly folder on the 1st of the month", keys: []string{"2026-W48"}, day: "2026-12-01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			reviewsWrite(t, root, tc.keys...)
+			if c := doctorReviewsCheck(root, reviewsDay(t, tc.day)); c != nil {
+				t.Errorf("doctor says %+v, want nothing: the folder keeps no cadence of that dimension", *c)
+			}
+		})
+	}
+
+	// The gate is not blanket silence for the coarse periods: the monthly
+	// folder above, on the day its own dimension closes with no report for the
+	// month that ended, is the warning -- which is the state the gate exists to
+	// tell apart from the two above.
+	root := t.TempDir()
+	reviewsWrite(t, root, "2026-10")
+	c := reviewsMiss(t, root, "2026-12-01")
+	if c.ID != "reviews-due" || !strings.Contains(c.Problem, "2026-11 (month)") {
+		t.Errorf("the month whose cadence this folder keeps is not warned: %+v", c)
+	}
+}
+
 // TestDoctorReviewsDueIsInTheDefaultView is the half of the task a check that
 // "prints a line" fails (M9): the warning is doctorClassActionable and the
 // info line is doctorClassDecision, and the default view prints both. The
@@ -187,7 +231,7 @@ func TestDoctorReviewsDueIsSilentWhenNothingIsDue(t *testing.T) {
 // audit are written, counted in the pointer and never shown.
 func TestDoctorReviewsDueIsInTheDefaultView(t *testing.T) {
 	warnRoot := t.TempDir()
-	reviewsWrite(t, warnRoot, "2026-10-27", "2026-10-26")
+	reviewsWrite(t, warnRoot, "2026-W43", "2026-11-01")
 	warning := reviewsMiss(t, warnRoot, "2026-11-02")
 	infoRoot := t.TempDir()
 	reviewsWrite(t, infoRoot, "2026-10-23")
@@ -271,7 +315,7 @@ func TestDoctorReviewsDueIsOffline(t *testing.T) {
 // the period that closed, and the reading that lists every period that is due.
 func TestDoctorReviewsDueNamesTheCommand(t *testing.T) {
 	warnRoot := t.TempDir()
-	reviewsWrite(t, warnRoot, "2026-10-27", "2026-10-26")
+	reviewsWrite(t, warnRoot, "2026-W43", "2026-11-01")
 	warning := reviewsMiss(t, warnRoot, "2026-11-02")
 	if !strings.Contains(warning.Fix, "`fugaro runs digest --period week --date 2026-10-26`") {
 		t.Errorf("the warning's fix does not name the report of the period that closed: %q", warning.Fix)
