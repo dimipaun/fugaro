@@ -1604,3 +1604,49 @@ func TestRecipesSkewRefusesTheNoneModelInTheTaskLayerOutsideACheckout(t *testing
 		t.Fatalf("%s: %v", noneModelSince, err)
 	}
 }
+
+// TestRecipesSkewRefusesTheNoneModelInALayerWithNoDefaultProfile: the
+// configuration a launch outside a checkout resolves is the task's own layer
+// over a synthetic anchor (launchLayerConfig), and that anchor carries no
+// workflow of its own: a layer that names no default_profile therefore does not
+// resolve over it, and the resolution's failure is not a reason to read nothing.
+// The layer is text the run reads — the file at the ref resolves it once the run
+// has one — so the gate that reads the text has to see it: without that, a level
+// the layer switched off with `model: none` runs on a pre-0.21.0 image in
+// silence, which is the failure this gate exists for.
+func TestRecipesSkewRefusesTheNoneModelInALayerWithNoDefaultProfile(t *testing.T) {
+	f := newCloudFixture(t)
+	layer := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1)
+	layer = strings.Replace(layer, "default_profile: svc\n", "", 1)
+	if strings.Contains(layer, "default_profile") {
+		t.Fatal("the layer still names a default_profile: the state this test needs is gone")
+	}
+	publishedLayer(t, f, layer)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	below := shiftRelease(t, noneModelSince, -1)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+below)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "Fix it.")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.agent.levels (read for acme/app)",
+		"needs a job image whose runner knows " + noneModelKnows,
+		"; or write it as none: true in the project layer's defaults.agent.levels and publish it again",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	// And at the release the gate names the same launch stands.
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+noneModelSince)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("%s: %v", noneModelSince, err)
+	}
+}

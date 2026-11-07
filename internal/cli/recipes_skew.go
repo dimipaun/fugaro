@@ -1346,10 +1346,21 @@ func launchLevelsConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *co
 // where a layer the run does use and this gate ignored is a level the run
 // drops in silence.
 //
-// A layer that does not parse or does not resolve leaves the empty
-// configuration. embedProjectLayer parsed the layer before storing it, so
-// neither happens for a task this launcher wrote; a layer that will not read
-// back is a run's own problem to refuse, not a skew this gate names.
+// A layer that does not parse leaves the empty configuration: embedProjectLayer
+// parsed the layer before storing it, so that does not happen for a task this
+// launcher wrote, and a layer that will not read back is a run's own problem to
+// refuse, not a skew this gate names.
+//
+// A layer that parses but does not resolve over the anchor is kept all the same,
+// as a configuration carrying the layer alone. The anchor is what fails there,
+// not the layer: it is a stand-in for a file this launcher could not read, it
+// carries no workflow and no profile:, and a layer that names no
+// default_profile of its own has nothing to resolve over it ("workflows: must
+// define at least one workflow, or name a profile with profile:"). The layer is
+// still text the run reads — the file at the ref resolves it once the run has
+// one — so the gates that read it off the text see it (SetsLevelsNoneModel),
+// where an empty configuration reads as a layer that says nothing and runs the
+// level the layer switched off in silence.
 func launchLayerConfig(spec *task.Spec) *config.Config {
 	if spec.ProjectLayer == nil {
 		return &config.Config{}
@@ -1362,7 +1373,7 @@ func launchLayerConfig(spec *task.Spec) *config.Config {
 	if c, _, ps := config.Resolve(anchor, l); len(ps) == 0 {
 		return c
 	}
-	return &config.Config{}
+	return &config.Config{Layer: l}
 }
 
 // launchRecipeForLevels is the recipe launchReviewLevelsAsk judges the levels
