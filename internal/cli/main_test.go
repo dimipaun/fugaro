@@ -31,6 +31,14 @@ var testCacheRoot string
 // create it, which TestATestNeverWritesTheDeveloperConfigHome fails on.
 var testConfigRoot string
 
+// testStateRoot is TestMain's own state directory: the $XDG_STATE_HOME every
+// test that does not isolate one of its own gets, so the logs the step
+// reporter keeps (report.OpenLog) can never be filed in the developer's real
+// ~/.local/state/fugaro/logs — and pruned there, 50 files per command name.
+// Also never removed. "" when TestMain could not create it, which
+// TestATestNeverWritesTheDeveloperStateHome fails on.
+var testStateRoot string
+
 // TestMain closes the ways a test could reach real Google through a
 // gs:// bucket_url or an unfaked client: no application default
 // credentials (a file that doesn't exist), no metadata server, and every
@@ -74,6 +82,17 @@ func TestMain(m *testing.M) {
 	if dir, err := os.MkdirTemp("", "fugaro-test-config-"); err == nil {
 		testConfigRoot = dir
 		os.Setenv("XDG_CONFIG_HOME", dir)
+	}
+	// And the third: the state directory, where every command that runs
+	// steps or writes files files its log (D1351, D1352). A log is opened
+	// and pruned by the command that writes it — 50 files per command name —
+	// so without this a suite run would read and delete the developer's own
+	// ~/.local/state/fugaro/logs, the logs an operator reads back after a
+	// failure. A test that reads its command's log back isolates a state
+	// home of its own (isolateState); this is the backstop.
+	if dir, err := os.MkdirTemp("", "fugaro-test-state-"); err == nil {
+		testStateRoot = dir
+		os.Setenv("XDG_STATE_HOME", dir)
 	}
 	// init refuses to apply anything in a coding agent's session, and the
 	// tests are often run from one: a test that means to be in one sets a

@@ -61,16 +61,16 @@ func newGitHubRig(t *testing.T) *githubRig {
 		}
 	}))
 	t.Cleanup(g.srv.Close)
-	oldAPI, oldRead := githubAPIURL, readAppKey
+	oldAPI, oldRead := githubAPIURL, readSecretValue
 	githubAPIURL = g.srv.URL
-	readAppKey = func(_ context.Context, _ *localcfg.Config, secretID string) ([]byte, error) {
+	readSecretValue = func(_ context.Context, _ *localcfg.Config, secretID string) ([]byte, error) {
 		g.reads++
 		if secretID != "app-key-secret" {
 			t.Errorf("read secret %q", secretID)
 		}
 		return append([]byte(nil), g.key...), g.keyErr
 	}
-	t.Cleanup(func() { githubAPIURL, readAppKey = oldAPI, oldRead })
+	t.Cleanup(func() { githubAPIURL, readSecretValue = oldAPI, oldRead })
 	return g
 }
 

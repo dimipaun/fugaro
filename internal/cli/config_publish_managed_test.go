@@ -867,6 +867,13 @@ func levelOffLayer(name string) string {
 	return minimalAnchored + "defaults:\n  agent:\n    levels:\n      " + name + ": { none: true }\n"
 }
 
+// levelNoneModelLayer is the layer a case publishes to skip one review level by
+// the other spelling: `model: none`, the level's own switch written the other
+// way (owner, 2026-11-07).
+func levelNoneModelLayer(name string) string {
+	return minimalAnchored + "defaults:\n  agent:\n    levels:\n      " + name + ": { model: none }\n"
+}
+
 // firstLineReviewLayer is the layer a first-line-review case publishes:
 // `defaults.agent.first_line_review` with the value the case names, and nothing
 // else. An empty value publishes no value at all, which is the removal case.
@@ -988,6 +995,55 @@ func TestConfigPublishManagedRefusesAReviewLevelTurnedOff(t *testing.T) {
 		conv := personConverge(t, r, minimalAnchored)
 		if err := conv.Refuse(); err != nil {
 			t.Fatalf("a person's own publish of a layer turning a review level back on was refused: %v", err)
+		}
+	})
+}
+
+// The same level skipped by the other spelling: `model: none` is the level's
+// own switch written the other way (owner, 2026-11-07), so the floor this door
+// holds a session to refuses it exactly as it refuses `none: true`, and the
+// level it names is the same one. The settings allowlist does not admit the
+// key either, so the whole-document door is not the only thing standing in the
+// way — but the rule that names the level is the floor's, which is the one this
+// test is about.
+func TestConfigPublishManagedRefusesALevelSkippedByItsModelName(t *testing.T) {
+	for _, name := range []string{"l1", "l2", "l3"} {
+		t.Run(name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, minimalAnchored)
+			_, _, err := execute(t, "config", "publish", layerFile(t, levelNoneModelLayer(name)))
+			if err == nil {
+				t.Fatalf("skipping review level %s as model: none was published in a coding agent's session", name)
+			}
+			if !strings.Contains(err.Error(), "levels."+name) || !strings.Contains(err.Error(), "floor") {
+				t.Errorf("the refusal does not name the level and the floor that refused it: %v", err)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != minimalAnchored {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			rec := r.audits(t)
+			if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+				t.Fatalf("the record is %v, want one refusal", rec)
+			}
+			if rules := strings.Join(rec[0].Rules, " "); !strings.Contains(rules, "levels."+name) {
+				t.Errorf("the record does not name the rule that refused: %q", rules)
+			}
+		})
+	}
+
+	// The other side: a level already skipped by its model name stays skipped
+	// without a rule, because nothing moved.
+	t.Run("a level already off by its model name", func(t *testing.T) {
+		r := newManagedPublishRig(t)
+		agentSession(t)
+		publishedLayer(t, r.cloudFixture, levelNoneModelLayer("l2"))
+		out, errOut, err := execute(t, "config", "publish", layerFile(t, levelNoneModelLayer("l2")))
+		if err != nil {
+			t.Fatalf("an unchanged layer was refused: %v\n%s", err, errOut)
+		}
+		if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+			t.Errorf("the session does not read that the step proceeded: %q", out)
 		}
 	})
 }

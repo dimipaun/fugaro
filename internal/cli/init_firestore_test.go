@@ -487,3 +487,42 @@ func TestReadBackAfterCreateRetriesAPIPropagation(t *testing.T) {
 		t.Error("no mark")
 	}
 }
+
+// TestRegionCannotChangeTheFirestoreLocation: where the installation's jobs
+// and the scheduler run is not where the Firestore database is created. The
+// two are separate constants that happen to hold the same value today
+// (reconciliation C1), and a database's location is permanent, so the
+// confirmation keeps coming from infra.FirestoreLocation and stays typed: a
+// run whose region is nowhere near the database's location still prompts for
+// the location, refuses the region typed there, and takes the location.
+func TestRegionCannotChangeTheFirestoreLocation(t *testing.T) {
+	const elsewhere = "europe-west4"
+	if elsewhere == infra.FirestoreLocation {
+		t.Fatalf("%s is the database's own location: this test needs a region that is not it", elsewhere)
+	}
+	c := condition{name: "a region elsewhere", terminal: true,
+		opts: initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: initProject, region: elsewhere}}}
+
+	r, spy, out := c.run(t, elsewhere+"\n")
+	err := r.confirmLocation()
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), infra.FirestoreLocation) {
+		t.Fatalf("the region %s was taken for the database's location: %v\n%s", elsewhere, err, out)
+	}
+	if !spy.read {
+		t.Error("the database's location was not asked for")
+	}
+	if r.o.cloud.region != elsewhere {
+		t.Errorf("the run's region = %q, want the one it was given (%s)", r.o.cloud.region, elsewhere)
+	}
+	if got := out.String(); !strings.Contains(got, "the Firestore database is created in "+infra.FirestoreLocation) ||
+		!strings.Contains(got, "Type "+infra.FirestoreLocation+" to create it there") || strings.Contains(got, elsewhere) {
+		t.Errorf("the confirmation does not come from %s alone:\n%s", infra.FirestoreLocation, got)
+	}
+
+	// The location itself, typed, is the confirmation — in this door and in
+	// the other, whatever region the run holds.
+	r2, _, out2 := c.run(t, infra.FirestoreLocation+"\n")
+	if err := r2.confirmLocation(); err != nil {
+		t.Fatalf("the database's location typed: %v\n%s", err, out2)
+	}
+}
