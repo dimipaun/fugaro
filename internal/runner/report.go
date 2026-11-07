@@ -260,8 +260,8 @@ func rigorLine(rg *runstore.RigorRecord) string {
 // same lines the pull request's status section carries (prflow.go ownerPart).
 //
 // "" for a record carrying no block, which is every run that is not waiting on
-// one: the halt reason above already says how many, and an empty list would
-// claim the run is waiting on nothing.
+// one: the reason above already says how many, and an empty list would claim
+// the run is waiting on nothing.
 //
 // Both fields are the reviewer's own text about an untrusted diff, so both go
 // through inlineText: a sentence carrying a newline would end its own bullet,

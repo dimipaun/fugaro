@@ -978,10 +978,12 @@ type Record struct {
 	Tolerated *ToleratedFindings `json:"tolerated,omitempty"`
 	// OwnerDecisions is what the run's review left for the repository's owner
 	// to settle (OD1): the findings a reviewer marked needs_owner, which no
-	// code change can fix, so the run stopped rather than spending fix rounds
-	// on them. Absent — never an empty block — for every run whose review left
-	// none, which is every record written before this field existed: the field
-	// is additive, so an old reader sees the record it always saw.
+	// code change can fix, so the run spent no fix round on them — it stopped
+	// on them where the whole round was theirs, and ended a draft that waits
+	// on them otherwise. Absent — never an empty block — for every run whose
+	// review left none (and for a run that stopped for its own reason), which
+	// is every record written before this field existed: the field is
+	// additive, so an old reader sees the record it always saw.
 	OwnerDecisions *OwnerDecisions `json:"owner_decisions,omitempty"`
 	// OwnerRuled is the owner's ruling a follow-up was launched with
 	// (task.Spec.OwnerRuled, fugaro run --owner-ruled): the launcher's own
