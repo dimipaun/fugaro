@@ -144,9 +144,11 @@ func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
 		filedBy = "unknown"
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: --filed-by looks like an email address, which an item never records; it records unknown")
 	}
-	// The reporter opens with the filing rather than at the door: the flags
-	// above are refused before a file is written, and a filing that wrote
-	// nothing is no run to keep a log of (D1352, D1354).
+	// The reporter opens with the filing rather than at the door, so the one
+	// refusal above it — a --mode outside the vocabulary — keeps no log
+	// (D1352, D1354). What backlog.Write itself refuses is this filing's own
+	// failure: it is a failed step, and the log under it holds the run whose
+	// output that path names (G8).
 	rep, sink := reporterFor(cmd, "backlog-add", nil)
 	if sink != nil {
 		defer func() { _ = sink.Close() }()

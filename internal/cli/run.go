@@ -30,7 +30,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
-	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -505,17 +504,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 		}
 	}
-	// The launch's reporter, opened here rather than at the command's door so
-	// a launch this launcher refuses before it reaches a cloud call leaves no
-	// log behind. Both shapes below — one launch and a best-of-N batch — print
-	// their steps through it and share the one log of this invocation (D1352,
-	// D1354).
-	rep, sink := reporterFor(cmd, "run", nil)
-	if sink != nil {
-		defer func() { _ = sink.Close() }()
-	}
 	if attemptsSet {
-		return runAttempts(cmd, env, o, text, total, rep, loggedOut(cmd.OutOrStdout(), sink))
+		// The batch opens its own reporter once its own refusals are behind
+		// it (runAttempts): a batch this launcher refuses is no run to keep a
+		// log of either (D1352, D1354).
+		return runAttempts(cmd, env, o, text, total)
 	}
 
 	var (
@@ -554,6 +547,15 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	// The launch's reporter opens where the launch's own work does, once the
+	// task is built: every refusal above it — the flags, and the spec a
+	// --repo, --retry, --pr or --recipe does not resolve — is answered before
+	// the run begins, and a launch that never began keeps no log (D1352,
+	// D1354).
+	rep, sink := reporterFor(cmd, "run", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
 	}
 	if o.retry == "" {
 		noteRigorRequest(ctx, o, spec.Repo, cmd.ErrOrStderr())
@@ -1571,7 +1573,7 @@ var resolveBatchPlan = resolveAttemptPlan
 // after k launches (including finishLaunch reporting "already-launched",
 // which here can only mean a run id collision slipped past the retry)
 // reports those k and returns the error.
-func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, total time.Duration, rep *report.Reporter, out io.Writer) error {
+func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, total time.Duration) error {
 	ctx := cmd.Context()
 	warn := cmd.ErrOrStderr()
 	n := o.attempts
@@ -1594,6 +1596,15 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	if err := env.batchBudgetPrecheck(ctx, plan.slug, plan.repo, n, warn); err != nil {
 		return err
 	}
+	// The batch's reporter opens where its own refusals end — a recipe that
+	// does not resolve, a mode the batch cannot run, no room for all the
+	// attempts, no budget headroom — so a refused batch keeps no log, and
+	// from here every attempt is one step of this run (D1352, D1354).
+	rep, sink := reporterFor(cmd, "run", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	out := loggedOut(cmd.OutOrStdout(), sink)
 	seen := make(map[string]bool, n)
 	results := make([]launchResult, 0, n)
 	for i := 0; i < n; i++ {

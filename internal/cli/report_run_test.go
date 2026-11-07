@@ -340,6 +340,58 @@ func assertLogMode(t *testing.T, cmdName string) {
 	}
 }
 
+// TestARefusedCommandKeepsNoLog: a command that refuses before its run begins
+// files no log — not even an empty one. The log is the run's own output and a
+// refusal has none, so the reporter opens where the run's work does: after the
+// launch's own task is built, after the batch's pre-checks, and after the
+// reaper's pass resolved — never at the command's door, where every refused
+// invocation would file a file (D1352).
+func TestARefusedCommandKeepsNoLog(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T) error
+	}{
+		{"a launch whose task is refused", func(t *testing.T) error {
+			newCloudFixture(t)
+			_, _, err := execute(t, "run", "--retry", "20260927-000000-0000")
+			return err
+		}},
+		{"a batch its own pre-checks refuse", func(t *testing.T) error {
+			newCloudFixture(t)
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--recipe", "review-only", "fix the flaky test")
+			return err
+		}},
+		{"a pass the selected project refuses", func(t *testing.T) error {
+			newReaperRig(t, false)
+			_, _, err := execute(t, "reaper")
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateState(t)
+			if err := tc.run(t); err == nil {
+				t.Fatal("the command ran, want the refusal this case is about")
+			}
+			assertNoLog(t)
+		})
+	}
+}
+
+// assertNoLog is what a refused run must leave behind: nothing. The log
+// directory is one isolateState's own, so a directory that is not there at all
+// is no log either.
+func assertNoLog(t *testing.T) {
+	t.Helper()
+	entries, err := os.ReadDir(logDir(t))
+	if err != nil {
+		return
+	}
+	if len(entries) != 0 {
+		t.Errorf("a refused run filed %d logs, want none: %v", len(entries), entries)
+	}
+}
+
 // TestNoStepCommandPrintsAnsiOffATerminal: a command that reports no step --
 // a listing, and --json, whose document no human line may touch -- prints no
 // escape byte off a terminal and no step line where its output goes (G2, G4).

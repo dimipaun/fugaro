@@ -133,14 +133,6 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	// The pass's reporter, opened here rather than at the command's door: a
-	// pass this command refuses before it reaches the APIs (no batch: block,
-	// a refused project) leaves no log behind. From here on the sweep is one
-	// step and the report is kept beside it (D1352, D1354).
-	rep, sink := reporterFor(cmd, "reaper", nil)
-	if sink != nil {
-		defer func() { _ = sink.Close() }()
-	}
 	opts, note, err := reaperPass(ctx, o, os.Getenv, dryRun)
 	if err != nil {
 		return err
@@ -158,6 +150,15 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 		// timeouts -- or the credentials to reach Google with; both are the
 		// caller's side of the call, not a failure of the API it then reads.
 		return userErr("%v", err)
+	}
+	// The pass's reporter, opened where the pass itself starts: every refusal
+	// above it — this command's own before it reaches the APIs (no batch:
+	// block, a refused project) and batch.NewReaper's — is answered before
+	// there is a pass, and a refused pass keeps no log (D1352, D1354). From
+	// here the sweep is one step and the report is kept beside it.
+	rep, sink := reporterFor(cmd, "reaper", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
 	}
 	step := rep.Step("sweep " + opts.GCPProject + "/" + opts.Region)
 	pass, err := r.Reap(ctx)
