@@ -54,8 +54,9 @@ The clauses named below:
 | §8.5 | §6.4 | protection of License Keys |
 | §10.1, §10.2 | §8.1, §8.2 | support and supported versions |
 | §10.4 | §9.1 | read-only use after the grace period |
-| §14 | §10.5 | the liability cap for the Community Plan and the Free Plans |
+| §14 | §24 | limitation of liability: the cap, the excluded damages and the exceptions |
 | §17.4 | §27.4 | termination and the destruction duty |
+| — | §10.5 | the Community, Free Plans and Beta Features limits, new in counsel's text |
 
 ## Settled since the questions were asked
 
@@ -105,10 +106,15 @@ Software's behaviour**: "the Software requires a valid License Key to operate, s
 2. If counsel would rather the text say so, should §6.1 be worded as the Customer's obligation
    (a Customer shall hold a valid License Key) rather than as what the Software does, or should it
    carry the release from which the check applies?
-3. D448 makes counsel's sign-off of D432, D433 and D436 the gate on console 0.113.0 and the app's
-   first release. Counsel applied and approved those rulings on 2026-10-29. Does counsel regard
-   that approval as the sign-off, so that the app's first release may ship on it, or is a separate
-   written confirmation wanted?
+3. D448 makes counsel's sign-off of D432, D433 and D436 the gate on console 0.113.0, which has
+   shipped, and on the app's first release, which has not. That sign-off is the plan's
+   [S8.4](implementation-plan.md#slice-s8-the-owners-counsels-and-the-accountants-steps): counsel
+   words D433 there and confirms D432, D436, T15, T17's honour-based release and T21. What counsel
+   approved on 2026-10-29 is narrower — the S0.4 items as applied to the Terms (the Terms' own
+   list, item 4), which carry the clauses D432 and D436 produced (§9.1, §10.2(a)) and not the
+   rulings themselves — while D433's wording is one of the questions that round answers (counsel
+   question 13). Does counsel regard the clause approval as the sign-off, so that the app's first
+   release may ship on it, or must that release wait for S8.4?
 
 ### A2 — one binary, a mixed licence, and the MIT commands inside it (T21)
 
@@ -235,7 +241,9 @@ What is still open, and what A1–A6 feed:
 Two things this packet does not carry, so that counsel's round is not read as more than it is. It
 does not re-open a settled clause, and it asks for no figure: the amounts it refers to are the
 owner's, in the private business repository. And it is not the whole of S8.4 — that round also
-answers the questions 12–18 the draft already put, words D433, confirms the rest of D432, D436 and
-T12's cancel, and reviews the privacy notice
+answers the questions 12–18 the draft already put, words D433, confirms D432, D436 and T12's cancel,
+T15, T17's honour-based release and T21, and reviews the privacy notice
 [subscriptions S7.3](implementation-plan.md#s73-the-privacy-notice-for-key-sign-up) writes, which
-does not exist yet.
+does not exist yet. Its list names T12's cancel, which the Terms' own list, item 4, already records
+as applied and counsel-approved on 2026-10-29 — the reason the settled section above does not re-ask
+it, and what A1's third question asks counsel to resolve for the release gate.
