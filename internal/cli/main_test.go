@@ -33,15 +33,12 @@ var testCacheRoot string
 // create it, which TestATestNeverWritesTheDeveloperConfigHome fails on.
 var testConfigRoot string
 
-// testStateRoot is TestMain's own state directory, the third of the
-// developer's fugaro directories: a step-printing command keeps its log under
-// $XDG_STATE_HOME/fugaro/logs (CL3's OpenLog), so without it every test that
-// runs one — and CL7b migrates the project and config writers onto the
-// reporter — would file logs in the developer's own ~/.local/state/fugaro,
-// and the retention sweep (14 days, 50 files per command name) would prune
-// what an operator left there. Never removed, for the same reason the config
-// one is not: TestATestNeverWritesTheDeveloperStateHome reads it afterwards.
-// "" when TestMain could not create it.
+// testStateRoot is TestMain's own state directory: the $XDG_STATE_HOME every
+// test that does not isolate one of its own gets, so the logs the step
+// reporter keeps (report.OpenLog) can never be filed in the developer's real
+// ~/.local/state/fugaro/logs — and pruned there, 50 files per command name.
+// Also never removed. "" when TestMain could not create it, which
+// TestATestNeverWritesTheDeveloperStateHome fails on.
 var testStateRoot string
 
 // TestMain closes the ways a test could reach real Google through a
@@ -88,13 +85,13 @@ func TestMain(m *testing.M) {
 		testConfigRoot = dir
 		os.Setenv("XDG_CONFIG_HOME", dir)
 	}
-	// And the state directory, which is where a step-printing command keeps
-	// the log of its run (localcfg.DirState, CL3's OpenLog). It is the same
-	// backstop as the one above and for the same reason: a test that runs one
-	// of those commands without isolating a state home of its own would file
-	// a log in the developer's own ~/.local/state/fugaro/logs, beside an
-	// operator's, and the retention sweep that runs on every open would prune
-	// them.
+	// And the third: the state directory, where every command that runs
+	// steps or writes files files its log (D1351, D1352). A log is opened
+	// and pruned by the command that writes it — 50 files per command name —
+	// so without this a suite run would read and delete the developer's own
+	// ~/.local/state/fugaro/logs, the logs an operator reads back after a
+	// failure. A test that reads its command's log back isolates a state
+	// home of its own (isolateState); this is the backstop.
 	if dir, err := os.MkdirTemp("", "fugaro-test-state-"); err == nil {
 		testStateRoot = dir
 		os.Setenv("XDG_STATE_HOME", dir)
@@ -255,26 +252,17 @@ func TestATestNeverWritesTheDeveloperConfigHome(t *testing.T) {
 	}
 }
 
-// TestATestNeverWritesTheDeveloperStateHome is the state directory's half of
-// the rule above. A step-printing command keeps its run's log under
-// $XDG_STATE_HOME/fugaro/logs, and the retention sweep that runs on every
-// open deletes what is older than fourteen days or past fifty files for one
-// command name — so a suite that reached the developer's own state home
-// would not merely litter it, it would prune an operator's logs.
+// TestAStepCommandsLogLandsInTestMainsStateHome opens a log the way a
+// step-printing command does and reads back the path the sink reports: the
+// state directory's half of the rule above, through the code that resolves it
+// rather than the arithmetic of the rule, so a change to either one moves this
+// test's failure with it. A log under the developer's own state home is
+// pruned on every open — fourteen days, fifty files per command name — so
+// this is the difference between a suite run and an operator's logs.
 //
-// Mutation (run, restore): delete the XDG_STATE_HOME block from TestMain and
-// this fails twice over — testStateRoot is empty and XDG_STATE_HOME is the
-// developer's own.
-func TestATestNeverWritesTheDeveloperStateHome(t *testing.T) {
-	if os.Getenv("XDG_STATE_HOME") != testStateRoot || testStateRoot == "" {
-		t.Fatalf("XDG_STATE_HOME = %q, TestMain's own = %q: a test that runs a step-printing command would file its log in the developer's own state home", os.Getenv("XDG_STATE_HOME"), testStateRoot)
-	}
-	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(testStateRoot, home+string(filepath.Separator)) {
-		t.Fatalf("TestMain's state home %q is inside the developer's home %q", testStateRoot, home)
-	}
-	// Opened the way a step-printing command opens its own: what is checked is
-	// the path the sink reports, not the arithmetic of the directory rule, so
-	// a change to either one moves this test's failure with it.
+// TestATestNeverWritesTheDeveloperStateHome (report_run_test.go, CL7c) is the
+// other half: that the variable itself is TestMain's and not under $HOME.
+func TestAStepCommandsLogLandsInTestMainsStateHome(t *testing.T) {
 	sink, err := report.OpenLog("devhome", os.Getenv, runtime.GOOS, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)

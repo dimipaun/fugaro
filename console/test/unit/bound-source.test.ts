@@ -435,7 +435,8 @@ describe('the graph read, whose scope a previous answer taught', () => {
     // renderer could name one; the surface closes that by admitting an id only
     // when a previous answer of the same installation listed it. `all` is the
     // one value admitted without being listed, because it is the selector rather
-    // than a source -- the read a screen opens on -- and the refusal is thrown
+    // than a source (the Graph asks for it when the plan scope refuses for want
+    // of a checkout, never as the read it opens on) -- and the refusal is thrown
     // **before** `resolve`, so no binary is probed and no child runs.
     const built: string[] = []
     const spawned: unknown[] = []

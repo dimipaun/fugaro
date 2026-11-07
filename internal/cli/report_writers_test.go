@@ -633,11 +633,13 @@ func TestBudgetResumeWritesALog(t *testing.T) {
 	writesALog(t, "budget-resume")
 }
 
-// TestNoStepCommandPrintsAnsiOffATerminal: a step-printing command's marks are
-// plain where nothing is a terminal, whatever the environment says (G4). The
-// reporter decides that once; this is the batch's own guard that no migrated
-// command paints its own output.
-func TestNoStepCommandPrintsAnsiOffATerminal(t *testing.T) {
+// TestTheWriterCommandsPrintNoAnsiOffATerminal: a step-printing command's
+// marks are plain where nothing is a terminal, whatever the environment says
+// (G4), and it still reports its step. The reporter decides the first; this is
+// the batch's own guard that no migrated command paints its own output, and it
+// is the counterpart of CL7c's TestNoStepCommandPrintsAnsiOffATerminal
+// (report_run_test.go), which is about the commands that report no step at all.
+func TestTheWriterCommandsPrintNoAnsiOffATerminal(t *testing.T) {
 	newBudgetFixture(t, "")
 	for _, args := range [][]string{
 		{"budget", "set", "--global", "--daily", "60", "--yes"},

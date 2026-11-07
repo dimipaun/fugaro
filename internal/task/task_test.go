@@ -1263,14 +1263,62 @@ func TestReviewLevelsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestReviewLevelsNoneModelIsNone: `model: none` is the level's own switch
+// written the other way (owner, 2026-11-07), applied by the ONE set of rules
+// every reader of the block uses (config.ReviewLevels.Validate, called by
+// Validate below). The run record therefore carries a level that is skipped —
+// the string none never reaches a reader as a model name, and a launcher
+// round-tripping the spec writes `none: true` back — and a block that spells
+// both keys is refused with both of them named.
+func TestReviewLevelsNoneModelIsNone(t *testing.T) {
+	const head = `"version":1,"run_id":"20261031-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
+	got, err := Parse([]byte("{" + head + `,"review_levels":{"l2":{"model":"none"}}}`))
+	if err != nil {
+		t.Fatalf("Parse refused review_levels.l2: { model: none }: %v", err)
+	}
+	want := &config.ReviewLevels{L2: &config.LevelSetting{Off: true}}
+	if !sameLevels(got.ReviewLevels, want) {
+		t.Fatalf("parsed review_levels = %+v, want %+v: the level is skipped, and the model is not the string none", got.ReviewLevels, want)
+	}
+	data, err := got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"none": true`) || strings.Contains(string(data), `"model": "none"`) {
+		t.Errorf("the spec marshals the level as %s, want none: true and no model named none", data)
+	}
+
+	for _, tc := range []struct{ name, doc, want string }{
+		{"model: none beside an effort", `{"l2":{"model":"none","effort":"high"}}`, "model: none beside effort"},
+		{"model: none beside a written none: false", `{"l2":{"model":"none","none":false}}`, "model: none beside none: false"},
+		{"model: none beside a focus", `{"l1":{"model":"none","focus":"the migration"}}`, "model: none beside focus"},
+	} {
+		_, err := Parse([]byte("{" + head + `,"review_levels":` + tc.doc + "}"))
+		if err == nil {
+			t.Errorf("%s: Parse accepted the spec", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: refusal %q does not mention %q", tc.name, err, tc.want)
+		}
+	}
+}
+
 // TestReviewLevelsRefusesUnknownKey: the task's copy of the level block is
 // written by the launcher, and every key inside it decides which review
 // runs, on which model, at which effort — so an unknown key is refused at
 // every level of the object (the block, a level, and a level's own keys)
-// rather than dropped. The decode does it (DisallowUnknownFields reaches
-// every nested object), and the block's own rules reach a hand-written
+// rather than dropped. The decode does it (DisallowUnknownFields for every
+// object around a level, and the level block's own decoder for its keys), and
+// the block's own rules reach a hand-written
 // task.json through Validate: a spec written straight into the bucket
 // refuses the same documents a launcher would have refused before writing.
+//
+// The last two rows pin which key a refusal names when a block writes two it
+// does not know: the first the document writes, the way encoding/json's own
+// DisallowUnknownFields named it, and not whichever a map happened to hand
+// over first. The pair is written both ways round because that is the whole
+// difference between the two readers.
 func TestReviewLevelsRefusesUnknownKey(t *testing.T) {
 	head := `"version":1,"run_id":"20261031-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
 	for _, tc := range []struct {
@@ -1290,6 +1338,8 @@ func TestReviewLevelsRefusesUnknownKey(t *testing.T) {
 		{"a focus over the bound", `{"l3":{"focus":"` + strings.Repeat("a", config.MaxLevelFocusBytes+1) + `"}}`, "longer than"},
 		{"a focus with a bidi override", `{"l3":{"focus":"the ‮migration"}}`, "U+202E"},
 		{"a focus with a control character", `{"l1":{"focus":"the\u0007migration"}}`, "U+0007"},
+		{"two unknown keys, the first one named", `{"l2":{"rounds":2,"bogus":1}}`, "rounds"},
+		{"two unknown keys, in the other order", `{"l2":{"bogus":1,"rounds":2}}`, "bogus"},
 	} {
 		_, err := Parse([]byte("{" + head + `,"review_levels":` + tc.doc + "}"))
 		if err == nil {
