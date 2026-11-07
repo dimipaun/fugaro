@@ -618,7 +618,19 @@ after it is pushed. **The ruleset does not restrict creations**: it restricts
 updates and deletions, so anyone who can push tags can create a `mobile-v*` tag
 on a commit of their own, and the job on it runs that tree's copy of the gate —
 which is why `docs/release.md`, "What fences a release now", gives **Restrict
-creations** on that ruleset as an owner step that is still owed. Putting the click back is one
+creations** on that ruleset as an owner step that is still owed. **The second
+thing the click covered is who may start a manual submission, and nothing closes
+it today either:** `website-promote.yml` runs for the owner and nobody else
+(`if: github.actor == 'dimipaun'`), and `console-release.yml` has no dispatch
+trigger at all, but this stream's `workflow_dispatch` — the dry run and the
+re-submit — **carries no actor guard**, so any holder of `contents: write` can
+start one from `main` and reach the environment's `EXPO_TOKEN` and a store
+submission with it (the code is `main`'s either way: each job's dispatch step
+holds the ref to `main` or to a tag already on it, so what such a dispatch buys
+is a submission rather than unreviewed code). `docs/release.md` gives the owner
+both steps that close it — the reviewer back on `mobile-release` alone, or the
+same actor guard on this workflow's two jobs — and until one of them is done the
+manual submission rests on the repository having a single writer. Putting the click back is one
 `gh api` call per environment, and the one `docs/release.md` gives under "What
 fences a release now" is the same call this page's sibling
 [../website/preview-promote.md](../website/preview-promote.md) gives for
@@ -652,7 +664,9 @@ documentation at `https://docs.github.com/`):
   release procedure in §10 and the tag ruleset — plus, for the token, the fact
   that only a job naming `environment: mobile-release` can read it at all.
   Restoring the click is one `gh api` call per environment, and `docs/release.md`
-  gives it under "What fences a release now".
+  gives it under "What fences a release now" — and for this environment in
+  particular that call is one of the two steps that close the manual-dispatch
+  gap above, the other being an actor guard on the workflow's two jobs.
 - **Deployment branches and tags:** restricted to the refs that may deploy into
   it — and **this list has to name every ref §10's trigger offers, or the
   environment is unreachable.** GitHub refuses a deployment to an environment

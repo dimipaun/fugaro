@@ -1860,6 +1860,23 @@ reviewer, and GitHub would refuse their own approval of their own run, so the
 environment would hold every release forever. (The same note is in
 `docs/website/preview-promote.md`, step 6, for the same reason.)
 
+**And a reviewer is what one gap here still wants, or an actor guard instead.**
+`mobile-release` is the only one of the three environments whose workflow someone
+other than the owner can start: `website-promote.yml` carries
+`if: github.actor == 'dimipaun'` on its job and `console-release.yml` has no
+`workflow_dispatch` trigger at all, while this file's `workflow_dispatch` — the
+dry run, and the re-submit after a store rejection — has no actor guard, so with
+the reviewer gone any holder of `contents: write` can start a manual submission
+from `main` and reach the environment's `EXPO_TOKEN` with it. What that buys is a
+TestFlight and Play submission rather than unreviewed code — each job's dispatch
+step holds the ref to `main`, or to a tag already on `origin/main` and green —
+but it is a submission behind nothing except write access. `docs/release.md`,
+"What fences a release now", gives the owner both steps that close it: the
+reviewer back on this environment alone (the call above, with no file change), or
+the same actor guard on this file's two jobs (staged here and copied in, since
+`.github/workflows/` is never edited from an agent run). Until one of the two is
+done, that path rests on the repository having a single writer.
+
 **2. [per Expo account] An Expo access token, and [per repo] the secret
 `EXPO_TOKEN` holding it.** The token is created in the owner's own Expo account
 (expo.dev → **Access tokens** → *Create token*), and the workflow reads it as

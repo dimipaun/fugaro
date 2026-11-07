@@ -192,7 +192,11 @@ result, which is what catches it if you do.
 #     (`gh workflow run --ref v1.2.3`): without the second gate step a dispatch
 #     on an off-main branch, or on a `mobile-vtest` tag, would build on EAS and
 #     submit to a store behind nothing but the environment's branch policy --
-#     which admits `main` and the app's tags. So a dispatch whose `dry_run` is
+#     which admits `main` and the app's tags. **Who may dispatch is not guarded
+#     here**: unlike `website-promote.yml`'s `if: github.actor == 'dimipaun'`,
+#     this trigger carries no actor condition, so any holder of `contents: write`
+#     can start a submission, and docs/release.md, "What fences a release now",
+#     carries the owner step that closes it. So a dispatch whose `dry_run` is
 ```
 
 ## 6. The `environment:` comment on the iOS job
