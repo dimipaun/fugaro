@@ -34,19 +34,42 @@ import (
 // project's own. The rig is built for the other door, so the two things the
 // converge needs and the repo engine does not have are added below: the
 // repository's secrets stored (its secrets step runs before the repository
-// one) and, at the end of every run, the billable first image build, which an
-// empty stdin cannot confirm — the run ends on that step, after the
-// retirement, and the tests read it as the hold it is.
-const firstBuildHold = "the first image build of acme/sandbox/app was not confirmed"
+// one) and the Cloud Build seam faked, because the billable first image build
+// a run reaches after the retirement is one this project's owner is no longer
+// asked to type (NP3): the build is submitted and the run finishes, which is
+// what these tests read at the end of it.
 
 // newManagedRetireRig is newRetireRig on a managed project, run by its owner:
 // the two marks (the runs bucket's object and the project's label), a fake
 // terminal with no agent marker (newRetireRig clears them), the repository's
 // secrets stored, and the credentials an audit record is written with
 // isolated.
+//
+// The Cloud Build seam is faked too, and that is a consequence of NP3 rather
+// than rig plumbing: the run's first image builds are billable and no longer
+// held for a person at a terminal in a managed project (buildAsksNothing), so
+// a run that gets past the repository stage submits one. Without the fake the
+// run would reach the real Cloud Build endpoint and the test would fail on the
+// network rather than on what it is about.
 func newManagedRetireRig(t *testing.T, o retireOpts) *retireRig {
 	t.Helper()
 	r := newRetireRig(t, o)
+	useFakeBuilder(t)
+	// The repository root's plan is read more than once in a run that builds,
+	// and the rig scripts the sequence (faketerraform consumes a list in order,
+	// its last entry repeating). The retirement reads its own plan file twice
+	// and they are one document: the summary and the delete list come from
+	// terraform's `show` of it, the gate's admission and the record's digest
+	// from `show -json` of the same file. Both are the bytes retireOpts built.
+	// The read after them is the re-plan a build forces (init.go's step 6),
+	// which exists to deploy the image just built: by then the retirement has
+	// applied, so it holds the built image's job update and none of the
+	// deletes — the plan an ordinary step is judged by, and the one a managed
+	// gate admits.
+	retirement := r.script["show@repo"].(map[string]any)
+	postRetirement := map[string]any{"stdout": planJSON(t, retireJobUpdate())}
+	r.script["show@repo"] = []map[string]any{retirement, retirement, postRetirement}
+	r.save(t)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)
 	storedRepoSecrets(t, r)
@@ -86,6 +109,20 @@ func retirementRecords(t *testing.T, r *retireRig) []managedmode.AuditRecord {
 		}
 	}
 	return out
+}
+
+// firstRepoPlan is the repository root's plan as the run FIRST read it: the
+// retirement's own, which is the document the gate admitted and the digest the
+// record carries. A run that builds reads the root's plan a second time
+// (newManagedRetireRig scripts the two, in order), so the read a digest is of
+// is named rather than assumed.
+func firstRepoPlan(t *testing.T, r *retireRig) string {
+	t.Helper()
+	plans, ok := r.script["show@repo"].([]map[string]any)
+	if !ok || len(plans) == 0 {
+		t.Fatalf("the repository root's plan is scripted as %T, want the retirement's then the re-plan's", r.script["show@repo"])
+	}
+	return plans[0]["stdout"].(string)
 }
 
 // repoSteps are the REPOSITORY root's own terraform steps, in order, "state
@@ -191,7 +228,10 @@ func TestUpdateManagedRetiresItsOwnDerivedResources(t *testing.T) {
 	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
 	out, errOut, err := executeStdin(t, "", "update")
 	text := out + errOut
-	if err != nil && !strings.Contains(text, firstBuildHold) {
+	// The whole run, not only its retirement: an empty stdin types nothing, so
+	// a run that ends nonzero here is a step that asked for something (NP3's
+	// billable build is no longer one of them on a managed project).
+	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
 	}
 	// Nothing was asked. The retirement's own first confirmation opens with
@@ -237,7 +277,7 @@ func TestUpdateManagedRetiresItsOwnDerivedResources(t *testing.T) {
 	if rec.Command != "fugaro update" {
 		t.Errorf("the record names %q, want the command that ran", rec.Command)
 	}
-	sum := sha256.Sum256([]byte(r.script["show@repo"].(map[string]any)["stdout"].(string)))
+	sum := sha256.Sum256([]byte(firstRepoPlan(t, r)))
 	if want := hex.EncodeToString(sum[:]); rec.PlanDigest != want {
 		t.Errorf("the record's digest is %q, want the retirement's own plan %q", rec.PlanDigest, want)
 	}
