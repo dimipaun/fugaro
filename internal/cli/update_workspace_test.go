@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -180,7 +179,13 @@ func newWSUpdateRig(t *testing.T, h *wsUpdateHome) *wsUpdateRig {
 	cmd.SetOut(out)
 	cmd.SetErr(&syncBuf{})
 	cmd.SetIn(strings.NewReader(""))
-	run := &initRun{o: &initOptions{door: updateDoor.name}, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
+	// The run's own streams are the door's (newInitRun): the stage writes its
+	// diff through initRun.w and puts its confirmation through initRun.asking,
+	// so a test that gives this run a reporter sees what a person would — the
+	// frame is kept off the block and off the name typed under it, and it is
+	// this shape, not a run holding the buffer directly, that proves it
+	// (newMigrationRig's own note).
+	run := newInitRun(cmd, &initOptions{door: updateDoor.name})
 	run.setProject(lc)
 	return &wsUpdateRig{h: h, s: newWorkspaceStage(&initEngine{r: run, lc: lc, path: os.Getenv("FUGARO_CONFIG")}), cmd: cmd, out: out}
 }

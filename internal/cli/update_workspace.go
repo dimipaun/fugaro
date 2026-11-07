@@ -716,8 +716,17 @@ func (s *workspaceStage) Apply(ctx context.Context, env initflow.Env) (initflow.
 			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
 		}
 	}
+	// The diff, the confirmation and every line of the write go through the
+	// run's own writer, and the question this stage asks is one of the shared
+	// ones (confirmRemoval, confirmTypedStrict), which hold the command rather
+	// than the run: the whole call is put to the person with the line in flight
+	// down (initRun.asking), so neither the diff nor the CONFIRM block nor the
+	// project's name typed under it is drawn over (G1) — the policy stage's own
+	// reading of the same rule, for this command's second published document.
 	cmd := s.e.r.cmd
-	if err := p.confirm(cmd, env.Yes, cmd.OutOrStdout(), admitted); err != nil {
+	if err := s.e.r.asking(func() error {
+		return p.confirm(cmd, env.Yes, s.e.r.w, admitted)
+	}); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := p.write(ctx); err != nil {
