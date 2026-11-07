@@ -8,6 +8,7 @@ package cli
 // on the way to a credential is a step; what a person has to answer is not.
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strings"
@@ -254,6 +255,44 @@ func TestCredsSetWritesALog(t *testing.T) {
 		t.Fatal(err)
 	}
 	familyLog(t, "creds-set")
+}
+
+// TestCredsSetFailureIsACrossAndALog: a write that may have landed is not
+// abandoned. The run reached a result for its step — a version of the
+// credential exists — so the account carries the cross, the error the command
+// returns and the path of the log the rest of it is in (G3, G8). The lost
+// update is the one that reads worst either way: the command set no step and
+// printed no closing line, so a person whose write lost the race was told
+// nothing until the error came back with no account of the run at all.
+func TestCredsSetFailureIsACrossAndALog(t *testing.T) {
+	familyLogs(t)
+	f := credsFixtureFor(t)
+	f.seed(t, nil)
+	restore := credsWriteBack
+	t.Cleanup(func() { credsWriteBack = restore })
+	credsWriteBack = func(ctx context.Context, s *bundleStore) (bundleDoc, error) {
+		f.AddVersion(f.id, []byte(config.AnthropicSecret+": "+credsValue(t, "other")+"\n"))
+		return s.access(ctx, "latest")
+	}
+
+	out, _, err := executeStdin(t, credsValue(t, "ours")+"\n", "creds", "set", config.ClaudeOAuthToken)
+	if err == nil {
+		t.Fatalf("a lost concurrent update was not refused:\n%s", out)
+	}
+	step := stepLineOf(reportLines(out), "Writing")
+	if !strings.HasPrefix(step, markFailed+" Writing ") {
+		t.Errorf("the write that landed and lost the race is not a cross:\n%s", out)
+	}
+	if !strings.Contains(step, "not the document this command wrote") {
+		t.Errorf("the step does not carry the error the command returns: %q", step)
+	}
+	log, _ := onlyLog(t, "creds-set")
+	if !strings.Contains(out, "full output: "+log) {
+		t.Errorf("the failure does not name the log the rest of it is in:\n%s", out)
+	}
+	if last := reportLines(out); !strings.HasPrefix(last[len(last)-1], "Failed in ") {
+		t.Errorf("the run's account does not close on a failed outcome:\n%s", out)
+	}
 }
 
 // noisyTerraform gives the rig's Terraform something to say: the progress
