@@ -399,6 +399,55 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 	}
 }
 
+// TestDocsProjectClaudeAccountsOneCommand is A5's own red step: the page's
+// happy path for one new account was two hand edits and five commands — the
+// owner's seven steps ([accounts-add spec](../../docs/accounts-add/spec.md) §1,
+// whose table lists this page step by step) — and it is one command now.
+// `fugaro accounts add <name>` writes both declarations, runs Anthropic's own
+// login when asked, stores the token project-wide and converges the
+// installation on the account through the stages `fugaro update` runs, behind
+// one confirmation (spec §2, D860: the deploy half is the update door's own
+// stages invoked in-process, because a command that ends in "now run fugaro
+// update" is the second command the HARD RULE forbids).
+//
+// What this pins is the claim and not the sentence: the command the page names
+// is the one …CommandsExist resolves in the real tree, with the flags the page
+// gives it, and the two hand edits are the file the command leaves behind
+// rather than what the reader is told to type.
+//
+// Mutation (verified, run and restored): put the old opening back —
+// "Two edits, both in the operator's local config" — and this fails naming it,
+// as it does with the command line removed.
+func TestDocsProjectClaudeAccountsOneCommand(t *testing.T) {
+	doc := readDoc(t, projectClaudeAccountsDoc)
+	for _, want := range []string{
+		// The path, under the heading a reader looks for it at.
+		"## 2. Add an account: one command",
+		// The command, an example of it with the flag that runs the login, and
+		// its inverse — the three the page has to show for the path to be one
+		// command end to end.
+		"fugaro accounts add <name>",
+		"fugaro accounts add acme-team --claude",
+		"fugaro accounts rm <name>",
+		// What the one command does, in the page's own words: the two
+		// declarations, the project-wide store, the converge.
+		"`claude_accounts.<name>.allow_data_to`",
+		"`profiles.<p>.claude_accounts`",
+		"stored **project-wide**",
+		"the stages `fugaro update` runs",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer says %q: the happy path for one new account is one command (docs/accounts-add/spec.md §2), and this is where the page states it", projectClaudeAccountsDoc, want)
+		}
+	}
+	// The two hand edits are not the path any more. They are the file the
+	// command writes, and the page must not send a reader to write them first:
+	// that is the seven-step shape the design collapses.
+	if strings.Contains(doc, "Two edits, both in the operator's local config") {
+		t.Errorf("%s still presents the two hand edits as the work: fugaro accounts add does them, and the page's own §4 rules hold either way", projectClaudeAccountsDoc)
+	}
+}
+
 // TestDocsProjectClaudeAccountsCommandsExist keeps every command line and flag
 // the guide shows real, the way TestDocsProjectLayerCommandsExist does for
 // docs/project-layer.md: a command must resolve in the cobra tree and a flag
