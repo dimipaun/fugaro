@@ -11289,9 +11289,13 @@ launcher of an allow-listed repository hold the token's value (F7), which is why
    Credentials: `--gcloud-config <dir>` names the directory to read them from, and without the flag
    the script falls back to `$GOOGLE_APPLICATION_CREDENTIALS`, then `$CLOUDSDK_CONFIG`, then
    `~/.config/gcloud` — the CLI's own order (`internal/cli/adcpath.go`). The path is passed
-   through and **no credential is copied** into the scratch home; if the seeded command cannot read
-   the installation with what it was given, the step's row reads UNVERIFIED and names the flag to
-   pass, rather than reading as a pass.
+   through and **no credential is copied** into the scratch home. That seed is a write as well as a
+   read — it writes the scratch home's local config — and the CLI confirms that write: a terminal,
+   or `--yes`. The script passes `--yes`, because its scratch home has no terminal and a seed that
+   refuses would leave the second-machine row UNVERIFIED on every run; run it by hand and your own
+   terminal confirms it, or pass `--yes` there too (the config it writes is the scratch home's, never
+   yours). If the seeded command fails for any other reason, the row reads UNVERIFIED and names the
+   flag to pass, rather than reading as a pass.
 
 **How to read the block.** The script prints one block whose last line is the verdict, and the
 verdict is the exit status: `CHECK 180 RESULT: PASS (exit 0)` every criterion was measured and

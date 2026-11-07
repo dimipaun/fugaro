@@ -1203,11 +1203,21 @@ step_second_machine() {
   adc=$(second_machine_adc)
   local env=(HOME="$home" XDG_CONFIG_HOME="$home/.config" GIT_CONFIG_GLOBAL="$home/.gitconfig")
   [ -z "$adc" ] || env+=("$adc")
+  # The seed is a WRITE, not a read: it writes the scratch home's local config
+  # from the installation's outputs, and the CLI confirms that write
+  # (internal/cli/init.go: writeLocalConfig -> confirmOrdinary) — a terminal, or
+  # --yes. This step has no terminal (stdin is /dev/null), so without --yes the
+  # command refuses on EVERY run and the second-machine row could never be
+  # anything but UNVERIFIED: the whole all-PASS the check exists for, and U5's
+  # reading with it, would be unreachable. --yes is safe here because the write
+  # lands in the scratch home's own config, which this check created and removes;
+  # the owner's config is never the target. `--plan-only` below is the opposite:
+  # it creates nothing, so it takes no --yes.
   local rc=0
-  env "${env[@]}" fugaro update --gcp-project "$GCP_PROJECT" --region "$REGION" --name "$INSTALLATION" --config-only \
+  env "${env[@]}" fugaro update --gcp-project "$GCP_PROJECT" --region "$REGION" --name "$INSTALLATION" --config-only --yes \
     </dev/null >"$SCRATCH/second-seed.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
-    fact second-machine UNVERIFIED "the second machine was NOT seeded (fugaro update --gcp-project ... --config-only exited ${rc}): $(last_line "$SCRATCH/second-seed.log"). U5 is NOT measured by this run, and the block's last line says so: the reading needs a machine seeded from the shared config, and that command reads the installation's outputs with the owner's own Application Default Credentials, which this step hands to it by path (${adc:-none was found in this environment}). If yours are somewhere else, pass --gcloud-config <dir>, or set CLOUDSDK_CONFIG or GOOGLE_APPLICATION_CREDENTIALS — nothing was copied into the scratch home"
+    fact second-machine UNVERIFIED "the second machine was NOT seeded (fugaro update --gcp-project ... --config-only --yes exited ${rc}): $(last_line "$SCRATCH/second-seed.log"). U5 is NOT measured by this run, and the block's last line says so, so this settles nothing about the token either way. The seed is both a READ and a WRITE. The read takes the installation's outputs, and it needs the owner's own Application Default Credentials: this step hands them to it by path (${adc:-none was found in this environment}), and if yours are somewhere else, pass --gcloud-config <dir> or set CLOUDSDK_CONFIG or GOOGLE_APPLICATION_CREDENTIALS. The write is the scratch home's local config, which the CLI confirms and for which this step passes --yes, because it has no terminal to confirm with: a refusal that names the typed confirmation means this CLI will not take --yes for that write, and a refusal that names credentials or the state bucket is the read. Nothing was copied into the scratch home either way"
     return 0
   fi
   # The paths the seeded machine is asked about are the two checkouts this run
@@ -1341,7 +1351,7 @@ What the run will do, in this order:
   8. the probe repository, for U3;
   9. TestLiveBitbucket in ${SOURCE} with the token in that one command's environment;
  10. with --new-token-file: the new version of the same secret, its version list, and one more run;
- 11. a scratch home seeded with 'fugaro update --gcp-project ... --config-only', then
+ 11. a scratch home seeded with 'fugaro update --gcp-project ... --config-only --yes', then
      'fugaro update --repo --plan-only' there, expecting a per-repository token (U5, D467).
      Both commands are given the owner's own Application Default Credentials by path
      (--gcloud-config, else GOOGLE_APPLICATION_CREDENTIALS, else CLOUDSDK_CONFIG, else

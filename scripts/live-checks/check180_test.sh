@@ -136,6 +136,14 @@ update)
     ;;
   esac
   [ "$mode" = update-fails ] && { echo "update: the apply failed" >&2; exit 1; }
+  if [ "$mode" = update-leaks ]; then
+    # A command that says a credential in its own last line, which the check
+    # reads into the block with last_line. Short on purpose: the reading row cuts
+    # the line at 140 characters, and a longer one would be cut before its
+    # credential, leaving the test's assertion about it true for free.
+    echo "Authorization: Bearer FAKE-NOT-A-REAL-BEARER-4d17 refresh_token: FAKE-NOT-A-REAL-REFRESH-TOKEN-7c05" >&2
+    exit 1
+  fi
   if [ "$mode" = update-asks ]; then
     echo "Still missing for sandbox/one: run \`fugaro secrets set bitbucket-token --repo sandbox/one\`"
     exit 0
@@ -247,6 +255,33 @@ esac
 exit 0
 GIT_EOF
   chmod +x "$dir/git"
+
+  # The real curl, wrapped. The check reads curl's own last words into the block
+  # (`curl_note`), and the block is pasted into a PR — so the filter over them is
+  # a guard, and the real curl never prints a credential, which is why a test
+  # cannot reach that guard through curl alone. With FAKE180_CURL_MODE=leaks this
+  # wrapper makes curl say one credential-shaped line (to stderr, which the check
+  # redirects into its curl log); with the mode unset it only runs the real curl,
+  # so every other test in this suite is unaffected. The line stays under the 200
+  # characters curl_note keeps: a longer one would have its tail cut off, and the
+  # assertion that the tail's credential never reaches the block would then hold
+  # for free.
+  local real_curl
+  real_curl=$(command -v curl)
+  cat >"$dir/curl" <<CURL_EOF
+#!/usr/bin/env bash
+# A fake \`curl\`, for check180.sh's test only: the real one, plus a line the
+# test asked for. Never a real credential — the shapes are spelled as what they
+# are, and the suite asserts they do not survive.
+set -u
+"$real_curl" "\$@"
+rc=\$?
+if [ "\${FAKE180_CURL_MODE:-}" = leaks ]; then
+  printf '%s\n' 'curl: (22) The requested URL returned error: 401 with Authorization: Basic RkFLRS1OT1QtQS1SRUFMLUJFQVJFUg== and client_secret=FAKE-NOT-A-REAL-CLIENT-SECRET-4b21' >&2
+fi
+exit \$rc
+CURL_EOF
+  chmod +x "$dir/curl"
 
   cat >"$dir/go" <<'GO_EOF'
 #!/usr/bin/env bash
@@ -493,6 +528,30 @@ expect_store_argv() {
   [ "${lines:-0}" -eq "$want" ] || fail "$what: the run made $lines store call(s), want $want"
 }
 
+# expect_seed_argv DIR WHAT CHECKOUT — the second machine's TWO commands,
+# argument for argument, from the fake `fugaro`'s own log.
+#
+# The seed writes the scratch home's local config, and the CLI CONFIRMS that
+# write (internal/cli/init.go: writeLocalConfig -> confirmOrdinary): a terminal,
+# or --yes. This step's stdin is /dev/null and it has no terminal, so a seed
+# without --yes is refused on every run — the second-machine row could then never
+# be anything but UNVERIFIED, criteria_unmet would force exit 3, and the all-PASS
+# this check exists for (and U5's reading with it) would be unreachable. The fake
+# cannot model that refusal, because it is the CLI that makes it; the argv is the
+# only place the test can hold it, which is why it is pinned here. The second
+# command is the opposite case: `--plan-only` creates nothing, so it never takes
+# --yes, and the plan is about the allow-listed checkout rather than the current
+# directory.
+expect_seed_argv() { # dir what checkout
+  local dir=$1 what=$2 checkout=$3 seed plan
+  seed=$(grep '^update .*--config-only' "$dir/fugaro.log" 2>/dev/null || true)
+  [ "$seed" = "update --gcp-project sandbox-p --region us-east5 --name sandbox --config-only --yes" ] \
+    || fail "$what: the seed ran as '${seed:-nothing at all}', want exactly 'update --gcp-project sandbox-p --region us-east5 --name sandbox --config-only --yes': the seed WRITES the scratch home's local config, the CLI confirms that write, and this step has no terminal — without --yes the CLI refuses it (init.go's writeLocalConfig -> confirmOrdinary) and the second machine is never seeded"
+  plan=$(grep '^update --repo .*--plan-only' "$dir/fugaro.log" 2>/dev/null || true)
+  [ "$plan" = "update --repo $checkout --plan-only" ] \
+    || fail "$what: the plan ran as '${plan:-nothing at all}', want exactly 'update --repo $checkout --plan-only': --plan-only creates nothing so it never takes --yes, and the plan has to be about the allow-listed checkout rather than the directory the check was launched from"
+}
+
 # expect_runs_polled DIR WHAT LAUNCHES — how the check read each run's row.
 # `fugaro run` returns at launch (the fake's own answer says status
 # "launched"), so the listing has to be polled until that run reached a final
@@ -552,6 +611,9 @@ test_happy_path() {
   # the rotation's): every criterion was measured, so every step ran.
   expect_store_argv "$work/happy" "happy path: the store" 2
   expect_runs_polled "$work/happy" "happy path" 3
+  # The run only reaches an all-PASS if the second machine really was seeded: the
+  # seed's own argv is what says so, --yes included.
+  expect_seed_argv "$work/happy" "happy path: the second machine's commands" "$work/happy/checkout-a"
 
   assert_no_secret "$work/happy" "happy path"
 
@@ -794,6 +856,7 @@ test_second_machine() {
   # --merge), so the run is INCOMPLETE: what this case is about is the row.
   expect_status "$status" 3 "the second machine"
   expect_contains "$out" "FACT second-machine: PASS" "the second machine: the fact"
+  expect_seed_argv "$work/second-machine" "the second machine" "$work/second-machine/checkout-a"
   log=$(cat "$work/second-machine/fugaro.log")
   # `--gcloud-config` is the owner's own directory, named by path, and it is what
   # the seeded machine was run with.
@@ -903,6 +966,42 @@ test_xtrace_is_refused() {
   expect_contains "$out" "FACT xtrace: FAIL" "xtrace: the fact"
 }
 
+# A credential a command said in its OWN words is the one leak assert_no_secret
+# cannot catch: that assertion's sentinel is deliberately not credential-shaped,
+# so a redact_secrets that stopped filtering would leave it green. The two places
+# a command's words reach the block are last_line (a command's log) and curl_note
+# (curl's own stderr), and the block is a thing the check says to paste — so both
+# paths are driven here with fakes made to say a credential, and both have to
+# show <redacted> where a value was while the words AROUND it survive (a filter
+# that dropped the whole line would leave the owner a row saying nothing about
+# what failed).
+test_a_credential_a_command_said_never_reaches_the_block() {
+  # The run-log path: `fugaro update --repo` fails and its last line says a
+  # Bearer value and a refresh_token, which last_line reads into the update row.
+  RUN180_MODE=update-leaks
+  run180 leaks-update
+  expect_status "$status" 1 "a credential in a command's log"
+  expect_contains "$out" "<redacted>" "a credential in a command's log: what was filtered is marked as filtered"
+  expect_absent "$out" "FAKE-NOT-A-REAL-BEARER-4d17" "a credential in a command's log: a Bearer value never reaches the block"
+  expect_absent "$out" "FAKE-NOT-A-REAL-REFRESH-TOKEN-7c05" "a credential in a command's log: a refresh_token never reaches the block"
+  expect_contains "$out" "FAILED (exit 1)" "a credential in a command's log: the words that say what failed survive the filter"
+  assert_no_secret "$work/leaks-update" "a credential in a command's log"
+
+  # curl's own path: the token is refused, so the check stops with curl_note in
+  # the aborted row, and the wrapper makes curl say a Basic value and a
+  # client_secret. This is the only way to reach that guard: the real curl prints
+  # no credential, so no other test in this suite can make this path say one.
+  RUN180_API_MODE=wrong-token
+  RUN180_ENV=("FAKE180_CURL_MODE=leaks")
+  run180 leaks-curl
+  expect_status "$status" 2 "a credential in curl's own words"
+  expect_contains "$out" "<redacted>" "a credential in curl's own words: what was filtered is marked as filtered"
+  expect_absent "$out" "RkFLRS1OT1QtQS1SRUFMLUJFQVJFUg==" "a credential in curl's own words: a Basic value never reaches the block"
+  expect_absent "$out" "FAKE-NOT-A-REAL-CLIENT-SECRET-4b21" "a credential in curl's own words: a client_secret never reaches the block"
+  expect_contains "$out" "curl: (22) The requested URL returned error: 401" "a credential in curl's own words: the words that say what failed survive the filter"
+  assert_no_secret "$work/leaks-curl" "a credential in curl's own words"
+}
+
 test_the_secret_assertions_catch_an_echoing_script() {
   local dir=$work/detector caught
   mkdir -p "$dir"
@@ -966,6 +1065,7 @@ t test_live_test
 t test_hostile_endpoint_prints_nothing_it_was_given
 t test_installation_mismatch_and_doctor_failure
 t test_xtrace_is_refused
+t test_a_credential_a_command_said_never_reaches_the_block
 t test_the_secret_assertions_catch_an_echoing_script
 
 if [ "$failures" -ne 0 ]; then
