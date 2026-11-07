@@ -5379,10 +5379,11 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     pencil.click()
     await flush()
     expect(sent, 'a pencil press sent an edit').toEqual([])
-    // D1116: the press leaves the keyboard on the pencil rather than dropping it
-    // to `<body>`, so the editor it drew is reached from the control that opened
-    // it -- and a pencil under an open confirmation window is the control the
-    // keyboard comes back to when that window is answered or closed.
+    // D1116: the press puts the focus on the pencil as the editor is drawn, so
+    // it does not drop the keyboard to `<body>`. That is the half of the rule
+    // the entry owns -- the dry run, the window and the write are the editor's
+    // own flow from here, and where the keyboard rests once that window closes
+    // is that flow's to decide, not the press's.
     expect(document.activeElement, 'the press dropped the keyboard').toBe(pencil)
 
     const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
