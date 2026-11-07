@@ -1514,6 +1514,40 @@ func TestLoopFailureShowsContextAndFix(t *testing.T) {
 	}
 }
 
+func TestLoopFailureContextIsRedacted(t *testing.T) {
+	// The failure block prints the error's lines under the message (G8), so
+	// they go through the same redaction every other printed line does: a
+	// value the process holds is not on the screen because the stage put it
+	// in a line of context, and --json never carried it.
+	const secret = "s3cr3t-in-context"
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation)
+	stages[1].(*fake).applyErr = errors.New("apply failed\nDetails: token=" + secret + " rejected\nretry later")
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Redact = []string{secret}
+	opts.Report = reporterTo(&out, report.Options{})
+	res, err := Run(context.Background(), stages, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if strings.Contains(got, secret) {
+		t.Errorf("a held value reached the screen through the failure context:\n%s", got)
+	}
+	if !strings.Contains(got, "Details: token=[redacted] rejected") || !strings.Contains(got, "retry later") {
+		t.Errorf("the failure block did not print the error's context, redacted:\n%s", got)
+	}
+	js, err := res.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(js), secret) {
+		t.Errorf("a held value reached --json:\n%s", js)
+	}
+}
+
 func TestLoopAStageThatLeftSomethingIsNotATick(t *testing.T) {
 	// A stage that applied what this session may do and left the rest for the
 	// user (Outcome.Left) is not a tick: the result carries the left-for-you
