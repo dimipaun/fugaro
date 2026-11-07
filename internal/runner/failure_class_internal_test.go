@@ -302,6 +302,103 @@ func TestRecordEndSitesKeepTheClassTheyChose(t *testing.T) {
 	}
 }
 
+// TestRecordEndHaltAndCancelClasses: the two endings whose class the site does
+// not choose — a halt reads its family from the halt's own reason, and a
+// cancellation is `cancelled` and no other.
+//
+// A halt's family is the reason's: the seven endings that end a run halted all
+// hand haltClass the reason the halt carries, and a site that passed a family
+// constant instead would file every halt under one class while the record's own
+// halt said another. A cancellation is its own family: the seven endings that
+// end a run cancelled pass `cancelled`, and `infra_error` — the class beside it
+// in the same record — would say the machinery stopped the run rather than a
+// person, which is what endCancelled's own comment exists to tell apart. Both
+// classes are durable — nothing rewrites one, and FC5's report and FC7's digest
+// count runs by them — and neither guard above holds them: the class is not
+// empty, so the classless guard lets it through, and
+// TestRecordEndSitesKeepTheClassTheyChose names two other endings.
+//
+// The rule is a shape over the site, not a row per site, so a halt or a cancel
+// added later is held by it too. Every other class is left alone on purpose:
+// which family a failed or an infra_error ending is in belongs to the task that
+// reads the cause — FC3's refusals and FC4's reading of the agent's own message
+// — so those pass failure.Unclassified here, and a pin over them would decide
+// those tasks in advance.
+func TestRecordEndHaltAndCancelClasses(t *testing.T) {
+	// The reader first, on a file that is not in the tree: the two shapes the
+	// rule is about, the two ways a site chooses a class of its own for them,
+	// and the endings the rule must not touch.
+	t.Run("the reader flags the halts and cancels that choose their own class", func(t *testing.T) {
+		const src = `package runner
+
+func f(rec *runstore.Record, h *runstore.Halt) {
+	r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(h.Reason), "a reason")
+	r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, "a reason")
+	r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, failure.HaltedBudget, "a reason")
+	r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.InfraError, "a reason")
+	r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(runstore.HaltRunCap), "a reason")
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, "a reason")
+	r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.BranchMoved, "a reason")
+	r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeNone, "", "a reason")
+}
+`
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "shape.go", src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls := endingCallsIn(file, "shape.go", fset)
+		if len(calls) != 8 {
+			t.Fatalf("the walk read %d of the 8 endings of a file that ends a run eight ways: a walk that misses calls says nothing about the ones that choose a class of their own", len(calls))
+		}
+		var flagged []int
+		for _, call := range calls {
+			if choosesItsOwnClass(call) {
+				flagged = append(flagged, call.line)
+			}
+		}
+		// The three: a halt filed under one family, a cancel filed as an infra
+		// error, and a haltClass handed a reason the halt does not carry. The
+		// two above them are the shapes the rule lets through, and the three
+		// below are endings of other statuses, whose class is not this rule's.
+		if want := []int{6, 7, 8}; !slices.Equal(flagged, want) {
+			t.Errorf("the reader flagged line(s) %v of a file whose halt and cancel endings choose a class at line(s) %v: a rule over the wrong argument, or over every ending, is not the rule this test states", flagged, want)
+		}
+	})
+
+	halted, cancelled := 0, 0
+	for _, call := range endingCalls(t) {
+		switch call.status {
+		case "runstore.StatusHalted":
+			halted++
+		case "runstore.StatusCancelled":
+			cancelled++
+		}
+		if choosesItsOwnClass(call) {
+			t.Errorf("%s:%d (%s) ends the run %s with the class %s: a halt's family is read from the halt's own reason (haltClass) and a cancellation is failure.Cancelled and no other — the class is durable, so a site that chooses one of its own files the run under a family its own record contradicts", call.file, call.line, call.fn, call.status, call.class)
+		}
+	}
+	// The floor is what the tree has today (7 halts, 7 cancels): a walk that
+	// reads a handful of either would hold nothing about the ones it missed.
+	if halted < 7 || cancelled < 7 {
+		t.Errorf("the tree ends a run halted 7 times and cancelled 7, and this walk read %d and %d: a walk that misses endings says nothing about the classes they choose", halted, cancelled)
+	}
+}
+
+// choosesItsOwnClass reports whether a site picked the class for an ending
+// whose class is not the site's to pick: a halt's family comes from the halt's
+// own reason, and a cancellation is `cancelled` and nothing else. Every other
+// status passes, so the rule leaves the classes FC3 and FC4 decide alone.
+func choosesItsOwnClass(call endingCall) bool {
+	switch call.status {
+	case "runstore.StatusHalted":
+		return !strings.HasPrefix(call.class, "haltClass(") || !strings.HasSuffix(call.class, ".Reason)")
+	case "runstore.StatusCancelled":
+		return call.class != "failure.Cancelled"
+	}
+	return false
+}
+
 // endingCall is one call to a writer, read off the parsed file: the function
 // it sits in, and the status and class arguments it is handed as the source
 // writes them. It is the fact a site ends a run with, and no assignment is

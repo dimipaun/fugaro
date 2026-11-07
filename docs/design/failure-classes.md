@@ -162,7 +162,7 @@ knows what to do without reading a sentence:
 | `halted_budget` | a dollar or token cap stopped the run: `run_cap`, `repo_daily_cap`, `global_daily_cap`, `token_cap`, `no_cap` (`runstore.go:49`–`53`) | budget | yes, once the cap is raised | yes |
 | `halted_governance` | a governance tripwire stopped the run: `stage_budget`, `review_ratio`, `fanout`, `review_scope`, `expected_exceeded` (`runstore.go:81`–`95`, `GovernanceHaltReasons`, `:103`). The checkpoint says what it would have done next. | budget | no, until the checkpoint is read | yes |
 | `halted_credential` | no credential became usable, or the budget database refused: `no_credential`, `creds_rules_denied`, `budget_unavailable`, `budget_token_expired` (`runstore.go:54`–`71`) | infra | yes, once the account is usable | yes |
-| `halted_kill_switch` | the project's or the repository's kill switch was on (`HaltKillSwitch`, `runstore.go:47`) | infra | yes, once the switch is off | yes |
+| `halted_kill_switch` | the project's or the repository's kill switch was on (`HaltKillSwitch`, `runstore.go:48`) | infra | yes, once the switch is off | yes |
 | `cancelled` | a person cancelled the run (`markCancelled`, `halt.go:101`, and the reason `cancelled`) | other | yes | no |
 | `provider_auth_refused` | the model route or the credential refused the call: `403` from the provider, or a failed authentication (§4.3) | infra | no | yes |
 | `transport_failed` | the call's stream or connection died before completion: `API Error: stream closed before completion` (§4.3) | infra | yes | no |
@@ -212,7 +212,7 @@ passes the class beside the reason — and no reader anywhere derives it, caches
 Today no such function exists: 36 statements in 24 functions write the fields, each in a statement of
 its own (§1). The change is mechanical and it *removes* writers rather than adding one: every one of
 those statements becomes one `recordEnd(…)` call, and the deferred function in `Run`
-(`internal/runner/runner.go:586`), the two bootstrap terminals beside it (`:650`, `:656`),
+(`internal/runner/runner.go:586`), the two bootstrap terminals beside it (`:652`, `:657`),
 `finalize`'s switch (`internal/runner/runner.go:4371`) and the twelve `end*` helpers with the three
 `fail*Infra` and two `refuse*` writers all go through it. Its comment states the rule once: *the last
 call wins, and the four fields are written together, so a class can never describe a status the
@@ -646,10 +646,13 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
   that writes it — the shape `finalize`'s failed case and `endHalted` are held in),
   `TestRecordEndSitesKeepTheClassTheyChose` (the endings whose class their status does not name,
   `endRefused`'s `branch_moved` among them: a mutation there to `infra_error` or `unclassified`
-  leaves a class in place, so only the site's own name says which one is right) and
+  leaves a class in place, so only the site's own name says which one is right),
+  `TestRecordEndHaltAndCancelClasses` (the two endings whose class the site does not choose: a halt
+  reads its family from the halt's own reason and a cancellation is `cancelled` and no other, held as
+  a shape over every halt and cancel site, so a site that passes a family of its own reddens) and
   `TestHaltedRunCarriesItsHaltsClass` (a failure then a halt ends `halted` with the halt's own class,
   walked over the whole closed `HaltReason` set rather than sampled).
-- **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'RecordEnd|Unclassified|HaltedRun' -count=1`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'RecordEnd|NoClassIsWritten|HaltedRun' -count=1`.
 - **Depends on:** FC1.
 - **Red step:** `TestRecordEndIsTheOnlyWriterOfATerminalStatus` fails the moment the field is added
   beside the 36 statements — which is the task.
