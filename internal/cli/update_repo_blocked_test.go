@@ -62,8 +62,8 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
 	}
 
-	// The checkout's file is still the user's to fix, and the stage that says so
-	// is not a lie about the stages that do not read it.
+	// The checkout's file is still the user's to fix, and the run leaves them
+	// the command that says how.
 	if got := res.state(initflow.Repository); got != "needs-you" {
 		t.Errorf("the repository stage is %q, want needs-you: the invalid file is the user's to fix\n%s", got, out)
 	}
