@@ -396,7 +396,7 @@ func TestFanOutStopsWhenANewerPublisherWonTheCopyRace(t *testing.T) {
 		fake.Put("fugaro-runs-proj-1234", config.LayerCopyKey(appSlug), newer)
 	}
 	var w bytes.Buffer
-	failed := fanOutLayer(ctx, &w, env, l, gen)
+	failed := fanOutLayer(ctx, nil, &w, env, l, gen)
 	if failed != 2 {
 		t.Fatalf("failed = %d, want 2 (acme/app's race stops the rest too): %s", failed, w.String())
 	}
@@ -554,7 +554,7 @@ func TestFanOutCountsAFailedCopyAndRerunIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	if failed := fanOutLayer(ctx, &w, env, l, gen); failed != 1 {
+	if failed := fanOutLayer(ctx, nil, &w, env, l, gen); failed != 1 {
 		t.Fatalf("failed = %d, want 1\n%s", failed, w.String())
 	}
 	if !strings.Contains(w.String(), "acme/app: copied to "+config.LayerCopyKey(appSlug)) {
@@ -565,7 +565,7 @@ func TestFanOutCountsAFailedCopyAndRerunIsIdempotent(t *testing.T) {
 	}
 	repos["acme/other"] = localcfg.Repo{Provider: "github", Workflows: []string{"svc"}}
 	w.Reset()
-	if failed := fanOutLayer(ctx, &w, env, l, gen); failed != 0 {
+	if failed := fanOutLayer(ctx, nil, &w, env, l, gen); failed != 0 {
 		t.Fatalf("failed = %d, want 0 on rerun\n%s", failed, w.String())
 	}
 	otherSlug := mustSlug("github", "acme/other")
@@ -598,7 +598,7 @@ func TestFanOutNeverGuessesAProviderFromTheLayerDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	failed := fanOutLayer(ctx, &w, env, l, gen)
+	failed := fanOutLayer(ctx, nil, &w, env, l, gen)
 	if failed != 1 {
 		t.Fatalf("failed = %d, want 1: %s", failed, w.String())
 	}
@@ -650,7 +650,7 @@ func TestFanOutForbiddenMessageDoesNotClaimNothingWasPublished(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	if failed := fanOutLayer(ctx, &w, env, l, gen); failed != 1 {
+	if failed := fanOutLayer(ctx, nil, &w, env, l, gen); failed != 1 {
 		t.Fatalf("failed = %d: %s", failed, w.String())
 	}
 	if strings.Contains(w.String(), "nothing was published") {
@@ -687,7 +687,7 @@ func TestFanOutStopsWhenAnotherPublisherReplacedTheLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	failed := fanOutLayer(ctx, &w, env, l, genA) // A's own, now-stale generation
+	failed := fanOutLayer(ctx, nil, &w, env, l, genA) // A's own, now-stale generation
 	if failed == 0 {
 		t.Fatalf("A's late fan-out did not stop: %s", w.String())
 	}
@@ -718,7 +718,7 @@ func TestFanOutStopsWithoutClaimingARaceOnAReadError(t *testing.T) {
 	// right now (here: oversized), not replaced by another publisher.
 	fake.Put("fugaro-runs-proj-1234", config.LayerKey, bytes.Repeat([]byte("x"), config.LayerMaxBytes+1))
 	var w bytes.Buffer
-	failed := fanOutLayer(ctx, &w, env, l, gen)
+	failed := fanOutLayer(ctx, nil, &w, env, l, gen)
 	if failed != 1 {
 		t.Fatalf("failed = %d, want 1: %s", failed, w.String())
 	}
