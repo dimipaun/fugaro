@@ -82,9 +82,11 @@ type CoordinatorSource struct {
 // nodes and not one. A record with no pull request is the in-flight run
 // itself, keyed by the run's id, which is the work "somebody is on this" that
 // has produced no pull request yet. Its state is the host's own word when the
-// host answered for the pull request, and otherwise the newest run's status,
-// which is the fallback the view itself uses to decide whether a record is in
-// flight (coordinator.inFlight).
+// host answered for the pull request, and otherwise the newest run's status:
+// runs come newest first (`coordinator.Record.Runs`), and the newest is the
+// one the view itself names when a record has no pull request (`Record.Label`).
+// A record with neither a pull request nor a run is the one shape the join
+// never produces, and it draws nothing.
 //
 // It refuses an identity that sanitising would rewrite — a repository or a run
 // id carrying a control character, a bidi override or a run of spaces — rather
