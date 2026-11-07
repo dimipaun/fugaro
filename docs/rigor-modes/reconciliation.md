@@ -747,8 +747,8 @@ the figure is the tree's either way. Amended 2026-11-07: `internal/cli/docs_role
 roles-and-scopes folder's pin (RS1: the decision block, the answered cells, the files
 and the tests the plan names), moved the table's row from 105 to 106. Amended
 2026-11-07: `internal/cli/docs_subscriptions_test.go`, the subscriptions folder's
-pin over the no-price-figure constraint (plan S0.1, D430 and T22), moved the
-table's row from 109 to 110.) They
+pin over its plan's no-price-figure constraint (S0.1), moved the table's row from
+109 to 110.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
