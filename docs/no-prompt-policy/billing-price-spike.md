@@ -32,7 +32,7 @@ grant is needed"*).
 | SKUs | `GET /v1/services/{serviceId}/skus` | `GET /v2beta/skus?filter=service="services/<id>"` |
 | Price | inside `Sku.pricingInfo` (`effectiveTime`, `summary`, `pricingExpression`, `aggregationInfo`) | `GET /v1beta/skus/{skuId}/price`, and `…/prices` for all |
 | Region | `Sku.serviceRegions` | `geoTaxonomy` (`REGIONAL` + `regionalMetadata.region`) |
-| Audience | everyone | everyone |
+| Who reads it | any caller with an **identity** — an API key, or a token; no IAM permission exists for the public data | the same |
 
 The Preview page describes itself as *"a set of API resources that helps you get the prices and
 other information for Google Cloud services"* and says of the public half: *"To get information
@@ -45,7 +45,7 @@ returns `contractPrice`, and it is out of reach (§1.3).
 
 `PricingExpression` is the shape to be careful with, because the *unit* is data, not a constant:
 `usageUnit` (`"h"`, `"GiBy.mo"`, …), `usageUnitDescription`, `baseUnit`, `baseUnitConversionFactor`
-and `tieredRates[]` (descending tiers, `startUsageAmount` + `unitPrice`). A Cloud Build
+and `tieredRates[]` (sorted by ascending `startUsageAmount`, each a `unitPrice`). A Cloud Build
 machine-minute SKU is expected to come back with a per-minute or per-second `usageUnit`; **the code
 must read the unit and refuse anything it does not recognise**, the same way it refuses an unknown
 machine type (§4).
@@ -151,8 +151,9 @@ them without a credential. What is known:
 - Each billing account has *"2,500 free build-minutes per month"* (e2-standard-2, default pool).
   The estimator must **ignore** it: Fugaro cannot know how much of the month's free tier is left,
   so ignoring it keeps the number an upper bound.
-- Private-pool (worker pool) pricing is a separate table; Fugaro submits to the default pool
-  (`internal/backend/gcp/build.go:227` names only the service account and machine type), so the
+- Private-pool (worker pool) pricing is a separate table; Fugaro sets no `Options.Pool` — the request
+  carries a service account, a machine type, a logging mode and a timeout and nothing else
+  (`internal/backend/gcp/build.go:227-233`) — so it submits to the **default pool**, and the
   default-pool table is the right one.
 - The probe that settles it (either form of identity from §1.4):
 
@@ -174,7 +175,7 @@ that is not `fugaro-b-<repo>@<project>.iam.gserviceaccount.com`.
 
 | Path | Submit identity (the credential the API call carries) | Build runs as | Submitting today | What a billing read would add |
 | --- | --- | --- | --- | --- |
-| A person's CLI at a terminal | Their **ADC** — `authorized_user`, i.e. the person (`internal/cli/init_project.go:489` `credentialNote` names it; `GOOGLE_APPLICATION_CREDENTIALS` can override it with a service-account key). `gcloud auth application-default login` is the documented way to get it. | The repository's build account | `cloudbuild.builds.create` through the custom role `roles/fugaroBuildSubmitter` (`installation/iam.tf:35`, granted to `var.operators` at `:77` `operator_build_submitter`) | Nothing to grant. `cloudbilling.googleapis.com` **enabled** on the quota project (which `internal/backend/gcp/gcp.go:78-82` sets to the installation project), and `serviceusage.services.use` there — already held (`roles/serviceusage.serviceUsageConsumer`, `firebase/iam.tf:109`). |
+| A person's CLI at a terminal | Their **ADC** — `authorized_user`, i.e. the person (`internal/cli/init_project.go:489` `credentialNote` names it; `GOOGLE_APPLICATION_CREDENTIALS` can override it with a service-account key). `gcloud auth application-default login` is the documented way to get it. | The repository's build account | `cloudbuild.builds.create` through the custom role `roles/fugaroBuildSubmitter` (`deploy/terraform/gcp/modules/installation/iam.tf:35`, granted to `var.operators` at `:77` `operator_build_submitter`) | Nothing to grant. `cloudbilling.googleapis.com` **enabled** on the quota project (which `internal/backend/gcp/gcp.go:78-82` sets to the installation project), and `serviceusage.services.use` there — already held (`roles/serviceusage.serviceUsageConsumer`, `firebase/iam.tf:109`). |
 | An agent's session, on the person's credentials | **The same identity.** Nothing in the credential path reads `internal/agentenv`'s markers: an agent runs the same binary with the same ADC, so it submits as the person and reads prices as the person. | The repository's build account | the same `roles/fugaroBuildSubmitter` | The same, and no more. A price is public, read-only data: an agent that can build can already spend the money, and reading the rate it is charged at is not a privilege change (F20's trust probes are unchanged). |
 | The catalog check job (`fugaro-catalog-check`) | Its **own service account** (`installation/catalogcheck.tf:43`), on the job `fugaro image check --job --catalog` (`:99`, `:125`) | Each repository's build account, per repository | `projects/<p>/roles/fugaroBuildSubmitter`, granted by `installation/catalogcheck.tf:33-41` `catalog_check_build_submitter`, plus `roles/iam.serviceAccountUser` on each repo's build account (`modules/repo/catalogcheck.tf:24`) | The API enabled on the project, and — for the **key** route — the key delivered to the job. That is a new secret on the launch path and *a new `grantRules` row* (§3). For the **token** route, nothing: the job's own SA token is the identity. |
 
@@ -289,7 +290,8 @@ upper bound is **$0.936** per build. `e2-standard-2` is $0.006/min → $0.36. Th
   type/region **refuses**. Then the worst a hostile config does is buy a more expensive machine
   *and reserve the matching, larger amount* — which is what a cap is for.
 - It **must never** be able to supply the rate. No config key, local or published, may carry a price
-  (spec §2 of the reconnaissance: *"local config can supply neither"*). A rate read from config is a
+  (implementation plan T8: *"a machine type absent from the build config [refuses]; local config can
+  supply neither"*). A rate read from config is a
   rate an agent sets, and the cap stops meaning anything.
 - An unknown machine type at submit time is rejected by Cloud Build itself — the blast radius is a
   failed build, not a wrong estimate *provided the estimator refuses first*. (That Cloud Build
@@ -377,7 +379,7 @@ The repository, by path and symbol:
 
 | Path | Used for |
 | --- | --- |
-| `docs/no-prompt-policy/reconciliation.md` §3 D1543/D1548, §4 D1550, §5 T5, F5, F18, F19, F20, §6 | The decisions and the UNVERIFIED this spike answers |
+| `docs/no-prompt-policy/reconciliation.md` §3 D1543/D1548/D1550, §5 T5, F5, F18, F19, F20, §6 | The decisions and the UNVERIFIED this spike answers |
 | `docs/no-prompt-policy/implementation-plan.md` T8 | The file list, and *"the grant in `iam.tf` is UNVERIFIED until then"* |
 | `internal/backend/gcp/build.go:227,231,233,363,398-410,483,496` | The build request: service account, machine type, the fixed 3600 s timeout, the submit path |
 | `internal/backend/gcp/gcp.go:78-82` | ADC as the identity, quota project = the installation project |
