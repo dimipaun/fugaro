@@ -1308,6 +1308,11 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // installation's own, and this payload is the whole of what a renderer may
   // say to it (plan GV2.1, constraint C1).
   'plan.status': { all: false },
+  // No `source`: the scope is optional and its absence is the read a screen
+  // opens on (`all`), which is the whole of what a renderer may say to this
+  // read -- there is no directory, no repository and no id it can name
+  // (the graph plan's CG9a).
+  'graph.read': {},
   // No `repo`, no `since`, no `path`: T1.2's read is the installation's whole
   // repository set, from the view the coordinator already stored, so this
   // payload is empty on purpose (Bitbucket credentials T1.2).
@@ -2449,7 +2454,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-one, and no others".
+ * channel. The claim is "these thirty-two, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2531,7 +2536,18 @@ describe('the spend read’s arguments', () => {
  * process decides (the dry run's `--dry-run --json`, a write's `--yes`, which
  * both write phases carry) rather than on a flag the row fixes -- which is why
  * its `flags` is empty and why its three arguments are the whole of what a
- * renderer may say.
+ * renderer may say. **The graph plan's CG9a added the thirty-second**
+ * (`graph.read` / `graphRead`: the dependency graph as one versioned document,
+ * `fugaro graph --json`, with no checkout needed and one optional scope) and
+ * left the other thirty-one exactly where they were. It is next to
+ * `plan.status`, the tab's other read of the same picture -- the plan scope is
+ * one source of the graph and the checkout's `docs/` is what it reads -- and it
+ * is the first operation here whose one argument is held to a **closed grammar
+ * and to what a previous answer of the same read listed**: `all`, `coordinator`
+ * and an id of the CLI's own shape are the whole of what `src/main/ipc.ts`
+ * admits, and `src/source/cli.ts` refuses an id the last document did not name
+ * (finding F21). Its `--source` is the first `SPAWN_FLAGS` word that belongs to
+ * one command alone.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2541,6 +2557,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['runs.stats', 'statsRuns'],
   ['runs.summary', 'summaryRuns'],
   ['plan.status', 'planStatus'],
+  ['graph.read', 'graphRead'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -2595,7 +2612,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty-one, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty-two, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2616,7 +2633,7 @@ describe('the frozen list of operations the preload exposes', () => {
     // next task that adds a read cannot do it quietly.
     const thirtySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(thirtySecond).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtySecond).toContain('32 rows, and this console ships 31')
+    expect(thirtySecond).toContain('33 rows, and this console ships 32')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2630,7 +2647,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('30 rows, and this console ships 31')
+    expect(withoutTheNewRow).toContain('31 rows, and this console ships 32')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2645,8 +2662,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty-one methods and nothing else', () => {
-    // The bridge the window is handed: the thirty-one methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty-two methods and nothing else', () => {
+    // The bridge the window is handed: the thirty-two methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3838,8 +3855,12 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // is not in `REDUCED_VIEW_OPERATIONS`, so a reduced console answers it and
     // spawns its dry run. No control reaches it there -- the pencil lives in the
     // `caps` tab (`src/renderer/entry.ts`'s `VIEWS`), which a reduced mode does
-    // not draw -- and the operation's own answer carries no figure.
-    expect(THE_OPEN_OPERATIONS.length).toBe(25)
+    // not draw -- and the operation's own answer carries no figure. **`graph.read`
+    // (CG9a) is the twenty-sixth**, and it is here for that same reason: a graph
+    // is repository state -- nodes, edges and each scope's own state word -- so
+    // there is no figure for the mode to withhold, and its document carries no
+    // money field of any kind.
+    expect(THE_OPEN_OPERATIONS.length).toBe(26)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
