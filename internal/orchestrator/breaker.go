@@ -1,6 +1,9 @@
 package orchestrator
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // BreakerThreshold is how many cycles in a row may end with nothing done
 // before the daemon stops starting work and asks a person. One failed cycle is
@@ -9,9 +12,13 @@ import "fmt"
 // (D1228).
 const BreakerThreshold = 3
 
-// BreakerDecisionID is the id of the question a tripped breaker raises. One id
-// on purpose: a second trip is the same question, and a question waiting on a
-// person is not one to raise twice.
+// BreakerDecisionID is the prefix of the id of the question a tripped breaker
+// raises, and what a caller recognises the question by. The id carries the
+// trip's own stamp as well: an answered decision keeps its id in the list and a
+// second write of the same id is refused, so one fixed id could ask this
+// question once in the life of a node and never again — the next streak would
+// pause the daemon with nothing for a person to look at. Two trips inside one
+// second are the only collision, and a streak takes three cycles.
 const BreakerDecisionID = "breaker-tripped"
 
 // CycleOutcome is how one cycle ended, as the breaker reads it. It is the
@@ -66,10 +73,11 @@ func (b *Breaker) Tripped() bool { return b.consecutive >= BreakerThreshold }
 func (b *Breaker) Reset() { b.consecutive = 0 }
 
 // Decision is the question a tripped breaker raises, for the tick to commit
-// with the rest of its patch.
-func (b *Breaker) Decision() Op {
+// with the rest of its patch. now is the tick's server time, and it is what
+// makes this trip's question its own rather than the first one's.
+func (b *Breaker) Decision(now time.Time) Op {
 	return Op{Op: OpDecisionAdd, Decision: &DecisionOp{
-		ID: BreakerDecisionID,
+		ID: BreakerDecisionID + "-" + now.UTC().Format("20060102T150405Z"),
 		Question: fmt.Sprintf("The orchestrator has ended %d cycles in a row without starting or finishing anything. What should it do?",
 			BreakerThreshold),
 		WaitingOn: OnPerson,

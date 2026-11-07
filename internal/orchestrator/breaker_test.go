@@ -1,7 +1,9 @@
 package orchestrator_test
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 )
@@ -31,15 +33,28 @@ func TestBreakerRaisesADecision(t *testing.T) {
 	}
 
 	// The question waits on a person: the daemon does not answer it itself.
-	op := b.Decision()
+	now := o6Now()
+	op := b.Decision(now)
 	if op.Op != orchestrator.OpDecisionAdd || op.Decision == nil {
 		t.Fatalf("the breaker raised %+v", op)
 	}
-	if op.Decision.ID != orchestrator.BreakerDecisionID || op.Decision.WaitingOn != orchestrator.OnPerson {
+	if !strings.HasPrefix(op.Decision.ID, orchestrator.BreakerDecisionID) || op.Decision.WaitingOn != orchestrator.OnPerson {
 		t.Errorf("the breaker's decision is %+v", op.Decision)
 	}
 	if op.Decision.Question == "" {
 		t.Error("the breaker's decision carries no question")
+	}
+
+	// A question a person has answered is one the daemon can ask again: an
+	// answered decision keeps its id in the list and a second write of that id
+	// is refused, so the id belongs to the trip and not to the breaker.
+	var answered orchestrator.Breaker
+	for range orchestrator.BreakerThreshold {
+		answered.Observe(orchestrator.CycleEmpty)
+	}
+	again := answered.Decision(now.Add(time.Hour))
+	if again.Decision == nil || again.Decision.ID == op.Decision.ID {
+		t.Errorf("the second trip raised %+v, and a streak after an answer is a question of its own", again.Decision)
 	}
 
 	// A cycle that did something is a daemon that is working, and the streak
