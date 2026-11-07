@@ -21,7 +21,7 @@ in the folder whose spec this issue's feature belongs to — is an **unbuilt, un
 titled "A repository build context for catalog `dockerfile` entries"** that already designs exactly
 this issue's ask, in this repository's own form: its own gaps **G1–G4**, decisions **A1–A8**, open
 items **O1–O6** and build tasks **C1–C5**. It takes no `D` number and no `Check` number. It is the
-single most important finding in this file (**F1**, **D1408**), and it is the reason the owner's
+single most important finding in this file (**F29**, **D1408**), and it is the reason the owner's
 first answer is needed before any task below can start.
 
 ---

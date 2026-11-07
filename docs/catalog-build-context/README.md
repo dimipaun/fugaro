@@ -55,8 +55,10 @@ this folder's **F2**.
 **D1408** — fold into that amendment, supersede it, or stand beside it — is the gate on every task
 here, and it is the first item under **Open items**. What this folder adds that the amendment does not
 is a reconciliation written against the tree as it is on 2026-11-06, after `docs/repo-image-removal`
-ruled on D1208, and the finding that the amendment's own premise about where the credential is used
-does not match the code (**F1**).
+ruled on D1208, and the finding that the issue's own premise about where the credential is used does
+not match the code (**F1**). The amendment states that premise correctly and moves the fetch out of
+the Docker build on purpose (`docs/project-image-catalog/context-design.md` §A3, §C3); what this
+folder adds is the reading that the **issue** does not.
 
 ## What this folder is not
 
