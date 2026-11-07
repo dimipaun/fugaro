@@ -218,7 +218,8 @@ import {
 import { refusedState, renderUnavailable } from './screens/degraded'
 import { READING_STILL_MS, renderReading } from './screens/reading'
 import type { ReadingTab } from './screens/reading'
-import { NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
+import { noCheckoutActionKind, NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
+import type { NoCheckoutOptions } from './screens/nocheckout'
 import { renderCheckoutSelect } from './checkout'
 import type { CheckoutChoice } from './checkout'
 import {
@@ -3651,7 +3652,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // chose on its own: an operator who has picked a scope is asking for
         // that scope's answer (the card, with its own door back), and a second
         // fallback would be the console arguing with the person using it.
-        if (plan.sentence === NO_CHECKOUT_SENTENCE && !graph.chosen) {
+        //
+        // **And not for a card that records the checkout by itself** (H9 too,
+        // and the plan scope's own requirement): see `cardChoosesByItself`. The
+        // fallback replaces a card the operator had nothing to do about; it must
+        // not take the console's own choice of an installation's single checkout
+        // away, which is the write that makes this read succeed at all.
+        if (plan.sentence === NO_CHECKOUT_SENTENCE && !graph.chosen && !cardChoosesByItself()) {
           graph.fellBack = true
           await readScope(mine, null)
           return
@@ -3932,6 +3939,48 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     refuse('plan.status', sentence)
   }
 
+  /** openRow is the rail's open installation, which is the one the Graph reads
+   * for: the card's state is that row's. */
+  const openRow = (): RailRow | undefined => railNow.find((row) => row.open)
+
+  /**
+   * cardOptions is what the no-checkout card is drawn from, and it is built in
+   * one place because the fallback above asks the same question the drawing
+   * answers: an installation's open row, the list this console has read for it,
+   * and whether the card may choose its one checkout by itself.
+   */
+  const cardOptions = (): NoCheckoutOptions => {
+    const open = openRow()
+    return {
+      choices: open?.checkoutChoices ?? [],
+      listed: deps.railListed && open !== undefined,
+      // A project this card has already chosen for is not chosen for again: the
+      // write is the answer to the card, and a plan that still refuses after it
+      // draws the menu rather than a sentence about a read that is not happening.
+      auto: open !== undefined && !autoChosen.has(open.project),
+    }
+  }
+
+  /**
+   * cardChoosesByItself is whether that card would record the installation's one
+   * checkout on its own, and it is what keeps the H9 fallback from undoing the
+   * plan scope's own way out.
+   *
+   * **The fallback answers a card the operator could only be sent somewhere
+   * else from** -- the CLI listed no checkout, the list was never read, or there
+   * are several to choose between. **It does not answer the console's own
+   * choice**: an installation with exactly one usable checkout gets the card
+   * that records it and reads the plan from it, in the frame it always did, and
+   * the coordinator scope is reached by the operator's choice of scope like any
+   * other. Opening on the coordinator scope there would leave the installation's
+   * checkout unchosen and the plan scope unreadable until somebody chose it
+   * back: the state this card exists to end.
+   *
+   * The question is the card's own (`noCheckoutActionKind`, over the options the
+   * drawing is given), so the two cannot disagree about which state this is.
+   */
+  const cardChoosesByItself = (): boolean => noCheckoutActionKind(cardOptions()) === 'auto'
+
   /**
    * drawNoCheckout draws the Graph's no-checkout card and wires its action.
    *
@@ -3948,14 +3997,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * is not a claim it can make.
    */
   const drawNoCheckout = (sentence: string): void => {
-    const open = railNow.find((row) => row.open)
-    const choices = open?.checkoutChoices ?? []
-    const listed = deps.railListed && open !== undefined
-    // A project this card has already chosen for is not chosen for again: the
-    // write is the answer to the card, and a plan that still refuses after it
-    // draws the menu rather than a sentence about a read that is not happening.
-    const auto = open !== undefined && !autoChosen.has(open.project)
-    const drawn = renderNoCheckout(factory, sentence, theme, { choices, listed, auto })
+    const open = openRow()
+    const drawn = renderNoCheckout(factory, sentence, theme, cardOptions())
     replace(drawn.root)
     // **The card's own door back to the coordinator scope** (CG10). The card is
     // drawn *instead of* the Graph, so the scope control is gone with it, and the

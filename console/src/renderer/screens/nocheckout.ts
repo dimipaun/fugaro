@@ -175,6 +175,20 @@ export interface NoCheckoutOptions {
   readonly auto: boolean
 }
 
+/** noCheckoutActionKind is which of the card's four actions these options call
+ * for, and it is **exported because the entry asks it too** (CG10): whether the
+ * card would record the installation's one checkout by itself is what keeps the
+ * H9 fallback off a card that has something to do, and the answer has to be the
+ * drawing's own. A second copy of this decision in the entry is how a fallback
+ * ends up answering a card that was about to choose a checkout, which is the one
+ * thing the plan scope's own requirement cannot lose. */
+export function noCheckoutActionKind(options: NoCheckoutOptions): NoCheckoutAction['kind'] {
+  if (!options.listed) return 'picker'
+  if (options.choices.length === 0) return 'empty'
+  if (options.auto && options.choices.length === 1) return 'auto'
+  return 'choose'
+}
+
 /** NoCheckoutAction is what the card drew for the operator to do, and it is the
  * whole of what the entry has to wire: a closed four, because there is no fifth
  * thing this state can be. */
@@ -311,13 +325,14 @@ export function renderNoCheckout(
   literal(cell(body, factory, 'h1', 'unavailable-headline'), NO_CHECKOUT_HEADLINE)
 
   let action: NoCheckoutAction
+  const kind = noCheckoutActionKind(options)
   const only = options.auto && options.choices.length === 1 ? options.choices[0] : undefined
-  if (!options.listed) {
+  if (kind === 'picker') {
     const button = cell(body, factory, 'button', NO_CHECKOUT_CHOICE_CLASS)
     button.setAttribute('type', 'button')
     literal(button, NO_CHECKOUT_CHOICE_LABEL)
     action = { kind: 'picker', button }
-  } else if (options.choices.length === 0) {
+  } else if (kind === 'empty') {
     // It wears the card's own sentence hook (`unavailable-sentence`, the class
     // the CLI's text behind the disclosure uses) rather than a class of its own:
     // it is a sentence in this card, and a hook the theme has no rule for would

@@ -121,7 +121,7 @@ import {
   NO_CHECKOUT_SCOPE_LABEL,
   NO_CHECKOUT_USE_LABEL,
 } from '../../src/renderer/screens/nocheckout'
-import { CHECKOUT_SELECT_CLASS } from '../../src/renderer/checkout'
+import { CHECKOUT_SELECT_CLASS, checkoutLabel } from '../../src/renderer/checkout'
 import { GRAPH_SCOPE_ALL, GRAPH_SCOPE_PLAN } from '../../src/renderer/screens/graph'
 import {
   BUSY_ATTRIBUTE,
@@ -7235,6 +7235,54 @@ describe('the Graph’s scope', () => {
     // the scope that answers is the scope that is shown.
     expect(classed(panelOf(document), 'console-unavailable')).toEqual([])
     expect(classed(panelOf(document), 'graph-node')).toEqual([])
+  })
+
+  /** ONE_CHECKOUT is the one checkout an installation with a single repository
+   * lists: the card's `auto` state, and the directory that state sends. */
+  const ONE_CHECKOUT = { repository: 'github/owner/acme', path: '/home/operator/src/acme', more: 0 }
+
+  it('still chooses an installation’s one checkout by itself, over the fallback', async () => {
+    // **H9 does not take the plan scope's own way out away.** The fallback
+    // answers a card the operator could only be sent somewhere else from; an
+    // installation the CLI listed exactly one checkout for is one the console
+    // records and then reads the plan from, so **a coordinator read that works
+    // does not replace that card** -- which is what this case has and the four
+    // card cases above do not: a console that fell back here would open on the
+    // coordinator scope with the checkout still unchosen and the plan still
+    // unreadable.
+    const write = holding()
+    let recorded = false
+    let scopes = 0
+    vi.stubGlobal('Worker', FakeWorker)
+    const { bridge, rail } = railBridge([listRow('acme', { open: true, checkoutChoices: [ONE_CHECKOUT] })], {
+      setInstallationCheckout: () => {
+        recorded = true
+        return write.reply()
+      },
+    })
+    bridge['planStatus'] = () => (recorded ? planStatusReply() : { ok: false, reason: NO_PLAN_CHECKOUT })
+    bridge['graphRead'] = () => {
+      scopes += 1
+      return graphReply()
+    }
+    const document = await openGraph(bridge)
+    expect(scopes, 'the fallback opened the coordinator scope over the card’s own choice').toBe(0)
+    const card = panelOf(document).children[0] as FakeNode
+    expect(card.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    expect(holdsText(card, `${NO_CHECKOUT_AUTO_SENTENCE} ${checkoutLabel(ONE_CHECKOUT)}`)).toBe(true)
+    expect(rail.at(-1), 'the card did not choose the one checkout it was offered').toEqual({
+      name: 'setInstallationCheckout',
+      args: { project: 'acme', checkout: ONE_CHECKOUT.path },
+    })
+    // And the write is still not the answer: the plan read after it is, and it
+    // draws the picture the card was standing in for.
+    write.release({ ok: true, data: null })
+    await flush()
+    expect(
+      classed(panelOf(document), 'graph-canvas').length,
+      'the chosen checkout did not give way to the plan',
+    ).toBeGreaterThan(0)
+    expect(scopes, 'the coordinator scope was read after the plan answered').toBe(0)
   })
 
   it('the plan scope with no checkout still shows its card, and the way back to the coordinator', async () => {

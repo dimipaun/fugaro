@@ -60,6 +60,7 @@ import {
   NO_CHECKOUT_SENTENCE_CLASS,
   NO_CHECKOUT_SUMMARY_CLASS,
   NO_CHECKOUT_USE_LABEL,
+  noCheckoutActionKind,
   renderNoCheckout,
 } from '../../src/renderer/screens/nocheckout'
 import { GRAPH_SCOPE_ALL_LABEL } from '../../src/renderer/screens/graph'
@@ -376,6 +377,34 @@ describe('the Graph’s no-checkout card', () => {
       ORBIT.path,
     ])
     expect(action.kind).toBe('choose')
+  })
+
+  it('names the action it will draw before it draws it, which is the entry’s own question', () => {
+    // **The card's four states are a function of its options** (CG10, H9): the
+    // entry asks `noCheckoutActionKind` whether the card would record the
+    // installation's one checkout by itself before it decides to answer the plan
+    // scope's refusal with the coordinator scope instead. A second copy of that
+    // decision in the entry is how the fallback ends up skipping the very card
+    // that was about to choose a checkout, so the two are held to one answer
+    // here: four option sets, four kinds, and the drawing's own action is the
+    // one the function named.
+    const states: readonly NoCheckoutOptions[] = [
+      { choices: [], listed: false, auto: true },
+      { choices: [], listed: true, auto: true },
+      { choices: [ORBIT], listed: true, auto: true },
+      { choices: [ORBIT], listed: true, auto: false },
+    ]
+    expect(states.map(noCheckoutActionKind), 'two states of the card share one kind').toEqual([
+      'picker',
+      'empty',
+      'auto',
+      'choose',
+    ])
+    for (const options of states) {
+      expect(theCard(PLAIN_SENTENCE, 'dark', options).action.kind, JSON.stringify(options)).toBe(
+        noCheckoutActionKind(options),
+      )
+    }
   })
 
   it('keeps its door back to the coordinator scope in every state of the card', () => {

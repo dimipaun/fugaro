@@ -1164,7 +1164,13 @@ frame its control was used in — the drawing already there stays, under the sen
 **The no-checkout card is the plan scope's state and no longer the Graph's**: an installation
 that records no checkout opens on the coordinator scope, and the card carries its own door
 back (`graph-scope-back`) for an operator who chose the plan scope, which is the one thing
-the card owes a reader whose console cannot read a plan at all.
+the card owes a reader whose console cannot read a plan at all. **One state keeps its card**:
+an installation whose *single* checkout the card would record by itself (`auto`) is the plan
+scope's own way to satisfy its requirement, so the console draws that card and reads the plan
+from the directory it chooses, exactly as it did before the scope existed — opening on the
+coordinator scope there would leave the checkout unchosen and the plan unreadable until
+somebody chose it back. Which state this is is `noCheckoutActionKind`'s answer and not a
+second question asked in the entry (`nocheckout.ts`).
 
 **The inspector is text, and it is the same facts the card draws.** A selected task opens a
 panel beside the canvas — the card's words again as chips, the stream it is in, its run, what
