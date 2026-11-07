@@ -155,7 +155,7 @@ a level: slice 1 spans levels 0–2, slice 2 is level 3, slice 3 is levels 4–7
 - **Files:** `internal/orchestrator/sensitivity/pattern.go` (new — `Pattern{Name, Match, Category}`,
   `Match(paths, list)`, `Union(lists ...[]Pattern)`, the three bounds and the load-time validation),
   `internal/orchestrator/sensitivity/pattern_test.go` (new), `internal/orchestrator/sensitivity/floor.go`
-  (new — the **35 rows** of reconciliation §6, each a name, one of the six labels and a doublestar glob,
+  (new — the **43 rows** of reconciliation §6, each a name, one of the seven labels and a doublestar glob,
   and `Floor() []Pattern`),
   `internal/orchestrator/sensitivity/floor_test.go` (new), `internal/orchestrator/sensitivity/export_test.go`
   (the existing export seam gains `Match` and `Union` for the corpus test).
@@ -171,11 +171,16 @@ a level: slice 1 spans levels 0–2, slice 2 is level 3, slice 3 is levels 4–7
   the fail-closed direction whole.
 - **Red step:** `TestAProjectPatternCannotRemoveAFloorRow` fails to build (package surface absent), then
   fails when `Union` lets a later list drop a floor row of the same name.
-- **Tests:** `TestFloorIsAtLeastWhatTheRoutingRuleNames` (it reads
-  `internal/orchestrator/sensitivity/testdata/paths.txt` — the **32 paths across 15 categories** the
-  classifier's own routing pin holds, which is the tree's one machine-readable statement of what is
-  sensitive — and fails on any path **no floor row matches**; it is the test that makes reconciliation
-  §6's table checkable rather than a promise), `TestFloorRowsAreNamedAndBounded`,
+- **Tests:** `TestFloorIsAtLeastWhatTheRoutingRuleNames`, which has **two halves and both are needed**:
+  it reads `internal/orchestrator/sensitivity/testdata/paths.txt` — the **32 paths across 15 sections**
+  the classifier's own routing pin holds — and fails on any path **no floor row matches**; and it walks
+  `sensitivity.SensitiveExceptions()` (`Classify`'s own table, 11 rules, one of them the class
+  `docs/**/*.graph.json`) and fails on any rule **whose paths no floor row matches**. **A fixture-only
+  test would not catch the second**: the published checksums, the install commands and the plan-graph
+  artifacts live under `website/` and `docs/` and are in no fixture, so their absence from the floor is
+  visible only through the exceptions table. Together the two halves are what make reconciliation §6's
+  table checkable rather than a promise, and this test is the one that fails on a floor that omits the
+  exceptions. `TestFloorRowsAreNamedAndBounded`,
   `TestAProjectPatternCannotRemoveAFloorRow`,
   `TestUnionKeepsEveryLayersAdditions`, `TestUnionDeduplicatesByNameKeepingTheFirst`,
   `TestPatternMustBeARelativeDoublestarGlob` (the four checks, one case each),
@@ -184,8 +189,11 @@ a level: slice 1 spans levels 0–2, slice 2 is level 3, slice 3 is levels 4–7
   `TestPatternNameReachesTheRecordBounded`, `TestMatchIsCheapOnAPathologicalPattern` (the two-pointer
   match `MatchSegment` documents, so a published pattern cannot make a run quadratic). Command:
   `GOFLAGS=-p=2 go test ./internal/orchestrator/sensitivity -count=1`.
-- **Mutation (run, restore):** make `Union` return its last list instead of the union;
-  `TestAProjectPatternCannotRemoveAFloorRow` and `TestUnionKeepsEveryLayersAdditions` fail.
+- **Mutation (run, restore):** two. (a) make `Union` return its last list instead of the union:
+  `TestAProjectPatternCannotRemoveAFloorRow` and `TestUnionKeepsEveryLayersAdditions` fail. (b) drop the
+  eight `artifacts` rows that answer to `sensitiveExceptions` and keep only the fixture's paths: the
+  first half of `TestFloorIsAtLeastWhatTheRoutingRuleNames` still passes and its second half fails —
+  which is exactly the floor this plan carried before review.
 - **Why SEC:** this is the floor of a security control: every later layer is measured against it.
 - **Reviewer tier:** security. **Owner-run:** no. **Depends on:** nothing. **Commit:** `feat(sensitivity):
 the security-pattern floor, the matcher and the union merge`.
@@ -354,7 +362,8 @@ the security-pattern floor, the matcher and the union merge`.
 - **Interface:** `security:` on `config.Config`, the **same** shape the layer will carry (D1500): a list
   of `{name, match, category}`, decoded strictly, each row validated by SC1's `Pattern` rules — **so a
   pattern the matcher cannot read is a configuration error at load, not a rule that silently never
-  fires** (F21). `category` is the closed six-value vocabulary of reconciliation §6. `name` is bounded
+  fires** (F21). `category` is the closed **seven-value** vocabulary of reconciliation §6 (the ask's six plus
+  `artifacts`, D1500). `name` is bounded
   and closed by the same character set as `rigor.Area`'s (F21).
 - **Red step:** `TestScopesMatchDesignDoc` (`internal/config/scope_test.go`) fails the moment the field
   exists and the golden table has no row for it — the tree's own order, so the red step is the field
@@ -496,7 +505,7 @@ Claimed in [reconciliation.md](reconciliation.md) §9, above every claim on `mai
 section written is 291, the highest number cited is 360). It is **owner-run** because two of its three
 parts are only true on a real installation, and one of them spends real money:
 
-1. **The reader, on a project with no key.** `fugaro security paths --json` prints the floor's 35 rows.
+1. **The reader, on a project with no key.** `fugaro security paths --json` prints the floor's 43 rows.
    `--check internal/creds/state.go` answers `sensitive: true` from the `credentials` floor row, and
    `--check docs/recipes.md` answers `sensitive: false` — the pair that shows the floor is a **positive
    list and not the classifier's complement** (F1, F22): `docs/` is a routine tree, and only the two

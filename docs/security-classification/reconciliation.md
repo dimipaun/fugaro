@@ -273,18 +273,33 @@ the base branch's. If the design held only five of those six, the sixth is the e
 ## 6. The floor, written down
 
 The ask's six names — **credentials, guards, targets, infrastructure, prompts, CI** — are **labels the
-design puts on the floor's rows**, and they are not the routing rule's own category words. The
+design puts on the floor's rows**, and they are not the routing rule's own category words. **One more
+label, `artifacts`, is the design's own** and it is needed: the classifier's `sensitiveExceptions`
+(11 rules, `internal/orchestrator/sensitivity/classify.go`) holds eight paths that fit none of the six —
+the website's two manifests and the three files a user downloads, verifies or installs, and the docs
+tree's plan-graph artifacts and two redesign scripts, which the table's own comment calls "not reading
+matter". Without it, a change to the **published checksums or the install commands would never escalate
+to level 3** — the gap D1500 records. `artifacts` is a **seventh value in the closed vocabulary**, and
+the owner may reject it in favour of folding these eight rows into `targets` and `prompts`; how the six
+the ask does name map onto the fixture's sections is the second table below.
+
+The floor has two machine-readable mechanisms to be at least, and they are not the same shape. The
 classifier's fixture writes one section per category, **32 paths across 15 sections**
 (`internal/orchestrator/sensitivity/testdata/paths.txt`, held by `TestRulesTableMatchesTheReviewerRoutingText`
 and `TestRoutingRuleFixtureIsNeverRoutine`) — thirteen of them the routing text's own, with `gateway`
 folded into the agent environment, plus the two the fixture's comment says it adds (`mobile/` and the
-console, "which hold credentials and MACs and must never be routine"). The floor has to name its
-coverage **as patterns**, because "not routine" is not a list, and it has to cover **every one of those
-32 paths** — that is what `TestFloorIsAtLeastWhatTheRoutingRuleNames` (SC1) checks, and a floor that
-misses one is a project whose list cannot be at least the tree's.
+console, "which hold credentials and MACs and must never be routine"). And `sensitiveExceptions` is
+**eleven rules, not paths** (`internal/orchestrator/sensitivity/classify.go`), one of them a whole class
+(`docs/**/*.graph.json`) and the rest named files and trees. The floor has to name its coverage **as
+patterns**, because "not routine" is not a list, and it has to cover **every one of those 32 paths and
+every one of those 11 rules** — the two halves of `TestFloorIsAtLeastWhatTheRoutingRuleNames` (SC1). A
+floor that misses one either way is a project whose list cannot be at least the tree's, and the second
+half is the one that catches the **published checksums, the install commands and the plan-graph
+artifacts**: they are under `website/` and `docs/`, so a test that read only the routing fixture would
+never notice their absence.
 
 The design's recommendation (D1505) is a floor table in the classifier's package, each row a **name**,
-one of the six labels, and a **doublestar glob** in `rigor.Area`'s shape:
+one of the labels, and a **doublestar glob** in `rigor.Area`'s shape:
 
 | Row name | Label | Match |
 | --- | --- | --- |
@@ -323,20 +338,30 @@ one of the six labels, and a **doublestar glob** in `rigor.Area`'s shape:
 | `pending-workflows` | CI | `docs/pending-workflows/**` |
 | `release-streams` | CI | `docs/release-streams.yaml` |
 | `release-script` | CI | `scripts/release.sh` |
+| `plan-graphs` | artifacts | `docs/**/*.graph.json` |
+| `redesign-screenshot-script` | artifacts | `docs/website/redesign/capture-screenshots.mjs` |
+| `redesign-logo-script` | artifacts | `docs/website/redesign/sample-logo-hue.py` |
+| `website-manifest` | artifacts | `website/package.json` |
+| `website-lock` | artifacts | `website/package-lock.json` |
+| `published-downloads` | artifacts | `website/content/downloads.json` |
+| `published-checksums` | artifacts | `website/data/console-sha256sums.txt` |
+| `install-commands` | artifacts | `website/data/install.yaml` |
 
-**Not every row comes from the same place, and the table says which.** Thirty-two of the 35 cover a path
-one of §2's four mechanisms already names — the fixture's 32 paths, the `.claude/rules/credentials-service.md`
-scope (`SECURITY.md`, `website/content/security.md`), `terraform.md`'s (`deploy/terraform/**`,
-`internal/infra/**`), `ee.md`'s (`ee/**`) and the review brief's (the gateway, the managed settings,
-`.fugaro/**`, `internal/agent/**`). **Three rows are the design's own additions, and the owner accepts or
-drops each**: `images/**` (the pinned base image every run's container is built from — a change there
-changes what every agent runs in, and no mechanism names it today), `internal/policy/**` (the merge that
-decides what a run may do), and one **widening** — `internal/gateway/**`, where the credentials rule's own
-scope is the narrower `internal/gateway/gitforward*.go` and the review brief says "the gateway" with no
-path at all. A floor narrower than a mechanism would miss paths the mechanism holds; a floor wider than
-one is a decision, which is why these three are named here rather than folded into the count.
+**Not every row comes from the same place, and the table says which.** Forty of the 43 cover a path a
+mechanism already names — the routing fixture's 32 paths, the classifier's 11 `sensitiveExceptions`
+(the eight `artifacts` rows plus `pending-workflows`, `release-streams` and `published-security-policy`),
+the `.claude/rules/credentials-service.md` scope (`SECURITY.md`, `website/content/security.md`),
+`terraform.md`'s (`deploy/terraform/**`, `internal/infra/**`), `ee.md`'s (`ee/**`) and the review
+brief's (the gateway, the managed settings, `.fugaro/**`, `internal/agent/**`). **Three rows are the
+design's own additions, and the owner accepts or drops each**: `images/**` (the pinned base image every
+run's container is built from — a change there changes what every agent runs in, and no mechanism names
+it today), `internal/policy/**` (the merge that decides what a run may do), and one **widening** —
+`internal/gateway/**`, where the credentials rule's own scope is the narrower
+`internal/gateway/gitforward*.go` and the review brief says "the gateway" with no path at all. A floor
+narrower than a mechanism would miss paths the mechanism holds; a floor wider than one is a decision,
+which is why these three are named here rather than folded into the count.
 
-**How the fixture's fifteen sections map onto the six labels**, which is the one judgement this table
+**How the fixture's fifteen sections map onto six of the seven labels**, which is a judgement this table
 makes and the owner is the one who can overturn it:
 
 | The fixture's section | Label | Why |
@@ -350,17 +375,20 @@ makes and the owner is the one who can overturn it:
 | Terraform/IAM | targets | what a run deploys to |
 | CI | CI | the word itself |
 | the agent environment | infrastructure | what a run runs in |
-| prompts · recipes · `CLAUDE.md` · `AGENTS.md` · `.claude/**` · plugin skills | prompts | all six are text an agent is told to obey; `recipes` and `fugaro.yaml` are the weakest of the six and a reader may want a seventh label |
+| prompts · recipes · `CLAUDE.md` · `AGENTS.md` · `.claude/**` · plugin skills | prompts | all six are text an agent is told to obey; `recipes` and `fugaro.yaml` are the weakest of the six |
+| *(no section: the classifier's `sensitiveExceptions`, eight rules)* | **artifacts** | the label this design adds — the website's manifests and the three files a user downloads, verifies or installs, the docs tree's plan-graph artifacts and two redesign scripts. It is the seventh value in the vocabulary and the owner may reject it (above) |
 
 **The table above is the design's proposal and not a fact about the tree** — §11 says so. What *is* a
 fact is that **the union of §2's four mechanisms is the floor the design must not go below**, and that
-exactly one of the four is machine-readable: the routing rule, whose fixture is
-`internal/orchestrator/sensitivity/testdata/paths.txt`, which `TestFloorIsAtLeastWhatTheRoutingRuleNames`
-reads and fails on any path no floor row matches. **The other three are prose — the `.claude/rules/*.md`
-scopes, the review brief's paragraph, and the classifier's own tables — and they are why the floor stays
-a proposal**: they name areas in words, so three of this table's rows are its own additions (named
-above) and a reader who finds an area a word names and the table does not carry has found a bug in the
-table, which the owner is the one who settles.
+**three of the four have a machine-readable half** — the classifier's tables *are* code
+(`routineRules`, `sensitiveExceptions`), the routing rule has its fixture and its own two-way pin, and
+the path-scoped rules carry their `paths:` front matter. `TestFloorIsAtLeastWhatTheRoutingRuleNames`
+reads the first two and fails on either a fixture path or an exception no floor row matches. **One
+mechanism is prose alone**, the review brief's paragraph in `.fugaro/review.md`, and **it is why the
+floor stays a proposal**: it names areas in words — "the gateway", "the managed settings", "a prompt" —
+so the rows that answer to it are this table's own reading, a reader who finds an area that paragraph
+names and the table does not carry has found a bug in the table, and the owner is the one who settles
+it.
 
 **Why a named table rather than re-using the allowlist's complement.** The classifier's answer is
 "Routine iff every path is routine, else Sensitive". That is the right **model floor** (F1's `O4`) and
@@ -396,12 +424,12 @@ recommendation needs no decision is not here; these twenty are the ones that do.
 
 | # | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer |
 | --- | --- | --- | --- | --- | --- |
-| **D1500** | What is the shape of the answer: one block, or the ask's two parallel lists (`security_paths` **plus** `categories`)? | **One block, `security`, whose list is `security.patterns` — each row `{name, match, category}`.** A pattern with no category cannot be explained to the person reading the pull request ("why did this run a level-3 review?"), and a category with no pattern names nothing. One row per pattern is `rigor.Area`'s own shape (`Area{Name, Match, Mode}`), which the record, the PR body and `watch` already know how to print (§3, F21) | The ask's `security_paths: [globs]` plus a separate `categories:` map | Two lists that can disagree: a glob whose category nobody wrote, and a category whose globs nobody kept — and no name on a match, so the record's "which rule decided" is a glob the reader has to re-read | *(empty)* |
+| **D1500** | What is the shape of the answer: one block, or the ask's two parallel lists (`security_paths` **plus** `categories`)? | **One block, `security`, whose list is `security.patterns` — each row `{name, match, category}`.** A pattern with no category cannot be explained to the person reading the pull request ("why did this run a level-3 review?"), and a category with no pattern names nothing. One row per pattern is `rigor.Area`'s own shape (`Area{Name, Match, Mode}`), which the record, the PR body and `watch` already know how to print (§3, F21). **`category` is a closed vocabulary of SEVEN values, not the ask's six**: §6 adds `artifacts`, because eight of the classifier's eleven `sensitiveExceptions` (the published downloads, the checksums, the install commands, the website's two manifests, the plan-graph artifacts, the two redesign scripts) fit none of credentials, guards, targets, infrastructure, prompts or CI, and a vocabulary without a value for them is a floor that cannot hold them — a change to the published checksums would then never escalate. **The vocabulary question's own alternative is to keep the ask's six and fold those eight rows into `targets` and `prompts`** — cheaper to explain, and a reader who sees `install.yaml` labelled `targets` has to guess why | The ask's `security_paths: [globs]` plus a separate `categories:` map | Two lists that can disagree: a glob whose category nobody wrote, and a category whose globs nobody kept — and no name on a match, so the record's "which rule decided" is a glob the reader has to re-read | *(empty)* |
 | **D1501** | Which layer carries it: the project layer, the repo's `fugaro.yaml`, or both? | **Both, with the project layer first**: `layer.security` on `config.ProjectLayer` (joining `layerTopKeys` and `schemas/project-layer.schema.json`) and a repo `security:` key on `config.Config`. The ask wants "a project level component, and an optional repo-level one", and the two layers already meet in exactly this way for `rigor` (`Config.RigorConfig()`, `ProjectRigor()`, `RepoRigor`) | Project layer only | Every repository of a project that has one extra sensitive tree must be special-cased in the layer, and a repository owner with no project has no way to say it at all — the ask's "optional repo-level one" is dropped | *(empty)* |
 | **D1502** | Which glob dialect, and is it documented? | **`doublestar`, the dialect the tree already matches with** — `rigor.Area.Match` via `doublestar.Match` (`internal/rigor/select.go`), the same matcher `internal/plan/footprint.go`, `internal/imagecheck` and `internal/config/validate.go` use. Validated **at load** by the same four checks in the same order `rigor.Area.Validate` uses — `internal/config/validate.go`'s `validateRebuild` for `rebuild.paths`: not empty, repository-relative (never a leading `/`), no `..` component, and `doublestar.ValidatePattern` — bounded at **200 bytes** like `MaxAreaPattern`, and named by `areaNameRE`'s closed character set. **Not** `config.MatchSegment`, which is the repository-name dialect and never crosses `/` (§3) | A second, purpose-built matcher for security paths | A fifth matcher in a tree that already has two, with its own edge cases (`**` crossing `/`, a trailing `/`, a case-folded comparison) — and the divergence only shows up in a security decision, which is the worst place to discover it | *(empty)* |
 | **D1503** | Are patterns that match everything, or nothing, refused? | **`*`, `**` and an empty pattern are refused at write time** — a pattern that marks the whole repository sensitive is not a pattern, it is the "always level 3" setting, and D1517 is where that lives. A pattern that matches no path **is not refused** (the tree may not exist yet, and a project may write its list before its first commit to it), but **`doctor` says once that a pattern matched nothing in the base** | Refuse both, or refuse neither | Refusing a currently-empty pattern makes a correct list unwritable in the order projects actually write it; refusing neither lets `**` masquerade as a pattern and hides the real intent inside a glob — the exact thing a reader of the record cannot see | *(empty)* |
 | **D1504** | What does an empty list mean? | **The floor, and never "nothing is sensitive".** An absent project list, an absent repo list and an explicitly empty list all mean **the floor alone**. This is the ask's own ruling, and it is the only fail-closed reading: the alternative reading makes deleting a line the way to buy a cheaper review | Empty means "nothing extra beyond what the classifier would say anyway" | Identical in effect to the recommendation *only* while the classifier's default stays fail-closed — and it puts the whole guarantee outside the list, so the day the classifier's default changes, an empty list silently means something else | *(empty)* |
-| **D1505** | What is in the floor, and where does it live? | **A named table in the classifier's package** (`internal/orchestrator/sensitivity`), each row a name, one of the six labels and a doublestar glob, covering **at least the paths §2's four mechanisms already hold sensitive** — the concrete list is §6's **35 rows**, and the table must match **every one of the 32 paths** in `internal/orchestrator/sensitivity/testdata/paths.txt`, the tree's one machine-readable statement of the rule (SC1's `TestFloorIsAtLeastWhatTheRoutingRuleNames` is what makes that a build failure rather than a promise). The six labels are the ask's names, mapped onto the fixture's **fifteen sections** by §6's second table — **the mapping is the one judgement here the owner may overturn**. It is **new code**, because the classifier's Sensitive side is "not routine" and cannot be copied as a list (F1, F22) | Re-export the classifier's complement ("everything not routine") as the floor | The level-3 trigger becomes "almost every run", the adversarial pass runs on documentation-adjacent changes it was never meant for, and the cost the ask is trying to *bound* becomes the default | *(empty)* |
+| **D1505** | What is in the floor, and where does it live? | **A named table in the classifier's package** (`internal/orchestrator/sensitivity`), each row a name, one of the seven labels and a doublestar glob, covering **at least the paths §2's four mechanisms already hold sensitive** — the concrete list is §6's **43 rows**, and the table must match **both of the tree's machine-readable statements of the rule**: **every one of the 32 paths** in `internal/orchestrator/sensitivity/testdata/paths.txt` (`TestRulesTableMatchesTheReviewerRoutingText`'s fixture) **and every one of the 11 rules** in `sensitiveExceptions` (`internal/orchestrator/sensitivity/classify.go`, the same file SC1 edits) — the two halves of SC1's `TestFloorIsAtLeastWhatTheRoutingRuleNames`, which is what makes that a build failure rather than a promise. The second half is the one a fixture-only test misses: the published checksums, the install commands and the plan-graph artifacts are under `website/` and `docs/` and are in no fixture. The labels are the ask's six plus §6's own `artifacts`, mapped onto the fixture's **fifteen sections** by §6's second table — **both the mapping and the seventh label are judgements the owner may overturn**. It is **new code**, because the classifier's Sensitive side is "not routine" and cannot be copied as a list (F1, F22) | Re-export the classifier's complement ("everything not routine") as the floor | The level-3 trigger becomes "almost every run", the adversarial pass runs on documentation-adjacent changes it was never meant for, and the cost the ask is trying to *bound* becomes the default | *(empty)* |
 | **D1506** | How do the layers combine? | **Union, tightening-only, exactly as `policy.Merge` and `unionReviewFloor` do** (F10, F23): floor ∪ project ∪ repo, no intersections, no subtractions, and a looser value recorded in `Effective.Ignored` the way the merge already records one. A key `security` that a layer sets and a later layer does not **inherits**, never clears | Last-writer-wins, or a repo key that replaces the project's | A repo can delete a project's protection by writing `security: {}` — the one direction the ask says must be impossible ("a repo can never remove a project pattern or the engine's built-in floor list") | *(empty)* |
 | **D1507** | Who consumes it at run time, and when? | **The runner, at the seams where the diff can already be read — the post-`implement` window and the post-`fix` moment `roundRigor` is already called at.** Both windows exist; what is missing in them is a re-resolution and a plan rebuild, not a moment (F5, F9). The read is **`(*Repo).ChangedFiles(ctx, r.workBase())`**, which is what `roundRigor` itself uses — **never the record's `ChangedFiles`**, which `recordChangedFiles` fills only inside `finalize` and `shadowFinalize` and which is therefore nil at every one of these seams, so an escalation built on it would never fire (F5). On any match: **level 3** and a **rebuild of the plan** — both of which are currently computed once at bootstrap, and are why this is not a two-line change | Only the launcher: match the task's declared paths at launch and set the block there. Or only the post-`implement` window, once, ignoring a later fix that adds a matching path | The task declares no paths on nearly every launch (`Spec.Paths` is opt-in and `ExpectedScope` is written by nothing), so the escalation fires almost never — and the runs it most needs to catch are the ones that surprised their author. The record-only second alternative is the cheaper seam but **silently never fires** (F5) | *(empty)* |
 | **D1508** | Which levels does a match turn on, and does the rigor mode move? | **Level 3 only — the adversarial step — and the rigor mode does not move.** Level 2 is the senior review that every mode above POC already runs; the ask's rule is the *independent/security* review, which is level 3 (`recipe.StepAdversarial`, `stageAdversarial`, `runstore.TierAdversarial`, `rigor.defaultLevels`' `Critical` row). The mode stays the mode: moving it would change round counts and the findings policy (`rigor.Blocks`), which is a different decision than "this change needs a harder review" | Level 2 and 3, or a mode raise to `Critical` | A mode raise rewrites findings policy and round counts for a change whose *only* new fact is its paths, and the record can no longer say why the run got stricter — D1509's field becomes a guess | *(empty)* |
