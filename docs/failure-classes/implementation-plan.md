@@ -1,7 +1,8 @@
 # A closed failure class on every run record, and a failures report: implementation plan
 
 **Status: plan only; nothing is implemented; no task is approved.** Nine tasks, **FC1–FC9** — the
-design's own FC1–FC8 (its §10, kept by name, by order and by edge) plus **FC9**, which the plugin
+design's own FC1–FC8 (its §10, kept by name, by order and by edge — its **task** names, that is: one
+of the tests §10 names cannot be written as named, F35) plus **FC9**, which the plugin
 finding F13 adds — each with its files, its interfaces, its named tests **and the command that runs
 them**, its **red step**, the mutation that holds it, its **reviewer tier**, its **SEC** and
 **owner-run** flags, what it depends on and its commit. **Every citation below was resolved against
@@ -10,7 +11,7 @@ had drifted the reconciliation's line is used and the drift is named (F18, F19).
 
 **Written to:** [spec.md](spec.md) — the design, `docs/design/failure-classes.md`, byte for byte — and
 [reconciliation.md](reconciliation.md). **Where a task below and the reconciliation disagree, the
-reconciliation's findings (F1–F33) and decisions (D1450–D1469) win, and the task is wrong.**
+reconciliation's findings (F1–F35) and decisions (D1450–D1469) win, and the task is wrong.**
 
 **Nothing here is an approval.** The design is a design and this is a plan (§10 of the design and
 [README.md](README.md) say so); each task's gate is in §7, and most of them name a decision row whose
@@ -157,7 +158,7 @@ F21, F27, F28. **Depends on:** nothing. **Reviewer tier:** standard. **SEC:** no
 
 ### FC2. One writer for the terminal status (SEC)
 
-**Decisions:** D1452, D1456, D1464. **Findings:** F2, F3, F4, F18, F19, F25, F28. **Depends on:**
+**Decisions:** D1452, D1456, D1464. **Findings:** F2, F3, F4, F18, F19, F25, F28, F34, F35. **Depends on:**
 FC1. **Reviewer tier: independent (SEC)** — the reviewer's one question is *can a class or a status be
 written anywhere else, and is the last-writer rule the only rule?* **Owner-run:** no.
 
@@ -172,9 +173,14 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
 - **Interfaces:** `func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string)`.
   The **36 statements** of F2/§3.1 of the reconciliation become one call each; the sites that write a
   halt keep writing it and pass the halt's class (`endHalted` `:419`, `endArtifactHalted` `:1488`,
-  `endReviewHalted` `:987`); `endUnchanged` (`:557`) passes `unclassified` where the run's terminal
-  state is not a failure of its own; the deferred fallback in `Run` (`:586`) and the two bootstrap
-  terminals (`:650`, `:656`) keep their meanings exactly.
+  `endReviewHalted` `:987`); `endUnchanged` (`:557`) is the one site whose class follows its own
+  branch, and the design's §4.2 is the rule it follows: it passes the **halt's** class in its halt
+  branch (`:564`–`:569`, the same `haltClass` `endHalted` passes — the halt's class wins),
+  `cancelled` in its cancelled branch (`:559`–`:563`), and `branch_moved` otherwise, because every
+  reason it has is the pull request or the branch changing under the run (`followup.go:462`, `:478`,
+  `:487`; `runner.go:4110`, `:4114`, `:4177`) and `branch_moved` is the class the vocabulary gives
+  that fact (F34); the deferred fallback in `Run` (`:586`) and the two bootstrap terminals (`:650`,
+  `:656`) keep their meanings exactly.
 - **Tests:** `TestRecordEndIsTheOnlyWriterOfATerminalStatus` — **the guard parses the Go code**
   (`go/parser` over `internal/runner`, the shape the rewritten census pin uses) and asserts that no
   statement outside `recordend.go` assigns a `runstore.Status` to a record's `Status` field. It has
@@ -182,9 +188,15 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   (`internal/runner/followup.go:520`, the statement at `:522`) writes a **copy** of the record through
   a local `rec`, and a guard written for `r.rec.Status` alone would leave exactly that statement free
   to carry a status past `recordEnd`. The task accounts for that copy in the guard's own comment
-  rather than excepting it silently. Also `TestUnclassifiedIsWrittenWhereNoClassIsChosen` (a run that
-  ends with no failure carries no class, D1464) and `TestHaltedRunCarriesItsHaltsClass` (a failure
-  then a halt ends `halted` with the halt's class). And the **rewritten**
+  rather than excepting it silently. Also `TestNoClassIsWrittenWhereTheRunDidNotFail` — the field is
+  **absent** on the three records that did not fail: `succeeded`, a `mode: review` run that reviewed
+  (`outcome: reviewed`) and an artifact run that delivered (`outcome: artifacts`), which is the
+  design's §3 and **D1464**'s recommended answer. The design's §10 names that pin
+  `TestUnclassifiedIsWrittenWhereNoClassIsChosen`, which cannot be written as named: it would assert
+  the class on the very records the design's §3 leaves it off, and the half of it that is true — an
+  unmatched reason reading `unclassified` — is the reader's, FC5's
+  `TestLegacyUnmatchedReasonIsUnclassified` (F35). Also `TestHaltedRunCarriesItsHaltsClass` (a
+  failure then a halt ends `halted` with the halt's class). And the **rewritten**
   `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:250`): its
   `statements == 0` fatal is the state this task produces, so the pin turns from *a census of 36
   statements* into *no statement outside `recordend.go` writes a status*, and the design's §1 sentence
@@ -194,8 +206,9 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   census pin's own failure are quoted in the pull request.
 - **Mutation to hold it:** let one site keep writing `r.rec.Status` itself → the guard fails; make the
   guard match the text instead of the AST → `storeUnposted`'s copy passes unnoticed, and the mutation
-  that proves it is writing a status through a local record in a fresh helper.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'RecordEnd|Unclassified|HaltedRun' -count=1 -timeout 40m`
+  that proves it is writing a status through a local record in a fresh helper; let `recordEnd` fill a
+  class when the status is `succeeded` → `TestNoClassIsWrittenWhereTheRunDidNotFail` fails.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'RecordEnd|NoClassIsWritten|HaltedRun' -count=1 -timeout 40m`
   then `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsFailureClass' -count=1 -timeout 40m`.
 - **Commit:** `runner: one writer for a run's terminal status and class`.
 
@@ -281,7 +294,10 @@ standard, with the Docs run in the same pull request. **SEC:** no. **Owner-run:*
   is therefore irrelevant to correctness. It cannot live in `internal/failure`: the type it reads is
   `*runstore.Record`, and F21's import direction forbids `failure` importing `runstore`.
 - **Tests:** `TestLegacyClassFromReasonTable` (an old record's `reason` maps as the design's §5 table
-  says, cause by cause), `TestLegacyUnmatchedReasonIsUnclassified`, `TestLegacyClassIsNeverWrittenBack`
+  says, cause by cause — **plus the three `endUnchanged` reasons the design's list does not carry**
+  (`followup.go:462`, `:478`, `:487`; `runner.go:4110`, `:4114`, `:4177`), which FC2's writer classes
+  `branch_moved` and the reader must therefore class `branch_moved` too: one fact, one class, which is
+  the agreement **D1455** asks for and the split F34 names), `TestLegacyUnmatchedReasonIsUnclassified`, `TestLegacyClassIsNeverWrittenBack`
   (serialise the record before and after a read through `ClassOf` and `runs ls`: the bytes are equal
   — this is the test that holds the read-only property), `TestRowCarriesTheClassTheRecordHolds`, and
   `TestRunsLsCarriesTheLegacyClass` (a window holding one old and one new record: both rows carry a

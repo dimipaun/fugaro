@@ -28,7 +28,7 @@ the digest. `reason` keeps its meaning byte for byte; the field is additive, so 
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | `docs/design/failure-classes.md`, **byte for byte**, with a header naming the owner by role, the pull request that merged it and the fact that the copy is dated. Where this file and the others disagree about what the design *says*, this file wins |
-| [reconciliation.md](reconciliation.md) | Every claim of the design against the code on `main`, read by path and symbol: how the record and its five readers work today (§2: `result.json` and the schema, `runs ls --json`, `diagnose`, the console, the phone, the history census, the plugin and `watch`), where a failure reason is produced today (§3: `internal/runner`, `internal/runstore`, `internal/cli`'s `diagnose`), the findings **F1–F33** (Wrong / Exists / Gap / Rule / Open), the closed-field rule applied (§5), the decisions **D1450–D1469** with an **empty owner's-answer cell each** (§6), the number block and how it was read (§7), the **UNVERIFIED** section (§8) and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
+| [reconciliation.md](reconciliation.md) | Every claim of the design against the code on `main`, read by path and symbol: how the record and its five readers work today (§2: `result.json` and the schema, `runs ls --json`, `diagnose`, the console, the phone, the history census, the plugin and `watch`), where a failure reason is produced today (§3: `internal/runner`, `internal/runstore`, `internal/cli`'s `diagnose`), the findings **F1–F35** (Wrong / Exists / Gap / Rule / Open), the closed-field rule applied (§5), the decisions **D1450–D1469** with an **empty owner's-answer cell each** (§6), the number block and how it was read (§7), the **UNVERIFIED** section (§8) and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The **six levels** and the tasks **FC1–FC9**, each with its files, its interfaces, its named tests **and the command that runs them**, what it depends on, its **red step**, its **reviewer tier**, whether it is owner-run and whether it is SEC, and its commit; the levels and the **critical path** (§1), the **shared-files table that holds no two writers of one file in a level** (§2), what is deliberately not in the plan (§4), the release slot the owner named (§5), the owner-run live check **Check 350** (§6) and the gates a task may not start without (§7) |
 | `README.md` | This file: the status, the asker, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
@@ -42,8 +42,8 @@ and held by `TestDocsFailureClassCensusMatchesTheRunner`
 document. Everything the design's §1–§5 rests on — the free-text `reason`, `fail`/`failLocked` and the
 three sites that overwrite the record's reason after them, the phrase-table classifier beside
 `oauthLimitPhrases`, the six digest flags, the four pattern rules, the additive-schema precedent —
-**exists, by name, where the design says it does**. What the reconciliation adds is five things the
-design does not hold: **its line citations above `runner.go:3700` are four lines short** (F19) and the
+**exists, by name, where the design says it does**. The largest of what the reconciliation adds,
+finding by finding (§4), are: **its line citations above `runner.go:3700` are four lines short** (F19) and the
 `finalize` switch's range is wrong (F18); **the plugin's own status reference does name `runview.Row`'s keys** — fourteen of the
 row's forty-four, in one sentence, as a selection and not as the set
 (`plugin/skills/working/reference/status.md:31`) — so the design's §6.3 sentence that says nothing in
@@ -51,7 +51,10 @@ row's forty-four, in one sentence, as a selection and not as the set
 one clause (F13); **the phone reads `lsDoc` embedded and refuses
 an unknown key in it**, which makes the report's new block a mobile question and not only a console one
 (F14); **one test the design names does not exist** (F15); and **the vocabulary's import direction
-decides where three functions can live**, a rule the design leaves implicit (F21).
+decides where three functions can live**, a rule the design leaves implicit (F21); and **two of the
+design's own sites do not hold together**: the class `endUnchanged` has to pass has no row in §5's
+legacy table, so one sentence would read two ways across the release (F34), and §10's FC2 test name
+asserts the class §3 of the same design leaves absent (F35).
 
 ## What the reconciliation had to read first
 
@@ -72,7 +75,7 @@ reconciliation §2 reads **every reader** — the console (`console/docs/json-co
 | --- | --- |
 | **D1450–D1469** | **this work's block, read above every allocation on `main` and in every open pull request's head.** `main`'s highest written decision is **D1409** (`docs/catalog-build-context`); open PR **#1819** writes **D1427–D1429** for its own design; a `git grep` for `D14[5-6][0-9]` over `origin/main` and over every fetched open pull-request head returns **nothing at all**, so D1410–D1449 are free below this block and this work takes D1450–D1469. The reading is taken in [reconciliation.md](reconciliation.md) §7 with its commands |
 | **Check 350** | this work's owner-run live check (implementation-plan §6). The register's highest **written** `## Check` section is **290** (`docs/gcp-live-checklist.md`); `main` names 300–305, 309 and 311–314 as blocks other designs claim, and open PR **#1819** claims **330**. **350–359 is a fresh block** — nothing in `main` or in any open pull request names a number in it — so this work takes **350** and reserves 351–359. The register's own summary row and `## Check 350` section are written by the task that implements the check, under the number free **at that merge** |
-| **F1–F33** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §4, taking no number any other work reads |
+| **F1–F35** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §4, taking no number any other work reads |
 | **O1–O6** | the **Open items** of [reconciliation.md](reconciliation.md) §9. **O1–O6 are the design's own** (§9 of the design: the label, the vocabulary's size, whether anything beyond the enum may be stored from model output, whether a committed report may name run ids, the thresholds, and the spent subscription). **Nothing in this folder answers one of them.** This folder's decisions are D1450–D1469, and the plan's gates name which of them a task waits on — an Open item is not a task's gate, and a task that needed one would say so |
 
 ## What a reader should not take from this folder

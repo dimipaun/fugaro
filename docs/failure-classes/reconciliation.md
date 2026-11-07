@@ -9,7 +9,7 @@ and what could not be resolved at all is in §8.
 **Where this file and [spec.md](spec.md) disagree about the code, this file wins.** Where they
 disagree about what the design *says*, spec.md wins. Where a task in
 [implementation-plan.md](implementation-plan.md) and this file disagree, this file's findings
-(**F1–F33**) and decisions (**D1450–D1469**) win, and the task is wrong.
+(**F1–F35**) and decisions (**D1450–D1469**) win, and the task is wrong.
 
 **The design's decisions are not this file's.** §8 D1–D9 and §9 O1–O6 of the design are the owner's,
 and **nothing here answers one of them** — not one row of §6 re-asks one, and §9 repeats them as the
@@ -385,6 +385,29 @@ be held to it) or **Open** (the design leaves it to the owner).
   in the same work as the field** (§8 D7 recommends they do, with thresholds), and a rule that reads
   only blocks carrying the new key cannot fire in its first week (the design says this). Whether the
   rules are a task of this work or a follow-up is a plan-level question. → **D1466**.
+- **F34 — the class `endUnchanged` passes has no row in the legacy table.** `endUnchanged`
+  (`internal/runner/followup.go:557`) is not a plain failure: it sets `status: failed` with a real
+  reason, flips to `cancelled` when the run was cancelled (`:559`–`:563`), and flips to `halted` with
+  the halt attached when a halt stands (`:564`–`:569`), so a class written at its site has to follow
+  the branch (the design's §4.2: the last writer's class wins). But the write side's class for the
+  reason it actually carries — every one of its callers is the pull request or the branch changing
+  under the run (`followup.go:462`, `:478`, `:487`; `runner.go:4110`, `:4114`, `:4177`), which is the
+  vocabulary's own `branch_moved` row — has no row in the design's §5 legacy table: the design lists
+  the reason families it means to map and says an unmatched reason reads `unclassified`. So the same
+  fact would read `unclassified` on a record written before the field shipped and `branch_moved` on
+  one written after — the week split into two that §5 exists to prevent, and a writer and a reader
+  disagreeing about one sentence, which is what D1455 asks them not to. → **FC2** writes
+  `branch_moved` at the site, and **FC5**'s table gains those prefixes so the reader classes the same
+  sentence the same way (`TestLegacyClassFromReasonTable`).
+- **F35 — the design's §10 test name asserts the field its own §3 leaves absent.** §10's FC2 names
+  `TestUnclassifiedIsWrittenWhereNoClassIsChosen` (`docs/design/failure-classes.md`, `spec.md:653`).
+  §3 of the same design says `failure_class` "is written for every run that did not end `succeeded`"
+  and that a `succeeded` run, a `mode: review` run that reviewed (`outcome: reviewed`), an artifact
+  run that delivered (`outcome: artifacts`) and a row that never started carry none. Written as
+  named, the pin asserts a class on exactly the records the design leaves it off, and the claim it
+  describes in half — an unmatched reason reading `unclassified` — is the reader's, not a run's. →
+  **FC2** names the absence pin `TestNoClassIsWrittenWhereTheRunDidNotFail`, **FC5** keeps
+  `TestLegacyUnmatchedReasonIsUnclassified`, and **D1464** is the decision the absence answers.
 
 ### Rule
 
