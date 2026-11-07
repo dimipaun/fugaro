@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -376,6 +377,12 @@ type engineStage struct {
 	skip func() string
 	run  func(ctx context.Context) error
 	left initflow.Left
+	// leftFor, when set, is the stage's left-for-you as a function of the run's
+	// own arm instead of one fixed line: the installation-2 stage has two, and
+	// the command they name differs (--firebase-project's history job, the
+	// catalog check job a plain update deploys), so one of them would send the
+	// user to a command that does not do what the prompt says.
+	leftFor func() initflow.Left
 	// isolate makes the stage judge "No changes" and its plan line by what
 	// it did itself, not by what the stages before it left in the run's
 	// result (the second installation apply, after the Firebase root's).
@@ -392,7 +399,12 @@ type engineStage struct {
 func (s *engineStage) Name() string                 { return s.name }
 func (s *engineStage) SelfConfirming()              {}
 func (s *engineStage) Verify(context.Context) error { return nil }
-func (s *engineStage) Left() initflow.Left          { return s.left }
+func (s *engineStage) Left() initflow.Left {
+	if s.leftFor != nil {
+		return s.leftFor()
+	}
+	return s.left
+}
 
 func (s *engineStage) Check(context.Context) (initflow.Status, error) {
 	if why := s.skip(); why != "" {
@@ -684,24 +696,71 @@ func newFirebaseStage(e *initEngine) *engineStage {
 	}
 }
 
-// newInstallation2Stage is stage 6: the installation root once more, which
-// deploys the history job with the Firebase outputs now that the images
-// stage has put its image in the registry. Only --firebase-project has a history
-// job to deploy.
+// newInstallation2Stage is stage 6: the installation root once more, deploying
+// what only the images stage's own work makes deployable — the history job,
+// whose image that stage mirrors, and the catalog check job, which runs FROM
+// the base image it pins (#1843).
 func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
-			if e.r.o.firebase == "" {
-				return "no --firebase-project given: nothing to deploy the history job with"
+			if e.r.o.firebase != "" || e.catalogPinAwaitsTheJob() {
+				return ""
 			}
-			return ""
+			return "no --firebase-project given and a base image the catalog check job does not run from yet: the first apply deployed everything this stage would"
 		},
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
-			return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+			// The installation's spec is read the run's own way again: it was
+			// built before the images stage, and the catalog check job's image
+			// is one of the things that stage moves.
+			next, err := installOptions(e.r.o, e.lc)
+			if err != nil {
+				return err
+			}
+			e.spec.CatalogCheck = next.CatalogCheck
+			if e.r.o.firebase != "" {
+				return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+			}
+			return e.r.installCatalogCheck(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
-		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
+		leftFor: func() initflow.Left {
+			if e.r.o.firebase != "" {
+				return promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord())
+			}
+			return promptLeft(initflow.Installation2, "type the project's name to apply the catalog check job", e.r.o.doorName())
+		},
 	}
+}
+
+// catalogPinAwaitsTheJob reports whether this run pinned the base image the
+// project's catalog check job runs FROM and the installation root has yet to be
+// applied with it: the local config records one, the spec the run planned
+// carries no job from it, and the catalog is one this installation builds.
+//
+// It is what makes `fugaro image add <entry>` followed by a plain `fugaro
+// update` the whole of it (#1843): the catalog check job runs FROM
+// base_images.base and every catalog build is built FROM it, nothing else
+// names that kind, and the pin is this run's images stage — behind the
+// installation root — so the root is applied again here.
+func (e *initEngine) catalogPinAwaitsTheJob() bool {
+	img := e.lc.BaseImage(config.BaseKind)
+	if img == "" || (e.spec.CatalogCheck != nil && e.spec.CatalogCheck.Image == img) {
+		return false
+	}
+	return infra.CatalogBuilds(e.lc)
+}
+
+// installCatalogCheck applies the installation root again with the catalog
+// check job the local config now names: the run that pinned the project's base
+// image deploys the job from it in the same run, so the catalog's entries are
+// built without a second command from the user.
+func (r *initRun) installCatalogCheck(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) error {
+	r.installLabel = " (the catalog check job and its schedule)"
+	_, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
+	if err != nil || stop {
+		return err
+	}
+	return nil
 }
