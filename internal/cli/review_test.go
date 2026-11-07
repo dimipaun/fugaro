@@ -92,12 +92,22 @@ func setBaseImage(t *testing.T, tag string) {
 }
 
 // admitReviewJob is E7's second half, set by the tests that have to reach a
-// launch and restored after each: on this tree the deployed service carries no
-// review job accounts, so a review launch is refused (reviewJobAdmitted).
+// launch and restored to the value it FOUND after each: on this tree the
+// deployed service carries no review job accounts, so a review launch is
+// refused (reviewJobAdmitted).
+//
+// What it restores is the tree's own value and not `false`, and that is the
+// point of the helper's shape rather than a detail: a cleanup that wrote false
+// would hand every later test a gate this tree does not have, so flipping the
+// constant to true — the one change this branch exists to hold off — would
+// leave the whole file green (the refusal is read by tests that run after an
+// admitReviewJob, and they would be reading the value the cleanup wrote, not
+// the tree's).
 func admitReviewJob(t *testing.T) {
 	t.Helper()
+	was := reviewJobAdmitted
 	reviewJobAdmitted = true
-	t.Cleanup(func() { reviewJobAdmitted = false })
+	t.Cleanup(func() { reviewJobAdmitted = was })
 }
 
 // storedRunRef is the "<slug>/<run-id>" of the run the fixture's bucket holds:

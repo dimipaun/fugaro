@@ -3307,7 +3307,11 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 		}
 		return got
 	}
-	t.Cleanup(func() { reviewJobAdmitted = false })
+	// Restored to the value this test found, never to false: a cleanup that
+	// wrote false would hide a flip of the constant from the rows below, which
+	// set it per case and would otherwise read a gate the tree does not have.
+	wasAdmitted := reviewJobAdmitted
+	t.Cleanup(func() { reviewJobAdmitted = wasAdmitted })
 	for _, tc := range []struct {
 		name     string
 		local    string
