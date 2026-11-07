@@ -9805,6 +9805,17 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"it is the console's second",
 		"`settings set|unset KEY --layer <L> --dry-run --json",
 		"retried silently",
+		// The member the section had wrong: `target_layer` was written as
+		// "`project` or `local`, the two the generic path writes, or `""` when
+		// the generic path would not write the key at all", and the read answers
+		// `settingsDefaultLayer` instead -- the narrowest of the three the key may
+		// be set in, which is non-empty for a key the generic path refuses
+		// (`mailbox.keychain_item` is `local` on a `writable: false` row). The
+		// phrase pinned is the schema's own (`schemas/settings.schema.json`,
+		// `$defs.row.target_layer`), so the contract, the schema and the read say
+		// one thing, and the fixture the e2e draws is a document with it.
+		"the narrowest of `repo`, `project` and `local` the key may be set in",
+		"non-empty on a row the generic path refuses",
 	} {
 		if !strings.Contains(read, want) {
 			t.Errorf("%s's §6.19 does not state %q: the read's section is where a reader learns that the console also writes this group, and the screen C3 shipped does", path, want)
