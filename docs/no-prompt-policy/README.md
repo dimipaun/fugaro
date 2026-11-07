@@ -10,6 +10,7 @@ D1560–D1579 and Checks 390–399 belong to the sibling spec `docs/composite-co
 | [spec.md](spec.md) | The spec as received |
 | [reconciliation.md](reconciliation.md) | Findings against the code, decisions D1540–D1555 (all answered 2026-11-07), the tensions T1–T6 (T1–T4 and T6 ruled by the owner 2026-11-07; T5 open until the T8 spike reports, and T6's capless case open) |
 | [implementation-plan.md](implementation-plan.md) | Slices T1–T16 and the spike T8S (rounds 1 and 2 of the independent review applied), levels, critical path, shared-files table |
+| [billing-price-spike.md](billing-price-spike.md) | The spike T8 was held for: which API and credential give a Cloud Build machine-minute price, why no IAM grant is needed, the failure modes, and the recommendation |
 
 Three answers are not the recommendation: D1544 (keep `--ask`), D1545 (the managed gate becomes
 audit-only) and D1550 (the build rate is queried from Cloud Billing). They opened tensions T1–T5, and

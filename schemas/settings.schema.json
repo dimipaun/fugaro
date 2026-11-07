@@ -237,6 +237,30 @@
         "agent.compression": {
           "default": "unset = inherit"
         },
+        "agent.crafts.coder.access": {
+          "default": "unset = required: the coder's calls go out on a credential or a pool"
+        },
+        "agent.crafts.coder.model": {
+          "default": "unset = required: the coder implements, so a run needs its model"
+        },
+        "agent.crafts.review.access": {
+          "default": "unset = the coder's access"
+        },
+        "agent.crafts.review.model": {
+          "default": "unset = the coder's model"
+        },
+        "agent.crafts.security-review.access": {
+          "default": "unset = the senior review's access"
+        },
+        "agent.crafts.security-review.model": {
+          "default": "unset = the senior review's model"
+        },
+        "agent.crafts.senior-review.access": {
+          "default": "unset = required: the senior review's calls go out on a credential or a pool"
+        },
+        "agent.crafts.senior-review.model": {
+          "default": "unset = required: the senior review is the second opinion a run needs"
+        },
         "agent.first_line_review": {
           "$comment": "config.FirstLineAuto",
           "default": "auto"
@@ -419,6 +443,36 @@
         },
         "compute_prices.*.vcpu_second_usd": {
           "default": "unset = the built-in list price"
+        },
+        "crafts.coder.access": {
+          "default": "unset = required: the coder's calls go out on a credential or a pool"
+        },
+        "crafts.coder.model": {
+          "default": "unset = required: the coder implements, so a run needs its model"
+        },
+        "crafts.review.access": {
+          "default": "unset = the coder's access"
+        },
+        "crafts.review.model": {
+          "default": "unset = the coder's model"
+        },
+        "crafts.security-review.access": {
+          "default": "unset = the senior review's access"
+        },
+        "crafts.security-review.model": {
+          "default": "unset = the senior review's model"
+        },
+        "crafts.senior-review.access": {
+          "default": "unset = required: the senior review's calls go out on a credential or a pool"
+        },
+        "crafts.senior-review.model": {
+          "default": "unset = required: the senior review is the second opinion a run needs"
+        },
+        "credentials.*.name": {
+          "default": "unset = required: the name a craft's access and a pool's members speak"
+        },
+        "credentials.*.type": {
+          "default": "unset = required: the provider that serves it, one of openrouter, anthropic, claude-oauth"
         },
         "credentials_service.url": {
           "default": "unset = none: the credentials service is not deployed"
@@ -624,6 +678,30 @@
         },
         "layer.defaults.agent.auth": {
           "default": "unset = vertex"
+        },
+        "layer.defaults.agent.crafts.coder.access": {
+          "default": "unset = none: only the local config and the policy node name a credential"
+        },
+        "layer.defaults.agent.crafts.coder.model": {
+          "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.crafts.review.access": {
+          "default": "unset = none: only the local config and the policy node name a credential"
+        },
+        "layer.defaults.agent.crafts.review.model": {
+          "default": "unset = the coder's model"
+        },
+        "layer.defaults.agent.crafts.security-review.access": {
+          "default": "unset = none: only the local config and the policy node name a credential"
+        },
+        "layer.defaults.agent.crafts.security-review.model": {
+          "default": "unset = the senior review's model"
+        },
+        "layer.defaults.agent.crafts.senior-review.access": {
+          "default": "unset = none: only the local config and the policy node name a credential"
+        },
+        "layer.defaults.agent.crafts.senior-review.model": {
+          "default": "unset = defaults.agent.model"
         },
         "layer.defaults.agent.first_line_review": {
           "default": "unset = auto"
@@ -977,6 +1055,15 @@
         "policy_generation": {
           "default": "unset = none: no generation is recorded; the next update adopts the published one"
         },
+        "pools.*.members": {
+          "default": "unset = required: a pool with no members serves nothing"
+        },
+        "pools.*.name": {
+          "default": "unset = required: the name a craft's access speaks"
+        },
+        "pools.*.strategy": {
+          "default": "unset = failover"
+        },
         "profile": {
           "default": "unset = the project layer's default_profile"
         },
@@ -1036,6 +1123,9 @@
         },
         "repos.*.vertex": {
           "default": "unset = false"
+        },
+        "repos.*.credentials_service_ready": {
+          "default": "unset = false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade"
         },
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"

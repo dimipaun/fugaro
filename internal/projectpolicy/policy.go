@@ -241,6 +241,39 @@ type Policy struct {
 	// for a project that names no stage account.
 	ClaudeAccountStages map[string]string `json:"claude_account_stages,omitempty"`
 
+	// CraftCredentials are the project's named credentials (docs/model-crafts/
+	// spec.md §1) and CraftPools its named pools of them (spec §2): a type
+	// whose secret this node never carries, only its name, because the secret
+	// is a Secret Manager entry under that name. They generalise Accounts
+	// (D1621) and are published from the owner's local config by the same
+	// publish that writes it.
+	//
+	// They are member names of their own rather than credentials and pools:
+	// `credentials` on this node is already the budget cascade block (D152), an
+	// unrelated thing, and a JSON member that meant two things would be read as
+	// one of them with no error at all.
+	//
+	// A project that defines none publishes neither member, so its node is byte
+	// for byte what it was before they existed (the same rule
+	// DefaultClaudeAccount follows).
+	CraftCredentials []config.Credential `json:"craft_credentials,omitempty"`
+	CraftPools       []config.Pool       `json:"craft_pools,omitempty"`
+
+	// Crafts are the credential or pool each craft's calls go out on (spec §3):
+	// the project's answer for the four crafts, which a repository selects
+	// among and narrows but never adds to (F25, D1628). A craft's access here
+	// names a member of CraftCredentials or CraftPools, or the built-in vertex;
+	// what the name resolves to is the run's answer (MC2).
+	//
+	// It is a pointer for Orchestrator's reason: omitempty is a no-op on a
+	// struct, so a value field would write "crafts":{"coder":{},...} into every
+	// project's node, and this member is not known to a CLI that predates it —
+	// a project that uses no craft would force every teammate to update before
+	// it could launch. A project that sets none writes no member, and an absent
+	// member and a written empty one are the same block: no craft is set, so
+	// every craft resolves to the project's default credential (D1624).
+	Crafts *config.Crafts `json:"crafts,omitempty"`
+
 	// CloneURLs are the project's clone URLs, keyed by canonical repository
 	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
 	// the runner's slug already use). A repository that is not listed here
@@ -397,6 +430,7 @@ var knownTopLevelKeys = map[string]bool{
 	"review_floor": true, "verifier_accounts": true,
 	"image_catalog":          true,
 	"default_claude_account": true, "claude_account_stages": true,
+	"crafts": true, "craft_credentials": true, "craft_pools": true,
 	"orchestrator": true,
 }
 
@@ -1138,6 +1172,61 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		}
 		if len(p.ClaudeAccountStages) == 0 {
 			p.ClaudeAccountStages = nil
+		}
+	}
+	// The crafts' credentials and pools, and the crafts that choose among
+	// them (docs/model-crafts/spec.md §1–3). The three are read together, in
+	// this order, because the pools are judged against the credentials block
+	// they name members of; the crafts last, so a node that carries a craft
+	// whose access names nothing this project defines is read in full rather
+	// than against a block this reader has not seen.
+	//
+	// They travel here for the account-choice members' reason (F12, D1628): a
+	// key that names a credential is a way around that credential's own
+	// allow_data_to, so the shared config a launcher can write never carries
+	// one, and this node — written only by the owner, read by a runner that
+	// fails closed — is where the project's answer lives.
+	//
+	// The member names are craft_credentials and craft_pools, not credentials
+	// and pools: `credentials` is already the budget cascade block on this
+	// node, a different thing entirely, and a JSON member that meant two
+	// things would be read as the wrong one with no error at all.
+	if craw, ok := doc["craft_credentials"]; ok && !IsNull(craw) {
+		dec := json.NewDecoder(bytes.NewReader(craw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&p.CraftCredentials); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: craft_credentials: %w", err)
+		}
+		for _, prob := range config.ValidateCredentials(p.CraftCredentials) {
+			return nil, true, fmt.Errorf("projectpolicy: %s: %s", prob.Path, prob.Message)
+		}
+	}
+	if praw, ok := doc["craft_pools"]; ok && !IsNull(praw) {
+		dec := json.NewDecoder(bytes.NewReader(praw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&p.CraftPools); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: craft_pools: %w", err)
+		}
+		for _, prob := range config.ValidatePools(p.CraftPools, p.CraftCredentials) {
+			return nil, true, fmt.Errorf("projectpolicy: %s: %s", prob.Path, prob.Message)
+		}
+	}
+	if fraw, ok := doc["crafts"]; ok && !IsNull(fraw) {
+		dec := json.NewDecoder(bytes.NewReader(fraw))
+		dec.DisallowUnknownFields()
+		var cs config.Crafts
+		if err := dec.Decode(&cs); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: crafts: %w", err)
+		}
+		for _, prob := range config.ValidateCrafts(cs) {
+			return nil, true, fmt.Errorf("projectpolicy: %s: %s", prob.Path, prob.Message)
+		}
+		// A block that sets no craft is no block, exactly as an empty
+		// orchestrator is none: nil is what the decoder answers for an absent
+		// member, so the two spellings of "this project sets no craft" are one
+		// answer and a writer that round trips this policy writes no member.
+		if cs != (config.Crafts{}) {
+			p.Crafts = &cs
 		}
 	}
 	// The Bitbucket block is judged *before* the profiles block, and the

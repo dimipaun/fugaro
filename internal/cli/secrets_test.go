@@ -45,7 +45,12 @@ func TestSecretsSetFromPipe(t *testing.T) {
 	if got := string(sm.Latest(claudeSecret)); got != tokenValue {
 		t.Fatalf("stored %q", got)
 	}
-	if out != "stored "+claudeSecret+", version 1\n" || strings.Contains(out+errOut, tokenValue) {
+	// The store's account, whole: one step naming the container it wrote to and
+	// the version it wrote, and the closing line under it (CL7a). The container
+	// is on the line because the person who stored the value is the one who has
+	// to be able to find it in Secret Manager; the value is on neither stream.
+	want := markDone + " Storing claude-oauth-token version 1 in " + claudeSecret + "\nDone in <the run's own>, 1 step\n"
+	if got := withoutRunOwn(out); got != want || strings.Contains(out+errOut, tokenValue) {
 		t.Fatalf("stdout %q, stderr %q", out, errOut)
 	}
 	if !strings.Contains(errOut, "trailing newline") {
