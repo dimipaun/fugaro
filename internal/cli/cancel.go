@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 )
@@ -92,7 +93,13 @@ func newCancelCmd() *cobra.Command {
 				return err
 			}
 			defer env.Close()
-			return cancelRun(cmd.Context(), env, &o, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr())
+			rep, sink := reporterFor(cmd, "cancel", nil)
+			if sink != nil {
+				defer func() { _ = sink.Close() }()
+			}
+			err = cancelRun(cmd.Context(), env, &o, args[0], loggedOut(cmd.OutOrStdout(), sink), cmd.ErrOrStderr(), rep)
+			rep.Summary()
+			return err
 		},
 	}
 	f := cmd.Flags()
@@ -110,18 +117,40 @@ func newCancelCmd() *cobra.Command {
 	return cmd
 }
 
-// cancelRun is cancel's flow (design §4.5) against env.
-func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string, out, errOut io.Writer) error {
-	emit := func(r cancelResult) error {
-		r.Project = env.lc.Name
-		return printCancel(out, r, o)
-	}
+// cancelRun is cancel's flow (design §4.5) against env. rep is the command's
+// reporter, and nil for the callers that drive this flow directly (the tests
+// of the flow itself), which print as they did before it had one.
+func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string, out, errOut io.Writer, rep *report.Reporter) (err error) {
+	// The cancel is one step, and it is not ended here: emit ends it with the
+	// result, just before the result's own message, so the verdict is read
+	// above the sentence it is about. Every other way out of this flow is a
+	// failure, and the deferred call below is what reports it.
+	var step *report.Step
+	defer func() {
+		if step != nil && err != nil {
+			step.Failed(err, nil)
+		}
+	}()
 	// Not locateLaunched: a never-launched run is a case cancel handles.
 	slug, id, err := locateRun(ctx, env, arg)
 	if err != nil {
 		return err
 	}
 	ref := slug + "/" + id
+	if rep != nil {
+		step = rep.Step("cancel " + ref)
+		// The line in flight goes down for the rest of the run: what follows
+		// is the progress line a person waits on, and the wait itself is the
+		// grace period — minutes, with the runner finalizing behind it (G1).
+		rep.Pause()
+	}
+	emit := func(r cancelResult) error {
+		r.Project = env.lc.Name
+		if step != nil {
+			step.Done("")
+		}
+		return printCancel(out, r, o)
+	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
 	l, err := ownerLaunch(ctx, env, s, id)
 	if err != nil {
