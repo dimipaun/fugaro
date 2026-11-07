@@ -198,11 +198,13 @@ var doctorDecisionIDs = map[string]bool{
 //
 // token-signers-managed is the one ID in the list with no warning variant of
 // its own: it names the managed deployment's own grants (the deployer
-// account's conditioned roles, fenced to the managed prefix, and the operators
-// the installation names impersonating that account), which Fugaro's own
-// Terraform makes on purpose and which reach no service account outside the
-// fence — so it is a measurement, and every other principal on that account
-// still comes through token-signers-<n> as a warning.
+// account's conditioned roles, recognised under exactly the condition the
+// module writes, and the operators the installation names impersonating that
+// account itself), which Fugaro's own Terraform makes on purpose — so it is a
+// measurement, and every other principal on that account still comes through
+// token-signers-<n> as a warning. What the condition admits is not claimed
+// here: the design of record leaves it to Check 68
+// (docs/design/managed-deployer-fence.md).
 var doctorMeasureIDs = map[string]bool{
 	// The update lookup did not answer. Nothing about this installation is
 	// wrong, and the newer-release case is the warning variant of the same ID.

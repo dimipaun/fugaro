@@ -26,10 +26,11 @@ const signConsequence = "can sign sign-in tokens with any claims, i.e. act as an
 // identity. Four kinds of principal are information: the ones the design
 // expects (the Firebase Admin SDK account, the minter role on the signer
 // account alone), the managed deployment's own grants (the deployer account's
-// conditioned roles, fenced to the managed prefix, and the operators'
-// impersonation of the deployer account), Google's own service agents of this
-// project (matched by exact email AND this project's number) and the project
-// owners (the trust root); none is ever given a remove command. Every other
+// conditioned roles, under exactly the condition the module writes, and the
+// operators' impersonation of the deployer account itself), Google's own
+// service agents of this project (matched by exact email AND this project's
+// number) and the project owners (the trust root); none is ever given a
+// remove command. Every other
 // one is a warning that fails doctor under --strict. Nothing is
 // checked without a budget backend. Read-only.
 func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service, i *iam.Service) []doctorCheck {
@@ -110,7 +111,7 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		}
 		info = append(info, doctorCheck{ID: "token-signers-managed", Severity: "info",
 			Problem: "the managed deployment's own grants, which Fugaro's own Terraform makes on purpose: " + strings.Join(parts, ", ") +
-				"; neither the fenced roles nor the impersonation grant reaches the signer account; no action"})
+				"; the conditioned roles are the module's own bindings, and the impersonation grant is on the deployer account rather than the signer; what a service makes of the condition is not read here and is Check 68 of docs/gcp-live-checklist.md's to measure (docs/design/managed-deployer-fence.md); no action"})
 	}
 	if len(agentOrder) > 0 {
 		var parts []string

@@ -496,12 +496,14 @@ func TestDoctorTokenSignersUnreadProjectNumberIsCounted(t *testing.T) {
 // the false positives an installation that ran `fugaro update` reported.
 //
 // The deployer account's fugaroDeployerAccount resolves to
-// iam.serviceAccounts.setIamPolicy, but the module binds it under the
-// managed-prefix fence, which admits a service account only when its name
-// carries fmgd- — the token signer's does not, so the deployer can neither
-// grant itself signing on the signer nor reach any account outside the fence.
-// The operator's roles/iam.serviceAccountTokenCreator is on the deployer
-// account, which is not the signer either.
+// iam.serviceAccounts.setIamPolicy, but the module binds it under its own
+// condition on the managed prefix, and that exact binding is what this check
+// recognises. What the condition admits once a service enforces it is not read
+// here and not claimed — the line names Check 68, as the design of record
+// requires (docs/design/managed-deployer-fence.md: until it has run, the
+// prefix condition is not a boundary). The operator's
+// roles/iam.serviceAccountTokenCreator is on the deployer account, which is
+// not the signer either.
 //
 // Mutations this test is the guard for: dropping managedGrant's condition
 // comparison (the fence) must turn the first grant into a warning, and
@@ -525,10 +527,16 @@ func TestDoctorTokenSignersManagedDeploymentIsInfo(t *testing.T) {
 	for _, want := range []string{
 		dsDeployer, dsDeployerRole, tf.DeployerConditionTitle, tf.ManagedPrefix,
 		"user:ops@example.com", tf.DeployerTokenCreatorRole, "no action",
+		// The condition, not what it admits: the line says so and names the
+		// check that measures the rest.
+		"Check 68",
 	} {
 		if !strings.Contains(c.Problem, want) {
 			t.Errorf("managed line %q lacks %q", c.Problem, want)
 		}
+	}
+	if strings.Contains(c.Problem, "reaches no service account whose name does not carry it") {
+		t.Errorf("the managed line claims the fence's enforcement, which no document may claim before Check 68 runs: %q", c.Problem)
 	}
 	if strings.Contains(c.Problem, "remove-iam-policy-binding") {
 		t.Errorf("a class line carries a remove command: %q", c.Problem)

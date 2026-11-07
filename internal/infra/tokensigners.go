@@ -52,9 +52,12 @@ const (
 	SignerOwner
 	// SignerManaged: the managed deployment's own grant, which Fugaro's own
 	// Terraform makes on purpose (managedGrant): the deployer account holding
-	// one of the seven conditioned custom roles under the module's own fence,
-	// or an operator the installation names holding the token-creator role on
-	// the deployer account. Neither reaches the signer, and removing either
+	// one of the seven conditioned custom roles under exactly the condition
+	// the module writes, or an operator the installation names holding the
+	// token-creator role on the deployer account itself, never on the signer.
+	// What the condition then admits is what Check 68 of
+	// docs/gcp-live-checklist.md measures (docs/design/managed-deployer-fence.md),
+	// not something this check reads off the policy; removing either grant
 	// breaks the managed replacement `fugaro update` runs.
 	SignerManaged
 )
@@ -344,12 +347,14 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 //
 //   - the deployer account (tf.DeployerAccount) holding one of the seven
 //     conditioned custom roles under exactly that role's own condition
-//     (tf.DeployerConditionExpression). That condition is the fence: the role
-//     resolves to iam.serviceAccounts.setIamPolicy, but it reaches a service
-//     account only where the account's name carries the managed prefix
-//     (tf.ManagedPrefix), and the token signer's does not. Recognised byte for
-//     byte, so a binding whose condition is absent, widened or narrowed is a
-//     warning like any other.
+//     (tf.DeployerConditionExpression): the condition the module writes, whose
+//     title is tf.DeployerConditionTitle and whose clauses test the managed
+//     prefix tf.ManagedPrefix. Recognised byte for byte, so a binding whose
+//     condition is absent, widened or narrowed is a warning like any other.
+//     What the condition admits once a service enforces it is not read here
+//     and not claimed: the design of record leaves it to Check 68 of
+//     docs/gcp-live-checklist.md (docs/design/managed-deployer-fence.md), and
+//     until then the prefix condition is not a boundary.
 //   - an operator the installation names (Managed.Operators) holding
 //     roles/iam.serviceAccountTokenCreator on the deployer account: the managed
 //     mode's one-time impersonation setup (Task 1.5 step 2 of
@@ -372,8 +377,8 @@ func (e *signerEval) managedGrant(f SignerFinding) string {
 		if !ok || f.Condition.Title != tf.DeployerConditionTitle || f.Condition.Expression != expr {
 			return ""
 		}
-		return "the deployer account's " + f.Role + ", fenced to the managed prefix " + tf.ManagedPrefix +
-			": it reaches no service account whose name does not carry it"
+		return "the deployer account's " + f.Role + ", the module's own binding under " + tf.DeployerConditionTitle +
+			" (" + tf.ManagedPrefix + "); its reach is not yet measured (Check 68, managed-deployer-fence.md)"
 	}
 	if strings.EqualFold(f.Account, tf.DeployerAccount(e.managed.Project)) && f.Role == tf.DeployerTokenCreatorRole && e.operator(f.Member) {
 		return f.Role + " on the deployer account: the managed mode's one-time setup, how the operators the installation names assume it, not the signer"
