@@ -109,9 +109,17 @@ func TestManagedOwnerTerminalOrdinaryStepRefusesWithNobodyAtTheTerminal(t *testi
 // TestManagedOwnerTerminalOrdinaryStepTypesNothing: the ordinary steps of the
 // converge — the state bucket, the Viewer-read removal — are the ones the run's
 // one confirmation used to cover, and on a managed project the owner types
-// nothing for them either. What is printed is the step's own banner and
-// OwnerProceeded's sentence, which claims no verdict because no rule judged
-// these steps.
+// nothing for them either. The step goes through runCovers' covered branch, as
+// it does in a converge, and what is printed for it is the gate's own verdict
+// (initflow.GateOrdinary), the sentence the gate's announced steps print where
+// their confirmation would have been.
+//
+// The review here is the converge's own — taken, which is the state the step
+// meets in production (init_stages.go sets r.review before any stage runs), not
+// the rig's default of none. On the rig alone the step would read
+// OwnerProceeded's sentence, the one for a run whose confirmation cannot be
+// taken at all (TestManagedOwnerTerminalWithYesReadsNoFlag, the arm's own
+// case), which no converge reaches for a step the review's cover admitted.
 //
 // The assertion about the question is the empty stdin: the rig's terminal has
 // nothing to read, so a step that asked would read no answer and report false,
@@ -121,11 +129,12 @@ func TestManagedOwnerTerminalOrdinaryStepTypesNothing(t *testing.T) {
 		name string
 		what string
 	}{
-		{"covered", "writes the Terraform state bucket (cents a month)"},
-		{"its own", "removes project Viewers' read access to the runs bucket"},
+		{"the state bucket", "writes the Terraform state bucket (cents a month)"},
+		{"the Viewer-read removal", "removes project Viewers' read access to the runs bucket"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, e, out := managedTerminalUpdate(t, true)
+			e.r.review = &runReview{state: reviewTaken}
 
 			ok, err := e.r.askOrdinary(tc.what, "")
 			if err != nil {
@@ -134,8 +143,11 @@ func TestManagedOwnerTerminalOrdinaryStepTypesNothing(t *testing.T) {
 			if !ok {
 				t.Fatalf("the step was not confirmed with nothing typed:\n%s", out)
 			}
-			if !strings.Contains(out.String(), initflow.OwnerProceeded()) {
+			if !strings.Contains(out.String(), initflow.GateOrdinary()) {
 				t.Errorf("the step does not say why nothing is typed:\n%s", out)
+			}
+			if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+				t.Errorf("a step the review's cover admitted read the sentence of the arm for a step it did not:\n%s", out)
 			}
 			for _, no := range []string{"Type " + initProjectName, "confirmed by --yes"} {
 				if strings.Contains(out.String(), no) {
@@ -298,6 +310,13 @@ func TestManagedOwnerTerminalInstallationFlagKeepsTheTypedName(t *testing.T) {
 // --yes" — the flag is not asked for and does not decide (initflow's
 // PersonAtTheTerminal deliberately ignores it), so an owner who passed it is told
 // what actually decided the step rather than that a flag they did not need did.
+//
+// This is also the OwnerProceeded arm's own case: with the flag the run's one
+// confirmation cannot be taken (initflow.CanConfirmRun is false where
+// PersonAtTheTerminal is true, and --yes is the only condition they differ on),
+// so a converge reaches that arm here and nowhere else. A step the review's
+// cover did admit keeps the gate's verdict instead, which
+// TestManagedOwnerTerminalOrdinaryStepTypesNothing pins.
 func TestManagedOwnerTerminalWithYesReadsNoFlag(t *testing.T) {
 	r := updateRig(t)
 	r.managedRuns(t, initProjectName, initProject)
