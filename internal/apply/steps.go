@@ -90,34 +90,39 @@ var resourceSteps = map[string][]string{
 	ResourceWorkspace: []string{initflow.Workspace},
 }
 
-// settingPrefixSteps is the setting-key half of the table. A key is matched
-// against these rows in order and the first row it starts with is the answer,
-// so a row is also a statement about the rows below it: a family whose prefix
-// is a dotted path comes before the bare key that would otherwise claim it.
+// settingSteps is the setting-key half of the table. A key is matched against
+// these rows in order and the first row that answers it is the answer: a prefix
+// row answers every key that starts with it, and an exact row answers its own
+// key and nothing else.
+//
 // A key that matches no row is a gap in the table and not an answer (Steps says
 // so), because every setting a command writes has to declare what it affects
 // (spec rule 2, D1561). A row with no steps is a declaration too — it says the
 // change is live once the config is written — and it is a different answer from
 // the gap, which is why the two are not spelled the same way.
-var settingPrefixSteps = []struct {
-	prefix string
-	steps  []string
+var settingSteps = []struct {
+	// match is the key this row answers for, or the prefix of the family it
+	// answers for when exact is false.
+	match string
+	// exact says match is the whole key rather than a prefix of it.
+	exact bool
+	steps []string
 }{
 	// The catalog's keys are the local config's (internal/settings, the
 	// `image_catalog.entries.*` rows), and they owe what the image resource
 	// type owes: the build, the redeploy and the publish.
-	{"image_catalog.", catalogSteps},
+	{"image_catalog.", false, catalogSteps},
 	// The project layer's keys are published by the layer stage, which is the
 	// only writer of that file's cloud copy (D830).
-	{"layer.", []string{initflow.Layer}},
+	{"layer.", false, []string{initflow.Layer}},
 	// The workspace OWNER's half of a membership: the member table and the cap
 	// are the whole of what the workspace stage publishes (D1292, and
 	// update_workspace.go's own comment: the record a run publishes is the one
 	// its own config declares, `workspace_members` and `workspace_cap`). They
 	// are the keys of the project the workspace is named after, and the stage
 	// does nothing on a member's run, where they are absent.
-	{"workspace_members.", []string{initflow.Workspace}},
-	{"workspace_cap.", []string{initflow.Workspace}},
+	{"workspace_members.", false, []string{initflow.Workspace}},
+	{"workspace_cap.", false, []string{initflow.Workspace}},
 	// The workspace MEMBER's half — the pin, and the membership key naming the
 	// workspace it trusts — owes no step: nothing publishes either. The
 	// workspace stage is the owner's and skips on a member, no other stage
@@ -126,10 +131,15 @@ var settingPrefixSteps = []struct {
 	// verified against its own config, so the change is live when the config is
 	// written — and a row mapping them to the workspace stage would queue a step
 	// that can never run on the machine that asked for it.
-	{"workspace_pin.", nil},
-	// The bare membership key, last of the workspace rows so the two families
-	// above are matched first.
-	{"workspace", nil},
+	{"workspace_pin.", false, nil},
+	// The bare membership key owes no step for the pin's reasons, and it is
+	// matched whole rather than as a prefix: it is a prefix of every other key
+	// of its family, so a prefix row here would answer `workspace_members`,
+	// `workspace_cap` and any future `workspaces.*` — keys the registry does
+	// not declare — with "declared, owes nothing" instead of the gap the table
+	// owes them, and an owner-side key added later would be saved with no
+	// workspace stage queued and nothing said about it.
+	{"workspace", true, nil},
 }
 
 // Steps answers the steps change owes, in the order initflow runs them, and
@@ -146,10 +156,15 @@ func Steps(change Change) ([]string, bool) {
 		}
 		return Order(steps), true
 	case Setting:
-		for _, row := range settingPrefixSteps {
-			if strings.HasPrefix(change.Key, row.prefix) {
-				return Order(row.steps), true
+		for _, row := range settingSteps {
+			if row.exact {
+				if change.Key != row.match {
+					continue
+				}
+			} else if !strings.HasPrefix(change.Key, row.match) {
+				continue
 			}
+			return Order(row.steps), true
 		}
 		return nil, false
 	}

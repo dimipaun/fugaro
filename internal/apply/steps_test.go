@@ -23,18 +23,22 @@ import (
 // the layer, and so on. Order is what a row is read through, so it is what this
 // checks. The third is that the row is what Steps answers for the change it is
 // keyed by, and that a change nobody declared answers "not declared" rather
-// than "nothing owed".
+// than "nothing owed" — a key that merely starts with a declared one among
+// them, because that is the one a prefix row would answer for a family it does
+// not declare, and the one an owner-side key added later would silently inherit
+// the member's "owes nothing" from.
 func TestStepsTableNamesOnlyKnownStages(t *testing.T) {
 	rows := 0
 	for _, resource := range slices.Sorted(maps.Keys(resourceSteps)) {
 		rows++
 		checkStepsRow(t, Change{Kind: Resource, Key: resource}, "resource "+resource, resourceSteps[resource])
 	}
-	for _, row := range settingPrefixSteps {
+	for _, row := range settingSteps {
 		rows++
-		// The prefix is a key of its own family, which is what a change is
-		// keyed by: `image_catalog.` stands for every `image_catalog.*` key.
-		checkStepsRow(t, Change{Kind: Setting, Key: row.prefix}, "setting "+row.prefix, row.steps)
+		// The row's own key is what a change is keyed by: `image_catalog.`
+		// stands for every `image_catalog.*` key, and an exact row stands for
+		// itself.
+		checkStepsRow(t, Change{Kind: Setting, Key: row.match}, "setting "+row.match, row.steps)
 	}
 	if rows == 0 {
 		t.Fatal("the table declares no row at all: every change would answer \"nothing owed\"")
@@ -51,6 +55,29 @@ func TestStepsTableNamesOnlyKnownStages(t *testing.T) {
 	} {
 		if steps, ok := Steps(c); ok {
 			t.Errorf("Steps(%+v) = %v, true, and the table declares nothing for it", c, steps)
+		}
+	}
+
+	// A key that only starts with a declared one is a gap too, and it is the
+	// case the bare membership key is matched whole for: `workspace` is a
+	// prefix of every other key of its family, so a prefix row for it would
+	// answer the keys below — the registry declares `workspace`, `workspace_pin.*`,
+	// `workspace_members.*.*` and `workspace_cap.monthly` and none of these —
+	// with "declared, owes nothing" instead of the gap, and an owner-side family
+	// added later would be saved with no workspace stage queued and nothing said
+	// about it.
+	for _, c := range []Change{
+		{Kind: Setting, Key: "workspace_members"},
+		{Kind: Setting, Key: "workspace_cap"},
+		{Kind: Setting, Key: "workspaces.foo"},
+		{Kind: Setting, Key: "workspacex"},
+		{Kind: Setting, Key: "workspace_pin"},
+		{Kind: Setting, Key: "image_catalog"},
+		{Kind: Setting, Key: "layer"},
+	} {
+		if steps, ok := Steps(c); ok {
+			t.Errorf("Steps(%+v) = %v, true, and the table declares nothing for that key: it only starts with one the table declares, which is the gap and not the declaration",
+				c, steps)
 		}
 	}
 }
