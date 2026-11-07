@@ -597,6 +597,63 @@ func TestDoctorSweepWarningsAreOneLine(t *testing.T) {
 	}
 }
 
+// TestDoctorAccountShortsKeepTheScopeAndTheUnservedForm: the default view
+// prints a check's short form whenever the check's own fix does not fit beside
+// its sentence, and the two account checks' own fixes are long in exactly the
+// state projectAccountRig sets up — a named account and the default account
+// both with no stored token — so the short form is the line an owner reads
+// there. Both said the wrong command: project-account-stored's dropped
+// --project-wide from the default account's pair, and claude-oauth-token is
+// not project-scoped by default (config.ProjectScopeByDefault), so from a
+// checkout outside the project_secrets entry the bare command stores a
+// repository copy the shared job — which mounts the project-wide one — never
+// sees; and claude-accounts-stored's named the accounts-add form with
+// --profile as the whole fix, which doctorAccountStore does not print when no
+// profile's claude_accounts lists the account. This pins the rendered line of
+// the two real checks, not the table they come from.
+func TestDoctorAccountShortsKeepTheScopeAndTheUnservedForm(t *testing.T) {
+	r := projectAccountRig(t)
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: no account job's token is stored")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	want := map[string][]string{
+		// The named account's one command, and the default account's pair with
+		// the scope its container is stored at.
+		"project-account-stored": {"accounts add NAME --repos OWNER/NAME --profile PROFILE",
+			"claude setup-token", "secrets set claude-oauth-token --project-wide"},
+		// The one command for a profile that serves the account, and the pair
+		// for one no profile's claude_accounts lists: the short form covers
+		// both, because the check fires in both.
+		"claude-accounts-stored": {"accounts add NAME --repos OWNER/NAME --profile PROFILE",
+			"claude setup-token", "secrets set claude-oauth-token-NAME"},
+	}
+	for id, wants := range want {
+		c, ok := doctorCheckByID(o.Checks, id)
+		if !ok || c.OK {
+			t.Fatalf("%s = %+v", id, c)
+		}
+		// The check's own fix is the long one: a check whose fix fits one line
+		// prints that fix, and this test would then be reading the wrong text.
+		if doctorFits(c, firstSentence(c.Fix)) {
+			t.Fatalf("%s's own fix fits one screen line, so the default view does not print its short form: %q", id, c.Fix)
+		}
+		line := doctorDefaultOutput(t, []doctorCheck{c})
+		for _, w := range wants {
+			if !strings.Contains(line, w) {
+				t.Errorf("the default view's line for %s lacks %q:\n%s", id, w, line)
+			}
+		}
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
 // TestDoctorAllPrintsEveryCheck: --all is the long-standing output — one line
 // per check, informational and audit lines included — so nothing an operator
 // could read before is gone.

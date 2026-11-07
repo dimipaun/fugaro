@@ -135,10 +135,37 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // ee/report, so §4 and §8's report row moved with them
 // (ee/report/cli/console_contract_test.go), read as bytes and embedding nothing
 // like the other two.
+//
+// The fourth is the settings-edit plan's C4, and it is the same kind of
+// exception: the console's hermetic CLI stub answers `fugaro settings --json`
+// with a committed document (console/test/fixtures/settings.json) that the e2e
+// spec draws as the CLI's own read, the schema that documents that document is
+// schemas/settings.schema.json, and the test that holds the one to the other is
+// the schema's own (schemas/schemas_test.go, TestSettingsConsoleFixture), which
+// is the file that already validates a document of this repository against a
+// schema it owns (TestProjectLayerDocsExample reads docs/project-layer.md). The
+// read is bytes: no import under console/, no go:embed, and no Go file that
+// builds against anything the console holds.
+//
+// The fifth is the same fixture read from this package's side, and it is the
+// other half of the same claim: the registry answers a row's `sensitive` and
+// supplies the layers the narrowest-layer rule reads (the entry above), but
+// `target_layer` is settingsDefaultLayer's own answer, `owner` is the word
+// settingsFamilyCommands makes of the registry's owner token, and `writable` is
+// settingsWriteRow's -- the write's decision the read copies, D1102 -- and all
+// three of those live in this package. So the test that holds the fixture to
+// them (internal/cli/settings_console_fixture_test.go,
+// TestSettingsConsoleFixtureOwnerAndWritable) is the one file here that reads a
+// console document to ask this package's own functions, which is why it is an
+// entry and not a line in a test of its own. Bytes again, like the other four:
+// no import under console/, no go:embed, nothing built against what the console
+// holds.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
 	"ee/coordinator/cli/console_contract_test.go",
 	"ee/report/cli/console_contract_test.go",
+	"schemas/schemas_test.go",
+	"internal/cli/settings_console_fixture_test.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -748,11 +775,14 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// The count is pinned on purpose: a new entry is a deliberate widening
 		// of the boundary, argued for in the commit that adds it (plan Task 0.3
 		// a3) and in a comment on the entry itself. The second is ee-reorg
-		// E2.1b's (the coordinator's moved half) and the third E2.2b1's (the
+		// E2.1b's (the coordinator's moved half), the third E2.2b1's (the
 		// report's), each in the package its command and shapes moved to, and
-		// this number is what makes a fourth one impossible to add quietly.
-		if len(consoleBoundaryAllowList) != 3 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests and the moved halves of the coordinator's and the report's commands, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+		// the fourth and the fifth the settings-edit plan's C4, which reads the
+		// console's settings fixture from both sides -- the schema that
+		// documents it and the write this package answers it with; this number
+		// is what makes a sixth one impossible to add quietly.
+		if len(consoleBoundaryAllowList) != 5 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, and the two halves of the settings fixture's check, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 

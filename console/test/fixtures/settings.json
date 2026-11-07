@@ -3,54 +3,75 @@
   "project": "example-project",
   "generated_at": "2026-11-03T09:00:00Z",
   "sources": [
-    { "layer": "repo", "read_at": "2026-11-03T09:00:00Z", "duration_ms": 3, "status": "read" },
-    { "layer": "project", "read_at": "2026-11-03T09:00:00Z", "duration_ms": 2, "status": "read" },
-    { "layer": "local", "read_at": "2026-11-03T09:00:00Z", "duration_ms": 1, "status": "read" }
+    { "layer": "default", "read_at": "2026-11-03T09:00:00Z", "duration_ms": 0, "status": "ok" },
+    {
+      "layer": "project",
+      "read_at": "2026-11-03T09:00:00Z",
+      "duration_ms": 2,
+      "status": "ok",
+      "note": "cached 3h ago"
+    },
+    {
+      "layer": "local",
+      "read_at": "2026-11-03T09:00:00Z",
+      "duration_ms": 1,
+      "status": "ok",
+      "note": "/home/owner/.config/fugaro/projects/example-project.yaml"
+    }
   ],
   "settings": [
     {
       "key": "agent.review_rounds",
-      "scope": "repo",
+      "scope": "project",
       "value": "2",
       "wins": "project",
-      "default": { "unset": "the run's rigor mode decides (rigor.DefaultRounds)" },
-      "state": "set (project)",
+      "default": { "unset": "unset = the run's rigor mode decides (rigor.DefaultRounds)" },
+      "state": "stale 3h",
       "writable": true,
-      "owner": "settings set",
-      "target_layer": "project"
+      "owner": "",
+      "target_layer": "repo",
+      "levels": [{ "layer": "project", "value": "2", "outcome": "wins" }]
     },
     {
       "key": "claude_account_auto",
-      "scope": "",
+      "scope": "project",
       "value": "false",
       "wins": "local",
-      "default": { "unset": "false: nothing chooses an account for the owner" },
-      "state": "set (local)",
+      "default": { "unset": "unset = false: nothing chooses an account for the owner" },
+      "state": "ok",
       "writable": true,
-      "owner": "settings set",
-      "target_layer": "local"
+      "owner": "",
+      "target_layer": "local",
+      "levels": [{ "layer": "local", "value": "false", "outcome": "wins" }]
     },
     {
       "key": "mailbox.keychain_item",
-      "scope": "",
-      "value": "Fugaro Mailbox",
-      "wins": "default",
-      "default": { "unset": "the keychain item the subscription design names" },
-      "state": "default",
+      "scope": "project",
+      "value": "{\"m~AAECAwQFBgcICQoLDA0ODw\":\"fugaro-mailbox-example-project\"}",
+      "wins": "local",
+      "default": { "unset": "unset = the keychain item the subscription design names" },
+      "state": "ok",
       "writable": false,
-      "owner": "secrets",
-      "target_layer": ""
+      "owner": "fugaro secrets",
+      "target_layer": "local",
+      "levels": [
+        {
+          "layer": "local",
+          "value": "{\"m~AAECAwQFBgcICQoLDA0ODw\":\"fugaro-mailbox-example-project\"}",
+          "outcome": "wins"
+        }
+      ]
     },
     {
       "key": "budget.firebase_api_key",
       "scope": "project",
-      "wins": "project",
-      "default": { "unset": "none" },
-      "state": "set (project)",
+      "wins": "default",
+      "default": { "unset": "unset = none: the Realtime Database API key" },
+      "state": "ok",
       "sensitive": true,
       "writable": false,
-      "owner": "budget",
-      "target_layer": ""
+      "owner": "",
+      "target_layer": "local"
     }
   ]
 }
