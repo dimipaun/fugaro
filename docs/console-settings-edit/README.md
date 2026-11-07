@@ -1,13 +1,24 @@
 # Editing the Project tab's settings from the console, behind a pencil
 
-**Status: plan only; nothing is implemented; no task approved.** This is a design-only folder: it adds
-no code, no schema, no console source, no test fixture and no workflow, and it edits no file outside
-`docs/` and the one Go test that pins this folder. Every command, flag, field and argv below is a
-proposal. The owner answered **every one of its decisions** on 2026-11-01 ([spec.md](spec.md)):
-D1100–D1121 as recommended, except **D1107**, which he answered with **`--yes` is allowed for a
-widening** — so the console runs `settings set … --yes` and gets no hook of its own. An answer is not
-an approval: no task in [implementation-plan.md](implementation-plan.md) may start before the owner
-approves it.
+**Status (2026-11-07, later): the plan is built — every task in it has landed.** Each task needed the
+owner's go by name and got it, and the tree followed: the prerequisite CLI tasks **P1–P4** and all
+six console tasks **C1–C6** are on `main` — the settings write, the pencil, the window, the widening
+answered by `--yes` — so the commands, flags, fields and argv proposed below are what the CLI and
+the console now do, and the console shipped it in **0.120.0 "Quince"**.
+[reconciliation.md](reconciliation.md) §1 records the commit its citations were re-read on. What
+landed were the tasks, in their own pull requests — **this folder ships no code itself**, and the
+paragraph kept below is the folder's own statement of what it is. **This line records what the tree
+holds; it approves no task and it changes no sentence below.** Everything under it is the state as
+it was written on its own date, kept as written.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.**
+This is a design-only folder: it adds no code, no schema, no console source, no test fixture and no
+workflow, and it edits no file outside `docs/` and the one Go test that pins this folder. Every
+command, flag, field and argv below is a proposal. The owner answered **every one of its decisions**
+on 2026-11-01 ([spec.md](spec.md)): D1100–D1121 as recommended, except **D1107**, which he answered
+with **`--yes` is allowed for a widening** — so the console runs `settings set … --yes` and gets no
+hook of its own. An answer is not an approval: no task in
+[implementation-plan.md](implementation-plan.md) may start before the owner approves it.
 
 **Asked by:** the owner, 2026-11-01: "In the console, under the Project tab, for each of those values,
 a way for administrators to edit them from within the console: a little pencil icon to trigger an
@@ -27,12 +38,14 @@ with it, **reconciliation wins**.
 
 ## What it is
 
-The Project tab draws five panels today, from three commands: `budget show --json`,
-`accounts ls --json` and `secrets ls --json` (`PROJECTS_SOURCE_LINES`,
-`console/src/renderer/screens/projects.ts:92`). What it shows is caps, kill switches, repositories,
-accounts and a secrets inventory — and two panels that say they have no command at all. The owner's
-ask is about **those values**: the settings of this one project, each of them editable from the
-console behind a little pencil.
+The Project tab draws **nine** panels today, seven of them from **five** commands: `budget show
+--json` — which draws caps, kill switches and repositories — plus `accounts ls --json` and `secrets
+ls --json`, the three that drove this screen on the day this was written, and, since, `models ls
+--json` (console 0.119.0's models panel) and `settings --json` (this design's **C1**, the read the
+pencil rests on) (`PROJECTS_SOURCE_LINES`, `console/src/renderer/screens/projects.ts:108`). The two
+that are left, policy and enrollment, say they have no command at all (`POLICY_SOURCE_LINE`, `:122`;
+`ENROLLMENT_SOURCE_LINE`, `:126`). The owner's ask is about **those values**: the settings of this
+one project, each of them editable from the console behind a little pencil.
 
 The console has **no editing code of its own**, and this design does not give it one. Every edit is
 `fugaro settings set` or `fugaro settings unset` — the generic write path the settings design's **S5**
@@ -45,7 +58,7 @@ which shows **what will be spawned** and spawns it verbatim on a yes from **its 
 Three things this design settles that the ask does not:
 
 1. **Which rows get a pencil is the CLI's answer, never the console's.** S5 keeps the allow-list of
-   writable rows (`settingsGenericKeys` and `settingsGenericPrefixes`, `internal/cli/settings_set.go:64`, `:83`) and
+   writable rows (`settingsGenericKeys` and `settingsGenericPrefixes`, `internal/cli/settings_set.go:83`, `:197`) and
    the registry's `Owner` and `Sensitive` facts (`internal/settings/registry.go:80`). The console
    reads them and keeps no list of its own; the read's own field is the subject of **D1102** and the
    prerequisite **P2**. A row the read marks `sensitive: true` is **hidden** — no key, no value, no
@@ -55,7 +68,7 @@ Three things this design settles that the ask does not:
    re-derive (**D1106**, prerequisite **P3**).
 3. **A widening is confirmed by `--yes`, and the agent-session fence is untouched.** D846 reserves a
    widening for the project's name typed at a terminal, and no flag answers it today
-   (`confirmTypedStrict`, `internal/cli/budget.go:239`) — which the console, with no terminal, cannot
+   (`confirmTypedStrict`, `internal/cli/budget.go:251`) — which the console, with no terminal, cannot
    do. **D1107** is the owner's answer of 2026-11-01: "I don't see why `--yes` doesn't work, we
    should allow it." `settings set|unset` **consult `--yes`** on that path **outside an agent
    session**, the agent-session refusal coming **first** so `--yes` never lifts it, and `fugaro
