@@ -21,6 +21,7 @@
 #               --repo <owner/name>=<checkout path> \
 #               --probe-repo <owner/name> \
 #               [--new-token-file <path>] [--source <fugaro checkout>] [--merge]
+#               [--gcloud-config <dir>]
 #             --dry-run  prints the plan and touches nothing.
 #             The token file holds the project access token and nothing else —
 #             one line, no quotes, no JSON — at mode 0600. It is the ONE place
@@ -34,10 +35,21 @@
 #             Bitbucket PROJECT afterwards, which is what makes U3 a reading of
 #             the token rather than of a list of names: create it before the
 #             run, and do NOT add it to `project_secrets`.
-#             --new-token-file is the token created in step 5's rotation
-#             (F3). Without it the rotation's own facts are INFO and name what
-#             to pass; `--merge` is what lets the check measure U4's merge, and
-#             without it the approve is measured and the merge is not.
+#             --new-token-file is the token created in step 5's rotation (F3).
+#             Without it the rotation's own row reads UNVERIFIED and names what
+#             to pass, and the block's last line says INCOMPLETE; `--merge` is
+#             what lets the check measure U4's merge, and without it the approve
+#             is measured and the merge reads UNVERIFIED.
+#             --gcloud-config names the directory the SECOND MACHINE reads its
+#             Application Default Credentials from (U5). That step runs the CLI
+#             in a scratch home, so without credentials named for it the seeded
+#             `fugaro update --config-only` cannot read the installation's
+#             outputs and the step measures nothing. The owner's own ADC is
+#             handed to it BY PATH and never copied anywhere: this flag if it is
+#             given, else $GOOGLE_APPLICATION_CREDENTIALS, else $CLOUDSDK_CONFIG,
+#             else `~/.config/gcloud` — the CLI's own order
+#             (internal/cli/adcpath.go). Pass the flag only if your ADC is
+#             somewhere else than those name.
 # Needs:      bash, mktemp, python3 (the reader), curl, git, gcloud, fugaro,
 #             and `go` with a Fugaro checkout for the live test. Nothing is
 #             installed and nothing is fetched.
@@ -59,9 +71,36 @@
 #             the repository added to the project afterwards, the merge, and
 #             the rotated token pair.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 180 RESULT,
-#             to copy back to the coordinator. Exit 0 when every fact passed,
-#             1 when one FAILed, 2 when the run could not tell (a guard stopped
-#             it, a tool is missing, a command was refused).
+#             to copy back to the coordinator. Its last line is the verdict, and
+#             the verdict is the exit status:
+#
+#               CHECK 180 RESULT: PASS (exit 0)        every criterion passed;
+#               CHECK 180 RESULT: FAIL (exit 1)        a criterion was measured
+#                                                      and failed;
+#               CHECK 180 RESULT: INCOMPLETE (exit 2)  the run stopped before it
+#                                                      could measure everything (a
+#                                                      guard stopped it, a tool is
+#                                                      missing, a command was
+#                                                      refused, an error ended it):
+#                                                      the rows it never reached
+#                                                      read FAIL — not reached and
+#                                                      `aborted` says what stopped
+#                                                      it;
+#               CHECK 180 RESULT: INCOMPLETE (exit 3)  it ran to the end and at
+#                                                      least one criterion was
+#                                                      NOT settled: a row reading
+#                                                      UNVERIFIED, a step that
+#                                                      could not verify its
+#                                                      criterion (the rotation or
+#                                                      the merge without the flag
+#                                                      that measures it, the second
+#                                                      machine without credentials
+#                                                      it can read the installation
+#                                                      with).
+#
+#             ONLY an all-PASS block is a PASS: a check that measured most of its
+#             criteria and left one unmeasured is INCOMPLETE, not a pass, and the
+#             register's section is read against that word.
 #
 # NO SECRET IN ANY OUTPUT is a property of the design, not a promise kept by
 # care. The value is read from the token file by the reader, which writes it
@@ -114,7 +153,7 @@ stop() {
 }
 
 FACTS_FILE=""
-fact() { # fact KEY PASS|FAIL|INFO "detail"
+fact() { # fact KEY PASS|FAIL|UNVERIFIED "detail"
   [ -n "$FACTS_FILE" ] || return 0
   printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$FACTS_FILE"
 }
@@ -223,6 +262,26 @@ finish() {
     local cred_note="the curl config, the git config and the logs the token's value or a command's own words were written into are removed"
     [ "$CREDENTIALS_REMOVED" = yes ] || cred_note="A FILE HOLDING A CREDENTIAL IS STILL THERE — look in $SCRATCH yourself and remove it: it holds the token's value in a curl or git config, or an environment file the live test read"
     facts="${facts}"$'\n'"restore|$restore|${cred_note}, and the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
+  fi
+  # The status the block's last line carries, decided here because the restore
+  # row above is a criterion like any other and exists only now. A finished run
+  # whose restore row FAILed exits 1 (main decided 0 before that row existed);
+  # a finished run with a criterion that is not a PASS row — a row reading
+  # UNVERIFIED, a key nobody wrote — exits 3, because a block that measured most
+  # of its criteria and left one unmeasured is not a pass; and a run that stopped
+  # before it could measure everything keeps 2 and reads INCOMPLETE, because a
+  # guard, a missing tool or an error is not a criterion that failed.
+  #
+  # PRINTED says the run has already decided its own ending and its own status:
+  # --dry-run prints the plan and --help the usage, and neither is a run whose
+  # criteria were left unmeasured — there are no criteria, and a plan that
+  # measured nothing is the one thing that is not INCOMPLETE.
+  if [ -z "$PRINTED" ] && [ "$REACHED_END" = yes ] && [ "$status" -eq 0 ]; then
+    if printf '%s\n' "$facts" | grep -q '|FAIL|'; then
+      status=1
+    elif [ -n "$(criteria_unmet "$facts")" ]; then
+      status=3
+    fi
   fi
   if [ -z "$PRINTED" ]; then
     PRINTED=1
@@ -745,10 +804,10 @@ step_identity() {
     fact U2 PASS "the token answers GET /2.0/user with an account of its own (HTTP 200, a display name and a uuid are present; neither value is printed here). Bitbucket shows that name as the author of every pull request the token opens, so one token means one author on every repository it is allow-listed for (F8, D472)"
     ;;
   200:*)
-    fact U2 INFO "GET /2.0/user answered 200 but the answer carries no name this check can read, so what the token's pull requests are authored BY is not settled here (U2 stays UNVERIFIED); the pull request's own author field is read below"
+    fact U2 UNVERIFIED "GET /2.0/user answered 200 but the answer carries no name this check can read, so what the token's pull requests are authored BY is not settled here (U2 stays UNVERIFIED); the pull request's own author field is read below"
     ;;
   *)
-    fact U2 INFO "GET /2.0/user answered ${status}$(curl_note), so the identity behind the token was NOT read (U2 stays UNVERIFIED): Bitbucket documents this endpoint for an access token and whether it answers for one is exactly what U7 is open on"
+    fact U2 UNVERIFIED "GET /2.0/user answered ${status}$(curl_note), so the identity behind the token was NOT read (U2 stays UNVERIFIED): Bitbucket documents this endpoint for an access token and whether it answers for one is exactly what U7 is open on"
     ;;
   esac
 }
@@ -939,7 +998,7 @@ step_pr() { # step_pr LABEL REPO PR USERFILE
   local status facts author match state
   status=$(request "$SCRATCH/pr-${label}.json" GET "/repositories/${repo}/pullrequests/${pr}" --config "$CURL_CONF")
   if [ "$status" != 200 ]; then
-    fact author-$label INFO "pull request #${pr} of ${repo} could not be read with the token (HTTP ${status}$(curl_note)), so its author was NOT read; the register's section is where you record the name Bitbucket shows"
+    fact author-$label UNVERIFIED "pull request #${pr} of ${repo} could not be read with the token (HTTP ${status}$(curl_note)), so its author was NOT read; the register's section is where you record the name Bitbucket shows"
     return 0
   fi
   facts=$(reader pr "$SCRATCH/pr-${label}.json" "$userfile" 2>/dev/null || true)
@@ -947,13 +1006,13 @@ step_pr() { # step_pr LABEL REPO PR USERFILE
   match=$(field_of matches-identity "$facts")
   case "$author:$match" in
   absent:*)
-    fact author-$label INFO "pull request #${pr} of ${repo} carries no author this check can read, so U2's 'the token authors the pull request' stays UNVERIFIED for it; read the name in Bitbucket and record it in the register's section"
+    fact author-$label UNVERIFIED "pull request #${pr} of ${repo} carries no author this check can read, so U2's 'the token authors the pull request' stays UNVERIFIED for it; read the name in Bitbucket and record it in the register's section"
     ;;
   *:yes)
     fact author-$label PASS "pull request #${pr} of ${repo} was authored by the SAME account the token answers GET /2.0/user with (the two uuids match; neither is printed), so the token's own name is the author a reader sees (U2, F8, D472). With one token every enrolled repository's pull requests carry that one author"
     ;;
   *)
-    fact author-$label INFO "pull request #${pr} of ${repo} has an author this check cannot compare with the token's identity (${match}), so U2's attribution stays UNVERIFIED for it: record the author's name from Bitbucket in the register's section"
+    fact author-$label UNVERIFIED "pull request #${pr} of ${repo} has an author this check cannot compare with the token's identity (${match}), so U2's attribution stays UNVERIFIED for it: record the author's name from Bitbucket in the register's section"
     ;;
   esac
 
@@ -971,7 +1030,7 @@ step_pr() { # step_pr LABEL REPO PR USERFILE
   esac
 
   if [ "$MERGE" != yes ]; then
-    fact U4-merge-$label INFO "the merge was NOT attempted: pass --merge to measure it (only the scopes settle whether a token may merge). A merge cannot be undone, which is why it is a flag rather than the default; on a sandbox repository it is what the check is for"
+    fact U4-merge-$label UNVERIFIED "the merge was NOT attempted: pass --merge to measure it (only the scopes settle whether a token may merge). A merge cannot be undone, which is why it is a flag rather than the default; on a sandbox repository it is what the check is for"
     return 0
   fi
   local merge
@@ -1008,7 +1067,7 @@ step_probe() {
     fact U3 FAIL "the token could NOT read ${PROBE_REPO} (HTTP ${status}${code:+, ${code#error=}}): a repository added to the Bitbucket project afterwards is NOT reachable with this token, which contradicts the project scope the plan's U3 rests on. Record it before any task builds on it"
     ;;
   *)
-    fact U3 INFO "the probe repository ${PROBE_REPO} answered ${status}, which settles neither reach nor its absence, so U3 stays UNVERIFIED$(curl_note)"
+    fact U3 UNVERIFIED "the probe repository ${PROBE_REPO} answered ${status}, which settles neither reach nor its absence, so U3 stays UNVERIFIED$(curl_note)"
     ;;
   esac
 }
@@ -1018,11 +1077,11 @@ step_probe() {
 # value is read into a shell variable here and unset again straight after.
 step_live_test() {
   if [ ! -d "$SOURCE/internal/gitprov/bitbucket" ]; then
-    fact live-test INFO "the live test was NOT run: no Fugaro checkout with internal/gitprov/bitbucket was found at ${SOURCE} (pass --source <path>). Run it by hand, with the token file you named: FUGARO_LIVE_REPO=${REPO_A} FUGARO_BITBUCKET_TOKEN=\$(cat ${TOKEN_FILE}) go test -tags live -run TestLiveBitbucket -count=1 ./internal/gitprov/bitbucket/ — and record what it says in the register's section"
+    fact live-test UNVERIFIED "the live test was NOT run: no Fugaro checkout with internal/gitprov/bitbucket was found at ${SOURCE} (pass --source <path>). Run it by hand, with the token file you named: FUGARO_LIVE_REPO=${REPO_A} FUGARO_BITBUCKET_TOKEN=\$(cat ${TOKEN_FILE}) go test -tags live -run TestLiveBitbucket -count=1 ./internal/gitprov/bitbucket/ — and record what it says in the register's section"
     return 0
   fi
   if ! command -v go >/dev/null 2>&1; then
-    fact live-test INFO "the live test was NOT run: 'go' is not on PATH. Run the command in the register's section by hand and record its answer"
+    fact live-test UNVERIFIED "the live test was NOT run: 'go' is not on PATH. Run the command in the register's section by hand and record its answer"
     return 0
   fi
   local rc=0 token=""
@@ -1043,7 +1102,7 @@ step_live_test() {
 # the step says what to pass rather than guessing.
 step_rotation() {
   if [ -z "$NEW_TOKEN_FILE" ]; then
-    fact rotation INFO "the rotation was NOT measured: pass --new-token-file <path> with the token created in step 8 of the register's section (stored as a new version of the same secret). Without it, what a rotation does to the next run is an assumption this check does not make"
+    fact rotation UNVERIFIED "the rotation was NOT measured: pass --new-token-file <path> with the token created in step 8 of the register's section (stored as a new version of the same secret). Without it, what a rotation does to the next run is an assumption this check does not make"
     return 0
   fi
   local container count
@@ -1108,19 +1167,47 @@ TASK_EOF
   fi
 }
 
+# The seeded machine's Application Default Credentials, named BY PATH and never
+# copied: `fugaro update --config-only` reads the installation's outputs out of
+# the state bucket, so it needs the owner's own ADC, and this step replaces HOME
+# with a scratch home — with nothing said, the CLI would look for ADC inside the
+# scratch home, find none, and the step would measure nothing at all. The order
+# is the CLI's own (internal/cli/adcpath.go): --gcloud-config if it was given,
+# else $GOOGLE_APPLICATION_CREDENTIALS, else $CLOUDSDK_CONFIG, else
+# $HOME/.config/gcloud. Nothing is copied into the scratch home, so no
+# credential of the owner's is left lying in a directory this check created.
+second_machine_adc() {
+  if [ -n "$GCLOUD_CONFIG" ]; then
+    printf 'CLOUDSDK_CONFIG=%s\n' "$GCLOUD_CONFIG"
+    return 0
+  fi
+  if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
+    printf 'GOOGLE_APPLICATION_CREDENTIALS=%s\n' "$GOOGLE_APPLICATION_CREDENTIALS"
+    return 0
+  fi
+  [ -n "${HOME:-}" ] || return 0
+  printf 'CLOUDSDK_CONFIG=%s\n' "${CLOUDSDK_CONFIG:-$HOME/.config/gcloud}"
+}
+
 # U5 and D467: a second machine, seeded from the shared config, has no
 # project_secrets entry, and what it plans is a per-repository token. The whole
-# machine is a scratch home, so nothing on this one is touched.
+# machine is a scratch home — its own HOME, its own XDG config, its own git
+# config — so nothing of the owner's fugaro config is read or written; the one
+# thing it borrows is the ADC above, by path, because a machine with no
+# credentials cannot read an installation at all.
 step_second_machine() {
   local home="$SCRATCH/home"
   mkdir -p "$home/.config/fugaro"
   chmod 700 "$home"
-  local env=(HOME="$home" XDG_CONFIG_HOME="$home/.config" CLOUDSDK_CONFIG="$home/.gcloud" GIT_CONFIG_GLOBAL="$home/.gitconfig")
+  local adc
+  adc=$(second_machine_adc)
+  local env=(HOME="$home" XDG_CONFIG_HOME="$home/.config" GIT_CONFIG_GLOBAL="$home/.gitconfig")
+  [ -z "$adc" ] || env+=("$adc")
   local rc=0
   env "${env[@]}" fugaro update --gcp-project "$GCP_PROJECT" --region "$REGION" --name "$INSTALLATION" --config-only \
     </dev/null >"$SCRATCH/second-seed.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
-    fact second-machine INFO "the second machine was NOT seeded (fugaro update --gcp-project ... --config-only exited ${rc}): $(last_line "$SCRATCH/second-seed.log"). U5 stays UNVERIFIED for this run; the reading is that a machine seeded from the shared config has NO project_secrets.bitbucket-token entry, which is operator-local by design"
+    fact second-machine UNVERIFIED "the second machine was NOT seeded (fugaro update --gcp-project ... --config-only exited ${rc}): $(last_line "$SCRATCH/second-seed.log"). U5 is NOT measured by this run, and the block's last line says so: the reading needs a machine seeded from the shared config, and that command reads the installation's outputs with the owner's own Application Default Credentials, which this step hands to it by path (${adc:-none was found in this environment}). If yours are somewhere else, pass --gcloud-config <dir>, or set CLOUDSDK_CONFIG or GOOGLE_APPLICATION_CREDENTIALS — nothing was copied into the scratch home"
     return 0
   fi
   # The paths the seeded machine is asked about are the two checkouts this run
@@ -1136,7 +1223,7 @@ step_second_machine() {
   if grep -qE "secrets set bitbucket-token --repo|per-repository token|bitbucket-token.*--repo" "$plan"; then
     fact second-machine PASS "a machine seeded from the shared config with fugaro update --gcp-project ... --config-only, holding no project_secrets.bitbucket-token entry, plans a PER-REPOSITORY token: 'fugaro update --repo <path> --plan-only' printed a fugaro secrets set bitbucket-token --repo line (D467's sentence is exactly this — copy the project_secrets entry to every operator machine, or that machine types a per-repository token). The whole machine was a scratch home inside this run's scratch directory"
   elif [ "$rc2" -ne 0 ]; then
-    fact second-machine INFO "the plan did not run (exit ${rc2}): $(last_line "$plan"), so U5 stays UNVERIFIED"
+    fact second-machine UNVERIFIED "the plan did not run (exit ${rc2}): $(last_line "$plan"), so U5 stays UNVERIFIED"
   else
     fact second-machine FAIL "the second machine's 'fugaro update --repo <path> --plan-only' planned NO per-repository token, and a machine seeded from the shared config must have no project_secrets.bitbucket-token entry: either the entry reached the shared config (which D467 says it must not) or the plan hides the prompt. $(last_line "$plan")"
   fi
@@ -1144,11 +1231,47 @@ step_second_machine() {
 
 # The block's shape does not depend on how far the run got: the keys below are
 # printed in this order whatever happened, and one that was never reached reads
-# FAIL — not reached. Any other recorded key follows in the order the run
-# recorded it.
+# FAIL — not reached, the loud way of saying nothing measured it. Any other
+# recorded key follows in the order the run recorded it.
 BLOCK_KEYS=(installation inputs xtrace U1 U2 store update run-a run-b author-a author-b
   U4-approve-a U4-merge-a U4-approve-b U4-merge-b U3 live-test rotation second-machine
   restore)
+
+# criteria_unmet FACTS — the block's criteria that are not a PASS row, one name
+# per line. A criterion is one of BLOCK_KEYS, the rows the owner reads back: a
+# row reading UNVERIFIED (the step could not verify its criterion — the merge
+# without --merge, the rotation without --new-token-file, the second machine
+# without credentials it can read the installation with, a pull request that
+# could not be read) and a key no step wrote at all (the block prints those as
+# "not reached", and such a run already ends on a FAIL or on the stop that made
+# the step return early — the branch is here so that a run which finished
+# without a row for a criterion can never be a pass). Both are criteria that
+# were NOT settled, and they are what makes a run INCOMPLETE rather than a pass.
+# A `restore` row that FAILed is a FAIL like any other, not an unmet criterion.
+criteria_unmet() {
+  local facts=$1 key line
+  for key in "${BLOCK_KEYS[@]}"; do
+    line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
+    case "$line" in
+    "$key|PASS|"*) ;;
+    *) printf '%s\n' "$key" ;;
+    esac
+  done
+}
+
+# verdict_of FACTS STATUS — the block's own last word, and the one the exit
+# status carries. The status is decided first (finish below, from the facts) and
+# the word follows it, so the block can never tell two stories: 0 is PASS and
+# every criterion passed, 1 is FAIL and a criterion was measured and failed, and
+# both 2 (the run stopped before it could measure everything) and 3 (it finished
+# with criteria left unsettled) are INCOMPLETE.
+verdict_of() { # verdict_of FACTS STATUS
+  case "$2" in
+  0) printf 'PASS' ;;
+  1) printf 'FAIL' ;;
+  *) printf 'INCOMPLETE' ;;
+  esac
+}
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2
@@ -1162,7 +1285,13 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
         "$(printf '%s' "$line" | cut -d'|' -f2)" \
         "$(printf '%s' "$line" | cut -d'|' -f3-)" >&3
     else
-      printf 'FACT %s: FAIL — not reached (the run stopped before this step)\n' "$key" >&3
+      # A criterion no step wrote, read the way Check 130's block reads one: a
+      # row that was never reached is not a pass, and it is loud rather than
+      # quiet. It cannot be part of an exit-0 run: a key nothing wrote comes
+      # with the step that would have written it having stopped the run (exit 2)
+      # or with the FAIL that made it return early (exit 1), so the block's last
+      # line agrees with the row.
+      printf 'FACT %s: FAIL — not reached: nothing measured this criterion (the step that writes this row did not run, or it returned early)\n' "$key" >&3
     fi
     printed="$printed$key"$'\n'
   done
@@ -1171,11 +1300,14 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
     case $'\n'"$printed" in *$'\n'"$key"$'\n'*) continue ;; esac
     printf 'FACT %s: %s — %s\n' "$key" "$verdict" "$detail" >&3
   done
-  printf 'CHECK 180 RESULT END (exit %s)\n' "$status" >&3
+  printf 'CHECK 180 RESULT: %s (exit %s)\n' "$(verdict_of "$facts" "$status")" "$status" >&3
 }
 
 # ------------------------------------------------------------------- the plan
 print_plan() {
+  local adc
+  adc=${GCLOUD_CONFIG:+--gcloud-config ${GCLOUD_CONFIG}}
+  [ -n "$adc" ] || adc="from this environment: $(second_machine_adc)"
   cat <<PLAN_EOF
 Check 180 — one Bitbucket project or workspace access token serving many repositories.
 This is the PLAN. --dry-run touches nothing: no installation is read, no secret is
@@ -1186,8 +1318,9 @@ stored, no run is launched, no request is made and no credential is written.
                  ${REPO_B} (checkout ${PATH_B})
   probe repo     ${PROBE_REPO}   (added to the same Bitbucket project afterwards)
   token file     ${TOKEN_FILE}
-  rotation       ${NEW_TOKEN_FILE:-not given}   (without it the rotation's facts read INFO)
+  rotation       ${NEW_TOKEN_FILE:-not given}   (without it the rotation's row reads UNVERIFIED)
   merge          ${MERGE}   (--merge lets the check measure U4's merge; a merge cannot be undone)
+  gcloud config  ${adc}   (the second machine's ADC, by path, never copied)
   source tree    ${SOURCE}
   API root       ${API_ROOT}
   run cap        ${RUN_SECONDS}s per run
@@ -1210,13 +1343,16 @@ What the run will do, in this order:
  10. with --new-token-file: the new version of the same secret, its version list, and one more run;
  11. a scratch home seeded with 'fugaro update --gcp-project ... --config-only', then
      'fugaro update --repo --plan-only' there, expecting a per-repository token (U5, D467).
+     Both commands are given the owner's own Application Default Credentials by path
+     (--gcloud-config, else GOOGLE_APPLICATION_CREDENTIALS, else CLOUDSDK_CONFIG, else
+     $HOME/.config/gcloud); no credential is copied into the scratch home.
 It removes its scratch directory and every file a credential was written into on the way out,
 however it ends, and says so in the block's restore row.
 PLAN_EOF
 }
 
 # ----------------------------------------------------------------------- main
-USAGE="check180.sh --installation <sandbox> --token-file <path> --repo <owner/name>=<checkout> --repo <owner/name>=<checkout> --probe-repo <owner/name> [--new-token-file <path>] [--source <path>] [--merge] [--dry-run]"
+USAGE="check180.sh --installation <sandbox> --token-file <path> --repo <owner/name>=<checkout> --repo <owner/name>=<checkout> --probe-repo <owner/name> [--new-token-file <path>] [--source <path>] [--gcloud-config <dir>] [--merge] [--dry-run]"
 
 parse_args() {
   INSTALLATION=""
@@ -1224,6 +1360,7 @@ parse_args() {
   NEW_TOKEN_FILE=""
   PROBE_REPO=""
   SOURCE=""
+  GCLOUD_CONFIG=""
   MERGE=no
   DRY_RUN=no
   REPO_A=""
@@ -1262,6 +1399,16 @@ parse_args() {
     --source)
       [ $# -ge 2 ] || die "--source needs a path. usage: $USAGE"
       SOURCE=$2
+      shift 2
+      ;;
+    --gcloud-config)
+      # The owner's own gcloud config directory, named BY PATH. The second
+      # machine's step replaces HOME with a scratch home, so without this the CLI
+      # would look for the owner's Application Default Credentials inside that
+      # scratch home, find none, and the step would measure nothing; the check
+      # never copies a credential anywhere.
+      [ $# -ge 2 ] || die "--gcloud-config needs a directory. usage: $USAGE"
+      GCLOUD_CONFIG=$2
       shift 2
       ;;
     --repo)

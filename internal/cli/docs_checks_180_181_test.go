@@ -192,6 +192,20 @@ func TestDocsCheck180StatesWhatOnlyATokenSettles(t *testing.T) {
 		// U5 and D467: the second machine, and the command that shows what it
 		// would do without the entry.
 		"`fugaro update --repo <path> --plan-only`",
+		// The second machine's credentials, BY PATH: the step runs the CLI in a
+		// scratch home, so an ADC the check did not name would be looked for
+		// there and found nowhere -- and the step's row has to say which flag
+		// names the directory rather than report a pass it cannot make.
+		"`--gcloud-config <dir>`",
+		"**no credential is copied** into the scratch home",
+		// How the verdict is read. A step that could not verify its criterion
+		// has to make the block's last line say so: an UNVERIFIED row inside a
+		// block that exits 0 reads as a pass, which is exactly the way this
+		// check would lie about the token.
+		"only an all-PASS block is a PASS",
+		"`CHECK 180 RESULT: PASS (exit 0)`",
+		"`INCOMPLETE (exit 3)`",
+		"`UNVERIFIED`",
 		// U6, the reason the check cannot run today.
 		"no Premium sandbox workspace is known",
 	} {

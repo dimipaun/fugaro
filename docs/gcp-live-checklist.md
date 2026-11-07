@@ -11214,9 +11214,9 @@ scripts/live-checks/check180.sh --installation <sandbox> --token-file <the token
 place the value lives. Each `--repo owner/name=<checkout path>` is one of the two allow-listed
 repositories and the checkout the check runs `fugaro update --repo` in, one pair each.
 `--probe-repo` is the sandbox repository added to the same Bitbucket project afterwards (step 7),
-which must **not** be in `project_secrets`. `--new-token-file`, `--source` and `--merge` are
-optional. The script plans first (`--dry-run` prints the plan and touches nothing), refuses any
-installation but the sandbox one, and refuses `belong` at every step. Its driver is
+which must **not** be in `project_secrets`. `--new-token-file`, `--source`, `--gcloud-config` and
+`--merge` are optional. The script plans first (`--dry-run` prints the plan and touches nothing),
+refuses any installation but the sandbox one, and refuses `belong` at every step. Its driver is
 `scripts/live-checks/check180_test.sh`, which runs offline — fake `fugaro`, `gcloud`, `go` and `git`
 on `PATH` and a fake Bitbucket Cloud on a loopback port — inside `go test ./scripts`. **No agent runs
 any step of this check**, only that test; and no step types, prints or pastes a token or a key value:
@@ -11284,7 +11284,26 @@ launcher of an allow-listed repository hold the token's value (F7), which is why
    `fugaro update --gcp-project <id> --region <region> --name <name> --config-only`, run
    `fugaro update --repo <path> --plan-only` **without** copying the `project_secrets` entry, and
    record what it plans: a per-repository token, because the entry is operator-local by design and
-   the shared config never carries it.
+   the shared config never carries it. The script's own second machine is a scratch `HOME` with its
+   own `XDG` and git config, so the one thing it has to borrow is the owner's Application Default
+   Credentials: `--gcloud-config <dir>` names the directory to read them from, and without the flag
+   the script falls back to `$GOOGLE_APPLICATION_CREDENTIALS`, then `$CLOUDSDK_CONFIG`, then
+   `~/.config/gcloud` — the CLI's own order (`internal/cli/adcpath.go`). The path is passed
+   through and **no credential is copied** into the scratch home; if the seeded command cannot read
+   the installation with what it was given, the step's row reads UNVERIFIED and names the flag to
+   pass, rather than reading as a pass.
+
+**How to read the block.** The script prints one block whose last line is the verdict, and the
+verdict is the exit status: `CHECK 180 RESULT: PASS (exit 0)` every criterion was measured and
+passed; `FAIL (exit 1)` a criterion was measured and failed; `INCOMPLETE (exit 2)` the run stopped
+before it could measure everything — a guard stopped it, a tool is missing, a command was refused,
+an error ended it — and the keys it never reached read `FAIL — not reached`, with `aborted` naming
+what stopped it; `INCOMPLETE (exit 3)` it ran to the end and at least one criterion was **not
+settled**: a row reading `UNVERIFIED`, a step that could not verify its criterion (the rotation
+without `--new-token-file`, the merge without `--merge`, the second machine without credentials it
+can read the installation with). A criterion that was not measured is not a pass: **only an all-PASS
+block is a PASS**, and a step that could not verify its criterion says so in its own row instead of
+leaving the reader to take the block for an answer it never got.
 
 **What the check does not settle.** D474's API-root lock is 0.13.0's and this check does not read it;
 a workspace access token reaches the whole workspace rather than one project (the pair is one

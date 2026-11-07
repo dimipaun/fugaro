@@ -53,6 +53,16 @@ expect_absent() {
 expect_status() { # status want what
   [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1; the rows read: $(rows_of_block "${out:-}")"
 }
+# expect_last_line OUT WANT WHAT — the block's own last line, exactly. It is the
+# line a reader takes as the answer, and the one the exit status has to agree
+# with: a block whose last line is a verdict but whose status is another is two
+# stories about one run, which is the whole point of the verdict being written
+# from the status rather than beside it.
+expect_last_line() { # out want what
+  local last
+  last=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n 1)
+  [ "$last" = "$2" ] || fail "$3: the block's last line reads '$last', want '$2'"
+}
 
 # The sentinels are deliberately not credential shapes: nothing here is a real
 # token, and the assertions below hold that they never survive a run.
@@ -109,6 +119,14 @@ update)
     exit 0
     ;;
   *--config-only*)
+    # Which credentials the seeded machine was handed, and from where. The
+    # check replaces HOME with a scratch home, so an ADC the check did not name
+    # would be looked for inside that empty home and found nowhere; the fake
+    # records the two variables the CLI's own order reads
+    # (internal/cli/adcpath.go), so the test can pin that the owner's own
+    # directory came through BY PATH and that the scratch home's is never used.
+    printf 'config-only-cloudsdk=%s config-only-adc=%s\n' \
+      "${CLOUDSDK_CONFIG:-}" "${GOOGLE_APPLICATION_CREDENTIALS:-}" >>"$log"
     if [ "$mode" = second-seed-fails ]; then
       echo "the installation's outputs could not be read" >&2
       exit 1
@@ -400,7 +418,7 @@ write_token() { # write_token FILE [value]
 # $out and $err.
 run180() {
   local dir=$work/$1
-  mkdir -p "$dir/tmp" "$dir/checkout-a/.git" "$dir/checkout-b/.git" "$dir/bin" "$dir/state"
+  mkdir -p "$dir/tmp" "$dir/checkout-a/.git" "$dir/checkout-b/.git" "$dir/bin" "$dir/state" "$dir/gcloudconfig"
   mkdir -p "$dir/source/internal/gitprov/bitbucket"
   write_token "$dir/token"
   write_token "$dir/token2" "$TOKEN2_SENTINEL"
@@ -494,11 +512,18 @@ expect_runs_polled() {
 }
 
 # --------------------------------------------------------------- the tests
+# The all-PASS run: EVERY criterion is measured, which is what makes the block's
+# last line PASS and the exit status 0. --merge measures U4's merge,
+# --new-token-file measures the rotation, and --gcloud-config hands the second
+# machine the owner's own ADC by path, so the seeded `update --config-only` has
+# something to read the installation with. One criterion fewer and the run is
+# INCOMPLETE (test_unmeasured_criteria_are_not_a_pass below).
 test_happy_path() {
+  RUN180_ARGS=(--merge --new-token-file "$work/happy/token2" --gcloud-config "$work/happy/gcloudconfig")
   run180 happy
   expect_status "$status" 0 "happy path"
   expect_block_keys "$out" "happy path"
-  expect_contains "$out" "CHECK 180 RESULT END (exit 0)" "happy path: the end line"
+  expect_last_line "$out" "CHECK 180 RESULT: PASS (exit 0)" "happy path: the block's last line is the verdict"
   expect_contains "$out" "FACT installation: PASS — " "happy path: the installation"
   expect_contains "$out" "sandbox-p" "happy path: the GCP project it read"
   expect_contains "$out" "FACT inputs: PASS — " "happy path: the two repositories and the project they share"
@@ -513,18 +538,20 @@ test_happy_path() {
   expect_contains "$out" "FACT author-a: PASS — " "happy path: the pull request's author"
   expect_contains "$out" "FACT author-b: PASS — " "happy path: the second pull request's author"
   expect_contains "$out" "FACT U4-approve-a: PASS — " "happy path: the approve"
-  expect_contains "$out" "FACT U4-merge-a: INFO — " "happy path: the merge is reported, not guessed"
+  expect_contains "$out" "FACT U4-merge-a: PASS — " "happy path with --merge: the merge is measured"
   expect_contains "$out" "FACT U3: PASS — " "happy path: the probe repository"
   expect_contains "$out" "FACT live-test: PASS — " "happy path: the live test"
-  expect_contains "$out" "FACT rotation: INFO — " "happy path without --new-token-file: the rotation says what to pass"
+  expect_contains "$out" "FACT rotation: PASS — " "happy path with --new-token-file: the rotation is measured"
   expect_contains "$out" "FACT second-machine: PASS — " "happy path: the second machine"
   expect_contains "$out" "FACT restore: PASS — " "happy path: the Restore"
 
   # The live test's own contract: the check put the REAL token in that one
   # command's environment.
   expect_contains "$(cat "$work/happy/fugaro.log")" "token=matches" "happy path: the token reached the live test"
-  expect_store_argv "$work/happy" "happy path: the store" 1
-  expect_runs_polled "$work/happy" "happy path" 2
+  # Two stores (the original and the rotation) and three launches (two runs and
+  # the rotation's): every criterion was measured, so every step ran.
+  expect_store_argv "$work/happy" "happy path: the store" 2
+  expect_runs_polled "$work/happy" "happy path" 3
 
   assert_no_secret "$work/happy" "happy path"
 
@@ -538,13 +565,47 @@ test_happy_path() {
     || fail "happy path: something is still under the run's TMPDIR"
 }
 
+# A step that could NOT verify its criterion must not read as a pass. Without
+# --merge and --new-token-file there is nothing that can measure U4's merge or
+# the rotation, and the same run also has to seed the second machine with an ADC
+# it can actually read the installation with. An UNVERIFIED row inside a block
+# whose last line said PASS, and whose status was 0, is the check reporting an
+# answer it never got — so the block's last line says INCOMPLETE and the status
+# is 3, and both are read here.
+test_unmeasured_criteria_are_not_a_pass() {
+  RUN180_MODE=second-seed-fails
+  run180 unmeasured
+  expect_status "$status" 3 "a run that finished with criteria left unmeasured"
+  expect_block_keys "$out" "a run that finished with criteria left unmeasured"
+  expect_contains "$out" "FACT U4-merge-a: UNVERIFIED — " "without --merge: the merge is not claimed as measured"
+  expect_contains "$out" "FACT rotation: UNVERIFIED — " "without --new-token-file: the rotation says what to pass"
+  expect_contains "$out" "FACT second-machine: UNVERIFIED — " "a seeded command that cannot read the installation: the row says what it could not measure"
+  # The rows that WERE measured still read as they were measured: a criterion
+  # left open does not turn the ones that passed into failures.
+  expect_contains "$out" "FACT run-a: PASS — " "a run that finished with criteria left unmeasured: the runs still passed"
+  expect_contains "$out" "FACT U1: PASS — " "a run that finished with criteria left unmeasured: U1 still passed"
+  # An unsettled criterion is not a FAIL: nothing was measured to fail, so no
+  # row reads FAIL and the status is 3 rather than 1.
+  local failed
+  failed=$(printf '%s\n' "$out" | grep '^FACT .*: FAIL' || true)
+  [ -z "$failed" ] || fail "a run that finished with criteria left unmeasured: these rows read FAIL, and no criterion was measured and failed: $failed"
+  expect_last_line "$out" "CHECK 180 RESULT: INCOMPLETE (exit 3)" "a run that finished with criteria left unmeasured: the block's last line"
+  assert_no_secret "$work/unmeasured" "a run that finished with criteria left unmeasured"
+}
+
 test_dry_run_touches_nothing() {
-  RUN180_ARGS=(--dry-run)
+  RUN180_ARGS=(--dry-run --gcloud-config "$work/dry/gcloudconfig")
   run180 dry
   expect_status "$status" 0 "dry run"
   expect_contains "$out" "This is the PLAN" "dry run: the plan"
   expect_contains "$out" "--dry-run touches nothing" "dry run: what it promises"
   expect_contains "$out" "sandbox/one" "dry run: the repositories it would use"
+  # The plan says where the second machine's credentials come from, and the flag
+  # is the one that names it: a plan that hid the ADC would leave the owner to
+  # find out at the last step that the seeded machine had nothing to read the
+  # installation with.
+  expect_contains "$out" "gcloud config  --gcloud-config $work/dry/gcloudconfig" \
+    "dry run: the second machine's credentials, by path"
   expect_absent "$out" "CHECK 180 RESULT" "dry run: no block for a plan"
   expect_absent "$out" "FACT " "dry run: no facts"
   [ ! -s "$work/dry/fugaro.log" ] || fail "dry run: fugaro was called: $(cat "$work/dry/fugaro.log")"
@@ -650,6 +711,8 @@ test_a_run_that_does_not_push_is_a_fail() {
   expect_status "$status" 1 "a run that does not push"
   expect_contains "$out" "FACT run-a: FAIL" "a run that does not push: the first"
   expect_contains "$out" "FACT run-b: FAIL" "a run that does not push: the second"
+  # No pull request exists, so no step wrote the author's row, and the block
+  # reads that key the way it reads any unreached one: not a pass.
   expect_contains "$out" "FACT author-a: FAIL — not reached" "a run that does not push: no author is read for a pull request that does not exist"
 }
 
@@ -674,15 +737,21 @@ test_approve_and_merge() {
   expect_contains "$out" "FACT U4-approve-a: PASS" "a merge the scopes refuse: the approve was admitted"
   expect_contains "$out" "FACT U4-merge-a: FAIL" "a merge the scopes refuse: the fact"
 
+  # --merge measures U4's merge and nothing else: the rotation is still
+  # unmeasured, so the block's verdict is INCOMPLETE (exit 3) even though every
+  # row it does carry reads PASS. That is the reading the register takes: a
+  # measured merge is not a finished check.
   RUN180_ARGS=(--merge)
   run180 merge-allowed
-  expect_status "$status" 0 "a merge the scopes admit"
+  expect_status "$status" 3 "a merge the scopes admit"
   expect_contains "$out" "FACT U4-merge-a: PASS" "a merge the scopes admit: the fact"
   expect_contains "$out" "cannot be undone" "a merge the scopes admit: what the merge is"
+  expect_contains "$out" "FACT rotation: UNVERIFIED" "a merge the scopes admit: the rotation is still unmeasured"
+  expect_last_line "$out" "CHECK 180 RESULT: INCOMPLETE (exit 3)" "a merge the scopes admit: the block's last line"
 }
 
 test_rotation() {
-  RUN180_ARGS=(--new-token-file "$work/rotation/token2" --merge)
+  RUN180_ARGS=(--new-token-file "$work/rotation/token2" --merge --gcloud-config "$work/rotation/gcloudconfig")
   run180 rotation
   expect_status "$status" 0 "the rotation"
   expect_contains "$out" "FACT rotation: PASS" "the rotation: the fact"
@@ -710,15 +779,47 @@ test_rotation() {
   expect_contains "$out" "was not found once" "a container listing that names none: the reason"
 }
 
+# The second machine runs the CLI in a scratch home, so the ONE thing it has to
+# borrow is the owner's Application Default Credentials — handed to it BY PATH.
+# The step's own regression was to point CLOUDSDK_CONFIG at an empty directory
+# inside that scratch home, where the CLI finds no ADC at all: the seeded command
+# then cannot read the installation and the step measures nothing. The fake
+# `fugaro` records the two variables the CLI's own order reads, so this pins
+# where the credentials came from and, just as much, that they are not copied.
 test_second_machine() {
+  local log
+  RUN180_ARGS=(--gcloud-config "$work/second-machine/gcloudconfig")
   run180 second-machine
-  expect_status "$status" 0 "the second machine"
+  # The rotation and the merge are unmeasured here (no --new-token-file, no
+  # --merge), so the run is INCOMPLETE: what this case is about is the row.
+  expect_status "$status" 3 "the second machine"
   expect_contains "$out" "FACT second-machine: PASS" "the second machine: the fact"
+  log=$(cat "$work/second-machine/fugaro.log")
+  # `--gcloud-config` is the owner's own directory, named by path, and it is what
+  # the seeded machine was run with.
+  expect_contains "$log" "config-only-cloudsdk=$work/second-machine/gcloudconfig" \
+    "the second machine: the credentials it was seeded with, by path"
+  # And never the scratch home's own, which is empty: a check that pointed the
+  # CLI there would measure nothing and could not tell. Nothing was copied
+  # either — the owner's directory is the only one the run ever names, and the
+  # scratch home it might have been copied into is gone with the rest of the
+  # scratch directory.
+  expect_absent "$log" "home/.gcloud" \
+    "the second machine: a gcloud config inside the scratch home"
   # `update --repo` is a bool whose positional PATH defaults to the current
   # directory: the plan has to be about the allow-listed checkout, not about
   # whatever directory the check was launched from.
-  expect_contains "$(cat "$work/second-machine/fugaro.log")" "plan-cwd=$work/second-machine/checkout-a" \
+  expect_contains "$log" "plan-cwd=$work/second-machine/checkout-a" \
     "the second machine: the plan's own directory"
+
+  # Without the flag, CLOUDSDK_CONFIG is what the check passes through — the
+  # order of internal/cli/adcpath.go, and the flag only exists for an ADC
+  # somewhere else.
+  RUN180_ENV=("CLOUDSDK_CONFIG=$work/second-machine-env/gcloudconfig" "GOOGLE_APPLICATION_CREDENTIALS=")
+  run180 second-machine-env
+  expect_contains "$(cat "$work/second-machine-env/fugaro.log")" \
+    "config-only-cloudsdk=$work/second-machine-env/gcloudconfig" \
+    "the second machine without --gcloud-config: the environment's own CLOUDSDK_CONFIG"
 
   RUN180_MODE=second-plan-hides-the-token
   run180 second-hidden
@@ -729,10 +830,15 @@ test_second_machine() {
     "a second machine whose plan hides the per-repository token: the plan's own directory"
 
   RUN180_MODE=second-seed-fails
+  RUN180_ARGS=(--gcloud-config "$work/second-seed-fails/gcloudconfig")
   run180 second-seed-fails
-  expect_status "$status" 0 "a second machine that could not be seeded"
-  expect_contains "$out" "FACT second-machine: INFO" "a second machine that could not be seeded: the fact"
-  expect_contains "$out" "UNVERIFIED" "a second machine that could not be seeded: what is left open"
+  expect_status "$status" 3 "a second machine that could not be seeded"
+  expect_contains "$out" "FACT second-machine: UNVERIFIED" "a second machine that could not be seeded: the fact"
+  expect_contains "$out" "U5 is NOT measured by this run" "a second machine that could not be seeded: what is left open"
+  # The row names the flag to pass, so the owner can fix the one thing that
+  # stopped it rather than reading an UNVERIFIED row with no way forward.
+  expect_contains "$out" "--gcloud-config <dir>" "a second machine that could not be seeded: the way forward"
+  expect_last_line "$out" "CHECK 180 RESULT: INCOMPLETE (exit 3)" "a second machine that could not be seeded: the block's last line"
 }
 
 test_live_test() {
@@ -742,10 +848,14 @@ test_live_test() {
   expect_contains "$out" "FACT live-test: FAIL" "a live test that fails: the fact"
   expect_contains "$out" "TestLiveBitbucket" "a live test that fails: the harness it names"
 
+  # A criterion the step could not verify makes the run INCOMPLETE, not a pass:
+  # there is no checkout to run the live test from, so nothing measured the
+  # token against the API itself.
   RUN180_ARGS=(--source "$work/live-nosource/absent")
   run180 live-nosource
-  expect_status "$status" 0 "no source tree"
-  expect_contains "$out" "FACT live-test: INFO" "no source tree: the fact"
+  expect_status "$status" 3 "no source tree"
+  expect_contains "$out" "FACT live-test: UNVERIFIED" "no source tree: the fact"
+  expect_last_line "$out" "CHECK 180 RESULT: INCOMPLETE (exit 3)" "no source tree: the block's last line"
   expect_contains "$out" "go test -tags live -run TestLiveBitbucket" "no source tree: the command it hands over"
 }
 
@@ -840,6 +950,7 @@ t() {
 }
 
 t test_happy_path
+t test_unmeasured_criteria_are_not_a_pass
 t test_dry_run_touches_nothing
 t test_belong_is_refused_everywhere
 t test_endpoint_override_shapes_are_refused
