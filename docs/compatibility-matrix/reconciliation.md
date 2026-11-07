@@ -2,8 +2,7 @@
 
 Checked against `origin/main` on **2026-11-07** (the CLI's latest tag is `v0.20.3`, the console's
 `console-v0.120.0`; there is no mobile tag). Where this file disagrees with [spec.md](spec.md),
-this file wins. Spec owner: Dimi Paun. Decisions **D1520–D1539** (a fresh block: D1500–D1519 belong
-to `docs/security-classification`, D1490–D1499 are reserved by `docs/console-managed-screens`). No
+this file wins. Spec owner: Dimi Paun. Decisions **D1520–D1539** (a fresh block: D1500–D1519 are taken by the open `docs/security-classification` pull request, D1490–D1499 are reserved by `docs/console-managed-screens`; no D15xx exists on main). No
 live check is taken: the page makes claims, it does not run anything.
 
 ## 1. What the spec is
@@ -34,11 +33,11 @@ conflicts; **Exists** = the spec claims what is only partly there.
 | F10 | Agent harness: Claude Code | Exists, true | `internal/agent` runs `claude -p` only | Supported |
 | F11 | Codex "Coming soon" | Gap | no Codex code; only a non-goal in `docs/design/m10-multi-model.md` and a reserved `codex-oauth-token` naming in `docs/design/project-named-oauth-tokens.md` | Roadmap |
 | F12 | OpenRouter "any model" | Wrong as worded | `internal/config/providers.go` entries are `kind: anthropic-compat` with `models:` patterns, a price and a route fee; `routing.claude.via` keeps Claude IDs direct unless the operator opts in; pins, prices and a budget cap are required in enforce mode (`docs/multi-model.md`) | Supported, worded "OpenRouter or any Anthropic-compatible endpoint, for the coder and first-line reviewer"; no "any model" |
-| F13 | Anthropic API key for the senior reviewer | Exists, partly | in-job path A in `docs/design/mixed-credentials.md` section 3 "works today"; its live check (Check 330) has not run; the cloud review job is refused (`reviewJobAdmitted` is a constant `false` in `internal/cli/review.go`); `docs/api-key-review` AK4–AK7 are best effort | **Built, not enabled** (the new status, D1520) |
+| F13 | Anthropic API key for the senior reviewer | Exists, partly | in-job path A in `docs/design/mixed-credentials.md` (section 1 says it "works today"; section 3 is the Path A heading); its live check (Check 330) has not run; the cloud review job is refused (`reviewJobAdmitted` is a package variable set to `false` in `internal/cli/review.go`); `docs/api-key-review` AK4–AK7 are best effort | **Built, not enabled** (the new status, D1520) |
 | F14 | Claude OAuth tokens | Exists, partly | `internal/config/claude_accounts.go`, `fugaro accounts add`, stage accounts in `internal/infra/spec.go`; Check 290 passed on 0.20.3 (the OAuth in-job review is the proven path); automatic failover `claude_account_auto` is dormant until the owner confirms the provider's terms (`docs/accounts-add`, D875) | Supported, worded "several named accounts per project, chosen per profile or stage"; failover is not claimed; the terms caveat is the sentence already on the Terms page (D1539) |
-| F15 | Direct keys for OpenAI, DeepSeek "Coming soon" | Wrong as worded | providers are user-named `anthropic-compat` entries: a DeepSeek entry works today (`docs/multi-model.md`); there is no native OpenAI, Gemini, Vertex or Bedrock kind | Split: Anthropic-compatible endpoints (DeepSeek and others) **Supported**; native OpenAI **Roadmap** |
+| F15 | Direct keys for OpenAI, DeepSeek "Coming soon" | Wrong as worded | providers are user-named `anthropic-compat` entries: a DeepSeek entry works today (`docs/multi-model.md`); there is no native OpenAI, Gemini or Bedrock kind | Split: Anthropic-compatible endpoints (DeepSeek and others) **Supported**; native OpenAI **Roadmap** |
 | F16 | ChatGPT / Codex OAuth | Gap | only the `codex-oauth-token` naming reservation | Roadmap |
-| F17 | Vertex AI "Roadmap" | Gap | `agent.auth` accepts the value `vertex` (`docs/design/mixed-credentials.md` section 2) but no run path was traced or checked | Roadmap, with no "natural fit" claim |
+| F17 | Vertex AI "Roadmap" | **Wrong** (found by the review round) | **Vertex is the default**: `DefaultAgentAuth = "vertex"` and `AgentAuths` in `internal/config/defaults.go`; `internal/agent/env.go` passes the Vertex environment for `auth: vertex`; `docs/design/v1.md` says "Vertex AI (default) via the job's service account". The same page states that budget `enforce` with Vertex is refused until Check 20's Vertex FACTs are recorded (`docs/design/v1.md` section on the gateway) | **Supported** for Claude on Vertex, billed to the project's own GCP account; the note says that a dollar cap (budget `enforce`) on Vertex waits on Check 20, so the status for that is **Built, not enabled**. Amends D1527 (below) |
 | F18 | Cloud: GCP only; AWS/Azure "Not planned" | Gap | `internal/backend` holds Cloud Run and Cloud Batch only; no ruling says AWS or Azure never happen | GCP Supported; AWS and Azure say "no plan", not a ruling |
 | F19 | Backends: Cloud Run gen 1 and gen 2, VM | Wrong | Terraform sets `EXECUTION_ENVIRONMENT_GEN2` on the jobs and no gen 1 exists; `internal/backend/batch` exists but `backend: cloud-batch` is still refused by `internal/localcfg` validation (`docs/design/compute-backend.md`) | Remove gen 1; Cloud Run jobs (gen2) Supported; VM / Batch **Built, not enabled** |
 | F20 | Forges: GitHub and Bitbucket Cloud | Exists, true | `internal/gitprov/{github,bitbucket}` | Supported, core |
@@ -53,6 +52,8 @@ conflicts; **Exists** = the spec claims what is only partly there.
 | F29 | Enterprise SSO Supported | Wrong | no SSO or workforce-federation code or doc; identity is Google plus email or domain allowlists (`docs/mobile-auth/spec.md`) | Replace with "Google identity with email or domain allowlists" Supported; SSO and federation Roadmap |
 | F30 | Workspaces Roadmap, EE | Exists | `docs/workspaces`: design answered, W0–W2 built or in flight, services land under `ee/` | Roadmap, Subscription |
 | F31 | Editions CE and EE | Rule | counsel renamed Enterprise to Subscription Edition on 2026-10-29 (memory: `subscription-edition-licence-rename`; `LICENSING.md`); the console and mobile are under the Subscription licence from console 0.113.0; `ee/` holds `clidoc`, `coordinator`, `governance`, `graph`, `plugincheck`, `register`, `report` | Editions are **Core (MIT)** and **Subscription**; the console and mobile are Subscription |
+
+**F32 (Missing, found by the review round).** Spec sentences with no row: "Others: Not planned" (harnesses) is kept as Not planned, "Models are wired per role" is true (`docs/multi-model.md`) and stays as one prose line, and the cloud "Positioning" paragraph is kept as written (the page says nothing a run's isolation does not back: `docs/design/v1.md`). No decision needed.
 
 ### Concept to what exists
 
@@ -77,7 +78,7 @@ deviates, so there is no open tension).
 | D1524 | Codex | **Roadmap** (F11): there is no code | Coming soon: promises work nobody scheduled | **Recommended** — 2026-11-07 |
 | D1525 | Model-access wording | **Rewrite to the code** (F12–F14): no "any model"; Anthropic key Built, not enabled; OAuth Supported without failover | keep the spec's wording | **Recommended** — 2026-11-07 |
 | D1526 | Direct provider keys | **Split** (F15): Anthropic-compatible endpoints Supported, native OpenAI Roadmap | one row Coming soon | **Recommended** — 2026-11-07 |
-| D1527 | ChatGPT/Codex OAuth and Vertex | **Roadmap**, no "natural fit" claim (F16, F17) | keep Vertex as Roadmap with the claim: an unverified route | **Recommended** — 2026-11-07 |
+| D1527 | ChatGPT/Codex OAuth and Vertex | **ChatGPT/Codex OAuth Roadmap (F16). Vertex Supported** with the dollar-cap caveat (F17) | Vertex as Roadmap: understates the default route | **Recommended for ChatGPT/Codex OAuth — 2026-11-07. Vertex: AMENDED AFTER REVIEW.** The owner answered "Roadmap" on the premise that no Vertex run path exists; the code says Vertex is the default auth (F17). Intent kept (claim only what the code proves); the status follows the code. **Needs the owner's confirmation of the amended text (open item 3)** |
 | D1528 | Backends | **Remove gen 1**; Cloud Run (gen2) Supported; VM / Batch Built, not enabled (F19) | keep the spec's rows | **Recommended** — 2026-11-07 |
 | D1529 | Forges | **GitLab Roadmap; Bitbucket Data Center Not planned; GHES and GitLab self-managed Roadmap** (F21, F22) | keep Coming soon for GitLab | **Recommended** — 2026-11-07 |
 | D1530 | Tracker row | **Reworded** to the user's own agent reading the tracker and handing the task to Fugaro (F23); in-run tracker access and triggers Roadmap (F24) | keep "via MCP" Supported: false for runs | **Recommended** — 2026-11-07 |
@@ -93,16 +94,15 @@ deviates, so there is no open tension).
 
 ## 4. Open tensions and open items for the owner
 
-None between answers. Open items: (a) the page's final copy of each row's note is the build task's
+None between answers. Open items: **(3) D1527's amended Vertex answer, which the owner has not seen;** and (a) the page's final copy of each row's note is the build task's
 to draft and the owner's to read before the website promote, which the release procedure performs
-(the approval click was removed on 2026-11-07); (b) whether the nav links the page from the footer
-or the header is the build task's to propose.
+(the required reviewer was removed from the GitHub environments on 2026-11-07; `docs/release.md` still says otherwise until the stale-docs task DOC1 lands); (b) **(2) the navigation change needs the owner's explicit approval**, because `.claude/rules/website.md` keeps nav labels and URLs unless the owner approves a change: the build task proposes the entry (the "Project" group in `website/src/layouts/Base.astro` is the candidate) and does not add it before the owner says yes.
 
 ## 5. UNVERIFIED
 
 - Whether a repository's own `.mcp.json` loads in an implement stage was **not tested**, so the page
   makes no claim about it.
-- The Vertex run path was **not traced end to end**; the page claims nothing for it.
+- Vertex's real-world operation (a run on Vertex) was not exercised here: F17 rests on the code defaults and `docs/design/v1.md`, and Check 20's FACTs are not recorded.
 - The mobile app's store state beyond "no tag and no release note" is taken from
   `docs/subscriptions/status-2026-11-07.md`; no store was inspected.
 - Findings F1–F31 were produced by a read-only reader of `origin/main` and are re-verified by the
