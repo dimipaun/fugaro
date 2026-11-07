@@ -3871,11 +3871,13 @@ block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neithe
 writes a file, so a caller can read a report before committing it.
 
 --due is the cadence's own reading: it names the periods that have closed with no
-report under --dir, newest first, and how old the newest report it found is. It
-reads that folder and nothing else -- no project, no credential, no bucket -- so it
-answers in a checkout that has never been set up, and it writes nothing: --period,
---date, --repo, --stdout and --submit-draft have nothing to act on beside it and are
-refused by name. --json prints it as {version, dir, due[], newest}.
+report under --dir, newest first -- the period that ended most recently is the
+first line, and of two that ended on the same day the longer one comes first --
+and how old the newest report it found is. It reads that folder and nothing else --
+no project, no credential, no bucket -- so it answers in a checkout that has never
+been set up, and it writes nothing: --period, --date, --repo, --stdout and
+--submit-draft have nothing to act on beside it and are refused by name. --json
+prints it as {version, dir, due[], newest}.
 
 --submit-draft prints neither: it prints a redacted learning draft a person can
 file as a "Skill learning" issue, and it sends nothing. The draft leaves the

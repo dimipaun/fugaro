@@ -174,11 +174,13 @@ func newRunsDigestCmd() *cobra.Command {
 			"block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither\n" +
 			"writes a file, so a caller can read a report before committing it.\n\n" +
 			"--due is the cadence's own reading: it names the periods that have closed with no\n" +
-			"report under --dir, newest first, and how old the newest report it found is. It\n" +
-			"reads that folder and nothing else -- no project, no credential, no bucket -- so it\n" +
-			"answers in a checkout that has never been set up, and it writes nothing: --period,\n" +
-			"--date, --repo, --stdout and --submit-draft have nothing to act on beside it and are\n" +
-			"refused by name. --json prints it as {version, dir, due[], newest}.\n\n" +
+			"report under --dir, newest first -- the period that ended most recently is the\n" +
+			"first line, and of two that ended on the same day the longer one comes first --\n" +
+			"and how old the newest report it found is. It reads that folder and nothing else --\n" +
+			"no project, no credential, no bucket -- so it answers in a checkout that has never\n" +
+			"been set up, and it writes nothing: --period, --date, --repo, --stdout and\n" +
+			"--submit-draft have nothing to act on beside it and are refused by name. --json\n" +
+			"prints it as {version, dir, due[], newest}.\n\n" +
 			"--submit-draft prints neither: it prints a redacted learning draft a person can\n" +
 			"file as a \"Skill learning\" issue, and it sends nothing. The draft leaves the\n" +
 			"repository, so it carries no repository name and no run ID -- a period other\n" +
@@ -597,11 +599,19 @@ func runRunsDigestDue(cmd *cobra.Command, o *digestOptions) error {
 		return err
 	}
 	now := digestNow().UTC()
-	due := make([]digestDueRow, 0)
+	periods := make([]digest.Period, 0)
 	for _, p := range digest.DuePeriods(now) {
 		if !digestHasReport(folder.rows, p) {
-			due = append(due, digestDueRow{Dim: p.Dim, Key: p.Key})
+			periods = append(periods, p)
 		}
+	}
+	// DuePeriods lists the catch-up's days and then the week, month or year
+	// that closed, so a coarser period is not necessarily last: the list is
+	// ordered here, by the day each period ended.
+	sort.Slice(periods, func(i, j int) bool { return digestNewerPeriod(periods[i], periods[j]) })
+	due := make([]digestDueRow, 0, len(periods))
+	for _, p := range periods {
+		due = append(due, digestDueRow{Dim: p.Dim, Key: p.Key})
 	}
 	newest := digestNewestReport(folder.rows, now)
 
@@ -628,11 +638,9 @@ func digestHasReport(rows []digest.Row, p digest.Period) bool {
 }
 
 // digestNewestReport is the report the folder holds that covers the latest
-// period: the greatest end of period, and the greatest key among the rows that
-// share it (a day and the month it falls in can end on the same day). Rows are
-// in key order rather than period order, so the greatest key is not the newest
-// report, and the end of a period is the package's own -- a week's last day is
-// not a day a key spells.
+// period. Rows are in key order rather than period order, so the last row is
+// not the newest report, and the end of a period is the package's own -- a
+// week's last day is not a day a key spells.
 func digestNewestReport(rows []digest.Row, now time.Time) *digestDueReport {
 	var newest digest.Period
 	found := false
@@ -643,7 +651,7 @@ func digestNewestReport(rows []digest.Row, now time.Time) *digestDueReport {
 			// that somehow reached a row without one is no period to report.
 			continue
 		}
-		if found && (p.End < newest.End || (p.End == newest.End && p.Key < newest.Key)) {
+		if found && !digestNewerPeriod(p, newest) {
 			continue
 		}
 		newest, found = p, true
@@ -652,6 +660,36 @@ func digestNewestReport(rows []digest.Row, now time.Time) *digestDueReport {
 		return nil
 	}
 	return &digestDueReport{Key: newest.Key, Dim: newest.Dim, DaysAgo: digestDaysAgo(newest.End, now)}
+}
+
+// digestNewerPeriod is whether a is the newer of two periods: the one that
+// ended later, and the longer one where both ended on the same day (a day and
+// the week that closes with it, a day and the month it ends). It orders the
+// due list and picks the newest report, so a rule read in one place is not a
+// rule the other reads differently.
+func digestNewerPeriod(a, b digest.Period) bool {
+	if a.End != b.End {
+		return a.End > b.End
+	}
+	return digestPeriodRank(a.Dim) > digestPeriodRank(b.Dim)
+}
+
+// digestPeriodRank orders the four period dimensions from the shortest to the
+// longest, which is how two periods that ended on the same day are ordered:
+// the year before the month, the month before the week, the week before the
+// day. Anything that is not a period is a day's length here, and no period of
+// another dimension reaches this: DuePeriods writes the four and the layout
+// names the four.
+func digestPeriodRank(dim digest.Dim) int {
+	switch dim {
+	case digest.ByWeek:
+		return 1
+	case digest.ByMonth:
+		return 2
+	case digest.ByYear:
+		return 3
+	}
+	return 0
 }
 
 // digestDaysAgo is how many whole days have passed between a period's last day

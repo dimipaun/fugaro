@@ -22,7 +22,7 @@
     },
     "due": {
       "type": "array",
-      "description": "The periods that have closed and have no report file under dir, newest first: the seven closed days the catch-up covers, plus the week, month or year that just closed. Empty when nothing is due. A file whose name is not the layout's shape is not a report, so it neither satisfies a period nor appears here.",
+      "description": "The periods that have closed and have no report file under dir, newest first: ordered by the day the period ended, and of two periods that ended on the same day the longer one first (a year before the month, the month before the week, the week before the day), which is the rule the newest report below is picked by too. The periods themselves are the seven closed days the catch-up covers, plus the week, month or year that just closed. Empty when nothing is due. A file whose name is not the layout's shape is not a report, so it neither satisfies a period nor appears here.",
       "items": {
         "$ref": "#/$defs/period"
       }

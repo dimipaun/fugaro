@@ -314,6 +314,90 @@ func TestRunsDigestDueIsOffline(t *testing.T) {
 	}
 }
 
+// TestRunsDigestDueNamesThePeriodsNewestFirst: the list is ordered by the day
+// each period ended, and not by the order the due computation walks them in --
+// it walks the catch-up's days first and the week, month or year that closed
+// last, so on a Monday the week it hands over last ended the day the newest day
+// it hands over first did. Two periods that ended on the same day are ordered
+// longest first, which is the rule the newest report is picked by.
+func TestRunsDigestDueNamesThePeriodsNewestFirst(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		day  string
+		want []string
+	}{
+		{
+			// The week 2026-W43 closed on the 25th, the same day as the newest
+			// day of the catch-up, and the longer period comes first.
+			name: "a Monday, when the week closed",
+			day:  "2026-10-26",
+			want: []string{
+				"2026-W43", "2026-10-25", "2026-10-24", "2026-10-23",
+				"2026-10-22", "2026-10-21", "2026-10-20", "2026-10-19",
+			},
+		},
+		{
+			// October closed on the 31st, the same day as the newest day.
+			name: "the first of a month, when the month closed",
+			day:  "2026-11-01",
+			want: []string{
+				"2026-10", "2026-10-31", "2026-10-30", "2026-10-29", "2026-10-28",
+				"2026-10-27", "2026-10-26", "2026-10-25",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			digestClock(t, tc.day)
+			dir := t.TempDir()
+
+			out, errOut, err := execute(t, "runs", "digest", "--due", "--dir", dir)
+			if err != nil {
+				t.Fatalf("runs digest --due: %v (%s)", err, errOut)
+			}
+			if got := duePeriods(t, out); !equalStrings(got, tc.want) {
+				t.Errorf("--due names %v, want the periods newest first: %v\n%s", got, tc.want, out)
+			}
+
+			out, errOut, err = execute(t, "runs", "digest", "--due", "--dir", dir, "--json")
+			if err != nil {
+				t.Fatalf("runs digest --due --json: %v (%s)", err, errOut)
+			}
+			var decoded struct {
+				Due []struct {
+					Dim string `json:"dim"`
+					Key string `json:"key"`
+				} `json:"due"`
+			}
+			if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if len(decoded.Due) != len(tc.want) {
+				t.Fatalf("due holds %d periods, want %d: %s", len(decoded.Due), len(tc.want), out)
+			}
+			if decoded.Due[0].Key != tc.want[0] {
+				t.Errorf("due[0] = %+v, want %s, the period that ended most recently:\n%s", decoded.Due[0], tc.want[0], out)
+			}
+		})
+	}
+}
+
+// TestRunsDigestDueReadsTheLongerPeriodAsTheNewest: a day report and the week
+// report that closes with it end on the same day, and the longer period is the
+// newer report of the two.
+func TestRunsDigestDueReadsTheLongerPeriodAsTheNewest(t *testing.T) {
+	dir, _ := dueReportDir(t)
+	writeDueReport(t, dir, "2026-10-25")
+	writeDueReport(t, dir, "2026-W43")
+
+	out, errOut, err := execute(t, "runs", "digest", "--due", "--dir", dir)
+	if err != nil {
+		t.Fatalf("runs digest --due: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "newest report: 2026-W43 (week), 2 days old") {
+		t.Errorf("--due does not read the week as the newer of the two reports:\n%s", out)
+	}
+}
+
 // TestRunsDigestDueReadsACoarserReportAsTheNewest: the newest report is the one
 // whose own period ends latest, and a week's, month's or year's key is not a
 // date: a reading that parsed the key as one would find nothing at all in a
