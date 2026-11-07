@@ -31,18 +31,23 @@ import (
 // today, and the deadline is the one that a prompt answering EOF by asking
 // again trips.
 //
-// Every leaf must reach its own body. A leaf cobra stops at its own argument or
-// flag check — `fugaro settings set` with the key and the value it requires,
-// `fugaro restore` with the two it takes — has proved nothing about what the
-// command does, and a bare run that ends in cobra's usage error is the one way
+// Every leaf must reach its own body, and every leaf must be classified. A leaf
+// that stops at its own argument or flag check — cobra's usage error for a
+// command whose Args validator is declared on it, the command's own refusal for
+// one that reads `len(args)` or a flag inside its body — has proved nothing
+// about what the command does, and a bare run that ends there is the one way
 // this harness could have called a leaf quiet without ever asking it anything.
-// So the run's wrapper marks the leaves whose RunE ran, and a leaf that did not
-// get there fails until closedStdinFixtures gives it the arguments it needs (or
-// closedStdinNotRun says why it cannot be run at all). The fixture is the
-// arguments and, where the leaf is here to reach a question, the sentence it
-// must still print: without that sentence a fixture whose arguments had merely
-// stopped the leaf short would pass for a quiet one, which is a green answer for
-// the wrong reason.
+// Two checks answer it. The run's wrapper marks the leaves whose RunE ran, and
+// a leaf that did not get there fails; and every leaf of the tree has to be in
+// closedStdinFixtures or in closedStdinNoFixture, so the leaves the body check
+// cannot tell apart — a command that entered its body and stopped at the
+// argument check written there — are a decision someone wrote down rather than
+// a count that went up.
+//
+// The fixture is the arguments and, where the leaf is here to reach a question,
+// the sentence it must still print: without that sentence a fixture whose
+// arguments had merely stopped the leaf short would pass for a quiet one, which
+// is a green answer for the wrong reason.
 //
 // The world every leaf runs in is the hermetic installation this package
 // already builds — newBudgetFixture's temporary XDG, the local config naming
@@ -103,9 +108,10 @@ type closedStdinFixture struct {
 }
 
 // closedStdinFixtures is the per-leaf fixture. A leaf named here runs with these
-// arguments; a leaf that is not named runs bare, and then it must reach its own
-// body with nothing added, which is the case for most of the tree: their whole
-// run is the argument-free path.
+// arguments; a leaf that is not named runs bare and is named in
+// closedStdinNoFixture, which is the other half of the same classification:
+// every leaf of the tree is in one of the two, and the run fails on the leaf
+// that is in neither.
 //
 // The block below is the leaves whose own arguments are what stands between a
 // bare run and the command's work — cobra's usage error, not the command's
@@ -134,6 +140,13 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	},
 	// The write asks before it rewrites the project's claude_accounts block.
 	"fugaro accounts add": {args: []string{"team-a", "--repos", "acme/app"}, reaches: "claude_accounts"},
+	// The settings write asks with the typed name of the document it edits, and
+	// what it edits here is the world's own project config. The key is a real
+	// one: an unknown key stops at the registry's nearest-name refusal, and a
+	// fixture that stopped there would call the leaf quiet without the write
+	// having begun. The unset needs a value to remove, which its seed sets.
+	"fugaro settings set":   {args: []string{"base_branch", "main"}, reaches: "⚠ CONFIRM (project aurora): write base_branch"},
+	"fugaro settings unset": {args: []string{"base_branch"}, reaches: "⚠ CONFIRM (project aurora): remove base_branch", seed: closedStdinSetBaseBranch},
 	// watch is the one leaf whose contract is not to return: it follows the
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
@@ -149,11 +162,14 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro artifacts get":        {args: []string{"run-1"}},
 	"fugaro artifacts ls":         {args: []string{"run-1"}},
 	"fugaro budget preview":       {args: []string{"--recipe", "r", "--runs", "1"}},
+	"fugaro budget history":       {args: []string{"--sweep"}},
 	"fugaro cancel":               {args: []string{"run-1"}},
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
+	"fugaro exec":                 {args: []string{"--bucket", "file:///nonexistent"}},
 	"fugaro image add":            {args: []string{"base"}},
 	"fugaro image gate":           {args: []string{"--record", "r", "--slug", "s", "--bucket", "file:///nonexistent"}},
+	"fugaro image git-credential": {args: []string{"--out", "git-cred"}},
 	"fugaro image promote":        {args: []string{"base"}},
 	"fugaro image record":         {args: []string{"--in", "r", "--digest-from", "a", "--base-digest-from", "b", "--image", "i", "--base", "ba", "--build-id", "x", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image rm":             {args: []string{"base"}},
@@ -165,6 +181,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro models rm":            {args: []string{"claude-x"}},
 	"fugaro models search":        {args: []string{"x"}},
 	"fugaro models use":           {args: []string{"a", "b", "c"}},
+	"fugaro pair revoke":          {args: []string{"--uid", "uid-1"}},
 	"fugaro project repos add":    {args: []string{"acme/app"}},
 	"fugaro project repos rm":     {args: []string{"acme/app"}},
 	"fugaro recipes publish":      {args: []string{"slug"}},
@@ -172,28 +189,90 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro recipes validate":     {args: []string{"slug"}},
 	"fugaro restore":              {args: []string{"proj-2", "root"}},
 	"fugaro review show":          {args: []string{"run-1"}},
+	"fugaro run":                  {args: []string{"do something"}},
 	"fugaro secrets rm":           {args: []string{"NAME"}},
 	"fugaro secrets set":          {args: []string{"NAME"}},
 	"fugaro settings get":         {args: []string{"a.b"}},
-	"fugaro settings set":         {args: []string{"a.b", "1"}},
-	"fugaro settings unset":       {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
 	"fugaro user rm":              {args: []string{"someone@example.com"}},
 	"fugaro verify":               {args: []string{"build"}},
 	"fugaro workspace add":        {args: []string{"ws"}},
+	"fugaro workspace cap set":    {args: []string{"--workspace", "ws", "--monthly", "50"}},
 	"fugaro workspace member add": {args: []string{"ws", "acme/app"}},
 	"fugaro workspace member rm":  {args: []string{"ws", "acme/app"}},
 	"fugaro workspace rm":         {args: []string{"ws"}},
 	"fugaro workspace show":       {args: []string{"ws"}},
 }
 
-// closedStdinNotRun is the listed exemption: a leaf the harness does not run,
-// and why. It is empty, and that is the finding — every leaf of the tree
-// reaches a verdict under a closed stdin, so none needs excusing. The list is
-// here so that the first leaf that does need one is a decision written down
-// beside its reason, and not an omission a reader has to notice.
-var closedStdinNotRun = map[string]string{}
+// closedStdinNoFixture is the other half of the classification, and the reason
+// every leaf of the tree has to be in one of the two: a leaf with no fixture
+// runs bare, and a bare run of a command that takes arguments stops at its own
+// argument check — cobra's usage error for the ones whose Args validator is
+// declared on the command, the command's own refusal for the ones that read
+// `len(args)` or a flag in its body — which says nothing about what the command
+// does with them. Left unlisted, that is a green run for a leaf nobody drove.
+//
+// So a leaf is fixtured or it is named here with what its bare run is: the
+// leaves whose whole work is the argument-free path, and the few whose own
+// checks stop the bare run before that work and which this world has no
+// arguments for. Nothing here is claimed to be quiet either — the question
+// check and the deadline hold every leaf in this list exactly as they hold a
+// fixtured one, which is what makes the list safe to keep.
+var closedStdinNoFixture = map[string]string{
+	"fugaro accounts ls":            "selects no project and names the two ways to (--repo, an origin remote)",
+	"fugaro backends ls":            "lists every backend a project may name, which needs no project",
+	"fugaro backlog add":            "stops at its own D27 field checks, which this world has no values for",
+	"fugaro backlog index":          "reads docs/backlog, which this world has no checkout to hold",
+	"fugaro backlog list":           "reads docs/backlog, which this world has no checkout to hold",
+	"fugaro budget prices":          "prints the built-in price list with no project selected",
+	"fugaro budget show":            "prints the no-project-config refusal",
+	"fugaro config example":         "prints the example fugaro.yaml",
+	"fugaro config init":            "refuses outside a git checkout, which is what the world is",
+	"fugaro config layer":           "refuses with no checkout and no selected project config",
+	"fugaro config list":            "prints that this machine holds no installation",
+	"fugaro config publish":         "refuses with no fugaro.yaml to publish",
+	"fugaro config show":            "refuses outside a git checkout, which is what the world is",
+	"fugaro coordinator":            "refuses: the edition is not in this build",
+	"fugaro credentials serve":      "refuses without FUGARO_PROJECT in its own environment",
+	"fugaro creds ls":               "prints the no-project-config refusal",
+	"fugaro doctor":                 "runs its whole check and reports what this world lacks",
+	"fugaro graph":                  "refuses: the edition is not in this build",
+	"fugaro image build":            "refuses before the build: a billable build's confirmation needs a real terminal",
+	"fugaro image check":            "prints the no-project-config refusal",
+	"fugaro image ls":               "prints the no-project-config refusal",
+	"fugaro image refresh":          "refuses before its steps: each asks for the project's name at a real terminal",
+	"fugaro image render":           "refuses outside a git checkout, which is what the world is",
+	"fugaro image selftest":         "reads its spec from the closed stdin and returns on the EOF",
+	"fugaro image status":           "prints the no-project-config refusal",
+	"fugaro init":                   "is a pointer: it names setup and update and refuses",
+	"fugaro managed status":         "prints the no-project-config refusal",
+	"fugaro models ls":              "prints the built-in list with no project selected",
+	"fugaro pair ls":                "prints the no-project-config refusal",
+	"fugaro plan graph":             "refuses with no graph artifact under docs/plans",
+	"fugaro plan status":            "reads the repository's plan and stream files and reports what is missing",
+	"fugaro project policy publish": "refuses before its ask: the deployed rules here carry no policy marker",
+	"fugaro project policy show":    "prints that this installation has published no policy",
+	"fugaro project repos ls":       "prints the no-project-config refusal",
+	"fugaro project show":           "prints the no-project-config refusal",
+	"fugaro project sync":           "refuses before its ask: the deployed rules here carry no policy marker",
+	"fugaro reaper":                 "prints the no-project-config refusal",
+	"fugaro recipes ls":             "prints the no-project-config refusal",
+	"fugaro report":                 "refuses: the edition is not in this build",
+	"fugaro runs digest":            "prints the no-project-config refusal",
+	"fugaro runs ls":                "prints the no-project-config refusal",
+	"fugaro runs stats":             "prints the no-project-config refusal",
+	"fugaro runs summary":           "prints the no-project-config refusal",
+	"fugaro secrets ls":             "prints the no-project-config refusal",
+	"fugaro setup":                  "refuses on this world's runs bucket name before the wizard's first step",
+	"fugaro update":                 "refuses on this world's runs bucket name before its first stage",
+	"fugaro update-skills":          "reports that a development build has no release to pin the plugin to",
+	"fugaro upgrade":                "skips every step: a development build has no release to pin or install",
+	"fugaro user ls":                "prints the no-project-config refusal",
+	"fugaro validate":               "refuses with no fugaro.yaml in the world",
+	"fugaro version":                "prints the version",
+	"fugaro workspace ls":           "prints that no config on this machine names a workspace",
+}
 
 // closedStdinPrompts is the allow-list: the leaves that still print a question
 // with a closed stdin, each with the task of the plan that removes it. Every
@@ -215,6 +294,12 @@ var closedStdinPrompts = map[string]string{
 	// The account write asks before it rewrites the project's claude_accounts
 	// block and mints the account's secret version; T5 removes the ask.
 	"fugaro accounts add": "T5",
+	// Both halves of the generic settings write ask with the typed name of the
+	// document they edit; T5 removes the asks. They are here rather than in the
+	// unreached ledger because the world's own project config is the document
+	// they edit, so a fixture that names a real setting reaches the banner.
+	"fugaro settings set":   "T5",
+	"fugaro settings unset": "T5",
 }
 
 // closedStdinUnreachedAsk is one ask this world cannot drive its leaf to: the
@@ -235,10 +320,13 @@ type closedStdinUnreachedAsk struct {
 // too, or the marker check below fails.
 var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 	// The write asks only when the list it writes drops an approval the bucket
-	// already holds, which is not a state this world builds.
+	// already holds. Reaching that means a managed installation — the runs
+	// bucket under its default name, the endpoints the read needs, and an
+	// allow-list object — and this world is a project config with a file://
+	// bucket, so the run refuses before it reads anything.
 	"fugaro allow-delete": {
 		file: "allow_delete.go", marker: "confirmTypedStrict(cmd, lc,",
-		task: "T5", why: "asks only where the write drops an approval it read in the bucket",
+		task: "T5", why: "asks only where the write drops a read approval, which needs a managed installation this world is not",
 	},
 	// The restore refuses a session with no terminal before its banner, in a
 	// sentence of its own, so the banner is never printed here.
@@ -246,32 +334,23 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 		file: "restore.go", marker: "func (rr *restoreRun) confirm(cmd *cobra.Command) error {",
 		task: "T6", why: "refuses a session with no terminal before the banner it would print",
 	},
-	// The flag reads the project's number from the cloud before its banner, and
-	// the fake serves no Resource Manager.
+	// Both banners stand behind the managed installation: the flag's behind the
+	// project-number read its banner carries, the unflag's behind the marker
+	// read, and both behind a runs bucket with the name a managed project's
+	// marker lives in. This world's is the project config's own.
 	"fugaro managed flag": {
 		file: "managed_flag.go", marker: "confirmTypedGCPProject(cmd, lc.GCPProject)",
-		task: "T6", why: "prints its banner after a project-number read the fake does not serve",
+		task: "T6", why: "prints its banner after a project-number read, which needs the managed installation this world is not",
 	},
 	"fugaro managed unflag": {
 		file: "managed_unflag.go", marker: "confirmTypedGCPProject(cmd, lc.GCPProject)",
-		task: "T6", why: "prints its banner after the managed marker read, which this world refuses",
+		task: "T6", why: "prints its banner after a marker read, which needs the managed installation this world is not",
 	},
 	// managed apply asks from inside an apply: the question carries a saved
 	// plan's hash and counts, so it takes a planned root this world has none of.
 	"fugaro managed apply": {
 		file: "managed_apply.go", marker: "func managedAsk(cmd *cobra.Command, lc *localcfg.Config)",
 		task: "T9", why: "asks inside an apply, which needs a saved plan this world does not build",
-	},
-	// A settings write asks from the layer or checkout it edits, and the typing
-	// rules that decide which of the two confirmations applies are the write's
-	// own; this world has no checkout to edit.
-	"fugaro settings set": {
-		file: "settings_write.go", marker: "confirmTypedStrict(cmd, lc, e.TypedWhy, e.What)",
-		task: "T5", why: "asks from the layer or checkout it edits, and this world has neither",
-	},
-	"fugaro settings unset": {
-		file: "settings_write.go", marker: "func confirmSettingsWrite(",
-		task: "T5", why: "asks from the layer or checkout it edits, and this world has neither",
 	},
 	// A build's confirmation stands behind the rig that builds a real image:
 	// the registry, the build record and the Cloud Build API it submits to.
@@ -322,12 +401,6 @@ func TestEveryCommandRunsWithClosedStdin(t *testing.T) {
 	ran := 0
 	for _, leaf := range leaves {
 		path := leaf.CommandPath()
-		if why, exempt := closedStdinNotRun[path]; exempt {
-			if why == "" {
-				t.Errorf("%s is exempt with no reason: an exemption nobody can read is an omission", path)
-			}
-			continue
-		}
 		ran++
 		t.Run(path, func(t *testing.T) {
 			// One world per leaf: a run that writes must not decide what the
@@ -343,7 +416,7 @@ func TestEveryCommandRunsWithClosedStdin(t *testing.T) {
 				t.Fatalf("%s did not return within %s with its stdin closed: a read that waits for a person is a wait nobody can end (it printed %q)", path, closedStdinDeadline, out)
 			}
 			if !entered {
-				t.Fatalf("%s never reached its own body with its stdin closed (%v), so this run says nothing about what the command does: give it the arguments it needs in closedStdinFixtures, or list it in closedStdinNotRun with the reason it cannot be run", path, err)
+				t.Fatalf("%s never reached its own body with its stdin closed (%v), so this run says nothing about what the command does: give it the arguments it needs in closedStdinFixtures", path, err)
 			}
 			if fixture, ok := closedStdinFixtures[path]; ok && fixture.reaches != "" && !strings.Contains(out, fixture.reaches) {
 				t.Fatalf("the fixture for %s no longer reaches %q, so it refuses before the work it is here to reach: the run printed %q", path, fixture.reaches, out)
@@ -359,9 +432,32 @@ func TestEveryCommandRunsWithClosedStdin(t *testing.T) {
 	if !slices.Contains(paths, "fugaro version") {
 		t.Fatal("the walk does not find `fugaro version`, which every build holds: the tree it walks is not the released one")
 	}
+	// Every leaf is fixtured or exempted, and every exemption is a reason. A
+	// leaf in neither is the one way this harness could pass a command it never
+	// drove, so it fails here naming the leaf rather than joining the count.
+	for _, leaf := range leaves {
+		path := leaf.CommandPath()
+		_, fixtured := closedStdinFixtures[path]
+		why, exempt := closedStdinNoFixture[path]
+		switch {
+		case fixtured && exempt:
+			t.Errorf("%s is fixtured and exempt at once: the fixture is what a bare run cannot do, so one of the two is stale", path)
+		case !fixtured && !exempt:
+			t.Errorf("%s is neither fixtured nor exempt: its bare run stops at whatever arguments it takes, so this run would say nothing about the command. Give it the arguments it needs in closedStdinFixtures, or say in closedStdinNoFixture what its bare run is", path)
+		case exempt && why == "":
+			t.Errorf("%s is exempt with no reason: an exemption nobody can read is an omission", path)
+		}
+	}
+	// A fixture with no arguments is a bare run wearing a fixture's name, and
+	// the classification above would then hold a leaf that is in fact unfixtured.
+	for path, fixture := range closedStdinFixtures {
+		if len(fixture.args) == 0 {
+			t.Errorf("%s has a fixture with no arguments: that is a bare run, so either give it what it needs or move it to closedStdinNoFixture", path)
+		}
+	}
 	for _, named := range [][]string{
 		closedStdinNamed(closedStdinFixtures),
-		closedStdinNamed(closedStdinNotRun),
+		closedStdinNamed(closedStdinNoFixture),
 		closedStdinNamed(closedStdinPrompts),
 		closedStdinNamed(closedStdinUnreached),
 	} {
@@ -418,6 +514,15 @@ func closedStdinAsked(t *testing.T, path, out string) {
 		return
 	}
 	t.Errorf("%s printed a question with its stdin closed (%q): a closed stdin is nobody to answer, so the run asks a person who is not there\n%s", path, question, out)
+}
+
+// closedStdinSetBaseBranch gives the world's project config a value for the
+// setting the unset's fixture removes: an unset of a key no document sets has
+// nothing to confirm and says so, which would be the wrong reason for a green
+// run.
+func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "base_branch: main\n")
 }
 
 // closedStdinWorld is the state every leaf is run in: one hermetic
