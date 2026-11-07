@@ -625,9 +625,9 @@ func TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession(t *testing.T) {
 	}
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, errOut, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
 	if after := readFileString(t, r.cfg); after == before {
-		t.Fatalf("the removal was not written in a managed project's coding agent session: %v\nstdout:\n%s\nstderr:\n%s", rmErr, out, rmErr)
+		t.Fatalf("the removal was not written in a managed project's coding agent session: %v\nstdout:\n%s\nstderr:\n%s", rmErr, out, errOut)
 	}
 	lc := r.addLocal(t)
 	if _, ok := lc.ClaudeAccounts["team-a"]; ok {
@@ -644,6 +644,18 @@ func TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession(t *testing.T) {
 	}
 	if strings.Contains(out, "Nothing else to run") {
 		t.Errorf("the command ended on its ready line, which is only true of a converged installation:\n%s", out)
+	}
+	// The converge is add's own loop, and the door it names has to be this
+	// command's: the header, the result banner and the step left for the person
+	// are what that person reads to finish, and a run of the removal labelled
+	// `fugaro accounts add` hands them the inverse of the command they ran.
+	for _, want := range []string{"fugaro accounts rm: project ", "fugaro accounts rm: result", "left for you", " accounts rm"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("the run does not name itself where it prints %q:\nstderr:\n%s", want, errOut)
+		}
+	}
+	if strings.Contains(errOut, "accounts add") || strings.Contains(out, "accounts add") {
+		t.Errorf("the removal run names the inverse command:\nstderr:\n%s\nstdout:\n%s", errOut, out)
 	}
 
 	recs := r.audits(t)
@@ -664,6 +676,27 @@ func TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession(t *testing.T) {
 		if !slices.ContainsFunc(rec.Rules, func(rule string) bool { return strings.Contains(rule, want) }) {
 			t.Errorf("the record's rules (%v) do not name the rule %q: the record is what an owner reads to see what was judged", rec.Rules, want)
 		}
+	}
+}
+
+// TestAccountsRmNamesItselfOnTheOwnersPath is the other half of that label: the
+// door the converge was given was add's for EVERY run and not only for a
+// session's, so the owner's own removal printed its progress and its result as
+// `fugaro accounts add` too. The run's lines go to stderr, which is where this
+// reads them.
+func TestAccountsRmNamesItselfOnTheOwnersPath(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+
+	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if err != nil {
+		t.Fatalf("accounts rm: %v\nstderr:\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "fugaro accounts rm: project ") {
+		t.Errorf("the run does not name the command that was run:\nstderr:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "accounts add") || strings.Contains(out, "accounts add") {
+		t.Errorf("the removal run names the inverse command:\nstderr:\n%s\nstdout:\n%s", errOut, out)
 	}
 }
 
@@ -899,6 +932,116 @@ func TestAccountsRmReadsTheBranchTheCommittedFileNames(t *testing.T) {
 	}
 }
 
+// TestAccountsRmManagedRefusesTheRefALaunchWouldUse is the hole the base branch
+// alone left open, pinned: a run with no --ref launched from a checkout of a
+// pushed branch is cut from THAT branch (run_ref.go), so a repository whose
+// base-branch file is clean while the branch this checkout is on names the
+// account is a repository every run launched from here stops on. Judging the
+// base alone scored it clean, admitted a session's removal and ran the one-way
+// delete while origin/feature still named the account.
+func TestAccountsRmManagedRefusesTheRefALaunchWouldUse(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckoutOnBranch(t, "owner/repo-a", "feature", accountsRmRepoYAMLWithoutToken, accountsRmRepoYAML)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran while the branch the runs use still names the account (%v):\n%s", got, out)
+	}
+	if err == nil {
+		t.Fatalf("a branch whose runs name the account did not stop the removal:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") || !strings.Contains(err.Error(), "agent.oauth_token") {
+		t.Errorf("the refusal does not name the repository and the key that still reference the account: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one refusal: %+v", len(recs), recs)
+	}
+	if recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the record's verdict is %q, want %q: the step was refused", recs[0].Verdict, managedmode.AuditRefused)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "owner/repo-a") }) {
+		t.Errorf("the record's rules (%v) do not name the repository that refused the removal", recs[0].Rules)
+	}
+}
+
+// TestAccountsRmWarnsAboutTheRefALaunchWouldUse is the same state on the owner's
+// own path, where the referrer found at the branch the runs use is the warning
+// and not the block it is for a session (spec §4 step 2, D783's shape): the
+// owner reads which repository breaks with the removal and what its next run
+// does, and the removal they confirmed goes through.
+func TestAccountsRmWarnsAboutTheRefALaunchWouldUse(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckoutOnBranch(t, "owner/repo-a", "feature", accountsRmRepoYAMLWithoutToken, accountsRmRepoYAML)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	// The converge is not what this pins, and this state leaves it a step for
+	// the person: a checkout on a branch other than the default is the
+	// repository stage's own needs-you (the repository is onboarded from the
+	// default branch), which is true of this state and not of the reference
+	// check. What the owner reads before that is the warning, and what they
+	// confirmed runs behind it.
+	if err != nil && !strings.Contains(errOut, "left for you") {
+		t.Fatalf("accounts rm failed for a reason that is not a step left to the person: %v\nstderr:\n%s", err, errOut)
+	}
+
+	if !strings.Contains(out, "warning: team-a is named by owner/repo-a's committed fugaro.yaml in agent.oauth_token") {
+		t.Errorf("the run does not name the repository whose branch names the account:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: the referrer is a warning and not a block", got, id)
+	}
+	if lc := r.addLocal(t); func() bool { _, ok := lc.ClaudeAccounts["team-a"]; return ok }() {
+		t.Errorf("claude_accounts.team-a is still declared after a removal the owner confirmed")
+	}
+}
+
+// TestAccountsRmManagedRefusesABranchItCannotRead is the other half of that ref,
+// and the same split the base branch already answers: a document that was not
+// read is never scored clean, whichever ref it sits at. The branch this checkout
+// is on is a ref a launch uses, so a committed file there that this machine
+// cannot read is the unresolved value that refuses a session (managed spec §4.1)
+// and warns the owner, exactly as the base branch's is.
+func TestAccountsRmManagedRefusesABranchItCannotRead(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckoutOnBranch(t, "owner/repo-a", "feature", accountsRmRepoYAMLWithoutToken, accountsRmRepoYAMLUnreadable)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran while a ref the runs use could not be read (%v):\n%s", got, out)
+	}
+	if err == nil {
+		t.Fatalf("a branch whose committed file could not be read did not stop the removal:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") {
+		t.Errorf("the refusal does not name the checkout whose file could not be read: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the gate records are %+v, want the one refusal", recs)
+	}
+}
+
 // TestAccountsRmWarnsAboutACheckoutItCannotRead is the other half: a checkout
 // this machine HAS, whose own committed fugaro.yaml it could not read, is unknown
 // in a different way — the question was asked and the answer could not be read —
@@ -1095,6 +1238,36 @@ func accountsRmCheckoutBranched(t *testing.T, repo, atMain, atRelease string) st
 	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/release", "HEAD")
 	testutil.Git(t, dir, "checkout", "-q", "main")
 	return dir
+}
+
+// accountsRmCheckoutOnBranch is a checkout this machine is STANDING IN, of
+// repo, on branch, with origin's remote-tracking refs for the default branch
+// and for branch, and the committed fugaro.yaml the caller names at each of
+// them. It is the state that decides the other half of the ref a run of the
+// repository is cut from: the branch a launch from this working directory uses
+// when it is not the base (run_ref.go's checkoutBranchOnOrigin, which reads
+// this directory's HEAD and its own remote-tracking refs).
+//
+// It is accountsRmCheckout's shape plus the two things a launch's ref needs: a
+// remote origin, so this directory canonicalises to repo, and a branch of its
+// own that origin has.
+func accountsRmCheckoutOnBranch(t *testing.T, repo, branch, atBase, atBranch string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:"+repo+".git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": atBase})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's file at the base branch")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	testutil.Git(t, dir, "checkout", "-q", "-b", branch)
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": atBranch})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the file at the branch this checkout is on")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/"+branch, "HEAD")
+	t.Chdir(dir)
+	return accountsRmRemember(t, repo, dir)
 }
 
 // accountsRmRemember records dir as the project's checkout of repo, which is

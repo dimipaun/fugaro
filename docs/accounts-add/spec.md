@@ -378,14 +378,22 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    **committed** one, read at the ref a run of that repository checks out (`git cat-file`, the reader
    the launch itself uses) and **never the working tree**: the commit is what the next run resolves its
    account from, and a session's uncommitted edit — the state a coding agent leaves a checkout in —
-   would otherwise hide a reference the run still stops on. **The ref is never the checkout's file's
-   either.** That file is layer 1 of a launch's resolution, but it belongs to the session that owns
+   would otherwise hide a reference the run still stops on. **No ref the checkout's file picks is
+   read.** That file is layer 1 of a launch's resolution, but it belongs to the session that owns
    the tree, which can write a `git.base_branch` into it, uncommitted, naming a ref this checkout does
    not hold; the ref comes from the installation config instead (`repos.<r>.base_branch`, else the
    project's own default), and
    **the branch the committed file then names is followed**, because a repository whose file writes
    `git.base_branch` has its runs read the file at that branch: the value is resolved out of the
-   committed bytes and the file there is read in its place. Of the two ways the read can come up short,
+   committed bytes and the file there is read in its place.
+   **Every ref a run can be cut from is read, and the base branch alone is not all of them.** A launch
+   with no `--ref` from a checkout of a pushed branch is cut from that branch, so when this working
+   directory is on one and origin has it, that ref is read beside the base branch: a repository whose
+   base-branch file is clean while the branch the runs are launched from names the account is still a
+   repository whose runs stop at launch, and a read that covered the base alone would score it clean.
+   A name at either ref is the warnable reference, and a read that failed at either is an unresolved
+   value. A branch of origin that is neither — one a run reaches only with an explicit `--ref` — is
+   not read: what this check answers for is the runs the repository makes by itself. Of the two ways the read can come up short,
    a repository this machine has **no checkout of** is a warning, while a checkout whose committed file
    **did not resolve** (a document the strict reader refuses, or a ref this checkout does not hold) is
    a warning for the owner and a **refusal** for a session, because there the answer was asked for and

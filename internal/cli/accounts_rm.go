@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"os"
@@ -323,13 +324,14 @@ func accountsRmServing(lc *localcfg.Config, name string) []string {
 // tree"). A checkout whose working tree has the line removed while the branch it
 // was made from still names the account is exactly the state this check has to
 // see: a coding agent's session owns that working tree, and its edits are
-// uncommitted until someone pushes them. Neither the document nor the ref it is
-// read at may come from that tree — accountsRmCommittedYAML says why the ref is
-// the config's — and a name only the working tree carries is therefore not a
-// referrer this command reports: the committed read is what fails, and its
-// failure is the unknown this check refuses a session on and warns the owner
-// about. The conservative direction is the only one available here: a document
-// this machine could not read is never scored clean.
+// uncommitted until someone pushes them. No ref a session's own file picks is
+// read either — accountsRmCommittedYAML says why — and a name only the working
+// tree carries is therefore not a referrer this command reports: the committed
+// read is what fails, and its failure is the unknown this check refuses a
+// session on and warns the owner about. The conservative direction is the only
+// one available here: a document this machine could not read is never scored
+// clean, and every ref the runs of the repository can be cut from
+// (accountsRmRefs) is read rather than one of them.
 //
 // unseen and unread are the two ways this machine can come up short, and they
 // are not the same: no checkout here — no row at all, or a row whose directory
@@ -367,56 +369,96 @@ func accountsRmRepos(ctx context.Context, lc *localcfg.Config, name string) (ref
 			unseen = append(unseen, repo)
 			continue
 		}
-		data, err := accountsRmCommittedYAML(ctx, lc, repo, dir)
-		if err != nil {
-			unread = append(unread, repo)
-			continue
+		// Every ref a run of this repository can be cut from is read, and the
+		// answer is the referrer when ANY of them names the account, before the
+		// read that did not answer: a name at a ref the runs use is a fact, while
+		// an unread document beside it is the absence of one, and a repository
+		// that is both is reported as what it is — a referrer, and therefore a
+		// refusal for a session and a warning for the owner either way.
+		var named, failed bool
+		for _, ref := range accountsRmRefs(ctx, lc, repo) {
+			data, err := accountsRmCommittedYAML(ctx, dir, ref)
+			if err != nil {
+				failed = true
+				continue
+			}
+			agent, ok := config.AgentOf(data)
+			if !ok {
+				failed = true
+				continue
+			}
+			if agent.OAuthToken == name {
+				named = true
+			}
 		}
-		agent, ok := config.AgentOf(data)
-		if !ok {
-			unread = append(unread, repo)
-			continue
-		}
-		if agent.OAuthToken == name {
+		switch {
+		case named:
 			referrers = append(referrers, repo)
+		case failed:
+			unread = append(unread, repo)
 		}
 	}
 	return referrers, unseen, unread
 }
 
-// accountsRmCommittedYAML reads a repository's committed fugaro.yaml the way a
-// run of it reads that file: the blob at the ref the run resolves, out of the
-// checkout's object database, through the reader the launch uses
-// (readFugaroYAMLAtRef, which is git cat-file). An error is "this machine could
-// not read the document that answers", which is unknown and not clean.
+// accountsRmRefs is the refs a run of this repository can be cut from, as this
+// machine reads them: the base branch the installation config's layers name,
+// and — beside it, never instead of it — the ref a launch from this working
+// directory is cut from (newRunRef's answer, which is the branch this checkout
+// is on when origin has it and it is not that base).
 //
-// The ref is resolved from the local config's own layers and NEVER from the
-// checkout's file. A launch consults that file first (basebranch.go's layer 1),
-// but it belongs to the checkout a session owns: a ref it names — one this
-// checkout may not hold at all — fails the read, so a ref the file picks is a
-// ref the same uncommitted edit that hides the account can pick, and the read
-// that then falls back to a working tree without the name scores a referrer as
-// clean. The layers here are repos.<r>.base_branch, else the project's
-// base_branch, else main (config.EffectiveBaseBranch); a project whose base
-// branch lives only in the published policy node reads as main, because that is
-// a cloud read and this command reaches nothing.
+// The base branch alone is not the question this check asks. A run with no
+// --ref launched from a checkout of a pushed branch other than the base is cut
+// from THAT branch (run_ref.go), and it is the common case: the person standing
+// in the branch the account's removal is about. A checkout whose base branch
+// file is clean while the branch it is on names the account is therefore a
+// repository every run launched from here stops on, and judging only the base
+// would score it clean, admit a session's removal and run the one-way delete
+// while those runs keep stopping at launch.
 //
-// The file read at that ref may itself write git.base_branch, which is the
-// branch a launch out of this checkout then resolves (basebranch.go's layer 1)
-// and the run checks out: resolving that name out of the committed bytes and
-// reading the file there keeps this read on the document the runs use, and a ref
-// this checkout does not hold is an error rather than an older copy of the file.
-func accountsRmCommittedYAML(ctx context.Context, lc *localcfg.Config, repo, dir string) ([]byte, error) {
+// The ref a launch would use is taken from newRunRef itself rather than
+// re-derived, so this check cannot drift from the launch it is judging; its
+// warning line is a launch's and is dropped here.
+func accountsRmRefs(ctx context.Context, lc *localcfg.Config, repo string) []string {
 	repoBranch := ""
 	if r, ok := lc.Repos[repo]; ok {
 		repoBranch = r.BaseBranch
 	}
-	branch, _ := config.EffectiveBaseBranch("", false, repoBranch, lc.BaseBranch)
-	data, err := readFugaroYAMLAtRef(ctx, dir, branch)
+	base, _ := config.EffectiveBaseBranch("", false, repoBranch, lc.BaseBranch)
+	refs := []string{base}
+	if launched := newRunRef(ctx, repo, base, io.Discard); launched != base {
+		refs = append(refs, launched)
+	}
+	return refs
+}
+
+// accountsRmCommittedYAML reads a repository's committed fugaro.yaml at one ref
+// the way a run of it reads that file: the blob at ref, out of the checkout's
+// object database, through the reader the launch uses (readFugaroYAMLAtRef,
+// which is git cat-file). An error is "this machine could not read the document
+// that answers", which is unknown and not clean.
+//
+// ref comes from accountsRmRefs and NEVER from the checkout's file. A launch
+// consults that file first (basebranch.go's layer 1), but it belongs to the
+// checkout a session owns: a ref it names — one this checkout may not hold at
+// all — fails the read, so a ref the file picks is a ref the same uncommitted
+// edit that hides the account can pick, and the read that then falls back to a
+// working tree without the name scores a referrer as clean. What the file may
+// not pick is the ref; the branch this checkout is ON is another matter and is
+// judged (accountsRmRefs), because that is the ref a launch from here is cut
+// from whether or not any file says so.
+//
+// The file read at ref may itself write git.base_branch, which is the branch a
+// launch out of that ref resolves (basebranch.go's layer 1) and the run checks
+// out: resolving that name out of the committed bytes and reading the file there
+// keeps this read on the document the runs use, and a ref this checkout does not
+// hold is an error rather than an older copy of the file.
+func accountsRmCommittedYAML(ctx context.Context, dir, ref string) ([]byte, error) {
+	data, err := readFugaroYAMLAtRef(ctx, dir, ref)
 	if err != nil {
 		return nil, err
 	}
-	if named, ok := config.GitBaseBranchOf(data); ok && named != branch {
+	if named, ok := config.GitBaseBranchOf(data); ok && named != ref {
 		return readFugaroYAMLAtRef(ctx, dir, named)
 	}
 	return data, nil
@@ -720,7 +762,7 @@ func accountsRmRestore(cmd *cobra.Command, path string, wrote, back []byte, name
 // through add's own runner over the registered stages, so the job the account
 // owned is gone from the installation and the node no longer names it.
 func accountsRmConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, wrote []byte, path string, plan accountsRmPlan, secret string) error {
-	stages, err := accountsAddRunStages(ctx, cmd, after, path, wrote)
+	stages, err := accountsAddRunStages(ctx, cmd, after, path, wrote, "accounts rm")
 	if err != nil {
 		return err
 	}
