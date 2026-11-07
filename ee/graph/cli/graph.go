@@ -143,6 +143,16 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 		return fcli.UserErr("graph: source %s: no orchestrator is installed in this build", scope)
 	}
 
+	// The stream is the other output of the same read, and the one that needs
+	// --json: a reader of a stream is a program, and a table interleaved between
+	// documents is not a shape it can consume. A combination this command has no
+	// shape for is refused with the scope's own rules, before the project is
+	// selected and before the cloud is opened, so the pair reaches no read
+	// either.
+	if o.watch && !o.asJSON {
+		return fcli.UserErr("graph: --watch needs --json: the stream prints one document per change, one object per line")
+	}
+
 	ctx := cmd.Context()
 	env, err := fcli.OpenCloud(ctx, &o.cloud)
 	if err != nil {
@@ -150,13 +160,7 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	}
 	defer env.Close()
 
-	// The stream is the other output of the same read, and the one that needs
-	// --json: a reader of a stream is a program, and a table interleaved between
-	// documents is not a shape it can consume.
 	if o.watch {
-		if !o.asJSON {
-			return fcli.UserErr("graph: --watch needs --json: the stream prints one document per change, one object per line")
-		}
 		return runGraphWatch(ctx, cmd.OutOrStdout(), env)
 	}
 

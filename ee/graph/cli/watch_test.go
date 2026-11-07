@@ -579,31 +579,61 @@ func TestWatchOneSubscriptionPerScope(t *testing.T) {
 	}
 }
 
-// TestWatchRefusedReadIsTerminalAndNamesTheCommand: the server withdrawing the
-// listen is the one thing that ends the child, and the sentence it ends with
-// names the command a person can run instead — which is what a console reads as
-// "this CLI cannot stream the graph" and answers by showing that sentence (H3,
-// T3, contract §6.22).
+// TestWatchRefusedReadIsTerminalAndNamesTheCommand: a refusal is what ends the
+// child, and the sentence it ends with names what to do instead, because a
+// console shows that sentence and draws no graph (H3, T3, contract §6.22). Two
+// refusals reach it — the server withdrawing the listen mid-stream, and a
+// caller asking for the stream without --json — and each names its own way out.
 func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
-	f := newGraphFixture(t)
-	f.writeStoredView(t, storedView())
-	fast(t, testFloor, testKeep)
+	t.Run("the server withdrew the listen", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, storedView())
+		fast(t, testFloor, testKeep)
 
-	sink := newWatchSink()
-	child := startWatch(t, sink, "graph", "--watch", "--json")
-	if first := sink.next(t, testPatience); first.Seq != 1 {
-		t.Fatalf("the first document is seq %d, want 1: the child streamed before it was refused", first.Seq)
-	}
+		sink := newWatchSink()
+		child := startWatch(t, sink, "graph", "--watch", "--json")
+		if first := sink.next(t, testPatience); first.Seq != 1 {
+			t.Fatalf("the first document is seq %d, want 1: the child streamed before it was refused", first.Seq)
+		}
 
-	// The server takes the listen away: a rule no longer allows the read, which
-	// is a refusal rather than a scope that is down.
-	f.db.SendCancel()
+		// The server takes the listen away: a rule no longer allows the read,
+		// which is a refusal rather than a scope that is down.
+		f.db.SendCancel()
 
-	err := child.wait(t, testPatience)
-	if err == nil {
-		t.Fatalf("the child kept streaming after the server withdrew the listen")
-	}
-	if !strings.Contains(err.Error(), "fugaro graph") {
-		t.Errorf("the refusal is %q, want it to name the command to run instead", err)
-	}
+		err := child.wait(t, testPatience)
+		if err == nil {
+			t.Fatalf("the child kept streaming after the server withdrew the listen")
+		}
+		if !strings.Contains(err.Error(), "fugaro graph") {
+			t.Errorf("the refusal is %q, want it to name the command to run instead", err)
+		}
+	})
+
+	t.Run("--watch without --json", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, storedView())
+
+		// A stream is one document per line, which is a shape only --json has:
+		// a table interleaved with documents is not one a reader can consume.
+		// The refusal is made before anything is read, like the scope's.
+		before := len(f.db.Requests())
+		out, errOut, err := execute(t, "graph", "--watch")
+		if err == nil {
+			t.Fatalf("graph --watch without --json printed %q, want a refusal", out)
+		}
+		for _, want := range []string{"--json", "--watch"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal is %q, want it to name %s", err, want)
+			}
+		}
+		if out != "" {
+			t.Errorf("the refused stream wrote %q to stdout, want no document at all", out)
+		}
+		if errOut != "" {
+			t.Errorf("the refused stream wrote %q to stderr: the project was selected before the flags were checked", errOut)
+		}
+		if got := len(f.db.Requests()); got != before {
+			t.Errorf("the refused stream made %d database calls, want none", got-before)
+		}
+	})
 }
