@@ -208,6 +208,11 @@ type loop struct {
 	// coding agent's session often cannot open the log (G8). It is not part
 	// of the Result: --json carries the error and the fix, as it always has.
 	failedContext []string
+	// refused is set when converge stopped on a refusal rather than on a
+	// stage's own result: the error is the caller's, and the exit code that
+	// goes with it is not the account's, so the reporter has no outcome to
+	// close the run with and prints no closing line.
+	refused bool
 }
 
 // defaultProgram is what the run's lines name when the caller names no
@@ -372,6 +377,15 @@ func (l *loop) fail(stage string, err error) {
 // is left here is the context behind it.
 func (l *loop) failureContext(err error) []string {
 	lines := strings.Split(err.Error(), "\n")
+	// The message is the first line oneLine does not trim away, so the blank
+	// lines above it are not context — and taking the line after them is what
+	// keeps the message from printing twice under the cross.
+	for len(lines) > 0 && strings.Trim(lines[0], "\r\n \t") == "" {
+		lines = lines[1:]
+	}
+	if len(lines) == 0 {
+		return nil
+	}
 	var out []string
 	for _, ln := range lines[1:] {
 		if s := l.redact(oneLine(ln)); s != "" {
@@ -480,6 +494,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 			continue
 		}
 		if _, self := s.(SelfConfirming); !l.o.Yes && !l.interactive && !(self && YesCovers(name)) {
+			l.refused = true
 			return &NoTerminalError{Stage: name, Agent: l.o.Agent}
 		}
 		out, err := applyStage(ctx, s, l.env(name))
@@ -670,7 +685,15 @@ func (l *loop) steps(rs []StageResult) {
 		s := l.o.Report.Step(r.Name)
 		switch r.State {
 		case Done, Changed:
-			s.Done(r.Detail)
+			if l.leftFor(r.Name) != nil {
+				// The stage applied what this session may do and left the
+				// rest for the user (Outcome.Left): the result carries the
+				// entry and the run exits 1, so a tick here would say the
+				// run is done when it is not (G3).
+				s.Left(l.stageText(r))
+			} else {
+				s.Done(r.Detail)
+			}
 		case Failed:
 			// The stage's detail is the error's first line; the lines under
 			// it are the context the failure block prints (G8).
@@ -687,6 +710,19 @@ func (l *loop) steps(rs []StageResult) {
 	}
 }
 
+// leftFor is the step the user still owes for a stage: a stage that only
+// refused has one, and so does a stage that applied what it could and left
+// the rest (Outcome.Left), which is why a stage's marker follows this and not
+// its state alone (G3).
+func (l *loop) leftFor(stage string) *Left {
+	for i, lf := range l.res.Left {
+		if lf.Stage == stage {
+			return &l.res.Left[i]
+		}
+	}
+	return nil
+}
+
 // stageText is the one-line tail of a stage the user owes: what the stage
 // said about itself, or, when it said nothing — a stage that only refused —
 // the instruction its left-for-you entry carries.
@@ -694,10 +730,8 @@ func (l *loop) stageText(r StageResult) string {
 	if r.Detail != "" {
 		return r.Detail
 	}
-	for _, lf := range l.res.Left {
-		if lf.Stage == r.Name {
-			return lf.Text
-		}
+	if lf := l.leftFor(r.Name); lf != nil {
+		return lf.Text
 	}
 	return ""
 }
@@ -725,9 +759,11 @@ func (l *loop) finish() {
 		// The error itself is the caller's to print (the CLI returns it).
 		fmt.Fprintf(l.o.Out, "stopped at %s; fix: %s\n", f.Stage, f.Fix)
 	}
-	if l.o.Report != nil && !l.o.PlanOnly {
+	if l.o.Report != nil && !l.o.PlanOnly && !l.refused {
 		// Last, so the closing line is the last thing the run says: the
 		// reporter counts the steps it was given and names the outcome.
+		// A refused run has no outcome to name — the caller's exit code is
+		// not the account's — so it says nothing more (G3).
 		l.o.Report.Summary()
 	}
 }

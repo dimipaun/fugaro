@@ -21,10 +21,13 @@ type fake struct {
 	log    *[]string
 	status Status
 	// statusAfter, when set, is what Check says once Apply has run.
-	applied     bool
-	applyErr    error
-	verifyErr   error
-	unchanged   bool // Apply finds nothing to do
+	applied   bool
+	applyErr  error
+	verifyErr error
+	unchanged bool // Apply finds nothing to do
+	// outLeft is the step Apply leaves for the user: a stage that applied
+	// what this session may do and left the rest (Outcome.Left).
+	outLeft     *Left
 	left        Left
 	missing     []string
 	planSummary string
@@ -57,9 +60,9 @@ func (f *fake) Apply(_ context.Context, env Env) (Outcome, error) {
 	}
 	f.applied = true
 	if f.unchanged {
-		return Outcome{Detail: "No changes"}, nil
+		return Outcome{Detail: "No changes", Left: f.outLeft}, nil
 	}
-	return Outcome{Changed: true, Detail: "applied"}, nil
+	return Outcome{Changed: true, Detail: "applied", Left: f.outLeft}, nil
 }
 func (f *fake) Verify(context.Context) error { f.rec("verify"); return f.verifyErr }
 func (f *fake) Left() Left {
@@ -1472,7 +1475,7 @@ func TestLoopFailureShowsContextAndFix(t *testing.T) {
 	var out bytes.Buffer
 	stages := fakes(&log, Preflight, Installation, Firebase)
 	stages[1].(*fake).applyErr = &StageError{
-		Err: errors.New("terraform apply exited 1: Error: quota exceeded\n  on main.tf line 3\n  with google_project_service.this"),
+		Err: errors.New("\nterraform apply exited 1: Error: quota exceeded\n  on main.tf line 3\n  with google_project_service.this"),
 		Fix: "raise the quota, then rerun fugaro update",
 	}
 	opts := yesOpts()
@@ -1501,8 +1504,83 @@ func TestLoopFailureShowsContextAndFix(t *testing.T) {
 	if lines := outputLines(got); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
 		t.Errorf("the account does not end in a failed run's closing line:\n%s", got)
 	}
+	// The error starts with a blank line, which oneLine trims: the message is
+	// the first line that is not blank, and it prints once, not twice.
+	if n := strings.Count(got, "quota exceeded"); n != 1 {
+		t.Errorf("the message printed %d times, want once:\n%s", n, got)
+	}
 	if res.Failed == nil || strings.Contains(res.Failed.Error, "\n") {
 		t.Errorf("the result's error is not one line: %+v", res.Failed)
+	}
+}
+
+func TestLoopAStageThatLeftSomethingIsNotATick(t *testing.T) {
+	// A stage that applied what this session may do and left the rest for the
+	// user (Outcome.Left) is not a tick: the result carries the left-for-you
+	// entry and the run exits 1, so the step and the closing line say so (G3).
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Checkout)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).outLeft = &Left{Stage: Checkout, Kind: LeftCommand,
+		Text: "run fugaro upgrade's cloud half in your terminal"}
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{})
+	res, err := Run(context.Background(), stages, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := reporterMarks(t)
+	got := out.String()
+	line := m.line(got, Checkout)
+	if !strings.HasPrefix(line, m.left+" "+Checkout) {
+		t.Errorf("the stage that left something is %q, want the left-for-you marker:\n%s", line, got)
+	}
+	if strings.HasPrefix(line, m.done) {
+		t.Errorf("a stage with a step left for the user printed the tick:\n%s", got)
+	}
+	if !strings.Contains(got, "left for you (checkout, command): run fugaro upgrade's cloud half in your terminal") {
+		t.Errorf("the left-for-you block is missing:\n%s", got)
+	}
+	if res.ExitCode() != 1 {
+		t.Errorf("exit %d, want 1: the run has something only the user can do", res.ExitCode())
+	}
+	if o := opts.Report.Summary(); o.State != report.Left {
+		t.Errorf("the run reported %v, want Left", o.State)
+	}
+	if lines := outputLines(got); !strings.HasPrefix(lines[len(lines)-1], "Left for you in ") {
+		t.Errorf("the account does not end in a left-for-you closing line:\n%s", got)
+	}
+}
+
+func TestLoopRefusalPrintsNoClosingLine(t *testing.T) {
+	// A refusal is the caller's error, not the account's outcome: the stages
+	// that ran print their lines, and there is no closing line, because
+	// "Done in ..." under a run that refused is the one thing it must not say.
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation)
+	stages[0].(*fake).status = Status{State: Done}
+	opts := Options{Out: &out}
+	opts.Report = reporterTo(&out, report.Options{})
+	res, err := Run(context.Background(), stages, opts)
+	var refuse *NoTerminalError
+	if !errors.As(err, &refuse) {
+		t.Fatalf("err is %v, want the refusal of %s", err, Installation)
+	}
+	got := out.String()
+	m := reporterMarks(t)
+	if steps := m.steps(got); len(steps) != 1 || !strings.Contains(steps[0], Preflight) {
+		t.Errorf("the account is %q, want the one stage that ran:\n%s", steps, got)
+	}
+	for _, closing := range []string{"Done in ", "Failed in ", "Left for you in "} {
+		if strings.Contains(got, closing) {
+			t.Errorf("a refused run printed %q:\n%s", closing, got)
+		}
+	}
+	if res == nil || len(res.Stages) != 1 {
+		t.Errorf("result %+v, want the partial account of the stage that ran: the caller still has it to print", res)
 	}
 }
 
