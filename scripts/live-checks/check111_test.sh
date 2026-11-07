@@ -77,7 +77,7 @@ DISPLAY_NAME='Sandbox Billing'
 # shape does not depend on how far the run got, which is what makes two blocks
 # comparable — and what makes an unrun mode read as FAIL rather than as absent.
 BLOCK_KEYS=(fugaro-version project api-off-project api-on-project account-names account-ids
-  agent-session xtrace modes config-root adc-quota precondition
+  agent-session xtrace modes config-root adc-quota second-adc precondition
   run-1a offer-1a line-1a api-1a leak-1a
   run-1a-yes offer-1a-yes picker-1a-yes line-1a-yes
   run-1b refusal-1b offer-absent-1b line-1b api-1b leak-1b
@@ -160,7 +160,20 @@ auth)
   # the ADC file; so does this one, so the fake fugaro can tell which mode it is
   # in from the same file the wizard would read.
   if [ "${2:-}" = application-default ] && [ "${3:-}" = set-quota-project ]; then
-    printf '{"type": "authorized_user", "quota_project_id": "%s"}\n' "${4:-}" \
+    # The marker key survives the rewrite: the real gcloud edits this file's
+    # JSON and keeps every other key, and the fake fugaro reads the marker to say
+    # which login was in place for a run — the one thing mode 2's swap is about.
+    who=$(sed -n 's/.*"fake_login"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      "${CLOUDSDK_CONFIG:?}/application_default_credentials.json" 2>/dev/null || true)
+    # FAKE111_QUOTA_DENIED: the account the ADC names cannot use this project, so
+    # gcloud refuses to point the quota project at it — the premise of mode 1(a)
+    # and 1(b) failing, which the check must turn into a stop rather than a run.
+    if [ -n "${FAKE111_QUOTA_DENIED:-}" ] && [ "${4:-}" = "$FAKE111_QUOTA_DENIED" ]; then
+      printf 'ERROR: (gcloud.auth.application-default.set-quota-project) The project %s cannot be used by the credentials at %s\n' "${4:-}" "$CLOUDSDK_CONFIG/application_default_credentials.json" >&2
+      exit 1
+    fi
+    printf '{"type": "authorized_user", "quota_project_id": "%s"%s}\n' "${4:-}" \
+      "${who:+", \"fake_login\": \"$who\""}" \
       >"${CLOUDSDK_CONFIG:?}/application_default_credentials.json"
   fi
   ;;
@@ -174,6 +187,12 @@ GCLOUD_EOF
 # gcloud is first on PATH and answered, and whether this run has a terminal.
 set -euo pipefail
 printf 'fugaro %s\n' "$*" >>"$FAKE111_DIR/calls"
+# Which login was in place for this run: the marker the ADC files carry, which
+# the check never writes or reads (it copies files whole) and the fake gcloud
+# preserves. It is the only way a case can tell that mode 2 ran under the second
+# account and every other mode under the owner's own.
+printf 'login %s\n' "$(sed -n 's/.*"fake_login"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+  "${CLOUDSDK_CONFIG:?}/application_default_credentials.json" 2>/dev/null || true)" >>"$FAKE111_DIR/calls"
 case "${1:-}" in
 version)
   echo "fugaro 0.22.0"
@@ -330,8 +349,15 @@ setup_case() {
   : >"$dir/calls"
   : >"$dir/changed"
   printf '%s\n' "$DISPLAY_NAME" >"$dir/names.txt"
-  printf '{"type": "authorized_user", "quota_project_id": "%s"}\n' "$OWN_QUOTA" \
+  printf '{"type": "authorized_user", "quota_project_id": "%s", "fake_login": "own"}\n' "$OWN_QUOTA" \
     >"$dir/cloudsdk/application_default_credentials.json"
+  # The second account's login, saved aside by the owner the way the manual row
+  # says: a file of its own, which the check copies over the ADC for mode 2's
+  # runs alone and gives back unchanged. The marker key is this test's own — the
+  # check never reads a key of it.
+  printf '{"type": "authorized_user", "quota_project_id": "%s", "fake_login": "second"}\n' "$OWN_QUOTA" \
+    >"$dir/second-adc.json"
+  cp -p "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json"
   : >"$dir/$S.enabled"
   RUN111_ARGS=()
   RUN111_ENV=()
@@ -369,7 +395,8 @@ run111() {
 # The case's own three throwaways, spelled out: every case that wants the seven
 # runs uses this one line, so what a case is about is the difference it makes.
 sandbox_args() {
-  RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$S" --second-account sandbox-second@example.invalid)
+  RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$S" --second-account sandbox-second@example.invalid \
+    --second-adc "$dir/second-adc.json")
 }
 
 expect_block_keys() { # out what
@@ -479,6 +506,170 @@ test_a_leak_is_a_fail() {
   expect_contains "$out" "FACT leak-2a: INFO — " "leak: mode 2(a) is exempt by design"
   expect_contains "$out" "CHECK 111 RESULT: FAIL" "leak: the verdict"
   expect_scratch_gone "$dir" "leak"
+}
+
+# Mode 2 is the only part of the run whose caller is the second account: with
+# --second-adc the check copies that login over gcloud's own ADC file for mode
+# 2's runs alone, and every other mode runs under YOUR login — the premise the
+# checklist writes for them (their project stage reads the project through those
+# credentials). The two runs are the only ones that read the second marker, and
+# both files are given back byte for byte.
+test_only_mode_2_runs_under_the_second_login() {
+  setup_case swap
+  sandbox_args
+  cp -p "$dir/second-adc.json" "$dir/second-pristine.json"
+  run111
+  expect_status "$status" 0 "the swap"
+  expect_block_keys "$out" "the swap"
+  expect_contains "$out" "FACT second-adc: PASS — " "the swap: the second login is recorded"
+  # Mode 2's two runs are the only ones the second login was in place for; the
+  # other seven wizard runs — and the `fugaro version` the check reads before the
+  # modes — ran under your own login, which is the premise every one of them is
+  # written for.
+  [ "$(grep -c '^login second$' "$dir/calls")" = 2 ] \
+    || fail "the swap: expected mode 2's two runs under the second login, got $(grep -c '^login second$' "$dir/calls"): $(grep '^login ' "$dir/calls" | tr '\n' ' ')"
+  [ "$(grep -c '^login own$' "$dir/calls")" = 8 ] \
+    || fail "the swap: expected the other seven wizard runs and the version read under your own login, got $(grep -c '^login own$' "$dir/calls")"
+  cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
+    || fail "the swap: your own ADC file did not come back byte for byte: $(cat "$dir/cloudsdk/application_default_credentials.json")"
+  cmp -s "$dir/second-adc.json" "$dir/second-pristine.json" \
+    || fail "the swap: the second login's own file was not given back byte for byte: $(cat "$dir/second-adc.json")"
+  expect_scratch_gone "$dir" "the swap"
+
+  # The two copies the swap makes are the only credential files this check ever
+  # writes, and they go even when the scratch directory is kept: a kept scratch
+  # holds transcripts, never a login.
+  setup_case swapkeep
+  sandbox_args
+  cp -p "$dir/second-adc.json" "$dir/second-pristine.json"
+  RUN111_ENV=(CHECK111_KEEP_SCRATCH=1)
+  run111
+  expect_status "$status" 0 "the swap, scratch kept"
+  [ "$(grep -c '^login second$' "$dir/calls")" = 2 ] \
+    || fail "the swap, scratch kept: expected mode 2's two runs under the second login, got $(grep -c '^login second$' "$dir/calls")"
+  cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
+    || fail "the swap, scratch kept: your own ADC file did not come back byte for byte"
+  cmp -s "$dir/second-adc.json" "$dir/second-pristine.json" \
+    || fail "the swap, scratch kept: the second login's own file was not given back byte for byte"
+  scratch=$(scratch_of "$dir")
+  [ -d "$scratch" ] || fail "the swap, scratch kept: the scratch directory was removed anyway"
+  [ -z "$(find "$scratch" -name 'adc-*.bak' 2>/dev/null)" ] \
+    || fail "the swap, scratch kept: a copy of a login outlived the run: $(find "$scratch" -name 'adc-*.bak')"
+}
+
+# A run that stops while mode 2's login is still in place — its premise failing
+# at the step that sets it — has to put your own ADC file back from the exit
+# trap, byte for byte, or the machine is left logged in as the second account.
+test_the_second_login_is_put_back_when_a_mode_stops() {
+  setup_case swapfail
+  sandbox_args
+  cp -p "$dir/second-adc.json" "$dir/second-pristine.json"
+  RUN111_ENV=(FAKE111_QUOTA_DENIED="$S")
+  run111
+  expect_status "$status" 2 "the swap after a stop"
+  expect_contains "$(cat "$dir/err")" "could not point your ADC's quota project at $S" "the swap after a stop: the stop names the step"
+  # The stop is at the step that sets mode 2's premise, before mode 2(a)'s run
+  # and long before mode 2(b)'s: a run that got as far as reading 2(a)'s criteria
+  # reads nothing here, and the mode that never started is not concluded about.
+  [ "$(grep -c '^fugaro setup ' "$dir/calls")" = 3 ] \
+    || fail "the swap after a stop: mode 2(a) never ran, so the only runs are 1(a) twice and 1(b) — got $(grep -c '^fugaro setup ' "$dir/calls")"
+  expect_absent "$(cat "$dir/err")" "mode 2(b):" "the swap after a stop: and mode 2(b) never started"
+  expect_contains "$out" "FACT restore: PASS — " "the swap after a stop: the Restore still ran"
+  expect_contains "$out" "your own login again, byte for byte" "the swap after a stop: and says the file is yours again"
+  expect_absent "$out" "STILL the login in" "the swap after a stop: no leftover swap"
+  cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
+    || fail "the swap after a stop: your own ADC file did not come back byte for byte: $(cat "$dir/cloudsdk/application_default_credentials.json")"
+  cmp -s "$dir/second-adc.json" "$dir/second-pristine.json" \
+    || fail "the swap after a stop: the second login's own file was not given back byte for byte"
+  grep -q "set-quota-project $OWN_QUOTA" "$dir/calls" \
+    || fail "the swap after a stop: the ADC's quota project was not put back"
+  expect_scratch_gone "$dir" "the swap after a stop"
+}
+
+# The live ADC already IS the login --second-adc names: this machine is still
+# logged in as the second account, so the modes that are not mode 2 would run
+# under it. Refused before anything is called.
+test_a_machine_left_on_the_second_login_is_refused() {
+  setup_case stillsecond
+  sandbox_args
+  cp -p "$dir/second-adc.json" "$dir/cloudsdk/application_default_credentials.json"
+  run111
+  expect_status "$status" 2 "still on the second login"
+  [ -s "$dir/calls" ] && fail "still on the second login: a tool was called: $(tr '\n' ';' <"$dir/calls")"
+  expect_contains "$(cat "$dir/err")" "choose your own account" "still on the second login: the stop names the way out"
+  expect_absent "$out" "CHECK 111 RESULT: PASS" "still on the second login: no verdict"
+  expect_scratch_gone "$dir" "still on the second login"
+}
+
+# --second-account without --second-adc says the second account is the caller of
+# the WHOLE run, which modes 1(a), 1(b), 3, 4 and 5 are not written for — and
+# which the section's own mode-by-mode block makes impossible in one command.
+# The refusal names both ways forward, and a run of modes 2a,2b alone is one of
+# them: it really does run under that account.
+test_a_second_account_for_every_mode_is_refused() {
+  setup_case everymode
+  RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$S" --second-account sandbox-second@example.invalid)
+  run111
+  expect_status "$status" 2 "every mode under the second account"
+  [ -s "$dir/calls" ] && fail "every mode under the second account: a tool was called: $(tr '\n' ';' <"$dir/calls")"
+  expect_contains "$(cat "$dir/err")" "--second-adc" "every mode under the second account: the stop names what to pass instead"
+  expect_contains "$(cat "$dir/err")" "--modes 2a,2b" "every mode under the second account: and the run of mode 2 alone"
+  expect_scratch_gone "$dir" "every mode under the second account"
+
+  setup_case onlymode2
+  local only2=2a,2b
+  RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$S" --second-account sandbox-second@example.invalid --modes "$only2")
+  run111
+  expect_absent "$out" "FACT aborted: FAIL — " "mode 2 alone: the second account as the whole caller is allowed there"
+  expect_status "$status" 1 "mode 2 alone"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "mode 2 alone: the modes this run did not read are not a pass"
+  expect_contains "$out" "FACT source-2a: PASS — " "mode 2 alone: and mode 2(a) ran and passed"
+  expect_contains "$out" "FACT run-1a: FAIL — not run" "mode 2 alone: the modes it did not run are not a pass"
+  expect_scratch_gone "$dir" "mode 2 alone"
+}
+
+# --second-adc's own guards: a file that is not there, one that is not a
+# credentials file, one that IS gcloud's own ADC, and a run whose credentials
+# come from GOOGLE_APPLICATION_CREDENTIALS — where the file this check swaps is
+# not the file the run reads, so the swap would change nothing.
+test_second_adc_guards() {
+  local what
+  for what in "missing file" "not a credentials file" "is the live ADC" "GOOGLE_APPLICATION_CREDENTIALS"; do
+    setup_case "secondadc-${what// /-}"
+    sandbox_args
+    case "$what" in
+    "missing file") RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$S" --second-account second@example.invalid --second-adc "$dir/no-such-file.json") ;;
+    "not a credentials file")
+      printf 'not json at all\n' >"$dir/junk.json"
+      RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$S" --second-account second@example.invalid --second-adc "$dir/junk.json")
+      ;;
+    "is the live ADC") RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$S" --second-account second@example.invalid --second-adc "$dir/cloudsdk/application_default_credentials.json") ;;
+    "GOOGLE_APPLICATION_CREDENTIALS") RUN111_ENV=(GOOGLE_APPLICATION_CREDENTIALS="$dir/cloudsdk/application_default_credentials.json") ;;
+    esac
+    run111
+    expect_status "$status" 2 "second-adc: $what"
+    [ -s "$dir/calls" ] && fail "second-adc: $what: a tool was called: $(tr '\n' ';' <"$dir/calls")"
+    expect_absent "$out" "CHECK 111 RESULT: PASS" "second-adc: $what: no verdict"
+    expect_scratch_gone "$dir" "second-adc: $what"
+  done
+}
+
+# The premise of modes 1(a) and 1(b) failing: gcloud refuses to point the ADC's
+# quota project at a project the credentials cannot use (a second account that
+# has no role there, say). The check stops at that step rather than running the
+# mode under a premise it does not have — and the API mode 1(a) already disabled
+# is still enabled again by the Restore.
+test_a_quota_project_the_adc_cannot_use_stops() {
+  setup_case quotadenied
+  sandbox_args
+  RUN111_ENV=(FAKE111_QUOTA_DENIED="$P")
+  run111
+  expect_status "$status" 2 "quota project the ADC cannot use"
+  expect_contains "$out" "FACT aborted: FAIL — " "quota project the ADC cannot use: the block says the run was stopped"
+  expect_contains "$(cat "$dir/err")" "could not point your ADC's quota project at $P" "quota project the ADC cannot use: the stop names the step"
+  expect_changed "enable $P" "quota project the ADC cannot use: the API mode 1(a) disabled is enabled again"
+  expect_absent "$out" "CHECK 111 RESULT: PASS" "quota project the ADC cannot use: no verdict"
+  expect_scratch_gone "$dir" "quota project the ADC cannot use"
 }
 
 # The picker's own prompt in a run that cannot answer it: mode 1(a) under --yes
@@ -658,6 +849,8 @@ test_dry_run_runs_nothing() {
   expect_contains "$(cat "$dir/err")" "dry run: NOTHING below was run" "dry run: the plan says so"
   expect_contains "$(cat "$dir/err")" "gcloud services disable cloudbilling.googleapis.com --project=$P --force" "dry run: the plan names the commands a real run would run"
   expect_contains "$(cat "$dir/err")" "set-quota-project $OWN_QUOTA" "dry run: and the Restore's own write"
+  expect_contains "$(cat "$dir/err")" "cp -p $dir/second-adc.json over $dir/cloudsdk/application_default_credentials.json" "dry run: the plan says which login mode 2's runs would use, and where it would go"
+  expect_contains "$(cat "$dir/err")" "your own ADC file back over" "dry run: and that the Restore would put your own file back"
   expect_contains "$out" "CHECK 111 DRY RUN: nothing was run" "dry run: the block carries no verdict"
   expect_absent "$out" "CHECK 111 RESULT: PASS" "dry run: no verdict"
   expect_absent "$out" "CHECK 111 RESULT: FAIL" "dry run: no verdict either way"
@@ -775,6 +968,12 @@ t test_criterion_3_detects_a_numbered_line
 t test_a_missing_ids_file_stops
 t test_an_unrun_mode_is_not_a_pass
 t test_mode_2s_premise_missing_is_not_run
+t test_only_mode_2_runs_under_the_second_login
+t test_the_second_login_is_put_back_when_a_mode_stops
+t test_a_machine_left_on_the_second_login_is_refused
+t test_a_second_account_for_every_mode_is_refused
+t test_second_adc_guards
+t test_a_quota_project_the_adc_cannot_use_stops
 t test_a_blocking_run_is_a_fail
 t test_projects_that_collide_are_refused
 t test_dry_run_runs_nothing

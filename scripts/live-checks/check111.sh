@@ -13,7 +13,8 @@
 #               --project <throwaway> --account-names <file> \
 #               [--account-ids <file>] [--api-off-project <Q>] \
 #               [--api-on-project <S>] [--second-account <email>] \
-#               [--role-removed] [--region us-east5] [--modes 1a,1b,2a,2b,3,4,5]
+#               [--second-adc <file>] [--role-removed] [--region us-east5] \
+#               [--modes 1a,1b,2a,2b,3,4,5]
 #             bash scripts/live-checks/check111.sh --dry-run […same arguments…]
 #             (the guards and the files only: no gcloud call and no fugaro call
 #             is made; it prints the commands a real run would run and the
@@ -42,7 +43,8 @@
 #             billing account is linked, no API is enabled by a run, no config is
 #             written outside this check's own scratch directory, and the one
 #             thing any mode reaches outside your shell is your ADC — its quota
-#             project, which the Restore puts back.
+#             project, and (with `--second-adc`) the login mode 2's runs use,
+#             both of which the Restore puts back.
 # Costs:      nothing but wall clock (a few minutes: seven wizard runs, each
 #             stopping at the billing stage). No model call, no run, no money.
 # Runs:       by YOU. No agent runs any step of this, and the script refuses to
@@ -52,8 +54,10 @@
 #             session that is itself an agent's cannot tell them apart from mode
 #             5. Mode 5's marker is set for its one child alone, so it is gone
 #             whatever ends the run.
-# Cleanup:    always, and before the block is printed: the API this check
-#             disabled on `--project` and on `--api-off-project` is enabled
+# Cleanup:    always, and before the block is printed: if mode 2 swapped the
+#             second login in, your ADC file is your own again, byte for byte,
+#             which is what mode 2 found; the API this check disabled on
+#             `--project` and on `--api-off-project` is enabled
 #             again, your ADC's quota project goes back to the one it had, and
 #             the scratch directory with the seven transcripts is removed. The
 #             `restore` row says what really happened; a step that could not be
@@ -85,6 +89,26 @@
 # mode 2's premise is declared: a caller that lacks billing.accounts.list takes
 # a browser or your own IAM, which no script may do for you. The `manual` row is
 # that one step, with the exact commands and what to paste back.
+#
+# MODE 2 IS THE ONLY PART OF THIS RUN WHOSE CALLER IS THE SECOND ACCOUNT, and
+# that is what `--second-adc` is for. One gcloud ADC file is one login, and no
+# script can log an account in halfway through — so the second login is prepared
+# ONCE, by you, as a file, and this check copies it over gcloud's own ADC file
+# (the one `adcFilePath` names: $GOOGLE_APPLICATION_CREDENTIALS, else
+# $CLOUDSDK_CONFIG, else ~/.config/gcloud) for mode 2's runs alone. Everything
+# else — modes 1(a), 1(b), 3, 4 and 5 — runs under your own login, which is the
+# premise the checklist writes: their runs read the project they are about
+# through those credentials, and a caller that lacks billing.accounts.list is
+# exactly what mode 2 exists to see, so 1(a) would refuse instead of offering if
+# the second account were the whole run's caller (that combination is refused
+# here rather than reported as a FAIL the checklist does not describe). Two
+# byte-for-byte copies are kept in the scratch directory for the length of the
+# run — your own file as mode 2 found it, and the second login as you made it —
+# and both files are put back exactly, by mode 2's end and again by the Restore
+# whatever ends the run; the copies never outlive the run, not even under
+# `CHECK111_KEEP_SCRATCH`. Nothing here reads either file: `cp` and `cmp` move
+# and compare bytes, and no refresh token ever reaches a shell variable, a
+# transcript or a fact.
 #
 # CHECK111_DRY_RUN, CHECK111_RUN_SECONDS and CHECK111_KEEP_SCRATCH exist for this
 # script's own test and for you: the first turns --dry-run on from the
@@ -158,7 +182,7 @@ on_error() {
 # ------------------------------------------------------------------- arguments
 N=fugaro
 REGION_DEFAULT=us-east5
-USAGE="check111.sh --project <throwaway> --account-names <file> [--account-ids <file>] [--api-off-project <Q>] [--api-on-project <S>] [--second-account <email> | --role-removed] [--region <region>] [--modes 1a,1b,2a,2b,3,4,5] [--dry-run]"
+USAGE="check111.sh --project <throwaway> --account-names <file> [--account-ids <file>] [--api-off-project <Q>] [--api-on-project <S>] [--second-account <email> [--second-adc <file>] | --role-removed] [--region <region>] [--modes 1a,1b,2a,2b,3,4,5] [--dry-run]"
 MODES_ALL=(1a 1b 2a 2b 3 4 5)
 MODES_ALL_STR="1a 1b 2a 2b 3 4 5"
 
@@ -168,6 +192,7 @@ IDS_FILE=""
 Q=""
 S=""
 SECOND_ACCOUNT=""
+SECOND_ADC=""
 ROLE_REMOVED=no
 REGION=$REGION_DEFAULT
 MODES=""
@@ -203,6 +228,11 @@ parse_args() {
     --second-account)
       [ $# -ge 2 ] || die "--second-account needs the second account's email. usage: $USAGE"
       SECOND_ACCOUNT=$2
+      shift 2
+      ;;
+    --second-adc)
+      [ $# -ge 2 ] || die "--second-adc needs a file. usage: $USAGE"
+      SECOND_ADC=$2
       shift 2
       ;;
     --role-removed)
@@ -265,6 +295,9 @@ DISABLED_P=no
 DISABLED_Q=no
 QUOTA_POINTED=""
 ADC_QUOTA_ORIGINAL=""
+SECOND_ADC_IS=no
+ADC_OWN_BACKUP=""
+SECOND_ADC_BACKUP=""
 API_P_BEFORE=""
 API_Q_BEFORE=""
 API_S_BEFORE=""
@@ -463,6 +496,106 @@ guard_adc() {
   esac
   ADC_QUOTA_ORIGINAL=$quota
   fact adc-quota PASS "$quota (the quota project of your Application Default Credentials, read from $file; modes 1(a), 1(b) and 2 repoint it and the Restore puts it back)"
+}
+
+# second_adc_ok FILE — "ok" when FILE parses as a JSON object carrying a "type",
+# which is the shape gcloud writes for a login (authorized_user) and the shape
+# the Google libraries accept. The file is read for its SHAPE and nothing else:
+# no value in it reaches a variable, a transcript or a fact.
+second_adc_ok() {
+  python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        doc = json.load(f)
+except Exception:
+    print("notjson"); sys.exit(0)
+t = doc.get("type") if isinstance(doc, dict) else None
+print("ok" if isinstance(t, str) and t else "notjson")
+' "$1" 2>/dev/null || printf 'notjson'
+}
+
+# guard_second_adc: mode 2's login, as a file (see the header). What is checked
+# here is only that the file could be the second account's own credentials and
+# that the machine is NOT already logged in as it — the account's identity is not
+# readable from the file (a refresh token names no email), and the check does not
+# pretend to read one.
+guard_second_adc() {
+  [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] || stop "GOOGLE_APPLICATION_CREDENTIALS is set ($GOOGLE_APPLICATION_CREDENTIALS), and the run's credentials come from THAT file — not from gcloud's own ADC at $(adc_file), which is the one this check repoints and swaps. Unset it (or unset it for this one command) and run again. Nothing was run"
+  if [ -z "$SECOND_ADC" ]; then
+    fact second-adc INFO "not given (--second-adc is what keeps mode 2's login out of the other five modes; without it, --second-account declares the login of the whole run — which only a run of modes 2a,2b alone may be)"
+    return 0
+  fi
+  local file
+  file=$(adc_file)
+  [ -f "$SECOND_ADC" ] || stop "--second-adc names $SECOND_ADC, which does not exist. It is the SECOND account's own Application Default Credentials, saved to a file before this run (the manual row carries the three commands). Nothing was run"
+  [ -s "$SECOND_ADC" ] || stop "--second-adc names $SECOND_ADC, which is empty. Nothing was run"
+  [ "$SECOND_ADC" != "$file" ] || stop "--second-adc names $file, which IS gcloud's own ADC file: mode 2 would run under your own login and prove nothing. Save the second account's login to another path (the manual row). Nothing was run"
+  [ "$(second_adc_ok "$SECOND_ADC")" = ok ] || stop "$SECOND_ADC does not read as a credentials file: gcloud writes a JSON object with a 'type' for a login, and this one does not. Check the path — the manual row has the commands that make it. Nothing was run"
+  if mode_2_selected && cmp -s "$SECOND_ADC" "$file"; then
+    stop "the ADC at $file is byte for byte the login --second-adc names, so this machine is still logged in as the second account — and modes 1(a), 1(b), 3, 4 and 5 run under YOUR OWN login, which is the premise the checklist writes for them. Run 'gcloud auth application-default login' and choose your own account, then run this check again. Nothing was run"
+  fi
+  fact second-adc PASS "$SECOND_ADC (mode 2's runs alone are run with this login: this check copies it over $file before mode 2 and puts your own file back byte for byte after it, and again from its exit trap whatever ends the run)"
+}
+
+mode_2_selected() {
+  local m
+  for m in "${MODES_TO_RUN[@]}"; do
+    case "$m" in 2a | 2b) return 0 ;; esac
+  done
+  return 1
+}
+
+# guard_second_account: --second-account without --second-adc says "the ADC of
+# this whole run is that account". That is mode 2's premise and only mode 2's:
+# every other mode's run reads the project it is about through those credentials
+# — mode 1(a)'s project stage reads P's number, its Firebase and its billing link
+# through them — and a caller that lacks billing.accounts.list is exactly what
+# mode 2 exists to see, so mode 1(a) under the second account refuses instead of
+# offering. A FAIL the checklist does not describe would be a worse answer than a
+# refusal, so the combination is refused here, with both ways forward.
+guard_second_account() {
+  [ -n "$SECOND_ACCOUNT" ] || return 0
+  [ -z "$SECOND_ADC" ] || return 0
+  local m other=""
+  for m in "${MODES_TO_RUN[@]}"; do
+    case "$m" in 2a | 2b) ;; *) other="$other $m" ;; esac
+  done
+  [ -n "$other" ] || return 0
+  stop "--second-account $SECOND_ACCOUNT without --second-adc makes that account the ADC of EVERY run here, and modes$other are not written for it: their runs read their project through those credentials, and a caller that lacks billing.accounts.list is what mode 2 exists to see. Save the second account's login to a file and pass --second-adc (the manual row has the commands), so only mode 2's runs use it; or run modes 2a,2b alone, with --modes 2a,2b, as a run whose whole caller is that account. Nothing was run"
+}
+
+# adc_swap_in / adc_swap_out: mode 2's login, in place and out again. Two
+# byte-for-byte copies live in the scratch directory for the length of the run
+# (mode 0700, and removed before the directory is — never kept, not even under
+# CHECK111_KEEP_SCRATCH): your own file as mode 2 found it, and the second login
+# as you made it, which is a file of yours that this check gives back unchanged
+# too. Nothing here reads either file.
+adc_swap_in() {
+  [ -n "$SECOND_ADC" ] || return 0
+  [ "$SECOND_ADC_IS" = no ] || return 0
+  local live
+  live=$(adc_file)
+  ADC_OWN_BACKUP="$SCRATCH/adc-own.bak"
+  SECOND_ADC_BACKUP="$SCRATCH/adc-second.bak"
+  cp -p "$live" "$ADC_OWN_BACKUP" || stop "this check could not keep a copy of your ADC file ($live) before mode 2's swap, and without it the swap could not be undone. Nothing was run"
+  cp -p "$SECOND_ADC" "$SECOND_ADC_BACKUP" || stop "this check could not keep a copy of $SECOND_ADC before mode 2's swap. Nothing was run"
+  cp -p "$SECOND_ADC" "$live" || stop "this check could not put the second account's login in place for mode 2 ($SECOND_ADC -> $live). Nothing was run"
+  cmp -s "$live" "$SECOND_ADC" || stop "the second account's login did not land in $live, so mode 2 would run as the wrong caller. Nothing was run"
+  SECOND_ADC_IS=yes
+  say "mode 2's runs use the login in $SECOND_ADC; your own ADC file is copied back byte for byte when they are done, and by the Restore whatever ends this run"
+}
+
+adc_swap_out() {
+  [ "$SECOND_ADC_IS" = yes ] || return 0
+  local live ok=yes
+  live=$(adc_file)
+  { cp -p "$ADC_OWN_BACKUP" "$live" && cmp -s "$live" "$ADC_OWN_BACKUP"; } 2>/dev/null || ok=no
+  cp -p "$SECOND_ADC_BACKUP" "$SECOND_ADC" 2>/dev/null || ok=no
+  [ "$ok" = yes ] || return 1
+  SECOND_ADC_IS=no
+  say "your own ADC file is back in place, byte for byte — mode 2 was the only part of this run that used $SECOND_ADC"
+  return 0
 }
 
 # -------------------------------------------------------------------- the runner
@@ -1072,7 +1205,7 @@ step_1a() {
   say "mode 1(a): the Cloud Billing API is off on P, and P is the quota project — the run may offer to enable it, and the offer is declined"
   disable_api "$P" "mode 1(a)'s premise"
   DISABLED_P=yes
-  quota_set "$P" || stop "this check could not point your ADC's quota project at P, which is mode 1(a)'s premise. Nothing was run"
+  quota_set "$P" || stop "this check could not point your ADC's quota project at $P, which is mode 1(a)'s premise. Nothing was run"
   QUOTA_POINTED=$P
   maim_fallback
   run_pty 1a 'to enable it, or press Enter' '' -- fugaro "${SETUP_ARGS[@]}"
@@ -1129,7 +1262,7 @@ step_1b() {
   say "mode 1(b): the API is off on Q and Q is the quota project — the run must REFUSE, naming the line and who to ask"
   disable_api "$Q" "mode 1(b)'s premise"
   DISABLED_Q=yes
-  quota_set "$Q" || stop "this check could not point your ADC's quota project at Q, which is mode 1(b)'s premise. Nothing was run"
+  quota_set "$Q" || stop "this check could not point your ADC's quota project at $Q, which is mode 1(b)'s premise. Nothing was run"
   QUOTA_POINTED=$Q
   maim_fallback
   run_pty 1b -- fugaro "${SETUP_ARGS[@]}"
@@ -1174,9 +1307,10 @@ step_2a() {
     return 0
   fi
   if ! s_enabled 2a; then return 0; fi
+  adc_swap_in
   say "mode 2(a): the API is ON on S, ADC is $SECOND_ACCOUNT and lacks the permission — the fallback answers, and a list here is the point"
   unmaim
-  quota_set "$S" || stop "this check could not point your ADC's quota project at S, which is mode 2's premise. Nothing was run"
+  quota_set "$S" || stop "this check could not point your ADC's quota project at $S, which is mode 2's premise. Nothing was run"
   QUOTA_POINTED=$S
   run_pty 2a 'Billing account (a number, or' 'none' -- fugaro "${SETUP_ARGS[@]}"
   mode_exit 2a "the wizard at a real terminal, answered 'none' at the picker's prompt (the picker's own way out: it records no account and leaves --link-billing empty)" "$SCRATCH/mode-2a.log"
@@ -1234,15 +1368,21 @@ step_2b() {
     return 0
   fi
   if ! s_enabled 2b; then return 0; fi
+  adc_swap_in
   say "mode 2(b): the API refuses (403) and the fallback is maimed — the run must print the guided line"
   maim_fallback
-  quota_set "$S" || stop "this check could not point your ADC's quota project at S, which is mode 2's premise. Nothing was run"
+  quota_set "$S" || stop "this check could not point your ADC's quota project at $S, which is mode 2's premise. Nothing was run"
   QUOTA_POINTED=$S
   run_pty 2b -- fugaro "${SETUP_ARGS[@]}"
   mode_exit 2b "the wizard at a real terminal with the API refusing and the fallback maimed ($([ "$ROLE_REMOVED" = yes ] && echo "the billing role was removed from your own account, so both sources refuse" || echo "ADC is $SECOND_ACCOUNT, which lacks the permission")); route: $([ "$ROLE_REMOVED" = yes ] && echo role-removed || echo second-account)" "$SCRATCH/mode-2b.log"
   assert_unlisted 2b
   assert_mode 2b S
   unmaim
+  # Mode 2 is over, so the second account is put back out of the way before
+  # modes 3, 4 and 5 run: their calls must be yours again, not the second
+  # account's. A swap that cannot be put back is a stop, never a shrug — it is
+  # the caller of the rest of the run that is wrong, and the Restore asks again.
+  adc_swap_out || stop "this check could not put your own ADC file back after mode 2 ($(adc_file) is still the login in $SECOND_ADC), so modes 3, 4 and 5 would run as the wrong caller. The Restore tries again; if it cannot, run 'gcloud auth application-default login' and choose your own account"
 }
 
 # assert_unlisted MODE: what the run must say when neither source answered — one
@@ -1345,6 +1485,22 @@ restore_run() {
   if [ "$DISABLED_P" = no ] && [ "$DISABLED_Q" = no ]; then
     notes="no API was disabled by this run, so none was enabled again"
   fi
+  # The swap first, and before the quota project: putting your own file back
+  # byte for byte is what makes the quota project's own restore the last word on
+  # the file, and a swap left in place is the one thing here that would leave a
+  # caller of yours wrong rather than a project's state.
+  if [ "$SECOND_ADC_IS" = yes ]; then
+    if adc_swap_out; then
+      notes="$notes; $(adc_file) is your own login again, byte for byte, which is what mode 2 found there"
+    else
+      ok=no
+      notes="$notes; your ADC is STILL the login in $SECOND_ADC and your own file could not be put back — run: gcloud auth application-default login, choosing YOUR OWN account, and keep $SECOND_ADC for the next run"
+    fi
+  elif [ -n "$ADC_OWN_BACKUP" ]; then
+    notes="$notes; $(adc_file) is your own login, byte for byte (mode 2's second login, $SECOND_ADC, was in place for mode 2's runs alone and put back out when they were done)"
+  elif [ -n "$SECOND_ADC" ]; then
+    notes="$notes; mode 2's second login was never swapped in, so your ADC file is untouched"
+  fi
   if [ -n "$QUOTA_POINTED" ]; then
     if quota_set "$ADC_QUOTA_ORIGINAL"; then
       notes="$notes; your ADC's quota project is back to $ADC_QUOTA_ORIGINAL"
@@ -1374,6 +1530,11 @@ restore_run() {
 cleanup() {
   restore_run
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
+  # The two ADC copies mode 2's swap makes are the only credential files this
+  # check ever writes, and they live exactly as long as the run: the Restore has
+  # already put both files back, so the copies go even when the scratch
+  # directory itself is kept, and no copy of a login outlives the run.
+  rm -f "${ADC_OWN_BACKUP:-}" "${SECOND_ADC_BACKUP:-}" 2>/dev/null || true
   if [ -n "$KEEP_SCRATCH" ]; then
     say "the scratch directory is KEPT on purpose: $SCRATCH (CHECK111_KEEP_SCRATCH — the seven transcripts are in it)"
   else
@@ -1430,7 +1591,7 @@ finish() {
 # what makes the block safe to diff between two runs, and what keeps "an unrun
 # mode is not a pass" visible in the block itself.
 BLOCK_KEYS=(fugaro-version project api-off-project api-on-project account-names account-ids
-  agent-session xtrace modes config-root adc-quota precondition
+  agent-session xtrace modes config-root adc-quota second-adc precondition
   run-1a offer-1a line-1a api-1a leak-1a
   run-1a-yes offer-1a-yes picker-1a-yes line-1a-yes
   run-1b refusal-1b offer-absent-1b line-1b api-1b leak-1b
@@ -1483,7 +1644,7 @@ print_block() { # print_block FACTS STATUS [recorded] — always on the owner's 
 # owner's own IAM (removing a billing role from their account) — neither is
 # something this check may do, and the route that removes a role is theirs to undo.
 record_manual() {
-  fact manual INFO "the ONE step no script runs for you, and what to paste back: mode 2 needs a caller that LACKS billing.accounts.list, which takes a browser or your own IAM — do it by hand, then re-run this script: (a) for mode 2(a) log ADC in as your SECOND account (gcloud auth application-default login, choosing that account — ADC has to be that login while gcloud's own login stays yours), grant it only the rank that lets the call be MADE on S (gcloud projects add-iam-policy-binding ${S:-<S>} --member=user:<SECOND> --role=roles/serviceusage.serviceUsageConsumer), and pass --second-account <SECOND>; (b) for mode 2(b) pass the same --second-account, or remove the billing role from your own account (gcloud projects remove-iam-policy-binding ${S:-<S>} --member=user:<YOU> --role=<YOUR-BILLING-ROLE>) and pass --role-removed, then put the role back when you are done; then paste back, for each of the seven runs, its result, the exact guided line, the exact refusal or offer text, the exit code, which source answered in mode 2 AND which route made the caller lack the permission, and the assertion block's counts (P's and Q's must read 0, and S's must read 1 in mode 2), plus the agent marker your shell already carried and whether --yes ever took mode 1(a)'s offer"
+  fact manual INFO "the ONE step no script runs for you, and what to paste back: mode 2 needs a caller that LACKS billing.accounts.list, which takes a browser or your own IAM — do it by hand, BEFORE this run, and pass what it made: (a) for mode 2(a), make your SECOND account's login a file and leave your machine on your own account — gcloud auth application-default login (choose the SECOND account); cp $(adc_file) /tmp/chk111-second.json; gcloud auth application-default login (choose YOUR OWN account again, so nothing of this is left behind); then grant that second account only the rank that lets the call be MADE on ${S:-<S>} (gcloud projects add-iam-policy-binding ${S:-<S>} --member=user:<SECOND> --role=roles/serviceusage.serviceUsageConsumer), and pass --second-adc /tmp/chk111-second.json --second-account <SECOND>: this check copies that login over $(adc_file) for mode 2's runs alone and puts your own file back byte for byte afterwards, and again from its exit trap whatever ends the run; (b) for mode 2(b) either the same --second-adc and --second-account, or remove the billing role from your own account (gcloud projects remove-iam-policy-binding ${S:-<S>} --member=user:<YOU> --role=<YOUR-BILLING-ROLE>) and pass --role-removed, then put the role back when you are done; if a run ever ends with your ADC still logged in as the second account (a swap that could not be put back — the restore row says so), run gcloud auth application-default login and choose your own account; then paste back, for each of the seven runs, its result, the exact guided line, the exact refusal or offer text, the exit code, which source answered in mode 2 AND which route made the caller lack the permission, and the assertion block's counts (P's and Q's must read 0, and S's must read 1 in mode 2), plus the agent marker your shell carried and whether --yes ever took mode 1(a)'s offer"
 }
 
 # -------------------------------------------------------------------- the plan
@@ -1498,12 +1659,20 @@ print_plan() {
   say "  [network, writes] mode 1(a): gcloud services disable cloudbilling.googleapis.com --project=$P --force; gcloud auth application-default set-quota-project $P; then at a REAL TERMINAL, answered with one Enter (the offer declined): fugaro ${SETUP_ARGS[*]}"
   say "  [network, writes] mode 1(a) again with --yes: fugaro ${SETUP_ARGS[*]} --yes (the picker never runs there, so no offer may come)"
   say "  [network, writes] mode 1(b): the same two gcloud calls on ${Q:-<--api-off-project, required>}, then at a real terminal: fugaro ${SETUP_ARGS[*]} with the gcloud fallback maimed — the run must REFUSE and name the enable line"
+  if [ -n "$SECOND_ADC" ]; then
+    say "  [local, writes] before mode 2: cp -p $(adc_file) to the scratch directory, cp -p $SECOND_ADC over $(adc_file) — mode 2's runs alone use the second account's login, and your own file is copied back byte for byte when they are done, and again from the exit trap whatever ends the run. Both copies are removed with the scratch directory, never kept"
+  else
+    say "  [local] no --second-adc was given: mode 2's runs use $(adc_file) as it is, so that login has to be the second account's for the whole run — which only a run of modes 2a,2b alone may be"
+  fi
   say "  [network, writes] mode 2(a): gcloud auth application-default set-quota-project ${S:-<--api-on-project, required>}, the fallback NOT maimed, then at a real terminal answered 'none' at the picker's prompt: fugaro ${SETUP_ARGS[*]} (the one run where a list is the point)"
   say "  [network] mode 2(b): the fallback maimed, then fugaro ${SETUP_ARGS[*]} — the API refuses and nothing can answer it"
   say "  [network] mode 3: fugaro ${SETUP_ARGS[*]} with standard input at /dev/null and no pty"
   say "  [network] mode 4: fugaro ${SETUP_ARGS[*]} --json, its stdout and stderr kept apart, and the check's own jq line on the document"
   say "  [network] mode 5: env AI_AGENT=1 fugaro ${SETUP_ARGS[*]} (the marker in that one child's environment, never in this shell), then the same line with --yes"
   say "and its Restore (also from the exit trap) would run:"
+  if [ -n "$SECOND_ADC" ]; then
+    say "  [local, writes] cp -p your own ADC file back over $(adc_file) — only if mode 2 swapped the second login in and could not put it back at the end of mode 2"
+  fi
   say "  [network, writes] gcloud services enable cloudbilling.googleapis.com --project=$P — only if mode 1(a) disabled it"
   say "  [network, writes] gcloud services enable cloudbilling.googleapis.com --project=${Q:-<Q>} — only if mode 1(b) disabled it"
   say "  [network, writes] gcloud auth application-default set-quota-project $ADC_QUOTA_ORIGINAL — your own quota project, put back"
@@ -1555,6 +1724,8 @@ main() {
   guard_names
   guard_modes
   guard_adc
+  guard_second_adc
+  guard_second_account
 
   if [ -n "$DRY_RUN" ]; then
     # A dry run reaches its own end: it is the whole of what was asked of it, so
