@@ -135,10 +135,25 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // ee/report, so §4 and §8's report row moved with them
 // (ee/report/cli/console_contract_test.go), read as bytes and embedding nothing
 // like the other two.
+//
+// The fourth arrived with security-classification SC1
+// (docs/security-classification/implementation-plan.md §4), and it is the one
+// entry that reads no console document: the engine's security-pattern floor
+// (internal/orchestrator/sensitivity/floor.go) names every tree this repository
+// holds security-sensitive, one name, one category and one glob per row, and the
+// console's main process — where the spawn and IPC allow-lists are — is one of
+// them (reconciliation §6's `console-main` row). The reference is a glob in a
+// data table and not a read of the tree: that file imports nothing from console/
+// and embeds nothing from it, which is what the per-entry assertions below check
+// it for. The case for the entry is that a floor naming the console is the floor
+// the routing text asks for — the fixture that holds those paths already lives
+// in that package's testdata, and a floor that could not name them would be a
+// list that cannot cover the rule it is measured against.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
 	"ee/coordinator/cli/console_contract_test.go",
 	"ee/report/cli/console_contract_test.go",
+	"internal/orchestrator/sensitivity/floor.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -749,10 +764,12 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// of the boundary, argued for in the commit that adds it (plan Task 0.3
 		// a3) and in a comment on the entry itself. The second is ee-reorg
 		// E2.1b's (the coordinator's moved half) and the third E2.2b1's (the
-		// report's), each in the package its command and shapes moved to, and
-		// this number is what makes a fourth one impossible to add quietly.
-		if len(consoleBoundaryAllowList) != 3 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests and the moved halves of the coordinator's and the report's commands, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+		// report's), each in the package its command and shapes moved to. The
+		// fourth is security-classification SC1's (the floor row that names the
+		// console's main process). This number is what makes a fifth one
+		// impossible to add quietly.
+		if len(consoleBoundaryAllowList) != 4 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, and the sensitivity floor's row naming the console's main process, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 
