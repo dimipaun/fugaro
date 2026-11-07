@@ -30,7 +30,9 @@ import (
 // is that the register says so and names that command, and that the script and
 // its test are really there — a row pointing at a file nobody wrote is a
 // promise, and a section telling the owner to run one is what CONTRIBUTING.md
-// now requires of every owner-run check.
+// now requires of a new owner-run check — the ones already in the register keep
+// the shape their sections have until the work that touches them converts
+// them.
 const check340Number = "340"
 
 // check340Sections is the register's own register of written sections, read as
@@ -92,6 +94,11 @@ func TestDocsCheck340IsRegistered(t *testing.T) {
 		"list-prefix",
 		"r12",
 		"e4",
+		// Exit 1 is two readings, and the section has to say so: a teardown
+		// that could not confirm what it deleted exits 1 beside a PASSing
+		// list-prefix row, and a reader who takes every exit 1 for E4 stops
+		// R12's Terraform on a run that answered the question it was run for.
+		"or a form passed and the restore could not confirm what it deleted",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("Check %s's section does not say %q: the section is where the owner reads what the check settles and how to run it, and a pin that has moved is a section that stopped saying it", check340Number, want)
@@ -159,8 +166,14 @@ func TestDocsContributingOwnerRunRuleLinksTheChecklist(t *testing.T) {
 		t.Errorf("%s's owner-run-check rule does not link the checklist as %s: the file is at the repository root, so a link without `docs/` resolves to nothing", path, want)
 	}
 	// Every relative link in the file, resolved: the rule is one of a list, and a
-	// link that does not resolve is one a reader cannot follow.
-	for _, target := range relativeDocLinks(readDoc(t, path)) {
+	// link that does not resolve is one a reader cannot follow. The count is
+	// asserted first: a pattern that quietly stopped matching would leave the
+	// loop below passing over nothing, which is the same as not checking.
+	links := relativeDocLinks(readDoc(t, path))
+	if len(links) == 0 {
+		t.Errorf("%s carries no relative link, so this pin checks nothing", path)
+	}
+	for _, target := range links {
 		if _, err := os.Stat("../../" + target); err != nil {
 			t.Errorf("%s links %s and there is no such file at the repository root: %v", path, target, err)
 		}
@@ -168,7 +181,10 @@ func TestDocsContributingOwnerRunRuleLinksTheChecklist(t *testing.T) {
 }
 
 // relativeDocLinks returns the targets of the markdown links in doc that are
-// paths into this repository, with any anchor removed.
+// paths into this repository, with any anchor removed. A target is matched
+// whether or not it carries whitespace: a link rewritten with a space in it is
+// still one a reader clicks and this test has to resolve, and a pattern that
+// skipped those would pass while checking nothing at all.
 func relativeDocLinks(doc string) []string {
 	var out []string
 	for _, m := range check340LinkRE.FindAllStringSubmatch(doc, -1) {
@@ -185,7 +201,7 @@ func relativeDocLinks(doc string) []string {
 	return out
 }
 
-var check340LinkRE = regexp.MustCompile(`\]\(([^)\s]+)\)`)
+var check340LinkRE = regexp.MustCompile(`\]\(([^()]+)\)`)
 
 // TestDocsCheck340ComesAfterTheHighestWrittenSection: the section is appended
 // where the register's written sections end rather than inserted among older

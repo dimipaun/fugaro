@@ -98,8 +98,16 @@ unknown() {
 }
 deny() { # permission
   # FAKE340_DENY_PERM makes the refusal name a permission of another kind, which
-  # is what a refusal for a reason other than the clause reads like.
-  printf 'ERROR: (gcloud.storage) HTTPError 403: %s does not have %s access to the Google Cloud Storage object.\n' "$impersonate" "${FAKE340_DENY_PERM:-$1}" >&2
+  # is what a refusal for a reason other than the clause reads like. It applies
+  # while the run is READING the criteria and not after the bucket has accepted a
+  # removal: the wait for that removal reads a denial for what it is — the
+  # permission the removed clause carried — and a case about the criteria's
+  # refusals is not a case about that wait.
+  perm=$1
+  if [ -n "${FAKE340_DENY_PERM:-}" ] && [ ! -f "$dir/removed" ]; then
+    perm=$FAKE340_DENY_PERM
+  fi
+  printf 'ERROR: (gcloud.storage) HTTPError 403: %s does not have %s access to the Google Cloud Storage object.\n' "$impersonate" "$perm" >&2
   exit 1
 }
 
@@ -223,6 +231,15 @@ storage)
       fi
     fi
     if [ -n "$impersonate" ]; then
+      if [ -n "${FAKE340_LS_ERROR_AFTER_REMOVE:-}" ] && [ -f "$dir/removed" ]; then
+        # A call that does not ANSWER, once the bucket has accepted a removal:
+        # the session expired, gcloud did not retry a 5xx, the request was
+        # killed. It is not a permission refusal, so it says nothing about
+        # whether the removed binding is still in force -- which is what makes
+        # it the error a wait for the removal must not read as "gone".
+        printf 'ERROR: (gcloud.storage.ls) HTTPError 500: Backend Error\n' >&2
+        exit 1
+      fi
       tick_pending
       # FAKE340_ROOT_OK and FAKE340_WIDE are the two ways a grant can be wider
       # than R12's: the first lets the root listing through alone, the second
@@ -952,6 +969,50 @@ test_a_removal_that_never_takes_effect_stops() {
   expect_bucket_clean "stuck removal"
 }
 
+# A listing that FAILS without naming storage.objects.list is a call that did not
+# answer, not a binding that is gone: an expired session, a 5xx gcloud did not
+# retry, a killed request. Read as "the removal has taken effect", it grants the
+# next form while the earlier clause may still be in force — the one wrong answer
+# this check must never produce — so it is retried like a listing that still
+# succeeds, and a wait that never sees a real refusal stops as could-not-tell.
+# Only a refusal naming the permission the removed clause carried is the reading
+# that says the earlier binding is gone.
+test_a_listing_that_fails_for_another_reason_does_not_end_the_wait() {
+  setup_case ls-error relative
+  PROPAGATION=2
+  RUN340_ENV=(FAKE340_FLAKY_READ=999 FAKE340_REMOVE_LATE=999 FAKE340_LS_ERROR_AFTER_REMOVE=yes)
+  run340_default
+  expect_status "$status" 2 "listing error"
+  expect_contains "$out" "FACT aborted: FAIL — " "listing error: the abort is recorded"
+  expect_contains "$out" "kept failing without naming storage.objects.list" "listing error: the row says what the failure was not"
+  expect_contains "$out" "HTTPError 500" "listing error: and quotes the call that did not answer"
+  expect_contains "$out" "FACT full-lists-runs: FAIL — not reached" "listing error: the second form was never granted"
+  expect_absent "$out" "FACT full-lists-runs: PASS" "listing error: so it cannot list through the earlier clause"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "listing error: and no form is answered"
+  expect_bucket_clean "listing error"
+}
+
+# The Restore's PASS row claims the bucket policy was read back and no longer
+# names the account, so a run whose FIRST form passed the criteria must still
+# make that read: remove_bindings has already cleared BINDINGS_GRANTED by then,
+# and a read-back hung off that flag printed the sentence on a run that never
+# called get-iam-policy at all — a claim about a bucket whose policy nothing had
+# looked at.
+test_a_passing_run_reads_the_policy_back() {
+  setup_case policy-read relative
+  run340_default
+  expect_status "$status" 0 "policy read-back"
+  expect_contains "$out" "FACT restore: PASS — " "policy read-back: the Restore"
+  expect_contains "$out" "the policy no longer names the account" "policy read-back: the row makes the claim"
+  expect_contains "$(cat "$dir/state/calls")" "gcloud storage buckets get-iam-policy" \
+    "policy read-back: and the call the claim rests on was made"
+  # The read has to come AFTER the removals, which is the order the claim is
+  # about: a policy read before the binding went would answer the old state.
+  after=$(awk '/remove-iam-policy-binding/ {seen=1} seen' "$dir/state/calls")
+  expect_contains "$after" "gcloud storage buckets get-iam-policy" "policy read-back: after the removals, not before"
+  expect_bucket_clean "policy read-back"
+}
+
 # A Restore that cannot READ what it deleted must not read as a pass. The
 # listing, the bucket policy and the account are read back to make the PASS row
 # a reading rather than a claim, and an error from any of them — a 403, a dropped
@@ -1058,10 +1119,12 @@ t test_neither_form_listing_is_a_fail
 t test_a_grant_wider_than_the_two_prefixes_is_a_fail
 t test_a_root_listing_that_is_allowed_is_a_fail
 t test_a_restore_that_could_not_delete_is_a_fail
+t test_a_passing_run_reads_the_policy_back
 t test_a_restore_that_cannot_read_back_does_not_pass
 t test_a_restore_that_cannot_read_the_policy_does_not_pass
 t test_the_second_form_waits_for_the_first_bindings_to_be_gone
 t test_a_removal_that_never_takes_effect_stops
+t test_a_listing_that_fails_for_another_reason_does_not_end_the_wait
 t test_a_grant_that_arrives_late_is_not_a_refusal
 t test_a_read_that_arrives_late_is_not_a_refusal
 t test_refusals_are_not_read_when_nothing_held

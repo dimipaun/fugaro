@@ -11353,9 +11353,16 @@ Restore tries the removal again and reads the bucket policy back into its own ro
 forms speak for the same throwaway account, so if the relative form failed for a reason of its own — a criterion
 read past its 150-second window — the full-path form would list and read through the still-active relative clause
 and be answered as the form the attribute carries. The second form is therefore not granted until the account is
-**refused** the listing the first form allowed, read as the account's own reach and not yours; a bucket that has not
-got there within the same 150-second window stops the run with exit `2`, because that is a could-not-tell and not an
-answer.
+**refused** the listing the first form allowed — read as the account's own reach and not yours — **and refused for
+that reason**: the refusal has to be a denial naming `storage.objects.list`, the permission the removed clause
+carried, because that is the reading that says the clause is gone. A listing that failed naming another permission,
+or naming none — an expired session, a 5xx gcloud did not retry, a killed call, and gcloud's own command prefix in
+the message, whose dots read like a permission — is a call that
+did not answer rather than a binding that is gone, so it is retried like a listing that still succeeds: reading it as
+the removal having taken effect is the same wrong answer from the other side, and it is the reading this wait exists
+to refuse. A bucket that has not got there within the same 150-second window — and a call that never answers — stops
+the run with exit `2`, and the `aborted` row quotes whichever of the two it was, because that is a could-not-tell and
+not an answer.
 
 **Reading the `CHECK 340 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
 `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry
@@ -11364,9 +11371,12 @@ the same seven under `full-` — and the row that matters is **`list-prefix`**: 
 prints the exact string R12's builder must write, above the block in one line to copy back; `FAIL` says **neither**
 form listed, which is the reading that stops the plan (E4). The bucket-wide `objectViewer` a listing would otherwise
 need is deliberately **not** a fallback here, because it reads `tokens/` and `cache/` too. Exit `0` means a form
-passed every criterion, `1` means none did, and `2` means the run could not tell (a guard stopped it, a tool is
-missing, a grant or a removal the bucket refused, a removal that had not taken effect in time, an internal error
-ended it) — `2` is not an answer about the attribute, and the block's `aborted` row says so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
+passed every criterion **and** the Restore confirmed it deleted everything this run made; `1` means none did — or a
+form passed and the Restore could not confirm what it deleted, in which case the block's `restore` row names the
+account and the prefixes to remove by hand — so exit `1` reads as **E4** only when that row passed; and `2` means the
+run could not tell (a guard stopped it, a tool is missing, a grant or a removal the bucket refused, a removal that
+had not taken effect in time, a listing that never answered, an internal error ended it) — `2` is not an answer about
+the attribute, and the block's `aborted` row says so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
 
 **Cost.** Nothing billable and no model call: one throwaway service account, two bucket bindings, one impersonation
 grant of yours on that account alone, and four small objects. It never prints a credential, holds none, and the
@@ -11376,9 +11386,11 @@ grant of yours on that account alone, and four small objects. It never prints a 
 nothing behind: the four slug prefixes are removed, both bucket bindings go with `remove-iam-policy-binding --all`
 (no condition named, so it does not matter which form was granted when the run stopped), your impersonation grant
 goes, and the account is deleted — bindings first, because a deleted account's members read
-`deleted:serviceAccount:…` and the removes then fail. It reads all four prefixes, the bucket policy and the account
-back afterwards and says what it found: anything that did not go is a FAILed `restore` row that names the slug and
-the account to delete by hand, never a silent pass. A read-back that cannot be **read** — a refused listing, a
+`deleted:serviceAccount:…` and the removes then fail. It reads all four prefixes back afterwards, and — whenever it
+made an account — the bucket policy and the account too, and says what it found: the policy read is what the PASS
+row's own sentence ("the policy no longer names the account") rests on, so it is made on every run that created the
+account, not only on the runs where the removals had not already been done. Anything that did not go is a FAILed
+`restore` row that names the slug and the account to delete by hand, never a silent pass. A read-back that cannot be **read** — a refused listing, a
 policy the operator's identity may no longer read, a dropped call — is a FAILed row too, naming what could not be
 confirmed: only the empty listing and the account's own NOT_FOUND count as gone, because an error read as
 "deleted" is the same silent pass from the other side.
