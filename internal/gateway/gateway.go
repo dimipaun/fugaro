@@ -174,10 +174,10 @@ type StageReport struct {
 	Overrun       pricing.Micros            // charged above the calls' reservations
 	WouldHalt     int                       // observe: calls enforce would have refused
 	UsageUnparsed int                       // 2xx calls settled at their reservation
-	// StreamsCut is how many of this stage's streamed calls ended before
-	// their terminal event: the model's answer was cut off, and the agent
-	// read a stream that closed before completion (a `budget: stream ended
-	// before its terminal event` WARN names each, with the end that cut it).
+	// StreamsCut is how many of this stage's streamed calls the upstream's
+	// own end ended before their terminal event: the model was answering, the
+	// agent read a stream that closed before completion, and neither this
+	// gateway nor the agent stopped it (every cut is logged, with its side).
 	// It is disjoint from UsageUnparsed: a cut stream may still have said
 	// enough usage to settle the call, and a call that settled unparsed may
 	// have had a whole stream. A runner reads it to tell a stage whose

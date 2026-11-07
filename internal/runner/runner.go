@@ -3945,22 +3945,31 @@ func subscriptionUsageLimit(auth, text string) bool {
 var transientStagePhrases = []string{"stream closed before completion"}
 
 // transientStageError reports whether an attempt ended on a model stream
-// closed before its response finished. Three things, any of which is enough:
-// the agent's own result text says so, the runner's error for the attempt
-// says so, or the gateway recorded a streamed call of this stage whose
-// response ended before its terminal event (gateway.StageReport.StreamsCut,
-// issue #1827's diagnostics).
+// closed before its response finished. Two things, either of which is enough:
+// the agent's own result text says so (or the runner's error for the attempt),
+// or the attempt left no result text at all and the gateway recorded a
+// streamed call of this stage whose response ended before its terminal event
+// (gateway.StageReport.StreamsCut, issue #1827's diagnostics).
 //
 // The gateway's witness is the second half of the issue's own evidence: the
 // stream closed between the provider and the gateway, and what the agent was
 // told depends on where in the response it happened -- an agent whose stream
 // ends before any text arrives may report an error with no words in it at
-// all. It is asked only for a stage the gateway served: a stage the run's
+// all, and the only thing left to read is the exit that killed its process.
+// It is asked only for a stage the gateway served: a stage the run's
 // stage-scoped Claude OAuth account serves (docs/design/mixed-credentials.md)
 // forwards its calls itself, so there is no gateway to witness anything for
 // it, and such a stage is retried on its text alone -- or not at all. That is
 // the whole of the mixed-credential case here: no report of its own, no
 // change to how its calls are made.
+//
+// The gateway's count is a fact about the stage, though, and the words are
+// the attempt's own: a stage can lose one call's stream and still go on to
+// fail for a reason of its own -- an auth error, a refused edit, a sub-agent's
+// failing test -- and then the attempt's text is what ended it, so the count
+// is not read at all. Reading it for any failed attempt that had a cut call
+// anywhere in it would retry stages that failed for reasons about the work,
+// which is the set this one member list exists to bound.
 //
 // It is only ever asked about an attempt that failed (stageOnce's transient
 // case): a stage whose own result was a success is not retried because a
@@ -3976,14 +3985,16 @@ func (r *run) transientStageError(res agent.Result, err error) bool {
 			return true
 		}
 	}
-	return r.stageStreamsCut() > 0
+	return res.Text == "" && r.stageStreamsCut() > 0
 }
 
 // stageStreamsCut is how many streamed calls of the gateway stage that just
-// ended reached the agent without their terminal event. It is 0 for a run
-// with no gateway, for a stage the gateway did not serve, and for every stage
-// before this one -- the report it reads is the stage's own, replaced as each
-// stage begins.
+// ended reached the agent without their terminal event, with the upstream's
+// own end as the one that cut them: a stream the gateway cancelled or the
+// agent stopped reading is not a lost answer. It is 0 for a run with no
+// gateway, for a stage the gateway did not serve, and for every stage before
+// this one -- the report it reads is the stage's own, replaced as each stage
+// begins.
 func (r *run) stageStreamsCut() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()

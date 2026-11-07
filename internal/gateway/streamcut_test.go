@@ -1,10 +1,14 @@
 package gateway
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -96,6 +100,52 @@ func TestClaudeStreamCutIsLoggedAndCounted(t *testing.T) {
 	}
 	if line["terminal_event_seen"] != false {
 		t.Error("terminal_event_seen is true for a stream cut before message_stop")
+	}
+}
+
+// A stream the agent's own end stopped is logged with that side and is not
+// counted: the count (StageReport.StreamsCut) is the model's unfinished
+// answer, and a reader retries a stage because of it. An agent that stopped
+// reading, or a gateway that cancelled the call, ended this stream; the model
+// was still answering, and nothing about it is the runner's to act on.
+func TestClientCutStreamIsNotCounted(t *testing.T) {
+	rep := anthropicfake.StreamOK(sonnet, pricing.Usage{Input: 2000, Output: 5})
+	rep.EventDelay = 100 * time.Millisecond
+	h := newHarness(t, rep)
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan struct{})
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(h.request(ctx, "/v1/messages", msg(sonnet, 1000, `"stream":true`)))
+		if err != nil {
+			errc <- err
+			return
+		}
+		defer resp.Body.Close()
+		br := bufio.NewReader(resp.Body)
+		if _, err := br.ReadString('\n'); err != nil {
+			errc <- err
+			return
+		}
+		close(first)
+		_, _ = io.Copy(io.Discard, br)
+		errc <- nil
+	}()
+	waitFor(t, "the upstream to see the call", func() bool { return h.fake.Count() == 1 })
+	<-first
+	cancel() // the agent's end goes away, mid-response
+	<-errc
+	select {
+	case <-h.fake.Ended(0):
+	case <-time.After(5 * time.Second):
+		t.Fatal("the upstream request wasn't cancelled")
+	}
+	if rep := h.gw.EndStage(); rep.StreamsCut != 0 {
+		t.Errorf("stage counted %d cut streams for a stream the agent stopped reading, want 0: the count is what a runner retries a stage on", rep.StreamsCut)
+	}
+	line, _ := streamCutLine(t, h.logs)
+	if line["cut"] != cutClient {
+		t.Errorf("cut = %v, want %q: the agent's end went away, and the line still says which end it was", line["cut"], cutClient)
 	}
 }
 

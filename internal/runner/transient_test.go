@@ -180,23 +180,40 @@ func TestTheRunsOneRetryIsSpentOnTheFirstStage(t *testing.T) {
 // transient it looks: the list is closed, and a run's money, its credential
 // and its clock are never spent on a second attempt.
 func TestOtherStageErrorsAreNotRetried(t *testing.T) {
-	for _, text := range []string{
+	errs := []string{
 		"API Error: 400 invalid_request_error: max_tokens: field required",
 		"API Error: 401 authentication_error: invalid x-api-key",
 		"fugaro: budget halted: run cap $5.00 reached ($5.00 spent)",
 		"Claude AI usage limit reached",
 		"the stage ran out of time",
-	} {
-		g := newGW(t, gwConfig(t, ""), "observe", "", out4k())
-		step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-			return agent.Result{Text: text, IsError: true, Subtype: "success"}, nil
-		}
-		rec, _ := g.run(t, step)
-		if rec.Status != runstore.StatusFailed {
-			t.Fatalf("%q: rec = %+v", text, rec)
-		}
-		if rec.Retries != 0 || len(g.agent.calls) != 1 {
-			t.Fatalf("%q: retried %d times over %d calls, want none", text, rec.Retries, len(g.agent.calls))
+	}
+	// Twice: on the words alone, and after a streamed call of the same
+	// attempt was cut. The gateway's own count is the second half of the
+	// trigger, and it says a stream of this stage ended early -- not that the
+	// stream is what ended the attempt. A stage that lost one call and then
+	// failed for a reason of its own fails for that reason, and the count
+	// does not turn an auth error, a work failure or a cap into a retry.
+	for _, cut := range []bool{false, true} {
+		for _, text := range errs {
+			g := newGW(t, gwConfig(t, ""), "observe", "", cutStream(3), out4k())
+			step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				if cut {
+					if got := postStream(t, req, sonnet, 4000); got != http.StatusOK {
+						t.Errorf("the cut call answered %d, want 200", got)
+					}
+				}
+				return agent.Result{Text: text, IsError: true, Subtype: "success"}, nil
+			}
+			rec, _ := g.run(t, step)
+			if rec.Status != runstore.StatusFailed {
+				t.Fatalf("%q (cut %v): rec = %+v", text, cut, rec)
+			}
+			if rec.Retries != 0 || len(g.agent.calls) != 1 {
+				t.Fatalf("%q (cut %v): retried %d times over %d calls, want none", text, cut, rec.Retries, len(g.agent.calls))
+			}
+			if cut && !strings.Contains(rec.Reason, text) {
+				t.Errorf("%q: reason = %q, want the stage's own failure", text, rec.Reason)
+			}
 		}
 	}
 }

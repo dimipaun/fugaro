@@ -90,13 +90,13 @@ type charge struct {
 	unparsed     bool   // a 2xx settled at its reservation
 	tokens       int64  // reported tokens
 	sent         bool   // the call reached the upstream (it counts as a call)
-	// streamCut is a streamed 2xx whose response ended before its terminal
-	// event: the model never finished its answer, whatever the call settled
-	// as. It is not unparsed (a cut stream can settle from the usage it did
-	// report) and it is not a violation: it is the fact the stage report
-	// counts (StageReport.StreamsCut) so a runner can tell a stage that lost
-	// its stream from one that failed for a reason about the work.
-	streamCut bool
+	// streamCut is which end ended a streamed 2xx before its terminal event
+	// (the closed set in forward.go), or "" for a whole stream: the model
+	// never finished its answer, whatever the call settled as. It is not
+	// unparsed and not a violation. StageReport.StreamsCut counts only the
+	// upstream's cuts, the lost answer a runner retries a stage for; every
+	// cut is logged with its side.
+	streamCut string
 	violation string // a surprise pricing dimension
 	// serviceTier is the usage.service_tier value the response reported and
 	// the call was charged conservatively for, as a message shows it
@@ -218,7 +218,7 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	if c.unparsed {
 		r.UsageUnparsed++
 	}
-	if c.streamCut {
+	if c.streamCut == cutUpstream {
 		r.StreamsCut++
 	}
 	r.Tokens = int64(satAdd(pricing.Micros(r.Tokens), pricing.Micros(c.tokens)))

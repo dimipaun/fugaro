@@ -891,8 +891,8 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		o = reserved
 	}
 	if cut {
-		o.charge.streamCut = true
-		s.logStreamCut(p.model, resp.StatusCode, tee, s.streamCutSide(r, end), time.Since(start))
+		o.charge.streamCut = s.streamCutSide(r, end)
+		s.logStreamCut(p.model, resp.StatusCode, tee, o.charge.streamCut, time.Since(start))
 	}
 	return o
 }
