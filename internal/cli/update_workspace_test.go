@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -629,6 +630,75 @@ func TestUpdateDiffSaysWhatItRemoves(t *testing.T) {
 	}
 	if got := wsRepos(t, p.db, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
 		t.Errorf("member-b's published repositories are %v, want the two the table declares", got)
+	}
+}
+
+// TestUpdateRefusesACodingAgentsSession: this publish is the owner's word, and
+// a coding agent's session has none to give. `--yes` is the flag such a session
+// passes, and what it stands in for here is the ordinary y/N of a diff that
+// removes a member (workspaceRemovals) — a change to who is in the group like
+// any other, and one that must not happen with nobody's answer behind it. The
+// node is read back to show it did not move.
+//
+// The refusal is the stage's own and not the loop's: this stage confirms itself
+// (initflow.SelfConfirming), so the loop's AgentError arm is never reached and
+// an agent's session that got past this would read a converged run.
+func TestUpdateRefusesACodingAgentsSession(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	// The removal the run would otherwise make: a member the published node
+	// carries and this installation's table does not declare.
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+		wsPublishedMember("member-c", "owner/repo-c"),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	noTerminal(t)
+	t.Setenv("CLAUDECODE", "1")
+	_, out, err := r.apply(t, true)
+	var ae *initflow.AgentError
+	if !errors.As(err, &ae) {
+		t.Fatalf("a coding agent's session published the workspace record: %v\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "coding agent") {
+		t.Errorf("the refusal does not say why: %v", err)
+	}
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-c"}) {
+		t.Errorf("the node moved in a coding agent's session: the members are %v, want the two that were published", got)
+	}
+}
+
+// TestUpdateRefusesACodingAgentsSessionUnderTheGate is the same refusal one step
+// further in: a run whose gate is open but whose gate did NOT admit this step —
+// a project whose mark the write's own second read found gone, or one whose
+// whole-project inventory fell back (D59) — is a step the gate does not stand in
+// for, and what it falls back to in a coding agent's session is the refusal and
+// never the `--yes` that session passed. Without this the session applies the
+// removal the gate declined to judge, in the ordinary confirmation's clothes.
+//
+// The gate here is the rigs' own shape for a managed run (initGate{managed:
+// true} with no read behind it, migrationRig.managedGate), which answers exactly
+// that pair: underway, and no admission.
+func TestUpdateRefusesACodingAgentsSessionUnderTheGate(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+		wsPublishedMember("member-c", "owner/repo-c"),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	r.s.e.r.gate = &initGate{managed: true}
+	noTerminal(t)
+	t.Setenv("CLAUDECODE", "1")
+	_, out, err := r.apply(t, true)
+	var ae *initflow.AgentError
+	if !errors.As(err, &ae) {
+		t.Fatalf("a coding agent's session applied a step the gate did not admit: %v\n%s", err, out)
+	}
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-c"}) {
+		t.Errorf("the node moved in a coding agent's session: the members are %v, want the two that were published", got)
 	}
 }
 
