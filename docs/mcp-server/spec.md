@@ -629,7 +629,12 @@ amended answer has four parts, and the rules clause above is only the first:
    pepper held in Secret Manager**, so a reader who is not the coordinator cannot reverse one even
    with a weak token space; and **every record's identity, its limits and its revocation state are
    MAC'd**, so a writer the rules do not bind — a database admin, a launcher with a signer, a
-   compromised run — cannot forge one.
+   compromised run — cannot forge one. **This is the design's requirement and it is not what the
+   code does**: the store hashes with a plain unkeyed `sha256` and writes no MAC
+   (`ee/coordinator/mcpauth/store.go:387`), so a reader who is not the store's own member reads an
+   identity in the clear. That gap is M2's own row, merged on `main` and not in this branch, and it
+   is carried as a finding in §11 and [reconciliation.md](reconciliation.md) §4a rather than read
+   here as a control the tree performs.
 3. **The public service holds no `firebasedatabase.admin`.** It holds **viewer only**, and only for
    the pre-check it runs before minting. The account that writes the store is not the account that
    answers strangers.
@@ -656,9 +661,10 @@ exactly the way the decision was asked about.
 something were written there, which is finding H3 and the reason the records left the database
 altogether. So the correct statement is the narrower one: **what the rules close, they close against
 every client; what they do not close — IAM — is answered by the records not being there, by the
-HMAC-keyed hashes, by the MACs, and by the public service holding viewer and not admin.** "Store
-only hashes" is the *second* line of defence and not the only one; the value is shown once at mint
-and never again.
+public service holding viewer and not admin, and by the two controls of §6 that are **designed and
+not built**: the HMAC-keyed hashes and the MACs (§11, [reconciliation.md](reconciliation.md) §4a).**
+"Store only hashes" is the *second* line of defence and not the only one; the value is shown once at
+mint and never again.
 
 **D922 was answered the other way first, and restated the same day.** The first answer kept the
 separate subtree but made it readable by any signed-in user of the project; the restatement of
@@ -840,7 +846,10 @@ design says now, and what §6 states in full:
   main database is a failing test rather than a quiet widening.
 - **The records are keyed and marked**: **HMAC-keyed hashes with a pepper in Secret Manager**, and a
   **MAC over each record's identity, limits and revocation state**, so a reader cannot reverse a
-  hash and a writer the rules do not bind cannot forge a record.
+  hash and a writer the rules do not bind cannot forge a record. **Both are designed and not
+  built**: the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:387`)
+  and writes no MAC, which §11 and [reconciliation.md](reconciliation.md) §4a carry as a finding
+  rather than this paragraph reading as a control the tree performs.
 - **The public service holds viewer and not admin**, which is the part of the finding a *grant*
   fixes rather than a store.
 - **The values are shown once, at mint, and never again** — there is no "show me my token again"
@@ -1030,6 +1039,25 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   UNVERIFIED** (§6, [reconciliation.md](reconciliation.md) §6 check 8): whether GCS still attaches
   its convenience bindings to a Terraform-created bucket, so that a basic project Viewer reads the
   store until M4 strips or refuses those members.
+- **The keyed hashes and the MACs the store is specified to write** (§6, §8 — the answer to finding
+  H3): **designed and not built.** The store hashes with a plain unkeyed `sha256`
+  (`ee/coordinator/mcpauth/store.go:387`) and writes no MAC over a record's identity, limits or
+  revocation state, so a reader who is not the store's own member reads an identity in the clear and
+  a writer the rules do not bind is not refused by a mark. The gap is **M2's own row**, which merged
+  on `main` before this branch, and it is carried in [reconciliation.md](reconciliation.md) §4a as a
+  finding rather than closed by an edit here. **What it costs is bounded by the value it hashes**:
+  `NewValue` is 32 random bytes (`ee/coordinator/mcpauth/store.go:395`), so the hash has no weak
+  space to walk and the missing key buys a reader nothing practical — what is wrong until the keyed
+  hash and the MAC land is a security document promising an integrity control the code does not
+  perform.
+- **Who owns the two bounds the open registration endpoint is accepted under** (§3, §8): the
+  **per-source rate limit** and the **sweep that makes a registration, a pending authorize request
+  and a code expire**. **Neither is built**, M10's `store.go` row is revocation and nothing else, and
+  **no task of the plan carries them** ([reconciliation.md](reconciliation.md) §4a, "The two bounds
+  no task carries"). **What is owed is the owner's assignment** — them inside M10's entry, or a task
+  of their own — and **until it comes the bound is the wiring task's**: the task that mounts this
+  package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`, so the
+  growth §8 accepts is accepted only while nothing mounts the routes.
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.

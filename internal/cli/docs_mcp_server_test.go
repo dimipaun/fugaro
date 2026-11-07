@@ -285,6 +285,50 @@ func TestDocsMCPServerNamesWhatItDesigns(t *testing.T) {
 	}
 }
 
+// TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo: the two places where this
+// folder's documents state a control or a bound that no code in the tree
+// carries say so in their own words.
+//
+// Both were raised by the review of this branch and both are disclosures rather
+// than fixes: the store is specified to write HMAC-keyed hashes and a MAC over
+// each record, and it hashes with a plain unkeyed sha256 and writes no MAC
+// (M2's row, merged on `main` before this branch), and the open registration
+// endpoint is accepted under a per-source rate limit and a sweep that no task of
+// the plan carries. A document that asserted either as a fact would be a
+// security document promising an integrity control the code does not perform --
+// so what is pinned is the caveat itself, in the file a reader meets first, and
+// the section that carries each as a finding.
+func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
+	spec := flattenDoc(readDoc(t, mcpSpec))
+	for _, want := range []string{
+		// The keyed hash and the MAC, marked as the design's requirement rather
+		// than as what the code does, with the line that hashes without a key.
+		"The keyed hashes and the MACs the store is specified to write",
+		"Both are designed and not built",
+		"the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:387`)",
+		// And the two bounds, with the owner named as the one who assigns them
+		// and the wiring task named as the carrier until he does.
+		"Who owns the two bounds the open registration endpoint is accepted under",
+		"What is owed is the owner's assignment",
+		"the task that mounts this package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("%s does not state %q: the keyed hash and the MAC, and the two bounds the open registration endpoint is accepted under, are specified in this folder and built nowhere, so a document that dropped the caveat would read as a control the tree performs", mcpSpec, want)
+		}
+	}
+
+	rec := flattenDoc(readDoc(t, mcpReconciled))
+	for _, want := range []string{
+		"### The two bounds no task carries",
+		"the store hashes with a plain unkeyed sha256",
+		"raised as a finding rather than closed by an edit here",
+	} {
+		if !strings.Contains(rec, want) {
+			t.Errorf("%s does not state %q: both gaps are raised there as findings for the owner to assign, and a reconciliation that dropped either would leave the caveat in the spec with nothing behind it", mcpReconciled, want)
+		}
+	}
+}
+
 // TestDocsMCPServerCitationsResolve: every file and line these documents cite
 // exists. A reconciliation is only worth as much as the code behind it, and a
 // citation whose line moved turns a checked finding into an unchecked one with
