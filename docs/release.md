@@ -17,16 +17,21 @@ What holds a job to a reviewed commit is therefore the fences below, none of whi
 - **Tag protection.** The ruleset **"protect release tags"** restricts updates and deletions of `v*`, `console-v*` and `mobile-v*`, so a tag cannot be re-pointed after something was built from it.
 - **The release gate**, `scripts/release-gate.sh`, which every tag-triggered publishing workflow runs first: the tagged commit must be reachable from `origin/main` and the required checks must have succeeded on it.
 
-**Putting the click back is one API call per environment**, and it is the owner's: Fugaro changes no repository setting, and a coding agent's session is refused cloud writes. The environment is named by the `<name>` placeholder and the reviewer by their numeric id — no id is written down here, because it is the owner's account that goes in the list:
+**Putting the click back is one API call per environment**, and it is the owner's: Fugaro changes no repository setting, and a coding agent's session is refused cloud writes. **The PUT body is the whole environment**, so a body carrying only `reviewers` also clears the deployment branch policy — the first fence in the list above — and the call has to carry the policy back with it. The environment is named by the `<name>` placeholder and the reviewer by their numeric id — no id is written down here, because it is the owner's account that goes in the list:
 
 ```sh
 gh api --method PUT "repos/<owner>/<repo>/environments/<name>" \
   --input - <<'JSON'
-{ "reviewers": [ { "type": "User", "id": <reviewer-id> } ] }
+{
+  "reviewers": [ { "type": "User", "id": <reviewer-id> } ],
+  "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true }
+}
 JSON
 ```
 
-Leave **Prevent self-review** off while the owner is both the actor and the only reviewer: GitHub would otherwise refuse the owner's own approval of the owner's own run, and the environment would hold every job forever. The same call is the one `docs/website/preview-promote.md` gives for `website-live`.
+**Read both halves back afterwards**, because the policy's mode and the refs it admits are two objects: `gh api "repos/<owner>/<repo>/environments/<name>" --jq .deployment_branch_policy` prints the mode, and `gh api "repos/<owner>/<repo>/environments/<name>/deployment-branch-policies" --jq '.branch_policies[].name'` lists the refs — `main` for `website-live`, the `console-v*` pattern for `console-release`, and `main` plus the `mobile-v*` pattern for `mobile-release`. A policy mode without those refs admits nothing, which is an environment that refuses every deployment rather than one that lets the wrong one through; either way the fence is gone until they are back. `docs/website/preview-promote.md` step 6 is this same call written out for `website-live`, with the `deployment-branch-policies` POST that adds `main`.
+
+Leave **Prevent self-review** off while the owner is both the actor and the only reviewer: GitHub would otherwise refuse the owner's own approval of the owner's own run, and the environment would hold every job forever.
 
 ## What a tag does
 

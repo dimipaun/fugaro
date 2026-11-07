@@ -79,12 +79,23 @@ instruction, and there is no byte-identity clause that needs it kept.
 
 ```
 # **This file was applied on 2026-10-23**: the staged
-# `docs/pending-workflows/mobile-release.yml` was copied here and removed. The
-# copy-in's record -- what it changed, and the three sentences that had to move
-# with it -- is docs/pending-workflows/README.md's `## mobile-release.yml`
-# section, which a reader of a pending file has no reason to look in and a
-# reader of the applied one has.
+# `docs/pending-workflows/mobile-release.yml` was copied here and removed, and
+# **Three follow-up edits belonged in that same commit** -- the two sentences
+# that count and name the files still pending here (website/README.md's and this
+# README's own opening line) and docs/pending-workflows/README.md's
+# `## mobile-release.yml` section's own **Status line**. The copy-in's record,
+# those three included, is that section: a reader of a pending file has no
+# reason to look there and a reader of the applied one has.
 ```
+
+The `**Three follow-up edits**` sentence is not decoration: the workflow file
+**has to keep it**, in the header, saying `Three`, or
+`TestDocsMobileReleaseWorkflowIsStagedAndPinned` refuses the file
+(`mobileReleaseFollowUpEditsIn`, the regex at
+`internal/cli/docs_mobile_release_workflow_test.go:447`); the README's own side
+of the same count is checked against the other copy. Do not compress it away
+while applying the rest — and run `go test ./internal/cli/ -run Docs` on the
+result, which is what catches it if you do.
 
 ## 3. Requirement 1: the environment's reviewer is gone
 
