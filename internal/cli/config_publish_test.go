@@ -178,7 +178,7 @@ func TestPublishLayerRefusedAsLauncher(t *testing.T) {
 		t.Fatalf("fixture layer is invalid: %v", ps)
 	}
 	var w bytes.Buffer
-	_, err := publishLayer(ctx, &w, b, l, true, nil, layerRecord{})
+	_, err := publishLayer(ctx, &w, b, l, true, nil, layerRecord{}, nil)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
 		t.Fatalf("err = %v", err)
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -155,6 +156,13 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		return userErr("refusing to remove %s: %s holds only %s, and a container of any other name belongs to another block (a provider's key, a Claude account's token or a workflow secret this local config does not list) that this command does not remove; nothing was removed",
 			pluginwire.Printable(name), secretsBlockProject, strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
 	}
+	// The run's own account (CL7a): one line per step, and the log beside it
+	// (D1352). It is opened at the removal and not before it: everything
+	// between here and the step below — the container lookup, the document
+	// this file reads back, the entry that is not there — refuses over a state
+	// this command did not change, so a refused invocation keeps neither a
+	// step nor a log. A log each refusal filed would be one of the 50 this
+	// command's name keeps (pruneLogs), evicting the newest real one.
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
@@ -202,16 +210,29 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 			id, pluginwire.Printable(lc.Name), block, pluginwire.Printable(name))
 	}
 
+	// The step covers both halves — the config entry and the container — since
+	// the command is one removal made of two: it is opened before the diff and
+	// abandoned by every path that leaves the removal unmade, which is a dry
+	// run and a declined confirmation alike (G3). It is where the run begins:
+	// the refusals above it are answered from what is already there and from
+	// this file, and the removal below is the first thing that changes either.
+	run := stepRunFor(cmd, "secrets-rm", cmd.OutOrStdout())
+	defer run.close()
+	st := run.rep.Step("Removing " + block + "." + pluginwire.Printable(name))
+	defer st.Abandon()
+
 	what := secretsRmWhat(id, block, name, held, changed)
-	if err := applySettingsEdit(cmd, lc, settingsEdit{
-		Path:    sel.Path,
-		Old:     old,
-		New:     next,
-		What:    what,
-		Kind:    settingsDocLocal,
-		Command: command,
-		Yes:     o.yes,
-		DryRun:  secretsRmDryRun(o, block, name, old),
+	if err := run.ask(func() error {
+		return applySettingsEdit(cmd, lc, settingsEdit{
+			Path:    sel.Path,
+			Old:     old,
+			New:     next,
+			What:    what,
+			Kind:    settingsDocLocal,
+			Command: command,
+			Yes:     o.yes,
+			DryRun:  secretsRmDryRun(o, block, name, old),
+		})
 	}); err != nil {
 		return err
 	}
@@ -231,15 +252,23 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		// nothing to write, and the deletion below is the change this command
 		// is about: it is confirmed here, once, for the same reason and in the
 		// same words.
-		if err := confirmSettingsWrite(cmd, lc, sel.Path, o.yes, what); err != nil {
+		if err := run.ask(func() error {
+			return confirmSettingsWrite(cmd, lc, sel.Path, o.yes, what)
+		}); err != nil {
 			return err
 		}
 	}
 	if held {
 		if err := sm.Delete(ctx, id); err != nil {
-			return secretsRmUndo(id, sel.Path, block, name, old, next, changed, err)
+			undo := secretsRmUndo(id, sel.Path, block, name, old, next, changed, err)
+			// One line in the step, the whole undo in the error the command
+			// returns: the step's own line is one line.
+			st.Failed(errors.New(oneLine(undo.Error())), nil)
+			return undo
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "deleted %s\n", id)
+		st.Done("deleted the container " + id)
+	} else {
+		st.Done("no container " + id + " exists")
 	}
 	// A repository copy with an enabled version wins over the project copy, so
 	// the project copy's removal does not reach those repositories: said, in
