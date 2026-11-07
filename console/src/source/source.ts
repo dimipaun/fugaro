@@ -505,8 +505,10 @@ export const GRAPH_SCOPE_ALL = 'all'
  * for are the ones its own previous answer's `sources[]` carried: the read
  * teaches the surface the scopes that exist, and nothing else is ever spawned.
  *
- * `all` is the one value that is not a source of that array -- it is the
- * selector, and the read a screen opens on -- so it is admitted beside them.
+ * `all` is the one value that is not a source of that array: it is the selector
+ * rather than a source, and the command's own default, so it is admitted beside
+ * them. (A screen opens on the plan scope, not on `all`: the Graph reaches this
+ * read when that scope refuses for want of a checkout.)
  * The refusal is the console's own sentence, like `NO_PLAN_CHECKOUT`'s: no child
  * ran, so there is no CLI sentence to show.
  */
