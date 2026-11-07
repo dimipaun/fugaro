@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,7 +52,10 @@ func newMigrationRig(t *testing.T, f *projectFixture, o *initOptions) *migration
 	cmd.SetOut(out)
 	cmd.SetErr(&syncBuf{})
 	cmd.SetIn(strings.NewReader(""))
-	run := &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
+	// The run's own streams are the door's (newInitRun): the stage writes the
+	// diff through initRun.w, so a test that gives this run a reporter sees what
+	// a person would.
+	run := newInitRun(cmd, o)
 	run.setProject(lc)
 	return &migrationRig{f: f, s: newPolicyMigrateStage(&initEngine{r: run, lc: lc, path: f.path}), cmd: cmd, out: out}
 }
@@ -323,6 +325,9 @@ func TestUpdatePublishesTheFirstPolicyNodeForACatalog(t *testing.T) {
 	if !strings.Contains(st.Detail, "no policy is published") {
 		t.Errorf("the check does not say the project has no node: %q", st.Detail)
 	}
+	if !strings.Contains(st.Detail, "the image_catalog") || strings.Contains(st.Detail, "guardrails") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
 	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
 	if err != nil {
 		t.Fatal(err)
@@ -357,6 +362,86 @@ func TestUpdatePublishesTheFirstPolicyNodeForACatalog(t *testing.T) {
 	}
 	if want := []string{"universal", "rust"}; !slices.Equal(names, want) {
 		t.Errorf("the published catalog carries %v, want %v", names, want)
+	}
+}
+
+// orchestratorConfigYAML is the guardrail block the way an owner writes it: one
+// cap below the person's max_parallel and one spawn rate, so the test can tell
+// the block it published from the defaults a node without one implies.
+const orchestratorConfigYAML = "orchestrator: {max_running: 1, spawn_per_minute: 1}\n"
+
+// TestUpdatePublishesTheFirstPolicyNodeForAnOrchestratorBlock is #1656's second
+// member, and the reason the first-publish question is asked of the block as
+// well as of the catalog: the guardrails travel on the node and nowhere else
+// (Shared() nils the key, ParseShared refuses it, no job's environment carries
+// it), so a project that had never published a node and whose owner had just
+// written an orchestrator block was told there was nothing to do — the
+// guardrails reached the node only through `fugaro project policy publish`, the
+// second command `fugaro update`'s one command must not need. Every later edit
+// of the block goes through this stage's drift; only the first publish was
+// missing.
+func TestUpdatePublishesTheFirstPolicyNodeForAnOrchestratorBlock(t *testing.T) {
+	f := newProjectFixture(t, orchestratorConfigYAML)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "no policy is published") {
+		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the orchestrator's guardrails") || strings.Contains(st.Detail, "image_catalog") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the preview wrote a node of its own: %v", v)
+	}
+
+	// The write is behind the same confirmation the catalog's first publish
+	// takes, and the diff it prints names the block it creates the node with.
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("the first publish was not behind the confirmation:\n%s", out)
+	}
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "orchestrator") {
+		t.Errorf("the diff the operator confirmed does not name the guardrails it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Orchestrator == nil || p.Orchestrator.MaxRunning != 1 || p.Orchestrator.SpawnPerMinute != 1 {
+		t.Fatalf("the published node carries %+v, want the block the config writes", p.Orchestrator)
+	}
+
+	// A block written but setting no key is not a statement (SetsNothing): it
+	// keeps the node's like a silent config does, so it is no reason to create
+	// one where none was — the first-publish question is asked again of the same
+	// empty node and the stage stays done.
+	empty := newProjectFixture(t, "orchestrator: {}\n")
+	h2 := newMigrationRig(t, empty, &initOptions{})
+	st, err = h2.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done {
+		t.Errorf("the check says %s %q for a block that sets no key, want nothing to do", st.State, st.Detail)
+	}
+	if v := empty.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Errorf("a block that sets no key published a node: %v", v)
 	}
 }
 

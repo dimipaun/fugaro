@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -592,7 +593,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		// commands: a newer Fugaro knows the keys, and `fugaro update` is
 		// what carries the node over without a deletion.
 		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
-			projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys))
+			projectpolicy.PathShared(), len(p.UnknownKeys), unknownKeysText(p.UnknownKeys))
 	}
 	return p, nil
 }
@@ -929,6 +930,21 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCatalog = old.ImageCatalog
 	}
 	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
+	// The orchestrator block is kept by the same rule (D1239, D1234), with the
+	// catalog's two spellings collapsed into one: a config that states a block
+	// replaces what the node holds — the daemon's guardrails are the owner's own
+	// figures, and a second machine whose config predates the key must not
+	// publish a node without them — and a config that states none, or states a
+	// block that sets no key, keeps the node's (OrchestratorEffective). There is
+	// no spelling that empties a published block: a guardrail is a ceiling, so
+	// the only direction it moves is down, and a member dropped here would be
+	// every cap back at Fugaro's defaults on a machine nobody meant to change
+	// anything on.
+	var publishedOrchestrator *policy.Orchestrator
+	if old != nil {
+		publishedOrchestrator = old.Orchestrator
+	}
+	orchestrator := lc.OrchestratorEffective(publishedOrchestrator)
 	// The account-choice members are copied rather than derived — there is
 	// nothing to derive them from, they are the owner's own choice — and they
 	// are held to the node's own rules by the decode checkPolicyBytes runs on
@@ -965,6 +981,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,
 		ImageCatalog:         imageCatalog,
+		Orchestrator:         orchestrator,
 	}
 	switch {
 	case !silent:
@@ -2836,7 +2853,7 @@ func boundedNames(names []string) []string {
 // other is refused. A name Field would change is therefore escaped (each of
 // those characters as \uXXXX) instead of dropped, so a name reads as what it
 // is — the same choice the CLI makes for a policy node's unknown keys
-// (unknownPolicyKeysText), whose provenance this shares.
+// (unknownKeysText), whose provenance this shares.
 //
 // The escape set is Field's *drop* set and not pluginwire's escape set, which
 // is a review finding. PrintableN escapes the controls and the format
@@ -2971,18 +2988,19 @@ func allowSources(ctx context.Context, lc *localcfg.Config) (map[string]string, 
 	return allowSourcesOf(ctx, lc, false)
 }
 
-// unknownPolicyKeysText renders a policy node's unknown top-level keys for a
-// message. They are raw JSON member names of the node, which is hand-writable
-// (projectpolicy.Policy.UnknownKeys is what the strict top-level decode could
-// not place), and a key carrying a bidi override, a zero-width joiner or a
-// line/paragraph separator is a legal JSON name that unicode.IsControl does not
-// catch (checkTopLevelNames refuses duplicates and case-variants of the keys
-// this Fugaro knows, never their shape). Printed raw, such a name can rewrite
-// the line it is printed in — the terminal's reading of everything after it is
-// the file's to choose — so every name goes through pluginwire.Printable, the
-// same escaped form config.ValidateClaudeAccounts and
+// unknownKeysText renders a node's unknown top-level keys for a message, for
+// either node a refusal names them of: the policy node and the workspace record
+// (projectpolicy.Policy.UnknownKeys and Workspace.UnknownKeys are what the
+// tolerant top-level decode could not place). They are raw JSON member names of
+// a hand-writable object, and a key carrying a bidi override, a zero-width
+// joiner or a line/paragraph separator is a legal JSON name that
+// unicode.IsControl does not catch (checkTopLevelNames refuses duplicates and
+// case-variants of the keys this Fugaro knows, never their shape). Printed raw,
+// such a name can rewrite the line it is printed in — the terminal's reading of
+// everything after it is the file's to choose — so every name goes through
+// pluginwire.Printable, the same escaped form config.ValidateClaudeAccounts and
 // providerConventionRefusal print a name of the same provenance with.
-func unknownPolicyKeysText(keys []string) string {
+func unknownKeysText(keys []string) string {
 	out := make([]string, len(keys))
 	for i, k := range keys {
 		out[i] = pluginwire.Printable(k)
@@ -3003,7 +3021,7 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 		return nil
 	}
 	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update'",
-		projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
+		projectpolicy.PathShared(), unknownKeysText(p.UnknownKeys))
 }
 
 // notAdmittedNote marks a repository that has run here and that the published

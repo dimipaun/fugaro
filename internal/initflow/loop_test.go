@@ -25,6 +25,10 @@ type fake struct {
 	applyErr  error
 	verifyErr error
 	unchanged bool // Apply finds nothing to do
+	// onApply, when set, runs inside Apply, before it returns: what the run's
+	// own writer holds at the moment this stage starts its work, which is
+	// where a stage that takes minutes is watched from.
+	onApply func()
 	// outLeft is the step Apply leaves for the user: a stage that applied
 	// what this session may do and left the rest (Outcome.Left).
 	outLeft     *Left
@@ -55,6 +59,9 @@ func (f *fake) Plan(_ context.Context, env Env) (Plan, error) {
 func (f *fake) Apply(_ context.Context, env Env) (Outcome, error) {
 	f.rec("apply")
 	f.gotEnv = &env
+	if f.onApply != nil {
+		f.onApply()
+	}
 	if f.applyErr != nil {
 		return Outcome{}, f.applyErr
 	}
@@ -187,12 +194,14 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// Ten stages of the installation's own plus the credentials service's
 	// owner-run apply (C1.20), the deployed security rules generation
 	// (init_rules_stage.go), the published policy node's migration in place
-	// (init_policy_migrate.go), the project layer and its one local file
-	// (init_layer_stage.go), the checkout's own steps inside fugaro update
-	// (init_checkout_upgrade.go) and the compute backend's provisioning, which
-	// the design puts last (compute-backend §8.1 task 6).
-	if len(names) != 16 {
-		t.Fatalf("the design has sixteen stages, got %v", names)
+	// (init_policy_migrate.go), the workspace record the owner's `fugaro
+	// update` publishes (update_workspace.go / D1292), the project layer
+	// and its one local file (init_layer_stage.go), the checkout's own steps
+	// inside fugaro update (init_checkout_upgrade.go) and the compute
+	// backend's provisioning, which the design puts last (compute-backend
+	// §8.1 task 6).
+	if len(names) != 17 {
+		t.Fatalf("the design has seventeen stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -207,7 +216,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Rules, Policy, Layer, Checkout, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Rules, Policy, Workspace, Layer, Checkout, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -1424,6 +1433,40 @@ func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 	lines := outputLines(out.String())
 	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Left for you in ") || !strings.HasSuffix(last, ", 4 steps") {
 		t.Errorf("the account does not end in the run's closing line: %q\n%s", last, out.String())
+	}
+}
+
+// TestAStepLineIsOnScreenBeforeTheNextStageRuns: a stage's line prints when
+// that stage ends, not in one block at the end of the run. The stage that
+// takes minutes — a Terraform apply, an image build — is the case that
+// matters: a terminal that has said nothing since the stage before it looks
+// like a hang, and a person who interrupts an apply over it leaves Terraform a
+// lock and a half-written state behind, which `fugaro update` then has to
+// repair.
+func TestAStepLineIsOnScreenBeforeTheNextStageRuns(t *testing.T) {
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation)
+	m := reporterMarks(t)
+	stages[1].(*fake).onApply = func() {
+		if line := m.line(out.String(), Preflight); line == "" {
+			t.Errorf("the second stage's work started with the first stage's line not on the screen:\n%q", out.String())
+		}
+		if line := m.line(out.String(), Installation); line != "" {
+			t.Errorf("the second stage has a result on the screen before it ran: %q\n%q", line, out.String())
+		}
+	}
+	stages[1].(*fake).applyErr = errors.New("the apply failed")
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	// The stage's own failure is on the screen with it: the run does not wait
+	// for the end of a three-minute apply to say it stopped.
+	if line := m.line(out.String(), Installation); !strings.HasPrefix(line, m.failed+" "+Installation) {
+		t.Errorf("the failing stage's line is %q, want the failure marker:\n%s", line, out.String())
 	}
 }
 

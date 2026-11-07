@@ -128,18 +128,38 @@ func (e *initEngine) setupCloud(ctx context.Context) error {
 // replace it.
 var secretsHeld = func() []string { return nil }
 
-// options is the loop's configuration from the flags.
-func (e *initEngine) options() initflow.Options {
-	r, o := e.r, e.r.o
-	if e.redact == nil { // built once: the loop and the stage share the slots
+// slots builds the run's redaction list once: the values the process held from
+// the start (secretsHeld), then one slot per value a stage prompts for
+// (initRun.hold). The loop and the log share it, and the log reads it at each
+// line, so the slots are the same list as the run grows into it.
+func (e *initEngine) slots() {
+	if e.redact == nil {
 		base := secretsHeld()
 		e.redact = append(slices.Clone(base), make([]string, maxHeldSecrets)...)
 		e.held = e.redact[len(base):]
 	}
+}
+
+// redaction is the list a run's log is redacted with, read at each line: what
+// slots built, as the stage that holds a value fills it in (F6).
+func (e *initEngine) redaction() func() []string {
+	e.slots()
+	return func() []string { return e.redact }
+}
+
+// options is the loop's configuration from the flags.
+func (e *initEngine) options() initflow.Options {
+	r, o := e.r, e.r.o
+	e.slots() // built once: the loop, the stage and the log share the slots
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
+		// The run's account: one line per stage and the closing line, in place
+		// of the result header and the plan view (CL5b). A run that has no
+		// reporter — --print-vars, --forget, --config-only, or a test's
+		// hand-built engine — prints exactly what it printed before.
+		Report:  r.rep,
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
 		// The managed gate is `fugaro update`'s (D1016, update_managed.go):
@@ -199,6 +219,20 @@ func initStages(e *initEngine) []initflow.Stage {
 	// from (initRun.writeConfig), so the stage is reachable from there too.
 	e.r.policyStage = e.policy
 	stages = append(stages, e.policy)
+	// The workspace record after the policy one: both are documents a run of
+	// `fugaro update` publishes from the local config, and this one is the
+	// workspace OWNER's — the member list and the cap the workspace's own
+	// service rolls up and admits against (update_workspace.go, D1292). A
+	// member's run of the same command registers the stage and skips it without
+	// opening a database: a member holds no grant on the workspace's project at
+	// all.
+	workspace := newWorkspaceStage(e)
+	// The run's own local-config write drops the read this stage's plan is made
+	// from (initRun.writeConfig), so the stage is reachable from there too: the
+	// write is where a run that first names a budget backend gives this stage a
+	// database to publish the record in.
+	e.r.workspaceStage = workspace
+	stages = append(stages, workspace)
 	// The layer stage after the policy one: the project layer this run would
 	// publish is read under the node the policy stage just moved in place, so a
 	// layer whose claims the older node could not carry is judged by the same

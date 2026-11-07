@@ -90,6 +90,26 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	if err := projectpolicy.CheckProfiles(profiles, accounts); err != nil {
 		return nil, userErr("%v", err)
 	}
+	// The account axis's one non-account value is refused for EVERY profile
+	// here, ahead of the Bitbucket skip below rather than inside the job loop:
+	// config.ValidClaudeAccountRef admits config.AnthropicKeyAccount, because a
+	// profile may name the project's own Anthropic API key at publish, and no
+	// job any installation of this release deploys serves it — so an
+	// installation whose config names it is refused, not deployed, which is the
+	// fail-closed state the api-key review plan records until AK5 deploys the
+	// review variant that carries the key. The skip below is a rule about
+	// shared jobs and a provider; this is a rule about a credential, and every
+	// provider's profiles are held to it: a Bitbucket profile is skipped
+	// rather than deployed, so an arm inside the loop would never see it and
+	// the sentinel would pass an installation unrefused, with its policy entry
+	// published (projectpolicy.DeriveAccounts, above) for a job that does not
+	// exist.
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		if slices.Contains(lc.Profiles[name].ClaudeAccounts, config.AnthropicKeyAccount) {
+			return nil, userErr("profiles.%s.claude_accounts: %q is the project's own Anthropic API key, not a Claude account, and no job serves it: its credential is the project's own copy, held by the platform, so no shared job mounts a token for it and no review variant is deployed for it in this release. Take the key off profiles.%s.claude_accounts and run fugaro update again — a repository that reads the key for its own model calls mounts it from the project's own copy, which a profile does not have to name",
+				name, config.AnthropicKeyAccount, name)
+		}
+	}
 	// Every project job is a github one in this phase (a Bitbucket profile is
 	// skipped below), so the App's ID is resolved once, for all of them: the
 	// project has one App (design §4.5), and a job that carries it must carry
@@ -629,6 +649,15 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // profile's no-account job: it carries the default account's token exactly
 // when the profile lists "default" (D5), which is the same rule that function
 // states — a profile that lists no account mounts no Claude token anywhere.
+//
+// The account axis's one non-account value never reaches here: account is one
+// entry of config.ProjectJobAccounts of a profile ProjectJobs has already
+// refused for naming it, in a check that stands ahead of the Bitbucket skip and
+// so covers every profile this loop is reached for. This function is
+// deliberately not a second reader of the value, because its container lookup
+// below would answer the sentinel with claude_accounts.<sentinel>.allow_data_to
+// — a key config.ValidateClaudeAccounts refuses — so an arm here could only
+// ever repeat, in a worse sentence, a refusal the caller has already made.
 //
 // The mount is refused, rather than granted, when the installation creates no
 // container for it: a job whose secret_env names a container the root does not

@@ -43,10 +43,11 @@ func TestTaggedBuildReportsEE(t *testing.T) {
 // This package's init is what makes a build the Subscription Edition
 // (TestTaggedBuildReportsEE), so no name the CLI lists as paid may answer it
 // here: a paid command the tagged binary holds is registered by this package,
-// and one whose code has not landed yet is not in the tree at all. `graph` is
-// that second case today, until the graph task registers it, and a tagged
-// binary answering the stub for it would tell a subscriber their build does not
-// include what they bought.
+// and one whose code has not landed yet is not in the tree at all. Every name
+// the list carries today is registered (report.go, coordinator.go, graph.go),
+// so what this test holds is the next one that reaches the list before its
+// package does: a tagged binary answering the stub for it would tell a
+// subscriber their build does not include what they bought.
 //
 // Each name is asked with `--help`, which cobra answers before any RunE: a
 // registered command is never run, and the stub, which parses no flags, takes

@@ -44,6 +44,11 @@ describe('the stub’s command keys', () => {
       // counters and the spend history's daily documents are the whole read.
       'runs summary',
       'plan status',
+      // The graph plan's CG9a (`graph.read` / `graphRead`): the dependency graph
+      // as one versioned document, spawned with no checkout at all. Its key is
+      // the command word, because `--source` and its value are the row's own
+      // argument and never a word of the key.
+      'graph',
       'diagnose',
       'logs',
       'logs --url',
@@ -78,6 +83,17 @@ describe('the stub’s command keys', () => {
       // declarations the fleet's writers stored, and the one row here with no
       // argument at all -- its words are the whole argv.
       'coordinator intents',
+      // The managed screens' plan's CM4 (`managed.status` / `managedStatus`):
+      // what the two marks say about the project and the newest audit record,
+      // with no argument at all -- so its key is its command words, `managed
+      // status`, and nothing of a caller's reaches the child.
+      'managed status',
+      // The same plan's `policy.show` / `policyShow`: the published policy node
+      // the runs read, and the read the Project tab's policy panel was missing
+      // (F4). Its key is the command path, `project policy show`, because the
+      // group's other words -- `policy publish`, `repos add`, `repos rm`, `sync`
+      // -- are on no row of this table.
+      'project policy show',
       'run',
     ])
     // The console's one spawn table, which since the owner's design ruling of

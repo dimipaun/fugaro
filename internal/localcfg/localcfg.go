@@ -246,6 +246,33 @@ type Config struct {
 	// does not write the key at all is a machine whose file has nothing to say
 	// about the catalog and must not empty the node's.
 	ImageCatalog *config.Catalog `yaml:"image_catalog,omitempty"`
+	// Orchestrator is the owner's block of the orchestrator daemon's own
+	// guardrails (D1239, D1234): how many runs it may have running at once, how
+	// many it launches in one batch, the rate it may spawn at, and the model
+	// each class of its decisions runs on. It travels to the policy node the
+	// way the catalog and the verifier list do — `fugaro project policy
+	// publish` copies it there (OrchestratorEffective), which is where the
+	// daemon reads it, and the node is written only by the owner while the
+	// runner fails closed on it — and it lives here rather than in fugaro.yaml
+	// for their reason too: the shared config in the runs bucket is writable by
+	// any launcher, and one who could write the running cap or the per-minute
+	// rate could turn the project's own guardrail into a spawn loop against the
+	// installation's bill. Shared nils it and ParseShared refuses the key.
+	//
+	// The block is a ceiling and never a floor: policy.Merge only tightens, so
+	// this file's own figure and the node's are compared and the stricter one
+	// stands — a person may lower a cap and never raise one, and may not lift
+	// the project's caps at all. The security-sensitive class of decision is
+	// floored at opus in every layer, and a model outside the vocabulary is
+	// refused where the block is written: policy.ValidOrchestrator is the one
+	// rule, called here and by projectpolicy's decoder.
+	//
+	// It is a pointer for the catalog's reason: the two halves must be told
+	// apart. "This file says nothing about the block" keeps the node's, and
+	// "this file writes a block that sets no key" is the same statement
+	// (SetsNothing) — there is no spelling that empties a node's guardrails
+	// from here, because a guardrail is not the writer's to remove.
+	Orchestrator *policy.Orchestrator `yaml:"orchestrator,omitempty"`
 	// Profiles are the project's job profiles (design
 	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
 	// deployed as, and what a repository's workflow selects with job_profile.
@@ -539,10 +566,11 @@ type StageChoice struct {
 }
 
 // choiceRefProblem is why name may not stand as the value of an account-choice
-// key here, or "" when it may: the name's own rule first, then whether this
-// file actually defines the account. An undefined name is refused in the
-// sentence config.ValidateProfileClaudeAccounts already gives the same name in
-// a profile, because the two are the same reference and a second wording for
+// key here, or "" when it may: the name's own rule first, then the two values
+// that rule admits but this key cannot take, then whether this file actually
+// defines the account. An undefined name is refused in the sentence
+// config.ValidateProfileClaudeAccounts already gives the same name in a
+// profile, because the two are the same reference and a second wording for
 // one rule is a second rule; a name no run can use would leave the key silently
 // never applying, which is what the keys are specified to refuse.
 func (c *Config) choiceRefProblem(name string) string {
@@ -551,6 +579,15 @@ func (c *Config) choiceRefProblem(name string) string {
 	}
 	if name == config.DefaultClaudeAccount {
 		return ""
+	}
+	// The project's own Anthropic API key is the other value
+	// config.ValidClaudeAccountRef admits and this key cannot take: it names no
+	// account of any run's, so a key choosing a run's account cannot name it.
+	// The refusal has to stand ahead of the lookup below, whose sentence would
+	// send the operator to a claude_accounts entry that this file's own
+	// ValidateClaudeAccounts refuses — a remedy nobody can carry out.
+	if name == config.AnthropicKeyAccount {
+		return config.AnthropicKeyAccountChoiceMessage
 	}
 	if _, ok := c.ClaudeAccounts[name]; ok {
 		return ""
@@ -1569,6 +1606,24 @@ func (c *Config) ImageCatalogEffective(published *config.Catalog) *config.Catalo
 	return effective
 }
 
+// OrchestratorEffective is the keep rule for the orchestrator block, stated
+// here beside the field for the verifier list's and the catalog's reason
+// (D1239, D1234): this file's block when it writes one that sets a key, and the
+// published node's otherwise.
+//
+// The two spellings of a block that sets nothing — the key absent and a written
+// block with no member under it — are one statement here (SetsNothing), which
+// is the one place this rule parts from the catalog's: a written empty catalog
+// takes the node's away, and a written empty block keeps it. A guardrail is a
+// ceiling, so the node's own is never lifted by a file that says nothing about
+// it, and no file can empty it: the only way a published cap moves is down.
+func (c *Config) OrchestratorEffective(published *policy.Orchestrator) *policy.Orchestrator {
+	if c.Orchestrator == nil || c.Orchestrator.SetsNothing() {
+		return published
+	}
+	return c.Orchestrator
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -1912,6 +1967,17 @@ func (c *Config) validate() error {
 		for _, p := range config.ValidateCatalog("image_catalog", *c.ImageCatalog) {
 			bad("%v", p)
 		}
+	}
+	// The orchestrator block is held to the node's own rule here, the way the
+	// floor, the verifier list and the catalog are: it is copied into the policy
+	// node, and a block this file accepted while the node refused it would be a
+	// guardrail whose meaning depended on which door it came through.
+	// policy.ValidOrchestrator is that one rule, the same function
+	// projectpolicy's decoder applies to the node's block: a negative count, a
+	// class the vocabulary does not hold, a model it does not know, and a model
+	// under the floor of the class it is written for.
+	if err := policy.ValidOrchestrator(c.Orchestrator); err != nil {
+		bad("%v", err)
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

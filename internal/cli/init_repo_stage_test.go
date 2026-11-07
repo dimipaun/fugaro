@@ -848,12 +848,12 @@ func seedRepoSecrets(t *testing.T, r *initRig, names ...string) {
 	}
 }
 
-// catalogTeam is the operator's catalog: one entry a Fugaro build writes and
-// no default marker, so only a workflow that pins it by name runs it. The
-// entry is built rather than prebuilt because the workflows below are baked
-// ones, and a prebuilt entry on a baked workflow is refused where the job spec
-// is built (D1191): a prebuilt reference can no longer reach a job at all, so a
-// fixture that pinned one would never get past the spec.
+// catalogTeam is the operator's catalog: one entry whose source is a
+// Dockerfile Fugaro builds, which no default marker, so only a workflow that
+// pins it by name runs it. The source is built rather than prebuilt because
+// R1 (#1698, D1191) refuses a prebuilt entry on the baked workflow these
+// tests use; the entry's image is still the catalog's own project-level
+// build, never this repository's.
 func catalogTeam() string {
 	return "image_catalog:\n  entries:\n    - name: team\n      source: { kind: dockerfile, repo: acme/images, path: team/Dockerfile }\n"
 }

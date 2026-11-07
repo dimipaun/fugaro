@@ -1,6 +1,6 @@
 # Bitbucket workspace and project tokens
 
-**Status: nothing is implemented. T1.1 and T1.2 are APPROVED for 0.12.1 (2026-10-27); no other task is approved.**
+**Status (2026-11-07): T1.2, T2.1 (as the D493 re-plan amended it), T2.3 and T2.8 are merged, T1.1 is merged except for the one pointer sentence D490 added to it, T2.11's operator notes were delivered as docs/secrets-brokering's 0.14.0 draft, and T1.3, T2.2, T2.4, T2.6 and T2.9 are not started — [status-2026-11-07.md](status-2026-11-07.md) censuses every task against `origin/main`, names the commit and the test behind each state, and lists what can launch now; it records what the tree holds and approves no task, and T1.4 and T2.7 stay the owner's own runs, unperformed.**
 
 The owner ruled D460–D463 on 2026-10-27:
 
@@ -56,6 +56,7 @@ nothing. The docs present that path as an exception, so the 0.12.1 slice is docs
 | [spec.md](spec.md) | The owner's request of 2026-10-27, verbatim |
 | [reconciliation.md](reconciliation.md) | What exists (§2); Atlassian's facts (§3); findings F1–F18 (§4); decisions D460–D477, all answered 2026-10-27 (§5); the release split (§6); tensions T1–T2 and open items O1–O7 (§7); UNVERIFIED U1–U8 (§9). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices S1–S2 (S3 superseded by run dc73); tasks T1.1–T1.4 and T2.1–T2.11 (T2.5 folded into T2.9, T2.10 off, T3.1 superseded), each with its files, tests, red step, command and reviewer tier; levels, critical path, shared-files table, and Checks 180–181. **Only T1.1 and T1.2 are approved** (0.12.1, after dc73 merges) |
+| [status-2026-11-07.md](status-2026-11-07.md) | The census of 2026-11-07, read on `origin/main` at `0c705ec8`: every task in the plan with its state, the merged commit and the test that proves it, what blocks it, and the tasks that can launch now, in dependency order |
 
 ## Typos fixed in the spec
 

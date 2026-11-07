@@ -2038,12 +2038,12 @@ func newAppPreCheckRig(t *testing.T, stdin string) *appPreCheckRig {
 		Secrets:                  map[string]string{"github-app-key": gcp.SecretID(slug, "github-app-key")}}
 	r, _, out, _, _ := condition{"a terminal", initOptions{checkApp: true}, true, ""}.reviewRun(t, stdin, true)
 	rg := &appPreCheckRig{ri: ri, run: r, out: out, lc: lc, spec: spec}
-	oldRead, oldAPI := readAppKey, githubAPIURL
-	readAppKey = func(_ context.Context, _ *localcfg.Config, id string) ([]byte, error) {
+	oldRead, oldAPI := readSecretValue, githubAPIURL
+	readSecretValue = func(_ context.Context, _ *localcfg.Config, id string) ([]byte, error) {
 		rg.readID = id
 		return []byte(appKeyPEM(t)), nil
 	}
-	t.Cleanup(func() { readAppKey, githubAPIURL = oldRead, oldAPI })
+	t.Cleanup(func() { readSecretValue, githubAPIURL = oldRead, oldAPI })
 	rg.auth = gitHubAppServer(t, 200, fullPerms)
 	return rg
 }

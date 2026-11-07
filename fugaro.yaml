@@ -58,9 +58,10 @@ followup:
 
 workflows:
   go:
-    image:
-      # Bake the module cache and a warm build cache into the derived image.
-      setup: ["go mod download && go build ./..."]
+    # The project image catalog's entry for this repository, built from
+    # images/catalog/go/Dockerfile: the job's image is the catalog's choice and
+    # not an image Fugaro builds for this repository (docs/repo-image-removal, R0).
+    image_name: go
     commands:
       # The verify step must finish in about 20 minutes. It is NOT the merge gate:
       # GitHub CI is (go test -race ./..., the docker-tests, rules and terraform jobs).

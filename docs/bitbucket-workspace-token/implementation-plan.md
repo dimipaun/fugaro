@@ -5,6 +5,15 @@ references decisions by `D#` and findings by `F#`.
 
 ## Status
 
+- **2026-11-07: the state below is the state of 2026-10-27, and the tree has moved a long way since.**
+  [status-2026-11-07.md](status-2026-11-07.md) censuses every task in this plan against
+  `origin/main`: **T1.2, T2.1** (as the D493 re-plan amended it), **T2.3 and T2.8 are merged**;
+  **T1.1 is merged except for the one pointer sentence D490 added to it**, and its pin;
+  **T2.11's operator notes were delivered as docs/secrets-brokering's 0.14.0 draft**;
+  **T1.3, T2.2, T2.4, T2.6 and T2.9 are not started**; **T2.10 and T3.1 are closed** by D476 and
+  dc73; and **T1.4 and T2.7 are the owner's own runs, unperformed**. Everything below is kept as it
+  was written on 2026-10-27, including the sentence that opens it, which is the record of that day
+  and not of this one. **That census records what the tree holds; it approves no task.**
 - **Nothing is implemented.** On 2026-10-27 the owner **approved T1.1 and T1.2 for 0.12.1**: docs
   and CLI help wording only, no behaviour change, per-repository jobs unchanged. **No other task is
   approved.** Each needs the owner's own explicit go. Answering a decision does not approve a task.

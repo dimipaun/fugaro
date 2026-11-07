@@ -3601,6 +3601,19 @@ func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
 	}
 }
 
+// A prebuilt catalog entry used to reach a job here, and #1752's two tests —
+// TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv and
+// TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree — pinned the clone shape
+// that job carried (FUGARO_REMOTE and no FUGARO_CHECKOUT). R1 (#1698, D1191)
+// refuses a prebuilt entry on a baked workflow where the spec is built, and
+// the only two checkout kinds that leave the catalog inert — clone and shared
+// — make catalog.Applies false, so catalogJobImage returns an empty entry for
+// them and WorkflowSpec.CatalogPrebuilt is never set from this path: the
+// remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
+// configuration exercises it. The behaviour those tests were about — the
+// remote on a job whose image holds no checkout, credential-free — stays
+// covered by TestSpecCloneSetsRemoteEnv and TestSpecSharedRemoteIsCredentialFree.
+
 // TestSpecBuiltCatalogEntryCarriesNoRemoteEnv (#1752): the remote is for a job
 // whose image bakes no checkout, and a built entry's image is this
 // repository's own build — the same Dockerfile the catalog builds into the
@@ -3622,30 +3635,6 @@ func TestSpecBuiltCatalogEntryCarriesNoRemoteEnv(t *testing.T) {
 		if got, ok := ws.Env[RemoteEnv]; ok {
 			t.Errorf("%s runs a built entry and carries %s = %q, want no such key: its image bakes the repository", name, RemoteEnv, got)
 		}
-	}
-}
-
-// TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree (#1752, security): a clone
-// URL carrying credentials is refused where the spec is built, before any job
-// exists, and the check is the one repoURL gives every checkout shape — a
-// catalog whose entry is prebuilt is refused on the URL and not on its entry,
-// which is the order this test holds. The URL a job does carry is read off the
-// shapes that still have one (TestSpecSharedRemoteIsCredentialFree), because
-// the job this test used to read is one no repository can have: D1191 refuses a
-// prebuilt entry on a baked workflow at the same seam
-// (TestBakedWorkflowRefusesAPrebuiltCatalogEntry), so workflow()'s
-// `|| ws.CatalogPrebuilt` arm is no longer reachable through Repo() — the
-// run-side half of that property is internal/runner's
-// TestPrebuiltCatalogEntryJobClonesWhole.
-func TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree(t *testing.T) {
-	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
-	in.RepoURL = "https://person-1:token-shaped@github.com/acme/webapp.git"
-	_, err := Repo(in)
-	if err == nil {
-		t.Fatal("Repo accepted a clone URL carrying credentials")
-	}
-	if !strings.Contains(err.Error(), "without credentials") {
-		t.Errorf("err = %v, want the URL's own refusal: the check runs before any job spec exists", err)
 	}
 }
 

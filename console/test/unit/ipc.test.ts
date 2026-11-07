@@ -624,6 +624,16 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // no argument it could be steered with. It mints nothing of the host's: the
   // read is the caller's own database node (design §5.1 rule 6).
   { command: 'coordinator intents', kind: 'allowed', where: 'ee/coordinator/cli/coordinator_intents.go:66' },
+  // The managed screens' plan's CM3 and CM4: the Project tab's two managed
+  // reads, both `allowed` because the surface drives them and both with no
+  // argument at all -- `managed status --json` (the marks and the newest audit
+  // record's bounded subset) and `project policy show --json` (the published
+  // policy node, and the command that omits the installation's caps where
+  // `project show` carries them, F18). Neither is a writer: the first reads the
+  // caller's own database node, and the second reads the project's own node and
+  // writes neither it nor the state file.
+  { command: 'managed status', kind: 'allowed', where: 'internal/cli/managed_status.go:174' },
+  { command: 'project policy show', kind: 'allowed', where: 'internal/cli/project_cmd.go:2464' },
   // Console 0.119.0's read-only models panel (the owner's ruling of
   // 2026-11-02): the selected project's routes, the models a run can name and
   // each repository's pins, from the project's own configuration and the price
@@ -739,7 +749,12 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty-two argvs, and this surface is the same twenty-two.** The thirteenth is
+ * **It is twenty-five argvs, and this surface is the same twenty-five.** (The
+ * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
+ * after it was written and sits between `plan status --json` and
+ * `coordinator status --from-store --all --json`, and this plan's
+ * `managed status --json` and `project policy show --json` are the two rows
+ * after `coordinator intents --all --json`.) The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
@@ -785,6 +800,13 @@ const DESIGN_ARGV: readonly string[] = [
   'doctor --json',
   'config list --json',
   'plan status --json',
+  // The dependency graph read (the graph plan's CG9a). This row's one argument
+  // is the scope, and this file's convention takes what an argument fills out --
+  // `--source <v>` is the word the schema's `source` key becomes
+  // (`src/main/spawn.ts`'s `graphSource` kind) -- so the row is the command and
+  // its one fixed flag. The design's own row states the whole argv,
+  // `graph --json [--source <v>]` and all.
+  'graph --json',
   'coordinator status --from-store --all --json',
   // The pull request read (coordinator v2 C3, D816): `--repo R` and `--pr N`
   // are the operation's two declared arguments, so this file's convention --
@@ -798,6 +820,22 @@ const DESIGN_ARGV: readonly string[] = [
   // out -- and with no argument to fill, no caller word can reach the child
   // (`src/main/spawn.ts`'s empty `args`).
   'coordinator intents --all --json',
+  // The managed state and its audit trail (the managed screens' plan's CM4,
+  // D1472 to D1477). The row is the whole argv: the command takes no positional
+  // word (`cobra.NoArgs`), and the two project flags are main-process state
+  // rather than arguments, which is this file's convention for taking them out
+  // -- so what is left is the command and `--json`. The design's own row states
+  // the whole argv, `--project <name> [--config <path>]` and all, and the row
+  // declares no argument of its own (`src/main/spawn.ts`'s empty `args`), which
+  // is what makes the empty argument list true rather than merely stated: a
+  // caller cannot name the project, the generation or the day.
+  'managed status --json',
+  // The published policy node (the same plan's CM4, D1480 and D1481). Same shape
+  // as its sibling above -- no positional word, no argument, the two project
+  // flags out -- and the command is `project policy show` and not
+  // `project show`: only the former omits the **installation's** caps, which
+  // belong to the Spend screen (F18).
+  'project policy show --json',
   // Rule 11's argv, `--task-file -` and all: the literal `-` is the word that
   // sends the task down the child's stdin rather than onto a command line.
   'run --task-file - --json',
@@ -1308,6 +1346,11 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // installation's own, and this payload is the whole of what a renderer may
   // say to it (plan GV2.1, constraint C1).
   'plan.status': { all: false },
+  // No `source`: the scope is optional and its absence is the read a screen
+  // opens on (`all`), which is the whole of what a renderer may say to this
+  // read -- there is no directory, no repository and no id it can name
+  // (the graph plan's CG9a).
+  'graph.read': {},
   // No `repo`, no `since`, no `path`: T1.2's read is the installation's whole
   // repository set, from the view the coordinator already stored, so this
   // payload is empty on purpose (Bitbucket credentials T1.2).
@@ -1323,6 +1366,13 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // command's own fixed word and not a field here, which is why there is no
   // `all: true` and why the pin below refuses every key.
   'coordinator.intents': {},
+  // The empty payload twice more: the two managed reads take no argument at all
+  // either (the managed screens' plan's CM4), so what a renderer may say to them
+  // is nothing -- not the project, not a generation and not a day. The project
+  // flags are main-process state, not fields here, and the pin over them below
+  // refuses every key.
+  'managed.status': {},
+  'policy.show': {},
   // The five fields, with the two optional ones left out -- which is the argv
   // rule 11 writes for a launch the operator gave no title and no plan task.
   'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
@@ -1771,6 +1821,34 @@ describe('the argument schemas', () => {
     // fixed word, filled from the screened context and never from a payload
     // (`src/main/spawn.ts`), so the operation cannot ask for another project's
     // node. `spawn.test.ts` pins that word into the argv.
+  })
+
+  it('pins the two managed reads’ empty schemas, which are the whole of what they may send', () => {
+    // **CM4's pair has no argument at all either** (the managed screens' plan,
+    // D1472 to D1477 and D1480 and D1481), and here the emptiness carries more
+    // than it does for the declarations read: `managed status` and
+    // `project policy show` are the Project tab's two ways into a **project**,
+    // and a payload that could name one -- or a generation, or a day -- would be
+    // naming where this console reads somebody else's node. So the project flags
+    // are absent as keys for the reason above twice over, and the pin below
+    // refuses every key that could stand in for one.
+    for (const name of ['managed.status', 'policy.show'] as const) {
+      const operation = operationFor(name)
+      expect(operation.args).toEqual([])
+      expect(operation.flags).toEqual(['--json'])
+      expect(validateArguments(name, WELL_FORMED[name]).ok).toBe(true)
+      for (const key of ['project', 'config', 'generation', 'day', 'argv', 'json', 'path', 'command']) {
+        const decision = validateArguments(name, { [key]: 'x' })
+        expect(decision.ok, `${name} accepted ${key}`).toBe(false)
+        expect(decision.ok ? '' : decision.reason).toBe(`${name} takes no ${key}`)
+      }
+    }
+    expect(operationFor('managed.status').command).toBe('managed status')
+    // The policy read is the one that omits the installation's caps: `project
+    // show` would carry them, and this row must not (`project policy show` is
+    // the command whose document is the policy node alone, F18).
+    expect(operationFor('policy.show').command).toBe('project policy show')
+    expect(CONSOLE_OPERATIONS.map((row) => row.command)).not.toContain('project show')
   })
 
   it('pins `settings.edit`’s three keys, which are the whole of what a write may send', () => {
@@ -2449,7 +2527,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-one, and no others".
+ * channel. The claim is "these thirty-four, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2531,7 +2609,32 @@ describe('the spend read’s arguments', () => {
  * process decides (the dry run's `--dry-run --json`, a write's `--yes`, which
  * both write phases carry) rather than on a flag the row fixes -- which is why
  * its `flags` is empty and why its three arguments are the whole of what a
- * renderer may say.
+ * renderer may say. **The graph plan's CG9a added the thirty-second**
+ * (`graph.read` / `graphRead`: the dependency graph as one versioned document,
+ * `fugaro graph --json`, with no checkout needed and one optional scope) and
+ * left the other thirty-one exactly where they were. It is next to
+ * `plan.status`, the tab's other read of the same picture -- the plan scope is
+ * one source of the graph and the checkout's `docs/` is what it reads -- and it
+ * is the first operation here whose one argument is held to a **closed grammar
+ * and to what a previous answer of the same read listed**: `all`, `coordinator`
+ * and an id of the CLI's own shape are the whole of what `src/main/ipc.ts`
+ * admits, and `src/source/cli.ts` refuses an id the last document did not name
+ * (finding F21). Its `--source` is the first `SPAWN_FLAGS` word that belongs to
+ * one command alone. **The managed screens' plan's CM4 added the thirty-third
+ * and thirty-fourth** (`managed.status` / `managedStatus` and `policy.show` /
+ * `policyShow`: the Project tab's managed state with its audit trail, and the
+ * published policy node the project's runs read -- D1472 to D1477 and D1480 and
+ * D1481) and left the other thirty-two exactly where they were. They sit next
+ * to `coordinator.intents`, the declarations read, because the three are that
+ * tab's reads of what the project has stored, and both are operations with **no
+ * argument at all**: neither command has a positional word, and the two project
+ * flags are main-process state rather than arguments (`takesProject`, rule 3),
+ * so the fifth and sixth such operations here are also the first two whose
+ * empty schema is the whole of a tab's reach into a project. The first draws a
+ * **bounded** subset of the newest audit record -- never `argv` (D1476), and
+ * the bound is the command's rather than a screen's, which is its whole value
+ * -- and the second is `project policy show` and not `project show`, because
+ * only the former omits the installation's caps (F18).
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2541,6 +2644,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['runs.stats', 'statsRuns'],
   ['runs.summary', 'summaryRuns'],
   ['plan.status', 'planStatus'],
+  ['graph.read', 'graphRead'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -2564,6 +2668,8 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['coordinator.status', 'coordinatorStatus'],
   ['coordinator.show', 'coordinatorShow'],
   ['coordinator.intents', 'coordinatorIntents'],
+  ['managed.status', 'managedStatus'],
+  ['policy.show', 'policyShow'],
   ['run.launch', 'launchRun'],
 ]
 
@@ -2595,7 +2701,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty-one, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty-four, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2616,7 +2722,7 @@ describe('the frozen list of operations the preload exposes', () => {
     // next task that adds a read cannot do it quietly.
     const thirtySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(thirtySecond).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtySecond).toContain('32 rows, and this console ships 31')
+    expect(thirtySecond).toContain('35 rows, and this console ships 34')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2630,7 +2736,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('30 rows, and this console ships 31')
+    expect(withoutTheNewRow).toContain('33 rows, and this console ships 34')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2645,8 +2751,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty-one methods and nothing else', () => {
-    // The bridge the window is handed: the thirty-one methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty-four methods and nothing else', () => {
+    // The bridge the window is handed: the thirty-four methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3687,13 +3793,21 @@ describe('the source of the allow-list and the preload', () => {
  * `settings.read` is the same kind of figure again -- the Projects tab's
  * settings table carries the project's configured `budget.*` rows, so the
  * section is refused with the caps panel the tab's own `VIEWS` entry declares
- * (the settings-edit plan's C1) -- and the kill switch has no operation of its
- * own (design C10 -- its fields travel inside `live.watch`, which a reduced
+ * (the settings-edit plan's C1) -- and `policy.show` is the third of that kind
+ * (added 2026-11-07 by the managed screens' plan's CM4, on review): D1481 kept
+ * the *installation's* caps off this surface by choosing `project policy show`
+ * over `project show`, but the published node carries the **project's own
+ * `budget` block** (`mode`, `per_run_usd`, `allowed_models`, `max_run_tokens`),
+ * a configured ceiling of the same class as the settings table's `budget.*`
+ * rows, so a reduced console withholds this read with them rather than
+ * answering a cap it refuses two doors away. The kill switch has no operation of
+ * its own (design C10 -- its fields travel inside `live.watch`, which a reduced
  * console still draws).
  */
 const THE_WITHHELD_OPERATIONS: readonly OperationName[] = [
   'budget.show',
   'settings.read',
+  'policy.show',
   'runs.stats',
   'runs.summary',
   'spend.report',
@@ -3838,8 +3952,21 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // is not in `REDUCED_VIEW_OPERATIONS`, so a reduced console answers it and
     // spawns its dry run. No control reaches it there -- the pencil lives in the
     // `caps` tab (`src/renderer/entry.ts`'s `VIEWS`), which a reduced mode does
-    // not draw -- and the operation's own answer carries no figure.
-    expect(THE_OPEN_OPERATIONS.length).toBe(25)
+    // not draw -- and the operation's own answer carries no figure. **`graph.read`
+    // (CG9a) is the twenty-sixth**, and it is here for that same reason: a graph
+    // is repository state -- nodes, edges and each scope's own state word -- so
+    // there is no figure for the mode to withhold, and its document carries no
+    // money field of any kind. **`managed.status` (the managed screens' plan's
+    // CM4) is the twenty-seventh**: the two marks are not money but state, and
+    // the trail is the audit record's bounded subset, which carries the
+    // command's own name, verdict and identity rather than a figure -- so the
+    // reduced mode has nothing to withhold from it. **Its sibling `policy.show`
+    // is not here, and that is the review's finding**: the read is withheld with
+    // the caps reads (`THE_WITHHELD_OPERATIONS`'s comment says why), which is
+    // the one row of this task that a reduced console refuses. Nothing reaches
+    // `managed.status` there either: the section that will draw it is the
+    // Project tab's, and CM5 to CM11 are the tasks that build them.
+    expect(THE_OPEN_OPERATIONS.length).toBe(27)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
@@ -3853,6 +3980,9 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     expect(reached).not.toContain('spend.report')
     expect(reached).not.toContain('runs.stats')
     expect(reached).not.toContain('budget.show')
+    // The caps read this task added: a reduced console refuses it before the
+    // child exists, so the project's own ceiling is not answered here either.
+    expect(reached).not.toContain('policy.show')
   })
 
   it('withholds the by-person read with the spend view, because it reads the same spend figures (D7)', async () => {

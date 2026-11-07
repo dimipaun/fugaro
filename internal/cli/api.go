@@ -238,6 +238,18 @@ func LsDefaultSince() string { return lsDefaultSince }
 // how the listing's own tests pin that window, and the coordinator's do too.
 func LsNow() time.Time { return lsNow() }
 
+// LsSince is a --since window as the instant a read starts at: the zero time
+// for a window of none, otherwise the window measured back from LsNow, which is
+// what a listing's own default window is. A moved command that lists the same
+// objects over the same span reads this rather than writing the rule a second
+// time, so the two cannot drift.
+func LsSince(window time.Duration) time.Time {
+	if window <= 0 {
+		return time.Time{}
+	}
+	return lsNow().Add(-window)
+}
+
 // Parallel calls fn(0) … fn(n-1) on up to the listing's own bound of
 // goroutines.
 func Parallel(n int, fn func(i int)) { parallel(n, fn) }

@@ -1,7 +1,8 @@
 # Periodic run reviews: implementation plan
 
-**Status: design answered by the owner 2026-11-04 and ruled on again 2026-11-05; plan only; nothing
-implemented; no task approved.**
+**Status: design answered by the owner 2026-11-04, ruled on again 2026-11-05, and its decisions
+D1430–D1449 answered 2026-11-07 with all tasks approved 2026-11-07 (owner: "All tasks approved.
+Jobmax"); plan only; nothing implemented.**
 
 Every task is written to the owner's answers of 2026-11-04 (D960–D971,
 [reconciliation.md](reconciliation.md) §3) **and to the owner's rulings of 2026-11-05**
@@ -80,7 +81,12 @@ ends at the gates below.
   file, the design takes no check number (README, "Numbers this work holds"), and the two live
   checks (R12's listing check and R7's own) are **named**, not numbered — the task that writes each
   takes the number free at its merge
-  ([reconciliation.md](reconciliation.md) §5, "What the rulings take").
+  ([reconciliation.md](reconciliation.md) §5, "What the rulings take"). **Amended 2026-11-07:** the
+  file is **touched**, by Check 340 alone — the task that implemented it (§P8) wrote the register's
+  row and its `## Check 340` section, so R12's listing check has a number and a section now and R7's
+  own stays **named** until its task takes the number free at its merge
+  ([reconciliation.md](reconciliation.md) §5's amendment; the `Checks 340–349` row of
+  [README.md](README.md)).
 
 | Level | Tasks | Needs |
 | --- | --- | --- |
@@ -473,7 +479,7 @@ counts.
 - **Whether `fugaro settings set` may write it is not decided here** — the generic path writes the
   allowlist of `internal/cli/settings_set.go` and nothing else, so a new layer key is **refused by
   `settings set` until someone says otherwise**, and saying yes moves the allowlist's own count pin
-  (`docs/config-management/README.md:47`, "164 of the registry's 325 rows"). **Open items carries
+  (`docs/config-management/README.md:47`, "164 of the registry's 342 rows"). **Open items carries
   it**; what this task ships is the key, refused by the generic path, written by hand in the project
   layer.
 - **And what the managed gate makes of the value it writes is Open item 7**, not decided here: the
@@ -752,7 +758,7 @@ each one written where the task that meets it says so:
    generic path writes the allowlist of `internal/cli/settings_set.go` and nothing else, so the new
    layer key is **refused by `settings set`** as R13 ships it — which is the safe default, not a
    decision: saying yes adds `layer.jobs.reports.paused` (and its sibling) to the allowlist and moves
-   that list's own count pin (`docs/config-management/README.md:47`, "164 of the registry's 325
+   that list's own count pin (`docs/config-management/README.md:47`, "164 of the registry's 342
    rows"). **R13 ships the refused state**; the answer is one allowlist line and one count.
 7. **Whether the managed gate reads a Scheduler `paused` flip as a loosening (E4, and the review of
    round 4).** R13 makes enabling a job a setting `fugaro update` writes — and in a **managed** project
@@ -811,13 +817,14 @@ task here that is not gated by a release. R5 is the owner's whenever they run it
 
 ## Part II — the 0.22.0 slice: the reports job and the failures report (2026-11-07)
 
-**Status: plan only; nothing implemented; no task approved.** **Part I is everything above this
-heading**, the cut written to the owner's rulings E1–E8. This part is written to the owner's decision
+**Status: plan only; nothing implemented; every task in both parts is approved 2026-11-07 (owner:
+"All tasks approved. Jobmax").** **Part I is everything above this heading**, the cut written to the
+owner's rulings E1–E8. This part is written to the owner's decision
 of **2026-11-07** that the periodic reviews/reports ride **0.22.0 "Sloth"**
 (`docs/release-streams.yaml`: the CLI stream's `current` is `0.20.3` and its `next` is `Rhino`, so
 0.21.0 is Rhino's and 0.22.0 is Sloth's). It is a **release plan over two works that are already
 cut**, not a second cut of either. Its decisions are **D1430–D1449** ([reconciliation.md](reconciliation.md)
-§6), each with an empty owner's-answer cell; its checks are **Check 340–349** (§P8). Every path and
+§6), each answered as recommended on 2026-11-07; its checks are **Check 340–349** (§P8). Every path and
 symbol it names was read against `main` at `56c91f66` on 2026-11-07.
 
 ### P1. What this part is, and what it does not re-cut
@@ -1215,8 +1222,11 @@ from being a formality:
   repository reports and stops. **Reviewer:** opus + mandatory independent review. **Commit:**
   `feat(cli): the project aggregate, beside the repository reports`.
 
-**R9 — the opt-in commit (slice P). BLOCKED.** Part I, `## R9`. It waits for the designated-repo
-design item (E6), so it has **no commit message and no file list of record yet** — Part I writes
+**R9 — the opt-in commit (slice P). BLOCKED.** Part I, `## R9`. **Its task is approved — every task in
+both parts is, as of 2026-11-07 — and the block is not an approval question:** it waits for the
+designated-repo design item (**E6**), which is an **Open item** of this design and not one of the
+decisions answered on 2026-11-07, so no approved task can lift it. It therefore has **no commit
+message and no file list of record yet** — Part I writes
 `Files (to be completed by that design item)`. **What it commits is already decided, and neither
 decision is a task's:** the stored reports go in **as they are, table and all** (**D1441**), and a
 stored report **may name run ids** — the id is what makes a flagged row actionable with `fugaro
@@ -1364,7 +1374,12 @@ for a work that reserved none (`docs/gcp-live-checklist.md:586` — "which is th
 work that reserved none" — and `docs/run-limit-carry-over/README.md:55` is the same rule read from a
 work that took none). Two of the three replace
 the two live checks Part I "names and does not number" (R12's listing check and R7's own firing) —
-the numbering is this part's, the checks are Part I's.
+the numbering is this part's, the checks are Part I's. **Amended 2026-11-07:** the census above is
+the reading the numbers were taken at, and Check 340 is written since: its task (§P8) wrote the
+register's row and its `## Check 340` section, so the highest **written** `## Check` section is
+**340**, 341 and 342 stay claims until their own tasks write them, and this part's first check is
+one that names a section rather than only a number (the `Checks 340–349` row of
+[README.md](README.md); [reconciliation.md](reconciliation.md) §5's amendment).
 
 **Check 340 — the prefix-limited listing grant (R12's, and it gates R12).** The owner proves that the
 job's read grant lists `runs/<slug>/` and `reports/`, reads one `runs/` object, and is refused the

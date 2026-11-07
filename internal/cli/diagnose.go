@@ -102,6 +102,13 @@ type Diagnosis struct {
 	// sum(stages[].model_usd) + model_by["unattributed"] ==
 	// row.cost.model_usd.
 	Stages []runstore.StageTiming `json:"stages,omitempty"`
+	// Retries is the record's own count of attempts the run threw away and
+	// ran again because the model's stream was closed before its response
+	// finished (runstore.Record.Retries, issue #1827): why a stage's share of
+	// the run's duration and cost is larger than one pass over it. Zero for a
+	// run that retried nothing, which is every run whose record predates the
+	// field, so the key is absent rather than a zero.
+	Retries int `json:"retries,omitempty"`
 	// Reviews is the record's review rounds (runstore.ReviewSummary): the
 	// round, the tier, the verdict and the findings count, and what reviewed
 	// the round -- the model, the reasoning effort and the commit it read
@@ -252,6 +259,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Retries = rec.Retries
 		d.Reviews = reviewsOf(rec.Reviews, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
@@ -666,12 +674,30 @@ func lastTest(recs []verify.Record) (verify.Record, bool) {
 }
 
 // agentMessage is the result text of the last implement or fix transcript:
-// fix-<n> down to fix-1, n counted from rec.Stages, then implement-1.
+// fix-<n> down to fix-1, then implement-<m> down to implement-1, each count
+// taken from rec.Stages.
+//
+// The count is the shape the transcripts are named by: one file per attempt,
+// transcripts/<stage>-<n>.jsonl, n the stage's own attempt number
+// (internal/runner's stageN). A stage can run more than once -- a second
+// implement after a recovered failure, a retried implement (issue #1827) --
+// so reading implement-1 alone would report an attempt the run threw away as
+// the agent's last word. The count from rec.Stages is the same count, since
+// every attempt appends one stage timing of its own.
+//
+// The implement walk keeps implement-1 as its floor: a record can have no
+// implement timing while the transcript is there -- written before the stage
+// timings were (2026-10-03), or a run killed between the attempt's upload and
+// its timing write, which is the dead run diagnose exists for -- and that is
+// the transcript such a record has.
 func agentMessage(ctx context.Context, s *runstore.Store, rec *runstore.Record) string {
-	fixes := 0
+	fixes, implements := 0, 0
 	for _, st := range rec.Stages {
-		if st.Name == "fix" {
+		switch st.Name {
+		case "fix":
 			fixes++
+		case "implement":
+			implements++
 		}
 	}
 	for n := fixes; n >= 1; n-- {
@@ -679,8 +705,10 @@ func agentMessage(ctx context.Context, s *runstore.Store, rec *runstore.Record) 
 			return res.Text
 		}
 	}
-	if res, ok := transcriptResult(ctx, s, "implement-1"); ok {
-		return res.Text
+	for n := max(implements, 1); n >= 1; n-- {
+		if res, ok := transcriptResult(ctx, s, "implement-"+strconv.Itoa(n)); ok {
+			return res.Text
+		}
 	}
 	return ""
 }
@@ -808,6 +836,15 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	if len(d.Route) > 0 {
 		fmt.Fprintf(&b, "Route:    %s\n", oneLine(spendList(d.Route)))
+	}
+	// The stage the run ran a second time, when there was one (issue #1827):
+	// the record's own count, because a stage that was run twice explains a
+	// duration and a cost that a reader looking at the stage list would
+	// otherwise have to guess at. Nothing else about it is here -- which
+	// stage, and what the agent said, are in the log tail above and in the
+	// run's stages.
+	if d.Retries > 0 {
+		fmt.Fprintf(&b, "Retries:  %d (the model's stream was closed before a stage finished, so that stage was run once more)\n", d.Retries)
 	}
 	if d.Reported > 0 {
 		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)\n", d.Reported, d.Charge)

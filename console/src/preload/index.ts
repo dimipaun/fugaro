@@ -244,6 +244,40 @@ export const BRIDGE_VERSION = 1
  * main process's, and the argv the child is started from is the argv the window
  * drew: a plan that differs from it is refused rather than spawned
  * (`SETTINGS_EDIT_MOVED`, `src/source/source.ts`).
+ *
+ * **The graph plan's CG9a added the thirty-second** (`graph.read` /
+ * `graphRead`, the Graph screen's second read -- `fugaro graph --json`) and left
+ * the other thirty-one exactly where they were. It is **not in 0.119.0** or
+ * 0.120.0 as they shipped: it lands in the release that carries the graph plan's
+ * CG9a. It sits directly under `plan.status`, the same screen's other read, and
+ * it is the read that makes that screen work with **no checkout at all** -- its
+ * one scope today is the coordinator's stored view, read from the project's own
+ * database through the caller's own credential -- where `plan status` reads the
+ * checkout's own `docs/`. Its method takes one argument, the scope, and that is
+ * the narrowest argument on this surface: the pattern is the CLI's own closed
+ * set (`GRAPH_SCOPE_RE`, `src/main/ipc.ts`), and `src/source/cli.ts` refuses a
+ * scope no previous document of this read listed, so a renderer can name only a
+ * scope the document itself offered (F21). The command is a **paid** one
+ * (`ee/graph`, D1362), and its `--watch` stream form is a different argv: it is
+ * not on this surface, and CG9b is the task that will put it there.
+ *
+ * **The managed screens' plan's CM4 added the thirty-third and thirty-fourth**
+ * (`managed.status` / `managedStatus` and `policy.show` / `policyShow`, the
+ * Project tab's managed state and its published policy node -- D1472 to D1477
+ * and D1480 and D1481, and rule 6 carries a row for each) and left the other
+ * thirty-two exactly where they were. They are **not in 0.119.0** or 0.120.0 as
+ * they shipped: they land with CM4, in the release that carries the managed
+ * screens' plan. They sit directly under `coordinator.intents`, the declarations
+ * read, because the three are the same tab's reads of what the project has
+ * stored, and **each declares no argument at all**: neither command has a
+ * positional word, and the two project flags are main-process state rather than
+ * arguments (`takesProject`, rule 3, `src/main/spawn.ts`), so this is the one
+ * pair of rows here whose methods take nothing a renderer can vary. The first
+ * draws the marks and a **bounded** subset of the newest audit record -- never
+ * `argv` (D1476), and the bound is the command's rather than this file's, which
+ * is its whole value. The second is `project policy show --json` and not
+ * `project show --json`, because only the former omits the installation's caps
+ * (F18, D1481).
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -262,6 +296,18 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // default.
   ['runs.summary', 'summaryRuns'],
   ['plan.status', 'planStatus'],
+  // The Graph screen's other read (the graph plan's CG9a): `fugaro graph
+  // --json`, the dependency graph as one versioned document, which needs **no
+  // checkout** -- its scope is the coordinator's stored view, read from the
+  // project's own database -- so an installation with no recorded directory
+  // still draws it. One row here for the reason every other is one: a method
+  // that took the operation as an argument is the shape rule 5 forbids. Its
+  // one argument is the scope, and it is the surface's narrowest: `src/main/
+  // ipc.ts`'s `GRAPH_SCOPE_RE` admits the CLI's own closed set and nothing
+  // else, and `src/source/cli.ts` refuses a scope the previous document did not
+  // list -- so a renderer cannot name one the read never offered (F21). The
+  // `--watch` stream form is a different argv and is not on this surface.
+  ['graph.read', 'graphRead'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -345,6 +391,23 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // comes back as a **declaration** -- the string a writer put in its own
   // record -- never as an identity this process establishes.
   ['coordinator.intents', 'coordinatorIntents'],
+  // The managed state and its audit trail (the managed screens' plan, CM4,
+  // D1472 to D1477): `managed status --json`, one project's two marks and
+  // whether they agree, plus D1476's bounded subset of the newest audit record.
+  // One row for the same reason as every other, and here the reason is at its
+  // plainest: the operation has no argument, so the row declares none -- a
+  // method that took a project, a generation or a day would be naming where
+  // this console reads somebody else's project. The subset is the command's own
+  // bound and never `argv`, and the screen that draws this draws no "revoked"
+  // state, because the CLI persists none (D1475).
+  ['managed.status', 'managedStatus'],
+  // The published policy node (the same plan's CM4, D1480 and D1481):
+  // `project policy show --json`, `{project, policy}` and nothing else. One row,
+  // no argument. It is this row and not `project show --json` because that one
+  // also carries the **installation's** caps, which belong to the Spend screen
+  // (F18); what this document does carry is the project's own `budget` block,
+  // and that is the project's policy rather than a spend figure.
+  ['policy.show', 'policyShow'],
   // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
   // rule 11, D22). One row, like every other: the five fields are the
   // operation's own closed schema. What this method *does* is ask the main

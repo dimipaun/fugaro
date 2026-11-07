@@ -426,6 +426,11 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--pr',
   '--project-wide',
   '--from-store',
+  // `graph`'s own scope selector, and the graph read's argv is its only user:
+  // the value behind it is the closed scope of `src/main/ipc.ts`'s
+  // `graphSource` kind, and every row of the table emits it as a value rather
+  // than as a word of the command.
+  '--source',
   // V2.5.1a's two, and the launch's argv is the only place either can appear:
   // `--task-file -` hands the task over on stdin, and `--run-id` launches under
   // the id the main process generated rather than one the CLI would invent.
@@ -613,6 +618,12 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   gitProvider: 'value',
   installationName: 'value',
   installationCheckout: 'value',
+  // The graph read's scope (CG9a): one word behind `--source`, held to the
+  // renderer's alphabet like every other `value` -- and, unlike every other
+  // `value` here, to a closed grammar as well (`GRAPH_SCOPE_RE`, `ipc.ts`), so
+  // the word that reaches argv is a scope this process built rather than a
+  // string a renderer spelled.
+  graphSource: 'value',
   launchTask: 'stdin',
   launchTitle: 'title',
   launchPlanTask: 'planTask',
@@ -812,6 +823,37 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     words: ['plan', 'status', '--json'],
     takesProject: true,
     args: [{ key: 'all', flag: '--all', kind: 'boolean' }],
+    dirFlag: false,
+  },
+  {
+    // The Graph screen's other read (the graph plan's CG9a): `fugaro graph
+    // --json`, the dependency graph as the versioned document of
+    // `console/docs/json-contract.md` §6.22. It sits beside `plan status`
+    // because it is the same screen's read, and it is the read that makes the
+    // Graph tab work with **no checkout at all**: its one scope today is the
+    // coordinator's stored view, which the CLI reads from the project's own
+    // database, so the child's working directory is never the answer. `dirFlag`
+    // is therefore false, `plan.status`'s row above is the one that needs a
+    // directory, and an installation with no checkout still reads this command.
+    //
+    // **`--source` is the only thing a renderer can influence about this argv,
+    // and it is the one argument here held to a grammar rather than only to an
+    // alphabet**: `src/main/ipc.ts`'s `graphSource` kind admits `all`,
+    // `coordinator` and an `orchestrator:<id>`/`local:<id>` whose id matches the
+    // CLI's own anchored pattern (the plan's H1), it refuses everything else
+    // before a child exists, and `createBoundSource` refuses a value no previous
+    // document of this read listed (F21). A value spelled `-x`, `all --source
+    // local:o1` or `../..` is refused twice over: by that pattern, and by
+    // `isSafeArgumentValue` on the way into the argv -- and the words are the
+    // row's own fixed three, so no other word of the command line is reachable.
+    //
+    // It is §5.1 rule 6's `graph --json` row; `--json` is fixed, and the CLI's
+    // `--watch` form is not on the table at all (CG9b is the row that will
+    // carry it, and it will carry it as its own argv).
+    operation: 'graph.read',
+    words: ['graph', '--json'],
+    takesProject: true,
+    args: [{ key: 'source', flag: '--source', kind: 'value' }],
     dirFlag: false,
   },
   {
@@ -1063,6 +1105,58 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // provider is opened and nothing is sent anywhere.
     operation: 'coordinator.intents',
     words: ['coordinator', 'intents', '--all', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The Project tab's managed state and its audit trail (the managed screens'
+    // plan, CM4; `managed.status`, D1472 to D1477; rule 6's own row). The whole
+    // argv is the row's four words plus the installation's two: `fugaro managed
+    // status` has no positional word of its own, and the operation declares no
+    // argument (`src/main/ipc.ts`), so there is nothing a renderer could fill
+    // and nothing it could steer -- no `--gcp-project`, no `--region`, and no
+    // `--strict`, which is `doctor`'s flag and not this command's.
+    //
+    // It is a read of one project's marks and of the newest audit record, and
+    // it is the read whose *document* is the disclosure bound rather than whose
+    // argv is: what the child prints is the bounded subset D1476 fixes, never
+    // the record's `argv`. Nothing about that bound is this row's to keep -- the
+    // CLI's `--json` is the whole of what a caller may ask for, and the shape it
+    // answers with is the command's own (`console/docs/json-contract.md` §6.21).
+    //
+    // Like every other read here it takes the two project flags (rule 3) and
+    // keeps no cache and no credential: the CLI resolves the project's own
+    // database node through the caller's ADC.
+    operation: 'managed.status',
+    words: ['managed', 'status', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The Project tab's policy notes, the node half (the managed screens' plan,
+    // CM4; `policy.show`, D1480 and D1481; rule 6's own row). The command is
+    // `fugaro project policy show --json`, and the row spells all four of its
+    // words because three of them are the command path: the `project` group's
+    // other words -- `policy publish`, `repos add`, `repos rm` and `sync` -- are
+    // each on this module's own never table, so `project policy show` is the
+    // group's whole reachable argv.
+    //
+    // The command prints `{project, policy}` and nothing else, which is why the
+    // row is this one and not `project show --json`: the latter also carries the
+    // installation's caps, and those are the Spend screen's subject (D1481). The
+    // published node's own `budget` block is the project's own ceiling and is
+    // drawn as the policy it is, which is the Project tab's business rather than
+    // this row's -- and a ceiling is what the reduced mode withholds, so the
+    // operation is on that view's list (`REDUCED_VIEW_OPERATIONS`'s `caps`,
+    // `src/main/ipc.ts`) and not exempt from it.
+    //
+    // It takes no argument either (`src/main/ipc.ts`'s empty `args`): no
+    // positional word, no `--gcp-project` and no `--region`, so no word of the
+    // argv comes from a renderer.
+    operation: 'policy.show',
+    words: ['project', 'policy', 'show', '--json'],
     takesProject: true,
     args: [],
     dirFlag: false,

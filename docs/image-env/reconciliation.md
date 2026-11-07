@@ -49,8 +49,8 @@ The chain, end to end, because the whole design turns on where the image's `ENV`
    shape: gated on a fact, never on a name happening to be there.
 5. **The redaction that follows** is over **values**, registered by `run.addSecret`
    (`internal/runner/runner.go:934-941`) and applied by `agent.NewRedactor` to the transcript and the
-   stage's stderr (`internal/runner/runner.go:3408-3428`), by `agent.Redact` to the PR title and body
-   (`internal/runner/runner.go:4329-4346`), and by `RedactFunc` to logs, reasons and reports (F11).
+   stage's stderr (`internal/runner/runner.go:3488-3508`), by `agent.Redact` to the PR title and body
+   (`internal/runner/runner.go:4544-4561`), and by `RedactFunc` to logs, reasons and reports (F11).
 
 ## 3. Findings
 
@@ -187,7 +187,7 @@ environment.** The agent gets `ANTHROPIC_BASE_URL` and the gateway's per-run tok
 `ANTHROPIC_API_KEY` (`internal/agent/env.go:302-344`); both names are reserved, so an image cannot
 set, shadow or redirect them, and `GatewayVars` is copied **last** (`:218-223`). The real key is in
 the runner and is registered for redaction only (`internal/agent/env.go:148-163`; the gateway
-attaches it upstream, `internal/gateway/forward.go:1128-1136`).
+attaches it upstream, `internal/gateway/forward.go:1163-1171`).
 
 **F13. `doctor`'s one-screen rule is pinned, so the report cannot go on the default screen.** The
 default view is capped at **25 lines** (`internal/cli/doctor_render.go:23-26`) by
@@ -297,7 +297,7 @@ settles.
   consequence of D1372, stated because the stamp depends on it) and every name in
   `FUGARO_SECRET_ENVS` that this run's own workflow did not declare (F8).** *Recommendation.* A
   declared secret still reaches the agent through the existing path only
-  (`internal/runner/runner.go:2310-2312`). *Alternative:* let the workflow's own declarations decide
+  (`internal/runner/runner.go:2314-2316`). *Alternative:* let the workflow's own declarations decide
   (i.e. pass an undeclared secret name only if the image also set it) — refused: at run time nothing
   can tell the image's value from the mounted one, and the mounted one wins in the merged
   environment. *Cost:* an operator who needs a secret-shaped value must use `workflows.*.secrets`,
@@ -428,9 +428,9 @@ What the reading found, and why this block is where it is:
   `docs/periodic-reviews/README.md:125` name as the next free number is **still free on `main`** — no
   decision is written there.
 - **The overlap this round fixes was not with `main`: it is with a claim.**
-  `docs/stateless-orchestrator/reconciliation.md:17` records that "`D1320-D1349`, the block the brief
+  `docs/stateless-orchestrator/reconciliation.md:23` records that "`D1320-D1349`, the block the brief
   named, is therefore free" — the block that design **considered and did not take** (it takes
-  D1220–D1249, `docs/stateless-orchestrator/README.md:40`). A block another document has named, even in
+  D1220–D1249, `docs/stateless-orchestrator/README.md:46`). A block another document has named, even in
   the sentence that declines it, is not a block to write in when a free one exists above it, so this
   design moves rather than arguing the point.
 - **The highest block claimed anywhere, on `main` or in an open pull request, is open PR #1780's
@@ -449,7 +449,7 @@ What the reading found, and why this block is where it is:
 **Checks:** `main`'s register still has **290** as its highest **written** `## Check` section
 (`docs/gcp-live-checklist.md`'s `## Check 290`, the mixed-credentials run), so **291** is free and this
 work claims it (D1381) — the checks
-claimed above it in open work start at **300** (`docs/stateless-orchestrator/implementation-plan.md:131`,
+claimed above it in open work start at **300** (`docs/stateless-orchestrator/implementation-plan.md:139`,
 Checks 300–305 with 306–309 reserved, and #1780's 311–314), and the register's rule is that whichever of
 two claims merges second renumbers itself. The earlier reading said "no open pull request claims 291 or
 above"; that is no longer true of the neighbours, and the claim is unchanged because no open work writes
