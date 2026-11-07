@@ -26,8 +26,8 @@ import (
 // So this file is two things. The first is the register's own shape: each
 // number has one row and one section, the row and the section say the check is
 // the owner's and that it has not been run, and the section says plainly what
-// is not observable on this tree -- the service is wired end to end but refuses
-// every call and ships dormant, so the owner is never asked to run a step that
+// is not observable on this tree -- the service is wired end to end but no step
+// of the check reaches it, so the owner is never asked to run a step that
 // cannot pass. (The issuance audit line is NOT one of the things missing: #902
 // wired it, cascade.go's answer writes it, and what no step may expect yet is a
 // line a served call produced. Three reviews read the wiring as still queued,
@@ -92,16 +92,18 @@ func TestDocsChecklistHasChecks94And95And99(t *testing.T) {
 	// is wired end to end in 0.10.1 (the seven names its module sets are what
 	// `fugaro credentials serve` reads, #903, and since #951 its account holds
 	// its own two-permission database role, so a call's database reads are
-	// admitted) but it ships dormant, and no job is given its address, so
-	// nothing reaches it. The rows first said "the service does not serve yet" and "the
+	// admitted) and it is deployed for every installation -- and what a run
+	// reads is the per-repository switch, so a job is told the address only
+	// where the bundle holds a model credential and that repository's root has
+	// been re-applied with it. The rows first said "the service does not serve yet" and "the
 	// installation module puts three names on the container", which stopped being
 	// true the moment serve was configured from its own deployment -- and a
 	// register that says both things about one service tells the owner two
 	// different stories about whether the check can run.
 	for _, n := range []string{"| 94 |", "| 95 |", "| 99 |"} {
 		row := rows[n]
-		if !strings.Contains(row, "wired end to end in 0.10.1") || !strings.Contains(row, "ships dormant") {
-			t.Errorf("%s's %q row does not state the one consistent truth about the service -- wired end to end in 0.10.1 but dormant, with no job given its address: %q", path, strings.Trim(n, "| "), row)
+		if !strings.Contains(row, "wired end to end in 0.10.1") || !strings.Contains(row, "deployed for every installation") {
+			t.Errorf("%s's %q row does not state the one consistent truth about the service -- wired end to end in 0.10.1 and deployed for every installation, with the per-repository switch what a run reads: %q", path, strings.Trim(n, "| "), row)
 		}
 		// The revision's own state is part of the same truth: the deployment
 		// configures the service now, so a revision starts and refuses every
@@ -170,13 +172,13 @@ func TestCheck94KeepsItsPromises(t *testing.T) {
 	sec := registerSection(t, doc, check94Heading)
 
 	for _, want := range []string{
-		"fugaro update --provision-credentials", // the owner-run init stage this check reads
-		"fugaro update --repo",                  // the repository root that loses the mounts
-		"gcp.CredsBundleSecretID",               // the one container, by the name the code gives it
-		"roles/secretmanager.secretAccessor",    // the one grant on the one container (Q6)
-		"roles/run.invoker",                     // what every workflow job gains instead of the key
-		"secretmanager.googleapis.com",          // the service the DATA_READ config is about
-		"gcloud projects get-iam-policy",        // the config read back BEFORE the log is read
+		"installation stage of an ordinary `fugaro update`", // the stage that deploys it, now the whole upgrade
+		"fugaro update --repo",                              // the repository root that loses the mounts
+		"gcp.CredsBundleSecretID",                           // the one container, by the name the code gives it
+		"roles/secretmanager.secretAccessor",                // the one grant on the one container (Q6)
+		"roles/run.invoker",                                 // what every workflow job gains instead of the key
+		"secretmanager.googleapis.com",                      // the service the DATA_READ config is about
+		"gcloud projects get-iam-policy",                    // the config read back BEFORE the log is read
 		"gcloud projects set-iam-policy",
 		"AccessSecretVersion",        // the entry the log is looked for
 		"fugaro budget kill --all",   // the stop flag the check raises
@@ -264,12 +266,13 @@ func TestCheck99KeepsItsPromises(t *testing.T) {
 		// reads, and since #951 its account holds its own database role, so a
 		// call's database reads are admitted) and the issuance line IS written on
 		// the forward path, so the check must not send a reader looking for
-		// either as missing. What is missing is reach -- no job is given the
-		// service's address -- which is what the section has to name instead.
+		// either as missing. What is missing is reach -- no job of one is told
+		// the service's address, because the switch is off for every repository
+		// there -- which is what the section has to name instead.
 		"The service is wired end to end",
 		"**The issuance audit line on the answer path is wired; what is queued is the served call it would describe.**",
 		"its own custom database role `fugaroCredentialsDatabase`",
-		"no job is given its address",
+		"no job of one is told the address",
 	} {
 		if !strings.Contains(sec, want) {
 			t.Errorf("Check 99's section does not carry %q: the check walks the cascade by hand, clears what it wrote, and says which of its steps the service does not reach yet", want)

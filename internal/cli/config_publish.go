@@ -153,7 +153,7 @@ func newConfigPublishCmd() *cobra.Command {
 			if len(ps) > 0 {
 				return userErr("nothing was published: %s is invalid: %s", file, pluginwire.Printable(layerProblemsText(ps)))
 			}
-			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, at, rec)
+			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, at, rec, nil)
 			if err != nil {
 				// A failure that came after the write means the step APPLIED
 				// and only the record beside it failed: the admission is
@@ -263,7 +263,17 @@ type layerRecord struct {
 // then conditional on THAT read rather than on one taken here, which is what
 // makes the update stage's within-run guard — a publish that landed between
 // its seed and its write — a refusal instead of a silent overwrite.
-func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.ProjectLayer, executable bool, at *layerAt, rec layerRecord) (int64, error) {
+//
+// confirm, when it is not nil, is the caller's own confirmation (the layer
+// stage's: the owner's note on a managed project, the typed name otherwise),
+// asked between the replacement this call prints and the write it makes. The
+// order is the point of the parameter: what stands in for the typed name where
+// the ruling of 2026-11-06 takes it away is the diff above the note — the
+// policy stage's own shape, m.print before policyMigrationConfirm — and the
+// refusals above it (a published layer over the limit, a read that failed, an
+// executable change this door may not publish) are decided before the question
+// rather than after it. The explicit door asks a person nothing and passes nil.
+func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.ProjectLayer, executable bool, at *layerAt, rec layerRecord, confirm func() error) (int64, error) {
 	old, gen, rerr := b.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
 	if at != nil {
 		old, gen, rerr = at.old, at.gen, nil
@@ -310,6 +320,11 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 		}
 		if !executable {
 			return 0, userErr("nothing was published: the layer changes commands or image steps (shown above); review them, then run again with --executable-changes")
+		}
+	}
+	if confirm != nil {
+		if err := confirm(); err != nil {
+			return 0, err
 		}
 	}
 	layerPublishRace(ctx, b)

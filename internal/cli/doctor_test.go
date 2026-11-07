@@ -2467,7 +2467,7 @@ func TestDoctorChecksTheCosignVerifier(t *testing.T) {
 	if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "cosign is not on PATH") || !strings.Contains(c.Fix, "install cosign") {
 		t.Errorf("with no cosign: %+v", c)
 	}
-	if want := "an ordinary fugaro update of an installation that opted in with --provision-credentials"; !strings.Contains(c.Problem, want) {
+	if want := "an installation's ordinary fugaro update (which pins the credentials service it deploys)"; !strings.Contains(c.Problem, want) {
 		t.Errorf("the message does not say %q: an installation that opted in resolves the release's credentials image through this same binary on an upgrade that names no flag, so a message that stops at --base sends the owner into a failing fugaro update from a machine doctor called clean: %+v", want, c)
 	}
 }

@@ -165,6 +165,39 @@ func TestSharedDiffIgnoresPublishedOnlyEntries(t *testing.T) {
 	}
 }
 
+// TestSharedDiffIgnoresARecordItWouldPublishBack: the credentials service's
+// record is carried by MergeShared (mergeRepoRecords), so a published record
+// over a local entry that has none is no difference either — publishing again
+// writes it back unchanged. Without this every machine is told its config
+// differs on `repos` for every repository a teammate applied, with a fix
+// ("fugaro update publishes your local config's installation-wide fields") that
+// changes nothing, which is the nag the mailbox rule below exists to avoid.
+//
+// A record the local entry DOES carry is compared whole, because publishing it
+// is a real change: that is the switch-off travelling.
+func TestSharedDiffIgnoresARecordItWouldPublishBack(t *testing.T) {
+	local := &Config{Version: 1, Name: "aurora", GCPProject: "g1", Region: "us-east5",
+		Repos: map[string]Repo{"a/b": {Provider: "github"}}}
+	pub := local.Shared()
+	pub.Repos = maps.Clone(pub.Repos) // Shared() aliases the map
+	entry := pub.Repos["a/b"]
+	entry.CredentialsServiceReady = RecordSwitch(true)
+	pub.Repos["a/b"] = entry
+	if d := SharedDiff(pub, local); len(d) != 0 {
+		t.Fatalf("a record this machine never wrote counted as a difference: %v", d)
+	}
+	// The other direction: this machine's own record against a published file
+	// that has none (or the other value) is a difference publishing would make.
+	off := &Config{Version: 1, Name: "aurora", GCPProject: "g1", Region: "us-east5",
+		Repos: map[string]Repo{"a/b": {Provider: "github", CredentialsServiceReady: RecordSwitch(false)}}}
+	if d := SharedDiff(pub, off); strings.Join(d, ",") != "repos" {
+		t.Fatalf("a local record the published file does not carry = %v", d)
+	}
+	if !pub.Repos["a/b"].CredentialsServiceOn() {
+		t.Error("SharedDiff cleared the published entry's record")
+	}
+}
+
 // TestSharedDiffIgnoresAnotherMachinesPairing: mailbox.keychain_item is a union
 // too, one level down (MergeShared unions its entries), so the pairing the
 // machine on the next desk recorded is no difference — while a local entry the
