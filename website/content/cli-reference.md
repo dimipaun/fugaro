@@ -3981,6 +3981,15 @@ ones up rather than reading records.
 block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
 writes a file, so a caller can read a report before committing it.
 
+--due is the cadence's own reading: it names the periods that have closed with no
+report under --dir, newest first -- the period that ended most recently is the
+first line, and of two that ended on the same day the longer one comes first --
+and how old the newest report it found is. It reads that folder and nothing else --
+no project, no credential, no bucket -- so it answers in a checkout that has never
+been set up, and it writes nothing: --period, --date, --repo, --stdout and
+--submit-draft have nothing to act on beside it and are refused by name. --json
+prints it as {version, dir, due[], newest}.
+
 --submit-draft prints neither: it prints a redacted learning draft a person can
 file as a "Skill learning" issue, and it sends nothing. The draft leaves the
 repository, so it carries no repository name and no run ID -- a period other
@@ -4002,6 +4011,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--date` | string | "" | no | any day inside the period (YYYY-MM-DD); default: the most recent closed period |
 | `--dir` | string | `docs/fugaro-reviews` | no | the folder the reports live in, relative to the working directory |
+| `--due` | bool | `false` | no | print the closed periods this checkout has no report for; reads the folder and nothing else |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for digest |
 | `--json` | bool | `false` | no | print the summary block and the patterns as JSON |

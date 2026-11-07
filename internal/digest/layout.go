@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The report folder's layout (D321): one file per period under <YYYY>/, named
@@ -82,6 +83,53 @@ func ReportName(rel string) (Dim, string, bool) {
 		return shape.dim, m[2], true
 	}
 	return "", "", false
+}
+
+// PeriodOfKey is the period a report's own key names, in the dimension its
+// file's name gives: PeriodKey the other way round, for a reader that has a
+// folder of files and no dates -- a file's name is the key and nothing else.
+// Its start and end are the ones NewPeriod derives, so the two cannot drift.
+//
+// A key of another dimension's shape, and a key of this one's that names no
+// period (a week a year does not have, 30 February), is no period: the error
+// says so rather than the caller being handed one this package invented.
+func PeriodOfKey(dim Dim, key string) (Period, error) {
+	if d, ok := periodDim(key); !ok || d != dim {
+		return Period{}, fmt.Errorf("%s is not a %s key", key, dim)
+	}
+	date, err := keyDate(dim, key)
+	if err != nil {
+		return Period{}, err
+	}
+	p, err := NewPeriod(dim, date)
+	if err != nil || p.Key != key {
+		return Period{}, fmt.Errorf("%s is not a %s key", key, dim)
+	}
+	return p, nil
+}
+
+// keyDate is a date inside the period a key of this shape names: the day
+// itself, the Monday of the week, the first of the month, the first of
+// January. Whether that date's period is the one the key spells is NewPeriod's
+// answer and not this one's: 2026-W53 is a week because 2026 has one, and
+// 2026-13 is no month because no year has a thirteenth.
+func keyDate(dim Dim, key string) (string, error) {
+	switch dim {
+	case ByDay:
+		return key, nil
+	case ByWeek:
+		// The key is one periodDim matched, so its year and week parse, and
+		// the week Jan 4 falls in is week 1 (ISO 8601).
+		year, week := weekOf(key)
+		jan4 := time.Date(year, time.January, 4, 0, 0, 0, 0, time.UTC)
+		monday := jan4.AddDate(0, 0, -int((jan4.Weekday()+6)%7))
+		return monday.AddDate(0, 0, 7*(week-1)).Format("2006-01-02"), nil
+	case ByMonth:
+		return key + "-01", nil
+	case ByYear:
+		return key + "-01-01", nil
+	}
+	return "", fmt.Errorf("%s is not a period", dim)
 }
 
 // ReadRow is the summary block of one report file at path, and whether it is

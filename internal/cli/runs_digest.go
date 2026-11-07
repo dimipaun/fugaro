@@ -65,6 +65,41 @@ type digestOptions struct {
 	stdout      bool
 	asJSON      bool
 	submitDraft bool
+	due         bool
+}
+
+// digestDueDocVersion is runs digest --due --json's document version. Members
+// are only ever added within a version (D784), so the schema in schemas/
+// pins this number and a reused member name is a new name under a new version.
+const digestDueDocVersion = 1
+
+// digestDueDoc is runs digest --due --json's document: the periods that have
+// closed with no report under Dir, newest first, and the newest report the
+// folder holds. Due is always an array and Newest is null rather than absent,
+// so every member is there on every document and a consumer branches on a
+// value rather than on whether a member it needs was written.
+type digestDueDoc struct {
+	Version int              `json:"version"`
+	Dir     string           `json:"dir"`
+	Due     []digestDueRow   `json:"due"`
+	Newest  *digestDueReport `json:"newest"`
+}
+
+// digestDueRow is one period that is due: the dimension its key belongs to,
+// and the key itself, which is what a caller hands back to --date or greps the
+// folder for.
+type digestDueRow struct {
+	Dim digest.Dim `json:"dim"`
+	Key string     `json:"key"`
+}
+
+// digestDueReport is the newest report the folder holds: the period it covers,
+// and how many whole days old that period is at the clock the reading ran
+// with.
+type digestDueReport struct {
+	Key     string     `json:"key"`
+	Dim     digest.Dim `json:"dim"`
+	DaysAgo int        `json:"days_ago"`
 }
 
 // digestDoc is runs digest --json's document. The summary block and the
@@ -138,6 +173,14 @@ func newRunsDigestCmd() *cobra.Command {
 			"--stdout prints the report instead of writing it, and --json prints the summary\n" +
 			"block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither\n" +
 			"writes a file, so a caller can read a report before committing it.\n\n" +
+			"--due is the cadence's own reading: it names the periods that have closed with no\n" +
+			"report under --dir, newest first -- the period that ended most recently is the\n" +
+			"first line, and of two that ended on the same day the longer one comes first --\n" +
+			"and how old the newest report it found is. It reads that folder and nothing else --\n" +
+			"no project, no credential, no bucket -- so it answers in a checkout that has never\n" +
+			"been set up, and it writes nothing: --period, --date, --repo, --stdout and\n" +
+			"--submit-draft have nothing to act on beside it and are refused by name. --json\n" +
+			"prints it as {version, dir, due[], newest}.\n\n" +
 			"--submit-draft prints neither: it prints a redacted learning draft a person can\n" +
 			"file as a \"Skill learning\" issue, and it sends nothing. The draft leaves the\n" +
 			"repository, so it carries no repository name and no run ID -- a period other\n" +
@@ -160,11 +203,15 @@ func newRunsDigestCmd() *cobra.Command {
 	f.BoolVar(&o.stdout, "stdout", false, "print the report instead of writing it")
 	f.BoolVar(&o.asJSON, "json", false, "print the summary block and the patterns as JSON")
 	f.BoolVar(&o.submitDraft, "submit-draft", false, "print a redacted learning draft for a \"Skill learning\" issue; sends nothing")
+	f.BoolVar(&o.due, "due", false, "print the closed periods this checkout has no report for; reads the folder and nothing else")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
 func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
+	if o.due {
+		return runRunsDigestDue(cmd, o)
+	}
 	if o.stdout && o.asJSON {
 		return userErr("--stdout and --json don't go together")
 	}
@@ -502,4 +549,205 @@ func (f *digestFolder) add(dir, rel, replaced string, skip func(string)) {
 		skip(rel)
 	}
 	f.rows = append(f.rows, row)
+}
+
+// runRunsDigestDue is `runs digest --due`: the cadence's own reading (D962,
+// spec §6). It reads the committed report folder, prints the periods that have
+// closed with no report and the age of the newest report it found, and stops
+// there: no project config is selected, no credential is opened and no bucket
+// is reached, so it answers in a checkout that has never been set up and it is
+// safe in a coding agent's session.
+//
+// The periods are digest.DuePeriods(now), the one computation a report run's
+// own step reads (R0), so what a person is told is missing and what a report
+// run fills in cannot drift apart.
+func runRunsDigestDue(cmd *cobra.Command, o *digestOptions) error {
+	// --due prints no report and writes nothing, so a flag that selects a
+	// report -- its period, its date, its repository, its destination or its
+	// draft -- has nothing to act on here. Each is refused by name rather than
+	// silently ignored, and by Changed rather than by value, so `--period day`
+	// carrying its own default is refused too: the caller asked for something
+	// this read does not do.
+	for _, f := range []struct{ name, why string }{
+		{"period", "--due reports every period that is due, so --period has nothing to select"},
+		{"date", "--due asks today's clock which periods have closed, so --date has nothing to select"},
+		{"repo", "--due reads the folder in this checkout, so --repo has nothing to name"},
+		{"stdout", "--due prints no report, so --stdout has nothing to print"},
+		{"submit-draft", "--due prints no draft; the draft is of a report this call does not write"},
+	} {
+		if cmd.Flags().Changed(f.name) {
+			return userErr("--%s: %s", f.name, f.why)
+		}
+	}
+
+	// An empty --dir names no folder, and this reading is of a folder: it is
+	// refused rather than read as the default one, because a caller who typed
+	// the flag asked about the folder they named and about no other.
+	if o.dir == "" {
+		return userErr("--dir: name the folder the reports are read from, or leave the flag out to read %s", digest.Dir)
+	}
+
+	// The folder is read the way the report writer reads it, so "a report is
+	// here" means the same file in both: D321's shape, and a file whose name
+	// is not that shape is no report at all. A row that exists but whose block
+	// cannot be read still counts as the report it is named for -- the period
+	// has a file -- which is why nothing here needs the summaries. Nothing is
+	// warned about and nothing is written; the folder is untrusted input to
+	// this read, never output.
+	folder, err := digestReportFiles(o.dir, "", nil)
+	if err != nil {
+		return err
+	}
+	now := digestNow().UTC()
+	periods := make([]digest.Period, 0)
+	for _, p := range digest.DuePeriods(now) {
+		if !digestHasReport(folder.rows, p) {
+			periods = append(periods, p)
+		}
+	}
+	// DuePeriods lists the catch-up's days and then the week, month or year
+	// that closed, so a coarser period is not necessarily last: the list is
+	// ordered here, by the day each period ended.
+	sort.Slice(periods, func(i, j int) bool { return digestNewerPeriod(periods[i], periods[j]) })
+	due := make([]digestDueRow, 0, len(periods))
+	for _, p := range periods {
+		due = append(due, digestDueRow{Dim: p.Dim, Key: p.Key})
+	}
+	newest := digestNewestReport(folder.rows, now)
+
+	if o.asJSON {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(digestDueDoc{Version: digestDueDocVersion, Dir: o.dir, Due: due, Newest: newest})
+	}
+	writeRunsDigestDue(cmd.OutOrStdout(), o.dir, due, newest)
+	return nil
+}
+
+// digestHasReport is whether the folder holds a report of this period. The
+// dimension is compared as well as the key: a row's dimension comes from the
+// shape of the file's name, and only a file of this period's own shape is this
+// period's report.
+func digestHasReport(rows []digest.Row, p digest.Period) bool {
+	for _, r := range rows {
+		if r.Key == p.Key && r.Dim == p.Dim {
+			return true
+		}
+	}
+	return false
+}
+
+// digestNewestReport is the report the folder holds that covers the latest
+// period. Rows are in key order rather than period order, so the last row is
+// not the newest report, and the end of a period is the package's own -- a
+// week's last day is not a day a key spells.
+func digestNewestReport(rows []digest.Row, now time.Time) *digestDueReport {
+	var newest digest.Period
+	found := false
+	for _, r := range rows {
+		p, err := digest.PeriodOfKey(r.Dim, r.Key)
+		if err != nil {
+			// A row's own path named its period, so this cannot happen; a file
+			// that somehow reached a row without one is no period to report.
+			continue
+		}
+		if found && !digestNewerPeriod(p, newest) {
+			continue
+		}
+		newest, found = p, true
+	}
+	if !found {
+		return nil
+	}
+	return &digestDueReport{Key: newest.Key, Dim: newest.Dim, DaysAgo: digestDaysAgo(newest.End, now)}
+}
+
+// digestNewerPeriod is whether a is the newer of two periods: the one that
+// ended later, and the longer one where both ended on the same day (a day and
+// the week that closes with it, a day and the month it ends). It orders the
+// due list and picks the newest report, so a rule read in one place is not a
+// rule the other reads differently.
+func digestNewerPeriod(a, b digest.Period) bool {
+	if a.End != b.End {
+		return a.End > b.End
+	}
+	return digestPeriodRank(a.Dim) > digestPeriodRank(b.Dim)
+}
+
+// digestPeriodRank orders the four period dimensions from the shortest to the
+// longest, which is how two periods that ended on the same day are ordered:
+// the year before the month, the month before the week, the week before the
+// day. Anything that is not a period is a day's length here, and no period of
+// another dimension reaches this: DuePeriods writes the four and the layout
+// names the four.
+func digestPeriodRank(dim digest.Dim) int {
+	switch dim {
+	case digest.ByWeek:
+		return 1
+	case digest.ByMonth:
+		return 2
+	case digest.ByYear:
+		return 3
+	}
+	return 0
+}
+
+// digestDaysAgo is how many whole days have passed between a period's last day
+// and now. A period that has not ended yet -- a hand-written file named for a
+// period in the future -- is 0 days old rather than a negative age.
+func digestDaysAgo(end string, now time.Time) int {
+	last, err := time.Parse("2006-01-02", end)
+	if err != nil {
+		return 0
+	}
+	days := int(now.Sub(last) / (24 * time.Hour))
+	if days < 0 {
+		return 0
+	}
+	return days
+}
+
+// writeRunsDigestDue prints the reading for a person: the periods that are
+// due -- the list, or the one line that says there are none -- and the newest
+// report with its age. Every line names the folder it is about, so a caller
+// reading a log knows which checkout answered.
+func writeRunsDigestDue(w io.Writer, dir string, due []digestDueRow, newest *digestDueReport) {
+	name := safetext.Strip(dir)
+	if len(due) == 0 {
+		// One line, and it still says how old the newest report is: a caller
+		// that runs this on a schedule reads one line either way.
+		if newest == nil {
+			fmt.Fprintf(w, "nothing is due under %s: the folder holds no report\n", name)
+			return
+		}
+		fmt.Fprintf(w, "nothing is due under %s: the newest report is %s, %s\n", name, digestPeriodLabel(newest), digestDaysOld(newest.DaysAgo))
+		return
+	}
+	if len(due) == 1 {
+		fmt.Fprintf(w, "1 period is due under %s:\n", name)
+	} else {
+		fmt.Fprintf(w, "%d periods are due under %s:\n", len(due), name)
+	}
+	for _, d := range due {
+		fmt.Fprintf(w, "  %s (%s)\n", d.Key, d.Dim)
+	}
+	if newest == nil {
+		fmt.Fprintln(w, "the folder holds no report")
+		return
+	}
+	fmt.Fprintf(w, "newest report: %s, %s\n", digestPeriodLabel(newest), digestDaysOld(newest.DaysAgo))
+}
+
+// digestPeriodLabel is a report's period as a person reads it: the key and the
+// dimension it belongs to.
+func digestPeriodLabel(r *digestDueReport) string {
+	return fmt.Sprintf("%s (%s)", r.Key, r.Dim)
+}
+
+// digestDaysOld is n whole days as a person reads it.
+func digestDaysOld(n int) string {
+	if n == 1 {
+		return "1 day old"
+	}
+	return fmt.Sprintf("%d days old", n)
 }
