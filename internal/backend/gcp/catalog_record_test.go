@@ -264,10 +264,10 @@ func recordUpload(t *testing.T, key string, curlExit int) ([]string, string, err
 		}
 	}
 	write("gcloud", `#!/bin/sh
-if [ "$*" != "auth print-access-token" ]; then
-  echo "the record step ran gcloud $*" >&2
-  exit 1
-fi
+case "$*" in
+  "auth print-access-token"|"auth print-access-token --quiet") ;;
+  *) echo "the record step ran gcloud $*" >&2; exit 1 ;;
+esac
 printf '%s' '`+fakeToken+`'
 `)
 	write("curl", `#!/bin/sh
