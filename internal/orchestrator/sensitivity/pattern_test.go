@@ -37,9 +37,11 @@ func rowNamed(list []sensitivity.Pattern, name string) (sensitivity.Pattern, boo
 // in the same order and with the same words, so a pattern and a rigor rule are
 // refused for the same reasons: an empty match, one that is not relative to the
 // repository root, one that climbs out of it with a `..` component, and one
-// doublestar cannot read. The other two refusals are not a glob's: a category
-// outside the vocabulary is a label nothing can print, and a match longer than
-// the bound is text a person reads in the record.
+// doublestar cannot read. The remaining refusals are this list's own and are not
+// about a glob's syntax: a category outside the vocabulary is a label nothing
+// can print, a match longer than the bound is text a person reads in the record,
+// and alternation is refused for what it costs the matcher
+// (TestPatternAlternationIsRefused).
 func TestPatternMustBeARelativeDoublestarGlob(t *testing.T) {
 	valid := sensitivity.Pattern{Name: "credentials", Match: "internal/creds/**", Category: sensitivity.Credentials}
 	if got := valid.Validate(); got != "" {
@@ -294,9 +296,9 @@ func TestMatchReportsEachRowOnce(t *testing.T) {
 // generous on purpose — it is there to catch a blow-up, not to measure a
 // machine.
 //
-// It is the family the row does *not* argue about. Alternation is the other
-// one, and it is not cheap: TestMatchCostGrowsWithBraceGroups measures it and
-// Match's doc names it.
+// It is the family of match the row does not argue about. Alternation is the
+// other one, and it is not cheap: TestPatternAlternationIsRefused measures it,
+// and the refusal that measurement earned lives in Validate.
 func TestMatchIsCheapOnAPathologicalPattern(t *testing.T) {
 	const stars = 40
 	pattern := sensitivity.Pattern{Name: "pathological", Match: strings.Repeat("a*", stars) + "b", Category: sensitivity.Guards}
@@ -313,34 +315,39 @@ func TestMatchIsCheapOnAPathologicalPattern(t *testing.T) {
 	}
 }
 
-// TestMatchCostGrowsWithBraceGroups records the one shape of row whose cost the
-// matcher does not bound. doublestar matches `{a,b}` by re-entering its matcher
-// once per alternative with the alternative spliced in, so a row of `{a,aa}`
-// groups that fails costs about four times as much for every two groups added —
-// measured here at 224 µs for ten groups, 3.5 ms for fourteen and 199 ms for
-// twenty, which puts the 33 groups a 200-byte row (MaxPatternMatch) allows at
-// roughly half an hour, and Match runs the matcher once per row and path.
+// TestPatternAlternationIsRefused is the one refusal in Validate that is about
+// what a row costs rather than what it means, and the case for it is measured
+// here rather than asserted by fiat: doublestar matches `{a,b}` by re-entering
+// its matcher once per alternative with the alternative spliced in, so a failing
+// row of `{a,aa}` groups costs about four times as much for every two groups
+// added — 224 µs for ten groups, 3.5 ms for fourteen, 199 ms for twenty, which
+// puts the 33 groups a 200-byte row (MaxPatternMatch) allows at roughly half an
+// hour, for one row and once per path of a change. Validate is where a published
+// row is measured, and SC7 and SC8 have no second check of their own, so the
+// refusal lives there: a list never carries the shape at all.
 //
-// It is asserted rather than fixed because the fix is not this slice's: Validate
-// accepts braces on purpose — the pattern rule is rigor.Area's, braces and all
-// (F21, D1502) — and refusing them here would make one list's vocabulary
-// narrower than the other's. Bounding it belongs to whatever decodes and caps a
-// layer's rows (SC7, SC8), and the case for the refusal is the owner's to take.
-// So the test pins the growth, in the direction that makes noise in the doc
-// visible: if doublestar ever stops re-entering per alternative, this fails and
-// the paragraph above and Match's doc become stale in the same commit.
-func TestMatchCostGrowsWithBraceGroups(t *testing.T) {
+// The growth is still measured, on a row built here rather than loaded, so that
+// the refusal's reason is executable — if doublestar ever stops paying per
+// alternative, this fails and the refusal and its comment can go together. The
+// escape case holds the refusal to the alternation and not to the character.
+func TestPatternAlternationIsRefused(t *testing.T) {
 	unmatched := strings.Repeat("a", 45) + "c"
-	// The groups are `{a,aa}`, six bytes each, so 33 of them plus a literal is
-	// 199 bytes — inside MaxPatternMatch, which is what makes the shape
-	// reachable through the load check rather than a thought experiment. The
-	// path is long enough that no alternative matches it, which is the shape
-	// doublestar pays the most for.
 	row := func(groups int) sensitivity.Pattern {
 		return sensitivity.Pattern{Name: "alternation", Match: strings.Repeat("{a,aa}", groups) + "b", Category: sensitivity.Guards}
 	}
-	if reason := row(33).Validate(); reason != "" {
-		t.Fatalf("a row of 33 alternation groups is refused at load (%s): the shape the cost below is about would then be unreachable, and this test would be arguing about nothing", reason)
+	// 33 groups of `{a,aa}` plus a literal is 199 bytes: inside MaxPatternMatch,
+	// which is what made the shape loadable before this refusal.
+	for _, groups := range []int{1, 33} {
+		if reason := row(groups).Validate(); reason == "" {
+			t.Errorf("a row of %d alternation groups is accepted at load: a bounded row of them costs minutes in one Match call", groups)
+		}
+	}
+	literal := sensitivity.Pattern{Name: "literal-brace", Match: `docs/\{a,b\}/**`, Category: sensitivity.Artifacts}
+	if reason := literal.Validate(); reason != "" {
+		t.Errorf("a row matching a literal brace is refused: %s — the refusal is about alternation, not about the character", reason)
+	}
+	if got := sensitivity.Match([]string{"docs/{a,b}/plan.json"}, []sensitivity.Pattern{literal}); len(got) != 1 {
+		t.Errorf("the row %q did not match the literal path it names: %v", literal.Match, names(got))
 	}
 
 	measure := func(groups int) time.Duration {
@@ -352,7 +359,7 @@ func TestMatchCostGrowsWithBraceGroups(t *testing.T) {
 	}
 	small, large := measure(14), measure(18)
 	if large < 4*small {
-		t.Errorf("eighteen alternation groups cost %s against fourteen groups' %s: doublestar no longer pays per alternative, so Match's doc and this test's comment are stale — write down the new bound", large, small)
+		t.Errorf("eighteen alternation groups cost %s against fourteen groups' %s: doublestar no longer pays per alternative, so the refusal and its comment are stale and can go together", large, small)
 	}
 }
 

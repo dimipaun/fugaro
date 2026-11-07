@@ -123,6 +123,12 @@ var patternNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$`)
 // of the record can see through. A row that matches nothing is *not* refused —
 // the tree may not exist yet, and a project writes its list before its first
 // commit to it; doctor is where that is said once (D1503, D1513).
+//
+// Alternation is the third of this list's own, and it is refused for cost
+// rather than for meaning (see hasAlternation): it is the one shape of match
+// the matcher cannot bound, and this function is the only place a published row
+// is measured — SC7 and SC8 validate a loaded list with these rules and with no
+// second check of their own — so the refusal has to be here or nowhere.
 func (p Pattern) Validate() string {
 	switch {
 	case p.Name == "":
@@ -141,10 +147,47 @@ func (p Pattern) Validate() string {
 		return "is not a valid glob pattern"
 	case p.Match == "*" || p.Match == "**":
 		return "a match must name a tree, not the whole repository: * and ** are the project's always_level_3 setting, and a pattern that matches every path is not a pattern"
+	case hasAlternation(p.Match):
+		return "a match must not contain alternation: each {a,b} costs doublestar a re-entry, so the groups a bounded row allows are minutes of matching — write one row per tree"
 	case !KnownCategory(p.Category):
 		return "category must be one of " + CategoryList()
 	}
 	return ""
+}
+
+// hasAlternation reports whether match holds a `{` doublestar would read as the
+// start of an alternation. It is the one pattern shape refused for what it
+// costs rather than for what it means: doublestar matches `{a,b}` by re-entering
+// its matcher once per alternative with the alternative spliced in, so the work
+// multiplies with every group — measured on this tree, ten `{a,aa}` groups cost
+// 224 µs, twenty cost 199 ms, and the 33 a MaxPatternMatch-long row allows is
+// about half an hour, for one row and once per path of a change.
+//
+// A list a project or a repository publishes is exactly reconciliation §5's
+// threat model, and a hang is not a refusal: the run spends its budget on a
+// glob instead of failing where the row was written. So the refusal is here,
+// where SC7 and SC8 measure a loaded row, because they have no second check of
+// their own.
+//
+// An escaped `\{` is a literal brace to doublestar and is accepted, so the
+// refusal is about the alternation and not about the character. A `{` inside a
+// character class is refused too, though doublestar would read it literally:
+// telling the two apart means re-implementing doublestar's scanner, and
+// refusing a spelling nobody writes is the safe direction where hanging a run
+// is not.
+func hasAlternation(match string) bool {
+	escaped := false
+	for _, r := range match {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '{':
+			return true
+		}
+	}
+	return false
 }
 
 // Match reports which of list's rows a change's paths match: the rules that
@@ -169,11 +212,12 @@ func (p Pattern) Validate() string {
 // explain — the failure mode D1502 refuses at load, kept on the safe side here.
 //
 // The matching is doublestar's, so the cost of a row is doublestar's: linear in
-// the path for the stars and `**`, and not linear for `{a,b}` alternation, which
-// doublestar matches by re-entering its matcher once per alternative — a row of
-// `{a,aa}` groups inside MaxPatternMatch costs exponentially, and the loader is
-// where that is bounded, not the matcher (TestMatchCostGrowsWithBraceGroups,
-// and the note the pull request that carried this slice leaves for the owner).
+// the path for the stars and `**`, and, for the one shape that is not linear,
+// refused where the row is written — `{a,b}` alternation, which Validate declines
+// for exactly this reason (hasAlternation) rather than leaving the matcher to be
+// the bound. Every row a caller matches has passed that check, so the work here
+// is proportional to the paths and the rows, not to what a row's text can make
+// doublestar re-explore.
 func Match(paths []string, list []Pattern) []Pattern {
 	var matched []Pattern
 	for _, row := range list {
