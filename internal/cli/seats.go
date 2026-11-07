@@ -213,9 +213,9 @@ func runSeats(cmd *cobra.Command, o *seatsOptions) error {
 // nobody -- and the count of runs whose task.json could not be used.
 //
 // The read is the runs bucket's own listing plus one object per run, the same
-// shape runs ls has, and it is unbounded the way runs ls is: the window is
-// the caller's, and an estimate that dropped runs silently would be a count of
-// something nobody asked for.
+// shape runs ls has, and it is unbounded the way runs ls is: the window is the
+// ruling's 90 days and takes no flag, and an estimate that dropped runs of it
+// silently would be a count of something nobody asked for.
 //
 // A run whose task.json is ABSENT is not unreadable: nothing recorded a
 // requester for it. A task.json that is there and cannot be used is one run's
