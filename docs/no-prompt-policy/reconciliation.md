@@ -1,6 +1,6 @@
 # No-prompt policy — reconciliation
 
-**Checked against** `origin/main` as of 2026-11-07 (the commit the worktree was cut from). Where this
+**Checked against** `origin/main` as of 2026-11-07, after #1847 (the workspace publish stage) and #1870 (NP3) merged. Where this
 file disagrees with [spec.md](spec.md), this file wins. The spec is the owner's, as received.
 
 The spec is right about the principle and about what is wrong today, and it is written without the code
@@ -16,7 +16,7 @@ defeats the cap). The owner has answered every question below that needed an ans
 
 | Spec concept | What the repo already has |
 | --- | --- |
-| "No command waits for input" | About twenty files of confirmation helpers, value readers and data reads in `internal/cli` (F1); `stdinIsTerminal` decides terminal-or-not per call site, 58 call sites. |
+| "No command waits for input" | About twenty files of confirmation helpers, value readers and data reads in `internal/cli` (F1); `stdinIsTerminal` decides terminal-or-not per call site, 59 call sites. |
 | "Managed projects only" | A managed/unmanaged split: `internal/managed`, `internal/cli/managed_gate.go`, `managed_flag.go` (flagging is a typed-GCP-ID step); an unmanaged project keeps every prompt (F2). |
 | "Agents may run all commands" | `agentMarker` / `initflow.Conditions.Agent`: a coding agent's session confirms nothing (`CanConfirmManaged`); on a managed project `GateConfirms`/`Removes` stand in for the prompt (F3). |
 | "Budget caps replace cost prompts" | `internal/budget` leases **model spend** per run (`evaluate.go`, `ReasonMaxReserve`); `fugaro budget set` raises caps and asks a typed name; an image build is bounded by **`ImageBuilds`** (`internal/managed/builds.go`, `internal/infra/managed/marker.go` `MinImageBuilds`/`MaxImageBuilds`/`DefaultImageBuilds`), a count per `fugaro image refresh` (F5). |
@@ -28,7 +28,7 @@ defeats the cap). The owner has answered every question below that needed an ans
 
 ## 2. Findings
 
-**F1 — The prompts.** `stdinIsTerminal(cmd.InOrStdin())` appears at 58 call sites in `internal/cli`; the
+**F1 — The prompts.** `stdinIsTerminal(cmd.InOrStdin())` appears at 59 call sites in `internal/cli`; the
 confirmation helpers sit in about twenty files: `confirmTyped`/`confirmTypedStrict` (`budget.go`,
 `project_cmd.go`, `project_enroll.go`, `restore.go`, `init_policy_migrate.go`, `init_policy_publish.go`
 `confirmEmptyAllowList`), `confirmRemoval`/`confirmRemovalStrict` (`project_cmd.go`, `upgrade.go`),
@@ -129,7 +129,9 @@ first draft left them unclassified: the **managed configuration rule** in `inter
 cannot redirect an endpoint, project or billing account), the **pre-init refusal** of `backend`, `cloud`,
 `provider_meta`, `ephemeral` and `action` blocks (`TestApplyRefusesTheBlocksThePlanCannotShow`), the refusal of
 **an address named on the command line** (`TestApplyRefusesAnAddressTheCommandLineNamed`), the symlink and
-nesting bounds (`preflight.go`) and the deployer-impersonation checks. All of them stay refusals and are in
+nesting bounds (`preflight.go`), the deployer-impersonation checks, and the marker checks in
+`internal/managed/budget.go` (an **unreadable** marker, an **unknown version**, a marker that names **another
+project**), which must **fail closed**. All of them stay refusals and are in
 `TestIntegrityRefusalsStillRefuse` (plan T9).
 
 **F10 — Everything that leans on the refusal** (these all change or lose their enforcement point under
@@ -181,7 +183,7 @@ weaker record (T2).
 
 **F16 — Every form of loosening a cap, not only `budget set`.** `budget set` raising a cap (`confirmTyped`),
 `budget resume` (`confirmTyped`), the policy/settings ceilings `PerRunUSD`/`PerDayUSD` (the `Typed` class today:
-`settings_write.go`, `update_managed.go`, "a write that loosens a ceiling takes the Typed class (D846)"), and a
+`settings_write.go`, `update_managed.go`, the comment there says a write that loosens a ceiling takes the `Typed` class (D846)), and a
 direct `/config` write by a budget admin through Firebase IAM (`deploy/terraform/gcp/modules/firebase`'s
 `iam.tf`) all raise what runs may spend. D1542 covers the first; the others lose their only fence when the
 `Typed` class goes (T12) with no replacement. Consequence: plan T3 lists every raise form, and **D1552** (answered 2026-11-07) asks what the policy-ceiling loosening becomes.
@@ -207,12 +209,28 @@ on completion, and what happens when the CLI dies mid-build (the lease expires a
 forever). The estimate is client-side only: a direct `gcloud builds submit` bypasses it (T2). Plan T8.
 
 **F20 — Trust probes.** (a) "Owner session" is identified only by environment markers (`internal/agentenv`:
-`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, …); `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT fugaro budget set …` or a
+`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, …); unsetting the markers (`agentenv.Markers` has six, five of them agent markers; `env -u CLAUDECODE -u
+CLAUDE_CODE_ENTRYPOINT …` strips two, a person or loop that strips all five and `CLAUDE_CODE_SSE_PORT` defeats it) or a
 direct `/config` write defeats it, and today `budget set --yes` has **no** agent check at all — D1542 *adds* a
 fence, a courtesy one. (b) Audit-only lets a hostile agent apply an out-of-table IAM grant (the `admins` /
 `budget_admins` tfvars feed `iam.tf`), delete objects outside D1551's list, and then erase the record (F15). (c)
 The lease estimate is client-side and bypassable. These are accepted limits of the owner's rulings and are
 written into the plan's review focus.
+
+**F21 — The `Typed` class fences more than money ceilings.** `update_managed.go` `workspaceStage.gateStep` makes a
+publish that adds a workspace member or allow-list entry (`p.widens`) `Typed` — "never by a mark"; `init_credentials.go`
+(the credentials-service opt-in) and `init_compute.go` are `Typed` too; `update_workspace.go` asks
+(`confirmRemoval`, `confirmTypedStrict`). D1552 replaces only the `PerRunUSD`/`PerDayUSD` fence, so after T12 an agent
+session admits workspace members and switches on credential minting with no fence at all. Consequence: **D1555**
+(answered, recommended-delegated 2026-11-07: the same owner-session-only fence as D1552, for every `Typed` step that
+is not a money ceiling) and plan T15; T12 is blocked on it.
+
+**F22 — The lease must not look like a run.** A build lease under `runs/<slug>/<run>` would be read as a run by every
+record reader (`runstore`, `watch`, the console). It gets its own key (`buildleases/<slug>/<id>`), its own rules path
+and its own writer scoping (F19, T8). Separately, the budget rules admit a writer only with a **run token** whose
+`fs`/`fr` claims match `$slug/$run`; the CLI as a launching identity and the catalog check service account have no
+such token, so T8 must scope their writer and prove with an emulator test that it cannot touch another run's
+reserved/released or `config/caps`.
 
 ## 3. Decisions D1540–D1559
 
@@ -229,20 +247,21 @@ D1540–D1559 are reserved for this work (highest in use on `main` and in open p
 | **D1545** | Do the managed gate's refusals stay? | Refusals stay (admitted plans apply silently and are audited; a plan outside the cover tables fails with the fix named). | Remove the gate entirely (every rule that leans on it loses its enforcement point, F10). | **2026-11-07: NOT the recommendation** — "Remove the gate", scoped by the owner's follow-up to **audit-only**: the plan applies, the cover tables stay as a tripwire that records and warns (`AuditRecord`, `doctor` flags out-of-table grants), nothing is refused. Tensions T2, T3. |
 | **D1546** | Is the meta repo a prerequisite? | No: the printed plan and the audit record are the safety net until it lands. | Prerequisite (delays everything behind a feature with no plan). | **2026-11-07: as recommended** (answered; the independent review wrongly read it as open). |
 | **D1547** | How is "no prompt left" enforced? | A harness that runs every registered command with stdin closed and a short timeout against fakes, plus a static lint failing any confirmation-or-value read of stdin outside the sanctioned helpers (an AST rule, with a data-read exemption). | The closed-stdin test only (misses a prompt in a branch the harness does not reach). | **2026-11-07: as recommended** (answered; the independent review wrongly read it as open). |
-| **D1548** | In observe mode, does an over-cap image build proceed? | Follow the mode, as jobs do: in observe the estimate is recorded and the build proceeds; in enforce it fails with the spec's error. **An absent mode is observe** (`internal/budget/model.go`: "anything else, absent included, behaves as observe"), so a default installation plus D1543 has **unbounded builds**; in observe only `maxReserve` and the kill switches bite. `doctor` says so. | Builds always enforce (a second meaning of "mode"). | **2026-11-07: as recommended.** |
-| **D1549** | Do the integrity refusals stay under audit-only? | They stay: saved plan changed after the gate, creation fact not managed, environment injection, the managed configuration rule (`managed_cover.go`), the pre-init block refusal, an address named on the command line, symlink/nesting bounds, impersonation. Only the content refusals become record-and-warn. | Audit-only for everything. | **2026-11-07: as recommended** (the owner named the first three; the rest are listed by the plan as the same class — **confirm**, T3). |
+| **D1548** | In observe mode, does an over-cap image build proceed? | Follow the mode, as jobs do: in observe the estimate is recorded and the build proceeds; in enforce it fails with the spec's error. **An absent mode is observe** (`internal/budget/model.go`: "anything else, absent included, behaves as observe"), so a default installation plus D1543 has **unbounded builds**; in observe only `maxReserve` and the kill switches bite. `doctor` says so (a check `internal/cli/doctor_build_budget.go`, new, test `TestDoctorWarnsObserveWithUnattendedBuilds`, plan T8). | Builds always enforce (a second meaning of "mode"). | **2026-11-07: as recommended.** |
+| **D1549** | Do the integrity refusals stay under audit-only? | They stay: saved plan changed after the gate, creation fact not managed, environment injection, the managed configuration rule (`managed_cover.go`), the pre-init block refusal, an address named on the command line, symlink/nesting bounds, impersonation, and the marker checks in `internal/managed/budget.go` (unreadable marker, unknown version, another project's: fail closed). Only the content refusals become record-and-warn. | Audit-only for everything. | **2026-11-07: as recommended.** The owner named the saved-plan, creation-fact and environment-injection refusals and then the managed configuration rule, the pre-init block refusal and the address-on-the-command-line refusal; what remains for the owner to read is the symlink/nesting bounds, the impersonation checks and the marker checks (recommended; owner delegated reading to the PR, 2026-11-07). |
 | **D1550** | Where does the build cost rate come from? | A small table in the repo keyed by machine type, an upper bound; no billing call. | A live Cloud Billing lookup (a network read and an IAM grant on the launch path). | **2026-11-07: NOT the recommendation** — the rate is **queried from Cloud Billing at run time**: a new network call and a new IAM grant on the launch path; a missing or unknown price **refuses**, never defaults. Tension T5. |
-| **D1551** | After D1545, what does delete/replace of data-bearing types do? | It stays **refused** for the hard list: state bucket, runs bucket, Firestore, secrets, **and the Realtime Database that holds the budget ledger**; other deletes apply with the delete recorded and warned. | Everything applies. | **2026-11-07: as recommended** (the review adds the RTDB to the list; **confirm** the list). |
+| **D1551** | After D1545, what do delete/replace do for **data-bearing types**? | The owner said *types*, so every entry of `allowedTypes` (`cover.go`) is classified, and a type that is not classified, including one added later, **refuses delete/replace**. Data-bearing (refuse): `google_storage_bucket`, `google_storage_bucket_object`, `google_secret_manager_secret`, `google_firebase_database_instance` (the budget ledger), `google_artifact_registry_repository`, `google_logging_project_bucket_config`, `google_logging_log_view`, `google_service_account` (an identity whose keys and grants are lost), `google_apikeys_key`. Not data-bearing (apply, recorded and warned): the `*_iam_member` types, `google_cloud_run_v2_job`/`_service`, `google_cloud_scheduler_job`, `google_compute_firewall`/`_router`/`_router_nat`, `google_monitoring_*`, `google_billing_budget`, `google_project_iam_custom_role`, `google_project_service`, `google_logging_project_sink`/`_exclusion`, `google_firebase_project`. Secret **versions** and Firestore are not in the table today (Firestore is not deployed), so they are unclassified and refuse. | Everything applies; or a five-name denylist (a new type is open by default). | **2026-11-07: as recommended** (the review replaces the denylist by a classification of every type; recommended; owner delegated reading to the PR, 2026-11-07). |
 | **D1552** | What becomes of the policy/settings ceiling loosening (`PerRunUSD`/`PerDayUSD`, the `Typed` class today) when the class goes? | The same fence as D1542: owner session only, refused with the command in an agent session; the direct `/config` write stays an IAM matter (`budget_admins`). | No fence (the cap is then a courtesy); a typed prompt (contradicts the spec). | **2026-11-07: as recommended** — the same owner-session-only fence as cap raising, so the Typed class can go without leaving a ceiling unfenced. |
 | **D1553** | What does "Fugaro supports managed projects only" do to `setup`, `update` on an existing unmanaged installation, and flagging in an agent session? | `setup` always creates managed; `update` on an unmanaged installation flags it itself when given its budget once (no second command); flagging is refused in an agent session. | `update` refuses until the owner runs `managed flag` (breaks the HARD RULE). | **2026-11-07: as recommended** — setup always creates managed; update flags an unmanaged installation itself given its budget once (no second command, HARD RULE); flagging is refused in an agent session. |
 | **D1554** | Does the catalog check job take a lease or keep a build bound? | A lease through the same estimator with its own per-run cap. | Keep a count for that job only (a second mechanism, "no special handling for builds"). | **2026-11-07: as recommended** — a lease through the same estimator with its own per-run cap, so the nightly job keeps a bound without a second mechanism. |
+| **D1555** | What fences the `Typed` steps that are not money ceilings (workspace member/allow-list publish `p.widens`, the credentials-service opt-in, `init_compute`, workspace removal) once the class is deleted? | The same owner-session-only fence as D1552: refused in an agent session with the owner's command printed; no prompt at the owner's terminal. | No fence (an agent session admits members and switches on credential minting); a prompt (contradicts the spec). | **2026-11-07: as recommended; recommended; owner delegated reading to the PR.** |
 
 ## 4. Decisions the owner did not have to make (stated, not asked)
 
 - Terraform stays non-interactive by the saved-plan route; `-auto-approve` is not added (F6).
 - A refusal printed with the fix is not a prompt; a value reader that fails at once is not a prompt (F14).
 - `fugaro` commands run in a cloud job's container are unchanged: the cloud run never runs `update`/`setup`.
-- The spec's "agents may run all commands" is amended in exactly one place: raising a cap (D1542).
+- The spec's "agents may run all commands" is amended in four places, all one fence: raising a cap (D1542), loosening a policy ceiling (D1552), flagging a project managed (D1553) and the non-money `Typed` steps (D1555) — each refuses in an agent session and prints the owner's command.
 - Release notes carry `### For operators`: "run `fugaro update`" plus what it will now do without asking (the HARD RULE in CLAUDE.md).
 
 ## 5. Open tensions and open items for the owner
@@ -264,8 +283,7 @@ control, and it reviews code, not each plan. Choices: (a) accept, harden the rec
 reads) and rewrite the rules to say the table is a tripwire (T9, T13); (b) keep the refusal for IAM grants only.
 *Held back:* T9 states the owner's answer (audit-only) and writes (a); it needs the owner's word that (a) stands.
 
-**T3 (D1549 and D1551, confirmation).** The owner named three integrity refusals; the plan keeps the whole
-class listed in D1549 and the D1551 hard list including the budget RTDB. The owner is asked to confirm.
+**T3 (D1549 and D1551, confirmation).** The owner named the first six integrity refusals; the plan keeps the whole class listed in D1549, the marker checks of `internal/managed/budget.go`, and the D1551 type classification. The owner delegated reading the rest to the PR (recommended).
 
 **T4 (D1542, D1552 and F20).** The cap fence is as strong as `agentenv`'s markers: a courtesy against the
 accidental loop, not against a hostile one.
@@ -277,6 +295,12 @@ failure mode on every build; **a missing or unknown price refuses** (never defau
 client-side only (F19). *Held back:* T8 cannot start until the grant's shape is reviewed (security-reviewer, in-run
 level 3).
 
+**T6 (D1554 against D1548).** An absent mode is observe, and in observe a lease does not bite: on a default installation
+the nightly catalog check job (D1554's lease) and every other build is **unbounded**; only `maxReserve` and the kill
+switches bite. D1554 gives the job a lease, not a limit. *Choices (the owner's, not made here):* (a) accept; (b) `fugaro
+update` sets the mode to enforce on a managed project; (c) builds enforce regardless of mode (a second meaning of
+"mode"). T10's text no longer says the job is not left unbounded.
+
 **Open items:** none among D1540–D1554 (all answered 2026-11-07); whether `doctor`'s observe warning (D1548) is a warning or an error;
 the meta repo's own design (out of this plan).
 
@@ -286,8 +310,12 @@ the meta repo's own design (out of this plan).
   several that carry no `--quiet`** (for example `gcloud storage objects describe`, `gcloud auth
   print-access-token`), and they run **inside Cloud Build step scripts and the preload pipeline**, which a CLI
   harness cannot exercise; the question is settled by a static scan (T2), not by the harness.
-- That every one of the 58 `stdinIsTerminal` call sites guards a confirmation and not a value or data read; T1's
+- That every one of the 59 `stdinIsTerminal` call sites guards a confirmation and not a value or data read; T1's
   audit classifies each.
 - The Cloud Build machine types and rates (D1550 now queries them from billing).
 - Whether the marker format version can be moved without a console/mobile reader (the console reads the marker
   through the CLI only — not verified).
+- **D1550's Billing grant.** That a Cloud Billing price read needs an IAM grant in `installation/iam.tf` is not
+  verified: list prices need the Cloud Billing API enabled, not a project role; contract prices need a role on the
+  billing account that a project module cannot grant; and the CLI runs on the person's own credentials, so the
+  grant may not be needed at all. T8's first step is a spike that decides the mechanism before any grant is written.

@@ -2,7 +2,7 @@
 
 Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). **Status: plan only;
 nothing is implemented; no task is approved.** Answering a decision is not approving a task: each task below
-needs the owner's explicit go. D1540–D1554 are all answered (2026-11-07).
+needs the owner's explicit go. D1540–D1555 are all answered (2026-11-07; D1552–D1555 as recommended, delegated to the PR).
 Owner answers (2026-11-07) that shaped the plan: D1540 values stay, never hang; D1541 unmanaged refuses and
 names the flag-by-argument command (the shape is D1553: setup always managed; `update` flags an unmanaged installation itself given its budget once; flagging refused in an agent session); D1542 cap raise is owner-session only;
 D1543 builds lease an estimated cost, the count bound goes; **D1544 keep `--ask`** (not the recommendation),
@@ -13,10 +13,7 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
 
 ## Order against open pull requests
 
-#1870 (NP3: image build asks nothing), #1804 (a person at a real terminal on a managed project) and #1891 (CV1:
-the cover-table row for `catalog_check_records`) are **open**; on `main` `image.go` still uses the `Typed`
-confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or absorbs it), T9 after #1891 and
-#1804 merge. Merging them first costs nothing: they remove prompts and add one cover row.
+#1870 (NP3: image build asks nothing) **merged 2026-11-07**. #1804 (a person at a real terminal on a managed project) and #1891 (CV1: the cover-table row for `catalog_check_records`) are **open**; on `main` `cover.go` lacks the row, so T9 starts after both merge. Merging them first costs nothing: they remove prompts and add one cover row.
 
 ## Conventions every part follows
 
@@ -64,20 +61,21 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
 ## Slice 0 — the rail (ships inert)
 
 ### T1 — sanctioned helpers and the static lint
-- **Files:** `internal/cli/askconfirm.go` (new), `internal/cli/valueentry.go` (new),
+- **Files:** `internal/cli/managed_ask.go` (the existing `--ask` logic: **reused and extended, not duplicated** by a new `askconfirm.go`), `internal/cli/valueentry.go` (new),
   `internal/cli/noprompt_lint_test.go` (new).
-- **Interfaces:** `askConfirm(cmd, question)` (reads only under `--ask`, owner terminal, not JSON, not an agent
+- **Interfaces:** `askConfirm(cmd, question)` (a thin entry over `managed_ask.go`) (reads only under `--ask`, owner terminal, not JSON, not an agent
   session) and `readValue(cmd, spec)` (fails at once naming the flag/env when stdin is not a terminal).
   Consumes `stdinIsTerminal`, `agentMarker`.
 - **The lint is an AST rule**, not a grep: it fails on a call that reads a decision from `cmd.InOrStdin()` /
   `os.Stdin` (`bufio.NewReader`, `NewScanner`, `ReadString`, `term.ReadPassword`, `readConfirmLine`) outside the
   two helpers, and it does **not** flag `stdinIsTerminal(cmd.InOrStdin())` (a predicate, 58 sites) nor the named
   data reads (`run.go` `--task-file -`, `exec.go`, `creds.go` `readBundleValue`'s data form), which are an explicit
-  exemption list in the test.
+  exemption list in the test. **The rule follows an alias**: `in := cmd.InOrStdin(); bufio.NewReader(in)` is caught (the AST rule tracks the
+  identifier the stdin expression was assigned to within the function).
 - **Tests:** `TestAskConfirmNeverReadsOutsideAsk`, `TestAskConfirmRefusesInAnAgentSession`,
-  `TestReadValueFailsAtOnceWithNoTerminal`, `TestNoDecisionReadOutsideTheTwoHelpers` (red first: it lists every
+  `TestReadValueFailsAtOnceWithNoTerminal`, `TestAskInAnAgentSessionFailsFastAndDoesNotHang`, `TestLintCatchesAnAliasedStdinReader`, `TestNoDecisionReadOutsideTheTwoHelpers` (red first: it lists every
   current site; the list is the allow-list and **each of T3–T7 deletes its entries**, so it reaches empty only
-  because those tasks own every file in the list below).
+  because those tasks, T15 and T4 own every file in the list: `update_workspace.go` and the `Typed` init stages are T15's, `image_build_managed.go` is T4's, `managed_ask.go` is T1's).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'AskConfirm|ReadValue|NoDecisionRead' -count=1`
 - **Depends on:** none. **Commit:** `cli: the two sanctioned stdin readers and the lint that holds them (T1)`.
 - **Reviewer:** opus + mandatory independent review (agent detection).
@@ -111,10 +109,10 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
 
 ### T4 — image build and refresh: no confirmation, the lease
 - **Files:** `internal/cli/image.go`, `image_build_catalog.go`, `image_refresh.go`, `image_refresh_managed.go`,
-  `image_refresh_steps.go`, their tests.
+  `image_refresh_steps.go`, `image_build_managed.go` (`ImageBuildsBound` use), their tests. **`image_refresh_managed.go` and `image_build_managed.go` lose the `ImageBuildsBound` call here** (moved from T10, so T9 and T10 do not both write `image_refresh_managed.go`).
 - Remove `confirmBuild`/`buildNotConfirmable`; take T8's lease before each submit. **Tests:**
   `TestImageBuildAsksNothing`, `TestImageBuildOverCapFailsWithTheSpecError`.
-- **Depends on:** T1, T8, and #1870 merged (or absorbed). **Reviewer:** opus + mandatory independent review.
+- **Depends on:** T1, T8, (#1870 merged). **Reviewer:** opus + mandatory independent review.
 - **Commit:** `image: a build asks nothing and leases its cost (T4)`.
 
 ### T5 — accounts, settings, config, secrets removal, models, workspace, upgrade, delete
@@ -131,9 +129,10 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
 ### T6 — managed flag, unflag, project commands, and the unmanaged refusal (D1541, D1553)
 - **Files:** `internal/cli/managed_flag.go`, `managed_unflag.go`, `project_cmd.go`, `project_enroll.go`,
   `restore.go`, `managed_require.go` (new), `root.go` (a command annotation), tests.
+- **Self-flag in `update`/`setup`:** new `internal/cli/update_selfflag.go` (new) and the single hook in `init_stages.go` (T7 does not own `init_stages.go`; `init.go` stays T7's alone, so T6 and T7 share no file at level 1). In an agent session the self-flag refuses even when `--budget` is passed (consent by flag is only as strong as the agent markers, F20).
 - The flag command takes the GCP project ID as an argument; an unmanaged project's mutating command refuses
   naming it; `setup`/`update` behaviour and flagging in an agent session are D1553.
-- **Tests:** `TestUnmanagedProjectRefusesAndNamesTheFlagCommand`, `TestFlagTakesTheProjectIDAsAnArgument`,
+- **Tests:** `TestUnmanagedProjectRefusesAndNamesTheFlagCommand`, `TestFlagTakesTheProjectIDAsAnArgument`, `TestUpdateSelfFlagRefusesInAnAgentSession`,
   `TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand` (HARD RULE).
 - **Depends on:** T1; D1553. **Reviewer:** opus + mandatory independent review (the one-way door).
 - **Commit:** `managed: flag by argument; unmanaged projects refuse with the command (T6)`.
@@ -151,19 +150,18 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
 
 ### T8 — the estimator, the Billing read, and the lease (D1543, D1548, D1550, F19)
 - **Files:** `internal/budget/buildcost.go` (new), `internal/budget/buildcost_test.go` (new),
-  `internal/budget/lease_build.go` (new), `internal/cli/image_cost.go` (new), the Firebase rules under
+  `internal/budget/lease_build.go` (new), `internal/cli/image_cost.go` (new), `internal/cli/doctor_build_budget.go` (new; the observe-mode warning, D1548), the Firebase rules under
   `deploy/terraform/gcp/modules/firebase` and `internal/budget/rules` (the build lease path) with their emulator
-  tests, `deploy/terraform/gcp/modules/installation/iam.tf` (the Billing read grant), golden plans.
-- **The price is queried from Cloud Billing at run time** (D1550); **a missing or unknown price refuses**,
-  and so does a machine type absent from the build config; local config can supply neither. The lease: a node
-  `runs/<slug>/<run>` written by the CLI as the launching identity, counted against the per-run cap, settled
+  tests, `deploy/terraform/gcp/modules/installation/iam.tf` (only if the spike finds a grant is needed), golden plans, **and the rules path the catalog check job's lease uses (T10 consumes it, so it is written here)**.
+- **First a spike** decides the Billing mechanism (list prices need the API enabled, not a project role; contract prices need a billing-account role a project module cannot grant; the CLI runs on the person's credentials): the grant in `iam.tf` is **UNVERIFIED** until then. **The price is queried from Cloud Billing at run time** (D1550); **a missing or unknown price refuses**,
+  and so does a machine type absent from the build config; local config can supply neither. The lease: a node under its **own key** (`buildleases/<slug>/<id>`, never `runs/`, so no record reader mistakes it for a run), with **its own writer scoping** for the CLI and the catalog check service account (the rules today admit only a run token with `fs`/`fr` claims matching `$slug/$run`), counted against the per-run cap, settled
   on completion, **reclaimed if the CLI dies mid-build**; the rules change carries a **generation bump** and an
   `update` migration (HARD RULE) with a test that an installation at the previous generation converges. The
   over-cap error names the estimate, the cap, what is spent (jobs plus settled builds), the one command, and
   exits non-zero. Observe mode records and proceeds (D1548).
 - **Tests:** `TestBuildCostIsAnUpperBound`, `TestUnknownBillingPriceRefuses`, `TestOverCapErrorNamesEstimateCapSpentAndTheCommand`,
   `TestObserveModeRecordsAndProceeds`, the rules' emulator test `TestBuildLeasePath`,
-  `TestPreviousRulesGenerationConvergesOnUpdate`, `TestAnAbandonedBuildLeaseIsReclaimed`.
+  `TestPreviousRulesGenerationConvergesOnUpdate`, `TestAnAbandonedBuildLeaseIsReclaimed`, `TestBuildLeaseWriterCannotTouchAnotherRunsReservedOrCaps` (emulator), `TestDoctorWarnsObserveWithUnattendedBuilds`.
 - **Depends on:** T1; the owner's review of the grant's shape (T5 of the reconciliation). **Reviewer:** opus +
   mandatory independent review (IAM, rules, money). **Commit:** `budget: an image build leases its estimated cost (T8)`.
 
@@ -181,10 +179,9 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
   configuration rule in `managed_cover.go` (no provisioner, only Google providers, no data source, no upload
   from a local path, no provider endpoint/project/billing redirect); the pre-init refusal of
   `backend`/`cloud`/`provider_meta`/`ephemeral`/`action` blocks; an address named on the command line; the
-  symlink and nesting bounds; the deployer impersonation checks. D1551's hard list (state bucket, runs bucket,
-  Firestore, secrets, the budget RTDB) stays refused. `managedAsk` is deleted.
+  symlink and nesting bounds; the deployer impersonation checks; **the marker checks of `internal/managed/budget.go`** (unreadable marker, unknown version, another project's marker: fail closed). **D1551:** every entry of `allowedTypes` is classified data-bearing or not (the table in the reconciliation); data-bearing and **unclassified** types refuse delete/replace, including a type added later. `managedAsk` is deleted.
 - **Tests:** `TestOutOfTableGrantAppliesAndIsRecorded`, `TestIntegrityRefusalsStillRefuse`,
-  `TestHardListDeleteStillRefuses`, `TestDoctorFlagsAnOutOfTableGrant`, `TestAuditRecordBucketIsVersioned`.
+  `TestEveryAllowedTypeIsClassifiedDataBearingOrNot`, `TestAnUnclassifiedTypeRefusesDelete`, `TestMarkerChecksFailClosed`, `TestDoctorFlagsAnOutOfTableGrant`, `TestAuditRecordBucketIsVersioned`.
 - **Depends on:** T2, T4, T5, T7 (the shared files above), #1891 and #1804 merged; the owner's word on T2 of the
   tensions. **Reviewer:** opus + mandatory independent review at level 3; its PR body carries the tension.
 - **Commit:** `managed: the gate records and warns on content; the integrity refusals stay (T9)`.
@@ -192,14 +189,24 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
 ### T10 — remove the build-count bound (D1543, D1554)
 - **Files:** `internal/managed/builds.go`, `internal/infra/managed/marker.go`, `read.go`,
   `internal/infra/catalogcheck.go`, `internal/cli/image_check_catalog.go`,
-  `deploy/terraform/gcp/modules/installation/catalogcheck.tf` (if the job's account needs the lease path),
-  the schemas the marker/spec shape appears in, tests.
-- Marker version bump; `fugaro update` converges an installation at the previous version; **the catalog check
-  job takes a lease through T8's estimator with its own per-run cap** (D1554), so removing the count
-  does not leave it unbounded. **Tests:** `TestPreviousMarkerVersionConvergesOnUpdate`,
-  `TestCatalogCheckJobLeasesEachBuild`.
-- **Depends on:** T4, T8. **Release:** `### For operators`: "run `fugaro update`". **Reviewer:** opus + review.
-- **Commit:** `managed: the image build count is gone; update migrates the marker (T10)`.
+  `deploy/terraform/gcp/modules/installation/catalogcheck.tf` (if the job's account needs the lease path T8 wrote), the
+  schemas the marker/spec shape appears in, tests. **Not** `image_refresh_managed.go` (T4 removed that call).
+- Marker version bump; `fugaro update` converges an installation at the previous version; the catalog check job
+  takes a lease through T8's estimator with its own per-run cap (D1554). **Stated plainly: on a default installation the mode is
+  observe, a lease does not bite in observe, so the nightly job and every build are unbounded there; this is the owner's
+  tension T6, not fixed here.** **Tests:** `TestPreviousMarkerVersionConvergesOnUpdate`, `TestCatalogCheckJobLeasesEachBuild`.
+- **Depends on:** T4, T8, **T9** (golden plans and installation-module files are shared). **Release:** `### For operators`:
+  "run `fugaro update`". **Reviewer:** opus + review. **Commit:** `managed: the image build count is gone; update migrates the marker (T10)`.
+
+### T15 — the non-money `Typed` steps get the owner-session-only fence (D1555)
+- **Files:** `internal/cli/update_managed.go` (`workspaceStage.gateStep`, the `p.widens` step), `update_workspace.go`
+  (`confirmRemoval`, `confirmTypedStrict`), `init_credentials.go`, `init_compute.go`, their tests.
+- Each of these steps refuses in an agent session with the owner's command printed and asks nothing at the owner's
+  terminal. **Tests:** `TestWorkspaceMemberPublishRefusesInAnAgentSession`, `TestCredentialsOptInRefusesInAnAgentSession`,
+  `TestComputeStageRefusesInAnAgentSession`, `TestWorkspaceRemovalAsksNothingAtATerminal`.
+- **Depends on:** T1, T3 (`update_managed.go` is T3's at level 1, T9's at level 3). **Reviewer:** opus + mandatory
+  independent review (it is the fence that replaces `Typed` for membership and credential minting).
+- **Commit:** `cli: membership, credential minting and compute are owner-session-only (T15)`.
 
 ## Slice 2 — the flags, the class system, the words
 
@@ -210,7 +217,7 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
   `docs/gcp-live-checklist.md` (31 mentions), `docs/design/managed-projects.md`, `managed-projects-spec.md`,
   `docs/design/image-refresh.md`, `docs/managed-agent-converge/*`, `docs/console-managed-screens/*`,
   `SECURITY.md` (flag text only), other docs the grep finds.
-- **Depends on:** T3, T4, T5, T6, T7, T9, T10. **Tests:** plugin tests, console `npm run typecheck` and
+- **Depends on:** T3, T4, T5, T6, T7, T9, T10, T15. **Tests:** plugin tests, console `npm run typecheck` and
   `npm run test:unit -- --maxWorkers=2`, `go test ./internal/cli -run Docs`. **Reviewer:** opus + mandatory
   independent review (plugin skills, console spawn allow-list). **Commit:**
   `cli: --yes and --non-interactive are gone; --ask stays; skills, docs and console follow (T11)`.
@@ -220,11 +227,11 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
   (`agentMarker` stays), the last callers.
 - Remove `Typed`/`YesOrTyped`, `CanConfirmManaged`, `GateConfirms`, `ConfirmsByGate`, `Managed.Covers`, D1026's
   pin; keep `NeedsTerminal`/`Conditions` as far as value entry and `--ask` need them.
-- **Depends on:** T11. **Reviewer:** opus + mandatory independent review. **Commit:**
+- **Depends on:** T11 and **T15** (nothing deletes the `Typed` class while a step still relies on it). **Reviewer:** opus + mandatory independent review. **Commit:**
   `initflow: the confirmation classes are gone (T12)`.
 
 ### T13 — the policy in CLAUDE.md, the rules and SECURITY.md
-- **Files:** `CLAUDE.md`, `.claude/rules/terraform.md`, `.claude/rules/credentials-service.md`, `SECURITY.md`
+- **Files:** `internal/cli/docs_no_prompt_policy_test.go` (added with this PR: every D answered, in range D1540–D1559, unique), `CLAUDE.md`, `.claude/rules/terraform.md`, `.claude/rules/credentials-service.md`, `SECURITY.md`
   (the gate text; T11 owns its flag text and lands first), `website/content/security.md` (`npm run check`), the
   status line of this folder.
 - States the policy and points here as the authority; rewrites the cover-table rule as a tripwire **only after the
@@ -245,30 +252,35 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
 | Level | Tasks (concurrent) |
 | --- | --- |
 | 0 | T1, T2 |
-| 1 | T3, T6 (needs D1553), T7, T8 (needs the grant review) |
-| 2 | T4 (after T8, #1870), T5 (after T3) |
-| 3 | T9 (after T2, T4, T5, T7, #1891, #1804) , T10 (after T4, T8) |
-| 4 | T11 |
-| 5 | T12, T13, T14 |
+| 1 | T3, T6, T7, T8 (needs the Billing spike) |
+| 2 | T4 (after T8), T5 (after T3), T15 (after T3) |
+| 3 | T9 (after T2, T4, T5, T7, #1891, #1804) |
+| 4 | T10 (after T4, T8, T9) |
+| 5 | T11 |
+| 6 | T12 (after T11, T15), T13, T14 |
 
-**Critical path:** T8 → T4 → T9/T10 → T11 → T12. T9 is also gated by the owner's word on T2 of the tensions.
+**Critical path:** T8 → T4 → T9 → T10 → T11 → T12. T9 is also gated by the owner's word on T2 of the tensions.
 
 ### Shared-files table (no level holds two writers of one file)
 
 | File | Writers (level) |
 | --- | --- |
-| `budget.go`, `update_managed.go` | T3 (1), T9 (3: the gate call), T11 (4: flags) |
+| `budget.go`, `update_managed.go` | T3 (1), T9 (3: the gate call), T11 (5: flags) |
 | `settings_write.go` | T3 (1), T5 (2) |
-| `accounts_rm.go`, `accounts_managed.go`, `config_publish.go` | T5 (2), T9 (3), T11 (4) |
-| `image*.go`, `image_refresh_managed.go` | T4 (2), T9 (3), T10 (3: `image_check_catalog.go` only), T11 (4) |
-| `init*.go`, `init_retire.go`, `pair.go`, `secrets.go`, `creds.go`, `billing_prompt.go` | T7 (1), T9 (3: `init_retire.go` gate call), T11 (4) |
-| `managed_flag.go`, `managed_unflag.go`, `project_cmd.go`, `project_enroll.go`, `restore.go`, `root.go` | T6 (1), T11 (4) |
+| `accounts_rm.go`, `accounts_managed.go`, `config_publish.go` | T5 (2), T9 (3), T11 (5) |
+| `image*.go`, `image_refresh_managed.go`, `image_build_managed.go` | T4 (2), T9 (3: the gate call in `image_refresh_managed.go`), T11 (5) |
+| `image_check_catalog.go`, `internal/infra/catalogcheck.go`, installation-module files, golden plans | T8 (1), T9 (3), T10 (4) |
+| `update_workspace.go`, `init_credentials.go`, `init_compute.go`, `update_managed.go` | T3 (1: ceiling), T15 (2), T9 (3: gate call), T11 (5: flags) |
+| `managed_ask.go`, `askconfirm`-surface | T1 (0) |
+| `update_selfflag.go` (new), `init_stages.go` | T6 (1) |
+| `init*.go`, `init_retire.go`, `pair.go`, `secrets.go`, `creds.go`, `billing_prompt.go` | T7 (1), T9 (3: `init_retire.go` gate call), T11 (5) |
+| `managed_flag.go`, `managed_unflag.go`, `project_cmd.go`, `project_enroll.go`, `restore.go`, `root.go` | T6 (1), T11 (5) |
 | `managed_gate.go`, `managed_apply.go`, `doctor_managed_audit.go`, `internal/managed/{converge,plan,apply,audit}.go`, `cover.go`, `guard.go` | T9 (3) |
 | `internal/managed/builds.go`, `internal/infra/managed/*`, `internal/infra/catalogcheck.go` | T10 (3) |
 | `internal/budget/*`, Firebase rules, `iam.tf` (billing grant) | T8 (1) |
-| `internal/initflow/stage.go` | T9 (3: `Removes` only), T12 (5) |
-| `docs/gcp-live-checklist.md`, `SECURITY.md` flag text, plugin skills, console `spawn.ts`/`confirm.ts` | T11 (4); T14 rows and T13 gate text land at level 5 |
-| `CLAUDE.md`, `.claude/rules/*` | T13 (5) |
+| `internal/initflow/stage.go` | T9 (3: `Removes` only), T12 (6) |
+| `docs/gcp-live-checklist.md`, `SECURITY.md` flag text, plugin skills, console `spawn.ts`/`confirm.ts` | T11 (5); T14 rows and T13 gate text land at level 5 |
+| `CLAUDE.md`, `.claude/rules/*` | T13 (6) |
 
 Where two tasks write one file they are at different levels, and the later writer's description says it changes
 only its own part. Sequential only where a dependency forces it: the estimator before the build command, the
@@ -278,7 +290,7 @@ build command before the marker change, every caller before the flags, every fla
 
 | Check | Measures | Run by |
 | --- | --- | --- |
-| 380 | `fugaro update` on the dev project with stdin closed finishes without a prompt | owner, T14 script |
+| 380 | `fugaro update` on the **sandbox project** (`edgeappinc/fugarosandbox`, never `belong`) with stdin closed finishes without a prompt | owner, T14 script |
 | 381 | an image build over the cap fails with estimate, cap, spent and the command, non-zero | owner, T14 script |
 | 382 | a coding-agent session's `budget set` raise refuses and prints the command | owner, T14 script |
 | 383–389 | reserved | — |
