@@ -115,8 +115,9 @@
 // no check on the built page can hold it, and it is a promise to a subscriber rather than a
 // note: a document still saying "latest release only" is a false claim about what a licence
 // buys. The pin therefore reads the document and the generated file it is mirrored into — the
-// plan's red step names both, and the site ships the generated one, which no Go test in
-// `npm run check` would notice left behind.
+// plan's red step names both — because the site ships the generated one and `npm run check`
+// runs no test that reads its words: the Go suite that holds the copy to the document byte for
+// byte (`internal/cli/docs_website_security_test.go`) is not part of it.
 //
 // **Two readers, and why the text is read the hard way** (round 3 of the review, findings 3 and
 // 4). The text of the page is read with `test/lib/html.mjs`'s `verbatimText`, which invents
@@ -1974,8 +1975,8 @@ test('the supported-versions pin refuses the rule it replaced', () => {
   )
 
   // And the generated file is held on its own: a document regenerated into the site while the
-  // copy under `content/` was left behind is the drift the plan's red step names, and no Go
-  // test in `npm run check` reads that file.
+  // copy under `content/` was left behind is the drift the plan's red step names, and no test
+  // `npm run check` runs would read that copy's words.
   assert.match(
     supportedVersionFailures(current, restored).join('\n'),
     /website\/content\/security\.md's "Supported versions" section still says/,
