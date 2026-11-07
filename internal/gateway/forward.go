@@ -723,7 +723,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	stopHalt := context.AfterFunc(s.hctx, cancel) // so does an external halt
 	defer stopHalt()
 
-	up, sent, err := s.upstreamRequest(ctx, r, rt, body)
+	first, firstSent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
 		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
 			// C1.15 (service.go), D143: a service call this job cannot
@@ -739,7 +739,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())
 		return zeroOutcome(p.model, false)
 	}
-	resp, err := s.client.Do(up)
+	up, sent, resp, err := s.sendRetryingOnce(ctx, first, firstSent, func() (*http.Request, *atomic.Bool, error) {
+		return s.upstreamRequest(ctx, r, rt, body)
+	}, p.model)
 	if err != nil {
 		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
 			// C1.15 (service.go), D143: an unreachable credentials service
@@ -895,6 +897,113 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		s.logStreamCut(p.model, resp.StatusCode, tee, o.charge.streamCut, time.Since(start))
 	}
 	return o
+}
+
+// upstreamRetryDelay is how long the one retry of a call waits before it is
+// sent again. It is short on purpose: what it steps over is a connection that
+// died, or an upstream that answered a failure before the model began, and
+// not an outage -- an outage is Claude Code's own retry (a fresh request,
+// with a fresh reservation) and the runner's retry of a whole stage. It is a
+// var so the tests do not spend it.
+var upstreamRetryDelay = 250 * time.Millisecond
+
+// sendRetryingOnce sends up, the call's first attempt, and sends it once more
+// when that attempt failed before any byte of an answer had reached the
+// agent: a transport error, or an upstream failure status (5xx) or its rate
+// limit (429) -- upstreamRetryReason. Nothing the agent has seen is replayed,
+// because nothing had been sent to it: it is the one thing that makes the
+// retry safe, and it is why the failed answer is still this gateway's to
+// discard rather than the agent's to read. Every other failure is kept: a 4xx
+// other than 429 is an answer about the request or the credential, which the
+// same request sent again would get again, and a failure after a byte has
+// reached the agent is a stream the agent has already read.
+//
+// The retry is the same call: next builds it again -- the same route, the
+// same credential and the same body, which this gateway holds in memory for
+// exactly this and never logs -- and the reservation is untouched, because
+// the whole retry happens inside the one client request whose settlement
+// handleMessages owns. Nothing here reserves, releases or settles: the call
+// settles once, from the attempt that answered.
+//
+// A service upstream (C1.15, KindService) is not retried here: the service
+// retries its own calls across the credentials it holds, inside the one
+// answer it gives this gateway, and D143 makes an unreachable service a halt
+// rather than a call this gateway sends again.
+//
+// What the narrow form costs, stated: a transport error may have reached an
+// upstream that then generated and answered nothing, and the provider's
+// charge for it is in no ledger here. That is the one case this gateway
+// cannot tell from a request that never arrived, and the alternative --
+// charging the reservation twice for one client request -- would bill the run
+// for an answer no one received.
+//
+// It returns the attempt that answered, or the last one that failed, exactly
+// as a single attempt's would be: the request the caller reads the credential
+// and the run's identity off, the flag that says whether anything may have
+// reached the upstream, the response, and the error.
+func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string) (*http.Request, *atomic.Bool, *http.Response, error) {
+	resp, err := s.client.Do(up)
+	reason, status := upstreamRetryReason(resp, err)
+	if reason == "" || s.o.Upstream.Kind == KindService || ctx.Err() != nil {
+		return up, sent, resp, err
+	}
+	if !sleepUpstreamRetry(ctx) {
+		return up, sent, resp, err // cancelled while waiting: the failed attempt is the call's answer
+	}
+	if resp != nil {
+		// The failed attempt's answer is the gateway's to discard: not one
+		// byte of it reached the agent, and it is read no further.
+		_ = resp.Body.Close()
+	}
+	nup, nsent, nerr := next()
+	if nerr != nil {
+		// A call the gateway cannot build again (a Vertex token that went
+		// away between the two attempts) is not sent again: the attempt that
+		// failed is the call's answer, and the second build's failure is what
+		// it is answered with.
+		return up, sent, nil, nerr
+	}
+	s.logUpstreamRetry(model, reason, status, 1)
+	resp, err = s.client.Do(nup)
+	return nup, nsent, resp, err
+}
+
+// upstreamRetryReason is why an attempt may be sent again, from a closed set:
+// "" for an attempt whose answer the agent can be handed, "transport" for one
+// that got no status at all, and "status" with the upstream's own status for
+// a 5xx or a 429 -- the upstream failed, or is asking for the call to come
+// back later, and neither is a fact about the work.
+func upstreamRetryReason(resp *http.Response, err error) (string, int) {
+	switch {
+	case err != nil:
+		return "transport", 0
+	case resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode/100 == 5):
+		return "status", resp.StatusCode
+	}
+	return "", 0
+}
+
+// sleepUpstreamRetry waits out upstreamRetryDelay, and reports false when the
+// call was cancelled first -- the client went away, or Close or a halt ended
+// the run -- in which case no retry is made.
+func sleepUpstreamRetry(ctx context.Context) bool {
+	t := time.NewTimer(upstreamRetryDelay)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// logUpstreamRetry says the gateway sent a call a second time, and why the
+// first attempt was not the agent's. The retry count is here and nowhere
+// else, and the line carries no header, no credential and no byte of the
+// request or of the answer.
+func (s *Server) logUpstreamRetry(model, reason string, status, retry int) {
+	s.log.Warn("budget: call retried", "stage", s.stageName(), "model", logValue(model),
+		"retry", retry, "reason", reason, "status", status, "delay_ms", upstreamRetryDelay.Milliseconds())
 }
 
 // logStreamCut warns that a streamed response ended before its terminal
@@ -1120,7 +1229,7 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 		return nil, nil, errors.New("the upstream URL is invalid")
 	}
 	up.ContentLength = int64(len(body))
-	up.GetBody = nil // never replayed: the gateway never retries
+	up.GetBody = nil // the transport never replays the body: the gateway's one retry builds its own request from the body it holds
 	if rt.provider != nil {
 		// Only what the provider needs: no cookies, no session or agent
 		// IDs, no SDK telemetry.
