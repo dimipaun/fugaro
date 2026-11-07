@@ -2,14 +2,18 @@
 /**
  * website/src/components/Changelog.astro — the release entries (website plan, W1.9).
  *
- * One entry per release, newest first: the release's end-user summary, then the lines W0.6's
- * `src/lib/changelog.mjs` read out of `docs/releases/vX.Y.Z.md` at build time, in a block the
- * reader opens. The component writes no prose of its own: the tag comes from the filename,
- * the summary from `website/data/release-summaries.yaml`, the lines and the sections are the
- * file's own, and the only words it adds are the notes block's label and the "not yet
- * released" marker. Every heading inside an entry is a `###` heading the file itself carries
- * — `### For operators`, `### Known limits` — printed as the heading element it is, so a
- * section the format allows is a section the page renders.
+ * One entry per release, newest first — the three newest, which is what the page passes it
+ * (D1640) — and under them the page's own words: the link to the releases it does not render,
+ * and one line for each of the two streams beside the CLI (D1641, D1644, D1648). An entry is
+ * the release's end-user summary, then the lines W0.6's `src/lib/changelog.mjs` read out of
+ * `docs/releases/vX.Y.Z.md` at build time, in a block the reader opens. The component writes
+ * no prose of its own: the tag comes from the filename, the summary from
+ * `website/data/release-summaries.yaml`, the lines and the sections are the file's own, the
+ * app's line is that app's own summaries file's, and the only words it adds are the notes
+ * block's label, the "not yet released" marker and the three labels above. Every heading inside
+ * an entry is a `###` heading the file itself carries — `### For operators`, `### Known limits`
+ * — printed as the heading element it is, so a section the format allows is a section the page
+ * renders.
  *
  * Five decisions are worth stating rather than leaving in the code:
  *
@@ -98,9 +102,40 @@ interface Props {
    * so the page builds the URL and never types it.
    */
   repository: string
+  /** The desktop console's latest release, or null while it has none (D1641). */
+  consoleRelease: StreamRelease | null
+  /** The phone app's latest release with its sentence, or null while it has none (D1644). */
+  mobileRelease: AppLine | null
 }
 
-const { entries, summaries, repository } = Astro.props
+/** One of the two streams beside the CLI: its latest release, and the tag that release carries. */
+interface StreamRelease {
+  /** The version the line names: `0.120.0`. */
+  version: string
+  /** The tag its own notes and its GitHub release carry: `console-v0.120.0`. */
+  tag: string
+}
+
+/**
+ * The phone app's line: its latest release, and the sentence the app's own summaries file
+ * carries for it (`website/data/mobile-release-summaries.yaml`). The sentence is the whole of
+ * what the line says, because the app publishes no GitHub release to link (D1644).
+ */
+interface AppLine extends StreamRelease {
+  summary: string
+}
+
+const { entries, summaries, repository, consoleRelease, mobileRelease } = Astro.props
+
+// The three words this component adds to the entries, and the whole of them (D1644, D1648):
+// the link to the releases the page does not render, and the label each stream's line carries.
+// The console's and the app's versions are not here — they are read at build time from those
+// streams' own notes and manifests — and neither is the app's sentence, which is its summaries
+// file's. `website/test/changelog-page.mjs` holds every other sentence on the page to a release
+// file or to one of those two data files.
+const MORE_LABEL = 'See all releases on GitHub'
+const CONSOLE_LABEL = 'Desktop console'
+const MOBILE_LABEL = 'Mobile app'
 
 /** One element of an entry's body, in the order the file writes it. */
 type Element = { kind: 'list'; items: string[] } | { kind: 'paragraph'; text: string } | { kind: 'heading'; text: string }
@@ -227,6 +262,36 @@ function summaryOf(entry: Entry): string {
   ))}
 </div>
 
+{/* The rest of the history, one link away: the page renders the newest releases, and this is
+    where a reader finds every other one — with the date and the artifacts GitHub states for it
+    (D1640, D1648). It is the one sentence under the entries that is the page's own. */}
+<p class="changelog-more">
+  <a href={`${repository}/releases`}>{MORE_LABEL}</a>
+</p>
+
+{/* The two streams beside the CLI, one line each (D1641, D1644). The desktop console's latest
+    release is a GitHub release, so its line links it; the phone app publishes none, so its line
+    is the sentence the app's own summaries file carries for that release, in the paragraph under
+    it. Both lines are read at build time from those streams' own notes and manifests, which is
+    why no version is typed here and why the app's line is not rendered at all until the app has
+    a release (D1644). */}
+{consoleRelease && (
+  <p class="changelog-stream">
+    {CONSOLE_LABEL}{' '}
+    <a href={`${repository}/releases/tag/${consoleRelease.tag}`} rel="noopener">
+      {consoleRelease.version}
+    </a>
+  </p>
+)}
+{mobileRelease && (
+  <>
+    <p class="changelog-stream" data-mobile-release={mobileRelease.tag}>
+      {MOBILE_LABEL} {mobileRelease.version}
+    </p>
+    <p class="changelog-stream-summary">{mobileRelease.summary}</p>
+  </>
+)}
+
 <style>
   /* The bold look's shapes, and the entry's own hierarchy (the owner's brief of 2026-10-21).
      The spacing, the type scale, the radii and the tones come from W1.2's tokens and from the
@@ -330,6 +395,21 @@ function summaryOf(entry: Entry): string {
      that cannot. */
   .release-notes :global(code) {
     background: var(--ground);
+  }
+
+  /* The page's own words under the entries: the link to the whole history, and a line per other
+     stream. They are one quiet block — a step of the spacing scale above the cards, and the
+     muted tone a note about the list rather than a release is read in — and each is a paragraph
+     of its own, so two stream lines are two things rather than one sentence. */
+  .changelog-more {
+    margin-block-start: var(--space-lg);
+    color: var(--text-muted);
+  }
+
+  .changelog-stream,
+  .changelog-stream-summary {
+    margin-block-start: var(--space-xs);
+    color: var(--text-muted);
   }
 
   /* Opening the notes reveals them in every browser (the owner's request of 2026-10-24): the

@@ -354,7 +354,14 @@ export function parseYAML(raw: string, file: string): Value {
       skip()
       const next = lines[i]
       if (next && next.indent > parentIndent) return block()
-      return fail(`"${at.text}" has no value`, at)
+      // A key with nothing after it and nothing indented under it is null in YAML, and the
+      // file that writes it that way is `website/data/mobile-release-summaries.yaml`, whose
+      // `summaries:` key holds no entry until the app's first release. It is read as the null
+      // it is rather than refused here, because what an empty block mean is the loader's
+      // question and not this reader's — and a loader that needs a map, a list or a string
+      // still refuses the null by name (`asMap`, `asList`, `asString` below), so a key that
+      // lost its value to a bad edit is as loud as it was.
+      return null
     }
     if (BLOCK_SCALAR.test(rest)) return blockScalar(rest, parentIndent)
     return scalar(rest, at)
@@ -861,6 +868,64 @@ export function loadReleaseSummaries(): ReleaseSummaries {
   }
   if (Object.keys(out).length === 0) {
     throw new Error(`${file}: summaries is empty, and the changelog renders one summary per release (the owner's brief of 2026-10-19).`)
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------------------
+// website/data/mobile-release-summaries.yaml — the phone app's end-user summaries (D1644).
+//
+// The app releases on its own stream, with its own notes (`docs/releases/mobile/`, read by
+// `src/lib/mobile-release.mjs`) and its own line on the changelog, and its releases carry no
+// GitHub release, so that line's sentence comes from here (the file's own header). **Zero
+// entries is this file's valid state until the app's first release**, which is the one place
+// it differs from the changelog's own summaries file above: a page with no summary renders no
+// entry at all and the line is not rendered either, so an empty map here is a state rather
+// than a mistake, while an empty map there is a changelog with nothing under any heading.
+// ---------------------------------------------------------------------------------------
+
+/** website/data/mobile-release-summaries.yaml, validated: the app's tag, to its summary. */
+export type MobileReleaseSummaries = { [tag: string]: string }
+
+const MOBILE_SUMMARIES_FILE = 'website/data/mobile-release-summaries.yaml'
+
+/** The tag the app's summary is keyed by, which is its release's own: `mobile-vX.Y.Z`. */
+const MOBILE_RELEASE_TAG = /^mobile-v\d+\.\d+\.\d+$/
+
+export function loadMobileReleaseSummaries(): MobileReleaseSummaries {
+  const file = MOBILE_SUMMARIES_FILE
+  const doc = asMap(
+    parseYAML(
+      readBytes(path.join(DATA_DIR, 'mobile-release-summaries.yaml'), "the sentence the changelog renders as the phone app's line (D1644)"),
+      file,
+    ),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, ['summaries', 'version'], file)
+
+  if (asInt(doc.version, file, 'version') !== 1) {
+    throw new Error(`${file}: version is not 1, and this reader knows version 1 (W1.3 step 2).`)
+  }
+
+  // The file's `summaries:` key carries no entry while the app has no release, and the reader
+  // above reads a key with no value as the null it is: that null is the empty map and nothing
+  // else — a missing key is still a mistake, and every shape but the map is refused below.
+  if (doc.summaries === null) return {}
+
+  const summaries = asMap(doc.summaries, file, 'summaries')
+  const out: MobileReleaseSummaries = {}
+  for (const [tag, value] of Object.entries(summaries)) {
+    // A key that is not one of the app's tags is a summary no line can render: the changelog
+    // looks the app's release up by its own tag, which carries the stream's prefix.
+    if (!MOBILE_RELEASE_TAG.test(tag)) {
+      throw new Error(`${file}: ${tag} is not a tag of the app's, and summaries is keyed by them: mobile-vX.Y.Z, as docs/releases/mobile/vX.Y.Z.md writes it.`)
+    }
+    const summary = asString(value, file, `summaries.${tag}`)
+    if (summary.trim() === '') {
+      throw new Error(`${file}: summaries.${tag} is empty, and the changelog renders it as the app's line: an empty summary is a release with nothing said about it (D1644).`)
+    }
+    out[tag] = summary
   }
   return out
 }
