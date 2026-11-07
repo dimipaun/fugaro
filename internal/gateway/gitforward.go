@@ -31,8 +31,11 @@ package gateway
 //     and it refuses a spelling whose meaning depends on who decodes it — a
 //     reading this listener cannot do for it, because it would have to agree
 //     with it byte for byte about every escape (G13). What it does check is
-//     that the path is its own route's: a listener that relayed any path would
-//     present this job's identity to the credentials service's every route.
+//     that the path is its own route's — the prefix, and then no dot segment,
+//     written "." or as "%2e" — because a listener that relayed any path would
+//     present this job's identity to the credentials service's every route, and
+//     a hop that normalized "/v1/bitbucket/proxy/../v1/mint" before routing it
+//     would be presenting it to another one.
 //   - Both directions stream. The body is handed to the service as it arrives
 //     and the answer as it is answered; nothing is read to measure or buffer
 //     it. A proxied repository pushes its pack through here (Check 190's 33
@@ -198,12 +201,12 @@ func (f *GitForward) Close(ctx context.Context) error {
 func (f *GitForward) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.handlers.Add(1)
 	defer f.handlers.Done()
-	if !strings.HasPrefix(r.URL.EscapedPath(), GitProxyPrefix) {
-		// Not this listener's route. The forwarder serves the proxy route and
-		// nothing else: a listener that relayed whatever path it was handed
-		// would be one more way to present this job's identity to the
-		// credentials service's other routes, and the service's routes are
-		// gated for the callers that make them.
+	if !gitRoute(r.URL.EscapedPath()) {
+		// Not this listener's route: the proxy route, and nothing that walks
+		// out of it. A listener that relayed whatever path it was handed would
+		// be one more way to present this job's identity to the credentials
+		// service's other routes, and the service's routes are gated for the
+		// callers that make them.
 		http.Error(w, "fugaro: this listener serves "+GitProxyPrefix+" only", http.StatusNotFound)
 		return
 	}
@@ -220,6 +223,52 @@ func (f *GitForward) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	copyForwardAnswer(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// gitRoute reports whether an escaped request path is this listener's route:
+// the proxy's prefix, and then a path with no dot segment in it.
+//
+// The prefix alone does not say it. "/v1/bitbucket/proxy/../v1/mint" is
+// prefixed by the route and is a path to the service's mint route, and this
+// listener is the one client that puts a run's identity on a call to the
+// service: a hop that normalized the path before routing it would be handing
+// that identity to a route gated for someone else. The service's classifier
+// refuses the spelling too (a path whose meaning depends on who decodes it is
+// not one it classifies), but that refusal happens after the identity is on the
+// request, and this check is the one that keeps it off.
+func gitRoute(p string) bool {
+	rest, ok := strings.CutPrefix(p, GitProxyPrefix)
+	if !ok {
+		return false
+	}
+	for _, seg := range strings.Split(rest, "/") {
+		if dotSegment(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// dotSegment is a path segment that is one or two dots once its %2e escapes are
+// read, in either case: "%2e%2e", "%2E." and ".." all name the level above, and
+// which of the spellings a hop reads is the hop's own decision. A segment with
+// no escape is read as it stands, and nothing else is unescaped here — what the
+// service reads the rest of a path's escapes for is its own business (G13).
+func dotSegment(seg string) bool {
+	if strings.Contains(seg, "%") {
+		var b strings.Builder
+		b.Grow(len(seg))
+		for i := 0; i < len(seg); i++ {
+			if seg[i] == '%' && i+2 < len(seg) && seg[i+1] == '2' && (seg[i+2] == 'e' || seg[i+2] == 'E') {
+				b.WriteByte('.')
+				i += 2
+				continue
+			}
+			b.WriteByte(seg[i])
+		}
+		seg = b.String()
+	}
+	return seg == "." || seg == ".."
 }
 
 // upstream builds the call to the service for one arriving request, or answers

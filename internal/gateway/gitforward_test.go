@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -173,11 +174,39 @@ func TestGitForwardLoopbackOnly(t *testing.T) {
 	}
 }
 
+// rawAnswer sends one request line this file writes itself and reads the answer
+// whole. A dot segment is a path no client is obliged to keep as written, and
+// what this case is about is the bytes that arrive.
+func rawAnswer(t *testing.T, addr, target string) string {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dialing the forwarder: %v", err)
+	}
+	defer conn.Close()
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", target, addr); err != nil {
+		t.Fatalf("writing the request: %v", err)
+	}
+	b, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("reading the answer: %v", err)
+	}
+	return string(b)
+}
+
 // TestGitForwardServesTheRouteOnly: a path that is not the proxy route's is
 // refused here and never reaches the service. The forwarder is the one client
 // that presents a run's identity to the service, and presenting it to any path
 // a caller names would be a second way into the service's other routes — a way
 // this listener exists to not be.
+//
+// The route is the prefix and then a path with no dot segment in it, which a
+// prefix is not enough to say: "/v1/bitbucket/proxy/../v1/mint" is prefixed by
+// the route and is not on it, and a hop that normalized the path before routing
+// it would carry this job's identity to the service's mint route. The service's
+// own classifier refuses the spelling (that is why it refuses dot segments at
+// all), but the check that the identity never leaves the route is this
+// listener's, so it is made where the identity is written.
 func TestGitForwardServesTheRouteOnly(t *testing.T) {
 	svc := newForwardService(t, nil)
 	f := startForward(t, svc.url, nil)
@@ -196,6 +225,29 @@ func TestGitForwardServesTheRouteOnly(t *testing.T) {
 	}
 	if n := svc.count(); n != 0 {
 		t.Errorf("the service was sent %d requests for a path outside the route, want none", n)
+	}
+
+	// A path that walks out of the route, spelled the four ways it can be: the
+	// dot segments a client may write, and the same ones encoded as %2e — which
+	// the service refuses as spelling and a normalizing hop reads as meaning the
+	// same thing.
+	u, err := url.Parse(f.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{
+		"/v1/bitbucket/proxy/../../v1/mint",
+		"/v1/bitbucket/proxy/%2e%2e/%2e%2e/v1/mint",
+		"/v1/bitbucket/proxy/%2E%2e/",
+		"/v1/bitbucket/proxy/./info/refs",
+	} {
+		ans := rawAnswer(t, u.Host, target)
+		if line, _, _ := strings.Cut(ans, "\r\n"); !strings.HasPrefix(line, "HTTP/1.1 404") {
+			t.Errorf("%s answered %q, want 404", target, line)
+		}
+	}
+	if n := svc.count(); n != 0 {
+		t.Errorf("the service was sent %d requests for a path with a dot segment, want none", n)
 	}
 
 	// The route itself is served, so the refusal above is the prefix and not
