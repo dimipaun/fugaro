@@ -1,0 +1,15 @@
+# workspace-alpha as the workspace owner declares it: the members and the cap,
+# and nothing else (docs/workspaces/spec.md §2). No identity provider and no
+# service account here — each is the member's own pin, in that member's own
+# config — and the cap is a dollar amount, which Parse converts once into
+# integer micro-dollars.
+name: workspace-alpha
+members:
+  - project: repo-a
+    repos:
+      - owner/repo-a
+  - project: repo-b
+    repos:
+      - owner/repo-b
+cap:
+  monthly: 250
