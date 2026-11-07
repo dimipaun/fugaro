@@ -86,6 +86,20 @@ func coreRefFlagRows(lines []string) []string {
 	return names
 }
 
+// coreRefPaidPath reports whether path is a paid command's name at the root,
+// which this build cannot judge in either direction: the reference documents
+// the tagged tree, so the section is that tree's to carry or to lack, and the
+// core knows the name as a stub with no flags of its own. A paid name the
+// tagged tree has not registered yet -- `graph`, until the graph task registers
+// it -- has no section, and the stub the core tree documents for it is not a
+// name to require one for. The tagged generator's own test holds the whole file
+// either way (ee/clidoc/cliref_test.go's TestCliReferenceIsCurrent), which is
+// where the sections of a paid name are checked.
+func coreRefPaidPath(path string) bool {
+	fields := strings.Fields(path)
+	return len(fields) >= 2 && slices.Contains(cli.PaidCommandNames(), fields[1])
+}
+
 // coreRefVisibleFlagNames returns a command's own flags a reader may be told
 // about: local and non-inherited, so a flag is expected in the section of the
 // command that defines it, with the hidden ones left out.
@@ -117,6 +131,9 @@ func TestCoreCommandsAreInTheReference(t *testing.T) {
 		t.Fatal("cliref documents no command for the core tree, so an empty pass would prove nothing")
 	}
 	for path, cmd := range documented {
+		if coreRefPaidPath(path) {
+			continue
+		}
 		lines, ok := sections[path]
 		if !ok {
 			t.Errorf("%s does not name command %q, which the core tree has and does not hide", coreRefPath, path)
