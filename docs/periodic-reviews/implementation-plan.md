@@ -803,3 +803,498 @@ skill that names `--due`, or a skill that says where a report lands, must not re
 behaviour differs, and the pin is what decides that. R3 and R6's §7 sentence are also sequenced behind
 #1488's rename of `plugin/**`. **R9 waits for the designated-repo design item (E6)** and is the one
 task here that is not gated by a release. R5 is the owner's whenever they run it.
+
+---
+
+## Part II — the 0.22.0 slice: the reports job and the failures report (2026-11-07)
+
+**Status: plan only; nothing implemented; no task approved.** **Part I is everything above this
+heading**, the cut written to the owner's rulings E1–E8. This part is written to the owner's decision
+of **2026-11-07** that the periodic reviews/reports ride **0.22.0 "Sloth"**
+(`docs/release-streams.yaml`: the CLI stream's `current` is `0.20.3` and its `next` is `Rhino`, so
+0.21.0 is Rhino's and 0.22.0 is Sloth's). It is a **release plan over two works that are already
+cut**, not a second cut of either. Its decisions are **D1430–D1449** ([reconciliation.md](reconciliation.md)
+§6), each with an empty owner's-answer cell; its checks are **Check 340–349** (§P8). Every path and
+symbol it names was read against `main` at `56c91f66` on 2026-11-07.
+
+### P1. What this part is, and what it does not re-cut
+
+**Two designs meet in this release, and neither is rewritten here.**
+
+| Work | Its cut, which stands | Where it is written |
+| --- | --- | --- |
+| **the reports job** (the rulings E1–E8) | **R12, R13, R7, R11, R8, R10**, with **R9** blocked on E6 — and **R4** (the fifth rule) and the shipped loop (**R0–R3, R6**) as its prerequisites | this file, Part I |
+| **the failures report** (`docs/design/failure-classes.md` §6) | **FC1–FC8**, with that design's own D1–D9, O1–O6, levels L0–L5, critical path and shared-files table | `docs/design/failure-classes.md` §10 |
+
+**What this part adds is the three things neither document can state alone**, one section each:
+
+1. **the union's order** (§P2, §P3): one leveling over both works, and the proof that it costs
+   neither work a re-cut.
+2. **the seam** (§P4, §P5): the files the two meet in, the one file list that is wrong about a file
+   it writes, and the commit and reviewer tier every task carries — which Part I does not state per
+   task.
+3. **the release** (§P6, §P7, §P8): the slot and its `### For operators` text, the critical path, and
+   the owner-run checks the union owes.
+
+**It re-cuts nothing, deliberately.** `docs/catalog-build-context/README.md` records the rule this
+part follows — *a folder does not silently become a second plan for one feature* — and here the
+argument runs the other way too: two documents already own these two works, and a third statement of
+either would be a plan that can disagree with the one a run picks up. **R12, R13, R7, R11, R8, R9 and
+R10 are the reports job's cut and are cited by number; FC1–FC8 are the failures report's cut and are
+cited by number.** Where this part disagrees with either about the code it says so in
+[reconciliation.md](reconciliation.md) §6, and **there is exactly one such disagreement** (**F27**,
+§P5): R11's file list omits the generated CLI reference its own subcommand changes.
+
+**What is not in this part at all.** **R5** (Fugaro's own reports) is the owner's, at their terminal,
+with no agent step. The **`plugin/**` rename (#1488)** that R3, R6 and FC8 wait on is named where it
+orders a task (§P3) and is not this part's to sequence. **[spec.md](spec.md) is not rewritten**: it
+keeps its 2026-11-04 text, is read through [reconciliation.md](reconciliation.md) §5 and §6, and gains
+no sentence from this part.
+
+### P2. The slices
+
+| Slice | Tasks | What it delivers |
+| --- | --- | --- |
+| **P — the reports job** | R12, R13, R7, R11, R8, R10 (R9 blocked; R0–R4, R6 are its prerequisites) | one project-level scheduled job that writes every repository's report and the project aggregate into `reports/`, the setting that turns it on, the update that plans it, the stored reader the rules read, and the command's new default target |
+| **F — the failures report** | FC1–FC8 | `failure_class` on the record, one writer for the terminal status, the classifier, the legacy reader, `runs ls --group-by failure_class`, the digest's Failures table and its two rules |
+| **X — the seam** | none (§P4) | the ordering, the one file list F27 corrects, and the commit and reviewer tier each task carries |
+
+**The seam has no task of its own, and that is the finding rather than an omission.** §P3 shows the
+two works interleave into one leveling without a single task moving, and §P4 shows every file they
+share already has one writer per level. What the seam needs is not work but *order*, and the leveling
+is the order. The one thing a task list gets wrong — R11's file list omits the generated CLI
+reference its own subcommand changes — is corrected in §P5 as a file, not as a task.
+
+### P3. The union's levels
+
+**One leveling, and neither work moves.** A level's tasks may run concurrently; every task sits below
+all the tasks it depends on; no level holds two writers of one file. The two works' own levelings
+(Part I, "Order, and what this plan does not own", and the design's §10.1) merge unchanged:
+
+| Level | the reports job | the failures report | Why the two can share it |
+| --- | --- | --- | --- |
+| **0** | R0, R12, R13 | FC1 | the reports job writes `internal/digest/due.go`, `internal/backend/gcp/names.go`, `internal/infra/tf/cover.go`, `deploy/terraform/gcp/modules/installation/**` and the setting's own files; FC1 writes `internal/runstore/runstore.go`, `schemas/result.schema.json`, `internal/cli/runs_test.go` and `internal/cli/docs_pr_state_test.go` — no file is both |
+| **1** | R1, R7 | FC2 | R1 holds `internal/cli/runs_digest.go`, which R2 and R10 take at 2 and 5; R7 holds `internal/infra/tfvars.go`, which R13 took at 0; FC2 holds `internal/runner/**` and `internal/cli/docs_pr_state_test.go`, which FC1 took at 0 |
+| **2** | R2, R4 | FC3 | R4 holds `internal/digest/patterns.go`, which R11 takes at 3 and FC7 at 4; FC3 holds `internal/runner/runner.go`, which FC2 took at 1 and FC4 takes at 3 |
+| **3** | R3, R11 | FC4, FC5 | R11 holds `internal/cli/runs.go`, which FC6 takes at 4; R3 holds the skills, which R6 takes at 4 and FC8 at 5; FC5 holds `internal/cli/runs_test.go`, which FC1 took at 0 and FC6 takes at 4 |
+| **4** | R6, R8, R9 | FC6, FC7 | R8 holds `internal/digest/store.go`, which R11 took at 3 and R10 takes at 5; FC7 holds `internal/digest/patterns.go`, which R4 took at 2 and R11 at 3 |
+| **5** | R10 | FC8 | the two are the last of their chains, and they share no file |
+
+**No task moves a level, and that is a property of the two designs rather than a coincidence.** The
+reports job's tasks live in `internal/infra`, `deploy/terraform/**`, `internal/digest` and
+`internal/cli`; the failures report's live in `internal/runner`, `internal/runstore`,
+`internal/runview`, `schemas/` and the same two packages. The two therefore meet in seventeen files
+(§P4), and every one of the fourteen already had a level of its own in one work or the other — which
+is why the union adds **no edge that re-levels anything**: the only cross-work edges are **R11 (3) →
+FC7 (4)**, stated in §P6, and the shared files' own ordering. **A union that had to re-level would be
+a union that had to re-cut**, and the point of this table is that it does not.
+
+### P4. Shared files, over the union
+
+**Every file two or more tasks of the release write**, with its writers' levels. The rule is Part I's
+and the design's own: **no level holds two writers of one file.**
+
+| File | Writers (level) | Why they meet there |
+| --- | --- | --- |
+| `internal/digest/patterns.go`, `patterns_test.go` | R4 (2), R11 (3), FC7 (4) | R4 adds the fifth rule; R11 changes where the summaries come from (E7); FC7 adds the two class rules and their constants |
+| `internal/digest/store.go`, `store_test.go` (new) | R11 (3), R8 (4), R10 (5) | R11 writes the stored reader; R8 the aggregate's own shape; R10 the write path beside it |
+| `internal/cli/runs_reports.go`, `runs_reports_test.go` (new) | R11 (3), R8 (4) | R11 writes the job's loop; R8 the aggregate step after it |
+| `internal/cli/runs.go` | R11 (3), FC6 (4) | R11 registers `runs reports` beside its siblings; FC6 adds `--group-by` to `runs ls` |
+| `internal/cli/runs_test.go` | FC1 (0), FC5 (3), FC6 (4) | the record's field cases, the legacy reader's, and the grouping's |
+| `internal/cli/runs_digest.go`, `runs_digest_test.go` | R1 (1), R2 (2), R10 (5) | the flag and the refusal set, the doctor line's reading, and the default target |
+| `internal/cli/docs_pr_state_test.go` | FC1 (0), FC2 (1) | the census pin FC1 extends and FC2 rewrites |
+| `internal/runner/runner.go` | FC2 (1), FC3 (2), FC4 (3) | `recordEnd`, the structural classes, the message classifier |
+| `internal/runner/refused.go` | FC2 (1), FC3 (2) | `endRefused`'s call and the push rejection's class |
+| `internal/infra/tfvars.go` | R13 (0), R7 (1) | the two `paused` settings, then the `reports` node and `reports_days` |
+| `plugin/skills/working/reference/periodic-reviews.md` | R3 (3), R6 (4), and FC8 (5) if D1449 puts the rules' list there | the rule list and the report's place, §7's two sentences, and the two class rules' names |
+| `docs/recipes.md` | R1 (1), R10 (5) | the `--due` pointer, and the sentence E8 changes |
+| `website/content/cli-reference.md` (generated) | R11 (3), FC6 (4) | `fugaro runs reports` and `runs ls --group-by`, each regenerated in its own commit (F27) |
+
+**The table is the check, and it is read against §P3 rather than asserted.** Every row's levels are
+distinct; the widest rows — `patterns.go`/`patterns_test.go` and `periodic-reviews.md` with three
+writers each — are the two the union actually creates, and both are spread over three levels. **The
+one place a glob could have hidden a collision is the one worth stating plainly:** the design's
+§10.2 row `internal/digest/*.go` (FC7, L4) resolves to FC7's own six files
+(`digest.go`, `render.go`, `patterns.go`, `digest_test.go`, `patterns_test.go`, `testdata`) and
+**not** to `internal/digest/store.go`, which R11 creates at 3 and R8 and R10 write at 4 and 5. Read
+as a literal glob it would put R8 and FC7 in one level on one file; read as its own file list it does
+not, and this row is where the union says which.
+
+**Two files a reader may expect here are not, and the reason is the same in both cases:** a file with
+one writer is not a shared file. `internal/digest/render.go`, `digest.go` and `internal/digest/testdata`
+are FC7's alone — the reports job writes its reports through `internal/digest`'s own writer and adds
+no cell to them (R11) — and `internal/runstore/runstore.go` and `schemas/result.schema.json` are
+FC1's alone, because the job's spec, its env document and its IAM add no field to the record.
+
+**One file is written after every level, and it is not a task's:** `docs/releases/vX.Y.Z.md` is FC8's
+at 5 (its `### For operators` entry for the class) and the release's own file afterwards
+(`scripts/release.sh`, from a clean clone). The two are the same file written once each, a release
+apart in time rather than a level apart, and §P7 is the second one's text.
+
+### P5. The tasks, in the union's shape
+
+**Each block is the union's own summary of a task its owning document states in full**, and the
+fields this part adds are the **level** (§P3), the **commit** — which Part I does not state per task —
+and the file **F27** corrects. **The owning section wins on everything else**, and the file lists here
+are abbreviated to what the union needs: the owning section is the list of record.
+
+#### Level 0 — R0, R12, R13, FC1
+
+**R0 — the due computation moves into `internal/digest` (slice P).** Part I, `## R0`.
+- **Files (4):** `internal/digest/due.go` and `due_test.go` (new), `internal/runner/digest.go` (the
+  call site; `digestCatchUpDays` and `digestDuePeriods` go), `internal/runner/digest_test.go`.
+- **Interfaces:** `digest.DuePeriods` and the catch-up constant, moved with their cases.
+- **Tests, and the command:** the existing due-period test moves and keeps its cases —
+  `GOFLAGS=-p=2 go test ./internal/digest ./internal/runner -run 'Due' -count=1`.
+- **Depends on:** nothing. **Red step:** `TestDuePeriodsIsTheClosedWindow` fails while
+  `digest.DuePeriods` does not exist. **Reviewer:** standard. **Commit:**
+  `refactor(digest): the due computation, where both readers can reach it`.
+
+**R12 — the reports job in Terraform, and its grants, exactly (slice P).** Part I, `## R12`.
+- **Files (7):** `internal/backend/gcp/names.go` and `names_test.go`, `internal/infra/tf/cover.go`
+  and `cover_grants_test.go`, `deploy/terraform/gcp/modules/installation/reports.tf`, `variables.tf`
+  and `bucket.tf`.
+- **Interfaces:** the two prefix-limited conditions (both clause halves joined by `||`),
+  `ReportsAccountID` as its own principal kind, the module's `reports` variable, and the bucket's
+  fifth `lifecycle_rule` (18 months).
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/backend/gcp ./internal/infra/tf -run
+  'Reports' -count=1`.
+- **Depends on:** **Check 340's result** (§P8) — nothing in either work may be enabled before the
+  grant is proven. **Red step:** the condition tests fail while `names.go` has no builder, and the
+  join test fails against the `&&` shape. **Reviewer:** opus + mandatory independent review. **Commit:**
+  `feat(infra): the reports job, its account and its grants`.
+
+**R13 — the jobs' paused setting, in the layer (slice P).** Part I, `## R13`.
+- **Files (11):** `internal/config/layer.go`, `schemas/project-layer.schema.json`,
+  `internal/settings/registry.go` and `registry_test.go`, `internal/cli/docs_config_management_test.go`,
+  `docs/config-management/README.md` and `reconciliation.md`, `internal/infra/catalogcheck.go` and
+  `catalogcheck_test.go`, `internal/infra/tfvars.go`, `internal/cli/init.go`.
+- **Interfaces:** `ProjectLayer.Jobs` and its two `paused` keys, the two registry rows, and the
+  `Paused` field the catalog check's spec never had.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/settings ./internal/infra ./internal/config
+  -run 'Registry|Jobs|CatalogCheck' -count=1`.
+- **Depends on:** nothing. **Red step:** `TestRegistryCoversEveryConfigField` fails on the new field
+  with no row. **Reviewer:** opus + mandatory independent review. **Commit:**
+  `feat(config): jobs.reports.paused and jobs.catalog_check.paused`.
+
+**FC1 — the vocabulary and the record's field (slice F).** `docs/design/failure-classes.md`, `### FC1`.
+- **Files (4):** `internal/runstore/runstore.go`, `schemas/result.schema.json`,
+  `internal/cli/runs_test.go`, `internal/cli/docs_pr_state_test.go`.
+- **Interfaces:** `failure.Class` and its nineteen values, the record's `failure_class`.
+- **Tests, and the command:** the design's own list — `GOFLAGS=-p=2 go test ./internal/runstore
+  ./internal/cli -run 'FailureClass|Docs' -count=1`.
+- **Depends on:** nothing. **Red step:** the schema and the vocabulary tests fail with no class.
+  **Reviewer:** standard. **Commit:** `feat(runstore): the failure_class vocabulary and the record's
+  field`.
+
+#### Level 1 — R1, R7, FC2
+
+**R1 — `fugaro runs digest --due [--json]` (slice P).** Part I, `## R1`.
+- **Files (5):** `internal/cli/runs_digest.go`, `internal/cli/runs_digest_due_test.go` (new),
+  `schemas/runs-digest-due.schema.json` (new), `schemas/schemas_test.go`, `docs/recipes.md`.
+- **Interfaces:** `--due` and `--json` on the shipped subcommand, and the due document's schema.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli ./schemas -run 'RunsDigestDue|Schema'
+  -count=1`.
+- **Depends on:** R0. **Red step:** `TestRunsDigestDueNamesTheMissingPeriods` fails while the flag
+  does not exist. **Reviewer:** standard. **Commit:**
+  `feat(cli): runs digest --due names the closed periods a checkout has no report for`.
+
+**R7 — the reports job's Go plan and the update (slice P).** Part I, `## R7`.
+- **Files (11):** `internal/infra/reportsjob.go`, `reportsjob_test.go` and
+  `reportsjob_terraform_test.go` (new; the tagged convergence test alone, because a build tag applies
+  to a whole file), `internal/infra/tfvars.go`, the installation's own options, the five
+  `internal/infra/testdata/installation-*.tfvars.json` goldens and the roots.
+- **Interfaces:** `infra.ReportsJobSpec`, the env document and its version, and the `reports` node
+  with `reports_days`.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test -tags terraform ./internal/infra/... -run
+  'ReportsJob|BucketLifecycle|InstallationAtThePreviousVersionConverges' -count=1`.
+- **Depends on:** R12 (the module, the conditions and the guard) and R13 (the two `paused` settings),
+  and through R12 on Check 340. **Red step:** `TestUpdatePlansTheReportsJobPaused` fails while the
+  node is not rendered. **Reviewer:** opus + mandatory independent review. **Commit:**
+  `feat(infra): fugaro update plans the reports job, paused`.
+
+**FC2 — one writer for the terminal status and class (slice F).** The design, `### FC2`.
+- **Files (10):** `internal/runner/runner.go`, `refused.go`, `gate.go`, `followup.go`,
+  `reviewmode.go`, `artifact.go`, `reviewartifact.go`, `shadow.go`,
+  `failure_class_internal_test.go`, and `internal/cli/docs_pr_state_test.go`.
+- **Interfaces:** `recordEnd(status, outcome, class, reason)` — the one writer the thirty-six
+  statements become.
+- **Tests, and the command:** the design's own guard over the tree —
+  `GOFLAGS=-p=2 go test ./internal/runner ./internal/cli -run 'FailureClass|Docs' -count=1`.
+- **Depends on:** FC1. **Red step:** the census test fails while a second writer remains.
+  **Reviewer:** **independent (SEC)** — the reviewer asks whether a class or a reason can carry a
+  message. **Commit:** `feat(runner): one writer for a run's terminal status and class`.
+
+#### Level 2 — R2, R4, FC3
+
+**R2 — the `doctor` line (slice P).** Part I, `## R2`.
+- **Files (3):** `internal/cli/doctor_reviews.go` and `doctor_reviews_test.go` (new), and
+  `internal/cli/runs_digest.go` only if the reading needs a second entry point — search before
+  writing one.
+- **Interfaces:** the reviews-due check, its class and its one-line fix.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'DoctorReviewsDue' -count=1`.
+- **Depends on:** R1. **Red step:** `TestDoctorReviewsDueWarnsWhenAClosedPeriodHasNoReport` fails
+  while the check does not exist. **Reviewer:** standard. **Commit:**
+  `feat(doctor): the reviews-due line, and the class it prints in`.
+
+**R4 — the fifth pattern rule (slice P).** Part I, `## R4`.
+- **Files (2):** `internal/digest/patterns.go` and `patterns_test.go`. The skill's §3 rule list is
+  R3's, one level above.
+- **Interfaces:** `RuleCostPerRunRising` and its place in `RuleNames`.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/digest -run 'PatternCostPerRunRising|
+  PatternRuleOrderIsStable' -count=1`.
+- **Depends on:** R1. **Red step:** `TestPatternCostPerRunRisingNeedsFiveMonthlyReports` fails while
+  the rule does not exist. **Reviewer:** standard. **Commit:**
+  `feat(digest): cost_per_run_rising, the fifth rule`.
+
+**FC3 — the classes the runner knows from its own state (slice F).** The design, `### FC3`.
+- **Files (6):** `internal/runner/runner.go`, `refused.go`, `outcome.go`, `halt.go`, `prflow.go`,
+  and the internal test.
+- **Interfaces:** the structural classes — the ones no message can decide.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'FailureClass' -count=1`.
+- **Depends on:** FC2. **Red step:** the structural cases fail while the classes are unset.
+  **Reviewer:** standard. **Commit:** `feat(runner): the classes the runner knows from its own
+  state`.
+
+#### Level 3 — R3, R11, FC4, FC5
+
+**R3 — the skills carry the signal and the schedule (slice P).** Part I, `## R3`. **Sequenced after
+#1488.**
+- **Files (4):** `plugin/skills/setup/SKILL.md`, `plugin/skills/working/SKILL.md`,
+  `plugin/skills/working/reference/periodic-reviews.md`, `plugin/periodic_reviews_skill_test.go`.
+- **Interfaces:** the printed schedule, the due signal with its command, the report's place, and the
+  fifth rule's name in §3.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./plugin/ -count=1`, plus `pluginskillcheck`'s
+  CLI-coverage test.
+- **Depends on:** R4, and #1488 landed. **Red step:** the new plugin assertion fails while the setup
+  skill names no review cadence. **Reviewer:** standard. **Commit:**
+  `docs(skills): the cadence, the due signal and the five rules`.
+
+**R11 — the job's command and the stored reader (slice P).** Part I, `## R11`.
+- **Files (9 — 8 in Part I, plus the F27 correction):** `internal/cli/runs_reports.go` and
+  `runs_reports_test.go` (new), `internal/digest/store.go` and `store_test.go` (new),
+  `internal/digest/patterns.go` and `patterns_test.go`, `internal/cli/runs.go`,
+  `internal/cli/recipes_skew.go`, and **`website/content/cli-reference.md`**.
+- **The F27 correction, said plainly:** `website/content/cli-reference.md` is generated
+  (`go run ./ee/clidoc`) and `ee/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` requires the
+  committed file to match the command tree. R11 registers `fugaro runs reports`, so R11 changes that
+  file; the design assigns the regeneration to **FC6 at L4**, which is a different level and
+  therefore no collision, but **R11's own file list omits it** — leaving `TestCliReferenceIsCurrent`
+  red between the two commits. The file is added to R11's list and regenerated in each commit.
+- **Interfaces:** `fugaro runs reports --job`, the stored reader `internal/digest/store.go` returns
+  the summaries from, and the `*Since` constant beside `digestSince`.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli ./internal/digest -run
+  'RunsReports|PatternsReadTheStored' -count=1`.
+- **Depends on:** R7 (the job's spec and its own assignment) and R4 (the rules' source, E7). **Red
+  step:** `TestRunsReportsWritesEachRepositorysReportIntoTheBucket` fails while the subcommand does
+  not exist. **Reviewer:** opus + mandatory independent review. **Commit:**
+  `feat(cli): runs reports --job, and the reader the rules read`.
+
+**FC4 — classify a stage's own error message (slice F).** The design, `### FC4`.
+- **Files (3):** `internal/runner/runner.go`, `internal/runner/stageerror_test.go`,
+  `internal/runner/redaction_test.go`.
+- **Interfaces:** `stageFailureClass(auth string, res agent.Result) failure.Class` and its phrase
+  table.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'StageError|Redaction'
+  -count=1`.
+- **Depends on:** FC2. **Red step:** the phrase table's cases fail with no classifier. **Reviewer:**
+  **independent (SEC)** — the reviewer asks whether every byte of the message stays outside the
+  record. **Commit:** `feat(runner): classify a stage's own error message, without copying it`.
+
+**FC5 — read a legacy record's class from its reason (slice F).** The design, `### FC5`.
+- **Files (3):** `internal/runview/runview.go`, its own test file, and `internal/cli/runs_test.go`.
+- **Interfaces:** `legacyClass`/`ClassOf` — a reading, never written back.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/runview ./internal/cli -run
+  'LegacyClass|ClassOf' -count=1`.
+- **Depends on:** FC1, FC3. **Red step:** the legacy cases fail while the reader returns nothing.
+  **Reviewer:** standard. **Commit:** `feat(runview): read a legacy record's class from its reason`.
+
+#### Level 4 — R6, R8, R9, FC6, FC7
+
+**R6 — the learnings' two ends, documented (slice P).** Part I, `## R6`. **Sequenced after #1488.**
+- **Files (3):** `CONTRIBUTING.md`, `docs/periodic-reviews/README.md` (the status line), and
+  `plugin/skills/working/reference/periodic-reviews.md` (§7).
+- **Interfaces:** none — two sentences and a status line.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Backlog' -count=1`.
+- **Depends on:** R1–R4, R7 and R12, and #1488. **Red step:** none of its own; its pin is the Docs
+  gate. **Reviewer:** standard. **Commit:**
+  `docs: the learnings' two ends — the backlog item and the skill sentence`.
+
+**R8 — the project aggregate (slice P).** Part I, `## R8`.
+- **Files (3):** `internal/cli/runs_reports.go` and `runs_reports_test.go` (R11's files), and
+  `internal/digest/store.go` (R11's: the aggregate's own shape).
+- **Interfaces:** the aggregate step after the loop, and the aggregate's shape in the store.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'RunsReports|Aggregate'
+  -count=1`.
+- **Depends on:** R11. **Red step:**
+  `TestRunsReportsWritesTheProjectAggregateBesideTheRepositoryReports` fails while the job writes the
+  repository reports and stops. **Reviewer:** opus + mandatory independent review. **Commit:**
+  `feat(cli): the project aggregate, beside the repository reports`.
+
+**R9 — the opt-in commit (slice P). BLOCKED.** Part I, `## R9`. It waits for the designated-repo
+design item (E6), so it has **no commit message and no file list of record yet** — Part I writes
+`Files (to be completed by that design item)`. **Reviewer:** opus + mandatory independent review (the
+only path in this design that writes into a repository). **Commit:** none until E6 is answered; the
+release does not wait for it (§P6).
+
+**FC6 — group `runs ls` by failure class (slice F).** The design, `### FC6`.
+- **Files (5):** `internal/cli/runs.go`, `runid_test.go`, the `internal/cli/testdata` golden,
+  `website/content/cli-reference.md`, and `internal/cli/runs_test.go`.
+- **Interfaces:** `--group-by failure_class`, and the two refusals (no page, no window).
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'RunsLsGroupBy' -count=1`,
+  then `go run ./ee/clidoc` and the CLI-reference test.
+- **Depends on:** FC5. **Red step:** the grouping cases fail while the flag is unknown. **Reviewer:**
+  standard. **Commit:** `feat(cli): group runs ls by failure class`.
+
+**FC7 — the Failures table and the two rules (slice F).** The design, `### FC7`.
+- **Files (6):** `internal/digest/digest.go`, `render.go`, `patterns.go`, `digest_test.go`,
+  `patterns_test.go`, `internal/digest/testdata`. **Not `internal/digest/store.go`** — see §P4.
+- **Interfaces:** `FailuresTable`, the summary's `failures` block, and `failure_class_high` and
+  `failure_class_new` with their constants.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/digest -run
+  'DigestFailuresTable|FailureClass' -count=1`.
+- **Depends on:** FC5 — **and, in the union, R11 (3)**, because the series these two rules read comes
+  from R11's stored reader (E7). **Red step:** the two rule tests fail with the four rules alone.
+  **Reviewer:** standard. **Commit:** `feat(digest): a period's failures by class, and two rules`.
+
+#### Level 5 — R10, FC8
+
+**R10 — `fugaro runs digest` generates to the bucket (slice P).** Part I, `## R10`. **Its bucket
+write is blocked on Open item 5**, the way R9 is blocked on E6; what is not blocked is the default
+target's own change.
+- **Files (4):** `internal/cli/runs_digest.go`, `runs_digest_test.go`, `docs/recipes.md`, and
+  `internal/digest/store.go`.
+- **Interfaces:** the default target, `--dir` for a checkout, and the stored read.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'RunsDigest' -count=1`.
+- **Depends on:** R8, R1 and R2. **Red step:** `TestRunsDigestWritesToTheBucketByDefault` fails while
+  the command still writes into the repository's own tree. **Reviewer:** opus + mandatory independent
+  review. **Commit:** `feat(cli): runs digest generates to the bucket by default`.
+
+**FC8 — the documents, the contract and the skills (slice F).** The design, `### FC8`.
+- **Files (6):** `docs/design/v1.md`, `console/docs/json-contract.md`,
+  `docs/task-governance/reconciliation.md` **or** the periodic-reviews folder's own document (D1449),
+  `plugin/skills/working/reference/diagnose.md` (only if O1's answer wants a person to use the
+  grouping), `internal/cli/docs_desktop_console_test.go`, and `docs/releases/vX.Y.Z.md`'s
+  `### For operators`.
+- **Interfaces:** none — it writes no behaviour.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`.
+- **Depends on:** FC6, FC7. **Red step:** none of its own; its gate is the Docs run. **Reviewer:**
+  standard. **Commit:** `docs: the failure class on the record, the contract and the report`.
+
+### P6. The critical path
+
+**The union's longest chain is the reports job's, and the failures report does not lengthen it.**
+Part I's chain is **R0 → R1 → R4 → R11 → R8 → R10**, six tasks over six levels. The failures report's
+own chain is **FC1 → FC2 → FC3 → FC5 → FC6 → FC8**, also six tasks over six levels, and it runs
+*beneath* the first rather than after it: it starts at level 0 beside R0 and ends at level 5 beside
+R10. **Two edges cross between the works, and only one of them is an edge rather than an ordering:**
+
+- **R11 (3) → FC7 (4).** FC7's two rules read the summaries R11's stored reader returns (E7), so
+  FC7's own test of a stored series needs that reader to exist. The design states FC7's dependency as
+  FC5 alone; **in the union it also waits for R11**, and this is the one edge neither document can
+  state by itself.
+- **R4 (2) → FC7 (4)** through `internal/digest/patterns.go`: the fifth rule and the two class rules
+  are one `RuleNames` slice and one constants block, so the file's own order is R4, then R11, then
+  FC7. That is the shared-files rule doing its work rather than a new dependency.
+
+**The long pole is FC2**, the design's own reading: thirty-six statements across eight files in
+`internal/runner` become one call, in a package whose suite costs about 25 minutes — which is why
+FC2's test is a guard over the tree and not a fixture per site. **R12 is the union's widest gate**:
+it waits on an owner-run check (Check 340, §P8), and neither work's schedule may be enabled before
+its grants are proven. **R9 is off the path entirely** — blocked on E6, it is not in the release, and
+nothing in either work depends on it.
+
+### P7. Release slot, and the operator text
+
+**CLI 0.22.0 "Sloth",** as the owner decided on 2026-11-07. The slot is not this plan's to choose and
+the plan takes it as given; what the plan owes is that the release is **one release** (§P3 shows it
+can be) and that its operator step is the HARD RULE's whole upgrade.
+
+**The `### For operators` entry is two lines — one command, and one thing to turn on:**
+
+1. "Upgrade the CLI and run `fugaro update` in each checkout. It brings the installation (Terraform,
+   the reports job, its account, its paused schedule and the `reports/` lifecycle rule) and the
+   checkout to this release, and it asks for the typed project name where it plans the reports
+   grants."
+2. "**Both jobs are created paused, and `fugaro update` is what turns them on.** Set
+   `jobs.reports.paused: false` — and `jobs.catalog_check.paused: false` for the catalog check — in
+   the project layer and run `fugaro update` again. Nothing is committed anywhere until you run the
+   opt-in commit, which is a separate run (R9)."
+
+**The class field owes no operator step at all, and that is the HARD RULE's other half.**
+`failure_class` is additive on `result.json` and on `runs ls --json` (the design's §7 and §10.3): it
+publishes no policy node, moves no schema version, changes no image contract and changes no plugin
+pin, so an installation at the previous version converges with no migration and **no backfill** — the
+class of a run that predates the field is read from its `reason` (FC5), and that reading is never
+written back. **The plugin pin is the one thing that must move with the CLI**: R1, R3 and R10 ship in
+one release because a skill that names `--due`, or one that says where a report lands, must not reach
+a CLI whose behaviour differs (Part I, "Release slot"), and `fugaro upgrade`'s `pin` step is what
+decides that.
+
+### P8. The owner-run checks
+
+**Check 340, Check 341 and Check 342 are this round's; 343–349 are reserved and unused.** All three
+are the owner's: **no agent performs any step of them.** They are claimed rather than reserved, and
+the claim is against the register's own census, taken on 2026-11-07: **the highest written
+`## Check` section is 290**; 291 (`docs/image-env`), 292 (`docs/catalog-build-context`), 300–309
+(`docs/stateless-orchestrator`) and 310–314 (`docs/cli-output-console-graph`) are claimed on `main`,
+and 330 is claimed by the open pull request `docs/api-key-review` (read at commit `c3562215`).
+**Nothing writes 315–329 or 331–339, and nothing anywhere writes 340 or above.**
+`docs/gcp-live-checklist.md` is another work stream's file,
+so **this folder names the numbers and writes no section**: the task that implements each check
+writes its row and its section under the number free at that merge, which is the register's own rule
+for a work that reserved none (`docs/run-limit-carry-over/README.md:55`). Two of the three replace
+the two live checks Part I "names and does not number" (R12's listing check and R7's own firing) —
+the numbering is this part's, the checks are Part I's.
+
+**Check 340 — the prefix-limited listing grant (R12's, and it gates R12).** The owner proves that the
+job's read grant lists `runs/<slug>/` and `reports/`, reads one `runs/` object, and is refused the
+root listing and a `tokens/` read and a `tokens/` or `cache/` listing — which is what settles
+`storage.googleapis.com/objectListPrefix`'s own value form, the attribute `docs/design/bucket-iam.md`
+records as unverified (V7). **If it fails, R12's Terraform does not land and the plan stops and
+asks** (E4). Owner-run, **NOT RUN**.
+
+**Check 341 — the reports job's first firing, and what it stored.** The owner sets
+`jobs.reports.paused: false`, runs `fugaro update`, lets the schedule fire once and reads what
+landed: one report per repository under `reports/`, the project aggregate beside them, and the
+`reports/` objects still there after the run records' own 90 days — which is the 18-month rule
+(E3) doing what it is for. It also settles the question R10 is blocked on (Open item 5): **whether
+`fugaro runs digest` can write to `reports/` at all**, since E4 makes the job its only writer.
+Owner-run, **NOT RUN**.
+
+**Check 342 — the failures report reproduces a window a person built by hand.** The owner takes a
+window they already know the causes of — the design's own seven-day table is one — and checks that
+`fugaro runs ls --group-by failure_class` and the Failures table in the period's report agree with
+it, including the runs whose class the legacy reader read from `reason` (FC5). It is the one check
+that says whether the vocabulary means what the design says it means. Owner-run, **NOT RUN**.
+
+### P9. What is deliberately not in this part
+
+- **The console.** The contract's two rows are FC8's; a console column or chip is a product decision
+  and a second release stream (`console-vX.Y.Z`), so it is named and left to its own task (D1439).
+- **The yearly report's roll-up of the class table** is stated as a shape (D1443) and is not a task
+  in this release: the yearly report already rolls twelve stored monthlies up, and the table rides
+  that roll-up rather than adding one.
+- **`docs/periodic-reviews/spec.md`.** Not rewritten, here or anywhere: it keeps its 2026-11-04 text
+  and is read through [reconciliation.md](reconciliation.md) §5 and §6.
+- **The two `report`-shaped rules' behaviour in a period that predates the field.** D1431 is the
+  decision, and until it is answered the plan reads "a summary without the block is not read".
+- **A backfill of `failure_class` over stored records.** Deliberately absent: the record is 90 days
+  old at most, the reading is not written back (FC5), and a backfill would be a cloud write no
+  operator step asks for (the HARD RULE).
+
+### P10. Gates
+
+**Part I's gates apply to every task above, unchanged** ("Gates (every task)"): `go build ./...`,
+`gofmt -l .` printing nothing, `go vet ./...`, the task's own named tests, and the Docs run for any
+task that touches a pinned document. Three additions, and they are the union's:
+
+- **`go run ./ee/clidoc` after R11 and after FC6, each in its own commit** — `TestCliReferenceIsCurrent`
+  compares the committed file to the command tree, and the two tasks register a subcommand and a flag
+  (F27, §P4).
+- **`GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` after R6, FC8 and the release entry** —
+  the docs tests pin sentences, anchors and file lists in `docs/`, and three of this release's tasks
+  write documents those tests read.
+- **The release itself is not a task and has no level**: it is `scripts/release.sh 0.22.0` from a
+  clean clone ([docs/release.md](../../docs/release.md)), after every level, with §P7's entry as its
+  `### For operators`.

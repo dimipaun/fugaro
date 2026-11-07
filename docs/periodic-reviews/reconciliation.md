@@ -599,3 +599,146 @@ person who wants the files, which is why `--dir` survives rather than being repl
   under the register's own rule for a work that reserved none
   (`docs/run-limit-carry-over/README.md:55` and `docs/project-image-catalog/README.md:99` are the same
   shape). The register is still not touched by this design.
+
+## 6. The 2026-11-07 reconciliation: the reports job and the failures report
+
+### 6.1 The reading
+
+**The owner put this folder's work in 0.22.0 on 2026-11-07**, and asked for the release plan as a
+docs-only change: reconcile this folder's spec and the rulings of 2026-11-05 (§5, E1–E8) against the
+code on `main` **together with the failures report's own design**, and write the order the two works
+take together. **The tree read is `main` at `56c91f66`**, on 2026-11-07, with the open pull requests
+the launcher names read only for the numbers they claim (§6.3).
+
+**This section is a third refresh and it changes nothing in §1–§5.** What it adds is the union:
+[implementation-plan.md](implementation-plan.md) Part II is the plan, and this section is what it
+was reconciled against. **[spec.md](spec.md) is not rewritten** — the 2026-11-05 rulings already
+left it as the recorded request, and this round does the same.
+
+### 6.2 Findings F25–F34
+
+**F25. Exists: the failures report is designed and cut, in a document of its own.**
+`docs/design/failure-classes.md` carries the nineteen-value vocabulary (§3), the one writer (§4.1),
+the phrase table (§4.3), the legacy reader (§5), the report (§6), its decisions D1–D9 (§8), its open
+items O1–O6 (§9) and its tasks FC1–FC8 with levels, critical path and shared-files table (§10), and
+`internal/cli/docs_pr_state_test.go` pins the vocabulary, the census and the citations
+(`TestDocsFailureClassDesignPinsTheVocabulary`, `TestDocsFailureClassCensusMatchesTheRunner`,
+`TestDocsFailureClassDesignCitationsResolve`). *Consequence:* the plan adopts FC1–FC8 and re-cuts
+nothing (Part II §P1); the two documents are read together and neither is edited by this round.
+
+**F26. Exists: the two works meet first in the rules' own list.**
+`internal/digest/patterns.go`'s `RuleNames` is `[]string{RuleFlagRecurs, RuleReviewShare,
+RuleRecipeMedian, RuleHaltsHigh}` at `:37`; R4 adds a fifth, FC7 adds `failure_class_high` and
+`failure_class_new`, and R11 changes what the rules read. The reader's copy of that list is §3 of
+`plugin/skills/working/reference/periodic-reviews.md`. *Consequence:* one Go file and one skill file
+each carry three writers over three levels, and the union's ordering is what keeps them apart
+(Part II §P4).
+
+**F27. Wrong: R11's file list omits the generated CLI reference its own subcommand changes.**
+`website/content/cli-reference.md` is generated (`go run ./ee/clidoc`, the file's own header) and
+`ee/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` requires the committed file to match the
+command tree. R11 registers `fugaro runs reports` and the design assigns the regeneration to FC6
+(`website/content/cli-reference.md`, L4); **the two are a level apart and so no collision, but R11's
+own list does not name the file**, so `TestCliReferenceIsCurrent` is red from R11's merge until
+FC6's. *Consequence:* R11's file list gains one file and the file is regenerated in each commit
+(Part II §P5).
+
+**F28. Exists: the two works interleave into one leveling with no task moved.**
+Part I's levels are 0: R0, R12, R13 — 1: R1, R7 — 2: R2, R4 — 3: R3, R11 — 4: R6, R8, R9 — 5: R10;
+the design's are L0: FC1 — L1: FC2 — L2: FC3 — L3: FC4, FC5 — L4: FC6, FC7 — L5: FC8. Every file the
+two share already had a level of its own in one work or the other, so the union is the two tables
+read side by side. *Consequence:* the union's leveling (Part II §P3) needs no re-leveling, and the
+only cross-work edge is R11 (3) → FC7 (4).
+
+**F29. Exists: the stored summary's shape is one writer's, and a glob in the design hides it.**
+The design's §10.2 row `internal/digest/*.go` (FC7, L4) resolves to FC7's own six files
+(`digest.go`, `render.go`, `patterns.go`, `digest_test.go`, `patterns_test.go`, `testdata`) and not
+to `internal/digest/store.go`, which R11 creates at 3 and R8 and R10 write at 4 and 5. *Consequence:*
+the union's shared-files table states which reading holds, because the glob read literally would put
+R8 and FC7 in one level on one file (Part II §P4).
+
+**F30. Exists: the reports job's writer is the one writer of the new prefix, and the class reaches a
+stored report through it.** R11's stored reader and R10's write path both go through
+`internal/digest`'s own writer, and the report's cells are a closed vocabulary. *Consequence:* the
+Failures table reaches the job's stored reports with no task of its own, and the job needs no new
+rule (Part II §P4).
+
+**F31. Exists: the 90-day record retention is what makes the legacy reader load-bearing for the job's
+first stored reports.** `deploy/terraform/gcp/modules/installation/variables.tf:112` sets
+`runs_days = 90` (F24), and `reports/` gets 18 months (E3). The job writes reports for closed periods
+over records at most 90 days old, and on the day the field ships most of those records carry none.
+*Consequence:* FC5 is not optional for the job's first stored reports (D1436).
+
+**F32. Exists: the release slot moved twice more since Part I was written.** Part I's "Release slot"
+says 0.20.0, which has shipped; `docs/release-streams.yaml` has the CLI stream's `current` at
+`0.20.3` and its `next` at `Rhino`, so 0.21.0 is Rhino's and 0.22.0 is Sloth's. The owner decided
+0.22.0 on 2026-11-07. *Consequence:* Part II §P7 states the slot, the operator entry and why the
+class field owes no migration.
+
+**F33. Exists: `fugaro runs digest` and the job write through one writer, and the class's two rules
+read a stored series.** FC7's `failure_class_new` reads a four-week window of summaries, so a stored
+report written before the field existed carries no block and is not read by it. *Consequence:* the
+rules' behaviour over the field's first weeks is a decision (D1431), and the yearly roll-up is a
+shape rather than a task (D1443).
+
+**F34. Exists: the census the plan's numbers rest on.** The decisions' highest written number on
+`main` is **D1409**; the register's highest written `## Check` section is **290**. *Consequence:*
+§6.3's claims.
+
+### 6.3 The numbers this round takes
+
+**Decisions D1430–D1449.** `git grep -E 'D14(3|4)[0-9]'` over `main` at `56c91f66` and over the open
+pull request heads this checkout carries: **nothing writes D1430–D1449 anywhere.** The positive
+controls are that the same grep finds **D1409** written (`docs/catalog-build-context/`, the highest
+on `main`) and **D1410–D1429** written by the open pull request `docs/api-key-review` (the head read
+is commit `c3562215`, which is also the commit that records the census below). Above this folder's
+own **D960–D979** — which stay written and reserved exactly as the README records — the block
+**D1310–D1409** is taken by the plans that merged there, the highest being `docs/catalog-build-context`'s
+D1390–D1409.
+
+**Checks 340–349.** The register's highest written `## Check` section is **290**
+(`docs/gcp-live-checklist.md`, the mixed-credentials run). Claimed above it: **291**
+(`docs/image-env`), **292** (`docs/catalog-build-context`), **300–309**
+(`docs/stateless-orchestrator`), **310–314** (`docs/cli-output-console-graph`) and **330**
+(`docs/api-key-review`, the same open head). **Nothing writes 315–329 or 331–339**, and nothing
+anywhere writes 340 or above. This round takes **340–342** (Part II §P8) and reserves **343–349**.
+**The register is
+still not touched**: `docs/gcp-live-checklist.md` is another work stream's file, and the task that
+implements each check writes its row and its section under the number free at that merge — the
+register's own rule for a work that reserved none (`docs/run-limit-carry-over/README.md:55`).
+
+### 6.4 Decisions D1430–D1449
+
+**None of these is answered.** Each row carries the recommendation, the alternative with its cost,
+and an **empty owner's-answer cell** — the plan is written to the recommendation until the owner
+says otherwise, and nothing here is approved.
+
+| # | Question | Recommendation, and why | Alternative, and its cost | Owner's answer |
+| --- | --- | --- | --- | --- |
+| **D1430** | Does a stored report carry the Failures table in this release? | **Yes, in the same release as the field.** The job writes through `internal/digest`'s own writer, so the table reaches a stored report the moment FC7 lands; a release that stored reports without it writes a year of tables-less reports under an 18-month retention | The job's first stored reports carry no table, and the class reaches them a release later | |
+| **D1431** | What do the two class rules read in a stored report written before the field existed? | **Nothing — a summary without the block is not read**, which is the design's own rule, so the first weeks raise neither rule | Treat an absent block as "read the records instead" | |
+| **D1432** | Does the project aggregate carry a Failures table across the repositories? | **Yes — the table, and no rules**, which is E7's own split (the aggregate has no rules in the first slice) | Figures only, no table | |
+| **D1433** | Does the reports job's own run carry a class, and does the aggregate count it? | **The job's run is a run like any other and carries a class like any other** (FC2 writes it); **the aggregate counts the repositories' runs and not the job's own** | Exclude the job's runs from the record's vocabulary | |
+| **D1434** | Which is the reader of record when a stored report and `runs ls --group-by` disagree? | **Neither is**: the report is the period's frozen figures, the listing is the window's live ones, and the report's header names the period it closed | The listing refuses to print a class the stored reports disagree with | |
+| **D1435** | What does a class this build does not know print as, in a stored report? | **`unclassified`** — the digest's own closed-cell rule (FC5's last bullet) | The value is echoed | |
+| **D1436** | Is the legacy reader load-bearing for the job's first stored reports? | **Yes** (F31): most records a first report reads predate the field | Store the first reports with the field only | |
+| **D1437** | Does the job's release wait for the whole failures report, or only the field and the table? | **The whole of it, FC1–FC8.** The union's leveling costs neither work a re-cut (§P3), and shipping the job without the rules would put an 18-month retention over a series nothing reads | The job in 0.22.0 and the class in 0.23.0 | |
+| **D1438** | `website/content/cli-reference.md` is generated and both works change it: one regeneration or two? | **Two, each in its own commit and its own level** (R11 at 3, FC6 at 4) — F27 | One task regenerates it last | |
+| **D1439** | Does the console ride this release? | **No.** The contract's two rows are FC8's; a console column or chip is named and left to its own task (the design's §6.3) | The console task rides this release | |
+| **D1440** | Does the stored read of `fugaro runs digest` print the Failures table? | **Yes — the stored read prints what `--stdout` prints**, and after FC7 that includes the table | The stored read prints the report exactly as it was stored, byte for byte | |
+| **D1441** | Does the opt-in commit carry the class into a repository? | **Yes — it commits the stored reports as they are, table and all.** The committed report's reader is the repository's own agent and reviewer (D969), and the table is figures and a closed vocabulary | The committed copy drops the table | |
+| **D1442** | May a *stored* report name run ids (the design's O4, read through E1)? | **Yes.** The stored report is the same document as the committed one, and the id is what makes a flagged row actionable with `fugaro diagnose RUN`; what E1 changed is where it lives, not what it carries (D969 stands) | The stored copy renumbers its runs the way the outgoing draft does | |
+| **D1443** | A yearly report rolls twelve stored monthly reports up: does the class table roll up with them? | **Yes — the twelve months' counts summed**, read from the stored summaries' blocks, which is the shape the yearly report already uses for its figures | The yearly report re-derives from the records | |
+| **D1444** | Does `--due` gain a line for the class? | **No.** `--due` says a period has no report (D962, R1); the class is a reading of a report that exists | A due line for "the period's failures are unread" | |
+| **D1445** | Does the shipped `run-digest` recipe's report carry the table (Open item 4)? | **Yes, and it is the same writer** — the recipe is the per-repository path the rulings did not name, and a table it omitted would be a second report shape | Reroute the recipe through the bucket in this release | |
+| **D1446** | Do the two class rules' thresholds differ for a stored series and a committed one? | **No — one constants block in `internal/digest`** (D7), read by both | A project-level override of a rule's threshold | |
+| **D1447** | Does the stored report's table obey `runs ls --group-by`'s refusals (no page, no window)? | **The table is a total by construction** — a period is closed — so the refusals are the listing's own and the report needs none | The report prints the table's share against a window it names | |
+| **D1448** | Does the aggregate count the reports job's own runs? | **No** (D1433's other half): the aggregate is about the project's work, and the job's runs are the machinery that reports it | Count them | |
+| **D1449** | Where does the rules' document live — FC8's own either/or? | **This folder keeps the prose and `plugin/skills/working/reference/periodic-reviews.md` §3 keeps the reader's list**, so FC8 writes this folder's document and the skill file, not `docs/task-governance/reconciliation.md` | The rules' documents stay split between the two designs' folders | |
+
+**Two of the twenty are the plan's own structure rather than a product question** — D1437 (the two
+works ship in one release) and D1438 (the generated file is regenerated twice) — and both are listed
+because the plan acts on them. **One is the only place the union's file table depends on an open
+answer**: D1449 decides whether FC8's fifth file is this folder's document or
+`docs/task-governance/reconciliation.md`, and **either answer is safe** — neither file has another
+writer in the union, so the leveling holds whichever way it is answered (Part II §P4).
