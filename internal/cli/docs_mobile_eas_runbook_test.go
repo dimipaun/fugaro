@@ -229,8 +229,8 @@ func TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives(t *testing.T) {
 }
 
 // TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape
-// asserts the repository-side half is described: a protected environment whose
-// only required reviewer is the owner, the trigger the build would run on,
+// asserts the repository-side half is described: a protected environment, the
+// trigger the build would run on,
 // least privilege, pinned actions -- and that the runbook writes no workflow
 // file, only the shape a later staged file under docs/pending-workflows/ would
 // have (Global Constraint 8). It also pins the precedent claim to the tree as
@@ -242,12 +242,16 @@ func TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives(t *testing.T) {
 // `website-live`, `console-release`, and `mobile-release` from the staged file
 // -- so this test only refuses the stale sentences an earlier revision of the
 // page carried, including the one that read as a description of a workflow
-// nobody had written yet.
+// nobody had written yet. `required reviewer` is pinned as the setting's own
+// name **with the state it is in** (`Required reviewers: none since 2026-11-07`)
+// rather than as the click the page described before that date: the pin and the
+// page have to move together, and a page that stopped naming the setting at all
+// would leave a reader looking for a fence that is not there.
 func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *testing.T) {
 	doc := runbook(t)
 	for _, want := range []string{
 		"mobile-release",
-		"required reviewer",
+		"Required reviewers: none since 2026-11-07",
 		"environment:",
 		"workflow_dispatch",
 		"pull_request_target",
@@ -1284,8 +1288,8 @@ func sectionText(doc, from, to string) string {
 // environment settings and §10's workflow shape each describe where it may live,
 // and they are different fences: a **repository** secret is readable by every
 // workflow in the repository, whatever job it runs in, while an **environment**
-// secret is readable only by a job that names `environment: mobile-release`, and
-// only after its required reviewer has approved. A page whose table said
+// secret is readable only by a job that names `environment: mobile-release` (and,
+// since the reviewer was removed on 2026-11-07, by nothing else). A page whose table said
 // "repository secret" while its settings said "the only secret that belongs
 // here" would be describing the weaker fence as the stronger one, which is the
 // arrangement §7's own "a key in CI is a key any later workflow change can read"
