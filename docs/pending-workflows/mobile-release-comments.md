@@ -101,7 +101,7 @@ The `**Three follow-up edits**` sentence is not decoration: the workflow file
 **has to keep it**, in the header, saying `Three`, or
 `TestDocsMobileReleaseWorkflowIsStagedAndPinned` refuses the file
 (`mobileReleaseFollowUpEditsIn`, the regex at
-`internal/cli/docs_mobile_release_workflow_test.go:447`); the README's own side
+`internal/cli/docs_mobile_release_workflow_test.go:450`); the README's own side
 of the same count is checked against the other copy. Do not compress it away
 while applying the rest — and run `go test ./internal/cli/ -run Docs` on the
 result, which is what catches it if you do.
