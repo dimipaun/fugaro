@@ -357,6 +357,11 @@ const (
 	docModels = "docs/multi-model.md"
 	docRigor  = "docs/rigor-modes/spec.md"
 	docImages = "docs/project-image-catalog/spec.md"
+	// docOrchestrator is the document that states the orchestrator daemon's
+	// guardrails. It is the work's plan rather than a spec because the guardrail
+	// keys are stated there and nowhere else yet (D1239, D1234): a spec of the
+	// daemon's own would be the document that takes the row over.
+	docOrchestrator = "docs/stateless-orchestrator/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -383,6 +388,17 @@ func loc(key, def, owner, doc string) Row {
 		Owner:   owner,
 		Doc:     doc,
 	}
+}
+
+// locTighten is loc for a key whose layers combine by the ceiling rule rather
+// than by replace: the smaller figure wins whatever layer wrote it, so a key
+// written in two of them is the stricter of the two and not the narrower one
+// (policy.Merge). The orchestrator's guardrails are the keys of this kind
+// (D1239): every layer under the ceiling may lower a cap and none may raise it.
+func locTighten(key, def, owner, doc string) Row {
+	r := loc(key, def, owner, doc)
+	r.Merge = Tighten
+	return r
 }
 
 // locLocal is loc for a key the local config alone holds: no `shared`
@@ -705,6 +721,28 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
 	loc("image_catalog.entries.*.description", "none", "project", docImages),
 	loc("image_catalog.entries.*.default", "false", "project", docImages),
+
+	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
+	// policy like the catalog above, and one row per member for the catalog's
+	// reason. They carry Tighten rather than the ordinary Replace: the smaller
+	// cap wins whatever layer it was written in (policy.Merge), so a person or
+	// a project may lower one and never raise it, and the model a decision
+	// class runs on moves up the tier order or not at all. The default of each
+	// count is the figure policy.WithDefaults fills the ceiling layer with,
+	// named by the constant that holds it — the effective cap is the person's
+	// own max_parallel, which is why the sentence names that key rather than a
+	// number.
+	locTighten("orchestrator.max_running", "the person's max_parallel", "config", docOrchestrator),
+	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "config", docOrchestrator),
+	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "config", docOrchestrator),
+	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "config", docOrchestrator),
+	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "config", docOrchestrator),
+	// The one key of the block that is not a count: a class the map does not
+	// carry is at its floor, which is the bottom of the order for a routine
+	// decision and the top for a security-sensitive one (policy.ValidOrchestrator
+	// refuses a name outside the order and a model under the class's floor, so
+	// the classes' two ends are the two answers an absent key can take).
+	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "config", docOrchestrator),
 
 	loc("repos.*.provider", "none", "project", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "project", docSetup),

@@ -470,7 +470,7 @@ counts.
 - **Whether `fugaro settings set` may write it is not decided here** — the generic path writes the
   allowlist of `internal/cli/settings_set.go` and nothing else, so a new layer key is **refused by
   `settings set` until someone says otherwise**, and saying yes moves the allowlist's own count pin
-  (`docs/config-management/README.md:47`, "164 of the registry's 325 rows"). **Open items carries
+  (`docs/config-management/README.md:47`, "164 of the registry's 331 rows"). **Open items carries
   it**; what this task ships is the key, refused by the generic path, written by hand in the project
   layer.
 - **And what the managed gate makes of the value it writes is Open item 7**, not decided here: the
