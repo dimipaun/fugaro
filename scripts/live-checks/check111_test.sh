@@ -304,9 +304,10 @@ setup_case() {
   RUN111_XTRACE=""
 }
 
-# run111 [ARGS...] — runs the check on the case at hand. RUN111_ARGS adds
-# arguments, RUN111_ENV names environment variables (NAME=value), and
-# RUN111_XTRACE=1 runs it under `bash -x`. Sets $status, $out and $dir/err.
+# run111 — runs the check on the case at hand: RUN111_ARGS are the arguments
+# after the two every case passes, RUN111_ENV names environment variables
+# (NAME=value), and RUN111_XTRACE=1 runs it under `bash -x`. Sets $status, $out
+# and $dir/err.
 #
 # The agent markers are unset: this suite is itself run inside an agent's
 # session in CI, and Check 111's first guard is exactly that marker — a marker
@@ -325,7 +326,7 @@ run111() {
     ${RUN111_ENV[@]+"${RUN111_ENV[@]}"} \
     bash ${RUN111_XTRACE:+-x} "$script" \
     --project "$P" --account-names "$dir/names.txt" \
-    ${RUN111_ARGS[@]+"${RUN111_ARGS[@]}"} "$@" 2>"$dir/err") || status=$?
+    ${RUN111_ARGS[@]+"${RUN111_ARGS[@]}"} 2>"$dir/err") || status=$?
   RUN111_ARGS=()
   RUN111_ENV=()
   RUN111_XTRACE=""

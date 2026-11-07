@@ -17,7 +17,8 @@
 #             bash scripts/live-checks/check111.sh --dry-run […same arguments…]
 #             (the guards and the files only: no gcloud call and no fugaro call
 #             is made; it prints the commands a real run would run and the
-#             commands its Restore would run)
+#             commands its Restore would run, and its block carries no verdict —
+#             a dry run measures no criterion, so it has none to report)
 # Needs:      bash, mktemp, python3, gcloud, fugaro and jq on PATH. Nothing is
 #             installed and nothing is fetched; if one of those is missing the
 #             script stops with one line naming it. python3 is this check's own
@@ -1122,7 +1123,7 @@ assert_no_offer() { # assert_no_offer MODE — a refusal must not offer
 
 step_1b() {
   if [ -z "$Q" ]; then
-    not_run 1b "no --api-off-project was given: mode 1(b)'s premise is a SECOND throwaway of yours whose Cloud Billing API is off, and an unset one must stop the mode, never silently run mode 1(a)'s premise" $(mode_keys 1b)
+    not_run 1b "no --api-off-project was given: mode 1(b)'s premise is a SECOND throwaway of yours whose Cloud Billing API is off, and an unset one must stop the mode, never silently run mode 1(a)'s premise"
     return 0
   fi
   say "mode 1(b): the API is off on Q and Q is the quota project — the run must REFUSE, naming the line and who to ask"
@@ -1151,25 +1152,25 @@ assert_refusal() { # assert_refusal MODE
   fi
 }
 
-not_run() { # not_run MODE REASON KEY... — a mode the run did not select or could
-  # not run. The keys are full key names (mode_keys MODE), never suffixed here:
-  # a mode whose premise failed fills its own block rows with FAIL — not run, so
-  # that a block from a partial run can never read as a pass about the picker.
-  local m=$1 reason=$2 k
-  fact "run-$m" FAIL "not run: $reason"
-  shift 2
-  for k in "$@"; do
+not_run() { # not_run MODE REASON — a mode the run did not select or could not run:
+  # its own row and every one of its criteria's rows read FAIL — not run, so that
+  # a block from a partial run can never read as a pass about the picker. The
+  # keys come from mode_keys, never from the caller: a mode's rows are its own.
+  local m=$1 k
+  fact "run-$m" FAIL "not run: $2"
+  # shellcheck disable=SC2046 # word splitting is the point: mode_keys prints the key list
+  for k in $(mode_keys "$m"); do
     fact "$k" FAIL "not run: this mode's criteria were never read"
   done
 }
 
 step_2a() {
   if [ -z "$S" ]; then
-    not_run 2a "no --api-on-project was given: mode 2's premise is a THIRD throwaway of yours whose Cloud Billing API is ON" $(mode_keys 2a)
+    not_run 2a "no --api-on-project was given: mode 2's premise is a THIRD throwaway of yours whose Cloud Billing API is ON"
     return 0
   fi
   if [ -z "$SECOND_ACCOUNT" ]; then
-    not_run 2a "no --second-account was given: mode 2(a) is the one run where the gcloud fallback must be able to answer, and it answers with YOUR OWN gcloud login — so ADC has to be logged in as a SECOND account that lacks billing.accounts.list. See the manual row" $(mode_keys 2a)
+    not_run 2a "no --second-account was given: mode 2(a) is the one run where the gcloud fallback must be able to answer, and it answers with YOUR OWN gcloud login — so ADC has to be logged in as a SECOND account that lacks billing.accounts.list. See the manual row"
     return 0
   fi
   if ! s_enabled 2a; then return 0; fi
@@ -1192,7 +1193,7 @@ s_enabled() { # s_enabled MODE — S's API must be ON before the run, or the mod
     fact "premise-$m" PASS "S=$S has cloudbilling.googleapis.com ENABLED before the run, which is what mode 2 needs"
     return 0
   fi
-  not_run "$m" "S=$S reads cloudbilling enabled-count ${n:-nothing} and mode 2 needs 1: with the API off on S the run takes mode 1's disabled-API path and proves nothing. Enable it on S and run again" $(mode_keys "$m")
+  not_run "$m" "S=$S reads cloudbilling enabled-count ${n:-nothing} and mode 2 needs 1: with the API off on S the run takes mode 1's disabled-API path and proves nothing. Enable it on S and run again"
   return 1
 }
 
@@ -1225,11 +1226,11 @@ assert_source_2a() {
 
 step_2b() {
   if [ -z "$S" ]; then
-    not_run 2b "no --api-on-project was given: mode 2's premise is a THIRD throwaway of yours whose Cloud Billing API is ON" $(mode_keys 2b)
+    not_run 2b "no --api-on-project was given: mode 2's premise is a THIRD throwaway of yours whose Cloud Billing API is ON"
     return 0
   fi
   if [ -z "$SECOND_ACCOUNT" ] && [ "$ROLE_REMOVED" != yes ]; then
-    not_run 2b "neither --second-account nor --role-removed was given: mode 2 needs a caller without billing.accounts.list, which takes a browser or your own IAM — no script may do it for you. See the manual row" $(mode_keys 2b)
+    not_run 2b "neither --second-account nor --role-removed was given: mode 2 needs a caller without billing.accounts.list, which takes a browser or your own IAM — no script may do it for you. See the manual row"
     return 0
   fi
   if ! s_enabled 2b; then return 0; fi
@@ -1537,7 +1538,7 @@ select_mode() { # select_mode MODE FN
       return 0
     fi
   done
-  not_run "$m" "this run's --modes did not select it (it ran: ${MODES_TO_RUN[*]}). An unrun mode is not a pass: run the whole check" $(mode_keys "$m")
+  not_run "$m" "this run's --modes did not select it (it ran: ${MODES_TO_RUN[*]}). An unrun mode is not a pass: run the whole check"
 }
 
 main() {
