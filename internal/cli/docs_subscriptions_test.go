@@ -21,12 +21,15 @@ package cli
 //
 //   - commit messages and pull-request bodies, which the plan's Interfaces line
 //     hands to each PR's independent review;
-//   - a page's code rather than its copy: a page's frontmatter, <style> and
-//     <script> blocks are dropped before the scan, because "$1" in a regular
-//     expression and a width in a stylesheet are not figures, and the components
-//     a page composes are outside the walk;
-//   - the values the subscription documents already carry, which are allowed by
-//     the exact list below.
+//   - a page's stylesheet and its client script: <style> and <script> blocks are
+//     dropped before the scan, because a layout width and a CSS value a script
+//     carries are not figures. A page's frontmatter is read like its copy -- that
+//     is where a page's data lives, and where S7.2's pricing page writes the Team
+//     price -- so a percentage a page needs for layout goes in its stylesheet,
+//     which the scan does not read;
+//   - the components a page composes, which are outside the walk;
+//   - the renderings the exact list below names: the values the subscription
+//     documents already carry, and one page's own code.
 
 import (
 	"fmt"
@@ -42,11 +45,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// priceFigureAllow is the exact list of figures the subscription documents
-// already carry on `main`, which is what S0.1 allows: the Terms' own values are
-// contract terms a buyer must see (T24 sends the prices, discounts, fees and the
-// Enterprise minimum to the private Order Form and keeps the rest), and the
-// licensing census restates two of them while saying that they went in.
+// priceFigureAllow is the exact list of renderings already on `main` that the
+// scan must not fail on, each one judged and named rather than pattern-blessed.
+//
+// Six are the figures the subscription documents carry, which is what S0.1
+// allows: the Terms' own values are contract terms a buyer must see (T24 sends
+// the prices, discounts, fees and the Enterprise minimum to the private Order
+// Form and keeps the rest), and the licensing census restates two of them while
+// saying that they went in. The seventh is not a figure at all: the security
+// page's own code, whose JavaScript replacement argument reads like an amount,
+// and which the scan only sees because a page's frontmatter is read.
 //
 // An entry is a rendering and one file, never a licence to write that figure
 // anywhere: the scan drops a hit only inside its own occurrence, only in the
@@ -88,6 +96,11 @@ var priceFigureAllow = []struct {
 		"docs/licensing/status-2026-11-07.md",
 		"(US$100)",
 		"the same census restating the Terms' liability cap (L4.3)",
+	},
+	{
+		"website/src/pages/security.astro",
+		"'$1'",
+		"not a figure: the page's own Markdown-link stripper, whose replacement argument is JavaScript's first capture group (documentText.replace(/\\[([^\\]]*)\\]\\([^)]*\\)/g, '$1'))",
 	},
 }
 
@@ -270,11 +283,21 @@ func TestDocsSubscriptionsPriceScanCatchesPlants(t *testing.T) {
 		refused(t, "a second amount in the file the first is allowed in", scan(t, map[string]string{"docs/licensing/subscription-terms.md": body}), "US$250")
 	})
 
+	t.Run("a figure in a page's data", func(t *testing.T) {
+		body := "---\nconst TEAM_PRICE = '$20'\n---\n<p>Team is billed monthly.</p>\n"
+		refused(t, "a price in a page's frontmatter", scan(t, map[string]string{"website/src/pages/pricing.astro": body}), "$20")
+	})
+
+	t.Run("a discount in a page's data", func(t *testing.T) {
+		body := "---\nconst STARTUP_DISCOUNT = '20%'\n---\n<p>Startups pay less in their first year.</p>\n"
+		refused(t, "a discount in a page's frontmatter", scan(t, map[string]string{"website/src/pages/pricing.astro": body}), "20%")
+	})
+
 	t.Run("a page that carries no figure is accepted", func(t *testing.T) {
-		body := "---\nconst WIDTH = '100%'\nconst REPLACED = text.replace(/x/, '$1')\n---\n" +
+		body := "---\nconst WIDTH = 'wide'\nconst LINKED = text.replace(/x/, 'one')\n---\n" +
 			"<style>p { width: 100% }</style>\n<script>const rate = '100%'</script>\n" +
 			"<p>Two plans, one price: the pricing page is published by the owner.</p>\n"
-		accepted(t, "a page whose code carries no figure", scan(t, map[string]string{"website/src/pages/pricing.astro": body}))
+		accepted(t, "a page whose copy carries no figure, and whose stylesheet and script are not read", scan(t, map[string]string{"website/src/pages/pricing.astro": body}))
 	})
 }
 
@@ -347,31 +370,16 @@ func priceFigureFiles(root string) ([]string, error) {
 }
 
 // priceFigureProse is the text the scan reads from one file. A Markdown
-// document is read whole; a page is read with its frontmatter, <style> and
-// <script> blocks replaced by blank lines, so the line numbers a hit reports
-// stay the file's own while the page's code is not read as copy.
+// document is read whole; a page is read whole but for its <style> and
+// <script> blocks, which are replaced by blank lines so the line numbers a hit
+// reports stay the file's own. A page's frontmatter is read, because that is
+// where its data lives.
 func priceFigureProse(rel, body string) string {
 	if !strings.HasSuffix(rel, ".astro") {
 		return body
 	}
-	body = priceBlankFrontmatter(body)
 	body = priceAstroStyleRE.ReplaceAllStringFunc(body, priceBlankLines)
 	return priceAstroScriptRE.ReplaceAllStringFunc(body, priceBlankLines)
-}
-
-// priceBlankFrontmatter blanks a page's frontmatter block, the code above its
-// markup, and leaves the page alone when it has none.
-func priceBlankFrontmatter(body string) string {
-	rest, ok := strings.CutPrefix(body, "---")
-	if !ok {
-		return body
-	}
-	end := strings.Index(rest, "\n---")
-	if end < 0 {
-		return body
-	}
-	block := body[:len("---")+end+len("\n---")]
-	return priceBlankLines(block) + body[len(block):]
 }
 
 // priceBlankLines stands in for a block the scan does not read: the block's own
