@@ -2555,6 +2555,23 @@ old value and shape come from this document and from nowhere else.
 | `old` | string | never | never | the value the TARGET layer's own file holds for the key before the edit, which is not the value a run gets (the winning layer decides that). Empty when that layer's file holds none |
 | `new` | string | never | never | the value the edit would write. Empty for an unset, which is the fact that makes the pair meaningful: `changed` is the CLI's comparison and not a consumer's reading of these two strings |
 | `refusal` | string | never | never | **empty in every document this CLI prints.** A refusal is the CLI's own sentence with a non-zero exit and **no document at all**, which is what a consumer branches on (D1106, D1112); the member is written out because the shape is the contract, and a consumer reads it by name |
+| `operation` | string | unless the write is an entry write | never | which entry operation this write is, `add-entry` or `remove-entry` (`settingsEntryAdd`, `settingsEntryRemove`, D1164). It is the write path's own word and a consumer **never re-derives it**: `key`, `old` and `new` alone cannot say which of the two the CLI decided, because a map's removal and an object list's read alike in them |
+| `entry_key` | string | unless the write is an entry write | never | **the field the entry is addressed by**, printed through `safetext.Field`: the block's own key field for an object list (`name`, `id`), and the member's own name for a map, whose entry *is* one member. It is an address, not a value a form is drawn from |
+| `entry_value` | string | unless the write is an entry write | never | that field's value — the key field's value for an object list, the member's value for a map's add — printed through `safetext.Field`. **Empty for a map's `remove-entry`**, whose address is the member's name and nothing else: that member's value is what `old` carries |
+| `entry_fields` | `map[string]string` | unless the write is an entry write | never | the members the entry carries **beside** the field that names it, keyed by member name, both sides printed through `safetext.Field`. **Only an object list's `add-entry` has any**: a map's entry is one member and carries none, and no removal carries any. The table spells it the one way a cell carries an entry — the pairs sorted by field and joined with `, ` (`settingsEntryFieldsString`) — which is the same spelling `old` and `new` carry an entry in |
+
+**The four entry members are version 1's own growth, and a scalar write's
+document is the shape it has always had** (D1164, under D848's rule that a
+version gains only members a document may leave out): they are `omitempty`, and
+`settingsEntryAdd` and `settingsEntryRemove` are the only writers that set them.
+**The console's own row builds no entry write at all** — `settings set KEY
+--layer <L>` carries one key and one value, and `--add-entry`/`--remove-entry`
+are not words of it (design §5.1 rule 6, and no screen control can choose a form
+whose row would have to say a key is map- or list-shaped). A consumer that pins
+this version therefore **ignores these four and reads the ten members it has
+always read**: an entry write's document reaches no window this console draws,
+and a reader that meets one in the CLI's own output finds the entry's address in
+the entry's own terms rather than inferring it from `key`.
 
 **Every string is printed through `safetext.Field`**, for §6.19's reason: a key,
 a path and a value are as much the file's and the command line's as they are the
@@ -2565,12 +2582,21 @@ built.
 one `FIELD`/`VALUE` row per member, in this document's own order, so the two
 shapes cannot drift into two contracts.
 
-**The two phase words are exclusive, and that is the command's own rule.**
-`--json` without `--dry-run` is refused ("`--json` is the dry run's document"),
-and `--dry-run` with `--yes` is refused too ("a dry run says what the edit would
-do and writes nothing, `--yes` answers a write"): a console passes exactly one
-of the two spellings, and the CLI is what makes that a property rather than a
-convention. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+**The phase words are exclusive, and that is the command's own rule**
+(`settingsDryRunFlags`, `askConflict`). `--json` without `--dry-run` is refused
+("`--json` is the dry run's document"), `--dry-run` with `--yes` is refused too
+("a dry run says what the edit would do and writes nothing, `--yes` answers a
+write"), and so is `--dry-run` with **`--ask`**, the slot's third word: `--ask`
+is about the confirmations a write is given, which a dry run has none of and
+asks for none of (a managed project writes on the gate's verdict and asks
+nothing, and `--ask` is the flag that puts those questions back), and `--ask`
+beside `--yes` is refused as well, because the two are the slot's two answers to
+the same question. **A console passes exactly one of the two spellings this
+document is about** — `--dry-run --json` or `--yes` — and the CLI is what makes
+that a property rather than a convention: `--ask` is not a word of the console's
+argv (design §5.1 rule 6), because the questions it restores are asked at a
+terminal and the console's child, whose stdin is ignored, is given `--yes`
+instead. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
 omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
 one `settingsWriteLayers` names, and a layer outside them is a refusal rather
 than a document. The command is the same pair §6.19's paragraph describes, so the
