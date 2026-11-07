@@ -2,8 +2,7 @@
 
 **Status: design answered by the owner on 2026-11-07; plan only; nothing is implemented; no task
 approved.** This file amends [spec.md](spec.md) against the code. **Where it disagrees with the spec, it
-wins.** Checked against `origin/main` at `1ad2d3143` (main's tip on 2026-11-07; round 1 re-verified every finding below at that commit). **Round 1 (an independent security review) ran on 2026-11-07 and is applied here; see §7 for what was
-accepted and dismissed. No second round has run.**
+wins.** Checked against `origin/main` at `91ae90aa3` (main's tip on 2026-11-07, merged into the branch; rounds 1 and 2 re-verified every finding below on main). **Rounds 1 and 2 (independent security reviews) ran on 2026-11-07 and are applied here; see §7 and §8. No third round has run.**
 
 **Numbers.** This work holds **D1580–D1599** and **Checks 400–409** and reserves all of them. The
 siblings are `docs/no-prompt-policy` (D1540–D1559, PR #1906) and `docs/composite-commands`
@@ -55,7 +54,7 @@ check with `gcloud`.
 
 **F6 — Wrong: "refuses to create or register a repo named `project` or `all-repos`".** A canonical repo
 contains slashes, so it cannot equal either word. `fugaro project repos add` takes `provider/owner/name`, `owner/name` or `*`
-and so cannot be given a bare word (its exact refusal is UNVERIFIED, §6). *Consequence:* the reservation is a **test** that the two keywords can
+and so cannot be given a bare word (`canonicalRepoArg` refuses a one-segment name: it needs `provider/owner/name` or a listed `owner/name`). *Consequence:* the reservation is a **test** that the two keywords can
 never parse as a repository (RS1), not a refusal in `repos add`.
 
 **F7 — Wrong: "all repos, including repos added later" needs a definition.** The repo set is
@@ -155,9 +154,7 @@ fed to `access`.
 
 **F22 — Missing, BLOCKING, round 1: what each role and scope holds in the cloud, and who can write the
 grants.** Grants must live in the Realtime Database under `config/…`; `internal/budget/rules/rules.json.tmpl`
-gives `config/policy/*` and `config/admin/*` **`.write: false`**, so the only writers are IAM holders of
-`roles/firebasedatabase.admin` — the project's owners and editors and `budget_admins` (roles.md §1.2).
-The migrated **admins (today's `operators`) do not hold it.** Table (today, and after RS3/RS4):
+gives `config/policy/*` and `config/admin/*` **`.write: false`**, so the only writers are IAM holders of `roles/firebasedatabase.admin`: the project's owners and editors and `budget_admins` (roles.md §1.2), **and the history job's account and the coordinator's writer account** (`deploy/terraform/gcp/modules/firebase/iam.tf`, `history_database` and the coordinator member). The migrated **admins (today's `operators`) do not hold it.** Table (today, and after RS3/RS4):
 
 | Role and scope | Cloud grants it carries | Can it write the `access` node or any `config/policy/*` setting? |
 | --- | --- | --- |
@@ -167,6 +164,8 @@ The migrated **admins (today's `operators`) do not hold it.** Table (today, and 
 | owners, editors, `budget_admins` | `roles/owner`/`editor`, `firebasedatabase.admin` | **yes** (implicit project admins, F17.3) |
 | **any role at all-repos scope** | **none of its own** | no |
 | **any role at specific-repos scope** | **none of its own** | no |
+
+**Round 2 consequence: an explicit `admin@project` cannot grant anything.** After migration only the implicit admins (owners, editors, `budget_admins`) can write `config/admin/access`: RS3/RS4 do not derive `firebasedatabase.admin` for the new admin role. RS5 therefore refuses for an explicit admin with a sentence naming `budget_admins` ("add this person to `budget_admins`, or ask a project owner"). **D1592** asks whether `admin@project` should derive it. Implicit admins **do count** toward the last-admin rule (F17.2): the rule refuses only when no project admin of either kind would remain.
 
 Three consequences. (a) **Repo-scoped and all-repos pairs carry no cloud grant before RS12**: they are a
 CLI/console policy check over grants the person already holds project-wide, or none. (b) **Anyone who is
@@ -207,6 +206,10 @@ shows D681–D695 with status `open` although the owner answered them on 2026-10
 RS10 records D681–D695 as answered and marks D690 and D691 **superseded by the owner's 2026-11-07 D1580
 answer**; the narrowing of D446 is stated beside it.
 
+**F29 — Missing, round 2: the IAM derive is not ETag-protected; the contractor example.**
+(a) Only the node write is conditional (F23). The IAM lists are derived from a read and applied by `update` under Terraform's state lock; a concurrent grant or a revoke racing an `update` can apply lists from a **stale read and re-grant a revoked member IAM**. *Consequence:* RS3 and RS5 derive **from a read taken after the state lock is held**, re-reading the node; `TestRevokeIsNotUndoneByAStaleDerive`.
+(b) **The contractor example** (operator on one repo only): IAM is derived from **project-scope pairs only**, so such a person gets **no cloud grant before RS12 and cannot launch**. The example waits for RS12 (D1593). Check 402's "refused on another repo" proves nothing for a person who holds no IAM: the check subject must hold the project-wide launcher grant (operator@project) plus a scoped pair, and the script header states that IAM.
+
 **F28 — Wrong, round 1: the first D1585 put the grants where every run reads them.** `Policy.Access` in
 `projectpolicy.Policy` would sit in `config/policy/shared`, whose rule is `.read: TOKEN` (`rules.json.tmpl`):
 each run's agent could read every member's address and role. *Consequence:* D1585 amended (above); RS2
@@ -243,13 +246,15 @@ stores the node under `config/admin/` and pins it with a rules test.
 | **D1582** | A lapse: everyone to viewer, or only the Subscription surfaces? | **Only Subscription-edition surfaces drop to viewer;** the MIT core CLI keeps working; assignments kept and returned on resume. A licence-gate input, not a role rewrite (F12) | All surfaces to viewer, as the spec says: stops the free core | **2026-11-07: as recommended; differs from the spec's acceptance sentence** (amended in F12). Why: the MIT core promise |
 | **D1583** | Scope grammar | **`project`, `all-repos`, or a comma-separated list of repo patterns; `*` stays inside one path segment; no `**`; patterns re-evaluated at check time; bare names refused with a hint** | Accept bare names when unique: ambiguous across owners and changes meaning when a second owner registers a same-named repo | **2026-11-07: as recommended in its text; AMENDED AFTER REVIEW below, and the amendment CONFIRMED by the owner 2026-11-07** |
 | **D1584** | May a catalog entry carry a repo binding so a repo admin manages it? | **No for now: every catalog entry is project-level, project-scope admin only** (F8). A `repos:` binding is a later change to `config.Catalog`, its schema and the published node | Add the binding now: a catalog shape change and the cover/policy rows in the same release | **recommended; owner delegated reading to the PR, 2026-11-07** |
-| **D1585** | Where are the role/scope pairs stored? **(amended after review, round 1)** | **A new `access` node in the Realtime Database under `config/admin/` (`.read: false`, `.write: false` in `rules.json.tmpl`), NOT in `config/policy/shared`**, which carries `.read: TOKEN` so every run's agent would read every member's address and role (F28). Read and written over IAM by CLI callers holding the database grant; derived IAM lists from the project-scope pairs by the step registry. The node has its own size and count cap (F27) and an RS2 **rules test that no run token reads it**. Local `terraform.launchers/operators` become derived, then removed | The published policy node (first recommendation): shared, but run-readable | **2026-11-07: amended after review; amendment CONFIRMED by the owner 2026-11-07** (node under `config/admin/`) |
+| **D1585** | Where are the role/scope pairs stored? **(amended after review, round 1)** | **A new `access` node in the Realtime Database under `config/admin/` (`.read: false`, `.write: false` in `rules.json.tmpl`), NOT in `config/policy/shared`**, which carries `.read: TOKEN` so every run's agent would read every member's address and role (F28). Read and written over IAM by CLI callers holding the database grant; derived IAM lists from the project-scope pairs by the step registry. **The fence binds client tokens only:** `.read: false` does not stop an IAM `roles/firebasedatabase.viewer` holder, which every launcher and operator holds today and RS4 gives the viewer list (`rules.json.tmpl`, roles.md §1.2), so **every listed person, and an agent in their session, can read every grant**; a repo-scoped-only user holds no such role and cannot read the node at all (F22). The node has its own size and count cap (F27) and an RS2 **rules test that no run token reads it**. Local `terraform.launchers/operators` become derived, then removed | The published policy node (first recommendation): shared, but run-readable | **2026-11-07: amended after review; amendment CONFIRMED by the owner 2026-11-07** (node under `config/admin/`) |
 | **D1586** | Does a viewer read spend, and per scope? | **Yes at project scope; a repo-scoped viewer reads only the runs and logs of those repos, and project-level spend is not shown to them.** Spend history is one Firestore collection per project (roles.md `datastore.viewer`), so a per-repo spend view is a CLI-side filter, not a barrier | Spend for everyone who has any role: simplest, exposes other repos' cost to a contractor | **recommended; owner delegated reading to the PR, 2026-11-07** |
 | **D1587** | May an operator cancel a run another person started? **(lapse half dropped in round 1: already ruled by D436/T12, F11)** | **Yes, within scope** (today a launcher cancels any run, `fugaroLauncher`). An ordinary viewer cannot cancel; a lapsed viewer keeps cancel and the kill switch as T12 ruled | No cancel for any operator but the starter's own: needs a run-owner check the cloud cannot make (`fugaroLauncher` bundles cancel on every run) | **recommended; owner delegated reading to the PR, 2026-11-07** |
 | **D1588** | A paired device and scopes | **A device inherits the highest PROJECT-scope role of the pairing user and may only lower it; a user with only repo-scoped roles cannot pair** (a device node has no scope field). Scoped devices need a node-shape change later | Add a `scope` child to the device node now: a rules and schema change and a version bump | **recommended; owner delegated reading to the PR, 2026-11-07** |
 | **D1589** | Do the Terraform variable names (`launchers`, `operators`) change with the config words? | **No: config keys, flags and docs are renamed; the Terraform variable and resource names stay.** The plan is then empty for an installation that only renames, and no state move is needed | Rename the variables: state moves and a noisy plan for no user-visible gain | **recommended; owner delegated reading to the PR, 2026-11-07** |
 | **D1590** | May a coding-agent session grant or revoke a role? | **No: a grant or revoke in an agent session refuses (not a prompt) and prints the exact command for the person** — the same shape as the sibling's cap-raise rule (no-prompt D1542). Every other command stays open to the agent *within the person's own role*. **Stated honestly (round 1): agent sessions are detected by environment variables (`internal/agentenv`) that an agent can unset; this is a courtesy against accidents, not a barrier**, exactly as `agentenv.go` says of itself, and RS10's doc test pins that sentence | Yes: an agent in an admin's session can promote itself or anyone, defeating the role | **recommended; owner delegated reading to the PR, 2026-11-07** |
-| **D1591** | How does a repo-scoped admin's write reach the cloud (F22)? Before RS12 a repo-scoped admin has no cloud grant, and anyone given the database write is effectively a project admin | **(c) Until RS12 a repo-scoped admin changes only what a person can change without a cloud write: their repo's `fugaro.yaml` through the repository's own review, and CLI-local actions; scoped operator and viewer roles are CLI/console checks over grants the person already holds. The `access` node and every `config/` write need a project-scope admin.** Honest and ships now | (a) A write path that checks the node before writing (a small service the repo admin may call, a new trust boundary: RS12). (b) Give repo admins `firebasedatabase.admin`: they become project admins in practice and can promote themselves | **2026-11-07: as recommended (option c).** Why: ships project-scope writes now and leaves repo-scoped admin writes to RS12 |
+| **D1591** | How does a repo-scoped admin's write reach the cloud (F22)? Before RS12 a repo-scoped admin has no cloud grant, and anyone given the database write is effectively a project admin | **(c) Until RS12 a repo-scoped admin changes only what a person can change without a cloud write: their repo's `fugaro.yaml` through the repository's own review, and CLI-local actions; scoped operator and viewer roles are CLI/console checks over grants the person already holds. The `access` node and every `config/` write need a project-scope admin (in practice an implicit admin: an explicit `admin@project` holds no database write, D1592).** Honest and ships now | (a) A write path that checks the node before writing (a small service the repo admin may call, a new trust boundary: RS12). (b) Give repo admins `firebasedatabase.admin`: they become project admins in practice and can promote themselves | **2026-11-07: as recommended (option c).** Why: ships project-scope writes now and leaves repo-scoped admin writes to RS12 |
+| **D1592** | Should `admin@project` derive `roles/firebasedatabase.admin` so an explicit admin can grant? **(round 2)** | **No.** It widens an admin to lift caps and write all of `/config` (roles.md §1.2); grants stay with the implicit admins (owners, editors, `budget_admins`) | Yes: admins can grant, and are also budget admins | **recommended; owner delegated reading to the PR, 2026-11-07** |
+| **D1593** | Derive launcher IAM from a scoped operator pair so the contractor example works before RS12? **(round 2)** | **No: wait for RS12.** A project-wide IAM grant would let the contractor launch every repo, defeating the scope | Derive it: the contractor works now, with project-wide launch power and a CLI check as the only limit | **recommended; owner delegated reading to the PR, 2026-11-07** |
 
 ### D1583 — amended after review (rewritten in round 1)
 
@@ -262,8 +267,7 @@ that exact repository is listed in this machine's config** (`configRepo`), refus
 no provider to take. **What the scope grammar is:** the **stored and printed spelling is canonical**
 (`github/acme/api-*`, `bitbucket/acme/*`); the shorthand `owner/name` is accepted **only for an exact
 repository this machine's config lists** (as `repos add` does); a **pattern is always written canonical**;
-a **`*` in the provider segment is refused** (so the `*/acme/*` form `MatchRepo` allows is not a scope
-value; only the lone `*` is, and it means `all-repos`, which has its own keyword). Bare names
+a **`*` in the provider segment is refused** (so the `*/acme/*` form `MatchRepo` allows is not a scope value), and **a lone `*` is refused as a scope value too: write `all-repos`**, which is reserved to project admins, so an all-repos admin cannot mint it by writing `*`. Bare names
 (`frontend`) are refused with a hint; `*` stays inside one segment; no `**`; patterns re-evaluated at
 check time. The owner **confirmed this amended text on 2026-11-07**.
 
@@ -278,7 +282,7 @@ check time. The owner **confirmed this amended text on 2026-11-07**.
 3. **The role is a policy check, not a barrier (D1580)** for launch and read: a person with a
    project-wide IAM grant can act on any repo with `gcloud`. The docs say so wherever a scoped role is
    described (RS10 doc test). D1591 (c) settles it: repo-scoped operator and viewer are stated courtesies until RS12.
-4. **No decision is open:** D1584 and D1586–D1590 are recorded as the recommendation ("owner delegated reading to the PR"), D1591 and the two amendments as answered.
+4. **No decision is open:** D1584, D1586–D1590, D1592 and D1593 are recorded as the recommendation ("owner delegated reading to the PR"), D1591 and the two amendments as answered.
 5. **Sibling dependencies.** Role changes use `docs/composite-commands`' step registry (D1561) and its
    partial-failure message (D1563); refusals use `docs/no-prompt-policy`. Neither is merged: RS5 and RS6
    wait for them.
@@ -291,6 +295,7 @@ check time. The owner **confirmed this amended text on 2026-11-07**.
 | "refuses to create or register a repo with either name" | F6: a test, no new refusal |
 | scope values "a comma-separated list of repo names, for example `frontend,api`" | D1583 amended: canonical patterns; bare names refused |
 | "When a subscription lapses, all users are limited to viewer" | F12, D1582 (restates D436/T12): Subscription surfaces only, cancel and the kill switch kept |
+| "Contractor: operator on one specific repo only" | F29(b), D1593: no cloud grant before RS12, so the example waits for RS12 |
 | acceptance criterion 2 (a repo admin changes repo A's settings and images) | F22, D1591: only as far as a person needs no cloud write, until RS12 |
 | "Only a project admin can grant ... A repo admin can grant roles up to admin" | F17.1 subset rule, F24 revoke rule, F23 conditional write |
 | "no follow-up steps" | F20: composite step registry |
@@ -304,8 +309,7 @@ check time. The owner **confirmed this amended text on 2026-11-07**.
   budget caps exist (`budget set --repo`), per-repo `fugaro.yaml` lives in the customer's repository and
   is reviewed there. RS6b assigns each writable key a required role; the list is to be confirmed
   against `internal/settings`.
-- **Whether `fugaro project repos add` already refuses `project`/`all-repos`.** F6 reasons from the
-  canonical spelling; the refusal's exact message was not read.
+
 - **Console surfaces.** `consoleReadPaths` lives in `internal/cli/project.go` (round 1 corrected the file);
   its console-side half and the Go equality test were not re-read in full: RS7 states the test the rule
   requires.
@@ -334,3 +338,17 @@ Each finding was re-verified on `origin/main` at `1ad2d3143` before acting.
 | lesser | RS4→RS5 edge; group/domain/serviceAccount members; implicit admins input; member-exists source; `ls` enumeration; `consoleReadPaths` file; `ls --json` keys; main's commit; D1586's filter in `budget.go`; subset algorithm; rename/recreate; scope ⊆ `allow_repos`; node size; older CLI; package docs test | each checked (F25, F27, `internal/cli/project.go`) | **Accepted** in F25, F27, the plan's edges, RS1, RS2, RS3, RS6c, RS7 and RS10 |
 
 Dismissed: none in full. One partial dismissal: the non-existent `image dockerfile` command (row 7).
+
+## 8. Round 2 (independent review, 2026-11-07): accepted and dismissed
+
+| # | Finding | Verified on main | Action |
+| --- | --- | --- | --- |
+| 1 | An explicit `admin@project` cannot grant | `modules/firebase/iam.tf`: `firebasedatabase.admin` only on the listed accounts | **Accepted:** F22, D1591, RS5 (refusal names `budget_admins`), D1592 (recommended NO) |
+| 2 | F22 writers incomplete | `iam.tf` `history_database`, the coordinator member | **Accepted:** both added |
+| 3 | `.read: false` binds tokens only | viewer role bypasses rules (`rules.json.tmpl`, roles.md §1.2) | **Accepted:** D1585 and RS2 |
+| 4 | Contractor example, Check 402 subject | IAM derives from project-scope pairs only | **Accepted:** F29(b), §5 row, D1593, Check 402 states the IAM |
+| 5 | Derive race | only the node write was conditional | **Accepted:** F29(a), RS3/RS5, `TestRevokeIsNotUndoneByAStaleDerive` |
+| 6 | Lone `*` | plan pinned refusal while D1583 allowed it | **Accepted:** `*` refused as a scope value, D1583 reworded, RS1 |
+| follow-ups | RS7 test names; `status*.go`; F6 UNVERIFIED; RS3 drift and retire order; implicit admins in the last-admin rule; grant prints canonical scope; RS10 depends on RS7; cited commit; earlier docs test | `TestConsoleAllowListedReadsWriteNothing` (`checkouts_test.go`) and `TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode` exist; no `internal/cli/status*.go`; `canonicalRepoArg` refuses `len(parts) < 3` | **Accepted**; the docs test starts in RS1 |
+
+Dismissed: none.

@@ -4,7 +4,7 @@
 explicit go; answering a decision is not approving a task. It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md). Answers that shaped it (2026-11-07): D1580 (CLI and console
 checks first), D1581 (rename and migrate in `update`), D1582 (a lapse limits only Subscription
-surfaces), D1583 (scope grammar, amended to canonical patterns, **confirmed 2026-11-07**). **Round 1 of an independent review (2026-11-07) is applied**: D1585 is amended (the node lives under `config/admin/`), and D1591 (how a repo-scoped admin's write reaches the cloud) was answered 2026-11-07 as recommended (option c); D1584 and D1586–D1590 are recorded as the recommendation. No decision is open; each task still needs its own go. Tasks that
+surfaces), D1583 (scope grammar, amended to canonical patterns, **confirmed 2026-11-07**). **Rounds 1 and 2 of an independent review (2026-11-07) are applied**: D1585 is amended (the node lives under `config/admin/`), and D1591 (how a repo-scoped admin's write reaches the cloud) was answered 2026-11-07 as recommended (option c); D1584 and D1586–D1590 are recorded as the recommendation. D1592 and D1593 (round 2) are recorded as the recommendation. No decision is open; each task still needs its own go. Tasks that
 depend on an open decision say so; they cannot start before it is answered.
 
 **External dependencies (not in this folder).** `docs/composite-commands` (D1560–D1579): the named-step
@@ -52,6 +52,7 @@ the tasks of those plans that touch the same command files (see the shared-files
 | A repo admin revoking or demoting a project-scope pair (F24) | RS5 `TestRepoAdminCannotRevokeProjectGrant` |
 | A subset test that is wrong for hostile patterns | RS1 `TestSubsetHostileCases` (below) |
 | `ls --json` reusing `operators`/`launchers` with a new meaning | RS5 `TestUserLsJSONHasNoLegacyKeys` |
+| An explicit admin@project attempting a grant; a stale IAM derive re-granting a revoked member (F22, F29) | RS5 `TestExplicitAdminRefusalNamesBudgetAdmins`; RS3/RS5 `TestRevokeIsNotUndoneByAStaleDerive` |
 | The package's documented claims drifting | RS10 `internal/cli/docs_roles_scopes_test.go` |
 
 **Reviewer tier.** IAM, policy, pairing and the console fence are security-sensitive: **opus +
@@ -76,10 +77,10 @@ standard.
 ### RS1 — `internal/access`: roles, scopes, the resolver (inert)
 
 - **Files:** `internal/access/access.go`, `scope.go`, `resolve.go`, `access_test.go` (all new).
-  `internal/mobileauth/mobileauth.go` re-exports the role type from the new package (type alias).
+  `internal/mobileauth/mobileauth.go` re-exports the role type from the new package (type alias). **`internal/cli/docs_roles_scopes_test.go` (new) starts here** (decision numbers inside D1580–D1599, answered cells, named files and tests exist); RS10 extends it with the stated-limit sentences.
 - **Interfaces:** consumes `projectpolicy.MatchRepo` and `projectpolicy.Canonical`. Produces
   `Grant{User, Role, Scope}`, `ParseScope`, `Input{Grants, Implicit, AllowRepos, Lapse}` (the implicit
-  admins, F27, are an input), `Effective(in, caller, repo) Role`, `Allowed(in, caller, action, repo)`,
+  admins, F27, are an input; they count toward the last-admin rule, F22), `Effective(in, caller, repo) Role`, `Allowed(in, caller, action, repo)`,
   `SubsetOf(grantee, grantor)`, `KnownMatches(scope, knownRepos)` and `Caller(ctx)`, which reads the
   email from the **credential the command will use** and never from `localcfg.Me` or git (F21).
   **The subset algorithm** (conservative: false when unsure): `project` ⊇ everything; `all-repos` ⊇ any
@@ -89,11 +90,10 @@ standard.
   are equal, or the grantor's is `*`, or the grantor's is `prefix*` and the grantee's is `prefix…` with a
   longer literal prefix (a literal, or `prefix2*`). Hostile cases the tests hold: `api*` is **not** a
   subset of `api-*`; `api-*` **is** a subset of `api*`; `a*b*` against `a*`; `github/acme/*` does not
-  cover `github/acme/a/b` (segment counts); a `*` in the provider segment is refused at parse; a
-  scope never admits a repo outside `allow_repos` (F27).
+  cover `github/acme/a/b` (segment counts); a `*` in the provider segment is refused at parse; a scope never admits a repo outside `allow_repos` (F27). **A lone `*` is refused as a scope value (write `all-repos`, reserved to project admins)**, so `all-repos` being a superset of patterns cannot mint it.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestHighestRoleWins`, `TestProjectScopeOnlyForProjectActions`, `TestAllReposCoversLaterEnrolled`,
-  `TestPatternStarStaysInsideASegment`, `TestSubsetHostileCases`, `TestCallerIsTheCredentialNotGitConfig`, the Global-constraints tests above.
+  `TestPatternStarStaysInsideASegment`, `TestAllReposAdminCannotGrantBareStar`, `TestSubsetHostileCases`, `TestCallerIsTheCredentialNotGitConfig`, the Global-constraints tests above.
 - **Command:** `GOFLAGS=-p=1 go test ./internal/access/ ./internal/mobileauth/ -count=1`
 - **Depends on:** nothing. **Commit:** `access: roles, scopes and the one resolver (inert)`.
 - **Red step:** `TestGrantMustBeSubsetOfGrantorScope` fails against an empty `SubsetOf`.
@@ -109,7 +109,7 @@ standard.
   (`rtdb.Client.GetETag`) and `access.WriteIfMatch`, decoded strictly, validated at load by
   `access.ParseScope`, bounded by a count and a byte cap (F27). An absent node means **the migrated
   lists' meaning**, never "everyone".
-- **Schema change:** one new node (a new name; no format version bump).
+- **Schema change:** one new node (a new name; no format version bump). **The `.read: false` fence binds client tokens only**: every launcher/operator and the RS4 viewer list hold `roles/firebasedatabase.viewer`, which bypasses the rules, so every listed person (and an agent in their session) can read every grant; a repo-scoped-only user cannot read it at all.
 - **Tests:** `TestAccessNodeDecodesStrictly`, `TestAccessNodeRefusesUnknownRole`,
   `TestAbsentAccessNodeGrantsNothingNew`, `TestAccessNodeOverCapRefused`, and the **rules test**
   `TestNoRunTokenReadsTheAccessNode` (a run token and a `USER` claim read `config/admin/access` and are denied;
@@ -128,7 +128,7 @@ standard.
 - **Interfaces:** consumes RS2. The migration reads the old lists and writes `access` grants:
   `launchers`→operator@project, `operators`→admin@project, `budget_admins` and the project's owners
   and editors stay implicit admins (F17.3), then retires the old keys in the same update.
-- **Also:** group:/domain:/serviceAccount: members stay **legacy IAM-only members** (F25; the migration test covers each form); an **older CLI's** `update` refuses against a node it does not know, with a floor naming `brew upgrade` (F27; RS3's first step reads how an older CLI treats an unknown `config/admin` member).
+- **Also:** the migration reads the old lists **from the installation's outputs**, refuses on drift from the machine's copy, and **retires the old keys only after the node write has landed**; the IAM-list derive is taken **after the Terraform state lock is held**, from a fresh read of the node (F29a), pinned by `TestRevokeIsNotUndoneByAStaleDerive`. group:/domain:/serviceAccount: members stay **legacy IAM-only members** (F25; the migration test covers each form); an **older CLI's** `update` refuses against a node it does not know, with a floor naming `brew upgrade` (F27; RS3's first step reads how an older CLI treats an unknown `config/admin` member).
 - **Tests:** `TestUpdateMigratesListsToAccessNode` (an installation at the previous shape converges), `TestLegacyMemberFormsKeepTheirGrants`,
   `TestPlanIsEmptyForAPureRename`, the plugin lint, `go test ./internal/cli -run Docs`.
 - **Command:** `GOFLAGS=-p=1 go test ./internal/cli/ -run 'Migrat|Roles|Docs' ./plugin/ -count=1`
@@ -167,7 +167,7 @@ standard.
   caller holds the role at a covering scope; the grant is a **subset of the grantor's** scope, F17.1;
   the **last project admin stays**, self-removal and **self-demotion** included, F17.2; **revoke or demote
   only within the caller's own admin scope**, F24) and **writes conditionally on that ETag**, re-judging
-  on a mismatch (F23). An **agent session refuses** (D1590, a courtesy). `ls` prints each user's pairs,
+  on a mismatch (F23). An **explicit `admin@project` holds no database write (F22, D1592), so the command refuses for them with a sentence naming `budget_admins`**; a successful `grant` **prints the stored canonical scope**. An **agent session refuses** (D1590, a courtesy). `ls` prints each user's pairs,
   the effective role in a repo, and the repos a pattern matches **among those known to this machine**
   (labelled "known", F27); legacy members are listed as legacy. `--json` carries `grants` and
   `effective`, **never** the keys `operators` or `launchers` (a new name; the old keys are removed with
@@ -220,12 +220,11 @@ standard.
 ### RS7 — the console reads the same commands
 
 - **Files:** `internal/cli/project.go` (the CLI half of the fence, `consoleReadPaths`), `console/src/main/spawn.ts` and `ipc.ts` (the console half),
-  the preload surface, a Members view fixture, `internal/cli/console_reads_test.go` (the Go equality
-  test), `docs/design/desktop-console.md` §5.1 row.
+  the preload surface, a Members view fixture, the Go tests that hold the two halves equal, `docs/design/desktop-console.md` §5.1 row.
 - **Interfaces:** consumes RS5's `fugaro user ls --json` (roles.md D691(b), a read-only Members view).
   No reader of its own and no role logic in the renderer.
-- **Tests:** the Go test holding both halves equal; `npm run typecheck`, `npm run test:unit -- --maxWorkers=2`.
-- **Command:** `GOFLAGS=-p=1 go test ./internal/cli/ -run ConsoleRead -count=1` then the console commands.
+- **Tests:** `TestConsoleAllowListedReadsWriteNothing` (`internal/cli/checkouts_test.go`) and `TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode` (`docs_desktop_console_test.go`); `npm run typecheck`, `npm run test:unit -- --maxWorkers=2`.
+- **Command:** `GOFLAGS=-p=1 go test ./internal/cli/ -run 'TestConsoleAllowListedReadsWriteNothing|TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode' -count=1` then the console commands.
 - **Depends on:** RS5. **Tier:** opus + level 3 (console spawn/IPC allow-list). **OWNER-RUN:** no.
   **Commit:** `console: a read-only Members view over fugaro user ls --json`.
 
@@ -258,7 +257,7 @@ standard.
   page names the words, the docs test pins four sentences: "a scoped role is a policy check, not a cloud barrier" (D1580), "agent sessions are detected by environment variables an agent can unset: a courtesy, not a barrier" (D1590), "anyone given the write the access node needs is effectively a project admin" (F22), and the Check 402 re-scope.
 - **Tests:** `go test ./internal/cli -run Docs`, the plugin lint, `npm run check` in `website/` if touched.
 - **Command:** `GOFLAGS=-p=1 go test ./internal/cli/ ./plugin/ -run 'Docs|Lint' -count=1`
-- **Depends on:** RS3, RS5, RS6a–c. **Tier:** standard. **OWNER-RUN:** no.
+- **Depends on:** RS3, RS5, RS6a–c, RS7. **Tier:** standard. **OWNER-RUN:** no.
   **Commit:** `docs: roles and scopes, the words and the stated limit`.
 
 ### RS12 — per-repo cloud enforcement (LATER, not planned here)
@@ -293,7 +292,7 @@ own reconciliation; security-sensitive; listed so it is not forgotten.
 | `internal/infra/tf/cover.go`, `modules/*/iam.tf` | RS4 (3) |
 | `internal/cli/settings*.go`, `config_publish.go`, `project_cmd.go`, `recipes.go` | RS6b (5) |
 | `internal/cli/image*.go`, `budget.go`, `accounts*.go`, `project_enroll.go`, `secrets.go` | RS6c (5) |
-| `internal/cli/run*.go`, `cancel*.go`, `status*.go`, `logs*.go` | RS6a (5) |
+| `internal/cli/run*.go`, `cancel*.go`, `logs*.go`, `runs*.go` | RS6a (5) |
 | `internal/cli/project.go` (`consoleReadPaths`), `console/src/main/spawn.ts`, `ipc.ts` | RS7 (5) |
 | `plugin/skills/**` | RS3 (2), RS5 (4), RS10 (6) |
 | `docs/design/roles.md`, `internal/cli/docs_roles_scopes_test.go` | RS10 (6) |
@@ -309,5 +308,5 @@ inside this one.
 | --- | --- | --- |
 | **400** | A viewer on a real installation cannot launch or cancel and can read status and logs | owner, one script under `scripts/live-checks/` after RS4 |
 | **401** | `fugaro update` on an installation holding the old `launchers`/`operators` lists converges to the grants with an empty plan for a pure rename | owner, after RS3 |
-| **402** | **Re-scoped (F22, D1591):** a repo-scoped operator is refused on another repo and a repo admin is refused on the project guardrails and on a project-scope revoke, each refusal naming role and scope; the original "a repo admin changes their repo's settings" half moves to RS12 | owner, after RS6 |
+| **402** | **Re-scoped (F22, D1591, F29b):** the check subject holds the project-wide launcher IAM (operator@project) plus a scoped pair, and the script header says so (a person with no IAM is refused everywhere and proves nothing): a repo-scoped operator is refused on another repo and a repo admin is refused on the project guardrails and on a project-scope revoke, each refusal naming role and scope; the original "a repo admin changes their repo's settings" half moves to RS12 | owner, after RS6 |
 | 403–409 | reserved, unused | |
