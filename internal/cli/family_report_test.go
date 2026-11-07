@@ -8,6 +8,7 @@ package cli
 // on the way to a credential is a step; what a person has to answer is not.
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"os"
@@ -364,6 +365,52 @@ func TestAccountsAddDefaultIsShort(t *testing.T) {
 	}
 	if !strings.Contains(out, "Nothing else to run") {
 		t.Errorf("the command's stdout carries no answer:\n%s", out)
+	}
+}
+
+// TestAccountsAddClosesOnItsOwnStepsAndNotTheLoops is the `ReportBorrowed`
+// guard's own test: the loop that converges three of this command's steps is
+// the loop `fugaro setup` and `fugaro update` run, and `initflow.Run` prints
+// the closing line at the end of it unless the command's door asks it not to.
+// This command's run does not end there — the read-back after the loop can
+// still fail — so a closing line printed by the loop is a green `Done in …`
+// with a cross and an exit 1 behind it, the one account G3 forbids.
+//
+// Both streams are one writer here, because what this test is about is where
+// the line falls: the closing line is the last thing a run of this command
+// says, and the loop's would land before the command's own block. The count
+// alone says nothing — the borrowed reporter has ended the same four steps by
+// the time the loop would print it.
+//
+// Mutation (run, restore): delete the `opts.ReportBorrowed = true` line in
+// accountsAddRunStages and this fails — the account no longer ends on the
+// closing line, and `Done in …` is not the last thing the run said.
+func TestAccountsAddClosesOnItsOwnStepsAndNotTheLoops(t *testing.T) {
+	isolateState(t)
+	newAddRig(t)
+	// executeStdin's invocation with one writer for both streams, so the order
+	// the two are written in is the order they appear in.
+	cmd := NewRootCmd()
+	var both bytes.Buffer
+	cmd.SetIn(strings.NewReader(addToken() + "\n"))
+	cmd.SetOut(&both)
+	cmd.SetErr(&both)
+	cmd.SetArgs(NormalizeArgs([]string{"accounts", "add", "team-a", "--yes", "--repos", "owner/repo-a"}))
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("accounts add team-a: %v\n%s", err, both.String())
+	}
+	lines := reportLines(both.String())
+	vars := 0
+	for i, l := range lines {
+		if strings.HasPrefix(l, "Done in ") {
+			vars++
+			if i != len(lines)-1 {
+				t.Errorf("the closing line is line %d of %d, so the run said more after closing on it (the loop's own closing line lands before this command's block):\n%s", i+1, len(lines), both.String())
+			}
+		}
+	}
+	if vars != 1 {
+		t.Fatalf("the run printed %d closing lines, want one:\n%s", vars, both.String())
 	}
 }
 
