@@ -7,7 +7,9 @@ wins where they differ. Base: `origin/main` at `d6f97594c`, 2026-10-27. That com
 Subscription Terms amended to the owner's answers (#1146, licensing L4.5, done) and the Terms URL
 in the four licence files (#1140, merged).
 
-**Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
+**Status: partly built — of the 51 tasks below, 7 are done, 7 partial, 27 not started and 10 are
+owner-run — and NO TASK IS APPROVED; the census of every task against `origin/main` is
+[status-2026-11-07.md](status-2026-11-07.md).** Each task needs the owner's
 explicit go. Answering D430–D448 and B1–B17, and ruling T10–T26, O4 and the key binding, approved
 none of them. Some tasks also wait on counsel (S8.4) or on the new entity (S8.1); each task says
 which. **T27, the one consequence of the rulings, was ruled (b) on 2026-10-29:** the paid commands
