@@ -256,8 +256,11 @@ report's place and the setup step, not a new rule about who schedules.**
 - **Red step:** the new plugin assertion fails while the setup skill names no review cadence — which
   is the state of `main` today (F18).
 - **Tests:** the plugin package's own tests, run as `GOFLAGS=-p=2 go test ./plugin/ -count=1`, plus
-  `pluginskillcheck`'s CLI-coverage test: every command and flag a skill names must exist, which is
-  what keeps `--due` and the skill's sentence from drifting apart.
+  the lint's CLI-coverage rule — `plugin/skills_lint_test.go`'s `TestPluginSkillsLintClean` and
+  `TestSkillFilesQuoteCommands`, which fail on a command or a flag a skill names that the CLI does not
+  answer to, with the paid flags' own half in `ee/plugincheck/skills_test.go`'s
+  `TestSkillsNamePaidFlagsThatExist` — which is what keeps `--due` and the skill's sentence from
+  drifting apart.
 - **SEC:** none.
 
 ## R4. The fifth pattern rule (D968, answered by the owner 2026-11-04 as recommended: yes)
@@ -939,9 +942,9 @@ shared file at all an open answer decides: `plugin/skills/working/reference/peri
 third writer (FC8 at 5) is D1449's recommendation too, but R3 at 3 and R6 at 4 make that row shared
 whichever way the answer goes. Every row's levels are distinct; the widest row is
 `website/content/cli-reference.md`, **four writers over four levels** — the one file the release's own
-generator, not a person, decides the content of (F27) — and the next two,
-`patterns.go`/`patterns_test.go` and `periodic-reviews.md`, carry three each and are both spread over
-three levels. **The
+generator, not a person, decides the content of (F27) — and **six rows carry three writers each**,
+every one of them over three levels: `patterns.go`/`patterns_test.go`, `store.go`/`store_test.go`,
+`runs_test.go`, `runs_digest.go`/`runs_digest_test.go`, `runner.go` and `periodic-reviews.md`. **The
 one place a glob could have hidden a collision is the one worth stating plainly:** the design's
 §10.2 row `internal/digest/*.go` (FC7, L4) resolves to FC7's own six files
 (`digest.go`, `render.go`, `patterns.go`, `digest_test.go`, `patterns_test.go`, `testdata`) and
@@ -1123,8 +1126,8 @@ from being a formality:
   `plugin/skills/working/reference/periodic-reviews.md`, `plugin/periodic_reviews_skill_test.go`.
 - **Interfaces:** the printed schedule, the due signal with its command, the report's place, and the
   fifth rule's name in §3.
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./plugin/ -count=1`, plus `pluginskillcheck`'s
-  CLI-coverage test.
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./plugin/ -count=1`, plus the lint's CLI-coverage
+  rule (`plugin/skills_lint_test.go`, with the paid flags' half in `ee/plugincheck/skills_test.go`).
 - **Depends on:** R4, and #1488 landed. **Red step:** the new plugin assertion fails while the setup
   skill names no review cadence. **Reviewer:** standard. **Commit:**
   `docs(skills): the cadence, the due signal and the five rules`.
