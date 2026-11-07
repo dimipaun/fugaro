@@ -891,7 +891,7 @@ button.projects-settings-pencil {
   padding: var(--space-3xs) var(--space-sm);
   font: inherit;
   color: var(--text-3);
-  background: var(--surface-alt);
+  background: var(--surface-sunken);
   border: var(--rule-width) solid var(--control-border);
   border-radius: var(--radius-sm);
   cursor: pointer;

@@ -43,7 +43,7 @@ import { GRAPH_DOCUMENT_VERSION, decodeGraphDocument } from '../../src/shared/sc
 import type { GraphView, PlanStatusView, RunView } from '../../src/shared/schema'
 import { GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
 import type { WorkerLike } from '../../src/renderer/graph/layout-client'
-import { GRAPH_MAX_TITLE_CODE_POINTS, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
+import { GRAPH_MAX_TITLE_CODE_POINTS, GRAPH_SCOPE_NO_RELEASE, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
@@ -76,7 +76,6 @@ import {
   GRAPH_SCOPE_CONTROL_CLASS,
   GRAPH_SCOPE_EMPTY,
   GRAPH_SCOPE_LABEL,
-  GRAPH_SCOPE_NO_RELEASE,
   GRAPH_SCOPE_PLAN,
   GRAPH_SCOPE_PLAN_LABEL,
   GRAPH_ZOOM_MAX,

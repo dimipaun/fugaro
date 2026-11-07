@@ -73,11 +73,6 @@ import type { GraphColumn, GraphModel, GraphNode, GraphPlan, GraphRelease, Graph
 import type { ScopeModel, ScopeNode, ScopeRelease, ScopeSource } from '../graph/model'
 import { disabledWrite } from '../writes'
 
-/** GRAPH_SCOPE_NO_RELEASE is the model's own name for the group a node that
- * names no release is drawn in, re-exported here because the drawing's
- * vocabulary is this module's (`graph.test.ts` reads it from the screen). */
-export { GRAPH_SCOPE_NO_RELEASE } from '../graph/model'
-
 // ---------------------------------------------------------------------------
 // The factory
 // ---------------------------------------------------------------------------
@@ -1208,6 +1203,7 @@ function appendNotice(parent: ScreenElement, factory: ScreenFactory, notice: str
   if (notice === null) return
   drawn(parent, factory, 'p', sanitizeText(notice, 'sentence', 'graph.read'), 'graph-scope-notice')
 }
+
 /**
  * filter draws one segment per stream, then All (the addendum's own order: the
  * document's streams, then everything at once).
