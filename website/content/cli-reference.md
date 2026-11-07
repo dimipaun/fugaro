@@ -38,6 +38,7 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro graph` -- 
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro logs` -- Print a run's logs from Cloud Logging
@@ -1885,6 +1886,20 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro graph`
+
+Usage: `fugaro graph`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for graph |
 
 Subcommands:
 

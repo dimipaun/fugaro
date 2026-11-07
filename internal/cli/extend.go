@@ -142,12 +142,13 @@ func declareLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.S
 	return d(ctx, &Cloud{env: env}, slug, spec)
 }
 
-// paidCommandNames are the command names whose code the owner moves out of the
-// core. A build without that code shows a stub for each name it does not hold
-// rather than leaving the name unknown to cobra, whose "unknown command" would
-// mislead a source builder and the app into thinking the name was never part
-// of the CLI (D522).
-var paidCommandNames = []string{"report", "coordinator"}
+// paidCommandNames are the command names whose code this build does not carry:
+// the commands the owner moves out of the core, and the ones that never lived
+// there -- `graph` is ee/'s from the start (D1362). A build without that code
+// shows a stub for each name it does not hold rather than leaving the name
+// unknown to cobra, whose "unknown command" would mislead a source builder and
+// the app into thinking the name was never part of the CLI (D522).
+var paidCommandNames = []string{"report", "coordinator", "graph"}
 
 // newPaidStub is the command a build shows for a paid name it carries no code
 // for. It refuses, non-zero, with the one message D522 fixes, and it carries

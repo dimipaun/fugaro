@@ -583,3 +583,32 @@ func TestUntaggedPaidCommandSaysWhy(t *testing.T) {
 	assertStubSaysWhy(t, "report", "report", "--json")
 	assertStubSaysWhy(t, "report", "report", "--by", "mode", "--json")
 }
+
+// TestUntaggedBuildHasTheGraphStub: `fugaro graph` is ee/'s command (D1362), so
+// a build without that code carries no graph command at all -- and the name is
+// still an answer the CLI gives, the stub D522 fixes, rather than cobra's
+// "unknown command", which would tell a source builder, the console and a skill
+// that the name was never part of the CLI (T3).
+func TestUntaggedBuildHasTheGraphStub(t *testing.T) {
+	extendState(t)
+	if slices.Contains(coreRootPaths(), "fugaro graph") {
+		t.Fatal("the released tree holds a graph command: the stub is not installed for a name a core command owns")
+	}
+	if got := commandPaths(NewRootCmd()); !slices.Contains(got, "fugaro graph") {
+		t.Fatalf("a build without the ee tag answers no graph command:\n%v", got)
+	}
+	assertStubSaysWhy(t, "graph", "graph")
+}
+
+// TestGraphStubRefusesWhateverTheFlags: the stub parses nothing, so every argv
+// the console sends -- the one-shot read, the live feed, the scope as a value
+// -- reaches the one message rather than cobra's "unknown flag", which would
+// be a lie about a command the released binary has (D522). CG9a reads the
+// refusal as "this CLI has no graph" and keeps the plan scope.
+func TestGraphStubRefusesWhateverTheFlags(t *testing.T) {
+	extendState(t)
+	assertStubSaysWhy(t, "graph", "graph", "--json")
+	assertStubSaysWhy(t, "graph", "graph", "--source", "coordinator", "--json")
+	assertStubSaysWhy(t, "graph", "graph", "--watch", "--json")
+	assertStubSaysWhy(t, "graph", "graph", "--help")
+}
