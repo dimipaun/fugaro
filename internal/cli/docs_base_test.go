@@ -415,7 +415,7 @@ func TestDocsBaseImageStatesWhatACatalogImagesEnvDoes(t *testing.T) {
 		"fugaro doctor --all",     // where a reader sees what a job drops
 		"passes nothing",          // a per-repository image (D1370's scope)
 		"FUGARO_IMAGE_ENTRY",      // the one hole in it: a pre-stamp job reads the name from its image
-		"fugaro update --repo",    // and what closes that hole, since a plain update redeploys nothing
+		"fugaro update --repo",    // and the redeploy that closes that hole
 		"not a secret",            // what a passed value is
 		"never bake a credential", // and the rule that follows from it
 	} {
