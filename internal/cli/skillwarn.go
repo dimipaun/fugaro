@@ -39,10 +39,41 @@ var skillWarnCommands = map[string]bool{
 // FUGARO_NO_SKILL_WARNING set (and not 0 or false), nothing for ls --watch.
 // not wired, unpinned and foreign are for `doctor`, not a line on every
 // command.
+//
+// fugaro update is the one command that says nothing here: the remedy the line
+// names is that command, and the two things it can be about — the pin in the
+// checkout's settings and the plugin in Claude Code — are two steps of that
+// very run, so the line read before it points the door at itself over what the
+// run is about to move. It prints at the end of the run instead, and only what
+// is still true then (warnStaleSkillsAfter), which is what keeps the line and
+// the run's own account from reading as one "current" and the other "stale"
+// on a single run (#1836).
 func warnStaleSkills(cmd *cobra.Command) {
 	if cmd.Parent() == nil || cmd.Parent().Parent() != nil || !skillWarnCommands[cmd.Name()] {
 		return
 	}
+	if cmd.Name() == updateDoor.name {
+		return
+	}
+	warnStale(cmd)
+}
+
+// warnStaleSkillsAfter is the staleness line for the one command that runs it
+// at its own end (fugaro update, see warnStaleSkills): the same line under the
+// same conditions, and the case it exists for is the one where it says
+// nothing — a run that moved the pin and installed the plugin has nothing
+// stale left to report, so the door that the line sends the reader to is also
+// the door that clears it.
+func warnStaleSkillsAfter(cmd *cobra.Command) {
+	if cmd.Name() != updateDoor.name {
+		return
+	}
+	warnStale(cmd)
+}
+
+// warnStale is the line itself: every condition above, the once-per-process
+// mark included. The two entry points differ only in when they ask.
+func warnStale(cmd *cobra.Command) {
 	if w := cmd.Flags().Lookup("watch"); w != nil && w.Value.String() == "true" {
 		return
 	}
