@@ -517,6 +517,25 @@ func GateOrdinary() string {
 	return "this project is managed, so this step takes no confirmation: the marks were read, the step is one the run announced, and what it changes is printed above (the owner's ruling of 2026-11-01)"
 }
 
+// OwnerProceeded is the sentence for the same reader as GateOrdinary — the
+// person whose prompt the step would have been — at the steps the gate has no
+// document for and no verdict about: a policy whose next generation loosens
+// what the project may spend, a project layer this run republishes, the local
+// config. Nothing about them is judged plan by plan, so this sentence claims
+// no verdict; what it says is the owner's ruling of 2026-11-06, that a person
+// at their own terminal on a managed project is not asked to type a
+// confirmation for a step that loses no data and takes no secret value, and
+// that the line above is the note of what changed.
+//
+// It follows GateOrdinary's own rule about what it may name — no flag, no
+// variable, no marker a reader could set — and it is a third sentence rather
+// than that one's words because the reader of this one is owed the difference:
+// GateOrdinary speaks for a step the run announced and the gate let through,
+// this one for a step no rule judged at all.
+func OwnerProceeded() string {
+	return "this project is managed and this is the owner's own terminal: the marks were read, what this step changes is printed above, and nothing is typed for it here (the owner's ruling of 2026-11-06)"
+}
+
 // AskRestored is the line a managed project's own terminal reads when --ask
 // was given: the flag's whole promise, said once, at the point where the gate
 // would otherwise have taken the confirmations away. It says the two things a
@@ -812,6 +831,31 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 	return ConfirmsByGate(class, c, m)
 }
 
+// OwnerAtTerminal reports whether this session is the owner's own, at a real
+// terminal: a person is there to read what the step prints, and the session is
+// none of the shapes a confirmation cannot be taken in — a pipe, --json,
+// --non-interactive — and not one whose owner asked for the prompts back
+// (--ask).
+//
+// It is the half of ConfirmsByGate that is about WHO is there, named on its
+// own because the owner's ruling of 2026-11-06 reaches steps the gate has no
+// document for: a person at their own terminal on a managed project types
+// nothing for a step that loses no data and takes no secret value, whether the
+// gate judged its plan or the run only announced it. A caller asks this beside
+// its own read of the marks (the gate's own read, never a second one) and
+// prints OwnerProceeded's sentence; it is not a verdict about any plan, and it
+// admits nothing on its own.
+//
+// --yes is deliberately not part of it, in both directions: a managed project
+// must not need a flag the owner has to remember, and a run that passed it
+// reads the managed sentence rather than "confirmed by --yes" for a step the
+// project asks nothing about anyway. A coding agent's session is not this case
+// either — the marker is read here, and what replaces the confirmation there
+// is the gate's own verdict, with AgentProceeded's sentence (ConfirmsByGate).
+func OwnerAtTerminal(c Conditions) bool {
+	return !c.Ask && c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
+}
+
 // ConfirmsByGate reports whether the gate's verdict IS the confirmation for a
 // step of the class under the conditions: the owner at their own real
 // terminal, on a managed project, for a document the gate admitted. It is the
@@ -826,7 +870,7 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 // The two are told apart by the marker, because this branch is about who is
 // there to read the document the gate read.
 func ConfirmsByGate(class ConfirmClass, c Conditions, m Managed) bool {
-	return !c.Ask && c.Agent == "" && m.Removes(class) && c.Terminal && !c.NonInteractive && !c.JSON
+	return OwnerAtTerminal(c) && m.Removes(class)
 }
 
 // CanConfirm reports whether a step of the class can be confirmed under the

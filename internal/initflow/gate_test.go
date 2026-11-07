@@ -282,6 +282,46 @@ func TestManagedConfirmsByGateIsTheOwnerAtARealTerminal(t *testing.T) {
 	}
 }
 
+// TestOwnerAtTerminalIsTheOwnerAndNothingElse is the predicate the ruling of
+// 2026-11-06 is decided under, and it is the half of ConfirmsByGate that is
+// about WHO is there rather than about what a document said: the owner's own
+// session, at a real terminal, with no coding agent's marker in the
+// environment, nothing piped or asked in JSON, and no --ask putting the
+// prompts back.
+//
+// Three properties are what it exists for, and each is a direction a mistake
+// falls in. A marker in the environment is never the owner, whatever else the
+// row says (that is the mutation a "person at a terminal" read as "a terminal"
+// would make: a coding agent's session is a terminal too). A run nobody is at —
+// a pipe, --json, --non-interactive, --ask — is never the owner either, and the
+// answer there is the coding agent's refusal exactly as it was. And --yes
+// changes nothing in either direction: the flag is not asked for and does not
+// decide, so a row with it is the same row without it (the mutation caught is
+// `!c.Yes` in this predicate, which would leave the owner of a managed project
+// prompted for exactly the run the ruling is about).
+func TestOwnerAtTerminalIsTheOwnerAndNothingElse(t *testing.T) {
+	for _, c := range allConditions() {
+		want := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
+		if got := OwnerAtTerminal(c); got != want {
+			t.Errorf("OwnerAtTerminal(%s) = %v, want %v", conditionsName(c), got, want)
+		}
+		flipped := c
+		flipped.Yes = !c.Yes
+		if OwnerAtTerminal(flipped) != OwnerAtTerminal(c) {
+			t.Errorf("OwnerAtTerminal(%s) and (%s) disagree: --yes is not asked for and does not decide", conditionsName(c), conditionsName(flipped))
+		}
+		// And the predicate is exactly the owner half of ConfirmsByGate: the
+		// document's own facts are Removes' and nothing else's.
+		for _, class := range allClasses() {
+			for _, m := range allManaged() {
+				if got, want := ConfirmsByGate(class, c, m), OwnerAtTerminal(c) && m.Removes(class); got != want {
+					t.Errorf("ConfirmsByGate(%s, %s, %s) = %v, want %v", className(class), conditionsName(c), managedName(m), got, want)
+				}
+			}
+		}
+	}
+}
+
 // TestGateSentencesNameNoWayPast: the two sentences a run prints when the gate
 // stood in for a confirmation are read by the person the prompt would have
 // asked, and by nobody else — but a coding agent's session can read them too
@@ -294,6 +334,7 @@ func TestGateSentencesNameNoWayPast(t *testing.T) {
 	for _, s := range []struct{ name, sentence string }{
 		{"GateProceeded", GateProceeded()},
 		{"GateOrdinary", GateOrdinary()},
+		{"OwnerProceeded", OwnerProceeded()},
 	} {
 		for _, no := range []string{"--", "=", "unset ", "CLAUDECODE", "CLAUDE_CODE", "AI_AGENT", "FUGARO_", "export ", "Type "} {
 			if strings.Contains(s.sentence, no) {
@@ -310,8 +351,14 @@ func TestGateSentencesNameNoWayPast(t *testing.T) {
 	if GateProceeded() == GateOrdinary() {
 		t.Error("the two sentences are one: they answer about two different things — a document the gate judged, and a step the run announced")
 	}
+	if GateOrdinary() == OwnerProceeded() || GateProceeded() == OwnerProceeded() {
+		t.Error("the sentences are one: OwnerProceeded speaks for a step no rule judged, and claiming a verdict there is the direction this file refuses to take")
+	}
 	if !strings.Contains(GateProceeded(), "record") {
 		t.Errorf("GateProceeded does not say where the verdict can be read afterwards: %q", GateProceeded())
+	}
+	if strings.Contains(OwnerProceeded(), "verdict") || strings.Contains(OwnerProceeded(), "gate") {
+		t.Errorf("OwnerProceeded claims a verdict for a step no rule judged: %q", OwnerProceeded())
 	}
 }
 

@@ -497,17 +497,19 @@ func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 // every time and left the owner unable to apply a policy at all, so the count
 // becomes a note on the command's output and the write proceeds.
 //
-// The note replaces the refusal and nothing else. The diff and the stage's own
-// confirmation are still asked (the rig's gate is the managed answer alone,
-// whose inner gate admits nothing, so admitted is false here), the node is
-// written, and the generation the write landed is recorded in the file it was
-// built from exactly as a run with nothing in flight records it.
+// The same ruling is the rest of this test: the stage's own confirmation goes
+// with it. The rig's session is the owner's own (a real terminal, no marker, no
+// --ask) and the gate stands in for the run, so the diff and OwnerProceeded's
+// sentence are the whole of what is printed and nothing is typed — the stdin is
+// empty, so a run that asked would read no answer and write nothing, which is
+// what makes the write the assertion about the question. The generation the
+// write landed is recorded in the file it was built from exactly as a run with
+// nothing in flight records it.
 func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
 	h := newMigrationRig(t, f, &initOptions{}).managedGate().inFlight()
 	fakeTerminal(t)
-	h.cmd.SetIn(strings.NewReader("aurora\n"))
 
 	out, err := h.apply(t, false)
 	if err != nil {
@@ -519,8 +521,11 @@ func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d: the note did not let the write through", got, projectpolicy.Version)
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
-		t.Errorf("the note took the stage's own confirmation with it:\n%s", out)
+	if !strings.Contains(out, initflow.OwnerProceeded()) {
+		t.Errorf("the run does not say why nothing is typed:\n%s", out)
+	}
+	if strings.Contains(out, "Type aurora to confirm") {
+		t.Errorf("a managed project's own terminal was asked to type the project's name:\n%s", out)
 	}
 	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
 		t.Errorf("the generation the write landed is recorded as %q, want %q: the note changed the record", gen, want)
@@ -535,7 +540,6 @@ func TestUpdatePolicyManagedMigrationWithoutRunsPrintsNoNote(t *testing.T) {
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
 	h := newMigrationRig(t, f, &initOptions{}).managedGate()
 	fakeTerminal(t)
-	h.cmd.SetIn(strings.NewReader("aurora\n"))
 
 	out, err := h.apply(t, false)
 	if err != nil {
@@ -565,7 +569,7 @@ func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, false)
 	if err == nil {
 		t.Fatalf("a coding agent's session wrote a managed project's policy with a run in flight:\n%s", h.out)
 	}

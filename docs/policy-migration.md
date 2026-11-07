@@ -52,10 +52,18 @@ deleting it:
    session, which keeps the refusal). The one write `fugaro update`'s `--yes` never
    confirms is the one that leaves the node **looser** than the node it replaces
    — a ceiling raised or removed, a wider `budget.allowed_models` — because that
-   is the node every run of the project is admitted by: the stage asks for the
-   project's name typed at a real terminal, names the member that loosens, and
-   refuses a script or a coding agent's session with the command to run at a
-   terminal instead (`fugaro update`). The comparison `settings set` makes
+   is the node every run of the project is admitted by: the stage names the
+   member that loosens and asks for the project's name typed at a real terminal,
+   and refuses a script or a coding agent's session with the command to run at a
+   terminal instead (`fugaro update`). On a **managed** project's own terminal —
+   of a run that read the marks: one whose own arguments shape the installation
+   reads none, and keeps every confirmation it always gave — it is not asked
+   either: a `Typed` step that loses no data and takes no secret
+   value is noted and written there (the owner's ruling of 2026-11-06), with
+   `initflow.OwnerProceeded`'s sentence where the typed name would have been, so
+   the note of what loosens is the whole of what that terminal reads. A coding
+   agent's session is refused it exactly as before, and `--yes` still does not
+   confirm it. The comparison `settings set` makes
    decides it, so a ceiling raised is asked about the same way whichever of the
    two doors writes it — and `settings set|unset` themselves take `--yes` for
    that widening outside a coding agent's session, the owner's ruling of
@@ -100,7 +108,9 @@ from (`policy_generation`, the ETag the node was read at), and a
 and says so: it prints the three-way state — the generation this file was
 written from, the one the node carries now, and the members the two differ on —
 and offers to **re-seed** the file from the published node instead, under the
-same typed confirmation (`--yes` where that is enough), with a backup of the
+same confirmation (`--yes` where that is enough, and nothing typed on a managed
+project's own terminal: the re-seed keeps the file it replaces beside it, so it
+loses no data), with a backup of the
 file it replaces. Nothing of the older file is published. An installation whose
 config records no generation adopts the one it reads: refusing once would ask a
 question with no information in it, since the machine has no baseline to compare

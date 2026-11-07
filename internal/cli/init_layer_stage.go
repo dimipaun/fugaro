@@ -42,6 +42,30 @@ const (
 	layerReseedWhat  = "this re-seeds your local layer file from the published project layer: the file you have now is kept beside it"
 )
 
+// confirmWrite is the confirmation of this stage's three writes: the one
+// confirmRemoval asks (the project's name typed at a terminal, or --yes), or
+// nothing at all for the owner's own terminal on a managed project — the
+// owner's ruling of 2026-11-06, and the same shape the policy stage's writes
+// take. What the owner reads instead is the plan this stage printed above (the
+// layer file and object, the generation, the backup a re-seed leaves) and
+// OwnerProceeded's sentence: a layer publish rewrites a document every
+// repository resolves against, but it loses no data — a re-seed keeps the file
+// it replaces beside it — and takes no secret value, which is the whole of
+// what the ruling leaves asked.
+//
+// It is not a verdict about any plan: this stage's document is judged nowhere
+// (the layer stage is not one of the gate's stages), so the sentence claims
+// none, and a coding agent's session never reaches Apply at all.
+func (s *layerStage) confirmWrite(lc *localcfg.Config, env initflow.Env, what string) error {
+	r := s.e.r
+	if r.gateStandsIn() && initflow.OwnerAtTerminal(r.conditions()) {
+		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
+		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+		return nil
+	}
+	return confirmRemoval(r.cmd, lc, env.Yes, what)
+}
+
 // layerStage is the stage itself.
 type layerStage struct {
 	e       *initEngine
@@ -322,7 +346,7 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 // writes only this machine's file: the object is left exactly as it is.
 func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
 	cmd := s.e.r.cmd
-	if err := confirmRemoval(cmd, p.lc, env.Yes, layerSeedWhat); err != nil {
+	if err := s.confirmWrite(p.lc, env, layerSeedWhat); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
@@ -350,7 +374,7 @@ func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, err
 // gate still withholds afterwards, with the banner that names the keys.
 func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
 	cmd := s.e.r.cmd
-	if err := confirmRemoval(cmd, p.lc, env.Yes, layerPublishWhat); err != nil {
+	if err := s.confirmWrite(p.lc, env, layerPublishWhat); err != nil {
 		return initflow.Outcome{}, err
 	}
 	b, err := openRecordBucket(ctx, p.url)
@@ -403,7 +427,7 @@ func (s *layerStage) reseed(env initflow.Env, p *layerPlan) (initflow.Outcome, e
 	cmd := s.e.r.cmd
 	out := cmd.OutOrStdout()
 	p.printReseedState(out)
-	if err := confirmRemoval(cmd, p.lc, env.Yes, layerReseedWhat); err != nil {
+	if err := s.confirmWrite(p.lc, env, layerReseedWhat); err != nil {
 		return initflow.Outcome{}, err
 	}
 	backup, err := backupFile(p.path, p.local, time.Now())
