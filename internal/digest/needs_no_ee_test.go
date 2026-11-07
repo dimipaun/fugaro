@@ -14,14 +14,19 @@ import (
 )
 
 // TestDigestNeedsNoEE: the digest is MIT and stays MIT (D444, T11), so this
-// package and everything it imports must build with ee/ deleted, and it must
-// not read the report library either: that moved to ee/report, which an
-// untagged build does not carry. The digest carries its own copy of the period
-// vocabulary and the dollar rendering (period.go) for exactly this reason.
+// package and everything it imports must build with ee/ deleted, the report
+// library under ee/report included: an untagged build does not carry it. The
+// digest carries its own copy of the period vocabulary and the dollar
+// rendering (period.go) for exactly this reason.
 //
 // The two halves below are what that costs: the package still writes a digest
 // from an untagged build, and nothing its own .go files import -- test files
-// included -- reaches into ee/ or into internal/report.
+// included -- reaches into ee/.
+//
+// The refusal is the ee/ prefix and nothing else: it is not written as "the
+// report", because internal/report is a core package again -- the CLI's step
+// reporter (CL1 of the CLI output work) -- so the name no longer means the
+// moved library.
 func TestDigestNeedsNoEE(t *testing.T) {
 	t.Run("an untagged build writes a digest", func(t *testing.T) {
 		rec := run(t, "20261021-090000-cccc", "2026-10-21T09:00:00Z", 1.50, 0,
@@ -37,11 +42,6 @@ func TestDigestNeedsNoEE(t *testing.T) {
 		root := testutil.ModuleRoot()
 		const module = "github.com/dimipaun/fugaro/"
 		eePrefix := module + "ee/"
-		// Spelled in two pieces so this test's own source holds no literal of
-		// the import path it refuses: the digest's independence is checked by
-		// grepping the tree for that import, and this file must not turn up in
-		// that list.
-		reportPath := module + "internal/" + "report"
 
 		type step struct{ dir, chain string }
 		seen := map[string]bool{}
@@ -61,9 +61,6 @@ func TestDigestNeedsNoEE(t *testing.T) {
 				if strings.HasPrefix(imp, eePrefix) {
 					t.Fatalf("internal/digest reaches %s from %s; the digest is MIT and must build with ee/ deleted", imp, s.chain)
 				}
-				if imp == reportPath || strings.HasPrefix(imp, reportPath+"/") {
-					t.Fatalf("internal/digest reaches %s from %s; that moved to ee/report, and the digest must build without it", imp, s.chain)
-				}
 				if !strings.HasPrefix(imp, module) {
 					continue
 				}
@@ -78,8 +75,8 @@ func TestDigestNeedsNoEE(t *testing.T) {
 // test-only import that reaches ee/ breaks `go test ./internal/digest/` just
 // as hard) and skipped everywhere else: another package's tests are not
 // compiled into the digest's build or its test binary, so an import they make
-// -- internal/budget's tests read internal/cli, which still imports
-// internal/report today -- says nothing about what the digest needs.
+// -- internal/budget's tests read internal/cli -- says nothing about what the
+// digest needs.
 func importsOf(dir string, includeTests bool) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

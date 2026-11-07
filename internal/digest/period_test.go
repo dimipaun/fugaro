@@ -6,9 +6,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 )
 
-// These pins are the literals internal/report's own code answers, written from
-// one run of it so this copy can be held to the original without importing it
-// (internal/report moves to ee/report; the digest must build without it).
+// These pins are the literals ee/report's own code answers, written from one
+// run of it so this copy can be held to the original without importing it (the
+// report library moved to ee/report, and the digest must build without it).
 
 func TestParseDimAcceptsTheVocabulary(t *testing.T) {
 	for _, want := range []Dim{ByDay, ByWeek, ByMonth, ByYear, ByRepo, ByModel, ByPerson, ByMode} {
