@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -14,14 +18,64 @@ import (
 // what localcfg's own validation admits.
 const launchCredsURL = "https://fugaro-credentials-abcde-uc.a.run.app"
 
-// launchWithCredentialsService launches the fixture's run with lc as the
-// installation's config and returns what the backend was handed. It is the
-// one place the two subtests below differ.
-func launchWithCredentialsService(t *testing.T, lc *localcfg.Config) (plain, secret []string) {
+// markRepoCredentialsServiceReady writes the record `fugaro update` leaves on
+// a repository's local-config entry (init.go's writeRepoConfig) into the
+// fixture's config: the half of the switch that only an apply can answer
+// (infra.CredentialsServiceServes) — this repository's root was applied with
+// the service on — where the block and the live agent.auth are read where the
+// launch is. The fixture's repos block names acme/app with no record, which is
+// what a machine that never ran the update holds.
+func markRepoCredentialsServiceReady(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const repo = "  acme/app: { provider: github, base_branch: main, workflows: [web]"
+	if !strings.Contains(string(data), repo) {
+		t.Fatalf("the fixture's local config no longer holds %q:\n%s", repo, data)
+	}
+	ready := strings.Replace(string(data), repo, repo+", credentials_service_ready: true", 1)
+	if err := os.WriteFile(path, []byte(ready), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// oauthLaunchYAML is cascadeLaunchYAML's shape for a repository the service
+// cannot serve: the same workflow, git provider and project, with agent.auth
+// `oauth`. The auth, and nothing else about the repository, is what the switch
+// reads (infra.CredentialsServiceServes), so the pair is what a test about that
+// one condition needs.
+const oauthLaunchYAML = `version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: oauth
+workflows:
+  web: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// launchWithCredentialsService launches the fixture's run for a checkout
+// carrying yaml against an installation whose local config carries the
+// service's block with url (empty for an installation that never deployed it,
+// where the block is absent altogether) and the per-repository record when
+// ready is true, and returns what the backend was handed.
+//
+// The checkout is the test's own, and that is the switch's third condition: it
+// is the repository's agent.auth, read from the document the run will read —
+// the ref's fugaro.yaml, else this machine's checkout — and never from the
+// record, so a repository this launcher cannot read at all is a repository it
+// cannot switch on.
+func launchWithCredentialsService(t *testing.T, yaml, url string, ready bool) (plain, secret []string) {
 	t.Helper()
 	f := newLaunchBudget(t, "enforce")
-	if lc != nil {
-		f.appendConfig(t, "credentials_service:\n  url: "+lc.CredentialsService.URL+"\n")
+	if url != "" {
+		f.appendConfig(t, "credentials_service:\n  url: "+url+"\n")
+	}
+	projectJobCheckoutYAML(t, yaml)
+	if ready {
+		markRepoCredentialsServiceReady(t, f.cloudFixture)
 	}
 	env := memEnv(t, f.cloudFixture)
 	rec := &envRecorder{Backend: env.be}
@@ -48,8 +102,7 @@ func launchWithCredentialsService(t *testing.T, lc *localcfg.Config) (plain, sec
 // Mutation (verified, run and restored): drop the lspec.Env line in
 // internal/cli/run.go's launch — this fails with an empty plain list.
 func TestTheCredentialsServiceURLReachesTheJobEnv(t *testing.T) {
-	lc := &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}}
-	plain, secret := launchWithCredentialsService(t, lc)
+	plain, secret := launchWithCredentialsService(t, cascadeLaunchYAML, launchCredsURL, true)
 	want := envCredentialsServiceURL + "=" + launchCredsURL
 	if len(plain) != 1 || plain[0] != want {
 		t.Fatalf("the launch's plain Env = %v, want exactly [%s]", plain, want)
@@ -62,15 +115,17 @@ func TestTheCredentialsServiceURLReachesTheJobEnv(t *testing.T) {
 }
 
 // TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable: the
-// absence of the block is the opt-in's off position, and off is byte for byte
-// what this tree launched before the variable existed — no entry, no empty
-// value, nothing for a backend to merge into the job's environment. Every
-// installation is in this state until an owner runs `fugaro setup
-// --provision-credentials`, so a launcher that put an empty value here would
-// change every run in the world; a launcher that put a value here would make
-// every job believe it has a credentials service to call.
+// absence of the block is the off position, and off is byte for byte what this
+// tree launched before the variable existed — no entry, no empty value, nothing
+// for a backend to merge into the job's environment. Every `fugaro update`
+// writes the block now (docs/credentials-service/default-on.md), so the
+// installations in this state are the ones a run could not deploy it on: a
+// build from a checkout, which has no released image to pin, and a config with
+// no Firebase backend for the service to read. A launcher that put an empty
+// value here would change those runs for no reason; a launcher that put a value
+// here would make every job believe it has a credentials service to call.
 func TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable(t *testing.T) {
-	plain, secret := launchWithCredentialsService(t, nil)
+	plain, secret := launchWithCredentialsService(t, cascadeLaunchYAML, "", false)
 	if len(plain) != 0 {
 		t.Fatalf("an installation with no credentials service launched with the plain Env %v, want none: the block's presence is the opt-in, and an installation that has not opted in must launch exactly what it launched before this variable existed", plain)
 	}
@@ -81,13 +136,49 @@ func TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable(t *test
 	}
 }
 
+// TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService is the launch's
+// half of the oauth→cascade direction (update_switch_test.go's
+// TestTheRecordFollowsTheAuthTheRunsRead is the record's), and it is the state
+// the record's writer left behind until the review of 2026-11-07: the block is
+// there, the checkout is a cascade one, and the entry carries NO record because
+// the only apply of that root was made while the document still said oauth —
+// the natural adoption order, the cascade committed afterwards.
+//
+// The launch reads the auth live (TestEditingTheAuthModeTakesEffectWithout-
+// AnotherUpdate pins that it must), so the record is the whole of what stands
+// between this launch and a job handed an address whose invoker grant no apply
+// ever made: the run's provider call opens GitHub keyless and the service
+// refuses the mint, and a `cascade` run has nothing of its own to fall back to
+// (D143). Nothing is handed until a run of its own applies the root with the
+// switch on, which is what records true.
+func TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService(t *testing.T) {
+	plain, secret := launchWithCredentialsService(t, cascadeLaunchYAML, launchCredsURL, false)
+	if len(plain) != 0 {
+		t.Fatalf("a cascade repository whose entry carries no record launched with the plain Env %v, want none: the record is the half of the switch only an apply of that root can answer, so a launch that filled it in from what it can see would hand the job an address whose roles/run.invoker grant no apply made — the job opens its git provider keyless for a mint the service refuses\n", plain)
+	}
+	for _, kv := range secret {
+		if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
+			t.Fatalf("the launch carried %q in its secret entries: an installation whose bundle no run has recorded must launch exactly what it launched before the service was deployed", kv)
+		}
+	}
+}
+
 // TestCredentialsServiceLaunchEnv: the helper's own edges. A nil config, a
 // config with no block and a block with no URL are all "off" — the loader
 // refuses the last of those (localcfg's validCredentialsServiceURL), so it can
 // only be reached by a Config built in Go, and reading it as "off" is the
 // fail-closed direction: the job gets no address rather than an empty one.
 //
-// A SHARED PROJECT JOB is off whatever the config says, and that is the third
+// The switch's own two refusals are here beside them, because they are the
+// whole of what the helper answers with this release
+// (infra.CredentialsServiceServes): a block whose bundle the record does not
+// vouch for, and a repository whose agent.auth the service cannot serve. Both
+// hand the job nothing, which is the state every repository of a converged
+// installation is in until an operator stores a credential in the bundle —
+// and, for an `oauth` or `api-key` repository, the state it stays in, because
+// the service has no route that would serve it one.
+//
+// A SHARED PROJECT JOB is off whatever the config says, and that is the job
 // argument's whole job: the service refuses an account that belongs to one
 // (internal/credsvc/auth.go's verifyJob, Global Constraint 6, C3.9), so the
 // address would buy such a job nothing — and it would cost it its git
@@ -95,37 +186,214 @@ func TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable(t *test
 // (internal/gitprov/providers/providers.go) and the mint that replaces the
 // key it still mounts would be refused. The shared jobs keep their own
 // credentials until C3.9 moves them.
+//
+// The last rows are what answers where the document cannot be read, and the
+// fifth argument's whole job is one of the two: an empty auth is a document the
+// launcher could not read (a resolved config always defaults agent.auth, so the
+// empty string never comes from a file), and two things stand in for it — the
+// repository's own record, and this machine's tfvars of the root that record
+// describes (deployedRepoCredentialsService, read at the call site). Either one
+// saying on hands the address, because either is written by an apply that
+// dropped the job's mounts and granted its account roles/run.invoker. A machine
+// that holds neither never applied the root, and that is every console launch:
+// the desktop console spawns `fugaro run --repo` from a private empty directory,
+// so the document is never readable there and the record is the only answer —
+// withholding the address on such a machine starts a `cascade` run whose job
+// mounts no model credential and halts at the service's door (D143).
 func TestCredentialsServiceLaunchEnv(t *testing.T) {
-	optedIn := &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}}
+	optedIn := &localcfg.Config{
+		CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL},
+		Repos:              map[string]localcfg.Repo{"acme/app": {CredentialsServiceReady: localcfg.RecordSwitch(true)}},
+	}
 	for name, lc := range map[string]*localcfg.Config{
 		"no config":       nil,
 		"no block":        {},
 		"a block, no url": {CredentialsService: &localcfg.CredentialsService{}},
 	} {
-		if got := credentialsServiceLaunchEnv(lc, ""); got != nil {
+		if got := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, false); got != nil {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want nil", name, got)
 		}
 	}
-	got := credentialsServiceLaunchEnv(optedIn, "")
+	got := credentialsServiceLaunchEnv(optedIn, "", "acme/app", config.AuthCascade, false)
 	if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 		t.Errorf("credentialsServiceLaunchEnv = %v, want [%s=%s]", got, envCredentialsServiceURL, launchCredsURL)
 	}
+	for name, tc := range map[string]struct {
+		lc       *localcfg.Config
+		auth     string
+		deployed bool
+	}{
+		"no record yet": {
+			lc:   &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
+			auth: config.AuthCascade,
+		},
+		"a repository the service cannot serve": {lc: optedIn, auth: "oauth"},
+		"no document, and the root carries no service": {
+			lc:       &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
+			deployed: false,
+		},
+		"no service to hand": {lc: &localcfg.Config{}, deployed: true},
+	} {
+		if got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", tc.auth, tc.deployed); got != nil {
+			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want nil: the switch is the plan's own predicate (infra.CredentialsServiceServes), and a job told where the service is opens its git provider keyless (internal/gitprov/providers/providers.go) for a credential the service cannot hand back", name, got)
+		}
+	}
+	// Both stand-ins, from either side: with no document to read, a root whose
+	// tfvars carry the service hands the address — with the record empty, which
+	// is the upgrade's state, and with it already written, which is an ordinary
+	// launch from outside a checkout — and so does the record alone on a machine
+	// that holds no tfvars of the root, which is every console launch. The last
+	// of those is the regression this pins: it read only this machine's workdir
+	// before, so a teammate's console launch of a switched-on cascade
+	// repository got no address and its run halted at the service's door.
+	for name, tc := range map[string]struct {
+		lc       *localcfg.Config
+		deployed bool
+	}{
+		"a root applied with the service on, no record": {
+			lc:       &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
+			deployed: true,
+		},
+		"a root applied with the service on, and recorded": {lc: optedIn, deployed: true},
+		"the record alone, on a machine that never applied it": {
+			lc: optedIn,
+		},
+	} {
+		got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", "", tc.deployed)
+		if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
+			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want [%s=%s]", name, got, envCredentialsServiceURL, launchCredsURL)
+		}
+	}
 	for _, lc := range []*localcfg.Config{optedIn, nil} {
-		if got := credentialsServiceLaunchEnv(lc, "fugaro-standard-github"); got != nil {
+		if got := credentialsServiceLaunchEnv(lc, "fugaro-standard-github", "acme/app", config.AuthCascade, false); got != nil {
 			t.Errorf("a launch on the shared project job put %v in the execution's plain Env, want none: the credentials service refuses a shared project job's account whole (internal/credsvc/auth.go's verifyJob), and telling that job where the service is would open its git provider keyless (internal/gitprov/providers/providers.go) for a mint the service refuses — every GitHub run of such a job would break", got)
 		}
 	}
 }
 
+// seedRepoRootCredentialsService writes the repository root's tfvars — the
+// document the repository door leaves in this machine's workdir for it — the
+// way that door writes it for a root it deploys with the switch on:
+// installation.credentials_service present and not null. The URL is left out
+// deliberately, as the repository root's own copy leaves it
+// (infra.RepoCredentialsService), because nothing about the ROOT's answer
+// depends on it. update_switch_test.go's repoCredentialsServiceFact reads the
+// same file back out of a real `fugaro update --repo`.
+func seedRepoRootCredentialsService(t *testing.T, slug string) {
+	t.Helper()
+	seedRepoRootVars(t, slug, `{"installation":{"credentials_service":{"name":"fugaro-credentials","region":"us-east5"}}}`)
+}
+
+// seedRepoRootVars writes a repository root's tfvars, verbatim, where the last
+// apply of that root left them, in THIS machine's workdir: what a launch
+// outside a checkout reads the deployed root's answer from
+// (deployedRepoCredentialsService), and a document the upgrade's backfill
+// deliberately does NOT read any more (the review of 2026-11-07's fourth
+// round: it asked about roots another machine applies, and those write no
+// document here — appliedRepoCredentialsService reads the installation's own
+// state instead).
+func seedRepoRootVars(t *testing.T, slug, doc string) {
+	t.Helper()
+	dir, err := infra.RepoWorkdir(os.Getenv, initProject, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "gcp", "roots", "repo", infra.VarsFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestALaunchOutsideACheckoutReadsTheRecordOrTheDeployedRoot is the launch's
+// half of the switch where the run's own DOCUMENT cannot be read at all — the
+// one state the auth cannot judge. `fugaro run --repo X` from a directory that
+// holds no checkout of X leaves launchFileConfig with nothing to read: no ref
+// in an object database, no working tree to fall back to, so agent.auth is ""
+// and the switch's third condition is unanswerable. Withholding the address
+// there starts a `cascade` run whose job mounts no model credential at all —
+// the mounts were dropped by the apply that switched it on — so the run halts
+// at the service's door (D143), which is what every such launch did before
+// this.
+//
+// Two answers stand in for the document, and either one is enough, because
+// both are written by an apply that dropped the job's mounts and granted the
+// job's account roles/run.invoker: the repository's own record, written by
+// that apply's machine or by the installation-wide backfill that read the
+// installation's state, and this machine's tfvars of the root it was applied
+// from (deployedRepoCredentialsService, over the file
+// seedRepoRootCredentialsService above writes and update_switch_test.go's rig
+// produces for real). Reading only the tfvars is what the console's launches
+// cannot survive: the desktop console spawns `fugaro run --repo` from a private
+// empty directory on every machine, so the record is the only answer a
+// teammate's machine has — and a switched-on cascade repository it withholds
+// the address from fails at bootstrap with no PR.
+//
+// The last case is the same launch with neither: no record and no tfvars of
+// that root on this machine, so nothing here says its root carries the service
+// and the job is handed nothing — the address is also what opens the git
+// provider keyless (internal/gitprov/providers/providers.go), and that is the
+// fail-closed direction the switch wants.
+//
+// Mutation (verified, run and restored): pass the record out of the empty-auth
+// branch of credentialsServiceLaunchEnv (serves = installed && deployed) and
+// the middle case fails with an empty plain list.
+func TestALaunchOutsideACheckoutReadsTheRecordOrTheDeployedRoot(t *testing.T) {
+	for name, tc := range map[string]struct {
+		rootSeeded bool
+		recorded   bool
+	}{
+		"the repository root's own tfvars carry the service": {rootSeeded: true, recorded: true},
+		"the record alone, with no tfvars of that root here": {recorded: true},
+		"neither the record nor this machine's tfvars":       {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
+			if tc.recorded {
+				markRepoCredentialsServiceReady(t, f.cloudFixture)
+			}
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			// A directory that is no checkout of the repository: nothing for
+			// launchFileConfig to read the run's document from.
+			t.Chdir(t.TempDir())
+			if tc.rootSeeded {
+				seedRepoRootCredentialsService(t, appSlug)
+			}
+			env := memEnv(t, f.cloudFixture)
+			rec := &envRecorder{Backend: env.be}
+			env.be = rec
+			if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.recorded && !tc.rootSeeded {
+				if len(rec.env) != 0 {
+					t.Fatalf("a launch with no document, no record and no tfvars of the repository's root put %v in the plain Env, want none: nothing on this machine says that root was applied with the service on, and the address is what opens the git provider keyless for a mint a job account with no invoker grant is refused", rec.env)
+				}
+				return
+			}
+			want := envCredentialsServiceURL + "=" + launchCredsURL
+			if len(rec.env) != 1 || rec.env[0] != want {
+				t.Fatalf("the launch's plain Env = %v, want exactly [%s]: the run's document could not be read, and the repository's record and this machine's tfvars of its root are what stand in for it", rec.env, want)
+			}
+		})
+	}
+}
+
 // TestASharedProjectJobIsNotToldAboutTheCredentialsService is the same rule
-// through the launch itself, because the helper's third argument is the
+// through the launch itself, because the helper's job argument is the
 // launcher's to get right and a helper test cannot see the call site: this is
 // the arm that would break an opted-in installation's shared project jobs.
 //
 // The fixture is a real shared-job launch (projectJobFixture: the profile, the
 // published policy, the job the installation deployed) with the opt-in on, and
 // the checkout selects the clone workflow that resolves it — asserted, so the
-// test cannot pass by launching the per-repository job instead.
+// test cannot pass by launching the per-repository job instead. The repository
+// is switched on (a cascade checkout, the record written): what this test is
+// about is the job's own kind, so everything else the switch reads says yes and
+// the shared job is still handed nothing.
 //
 // Mutation (verified, run and restored): pass "" for job in run.go's launch
 // call — this fails on the credentials entry, and
@@ -134,7 +402,8 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 func TestASharedProjectJobIsNotToldAboutTheCredentialsService(t *testing.T) {
 	f := newProjectJobFixture(t)
 	f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
-	projectJobCheckoutYAML(t, projectJobRepoYAML)
+	projectJobCheckoutYAML(t, projectJobCascadeRepoYAML)
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
 	env := memEnv(t, f.cloudFixture)
 	rec := &envRecorder{Backend: env.be}
 	env.be = rec
