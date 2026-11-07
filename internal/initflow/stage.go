@@ -184,49 +184,35 @@ var order = []slot{
 	// holds the publisher's gate, which refuses a node under rules that
 	// predate the policy model, and a run whose rules are stale would refuse
 	// its own migration and leave the upgrade unfinished.
-	//
-	// A needs-you repository stage takes this stage with it, and that is not
-	// an accident of the file it stopped over: what the stages from here to
-	// the layer publish is the installation every run of the project is
-	// admitted by, and a run that is not converged does not write it — the
-	// fact `fugaro accounts add` fails on (accounts_add_converge_test.go).
 	{name: Rules, needs: []string{Repository}},
 	// The policy node is what every run of the project is admitted by, and
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
-	//
-	// The rules stage in front of it is one it does wait for, and a needs-you
-	// repository stage stops it for Rules' reason: the node is what admits
-	// runs, and a run with a stage left for the user is not one to publish it
-	// from.
 	{name: Policy, needs: []string{Repository, Rules}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a
 	// layer published after it would leave the run building from the one the
 	// owner just replaced.
-	//
-	// It publishes installation state like Rules and Policy, so a needs-you
-	// repository stage stops it with them.
 	{name: Layer, needs: []string{Repository}},
 	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
 	// run after the repository stage: the images the cloud step refreshes are
 	// that repository's, and the onboarding the repository stage does is what
 	// the refresh builds for.
 	//
-	// pastStops: the one row that has it, and the reason it does is that its
-	// two local steps — the pin in the checkout's settings and the plugin in
-	// the user's own Claude Code — read no repository fugaro.yaml. The plugin
-	// is what clears the staleness line every command prints ("run fugaro
-	// update"), and a repository stage that stopped needs-you over a file
-	// these steps never read may not take them with it: the door that line
-	// names would be the one door that cannot clear it, and the user is left
-	// in a loop with no way out (#1836). The stages that publish the
-	// installation (rules, policy, layer) are deliberately not here: a run
-	// with a stage left for the user does not write what admits its runs. The
-	// cloud step does need the repository, and keeps every refusal of its
-	// own: it is the step that skips itself where the checkout's file is not
-	// this run's to build for.
+	// pastStops: the one row that has it. Its two local steps — the pin in
+	// the checkout's settings and the plugin in the user's own Claude Code —
+	// read no repository fugaro.yaml, and the plugin is what clears the
+	// staleness line every command prints ("run fugaro update"): a repository
+	// stage that stopped needs-you over a file these steps never read may not
+	// take them with it, or the door that line names is the one door that
+	// cannot clear it and the user is left in a loop with no way out (#1836).
+	// The three stages before it publish the installation every run of the
+	// project is admitted by, which is why none of them is here: a run with a
+	// stage left for the user does not write that (accounts_add_converge_test.go
+	// is the door that says so). The cloud step does need the repository, and
+	// keeps every refusal of its own: it is the step that skips itself where
+	// the checkout's file is not this run's to build for.
 	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
