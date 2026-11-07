@@ -35,6 +35,13 @@ const (
 	// whose state needs escaping, because a value that survives an unescaped
 	// round trip proves nothing about one that would not.
 	testState = "state-4f2a 1c9d & more"
+	// testOtherRedirect is a second client's loopback callback, on a port of its
+	// own. The tests that hand one client's code or refresh token to another
+	// need two registrations, and two registrations need two redirect URIs: a
+	// client that registered the first client's URI would be refused at the
+	// authorize endpoint for a reason that has nothing to do with the binding
+	// under test.
+	testOtherRedirect = "http://127.0.0.1:8977/callback"
 )
 
 // testChallenge is the S256 challenge of testVerifier, computed here rather
@@ -423,5 +430,175 @@ func TestConsentIsCSRFBound(t *testing.T) {
 	// And the flow is answered once.
 	if again := ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}); again.Code == http.StatusFound {
 		t.Errorf("the same binding was answered twice: one binding answers one consent, and the second is refused rather than honoured")
+	}
+}
+
+// refusalOf reads the OAuth error a token or revocation endpoint answered with.
+// It is not the redirect reader above: these two endpoints answer a refusal in
+// the body, because there is no redirect URI to send it to and no page to render.
+type oauthRefusal struct {
+	Error       string `json:"error"`
+	Description string `json:"error_description"`
+}
+
+func refusalOf(t *testing.T, rec *httptest.ResponseRecorder) oauthRefusal {
+	t.Helper()
+	var out oauthRefusal
+	decodeBody(t, rec, &out)
+	return out
+}
+
+// TestTokenEndpointRefusesTheWrongClientSecret: a client that presents a secret
+// which is not the one it registered with is refused at the token endpoint — on
+// every grant, including the two that do not require one.
+//
+// Those two are the reason the check exists at all. A native client is not asked
+// to keep a secret (PKCE is what proves its code), so a secret it does present
+// is one it believes in, and reading a wrong one as "presented none" would hand
+// a token to a client that is confused about its own credentials — the one
+// confusion an attacker who has half a client's configuration can arrange.
+func TestTokenEndpointRefusesTheWrongClientSecret(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+
+	rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+		"client_secret": {"not-the-secret-this-client-registered-with"},
+	})
+	if rec.Code != http.StatusUnauthorized || refusalOf(t, rec).Error != string(oidc.InvalidClient) {
+		t.Errorf("the refresh grant with a wrong client secret answered %d (%s); want 401 %s: a secret that is presented is verified, and a wrong one is not read as a client that presented none", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidClient)
+	}
+	// And the family is where it was: a refused authentication spends nothing.
+	if rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	}); rec.Code != http.StatusOK {
+		t.Errorf("the refresh grant with no secret answered %d (%s); want the rotation: the refusal above is about the secret and not about the token", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestRevokeRefusesTheWrongClientSecret: the revocation endpoint authenticates
+// its caller, and a revocation that did not authenticate revokes nothing.
+//
+// The endpoint answers 200 to every token it is asked to revoke (RFC 7009), so
+// its secret check is the one place it refuses at all — and the second half
+// below is what makes the refusal mean something: the family is still there
+// afterwards, read by rotating the very token the refused call named.
+func TestRevokeRefusesTheWrongClientSecret(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+
+	rec := ts.postForm(t, RevokePath, url.Values{
+		"token":         {tokens.RefreshToken},
+		"client_id":     {clientID},
+		"client_secret": {"not-the-secret-this-client-registered-with"},
+	})
+	if rec.Code != http.StatusUnauthorized || refusalOf(t, rec).Error != string(oidc.InvalidClient) {
+		t.Errorf("the revocation with a wrong client secret answered %d (%s); want 401 %s", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidClient)
+	}
+	if rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	}); rec.Code != http.StatusOK {
+		t.Errorf("the refresh token stopped rotating after a refused revocation (%d): a revocation that did not authenticate deletes no family", rec.Code)
+	}
+}
+
+// TestCodeIsBoundToTheClientThatRequestedIt: a code is redeemed by the client it
+// was issued to, and by no other.
+//
+// The second half is the fail-closed direction this endpoint takes on purpose:
+// the code is spent by the exchange that presents it, before the client is even
+// looked at, so the client the code was issued to cannot redeem it afterwards
+// either. One page of re-authorization is what that costs, and a code an
+// attacker who read it out of a browser's history can keep guessing verifiers
+// against is what it buys.
+func TestCodeIsBoundToTheClientThatRequestedIt(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	otherID, _ := ts.register(t, "a second client", testOtherRedirect)
+
+	binding := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}))
+
+	form := url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {otherID},
+		"code_verifier": {testVerifier},
+	}
+	rec, _ := ts.exchange(t, form)
+	if rec.Code != http.StatusBadRequest || refusalOf(t, rec).Error != string(oidc.InvalidGrant) {
+		t.Errorf("a second client exchanged another client's code with %d (%s); want 400 %s: the code is bound to the client it was issued to", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidGrant)
+	}
+
+	form.Set("client_id", clientID)
+	if rec, _ := ts.exchange(t, form); rec.Code == http.StatusOK {
+		t.Errorf("the client the code was issued to redeemed it after another client had presented it: the exchange spends the code before it is judged, so a refused exchange leaves nothing to keep guessing verifiers against")
+	}
+}
+
+// TestRefreshTokenIsBoundToItsClient: a refresh token is rotated by the client it
+// was issued to, and by no other — and the refusal leaves the family where it
+// was, so the client that holds the token keeps working.
+//
+// That last property is why the check is made before the rotation rather than by
+// it: the store's compare-and-swap must not be asked to decide something the
+// caller could have refused, because its answer to a replay of a token it does
+// not know is to delete the whole family.
+func TestRefreshTokenIsBoundToItsClient(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+	otherID, _ := ts.register(t, "a second client", testOtherRedirect)
+
+	rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {otherID},
+	})
+	if rec.Code != http.StatusBadRequest || refusalOf(t, rec).Error != string(oidc.InvalidGrant) {
+		t.Errorf("a second client rotated another client's refresh token with %d (%s); want 400 %s: the refresh token is bound to the client it was issued to", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidGrant)
+	}
+	if rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	}); rec.Code != http.StatusOK {
+		t.Errorf("the refresh token stopped rotating after another client presented it (%d): the client binding is checked before the rotation, so a refusal does not revoke the family of the client that holds the token", rec.Code)
+	}
+}
+
+// TestClientCredentialsNeedsTheSecret is D929's other half: the one grant with no
+// person behind it is the one grant proved by the client secret, and a client
+// that presents none is refused before its record is even read for limits.
+//
+// The pair below is the whole rule. Without the secret the answer is 401; with
+// it, a registration's own record — which names no limits — answers 400. Neither
+// is a token, and the first is what keeps an unattended caller from being made
+// out of a registration nobody proved.
+func TestClientCredentialsNeedsTheSecret(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, secret := ts.register(t, "an editor", testClientRedirect)
+
+	rec := ts.postForm(t, TokenPath, url.Values{
+		"grant_type": {string(GrantClientCredentials)},
+		"client_id":  {clientID},
+	})
+	if rec.Code != http.StatusUnauthorized || refusalOf(t, rec).Error != string(oidc.InvalidClient) {
+		t.Errorf("the client credentials grant with no secret answered %d (%s); want 401 %s: this grant is proved by the secret and by nothing else", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidClient)
+	}
+
+	rec = ts.postForm(t, TokenPath, url.Values{
+		"grant_type":    {string(GrantClientCredentials)},
+		"client_id":     {clientID},
+		"client_secret": {secret},
+	})
+	if rec.Code != http.StatusBadRequest || refusalOf(t, rec).Error != string(oidc.UnauthorizedClient) {
+		t.Errorf("the client credentials grant with the secret but no limits answered %d (%s); want 400 %s: an unattended token without limits is the one token §7 refuses to mint (D929)", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.UnauthorizedClient)
 	}
 }
