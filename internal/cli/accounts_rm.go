@@ -560,6 +560,9 @@ func accountsRmCommittedYAML(ctx context.Context, dir, ref string) ([]byte, erro
 // stopped by one this command cannot write — and it is printed while the
 // confirmation below can still be declined, because the break it describes is
 // one the removal makes.
+//
+// The session-only bucket is not read here: a session holding one was refused
+// by the gate before this point, and the owner's own run never fills it.
 func accountsRmWarn(cmd *cobra.Command, plan accountsRmPlan, read accountsRmReferrers) {
 	if !plan.drop {
 		return
