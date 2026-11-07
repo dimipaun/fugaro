@@ -127,6 +127,15 @@ const credsServiceSince = "0.10.0"
 // and an agent running `fugaro update` — or an operator whose identity lost
 // the bundle's accessor role — would silently rewrite the switch of every
 // repository this machine serves.
+//
+// Both answers are memoized, and that is part of the rule above rather than an
+// optimization: one run asks twice — the installation door's backfill, then the
+// repository stage's record (init.go's install and repoEngine) — and the second
+// answer is a property of the READING, not of the question. Memoizing the
+// reading alone would leave the second door answering "the bundle holds no
+// model credential" out of a memo the first door wrote as "there was no
+// reading": a false no read produced, written into the entry and published for
+// the installation, which is the one write this function exists to refuse.
 func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Config) (ready, record bool) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s is set, so this is a coding agent's session) and the switch's record is left as this machine last wrote it: the bundle holds every model credential the service issues, and a person's own %s reads it", m, selfCommand()))
@@ -137,14 +146,21 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 		return false, false
 	}
 	if r.credsRead {
-		return r.credsReady, true
+		return r.credsReady, r.credsRecord
 	}
-	r.credsRead, r.credsReady = true, false
+	r.credsRead = true
+	// answer is the three states that ARE readings, and it memoizes the switch
+	// with them: the reading is spent, so every later door of this run reads it
+	// here rather than deciding again from a memo that answered nothing.
+	answer := func(holds bool) (bool, bool) {
+		r.credsReady, r.credsRecord = holds, true
+		return holds, true
+	}
 	if lc == nil || lc.CredentialsService == nil {
 		// No service, nothing to serve a run with — and no read to spend:
 		// the block's absence is the answer (the installation could not
 		// deploy the service, or its owner removed it).
-		return false, true
+		return answer(false)
 	}
 	unreadable := func(err error) (bool, bool) {
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s) and the switch's record is left as the last reading wrote it: nothing was read, so there is no answer to write, and a false published here would switch the service off for every machine of this installation", oneLineCLI(err.Error())))
@@ -162,13 +178,13 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 		// An empty container is a state and not a failure: the service was
 		// deployed and nothing has been stored in it yet, which is exactly
 		// the installation a fresh deploy leaves behind.
-		return false, true
+		return answer(false)
 	}
 	if err != nil {
 		return unreadable(err)
 	}
 	if meta.state == "DISABLED" {
-		return false, true
+		return answer(false)
 	}
 	doc, err := store.access(ctx, meta.number)
 	if err != nil {
@@ -178,8 +194,7 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 	if err != nil {
 		return unreadable(err)
 	}
-	r.credsReady = len(b.Credentials()) > 0
-	return r.credsReady, true
+	return answer(len(b.Credentials()) > 0)
 }
 
 // recordCredentialsServiceReady records, on the ONE repository entry whose root

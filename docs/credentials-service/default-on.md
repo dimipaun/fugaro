@@ -47,6 +47,7 @@ that finds every place it is written and every test that pins it.
 | **Amended after review** | 2026-11-07 — the record is the **switch itself**, not the reading of the bundle: the auth its plan was built for is **folded into it** (`infra.CredentialsServiceServes`, not a second copy of its conjunction), so a root applied before its owner committed the cascade is recorded held off and no launch is handed an address whose `roles/run.invoker` grant no apply made. The auth stays **read live** at every build and every launch, which is what honours an edit in the other direction |
 | **Amended after review** | 2026-11-07 — **the record carries the plan's FIRST condition as well as its third**: `installed` is read from the installation root's **outputs** — the source the spec reads it from — and not from the local config's block, which is what an owner's opt-out leaves behind while the outputs carry no service, so a `fugaro update --repo` can no longer record `true` for a root it applied held off (§3 DON8) |
 | **Amended after review** | 2026-11-07 — **a read that failed is not a reading and therefore not an answer.** The three states that answer are facts about the bundle, true for every reader (no version, a newest version that is `DISABLED`, a document that parses without a `KindModel` entry); an error is a fact about **this machine's identity**, and the record travels in the local config `fugaro update` publishes, so a `false` written from it switches the service off for every machine of the installation — including the jobs whose mounts the last apply dropped. A failed read leaves the record as the last reading wrote it (§3 DON8) |
+| **Amended after review** | 2026-11-07 — **the reading is asked once per run, and BOTH of its answers are memoized together** (the sixth review round): one run asks twice — the installation door's backfill, then the repository stage's record — and memoizing the reading alone left the second door answering "the bundle holds no model credential" out of a memo the first door had written as "there was no reading", which is the same installation-wide `false` the row above refuses, reached through the run's own second door (§3 DON8) |
 | **The Open item, answered** | **2026-11-05: DEPLOY NOW, SWITCH LATER.** The service deploys everywhere; the switch happens **per repository** and only where the service can serve that repository's runs — its auth mode must be one the service serves **and** the bundle must hold what that mode needs. §1.5 states what the switch flips; §3 DON8 is the task |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
 
@@ -1028,7 +1029,11 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   without the accessor role, a listing that failed — would write the switch off for every machine of
   the installation, and every teammate's `cascade` run would then be handed no service address by
   `credentialsServiceLaunchEnv` and stop at the service's door (D143) on the word of a machine that
-  read nothing. The cost of the rule is a convergence, not a wrong write: an entry the failed read
+  read nothing. **One run asks the bundle twice** — the installation door's backfill, then the
+  repository stage's record (`init.go`'s `install` and repoEngine) — so the two answers are memoized
+  **together**: memoizing the reading alone would leave the second door reading the memo's `false` as a
+  reading of its own and writing it, which is the same installation-wide `false` reached through the
+  run's own second door rather than through another machine. The cost of the rule is a convergence, not a wrong write: an entry the failed read
   could not judge stays unrecorded, and the next run that *can* read the bundle — the same door, the
   next time it works — is the one that records it. The three answering states are kept as writes
   because each of them means the same thing to every reader of the bundle, the service included.
@@ -1072,7 +1077,9 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   `TestAnOptedOutInstallationRecordsNoSwitch` (the fifth: one rig and one ready bundle, and the
   installation's outputs move from carrying the service to carrying none — the config's block stays,
   which is the opt-out — and the record has to go with the plan, `false` and absent from the file);
-  and
+  `TestAFailedReadIsNotAnsweredByTheRunsSecondDoor` (the sixth: one run, the backfill's refused read,
+  and the converged repository's record still `true` in the entry **and in the file** — the run's own
+  second door may not read the memo's "no reading" as an answer); and
   `TestNoRepositoryRootGainsAServiceTheBundleCannotServe` (the whole-predicate guard: **no** repository
   root in the fixtures plans `installation.credentials_service` set unless all three conditions hold).
 - **Red step:** `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone` fails the moment DON1 lands and
@@ -1091,7 +1098,9 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   local config's block instead of the outputs → `TestAnOptedOutInstallationRecordsNoSwitch` fails, the
   record vouching for a service the installation does not have; answer a failed read with
   `false` rather than with no answer → `TestAnUnreadableBundleLeavesTheRecordAlone` fails, and one
-  refused listing publishes the switch off for the whole installation; make
+  refused listing publishes the switch off for the whole installation; memoize the reading without its
+  record flag → `TestAFailedReadIsNotAnsweredByTheRunsSecondDoor` fails, the failed read written down by
+  the run's own second door; make
   `repoCredentialsService` return the block regardless → the no-repository-gains test fails and `sa.tf`
   drops the mounts of a repository nobody switched on; implement the predicate a second time in
   `internal/cli` and let the two disagree → the launch and the plan part company, which is the state

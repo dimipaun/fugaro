@@ -581,15 +581,17 @@ type initRun struct {
 	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
 	refresh *refreshManaged
 
-	// credsRead and credsReady are the credentials service's bundle as this
-	// run read it (credentialsBundleReady, init_credentials.go): whether it
-	// holds a model credential, read once and recorded on the repository
-	// entry the run writes. Read once because it is one installation's
-	// bundle and one secret read; a read that FAILED answers nothing at all
-	// — the entry keeps the record the last reading left on it — and the
-	// warning it prints is why.
-	credsRead  bool
-	credsReady bool
+	// credsRead, credsReady and credsRecord are the credentials service's
+	// bundle as this run read it (credentialsBundleReady, init_credentials.go):
+	// whether it holds a model credential, read once and recorded on the
+	// repository entry the run writes. Read once because it is one
+	// installation's bundle and one secret read; a read that FAILED answers
+	// nothing at all — the entry keeps the record the last reading left on it,
+	// and credsRecord is what carries that answer to this run's second door —
+	// and the warning it prints is why.
+	credsRead   bool
+	credsReady  bool
+	credsRecord bool
 
 	// managed is true once this run read that the project it installs into
 	// is managed (managedProject): a guard refusal's text is then the managed

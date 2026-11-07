@@ -793,6 +793,73 @@ func TestAnUnreadableBundleLeavesTheRecordAlone(t *testing.T) {
 	}
 }
 
+// TestAFailedReadIsNotAnsweredByTheRunsSecondDoor is the other way into the
+// write above, and the one the reading's own memo opens: ONE run asks the
+// bundle twice — the installation door's backfill for the repositories a
+// previous release applied (init.go's install), then the repository stage's
+// record for the root this run converges (init.go's repoEngine) — and the
+// second ask has to read the first one's ANSWER rather than its memo. A
+// memo that remembered only the reading would hand the second door a false
+// with record=true, which is the write the first door had just refused: a
+// false no reading produced, into the entry the repository stage persists and
+// `fugaro update` publishes for the installation.
+//
+// The state is the upgrade's, with the two entries the two doors ask about.
+// acme/sandbox carries the record a person's own run wrote — the switch is ON
+// for it, and its job's model mounts are gone, which is what makes the false
+// so expensive — and acme/other is the repository the backfill exists for: its
+// root's tfvars say the service is on and its entry carries no record. The
+// bundle read fails on the version list, the refusal of the role change or
+// rotation above.
+//
+// The bundle is read once in the whole run, which is what the two calls here
+// are: the second one is the repository door's own call on the same engine, and
+// the file is written by the door's own write.
+//
+// Mutation (verified, run and restored): memoize the reading without its record
+// flag (the pre-fix `if r.credsRead { return r.credsReady, true }`) and this
+// fails with the record cleared for acme/sandbox, in the entry and in the file.
+func TestAFailedReadIsNotAnsweredByTheRunsSecondDoor(t *testing.T) {
+	r := switchRig(t)
+	addSwitchRepo(t, r, "acme/other")
+	putSwitchBundle(t, r, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	if got := recordForRepo(t, r, config.AuthCascade); !got.Repos["acme/sandbox"].CredentialsServiceReady {
+		t.Fatalf("the fixture is not the state this test starts from: over a readable bundle holding a model credential, the record has to be written")
+	}
+	sibling, err := task.Slug("bitbucket", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedRepoRootCredentialsService(t, sibling)
+	r.sm.FailVersionsAfter = r.sm.VersionsListCalls()
+
+	e := rigEngine(t, r, &initOptions{yes: true})
+	e.r.backfillCredentialsServiceReady(t.Context(), e.lc, switchOutputs())
+	if !e.lc.Repos["acme/sandbox"].CredentialsServiceReady || e.lc.Repos["acme/other"].CredentialsServiceReady {
+		t.Fatalf("the run's first door did not leave the records this test judges the second door against (sandbox %v, other %v): the backfill reads the bundle once and writes nothing from a read that failed",
+			e.lc.Repos["acme/sandbox"].CredentialsServiceReady, e.lc.Repos["acme/other"].CredentialsServiceReady)
+	}
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, switchOutputs(), "acme/sandbox", config.AuthCascade)
+	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
+	cfg, problems := config.Parse([]byte(checkoutYAML("bitbucket", config.AuthCascade, "aurora", "")))
+	if cfg == nil {
+		t.Fatalf("the fixture's fugaro.yaml does not parse: %v", problems)
+	}
+	if err := e.r.writeRepoConfig(t.Context(), e.lc, spec, cfg, r.cfg, e.old); err != nil {
+		t.Fatalf("the repository stage's config write failed: %v", err)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the project config does not parse: %v", err)
+	}
+	if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
+		t.Errorf("the run's second door cleared the record of a repository whose bundle was never read: the backfill's failed read is not a reading, and a false written from it switches the service off for every machine of this installation — the launches that then withhold the address start `cascade` runs whose jobs have no model mount left to fall back on (D143)")
+	}
+	if raw := readFileString(t, r.cfg); !strings.Contains(raw, "credentials_service_ready: true") {
+		t.Errorf("the local config no longer carries the record after a run that read nothing, and this file is the one `fugaro update` publishes for the installation:\n%s", raw)
+	}
+}
+
 // markSwitchRepoReady writes the record a person's OWN run leaves on a
 // repository's entry: it read a bundle that held a model credential, so the
 // entry the next run reads already answers the switch.
