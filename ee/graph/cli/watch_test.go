@@ -33,6 +33,10 @@ package cli
 //   - TestWatchRefusedReadIsTerminalAndNamesTheCommand: the server withdrawing
 //     the listen is a refusal that ends the child and names the command, which
 //     is what a console reads as "this CLI has no graph" (T3).
+//   - TestWatchRefusedReadIsTerminalWhileTheListenStands: a *read* this CLI is
+//     refused, with the listen served throughout, is the other refusal: exit 1
+//     and no document, where a read that merely failed is a scope marked down
+//     (H3, T3).
 //   - TestWatchFirstSnapshotIsBoundedWhenTheListenIsSilent: the first document
 //     does not wait for a subscription that never speaks, because the read
 //     behind it needs no listen.
@@ -628,6 +632,94 @@ func TestWatchTransientReadFailureIsADownScopeAndIsRetried(t *testing.T) {
 		t.Errorf("the recovered document drew %+v, want the whole stored graph again %+v", back.Nodes, first.Nodes)
 	}
 	child.stillRunning(t, 20*testFloor)
+}
+
+// TestWatchRefusedReadIsTerminalWhileTheListenStands: a read this CLI is
+// *refused* — a 403 on GET /coordinator/repos/<slug>/view, the role its caller
+// does not hold — is the one failure of a read that ends the child, and it is
+// the CLI's own classification (ExitCode) that tells it apart from a read that
+// merely failed: a read `graph --json` would exit 2 for is a scope that is down,
+// which the test above holds, and a read it would exit 1 for is this (H3, T3,
+// §6.22).
+//
+// Nothing else here is refused: the repository's own paths are the only ones
+// the database answers 403, so the subscription is served throughout and the
+// sentence the child ends on is the read's, not the stream's. That is what a
+// console reads as "this CLI has no graph"; a document with the scope marked
+// down would say the opposite, and a child that kept running would never say
+// anything at all.
+//
+// Both instants are held, because they reach the arm from the two places it can
+// be reached: the first read, whose refusal leaves no document, and a read a
+// later floor makes, whose refusal leaves the graph the child had already drawn
+// and nothing after it.
+func TestWatchRefusedReadIsTerminalWhileTheListenStands(t *testing.T) {
+	t.Run("the first read", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, storedView())
+		fast(t, testFloor, testKeep)
+
+		// Only the repository's own paths: the subscription's path is the
+		// coordinator's subtree, which this refusal does not touch.
+		f.db.RefusePath("/repos/", http.StatusForbidden, "Forbidden", "PERMISSION_DENIED", "Permission denied")
+
+		sink := newWatchSink()
+		child := startWatch(t, sink, "graph", "--watch", "--json")
+
+		err := child.wait(t, testPatience)
+		if err == nil {
+			t.Fatalf("the child kept streaming a graph whose read it is refused; it wrote:\n%s", sink.text())
+		}
+		if got := fcli.ExitCode(err); got != fcli.ExitUserError {
+			t.Errorf("a refused read exits %d, want %d: it is the caller's, not the database's", got, fcli.ExitUserError)
+		}
+		for _, want := range []string{"refused the read", "roles/firebasedatabase.viewer"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal is %q, want the stored view's own sentence, naming %q", err, want)
+			}
+		}
+		if got := sink.text(); got != "" {
+			t.Errorf("the refused read wrote %q, want no document at all: a scope marked down is drawn as a graph that is down, which is not what a refusal is", got)
+		}
+	})
+
+	t.Run("a read after the first snapshot", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, storedView())
+		// A keep-alive inside a test's patience: it is what makes the next read
+		// due with nothing changed, so this refusal lands on the child's own
+		// floor and there is no change to race.
+		fast(t, testFloor, 60*time.Millisecond)
+
+		sink := newWatchSink()
+		child := startWatch(t, sink, "graph", "--watch", "--json")
+		first := sink.next(t, testPatience)
+		if len(first.Nodes) != 1 || first.Sources[0].State != graph.SourceUp {
+			t.Fatalf("the first document is %+v, want the stored graph up", first)
+		}
+
+		f.db.RefusePath("/repos/", http.StatusForbidden, "Forbidden", "PERMISSION_DENIED", "Permission denied")
+
+		err := child.wait(t, testPatience)
+		if err == nil {
+			t.Fatalf("the child kept streaming a graph whose read it is refused; it wrote:\n%s", sink.text())
+		}
+		if got := fcli.ExitCode(err); got != fcli.ExitUserError {
+			t.Errorf("a refused read exits %d, want %d: it is the caller's, not the database's", got, fcli.ExitUserError)
+		}
+		if !strings.Contains(err.Error(), "refused the read") {
+			t.Errorf("the refusal is %q, want the read's own sentence", err)
+		}
+		// The graph it had is the last thing it wrote: a refusal is an exit, and
+		// not a scope marked down beside the nodes of the last read.
+		written := sink.text()
+		if strings.Contains(written, `"state":"down"`) {
+			t.Errorf("the refused read was drawn as a down scope:\n%s", written)
+		}
+		if n := strings.Count(strings.TrimSpace(written), "\n") + 1; n != 1 {
+			t.Errorf("the child wrote %d documents, want the first snapshot and nothing after it:\n%s", n, written)
+		}
+	})
 }
 
 // TestWatchAFirstReadThatFailsIsADownScopeWithNoNodes: a child whose *first*
