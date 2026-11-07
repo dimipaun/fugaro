@@ -162,13 +162,6 @@ func (w *screenWatch) String() string {
 	return w.buf.String()
 }
 
-// after is everything the run wrote from that block on.
-func (w *screenWatch) after() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.buf.String()[len(w.before):]
-}
-
 // notDrawnOver is G1's assertion for a block a command prints itself while a
 // step is in flight: what was on the screen just before it has to be the
 // sequence that takes the line in flight down — the reporter's own "\r\x1b[K" —
