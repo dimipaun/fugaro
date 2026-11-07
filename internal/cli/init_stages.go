@@ -708,6 +708,8 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 				return ""
 			case e.catalogBaseIsMissing():
 				return "no --firebase-project given, and the project's image catalog builds its entries FROM base_images." + config.BaseKind + ", which this run does not pin: the catalog check job runs FROM that image and nothing else deploys it, so the catalog's entries are checked by nothing until a run that pins it is through"
+			case infra.CatalogBuilds(e.lc):
+				return "no --firebase-project given, and the first apply already deployed the catalog check job from the recorded base image: this stage has nothing of its own"
 			}
 			return "no --firebase-project given: nothing to deploy the history job with"
 		},
