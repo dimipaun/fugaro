@@ -484,6 +484,68 @@ func TestRedactsTheLongerValueFirst(t *testing.T) {
 	}
 }
 
+func TestRedactsOverlappingValues(t *testing.T) {
+	// F6: two held values can cover the same stretch of a line without either
+	// containing the other — an id and the token that follows it, meeting at a
+	// separator. Replacing them one value at a time destroys the second one's
+	// match, and its tail is then in the log with nothing left to look for.
+	t.Run("two values that overlap", func(t *testing.T) {
+		_, env := logStateDir(t)
+		secrets := []string{"AAAA-BBBB", "BBBB-CCCC"}
+		sink, err := OpenLog("update", env, "linux", logFixedNow, func() []string { return secrets })
+		if err != nil {
+			t.Fatalf("OpenLog: %v", err)
+		}
+		if _, err := sink.Write([]byte("x=AAAA-BBBB-CCCC\n")); err != nil {
+			t.Fatal(err)
+		}
+		body := logBody(t, sink)
+		for _, part := range []string{"AAAA", "BBBB", "CCCC"} {
+			if strings.Contains(body, part) {
+				t.Errorf("%q, part of a held value, reached the log:\n%q", part, body)
+			}
+		}
+		if body != "x="+Redacted+"\n" {
+			t.Errorf("the overlapping values are not one replacement:\n%q", body)
+		}
+	})
+
+	t.Run("two values that touch", func(t *testing.T) {
+		// Adjacent matches are merged as well, so a line of two values back to
+		// back is one marker rather than two.
+		_, env := logStateDir(t)
+		secrets := []string{"AAAA", "BBBB"}
+		sink, err := OpenLog("update", env, "linux", logFixedNow, func() []string { return secrets })
+		if err != nil {
+			t.Fatalf("OpenLog: %v", err)
+		}
+		if _, err := sink.Write([]byte("x=AAAABBBB\n")); err != nil {
+			t.Fatal(err)
+		}
+		if body := logBody(t, sink); body != "x="+Redacted+"\n" {
+			t.Errorf("the touching values are not one replacement:\n%q", body)
+		}
+	})
+
+	t.Run("a value that repeats and overlaps itself", func(t *testing.T) {
+		// The scan moves one byte at a time, so the occurrence that starts
+		// inside the one before it is a match too: without that, the tail of
+		// the line is left in the log.
+		_, env := logStateDir(t)
+		secrets := []string{"aba"}
+		sink, err := OpenLog("update", env, "linux", logFixedNow, func() []string { return secrets })
+		if err != nil {
+			t.Fatalf("OpenLog: %v", err)
+		}
+		if _, err := sink.Write([]byte("x=ababa\n")); err != nil {
+			t.Fatal(err)
+		}
+		if body := logBody(t, sink); body != "x="+Redacted+"\n" {
+			t.Errorf("the value's overlapping occurrences are not covered:\n%q", body)
+		}
+	})
+}
+
 func TestRedactsTheLinesOfAMultiLineValue(t *testing.T) {
 	// F6: the sink matches a value inside a line, so a PEM-shaped value is
 	// caught by the lines the caller holds beside it — initsecrets.hold holds

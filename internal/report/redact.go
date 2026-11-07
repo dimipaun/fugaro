@@ -3,7 +3,7 @@ package report
 import (
 	"bytes"
 	"io"
-	"slices"
+	"sort"
 	"strings"
 )
 
@@ -83,27 +83,82 @@ func (r *Redactor) emit(line []byte) error {
 	return err
 }
 
-// redact replaces every value the run holds at this moment, the longest value
-// first: one value is often inside another — an account id inside the
-// connection string that holds it — and replacing the shorter first would
-// leave the tail of the longer one in the log, where nothing would ever look
-// for it again. The values are copied rather than sorted in place, because
-// what secrets returns is the caller's own slice, still live for the stages
-// that fill it.
+// redact replaces every value the run holds at this moment. Every value is
+// matched against the line as it arrived and the matches are merged before
+// anything is written, because two values can cover the same stretch of a line
+// without either containing the other — an account id and the token that
+// follows it, or two values that meet at a separator. Replacing them one value
+// at a time would let the first replacement destroy the second value's match
+// and leave the rest of it in the log, where nothing would ever look for it
+// again.
 func (r *Redactor) redact(line string) string {
 	if r.secrets == nil {
 		return line
 	}
-	vals := slices.Clone(r.secrets())
-	slices.SortStableFunc(vals, func(a, b string) int { return len(b) - len(a) })
-	for _, v := range vals {
-		// An empty value is a substring of every string, and replacing one
+	spans := matchSpans(line, r.secrets())
+	if len(spans) == 0 {
+		return line
+	}
+	var b strings.Builder
+	b.Grow(len(line))
+	at := 0
+	for _, s := range spans {
+		b.WriteString(line[at:s.start])
+		b.WriteString(Redacted)
+		at = s.end
+	}
+	b.WriteString(line[at:])
+	return b.String()
+}
+
+// span is one stretch of a line to replace, as byte offsets.
+type span struct{ start, end int }
+
+// matchSpans returns the stretches of line that the held values cover, in
+// ascending order and never overlapping: matches that overlap, or that touch,
+// are one stretch, so one replacement covers both.
+//
+// Every value is matched against the original line rather than against what an
+// earlier replacement left, which is what keeps a value whose match overlaps
+// another's from being missed.
+func matchSpans(line string, values []string) []span {
+	var found []span
+	for _, v := range values {
+		// An empty value is a substring of every string, and matching one
 		// would put the marker between every character of every line. It is
 		// also the normal state of a converge slot no stage has reached yet.
 		if v == "" {
 			continue
 		}
-		line = strings.ReplaceAll(line, v, Redacted)
+		for at := 0; ; {
+			i := strings.Index(line[at:], v)
+			if i < 0 {
+				break
+			}
+			found = append(found, span{at + i, at + i + len(v)})
+			// One byte on, not len(v): a value can overlap itself, and the
+			// occurrence that starts inside this one is a match too.
+			at += i + 1
+		}
 	}
-	return line
+	if len(found) == 0 {
+		return nil
+	}
+	sort.Slice(found, func(i, j int) bool {
+		if found[i].start != found[j].start {
+			return found[i].start < found[j].start
+		}
+		return found[i].end < found[j].end
+	})
+	merged := make([]span, 0, len(found))
+	for _, s := range found {
+		if n := len(merged); n > 0 && s.start <= merged[n-1].end {
+			if s.end > merged[n-1].end {
+				merged[n-1].end = s.end
+			}
+			continue
+		}
+		merged = append(merged, s)
+	}
+	return merged
 }
