@@ -164,14 +164,14 @@ repository's own rule for a documentation folder says so. **The one licence this
 on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONFIRMED**, and
 **nothing the independent security review of 2026-11-04 read could settle it** (finding M-c,
 [reconciliation.md](reconciliation.md) §4a) — the library's Apache 2.0 claim is the library's own.
-What the owner answered on **2026-11-06** settles it: **he confirmed the licence himself —
-`zitadel/oidc` is Apache 2.0 and usable** — which is the answer M5's `go.mod` entry is taken against,
-and **it is his word rather than a file that closes the check the section below puts to him**
-([reconciliation.md](reconciliation.md) §6, check 1). **Two things his answer did not come from stay
-named as facts**: counsel has not been asked for **the transitive dependencies' clearance**, and the
-gate file the check describes is not in the tree. **His answer is what M5 was held behind and what it
-now has**; if that answer is wrong the alternative is D921's own — the library out of `go.mod` and M5
-rebuilt without it — and not a dependency shipped ahead of its own gate.
+**That check is unmet, and this folder records it as unmet while M5 is built.** Nothing in this tree
+answers it: counsel has not been asked for **the transitive dependencies' clearance**, the gate file
+the check describes is not in the tree, and the licence confirmation this branch's runs report is not
+an artifact here ([reconciliation.md](reconciliation.md) §6, check 1). **So the pull request that
+builds M5 does not merge until the owner writes the gate file and counsel clears the transitive set,
+or the owner writes the relaxation of the check himself** — and a licence that is not cleared sends
+D921 back to its own alternatives, with the library out of `go.mod` and M5 rebuilt without it, rather
+than a dependency shipped ahead of its own gate.
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -256,13 +256,14 @@ audience — the coordinator's own URL — so a client's standard check works.
 server is built on **zitadel/oidc** — the first option the owner listed, and the owner's answer —
 with the coordinator supplying two things the library does not: the storage over the project's own
 store (§6), and Dynamic Client Registration, which the owner's spec already expects to be a few
-hundred hand-written lines. **The library's licence is answered** — the review settles the library's
-*behaviour* against this design and not its licence, and **the owner confirmed the licence himself on
-2026-11-06: `zitadel/oidc` is Apache 2.0 and usable**, which is what M5's dependency is taken
-against ([reconciliation.md](reconciliation.md) §6, check 1). **Two facts his answer did not come
-from stay named**: counsel has not been asked for **counsel's clearance of the transitive
-dependencies included**, and the gate file the check describes is not in the tree. A licence that
-turns out to be unusable sends D921 back to its alternatives rather than to a
+hundred hand-written lines. **The library's licence is still UNCONFIRMED**, and the review settles the
+library's *behaviour* against this design and not its licence: **the owner or counsel confirms it —
+the transitive dependencies included — before any build**, and **the M5 gate file is the owner's to
+create** ([reconciliation.md](reconciliation.md) §6, check 1). **Nothing in this tree records that
+confirmation** — no gate file, and no clearance of the transitive set — **so the check stands unmet
+while M5 is built**, and **the pull request that builds it does not merge until they are there or the
+owner writes the relaxation of the check himself**. A licence that turns out to be unusable sends
+D921 back to its alternatives rather than to a
 workaround. The alternatives and their costs stay in the reconciliation; the short version is that
 ory/fosite brings the same missing piece and a heavier plugin API for a flow this small, and a
 standalone third-party server is a second resident service in a self-hosted product whose whole
@@ -1039,10 +1040,11 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   the text ([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
 - **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
-  (§3, D921, answered 2026-11-04 with its licence **UNCONFIRMED** and answered by the owner himself on
-  2026-11-06 — **Apache 2.0 and usable**, which is what M5's dependency is taken against, while
-  **counsel's clearance of the transitive dependencies included** and the gate file
-  stay named in §6's first check as the two things his answer did not come from); the
+  (§3, D921, answered 2026-11-04 with its licence **UNCONFIRMED**, and **§6's first check is unmet
+  while M5 is built**: nothing in this tree records the confirmation, so **counsel's clearance of the
+  transitive dependencies included** and the gate file stand as the check writes them, and the pull
+  request that builds M5 does not merge until they are there or the owner writes the relaxation
+  himself); the
   standalone-server option is not taken; and
   re-verification against the live MCP specification and the project's Identity Platform features is
   an owner check before implementation ([reconciliation.md](reconciliation.md) §6). **The

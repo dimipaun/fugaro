@@ -175,23 +175,22 @@ load-bearing:
   a CSRF-bound flow — are in §3's registration rules, §3's flow and §8's redirect-URI paragraph.
 
 **D921's licence, unconfirmed when the answers were given,** added the first owner check in §6 and a
-build gate in the plan — **a gate the owner has since answered himself** (§4a and §6, check 1): he
-confirmed the library on 2026-11-06, and what the check still names as facts rather than as gates are
-**counsel's clearance of the transitive dependencies** and **the gate file the check describes**.
+build gate in the plan, **and that check is unmet while M5 is built**: **counsel's clearance of the
+transitive dependencies** and **the gate file the check describes** are both still the owner's, and
+**nothing in this tree records either of them**.
 
-**The owner answered the licence check himself on 2026-11-06: `zitadel/oidc` is Apache 2.0 and
-usable.** That is the answer to §6's first check, given for M5's build, and it is what M5 takes
-its dependency against — so **the check is answered rather than unmet, and the gate it named is
-answered by his word rather than by the file the sentence had presumed.** The check's sentence was
-written before he answered, which is why it names a file a person writes. **The facts it named stay
-facts**: no gate file is in the tree, and counsel has not been asked for the transitive set this
-branch brings — `zitadel/schema`, `muhlemmer/gu` and `kr/text`, which are new, and the version
-bumps `go mod tidy` made beside the library: `go-jose/v4` v4.1.4→v4.1.6, **`go-logr/logr`**
-v1.4.3→v1.4.4, `doublestar/v4` v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with `/metric` and
-`/trace`, `x/text` v0.42.0→v0.43.0 and `x/sync` v0.23.0→v0.24.0. **The owner's answer is the later
-word and the one M5 follows**: the dependency is taken against the library he confirmed, and a
-licence that had turned out to be unusable would still send D921 back to its alternatives — the
-library out of `go.mod` and M5 rebuilt without it.
+**No artifact here answers that check, and this folder does not answer it on the run's word.** The
+licence confirmation this branch's runs report is not a file, a signature or a review comment this
+tree can show, and the check's own text is what stands: **M5 does not start until the licence is
+settled and a person has written the gate file.** M5 is built while both are open, so **the pull
+request that builds it does not merge until the owner writes the gate file and counsel clears the
+transitive set, or the owner writes the relaxation of the check himself** — and a licence that is
+not cleared sends D921 back to its own alternatives, with the library out of `go.mod` and M5 rebuilt
+against them, rather than a dependency landing ahead of its gate. **The transitive set counsel has
+to read is named here for that reason**: `zitadel/schema`, `muhlemmer/gu` and `kr/text`, which are
+new, and the version bumps `go mod tidy` made beside the library: `go-jose/v4` v4.1.4→v4.1.6,
+**`go-logr/logr`** v1.4.3→v1.4.4, `doublestar/v4` v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with
+`/metric` and `/trace`, `x/text` v0.42.0→v0.43.0 and `x/sync` v0.23.0→v0.24.0.
 
 The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file
@@ -322,15 +321,15 @@ M4 and M7 carry the rules; §8 states the risk.
 
 ### D921 — amended (finding M-c)
 
-**The licence was UNCONFIRMED when this amendment was written, and the owner answered it himself on
-2026-11-06** (§4a, the paragraph on it): `zitadel/oidc` is Apache 2.0 and usable, and that answer is
-the build gate for M5. **The answer is the owner's own word**, given for this task and recorded
-here; a transitive set counsel has not been asked about and a gate file no one has written are still
-absent from the tree, and neither of them held the build once he answered. **What 2026-11-06 settled
-is the licence** — the library's and, by his word, its usability — **and the alternative it displaced
-is the one that still stands if that word is wrong**: D921 back to its alternatives. The review
-settles the library's *behaviour* against this design, which is the paragraph below, and not its
-licence.
+**The licence is still UNCONFIRMED, and the check that names it is unmet while M5 is built** (§4a,
+the paragraph on it, and §6 check 1): **the owner or counsel confirms it — the transitive
+dependencies included — before any build**, and **the M5 gate file is the owner's to create**. **No
+artifact in this tree records that confirmation**, so the gate stands as written: **the pull request
+that builds M5 does not merge until the owner writes the gate file and counsel clears the transitive
+set, or the owner writes the relaxation of the check himself** — with D921's alternatives, the
+library out of `go.mod` and M5 rebuilt against them, the answer to a clearance that does not come.
+The review settles the library's *behaviour* against this design, which is the paragraph below, and
+not its licence.
 
 The review also found that **the library's defaults are the opposite of this design's rules**, and
 named them: PKCE is **optional** (`op/token_request.go` line 168) and an empty challenge method reads
@@ -694,19 +693,17 @@ code task starts:
    container can check it, and a dependency a self-hosted product cannot ship is a dependency the
    whole design rests on by mistake. **The independent security review of 2026-11-04 did not settle
    it either** — what it read is the library's behaviour against this design and not its licence —
-   so **the owner or counsel confirms the licence, the transitive dependencies included**. **The
-   owner answered this check himself on 2026-11-06: `zitadel/oidc` is Apache 2.0 and usable** — an
-   instruction he gave for M5's build, which is the answer M5's `go.mod` entry is taken against.
-   **His answer is what closes the check, and it closes it by his word rather than by the file the
-   sentence above presumed**: the sentence was written before he answered, no gate file has been
-   written into the tree, and counsel has not been asked about the transitive set — and neither of
-   those is what M5 was held behind, because the check put the question to the owner and he answered
-   it. **What a wrong answer still costs is the alternative this check names**: a licence that turns
-   out to be unusable sends D921 back to its own alternatives, with the library taken out of
-   `go.mod` and M5 rebuilt against them. **The two things his answer did not come from stay on this
-   list as facts rather than as gates** — **counsel's clearance of the transitive dependencies** the
-   library brings, and the gate file — so a later reader meets them still named and knows what they
-   are.
+   so **the owner or counsel confirms the licence, the transitive dependencies included**. **That
+   leaves this check unmet, and this folder says so rather than reading it as settled:** the check
+   is a gate and not a note — M5 does not start until the licence is settled and a person has
+   written the gate file — and M5 is built while both are open. **Nothing in this tree records the
+   owner's answer**: there is no gate file, counsel has not been asked about the transitive set, and
+   the licence confirmation this branch's runs report is not an artifact here — the transitive set
+   counsel would have to read is named in §4a so the list is not what is missing. **So the pull
+   request does not merge while this check is unmet** — the owner writes the gate file and counsel
+   clears the transitive set, **or the owner writes the relaxation of this check himself** — and a
+   licence that is not cleared sends D921 back to its own alternatives, with the library taken out
+   of `go.mod` and M5 rebuilt against them, rather than a dependency landing ahead of its gate.
 2. **The endpoint really is reachable from the public internet** once D920's answer says so: a
    request from outside the project reaches the handler and gets the 401, rather than being refused
    by the platform. spec.md §8 says what follows if it is not.

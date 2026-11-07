@@ -60,13 +60,11 @@ and PKCE and the project's own Firebase as the identity provider, so that MCP cl
 manage tasks without the CLI. The owner approved a design PR on 2026-10-31 and **answered the fifteen
 decisions on 2026-11-04** — D920's public endpoint, D923's paired-device sign-in and its `user:`-only
 lists, D930's rotating tokens, D931's single launch path, D934's off-by-default front door, D921's
-library, whose licence **was UNCONFIRMED when he answered and which the owner confirmed himself on
-2026-11-06: `zitadel/oidc` is Apache 2.0 and usable.** **That answer is the build gate §6's first
-check names, so the check is answered rather than unmet and M5 takes its dependency against it.** The
-record keeps the two things the answer did not come from — no gate file is in the tree, and counsel
-has not been asked about the transitive set — and the alternative it displaced is the one that still
-stands if the word is wrong: **a licence that turns out to be unusable sends D921 back to its
-alternatives rather than shipping the dependency** — and D922's separate
+library **with its licence still UNCONFIRMED** — **and §6's first check is unmet while M5 is built:
+no gate file is in the tree, counsel has not been asked about the transitive set, and nothing here
+records the confirmation the check asks for, so the pull request that builds M5 does not merge until
+they are there or the owner writes the relaxation of the check himself; a licence that turns out to
+be unusable sends D921 back to its alternatives rather than shipping the dependency** — and D922's separate
 **`mcpauth`** subtree, closed to
 every client. **And answered one more on 2026-11-05 (D935)**, on the independent review of PR
 #1715's M3: those records do not live in the project's shared Realtime Database at all, but in a
@@ -186,17 +184,17 @@ README, in its own diff, is where the block above D1189 is written.
   [reconciliation.md](reconciliation.md) §4a; **M4 and M6 were cancelled by those findings** and were
   to be **rerun from the amended plan**, and **M1 and M3 may continue** — **and the tree has gone past
   that**, five tasks merged, M5 built and the rest of the plan not started
-  ([reconciliation.md](reconciliation.md) §4a, "What has happened since"). The first owner check of
-  §6 is **answered** — the owner confirmed the licence himself — and what the folder still holds as
-  unverified is the one **UNVERIFIED** half of D935.
-- **Not a design anyone may build against without the list below.** D921's library was chosen with
-  **its licence UNCONFIRMED**, and the review of 2026-11-04 **could not settle it** — the Apache 2.0
-  claim is the library's own. **The owner answered it himself on 2026-11-06: `zitadel/oidc` is
-  Apache 2.0 and usable**, which is what M5's `go.mod` entry is taken against
-  ([reconciliation.md](reconciliation.md) §6, the first owner check). Two things the answer did not
-  come from stay in the record — counsel has not been asked about **the transitive dependencies**,
-  and **the gate file is not in the tree** — and a licence that turns out to be unusable still sends
-  that decision back to its alternatives.
+  ([reconciliation.md](reconciliation.md) §4a, "What has happened since"). **The first owner check of
+  §6 is unmet** — no gate file, no counsel's clearance of the transitive set, and no artifact in this
+  tree recording the confirmation — and the one **UNVERIFIED** half of D935 still stands too.
+- **Not a design anyone may build against yet.** D921's library was chosen with **its licence
+  UNCONFIRMED**, and the review of 2026-11-04 **could not settle it** — the Apache 2.0 claim is the
+  library's own — so **the owner or counsel confirms it, the transitive dependencies included**, and
+  **the gate file is the owner's to create**
+  ([reconciliation.md](reconciliation.md) §6, the first owner check). **M5 is built while that check
+  is unmet, and this pull request does not merge until it is answered** — by the gate file and
+  counsel's clearance, or by the owner writing the relaxation of the check himself. A licence that
+  turns out to be unusable still sends that decision back to its alternatives.
 - **Not the last word on the MCP specification.** §0's open item — re-verify the current revision —
   is still an owner check ([reconciliation.md](reconciliation.md) §6): **this container cannot reach
   the public specification**, which is the limitation `docs/coordinator/reconciliation.md`:794

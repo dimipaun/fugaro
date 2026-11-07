@@ -103,8 +103,7 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 		// The two gates the plan states before the first task: the review the
 		// coordinator runs -- which has run, so the gate is the finding each
 		// task now answers -- and the licence, which the review could not settle
-		// and which the owner answered himself on 2026-11-06, answering the
-		// check rather than leaving M5 held behind a file no one had written.
+		// and which nothing in this tree records an answer to.
 		"independent SECURITY review of [spec.md](spec.md) §8",
 		"**run by the coordinator**",
 		"D921's unconfirmed licence",
@@ -112,12 +111,13 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 		"D921's licence",
 		"counsel's clearance of the transitive dependencies",
 		"the M5 gate file the owner is to create",
-		// The answer itself, pinned so the folder cannot go back to reading as
-		// though the library's licence were still open: the licence, the date,
-		// and the two things the answer did not come from -- counsel's clearance
-		// and the gate file -- which the plan still names as facts.
-		"The owner confirmed the library's own licence on 2026-11-06",
-		"`zitadel/oidc` is Apache 2.0",
+		// The check's own state, pinned so the folder cannot go back to reading
+		// as though the branch's own word closed it: the licence is still
+		// UNCONFIRMED, the two things the check names are still missing, and the
+		// merge condition is the owner's act rather than the run's.
+		"The licence is still UNCONFIRMED",
+		"the pull request that builds M5 does not merge until the owner writes the gate file and counsel clears the transitive set",
+		"or the owner writes the relaxation of the check himself",
 		// And the cuts the amendment made: `spawn_task` out of the first slice,
 		// and the two tasks whose drafts predate the answers they now build.
 		"M9 leaves the first slice",

@@ -169,13 +169,16 @@ var consoleBoundaryAllowList = []string{
 // The fourth is the MCP server's, and it is the one entry here that is a new
 // dependency rather than a promotion. `zitadel/oidc` is the authorization
 // library the owner answered D921 with (docs/mcp-server/reconciliation.md §4),
-// and its licence -- Apache 2.0 -- is what he confirmed on 2026-11-06 before
-// the dependency could be added at all; the authorization server of
-// ee/coordinator/mcpauth (plan task M5) is built on it. The three indirect
-// entries beside it (`zitadel/schema`, `muhlemmer/gu`, `kr/text`) and the
-// version bumps `go mod tidy` made at the same time are the module graph the
-// new require brings, not decisions of their own. The console contributes
-// nothing to any of them either.
+// and the authorization server of ee/coordinator/mcpauth (plan task M5) is
+// built on it. Its licence is UNCONFIRMED and the first owner check of
+// reconciliation.md §6 is unmet while M5 is built: no gate file is in the tree
+// and counsel has not cleared the transitive set, so this require line is taken
+// ahead of that gate and the pull request that carries it is held until the
+// owner answers the check. The three indirect entries beside it
+// (`zitadel/schema`, `muhlemmer/gu`, `kr/text`) and the version bumps `go mod
+// tidy` made at the same time are the module graph the new require brings, not
+// decisions of their own. The console contributes nothing to any of them
+// either.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",

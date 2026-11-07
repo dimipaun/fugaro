@@ -19,17 +19,19 @@ answer, M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidate
 carried: **nothing waits on it any more, and no task names a store it is not written to.** **This plan
 approves no task, and two things gate the whole plan:** the
 independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
-**unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7). **The owner
-confirmed the library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 and usable, which
-is the answer he gave this task and asked to have recorded here — **so that second gate is answered,
-and M5 is built against the answer rather than held behind it.**
+**unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7). **That second
+gate is unmet and M5 is built while it stands**: nothing in this tree records the confirmation the
+check asks for — no gate file, and counsel has not cleared the transitive set — so **the pull request
+that builds M5 does not merge until the owner writes the gate file and counsel clears the transitive
+set, or the owner writes the relaxation of the check himself**, and a licence that is not cleared
+sends D921 back to its own alternatives rather than shipping the dependency.
 
 ## 1. What the owner answered on 2026-11-04, and what each answer moves
 
 | D | The question | Answered 2026-11-04, and written to | If the owner later answers the other way |
 | --- | --- | --- | --- |
 | D920 | Public endpoint, or P8's IAM invoker | **Public**, bearer token is the gate — **the recommendation** | **M5, M6, M8, M9, M10 are void, and M4 and M7 shrink.** An IAM-invoked endpoint has no metadata documents, no registration and no token endpoint; what survives is M1–M3 and a tool registry reached by a Google identity. The plan is then a different, much smaller plan. |
-| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED at the time**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled**. **The owner answered it himself on 2026-11-06 — `zitadel/oidc` is Apache 2.0 and usable — so the check is answered by his word and M5 takes the dependency against it; counsel's clearance of the transitive set and the gate file of §6's first check stay named as facts his answer did not come from** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
+| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled**. **That check is unmet while M5 is built** — no gate file, no counsel's clearance of the transitive set, and no artifact in this tree recording the confirmation — so **the pull request that builds M5 does not merge until they are there or the owner writes the relaxation of the check himself** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
 | D922 | Where the token records live | **The separate `mcpauth` subtree, `.read: false` and `.write: false`, written by the coordinator's own account only** — the recommendation (**restated the same day**: the first answer made it readable by any signed-in person) | **M3 changes** by taking `coordinator/`'s `.read: "USER"` for the new node, and its red step inverts from the denial to the admission. |
 | D923 | How the person signs in | **The installation's own custom-token flow, with a PAIRED DEVICE approving and the coordinator never minting a token** — the recommendation, mechanism named; the ID token is consumed at `/oauth/authorize` only, and only exact `user:` list entries are read | **M6 changes** (the verifier moves to the authorize endpoint), **M7 gains the `user:`-only rule**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
 | D924 | How the spend limit is enforced | **A variable of its own, tighter-of-two, counted across the whole token family** — the recommendation | **M9 loses its core change** and gains the launcher-side arithmetic instead, and **M2 gains the family counter** that makes rotation a lifetime mechanism rather than a budget one. |
@@ -103,12 +105,12 @@ it:
   discovery at `openid-configuration` rather than RFC 8414's path). M5 refuses a missing or
   non-`S256` challenge and an unknown scope **before the library sees them**, allows only the code
   and refresh grants, keeps its signing material in Secret Manager or uses opaque tokens, and serves
-  both metadata paths from one table. **The licence was UNCONFIRMED when that review ran** —
-  nothing in it could settle the claim — **and the owner answered it on 2026-11-06**: `zitadel/oidc`
-  is Apache 2.0 and usable, which he gave as this task's answer and asked to have recorded here.
-  **So M5's dependency is taken against the answer he gave**, and **the M5 gate file the owner is to
-  create**, with counsel's clearance of the transitive dependencies, stay named in §6's first check
-  as the two things his answer did not come from.
+  both metadata paths from one table. **The licence is still UNCONFIRMED** — nothing in that review
+  could settle the claim — so **the owner or counsel confirms it, and counsel's clearance of the
+  transitive dependencies** is part of that, with **the M5 gate file the owner is to create**. **M5
+  is built while that check is unmet**, and **the pull request that builds it does not merge until
+  the gate file is written and the clearance comes, or the owner writes the relaxation of the check
+  himself** ([reconciliation.md](reconciliation.md) §6, check 1).
 - **D922 — H3.** Keyed hashes and MACs, no database admin on the public service, and the records
   outside the main database (**D935**, the store of §8). M2, M3 and M4 carry it.
 - **D923 — H1 and M-a.** **H1 is the one amendment that is not the recommendation**: a device token
@@ -273,13 +275,13 @@ is asked here for every task that changes who may reach what.
 starts until it has been read and its findings answered, and its scope is §8, every **SEC**-marked
 task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the two new
 privileges this design asks for (M9's launch grant, and M4's single binding on the store the
-`mcpauth` records moved to). **D921's unconfirmed licence** was the second
-([reconciliation.md](reconciliation.md) §6, the first owner check): it gated **M5** specifically,
+`mcpauth` records moved to). **D921's unconfirmed licence** is the second
+([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
-D921 back to its alternatives before any code exists rather than after. **The owner confirmed the
-library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 and usable, an answer he gave
-this task and asked to have recorded here — **so M5 takes the dependency against it and the second
-gate is answered.**
+D921 back to its alternatives before any code exists rather than after. **That gate is unmet and M5
+is built while it stands** — nothing in this tree records the confirmation the check asks for — so
+**the pull request that builds M5 does not merge until the owner writes the gate file and counsel
+clears the transitive set, or the owner writes the relaxation of the check himself.**
 
 **That review has run, on 2026-11-04, and the gate from here on is per task**: its findings and the
 owner's answers to them are [reconciliation.md](reconciliation.md) §4a, every document in this folder
@@ -290,9 +292,9 @@ the deferred slice**), and the two new privileges the design asks for. **D921's 
 of the second gate that no review could settle: it is **UNCONFIRMED**, so what stands is **the owner
 or counsel confirming it — counsel's clearance of the transitive dependencies included — before any
 build**, with **the M5 gate file the owner is to create** ([reconciliation.md](reconciliation.md) §6,
-check 1) — **and the owner answered it on 2026-11-06: `zitadel/oidc` is Apache 2.0 and usable, an
-answer he gave this task and asked to be recorded here, so the second gate is answered and M5 is
-built against it rather than held behind a file he did not write.**
+check 1). **That half is unmet and M5 is built while it stands**, and **the pull request that builds
+M5 does not merge until the gate file is written and the clearance comes, or the owner writes the
+relaxation of the check himself.**
 **A third gate stood in front of M2 and M4, and it has been answered rather than left standing.**
 D935 moved the records out of the project's database and left **which** separate store to the owner
 (§8), so M2's backend file and M4's Terraform were both written against an answer nobody had given
@@ -703,10 +705,12 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   [reconciliation.md](reconciliation.md) §4a, the two bounds no task carries).
 - **SEC:** **yes, mandatory** — this is the endpoint the threat model's redirect-URI, CSRF and open-
   registration paragraphs are about.
-- **Depends on:** M2, M4, D921, D928 — **and on D921's licence, which the owner confirmed himself on
-  2026-11-06**, so the dependency was added against his answer rather than ahead of one
-  ([reconciliation.md](reconciliation.md) §6, check 1). This is the one task the licence gates
-  directly.
+- **Depends on:** M2, M4, D921, D928 — **and on D921's licence, which is still UNCONFIRMED**, so the
+  dependency was added ahead of the gate rather than behind it ([reconciliation.md](reconciliation.md)
+  §6, check 1). This is the one task the licence gates directly, and **that gate is unmet while this
+  task is built**: the pull request that carries it does not merge until the owner writes the gate
+  file and counsel clears the transitive set, or the owner writes the relaxation of the check
+  himself.
 - **The amendment's findings, and what this task carries (2026-11-04).** **M-a, M-c, M-f and the
   unverified client name**, all answered here: **a missing challenge, a challenge that is not `S256`
   and an unknown scope are refused before the library sees them**; only the code and refresh grants
@@ -720,14 +724,14 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   for the owner ([reconciliation.md](reconciliation.md) §4a) rather than rewritten into this row.
 - **What the review settles about the library, and what it does not.** The review found the library's
   defaults are the opposite of this design's rules in five named ways, and that half is settled by
-  the constraints above; **the licence was UNCONFIRMED when that review ran, and the owner answered
-  it on 2026-11-06: `zitadel/oidc` is Apache 2.0 and usable, which is what this task's `go.mod`
-  entry is taken against** (the paragraph in §3 above, [reconciliation.md](reconciliation.md) §6
-  check 1). **His answer is the relaxation of the check, and it is the word §6 puts the question
-  to**: the check's own sentence presumed a gate file a person writes, no such file is in the tree,
-  and the record he asked for — these rows carrying his answer with its date — is what stands in its
-  place. **An answer that had not come would send D921 back to its alternatives**: the library out of
-  `go.mod` and this task rebuilt without it ([reconciliation.md](reconciliation.md) §6 check 1).
+  the constraints above; **the licence is not, and stays UNCONFIRMED** (the paragraph in §3 above).
+  **This task's `go.mod` entry is therefore taken ahead of §6's first check rather than behind it**,
+  and **nothing in this tree records the answer that check asks for**: no gate file is written, and
+  counsel has not cleared the transitive set — the set is named in
+  [reconciliation.md](reconciliation.md) §4a so the list is not what is missing. **So this pull
+  request does not merge while that check is unmet**, and a clearance that does not come sends D921
+  back to its alternatives: the library out of `go.mod` and this task rebuilt without it
+  ([reconciliation.md](reconciliation.md) §6 check 1).
 
 ### M6 — Firebase at the authorize endpoint
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates M-a and H1,
