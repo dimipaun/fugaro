@@ -632,8 +632,18 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
   literal, `r.rec.Status = st` through a variable, or a status written in a helper and assigned
   later all sit past any pattern matched against lines, and only the parsed form can say whether a
   statement *calls* the writer or writes the field itself — the AST is what the rewritten census
-  pin counts too. Also `TestUnclassifiedIsWrittenWhereNoClassIsChosen` and
-  `TestHaltedRunCarriesItsHaltsClass` (a failure then a halt ends `halted`/`halted_budget`).
+  pin counts too. Also `TestNoClassIsWrittenWhereTheRunDidNotFail` — the absence pin, named here
+  `TestUnclassifiedIsWrittenWhereNoClassIsChosen`: a class on a `succeeded` run, a `mode: review` run
+  that reviewed or an artifact run that delivered would be a classification of a success, and the
+  half of that name that is true — an unmatched reason reading `unclassified` — is the reader's,
+  FC5's (F35). Also `TestNoFailureEndingCallsRecordEndWithoutAClass` (every ending that is not
+  `succeeded` passes a class, and one that passes the empty literal is reported by the file and line
+  that writes it — the shape `finalize`'s failed case and `endHalted` are held in),
+  `TestRecordEndSitesKeepTheClassTheyChose` (the endings whose class their status does not name,
+  `endRefused`'s `branch_moved` among them: a mutation there to `infra_error` or `unclassified`
+  leaves a class in place, so only the site's own name says which one is right) and
+  `TestHaltedRunCarriesItsHaltsClass` (a failure then a halt ends `halted` with the halt's own class,
+  walked over the whole closed `HaltReason` set rather than sampled).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'RecordEnd|Unclassified|HaltedRun' -count=1`.
 - **Depends on:** FC1.
 - **Red step:** `TestRecordEndIsTheOnlyWriterOfATerminalStatus` fails the moment the field is added

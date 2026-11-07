@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"path/filepath"
 	"slices"
@@ -149,6 +150,240 @@ func TestNoClassIsWrittenWhereTheRunDidNotFail(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNoFailureEndingCallsRecordEndWithoutAClass: a run that did not succeed
+// is handed a class by the same decision that hands it its status, so the
+// report can group it and a reader acts on a family and its remedy. An empty
+// class is not `unclassified` — a record with no class at all is one the
+// reader has to derive from the reason, which is what the records written
+// before the field shipped need and what a new one must never need, because
+// FC5's reader and this writer would then be answering the same question two
+// ways.
+//
+// The guard is over the call site and not over the writer, because the writer
+// already covers the other direction: writeEnd clears whatever class it is
+// handed when the status is succeeded
+// (TestNoClassIsWrittenWhereTheRunDidNotFail), so a failure ending can carry
+// no class only if the site passes the empty literal itself. Two of the three
+// mutations this guard was written for are exactly that — finalize's failed
+// case, which passes failure.Unclassified, and endHalted, which passes
+// haltClass(h.Reason) — and both redden here by the file and line that writes
+// the ending. The third, endRefused, passes a class that is not empty and is
+// the next test's.
+//
+// The design's §10 names this pin TestUnclassifiedIsWrittenWhereNoClassIsChosen,
+// which cannot be written as named: it would assert a class on the records §3
+// leaves it off (F35), and the half of it that is true — an unmatched reason
+// reading `unclassified` — is the reader's, FC5's
+// TestLegacyUnmatchedReasonIsUnclassified. This is the half that is the
+// writer's: the class is there wherever the run failed.
+func TestNoFailureEndingCallsRecordEndWithoutAClass(t *testing.T) {
+	// The reader first, on a file that is not in the tree: a guard that read
+	// the calls but applied the rule to the wrong argument, or that skipped
+	// the calls of one shape, would pass on any tree.
+	t.Run("the reader flags the classless shapes and no others", func(t *testing.T) {
+		const src = `package runner
+
+func f(rec *runstore.Record, h *runstore.Halt) {
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, "", "a reason")
+	r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, "", "a reason")
+	r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeNone, "", "a reason")
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, haltClass(h.Reason), "a reason")
+	writeEnd(rec, runstore.StatusCancelled, runstore.OutcomeNone, "", "a reason")
+	reportCopy(rec, runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, "a reason")
+}
+`
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "shape.go", src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls := endingCallsIn(file, "shape.go", fset)
+		if len(calls) != 6 {
+			t.Fatalf("the walk read %d of the 6 endings of a file that ends a run six ways: a walk that misses calls says nothing about the ones that are wrong", len(calls))
+		}
+		var classless []endingCall
+		for _, call := range calls {
+			if classlessEnding(call) {
+				classless = append(classless, call)
+			}
+		}
+		// Three: the failed, the halted and the cancelled ending. The
+		// succeeded one with an empty class is the shape the writer clears and
+		// this guard must let through.
+		if len(classless) != 3 {
+			t.Errorf("the guard read %d of the 3 classless failure endings above (the failed, the halted and the cancelled one): a guard that reads none of them, or reads the succeeded one, is not the rule this test states", len(classless))
+		}
+	})
+
+	for _, call := range endingCalls(t) {
+		if !classlessEnding(call) {
+			continue
+		}
+		t.Errorf("%s:%d (%s) ends the run %s with an empty class: the class is handed over by the same decision that hands over the status, so a failure names the family it is in — haltClass for a halt, and failure.Unclassified where the class is a later task's to choose, which is not the same as none at all", call.file, call.line, call.fn, call.status)
+	}
+}
+
+// TestRecordEndSitesKeepTheClassTheyChose: the two endings whose class their
+// status does not name still pass the class this task chose for them. A
+// refused push ends infra_error — the status says which machinery stopped the
+// run — with branch_moved, because the class says which family the cause is
+// in, and the design's §3 names this call as that class's case; endUnchanged's
+// fallback ends failed with branch_moved, because every reason it is called
+// with is the branch or the pull request moving under the run (F34).
+//
+// The guard above cannot see either of them: a mutation from branch_moved to
+// infra_error, or to unclassified, leaves a class in place, and both values
+// are written elsewhere in the package, so only the site's own name says which
+// one is right — and exactly that mutation was carried by an earlier revision
+// of this branch, at endRefused, until a review of this pull request found it.
+// The table stops at these two sites on purpose: every other class belongs to
+// the task that chooses it (FC3's refusals, FC4's reading of the agent's own
+// message), and a pin here would decide those classes in advance.
+func TestRecordEndSitesKeepTheClassTheyChose(t *testing.T) {
+	// The class is the vocabulary's constant for the family, written as the
+	// site writes it: failure.BranchMoved, whose value is branch_moved, the
+	// design's §3 row for the branch or the pull request moving under the run.
+	want := []struct {
+		fn     string
+		status string
+		class  string
+	}{
+		{"endRefused", "runstore.StatusInfraError", "failure.BranchMoved"},
+		{"endUnchanged", "runstore.StatusFailed", "failure.BranchMoved"},
+	}
+
+	calls := endingCalls(t)
+	for _, w := range want {
+		matched := false
+		for _, call := range calls {
+			if call.fn != w.fn || call.status != w.status {
+				continue
+			}
+			matched = true
+			if call.class != w.class {
+				t.Errorf("%s:%d (%s) ends %s with the class %s, want %s: the class is the cause's family and the remedy the report prints, and at this site it is not the name of the status beside it", call.file, call.line, call.fn, call.status, call.class, w.class)
+			}
+		}
+		if !matched {
+			t.Errorf("no ending of %s passes %s: the site this pin is about is gone or writes another status, and a pin that matches nothing holds nothing — the site and this table are corrected together", w.fn, w.status)
+		}
+	}
+}
+
+// endingCall is one call to a writer, read off the parsed file: the function
+// it sits in, and the status and class arguments it is handed as the source
+// writes them. It is the fact a site ends a run with, and no assignment is
+// one — which is why both guards above read calls and not fields.
+type endingCall struct {
+	file, fn string
+	line     int
+	status   string
+	class    string
+}
+
+// classlessEnding reports whether a call ends a run that did not succeed with
+// no class at all: the one shape
+// TestNoFailureEndingCallsRecordEndWithoutAClass is about. A succeeded ending
+// with an empty class is the writer's own rule (writeEnd), not a site's
+// mistake, and a call that passes anything else — a class, a call to
+// haltClass — is a site choosing one.
+func classlessEnding(call endingCall) bool {
+	return call.class == `""` && call.status != "runstore.StatusSucceeded"
+}
+
+// endingCalls is every call to a writer in the package's own code: a test may
+// end a record to build the state it asserts on, and recordend.go's own two
+// calls are the writer reaching itself.
+func endingCalls(t *testing.T) []endingCall {
+	t.Helper()
+	paths, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var out []endingCall
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("%s does not parse: %v", path, err)
+		}
+		out = append(out, endingCallsIn(file, path, fset)...)
+	}
+	// The floor is the guard's own reader check: the package ends a run from
+	// every stage, so a walk that reads a handful is not reading the tree and
+	// its silence would mean nothing.
+	if len(out) < 20 {
+		t.Fatalf("the walk read %d endings in internal/runner: the package ends a run from dozens of sites, so the guards above would pass against a tree they never looked at", len(out))
+	}
+	return out
+}
+
+// endingCallsIn is every call to a writer in one parsed file, each with the
+// function it sits in.
+func endingCallsIn(file *ast.File, path string, fset *token.FileSet) []endingCall {
+	var out []endingCall
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			var name string
+			switch fun := call.Fun.(type) {
+			case *ast.Ident:
+				name = fun.Name
+			case *ast.SelectorExpr:
+				name = fun.Sel.Name
+			default:
+				return true
+			}
+			status, class, ok := writerArgs(name)
+			if !ok || len(call.Args) <= class {
+				return true
+			}
+			out = append(out, endingCall{
+				file: path, fn: fn.Name.Name, line: fset.Position(call.Pos()).Line,
+				status: argText(fset, call.Args[status]), class: argText(fset, call.Args[class]),
+			})
+			return true
+		})
+	}
+	return out
+}
+
+// writerArgs is where a call to one of the writers keeps its status and its
+// class, and whether the call is one at all: recordEnd is a method, so the
+// record is its receiver and its arguments start at the status, while writeEnd
+// and reportCopy take the record first and reach the status after it.
+func writerArgs(name string) (status, class int, ok bool) {
+	switch name {
+	case "recordEnd":
+		return 0, 2, true
+	case "writeEnd", "reportCopy":
+		return 1, 3, true
+	}
+	return 0, 0, false
+}
+
+// argText is an argument as the source writes it: `runstore.StatusHalted`,
+// `haltClass(h.Reason)`, `""`. The guards above compare what a site hands the
+// writer, which is a value's name and not a field write, so the written form
+// is the fact — there is no second spelling of a class argument to catch.
+func argText(fset *token.FileSet, expr ast.Expr) string {
+	var b strings.Builder
+	if err := printer.Fprint(&b, fset, expr); err != nil {
+		return "?"
+	}
+	return b.String()
 }
 
 // TestHaltedRunCarriesItsHaltsClass: a run that failed and was then halted
