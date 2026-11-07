@@ -418,7 +418,12 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // holds no such grant — never applied anywhere, applied with the service off,
 // or forgotten — is left alone: the record vouches for a grant, and none of
 // those is evidence of one. The value is this run's bundle reading, the same
-// one the repository door writes.
+// one the repository door writes, and the bundle reading alone: this door fills
+// the roots no checkout here applies, so it has neither the installation's
+// outputs nor their files to fold in — and does not need them, the grant that
+// brought a key here being one an apply made with the switch on, while both
+// readers judge those two conditions again, live, on the run that reads the
+// record (localcfg.Repo.CredentialsServiceReady).
 //
 // Nothing is written where the bundle was not read (credentialsBundleReady's
 // second answer): in a coding agent's session or in a run's own process, and on

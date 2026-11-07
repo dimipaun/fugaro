@@ -72,6 +72,7 @@ var postureRecordRoots = []string{
 	"docs/review-levels-ab-jobmax/",
 	"docs/run-without-checkout/",
 	"docs/secrets-brokering/",
+	"docs/security-classification/",
 	"docs/settings-commands/",
 	"docs/stateless-orchestrator/",
 	"docs/subscriptions/",
