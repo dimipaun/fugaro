@@ -1272,8 +1272,11 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 // alone -- and it must never be read as "no value" and answered with the
 // checkout's repository instead.
 func namedRepo(ctx context.Context, repo string) (string, error) {
+	var err error
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return "", err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return "", userErr("--repo with no value means the repository this checkout belongs to, and this is not a checkout with an origin remote that names one: pass --repo owner/name")
 		}

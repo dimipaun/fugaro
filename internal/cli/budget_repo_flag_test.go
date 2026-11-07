@@ -426,3 +426,46 @@ func TestBudgetRepoFlagHelpSaysWhichSubcommands(t *testing.T) {
 		}
 	}
 }
+
+// TestBudgetSetRepoAcceptsThisCheckoutsPath: RP1's path form is the same
+// command as the repository name it resolves to. `--repo .` in a checkout of
+// acme/app writes exactly what `--repo acme/app` writes.
+func TestBudgetSetRepoAcceptsThisCheckoutsPath(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.Checkout(t, "")
+	out, _, err := execute(t, "budget", "set", "--repo", ".", "--daily", "5", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repoCapsOf(t, f, appSlug) == nil {
+		t.Fatalf("--repo . did not write this checkout's repository: %v", f.db.Value(budget.PathCapsRepo(appSlug)))
+	}
+	if !strings.Contains(out, "caps of acme/app") {
+		t.Errorf("--repo . names something else:\n%s", out)
+	}
+}
+
+// TestBudgetSetRepoRefusesAPathOutsideTheProject: a path is a checkout, and a
+// checkout of a repository this project does not list is refused with a
+// sentence naming the path -- never acted on, and never silently read as the
+// repository the command happens to run in.
+func TestBudgetSetRepoRefusesAPathOutsideTheProject(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/other.git")
+	t.Chdir(dir)
+	_, _, err := execute(t, "budget", "set", "--repo", ".", "--daily", "5", "--yes")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"--repo .", "acme/other", "aurora"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if repoCapsOf(t, f, appSlug) != nil {
+		t.Error("a refused path wrote caps anyway")
+	}
+}
