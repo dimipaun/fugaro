@@ -694,7 +694,7 @@ condition an `ETag` PUT gave a store inside the database — so exactly one rota
 answer's second half is not built**: the loser inside a **small grace window** is meant to be
 answered with the winner's own new pair rather than read as a replay, so a client on a slow link is
 not logged out by its own retry — and no grace window exists in the tree. What the loser gets
-instead is `invalid_grant` (`ee/coordinator/mcpauth/token.go:309`), which is terminal and carries no
+instead is `invalid_grant` (`ee/coordinator/mcpauth/token.go:323`), which is terminal and carries no
 invitation to try again, because the retry that a 5xx invites presents the spent token and that
 presentation is the theft signal itself: it revokes the family the winner is holding, so one
 double-submit would become a logout. A client that re-authorizes instead loses nothing but a page;

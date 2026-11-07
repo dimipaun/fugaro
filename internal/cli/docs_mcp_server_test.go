@@ -16,7 +16,10 @@ package cli
 //  * TestDocsMCPServerIsWritten -- the four files exist, each carries the
 //    folder's status line word for word, and the plan states the two gates
 //    every task waits behind, with the amendment's own cuts (M9 out of the
-//    first slice, M4 and M6 cancelled and to be rerun) among them.
+//    first slice, M4 and M6 cancelled and to be rerun) among them. The
+//    licence table the folder ships beside them carries the status line too
+//    (mcpFolderDocs), and it is pinned as the table it says it is: not the
+//    gate, and claiming no clearance.
 //  * TestDocsMCPServerAnswersAreTheOnesInForce -- the answers of 2026-11-04 and
 //    the answer of 2026-11-05 are dated in reconciliation.md §4, every one of
 //    the fifteen and the sixteenth is the recommendation (no
@@ -67,6 +70,15 @@ const (
 	mcpReconciled = "docs/mcp-server/reconciliation.md"
 	mcpPlan       = "docs/mcp-server/implementation-plan.md"
 
+	// mcpLicence is the dependency licence table the owner reads to clear the
+	// `zitadel/oidc` set (his ruling of 2026-11-07). It sits beside the design
+	// documents and carries their status line, but it is not one of them: it
+	// states no answer of the owner's and no bound of the design, so the pins
+	// that ask a document for those stay on the four. It owes the two things
+	// the four owe that a table can carry -- the status line, and citations
+	// that resolve -- and both are checked over mcpFolderDocs.
+	mcpLicence = "docs/mcp-server/licence-table.md"
+
 	// mcpStatus is the line every file in this folder carries, word for word.
 	// It is the folder's whole claim about itself -- the design is answered,
 	// which of the plan's tasks are built and which are not, and the fact that
@@ -91,14 +103,37 @@ const (
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
 
+// mcpFolderDocs is every file of the folder that carries the status line and
+// whose citations have to resolve: the four documents that state the design,
+// and the licence table beside them.
+func mcpFolderDocs() []string { return append(mcpDocs(), mcpLicence) }
+
 // TestDocsMCPServerIsWritten: the four files are there, each carries the status
 // line, and the plan still says what every task in it waits behind.
 func TestDocsMCPServerIsWritten(t *testing.T) {
-	for _, path := range mcpDocs() {
+	for _, path := range mcpFolderDocs() {
 		flat := flattenDoc(readDoc(t, path))
 		if !strings.Contains(flat, mcpStatus) {
 			t.Errorf("%s does not carry the folder's status line %q: every file of an answered design folder says in one line that the design is answered, which tasks of the plan are built and which are not, and that the folder approves no task, and a file that drops it reads as a design somebody may build from",
 				path, mcpStatus)
+		}
+	}
+
+	// The licence table says what it is, and what it is not: the artifact the
+	// owner reads to clear D921's set is the one a later edit could turn into a
+	// clearance nobody gave. Nothing else in the tree pins its two denials, and
+	// its closing line names the clearance as the owner's to give rather than
+	// the file's to claim, so the reading it exists for and the reading it must
+	// never carry are both stated here.
+	table := flattenDoc(readDoc(t, mcpLicence))
+	for _, want := range []string{
+		"This file is a table, and it is not a gate.",
+		"No clearance is claimed anywhere in this folder, by this file or by any other.",
+		"the clearance is the owner's to give rather than this file's to claim",
+	} {
+		if !strings.Contains(table, want) {
+			t.Errorf("%s does not state %q: the owner clears D921's dependency set by reading this table, so a table that claimed the clearance, or that stopped saying it is evidence rather than the gate, would be the merge condition's answer written by the artifact under it",
+				mcpLicence, want)
 		}
 	}
 
@@ -355,10 +390,11 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 // TestDocsMCPServerCitationsResolve: every file and line these documents cite
 // exists. A reconciliation is only worth as much as the code behind it, and a
 // citation whose line moved turns a checked finding into an unchecked one with
-// no other symptom.
+// no other symptom. The licence table's one citation is read here too: it is
+// the line the whole table's claim about the library's surface rests on.
 func TestDocsMCPServerCitationsResolve(t *testing.T) {
 	bare := csrBareNames(t)
-	for _, path := range mcpDocs() {
+	for _, path := range mcpFolderDocs() {
 		doc := readDoc(t, path)
 		// The census first, and independently: how many path-looking tokens
 		// carrying a line the document holds at all. The check below has to see

@@ -76,7 +76,7 @@ permissive in effect; both are noted under the table rather than left for the re
 | Change | Module | Version | Licence, as the module's own file reads it | In the fugaro binary? | Not clearly permissive |
 | --- | --- | --- | --- | --- | --- |
 | new | `github.com/go-chi/chi/v5` | v5.5.0 | `MIT License`; `Copyright (c) 2015-present Peter Kieltyka (https://github.com/pkieltyka), Google Inc.` — `LICENSE`, body is the standard MIT text (SPDX: MIT) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
-| new | `github.com/golang/mock` | v1.6.0 | `Apache License` / `Version 2.0, January 2004`; **the file carries no copyright holder line** — its appendix holds the placeholder `Copyright [yyyy] [name of copyright owner]`, and the module's own source headers carry `// Copyright 2010 Google Inc.` (`gomock/controller.go:1`) — `LICENSE`, standard Apache 2.0 text (SPDX: Apache-2.0) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
+| new | `github.com/golang/mock` | v1.6.0 | `Apache License` / `Version 2.0, January 2004`; **the file carries no copyright holder line** — its appendix holds the placeholder `Copyright [yyyy] [name of copyright owner]`, and the module's own source headers carry `// Copyright 2010 Google Inc.`, in its own `controller.go` beside the `gomock` package — not a file of this tree, so it is named and not cited — `LICENSE`, standard Apache 2.0 text (SPDX: Apache-2.0) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
 | new | `github.com/google/go-github/v31` | v31.0.0 | `Copyright (c) 2013 The go-github AUTHORS. All rights reserved.`; the file carries **no title line** — `LICENSE`, standard BSD 3-clause text, third clause `Neither the name of Google Inc. nor the names of its` (SPDX: BSD-3-Clause) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
 | new | `github.com/google/go-querystring` | v1.2.0 | `Copyright (c) 2013 Google. All rights reserved.`; no title line — `LICENSE`, standard BSD 3-clause text, third clause `Neither the name of Google Inc. nor the names of its` (SPDX: BSD-3-Clause) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
 | new | `github.com/gorilla/securecookie` | v1.1.2 | `Copyright (c) 2023 The Gorilla Authors. All rights reserved.`; no title line — `LICENSE`, standard BSD 3-clause text, third clause `Neither the name of Google Inc. nor the names of its` (SPDX: BSD-3-Clause) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
@@ -141,4 +141,5 @@ permissive in effect; both are noted under the table rather than left for the re
   says nothing about the modules `main` already carried. **The gate it is evidence for is
   [reconciliation.md](reconciliation.md) §6, check 1, and that gate is unmet.**
 
-owner reads this table: all permissive = the clearance
+owner reads this table: all permissive = the clearance, and the clearance is the owner's to give
+rather than this file's to claim

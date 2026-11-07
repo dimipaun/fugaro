@@ -478,7 +478,7 @@ double-submit. The amended answer, built by M2:
 - keep a **small grace window** in which the loser of that race is answered with the same new pair
   rather than read as a replayed token, so a client on a slow link is not logged out by its own
   retry — **not built**, and the first half of the answer is what stands alone: the loser is refused
-  `invalid_grant` with no invitation to retry (`ee/coordinator/mcpauth/token.go:309`), because the
+  `invalid_grant` with no invitation to retry (`ee/coordinator/mcpauth/token.go:323`), because the
   retry a 5xx invites presents the spent token and that presentation revokes the family the winner
   holds — so a double-submit ends in a re-authorization rather than a logout, and the session the
   window would save is the one a client that retries anyway loses;
