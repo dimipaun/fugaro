@@ -578,6 +578,13 @@ func runRunsDigestDue(cmd *cobra.Command, o *digestOptions) error {
 		}
 	}
 
+	// An empty --dir names no folder, and this reading is of a folder: it is
+	// refused rather than read as the default one, because a caller who typed
+	// the flag asked about the folder they named and about no other.
+	if o.dir == "" {
+		return userErr("--dir: name the folder the reports are read from, or leave the flag out to read %s", digest.Dir)
+	}
+
 	// The folder is read the way the report writer reads it, so "a report is
 	// here" means the same file in both: D321's shape, and a file whose name
 	// is not that shape is no report at all. A row that exists but whose block
@@ -624,12 +631,13 @@ func digestHasReport(rows []digest.Row, p digest.Period) bool {
 // period: the greatest end of period, and the greatest key among the rows that
 // share it (a day and the month it falls in can end on the same day). Rows are
 // in key order rather than period order, so the greatest key is not the newest
-// report and the comparison is made here.
+// report, and the end of a period is the package's own -- a week's last day is
+// not a day a key spells.
 func digestNewestReport(rows []digest.Row, now time.Time) *digestDueReport {
 	var newest digest.Period
 	found := false
 	for _, r := range rows {
-		p, err := digest.NewPeriod(r.Dim, r.Key)
+		p, err := digest.PeriodOfKey(r.Dim, r.Key)
 		if err != nil {
 			// A row's own path named its period, so this cannot happen; a file
 			// that somehow reached a row without one is no period to report.

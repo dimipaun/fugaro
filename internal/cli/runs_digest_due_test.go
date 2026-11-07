@@ -314,6 +314,74 @@ func TestRunsDigestDueIsOffline(t *testing.T) {
 	}
 }
 
+// TestRunsDigestDueReadsACoarserReportAsTheNewest: the newest report is the one
+// whose own period ends latest, and a week's, month's or year's key is not a
+// date: a reading that parsed the key as one would find nothing at all in a
+// folder that holds three reports, and would say so.
+func TestRunsDigestDueReadsACoarserReportAsTheNewest(t *testing.T) {
+	dir, closed := dueReportDir(t)
+	// The week of Monday 2026-10-19, which closes on the 25th; a September; and
+	// a year. Only the first is the newest, and none of them covers a closed day.
+	writeDueReport(t, dir, "2026-W43")
+	writeDueReport(t, dir, "2026-09")
+	writeDueReport(t, dir, "2025")
+
+	out, errOut, err := execute(t, "runs", "digest", "--due", "--dir", dir)
+	if err != nil {
+		t.Fatalf("runs digest --due: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "newest report: 2026-W43 (week), 2 days old") {
+		t.Errorf("--due does not read the week as the newest report:\n%s", out)
+	}
+	if got := duePeriods(t, out); !equalStrings(got, closed) {
+		t.Errorf("--due names %v, want the seven closed days a week report does not cover: %v\n%s", got, closed, out)
+	}
+
+	out, errOut, err = execute(t, "runs", "digest", "--due", "--dir", dir, "--json")
+	if err != nil {
+		t.Fatalf("runs digest --due --json: %v (%s)", err, errOut)
+	}
+	var decoded struct {
+		Newest *struct {
+			Key     string `json:"key"`
+			Dim     string `json:"dim"`
+			DaysAgo int    `json:"days_ago"`
+		} `json:"newest"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Newest == nil || *decoded.Newest != (struct {
+		Key     string `json:"key"`
+		Dim     string `json:"dim"`
+		DaysAgo int    `json:"days_ago"`
+	}{Key: "2026-W43", Dim: string(digest.ByWeek), DaysAgo: 2}) {
+		t.Errorf("newest = %+v, want the 2026-W43 week report two days old:\n%s", decoded.Newest, out)
+	}
+}
+
+// TestRunsDigestDueRefusesAnEmptyDir: --dir names the folder the reading is of,
+// and an empty one names no folder. It is refused rather than read as the
+// default, so no reading ever prints an empty folder -- the document this
+// command ships has no room for one.
+func TestRunsDigestDueRefusesAnEmptyDir(t *testing.T) {
+	dueReportDir(t)
+
+	for _, args := range [][]string{
+		{"runs", "digest", "--due", "--dir", ""},
+		{"runs", "digest", "--due", "--dir", "", "--json"},
+	} {
+		out, _, err := execute(t, args...)
+		if err == nil || !strings.Contains(err.Error(), "--dir") {
+			t.Errorf("%s: err = %v, want --dir refused by name", strings.Join(args, " "), err)
+			continue
+		}
+		if out != "" {
+			t.Errorf("%s printed %q, want nothing: it read no folder", strings.Join(args, " "), out)
+		}
+	}
+}
+
 // TestRunsDigestDueRefusesTheReportFlags: --due writes nothing and prints no
 // report, so a flag that selects a report's period, its date, its repository,
 // its destination or its draft has nothing to act on and is refused by name
