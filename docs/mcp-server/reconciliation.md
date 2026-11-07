@@ -1,6 +1,7 @@
 # The hosted MCP server: reconciliation and decisions
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved.**
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
+merged on `main`; the rest is not started; this folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -85,8 +86,8 @@ owner answers them; an answer picks an option and approves no work. **The owner 
 on 2026-11-04** — the answers are recorded under the table, in the owner's own terms, and the
 design is now written to them.
 
-| D | The question | The recommendation | The alternative, and its cost | Blocks |
-| --- | --- | --- | --- | --- |
+| D | The question | The recommendation | The alternative, and its cost | Blocks | Amendment |
+| --- | --- | --- | --- | --- | --- |
 | **D920** | Is the MCP endpoint public, with the bearer token as the only gate, or does it keep P8's Cloud Run IAM invoker? | **Public.** `allUsers` may invoke, and the handler is the gate. Every unauthenticated path is a metadata document or an authorization endpoint with no work behind it; every refusal is audited. It is the only shape a standard MCP client can use. | **Keep IAM invoker** (P8's recorded departure): every caller — including a chat client — needs a Google identity with the project's invoker role and a way to mint an ID token for it. No standard MCP client can, so the feature is reachable only by software already written against Fugaro; the OAuth flow the owner's spec asks for becomes dead code. Cost of the recommendation: the endpoint is on the public internet and the handler is the whole perimeter (spec.md §8). | Everything. |
 | **D921** | Which OAuth library? | **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator (the owner's spec already expects DCR to be hand-written). **Apache 2.0 and OpenID-certified are the library's own claims and this container cannot check either** — the owner answered with the licence **UNCONFIRMED**, which is why confirming it is the first owner check (§6) and a gate on M5. No new runtime. | **ory/fosite**: the same missing DCR, plus a heavier plugin surface for a flow this small. **A standalone third-party server**: a second resident service in a self-hosted product whose point is one service per project, on a licence the owner has not confirmed — the owner's own open item, which the answer does not close for the library it did pick either. Cost of the recommendation: a new dependency in `go.mod`, a library whose storage interfaces must be fitted to a database it has never seen, and **a licence check that has to pass before any code is written**. | Every endpoint in D921's own scope; the implementation plan's first code task — **and M5 waits on the licence**. |
 | **D922** | Where do token records, client registrations and the audit trail live? | **A separate top-level subtree with reads and writes refused to everything but the coordinator's service account.** Only hashes are stored, and a database read yields no presentable value. | **Reuse the `coordinator/` subtree.** It is `.read: USER` today (F7), so every person the installation admits may read the client list, the redirect URIs, the revocation state and the whole tool-call audit. The "store only hashes" rule protects the token values and nothing else: the client list, the redirect URIs, the revocation state and the whole tool-call audit have no protection at all. Cost of the recommendation: one more subtree in the rules, one more account able to write it, and a census test to keep both honest. | D920's audit requirement, D929's client secrets, F22. |
@@ -113,8 +114,8 @@ marked "not the recommendation"** — every answer took it, so the design is the
 throughout. D922 is the one row whose answer was **restated**: it is marked as such there and the
 note under the table says what moved.
 
-| D | The answer, 2026-11-04 | Why, in one line |
-| --- | --- | --- |
+| D | The answer, 2026-11-04 | Why, in one line | Amendment |
+| --- | --- | --- | --- |
 | **D920** | **The recommendation** — the MCP endpoint is **public**, the bearer token is the gate, and the six unauthenticated paths are the metadata documents and the authorization endpoints. **Amended 2026-11-04** (M-e) — see §4a | A standard MCP client on a laptop or a phone cannot mint a Google ID token, so P8's IAM invoker makes the feature reachable only by software already written against Fugaro — and spec.md §8 is the price the owner accepts for that. |
 | **D921** | **The recommendation** — **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator — **and the licence is UNCONFIRMED.** **The owner or counsel must confirm the licence before any build.** **Amended 2026-11-04** (M-c) — see §4a | Apache 2.0 is the library's own claim and nothing in this container can check it, and a dependency a self-hosted product cannot ship would sink the whole design — so the licence becomes a gate of its own, and it is the first owner check in §6. |
 | **D922** | **The recommendation**, in the owner's words of 2026-11-04: the **separate top-level subtree** — **not under `coordinator/`** — is the **`mcpauth`** node, **not readable by any client** (`.read: false`) and with **`.write: false`**; **only the coordinator's account writes it**, because that account holds `roles/firebasedatabase.admin` and the rules do not bind it **Amended 2026-11-04** (H3) — see §4a | The separate subtree is what keeps the coordinator's shared view and the token records off one node, and the closed read is what keeps F26's finding closed against every client the rules bind — **and the amendment is what keeps it closed against the accounts IAM exempts from them**. The separate subtree, the closed read, the keyed hashes, the MAC and the public service's viewer-only grant are now **five independent barriers** rather than two, which is the honest answer to a review that showed the first two were not enough on their own. **This answer was restated the same day** — see the note under the table — and the restatement plus this amendment are the ones every document is written to. spec.md §6 and §8 state both, and M3's red step is the "named and denied to every client" one. |
@@ -177,8 +178,8 @@ build gate in the plan, and §4a records what still stands behind that check: **
 confirms the licence — the transitive dependencies included — and the gate file that closes it is the
 owner's to create**. The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file now
-carries — **design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.**
+carries — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
+merged on `main`; the rest is not started; this folder approves no task.**
 
 ### The answer of 2026-11-05
 
@@ -525,9 +526,18 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
 - **M1 and M3 may continue**, and neither is cancelled. M1's spend-type finding is **M9's to close**
   (the paragraph above); M3 is unchanged, and its tripwire red step is what the amendment relies
   on.
-- **M4 and M6 were cancelled** and **will be rerun from this amended plan**: M4's draft predates the
-  D934 and M-e answers (the cover rule and the meaning of "off"), and M6's predates M-a and H1.
-- **Nothing else started.**
+- **M4 and M6 were cancelled** and **were to be rerun from this amended plan**: M4's draft predates
+  the D934 and M-e answers (the cover rule and the meaning of "off"), and M6's predates M-a and H1.
+- **What has happened since, as of the commit this file is read at.** **M1 (#1713), M2 (#1767), M3
+  (#1715), M6 (#1714) and M4's first half (#1716) are merged on `main`** — M4's half being the
+  account, the front door service and its public invoker binding
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **because the
+  owner approved them one at a time, which is what "may continue" turned into.** **What is not built
+  is the rest of the plan**: M4's store half (`mcpauth_store.tf`, the bucket and its one grant), M5
+  and M7–M10; **M3's node is in with its parity test while the comment D935 asks for above it is not
+  written**; and **what merged as M6 is the draft M-a predates** — no approve-step POST and no
+  `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, is not
+  started.
 
 ## 4b. The decision the amendment added
 

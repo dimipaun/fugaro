@@ -69,10 +69,13 @@ const (
 
 	// mcpStatus is the line every file in this folder carries, word for word.
 	// It is the folder's whole claim about itself -- the design is answered,
-	// the plan is all there is, nothing is implemented and no task is approved
-	// -- and a file that dropped it would read as a design somebody may build
-	// from, which is the one thing this folder is not.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved."
+	// which of the plan's tasks are built and which are not, and the fact that
+	// the folder itself approves nothing -- and a file that dropped it would
+	// read as a design somebody may build from, which is the one thing this
+	// folder is not. The built half is the five tasks merged on `main` since
+	// the answers: a status line that still said "nothing implemented" would be
+	// the folder's one load-bearing false claim.
+	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; the rest is not started; this folder approves no task."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -83,7 +86,7 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 	for _, path := range mcpDocs() {
 		flat := flattenDoc(readDoc(t, path))
 		if !strings.Contains(flat, mcpStatus) {
-			t.Errorf("%s does not carry the folder's status line %q: every file of an answered design folder says in one line that the design is answered, that nothing is implemented and that no task is approved, and a file that drops it reads as a design somebody may build from",
+			t.Errorf("%s does not carry the folder's status line %q: every file of an answered design folder says in one line that the design is answered, which tasks of the plan are built and which are not, and that the folder approves no task, and a file that drops it reads as a design somebody may build from",
 				path, mcpStatus)
 		}
 	}

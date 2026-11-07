@@ -1,8 +1,9 @@
 # The hosted MCP server
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The owner's spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is
-reconciled against the code here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
+merged on `main`; the rest is not started; this folder approves no task.** The owner's spec of
+2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code here;
+[reconciliation.md](reconciliation.md) §4 puts fifteen decisions
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the
 alternative — and **all fifteen were answered on 2026-11-04**, **every one of them the
 recommendation**, with the owner's own detail written into the design (D922's was restated the same
@@ -43,10 +44,15 @@ instead of fixing it. The findings and what each changed, in one line each:
 | **Low** | M1's `SpendUSD float64` cannot tell unset from zero — and `+Inf` passes the same test, which the review of 2026-11-05 found at `ee/coordinator/mcpauth/limits.go:298` | Optional **integer micros** and unknown modes refused; the client shown **unverified**; **Cloud Logging is the durable copy** | M1 (as written) and **M9** for the ceiling (deferred); M5, M10 |
 | **Workspaces** | `docs/workspaces` (a parallel run's amendment, merged as **#1711** and read here) requires a member-bound assertion and an exchange at `/oauth/authorize` that keeps the paired-device approval | The dependency and the **identity mismatch** (a verified email against a device uid read back to an email) are noted; **this folder does not edit `docs/workspaces`** | spec.md §10; `docs/workspaces/spec.md:209-210`, `:217-219`; [reconciliation.md](reconciliation.md) §4a, the workspaces dependency |
 
-**Two tasks were cancelled by the amendment and will be rerun from the amended plan**: **M4** (its
+**Two tasks were cancelled by the amendment and were to be rerun from the amended plan**: **M4** (its
 draft predates the D934/M-e answers) and **M6** (its predates M-a and H1). **M1 and M3 may
 continue** — M1's spend-type finding is **M9's to close**, which is where the review of 2026-11-05
-found the same defect (`ee/coordinator/mcpauth/limits.go:298`) — and **nothing else started**.
+found the same defect (`ee/coordinator/mcpauth/limits.go:298`). **The tree has gone past that**:
+**M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first half (#1716) are merged** — M4's
+half being its account, the front door service and its public invoker binding
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **and what is left
+is M4's store half, M5 and M7–M10** ([reconciliation.md](reconciliation.md) §4a, "What has happened
+since").
 
 **Asked by.** The owner, on 2026-10-24: a hosted MCP server inside the coordinator, with OAuth 2.1
 and PKCE and the project's own Firebase as the identity provider, so that MCP clients can submit and
@@ -165,13 +171,15 @@ README, in its own diff, is where the block above D1189 is written.
 ## What a reader should not take from here
 
 - **Not an approval of any task.** Every decision was answered on 2026-11-04, and **an answer is not
-  an approval**: no task in [implementation-plan.md](implementation-plan.md) is approved, and the
-  owner approves them one at a time.
+  an approval**: this folder approves no task, and the owner approves them one at a time — the tasks
+  built so far were each approved that way, and they are named above.
 - **Not a plan to start.** The independent SECURITY review of [spec.md](spec.md) §8 **has run** (the
   coordinator ran it on 2026-11-04) and its findings are answered in
-  [reconciliation.md](reconciliation.md) §4a; **M4 and M6 were cancelled by those findings** and will
-  be **rerun from the amended plan**, and **M1 and M3 may continue**. Something else still gates every
-  task: **the M5 gate file is the owner's to create** (§6, the first owner check), and the two
+  [reconciliation.md](reconciliation.md) §4a; **M4 and M6 were cancelled by those findings** and were
+  to be **rerun from the amended plan**, and **M1 and M3 may continue** — **and the tree has gone past
+  that**, five tasks merged and the rest of the plan not started
+  ([reconciliation.md](reconciliation.md) §4a, "What has happened since"). Something else still gates
+  every task: **the M5 gate file is the owner's to create** (§6, the first owner check), and the one
   **UNVERIFIED** half of D935.
 - **Not a design anyone may build against yet.** D921's library was chosen with **its licence
   UNCONFIRMED**, and the review of 2026-11-04 **could not settle it** — the Apache 2.0 claim is the

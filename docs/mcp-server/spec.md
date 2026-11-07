@@ -1,8 +1,9 @@
 # The hosted MCP server: the spec
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The owner's spec of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1
-onward) is written to the **answers the owner gave on 2026-11-04** to the fifteen decisions in
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
+merged on `main`; the rest is not started; this folder approves no task.** The owner's spec of
+2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
+**answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
 the time** — with the owner's own detail written into §2, §3, §4, §5, §6 and §8. **Where §0 and this
 design disagree the reconciliation wins** — §0 is the record of what was asked, not of what this

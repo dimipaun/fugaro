@@ -1,7 +1,8 @@
 # The hosted MCP server: implementation plan
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The design is [spec.md](spec.md), the findings and the fifteen decisions are
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
+merged on `main`; the rest is not started; this folder approves no task.** The design is
+[spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
 plan is written to those answers: the "Answered" column below is what the tasks build, and the last
@@ -14,8 +15,8 @@ hold `roles/firebasedatabase.admin`, so the rules cannot keep them out. They mov
 IAM names only the front door's own account (`mcp_server`), and §1's last subsection records the
 answer, M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidates for that store —
 **and the answer of the same day that picked the bucket**, which closes the Open item that section
-carried: **nothing waits on it any more, and no task names a store it is not written to.** **No task
-here is approved, and two things gate the whole plan:** the
+carried: **nothing waits on it any more, and no task names a store it is not written to.** **This plan
+approves no task, and two things gate the whole plan:** the
 independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
 **unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7).
 
@@ -135,9 +136,14 @@ it:
 **What the amendment does to the tasks that were already running.** **M1 and M3 may continue** — M3
 is unchanged, and **M1's spend-type finding is M9's to close**, which is where the review of
 2026-11-05 found the same defect from the other end
-(`ee/coordinator/mcpauth/limits.go:298`) — and **M4 and M6 were cancelled** and will be rerun from
-this amended plan, because M4's draft predates the D934 and M-e answers and M6's predates M-a and H1. **Nothing else started**
-([reconciliation.md](reconciliation.md) §4a, "What the running tasks do").
+(`ee/coordinator/mcpauth/limits.go:298`) — and **M4 and M6 were cancelled** and were to be rerun from
+this amended plan, because M4's draft predates the D934 and M-e answers and M6's predates M-a and H1.
+**Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first
+half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
+public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
+`:527`) — **and M4's store half, M5 and M7–M10 are not started**. **What each built task still owes is
+named in its own section below**
+([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
 ### The decision the amendment added
 
@@ -446,13 +452,16 @@ Terraform file rather than any interface any other task builds against.
 ### M4 — The coordinator's public service, its own account, its grants and the store (D935)
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates the D934 and
 M-e answers — the meaning of "off" and the collision with the installer's own cover rule — and the
-store D935 moves the records into, which this task creates as a bucket of its own.
+store D935 moves the records into, which this task creates as a bucket of its own. **Its first half
+landed as #1716** — the account, the front door service and its public invoker binding
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — and **its store
+half, `mcpauth_store.tf` with the bucket and its one grant, is not started.**
 
 - **The amendment's findings (2026-11-04). The review's findings were H3, M-e and D934's cover
   collision; all three are answered above**: the account holds no `firebasedatabase.admin` over
   anything (H3), **"off" is the absence of the `allUsers` binding** and the stage that adds it asks
   its **own typed confirmation** (`internal/infra/tf/cover.go:911`), and **M4 must not widen
-  `tf.Cover`** to make its own plan covered (`:867` refuses `allUsers`).
+  `tf.Cover`** to make its own plan covered (`:913` refuses `allUsers`).
 
 - **Files (8):** `deploy/terraform/gcp/modules/installation/coordinator.tf`,
   `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` (new: the store and its one grant),
@@ -690,7 +699,11 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
 
 ### M6 — Firebase at the authorize endpoint
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates M-a and H1,
-and both change what this task must say and where its verifier is called from.
+and both change what this task must say and where its verifier is called from. **What merged as
+#1714 is that draft**: the verifier is in the tree and the token endpoint refuses an ID token, while
+**M-a's change is still to be built** — the approve step's single-use POST and
+`TestAnIDTokenInAQueryStringIsRefused` — because nothing calls the verifier from an approve step yet
+and M5, which defines that step, is not started.
 
 - **M-a and H1 (2026-11-04).** The verifier is called from **the approve step** — a **single-use
   POST** that carries the ID token in its body and never in a URL — and
