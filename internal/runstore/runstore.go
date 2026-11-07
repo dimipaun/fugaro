@@ -621,6 +621,25 @@ func NewOwnerDecisions(ds []OwnerDecision) *OwnerDecisions {
 	return od
 }
 
+// Bounded is od as a reader may show it. The record is an object the job's
+// service account can write, so what is read back is not trusted to be the
+// bounded, honest block NewOwnerDecisions wrote: it is bounded again (empty
+// sentences dropped, the same caps), Total is never less than the decisions it
+// read, and nil stays nil — a record with no block is "nothing is pending",
+// never a block of nothing. A block whose every sentence is unreadable reads
+// as none at all: the run's halt reason still says it is waiting.
+func (od *OwnerDecisions) Bounded() *OwnerDecisions {
+	if od == nil {
+		return nil
+	}
+	out := NewOwnerDecisions(od.Decisions)
+	if out == nil {
+		return nil
+	}
+	out.Total = max(out.Total, od.Total, len(out.Decisions))
+	return out
+}
+
 // StageTiming records how long one stage took, and what its model calls
 // cost (generic-tool plan Task 24). ModelUSD is the gateway's StageReport
 // figure for the stage when the run went through the gateway, and the

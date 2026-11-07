@@ -259,6 +259,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Row.OwnerDecisions = ownerDecisionsOf(rec.OwnerDecisions, red)
 		d.Retries = rec.Retries
 		d.Reviews = reviewsOf(rec.Reviews, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
@@ -452,6 +453,56 @@ func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runsto
 	// record claiming fewer than it lists is not one to print as written.
 	out.Total = max(t.Total, len(out.Findings))
 	return out
+}
+
+// ownerDecisionsOf is the pending owner decisions a run's record carries
+// (OD1) for the document: every sentence redacted -- the file and the sentence
+// are model output -- and bounded again on read, since the record is an object
+// a hand can edit and the write-side bound (runstore.NewOwnerDecisions) is not
+// one a reader can count on. The total is never less than the decisions it
+// lists, so a record claiming fewer than it lists is not printed as written.
+func ownerDecisionsOf(od *runstore.OwnerDecisions, red func(string) string) *runstore.OwnerDecisions {
+	if od == nil || len(od.Decisions) == 0 {
+		return nil
+	}
+	ds := make([]runstore.OwnerDecision, 0, min(len(od.Decisions), runstore.MaxOwnerDecisions))
+	for _, d := range od.Decisions {
+		if len(ds) == runstore.MaxOwnerDecisions {
+			break
+		}
+		ds = append(ds, runstore.OwnerDecision{File: red(d.File), Summary: red(d.Summary)})
+	}
+	out := runstore.NewOwnerDecisions(ds)
+	if out == nil {
+		return nil
+	}
+	out.Total = max(od.Total, out.Total, len(out.Decisions))
+	return out
+}
+
+// ownerBlock is what a run is waiting for its owner to decide (OD1), printed
+// under the run's status and above its cost: the count the halt reason names,
+// then one line per decision with the file and the reviewer's own sentence, in
+// the words the pull request's status section and `fugaro runs ls` use. It is
+// empty for a run that is waiting on nothing, which is every ordinary run.
+func ownerBlock(od *runstore.OwnerDecisions) string {
+	if od == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nWaiting on you\n  review is waiting on %s\n", runner.Plural(od.Total, "owner decision"))
+	for _, d := range od.Decisions {
+		summary := oneLine(clipRunes(d.Summary, maxOwnerDecisionRunes))
+		if d.File != "" {
+			fmt.Fprintf(&b, "  - `%s`: %s\n", oneLine(d.File), summary)
+			continue
+		}
+		fmt.Fprintf(&b, "  - %s\n", summary)
+	}
+	if n := od.Total - len(od.Decisions); n > 0 {
+		fmt.Fprintf(&b, "  and %s more; the run's record lists %d of them\n", runner.Plural(n, "decision"), len(od.Decisions))
+	}
+	return b.String()
 }
 
 // checkpointOf is the record's checkpoint for the document: every string
@@ -793,6 +844,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
 	b.WriteString(checkpointBlock(d.Checkpoint))
+	b.WriteString(ownerBlock(d.Row.OwnerDecisions))
 	for _, ln := range costLines(r.Cost) {
 		fmt.Fprintf(&b, "%s\n", ln)
 	}
