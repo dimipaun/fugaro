@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -30,7 +34,10 @@ import (
 //   - whether the repository's copy, which the daily check and Cloud Build
 //     read, is current;
 //   - whether each workflow's image was built from the image settings it
-//     resolves to now;
+//     resolves to now, and whether a workflow the project's image catalog
+//     gives its image to runs an entry that has been built — judged against
+//     the catalog the job spec resolves, with an unread line of its own when
+//     that catalog could not be read at all;
 //   - the one local layer file (localLayerFileCheck), which reads no bucket
 //     and so is reported even when none of the above can be.
 //
@@ -83,7 +90,18 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 	out = append(out, layerDrift(ctx, b, slug, l)...)
 	out = append(out, layerCopyCheck(ctx, b, slug, l)...)
 	if rb, err := env.recordBucket(ctx); err == nil {
-		out = append(out, imageConfigChecks(ctx, rb, slug, rf.Cfg, rf.Res)...)
+		// The catalog the deploy-time job spec is computed against and the
+		// launcher judges the deployed job's image by: this checkout's config
+		// when it states one, the published node's otherwise (effectiveCatalog,
+		// the resolution internal/infra's spec and run.go both make). Reading
+		// the local config alone left a machine whose file is silent about the
+		// catalog reading "no catalog" for a project that has one, and its
+		// pinned workflow was then judged by no line at all while its job runs
+		// an entry only the published node holds.
+		cat, catErr := effectiveCatalog(ctx, env)
+		out = append(out, imageCatalogUnreadCheck(lc, rf.Cfg, catErr)...)
+		out = append(out, imageConfigChecks(ctx, env, rb, slug, rf.Cfg, rf.Res, cat)...)
+		out = append(out, catalogImageChecks(ctx, env, rb, slug, rf.Cfg, cat)...)
 	}
 	return out
 }
@@ -306,13 +324,51 @@ func layerCopyCheck(ctx context.Context, b *blobx.Bucket, slug string, l *config
 	return nil
 }
 
+// imageCatalogUnreadCheck is doctor's line for the one state in which the
+// catalog the two checks below judge workflows against was not read: this
+// machine's config states none of its own, and the published node it would
+// take one from did not answer (effectiveCatalog's error). Every workflow is
+// then judged against a catalog nobody read — a pinned entry is neither
+// compared nor called unbuilt — so the unknown is a line of its own, never
+// silence. It is doctor's unread state (unread, so doctorClassOf counts it as
+// a finding: an unknown is not a measurement).
+//
+// A config that states a catalog of its own is not this state, however the
+// node answered: the local one wins (localcfg's keep rule, D1140), it is what
+// the job spec resolves, and the node's copy cannot change a line below.
+func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr error) []doctorCheck {
+	if catErr == nil || lc.ImageCatalog != nil || len(cfg.Workflows) == 0 {
+		return nil
+	}
+	return []doctorCheck{{ID: "image-catalog", Severity: "info", unread: true,
+		Problem: "whether the project's image catalog decides a workflow's image could not be checked: this machine's config states no catalog of its own, and the published policy node it would take one from could not be read (" + oneLineCLI(catErr.Error()) + "), so a workflow that pins an entry, needs a tag one covers, or runs the project's default is not judged here",
+		Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
+}
+
 // imageConfigChecks names each workflow (with a generated image) whose build
 // record's image-config hash is not the hash of what it resolves to now:
 // typically a profile's base or image settings changed.
-func imageConfigChecks(ctx context.Context, rb *blobx.Bucket, slug string, cfg *config.Config, res *config.Resolution) []doctorCheck {
+//
+// A workflow the project's image catalog speaks for is not one of them
+// (catalogImageChecks judges those): its jobs run the catalog entry's image,
+// which the catalog build writes and records per entry, so the per-workflow
+// record compared here is not the image they start on — and the fix this
+// check would name, `fugaro image build --workflow`, builds an image those
+// jobs never run. The owner's rule is what that serves: doctor is clean after
+// `fugaro update`, and sending the owner back to it for an image it does not
+// build is a loop they have already run.
+//
+// cat is the catalog the job spec resolves (doctorLayerChecks), never the
+// local config's alone: a workflow the published node's catalog speaks for is
+// as much the catalog's as one this file's own catalog names.
+func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		if cfg.Workflows[name].Dockerfile != "" {
+		w := cfg.Workflows[name]
+		if _, ok := workflowCatalogEntry(cat, slug, w, catalog.Backend(env.lc.Backend())); ok {
+			continue
+		}
+		if w.Dockerfile != "" {
 			continue // its hash covers the Dockerfile's blob, which needs a tree
 		}
 		data, _, err := rb.Read(ctx, imagecheck.RecordKey(slug, name))
@@ -333,6 +389,195 @@ func imageConfigChecks(ctx context.Context, rb *blobx.Bucket, slug string, cfg *
 			Fix:     "the daily image check rebuilds it; to do it now: fugaro image build --workflow " + name})
 	}
 	return out
+}
+
+// catalogImageChecks names each workflow whose image the project's image
+// catalog gives it and whose entry is not the image a build of the entry
+// would produce now: no build has built it at all, or the build that did read
+// another definition than the runs bucket's copy holds (the daily catalog
+// check's own catalog-definition trigger, D1148).
+//
+// The fix is the entry's own build, never `fugaro update`: update publishes
+// the catalog and builds no entry of it, so its line would be the loop
+// imageConfigChecks' comment is about. The check's ID is deliberately outside
+// doctorUpdatePrefixes for the same reason — the default view prints the
+// command that does the work.
+//
+// Best effort, as the layer checks are: what cannot be read says nothing, and
+// cat — the catalog the job spec resolves, handed in — being nil is one of
+// those reads (imageCatalogUnreadCheck is its own line when it was the node
+// that did not answer). So is an entry's build record that is there and could
+// not be read or parsed: only an absent one is the "no build has built it"
+// warning below (catalogEntryRecord). An entry that is a prebuilt image has
+// nothing to build.
+func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, cat *config.Catalog) []doctorCheck {
+	var out []doctorCheck
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		e, ok := workflowCatalogEntry(cat, slug, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
+		if !ok || e.Source.Kind == config.SourceImage {
+			continue
+		}
+		slugs := catalogEntrySlugs(ctx, env, slug, e)
+		rec, rerr := catalogEntryRecord(ctx, rb, slugs, e.Name)
+		if rerr != nil {
+			// A record that is there and unreadable is not an entry no build
+			// has built: what cannot be read says nothing (catalogEntryRecord).
+			continue
+		}
+		if rec == nil {
+			// Only an entry this machine can place is called unbuilt, and
+			// only one whose source it read: the record lives under the slug
+			// of the repository the build ran as, so an entry whose source
+			// names a repository this machine cannot resolve has no place to
+			// look, and a pin with no catalog behind it may be a prebuilt
+			// image, which nothing builds.
+			if len(slugs) == 0 || e.Source.Kind == "" {
+				continue
+			}
+			// The one command that can build an entry no build has built is a
+			// person's build from the checkout the entry's build has to be
+			// submitted from: the daily image check cannot submit one (its own
+			// line says why — a rebuild is pinned to the commit the last build
+			// recorded, and there is none), so a Fix naming the daily check
+			// would name a run that does nothing.
+			from := "this checkout"
+			if e.Source.Repo != "" {
+				from = e.Source.Repo + "'s checkout"
+			}
+			out = append(out, doctorCheck{ID: "image-catalog-" + name, Severity: "warning",
+				Problem: fmt.Sprintf("workflow %s runs the project image catalog's entry %s, which no build has built: its jobs have no image to start", name, e.Name),
+				Fix:     "fugaro image build " + e.Name + " from " + from + " builds it once, and the daily image check rebuilds it from then on"})
+			continue
+		}
+		key, err := config.CatalogDockerfileKey(e.Name)
+		if err != nil {
+			continue
+		}
+		data, _, err := rb.Read(ctx, key)
+		if err != nil {
+			continue // no copy to compare the record's definition with
+		}
+		sum := sha256.Sum256(data)
+		built := hex.EncodeToString(sum[:])
+		if built == rec.DefinitionSHA256 {
+			continue
+		}
+		out = append(out, doctorCheck{ID: "image-catalog-" + name, Severity: "warning",
+			Problem: fmt.Sprintf("workflow %s runs the project image catalog's entry %s, whose image was built from another definition than the runs bucket holds now (sha256 %s, built from %s)", name, e.Name, shortSHA(built), shortSHA(rec.DefinitionSHA256)),
+			Fix:     "the daily image check rebuilds it; to do it now: fugaro image build " + e.Name})
+	}
+	return out
+}
+
+// workflowCatalogEntry is the catalog entry the workflow w runs, and whether
+// the project's image catalog decides its image at all. It is catalog.Applies
+// — the predicate the deploy-time job spec (internal/infra) and the launch's
+// image rule (run.go) ask — asked of the same catalog those two resolve
+// (effectiveCatalog, handed in as cat), so doctor judges the workflows the
+// deployed job's own image came from.
+//
+// cat is that catalog, nil when the project has none — or when it is a config
+// that states none of its own beside a published node that did not answer,
+// which imageCatalogUnreadCheck reports as its own line. A pin is the
+// repository's own claim about its entry and not the algorithm (D1155), so a
+// pinned workflow is answered from its name alone: with no catalog at all
+// doctor can still say the catalog speaks for the workflow, which is what
+// keeps its comparison off an image the catalog build writes. The entry it
+// returns is then the name by itself (no source), and the caller judges what
+// it can of it.
+func workflowCatalogEntry(cat *config.Catalog, slug string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
+	var c config.Catalog
+	if cat != nil {
+		c = *cat
+	}
+	if !catalog.Applies(c, w) {
+		return config.Entry{}, false
+	}
+	if w.ImageName != "" {
+		e, ok := catalogEntryNamed(&c, w.ImageName)
+		switch {
+		case ok:
+			return e, true
+		case cat == nil:
+			return config.Entry{Name: w.ImageName}, true
+		}
+		// A pin the catalog does not hold is a configuration mistake the job
+		// spec's own rule and `fugaro validate` report, and there is no entry
+		// here to judge an image of.
+		return config.Entry{}, false
+	}
+	if cat == nil {
+		return config.Entry{}, false
+	}
+	choice, err := catalog.Choose(catalog.Job{Catalog: c, Repos: []catalog.Repo{{Slug: slug, Needs: w.Needs}}, Backend: be})
+	if err != nil {
+		return config.Entry{}, false
+	}
+	return choice.Entry, true
+}
+
+// catalogEntrySlugs are the repository slugs entry e's build record may be
+// under. A catalog build runs as the build account of the checkout it was
+// submitted from, so the record is under that checkout's repository's slug
+// (gcp.CatalogRecordKey). An entry whose Dockerfile names a repository is
+// built by that repository or not at all — a catalog build refuses another
+// repository's entry (runImageBuildCatalog) — so its one slug is that
+// repository's, and a record that is not there is not anywhere. An inline
+// entry names no repository: its record is under whichever checkout built it,
+// which is this one first and then every repository this machine's config
+// knows, the set `fugaro image ls` reads an entry's digest from.
+func catalogEntrySlugs(ctx context.Context, env *cloudEnv, slug string, e config.Entry) []string {
+	if e.Source.Kind == config.SourceDockerfile && e.Source.Repo != "" {
+		s, err := env.repoSlug(e.Source.Repo, func() *config.Config { return checkoutConfig(ctx, e.Source.Repo) })
+		if err != nil {
+			return nil
+		}
+		return []string{s}
+	}
+	out := []string{slug}
+	for _, repo := range slices.Sorted(maps.Keys(env.lc.Repos)) {
+		s, err := env.repoSlug(repo, func() *config.Config { return checkoutConfig(ctx, repo) })
+		if err != nil || s == slug {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// catalogEntryRecord reads entry's build record from the first of slugs that
+// has one: the record, nil when none does, and an error when one is there and
+// could not be read.
+//
+// Only blobx.ErrNotExist is an absent record. Any other read error, and a
+// record that does not parse, stop the search and are returned as themselves:
+// the caller's "no build has built it" is a claim about a record that was not
+// there to read, and a record that is there and unreadable is the state the
+// daily check stops on ("nothing is submitted for it until it is fixed or
+// deleted", image_check_catalog.go) — told to rebuild instead, it would name a
+// build of an entry that has one.
+// (A 403 is ErrNotExist before it arrives here: the non-strict read folds it,
+// which is what the job and build accounts' conditional grant needs.)
+func catalogEntryRecord(ctx context.Context, rb *blobx.Bucket, slugs []string, entry string) (*imagecheck.CatalogRecordState, error) {
+	for _, s := range slugs {
+		key, err := gcp.CatalogRecordKey(s, entry)
+		if err != nil {
+			continue
+		}
+		data, _, err := rb.Read(ctx, key)
+		if errors.Is(err, blobx.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", key, err)
+		}
+		rec, err := imagecheck.ParseCatalogRecordState(data)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", key, err)
+		}
+		return rec, nil
+	}
+	return nil, nil
 }
 
 // imageLeafKeys are the leaf paths under workflows.<name>. that decide a

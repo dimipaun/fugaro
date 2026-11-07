@@ -10,6 +10,8 @@ import (
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	iam "google.golang.org/api/iam/v1"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // Firebase accepts a custom sign-in token signed by ANY service account of
@@ -48,7 +50,39 @@ const (
 	// SignerOwner: a project owner (roles/owner on the project), the trust
 	// root: owners can always create keys or grant themselves anything.
 	SignerOwner
+	// SignerManaged: the managed deployment's own grant, which Fugaro's own
+	// Terraform makes on purpose (managedGrant): the deployer account holding
+	// one of the seven conditioned custom roles under exactly the condition
+	// the module writes, or an operator the installation names holding the
+	// token-creator role on the deployer account itself. It is a WARNING, and
+	// it is the layout that makes it one. This check reads the Firebase
+	// project's policy and the policy of each of its accounts, and the two
+	// bindings are in the deployer's own project, so it sees them exactly
+	// where the Firebase project IS the deployer's own project — and there the
+	// deployer is a signer: its other, unconditioned role (tf.DeployerRole)
+	// holds iam.serviceAccounts.create, so the account creates an fmgd- account
+	// of that very project, the condition above names exactly the accounts it
+	// creates, and it can grant itself the token-creator role on the one it
+	// made; Firebase accepts a token signed by ANY account of the project
+	// (live Check 26, step 7). What the condition admits once a service
+	// enforces it is Check 68 of docs/gcp-live-checklist.md's to measure and is
+	// not read here (docs/design/managed-deployer-fence.md) — and a grant whose
+	// harmlessness rests on an unmeasured answer is not an information line.
+	// Removing either binding stops the managed replacement `fugaro update`
+	// runs, so the warning names the path and carries no remove command.
+	SignerManaged
 )
+
+// Managed is the installation's own managed deployment, as the local config
+// records it: Project is the GCP project the installation lives in (the
+// deployer account is there, tf.DeployerAccount) and Operators are the
+// principals the installation names (localcfg's terraform.operators), the ones
+// the module grants the token-creator role on that account to. The zero value
+// recognises nothing, so every managed grant is then a warning.
+type Managed struct {
+	Project   string
+	Operators []string
+}
 
 // SignerCondition is a conditional binding's condition.
 type SignerCondition struct{ Title, Expression string }
@@ -65,9 +99,15 @@ type SignerFinding struct {
 	// Expected is set for what the design expects (Why says what); everything
 	// else is a risk to name.
 	Expected bool
-	Why      string
+	// Why is the class's own sentence about the finding: why a class that is
+	// not a risk is not one (SignerGoogleAgent, SignerOwner, the designed
+	// cases), and for SignerManaged which of the module's own bindings the
+	// finding is (the signing path is the same for both, so the line says it
+	// once).
+	Why string
 	// Class is SignerRisk for everything that is not Expected and not one of
-	// the two inherent cases (set only for findings that sign or grant).
+	// the inherent or designed cases (set only for findings that sign or
+	// grant).
 	Class SignerClass
 	// Perms are the permissions of the role, as the IAM API resolves them,
 	// that make it sign or grant (empty for SignerUnread).
@@ -136,10 +176,12 @@ type signerBinding struct {
 // each of its service accounts, and returns every principal that holds a
 // role that can sign as an account or grant itself that. signer is the token
 // signer account's email. number is the project's number (0 when it could not
-// be read: no Google service agent is then recognised). A project policy or account list that cannot be
+// be read: no Google service agent is then recognised). managed is the
+// installation's own managed deployment, whose designed grants are recognised
+// rather than warned about. A project policy or account list that cannot be
 // read is an error; a single account's policy or a single role that cannot be
 // read is a SignerUnread finding.
-func TokenSigners(ctx context.Context, c *crm.Service, i *iam.Service, fp, signer string, number uint64) ([]SignerFinding, error) {
+func TokenSigners(ctx context.Context, c *crm.Service, i *iam.Service, fp, signer string, number uint64, managed Managed) ([]SignerFinding, error) {
 	pol, err := c.Projects.GetIamPolicy(fp, &crm.GetIamPolicyRequest{Options: &crm.GetPolicyOptions{RequestedPolicyVersion: 3}}).Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("reading the IAM policy of project %s: %w", fp, err)
@@ -156,7 +198,7 @@ func TokenSigners(ctx context.Context, c *crm.Service, i *iam.Service, fp, signe
 	}
 	slices.Sort(accounts)
 
-	e := &signerEval{ctx: ctx, i: i, fp: fp, signer: strings.ToLower(signer), number: number, adminSDK: adminSDKRE(fp), roles: map[string]*roleInfo{}}
+	e := &signerEval{ctx: ctx, i: i, fp: fp, signer: strings.ToLower(signer), number: number, adminSDK: adminSDKRE(fp), roles: map[string]*roleInfo{}, managed: managed}
 	var proj []signerBinding
 	for _, b := range pol.Bindings {
 		sb := signerBinding{role: b.Role, members: b.Members}
@@ -214,6 +256,7 @@ type signerEval struct {
 	number   uint64
 	adminSDK *regexp.Regexp
 	roles    map[string]*roleInfo
+	managed  Managed
 }
 
 // role is what a role can do, from its permissions as the IAM API resolves
@@ -290,18 +333,81 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 				b.role == "projects/"+e.fp+"/roles/"+MinterRoleID && slices.Equal(r.perms, []string{"iam.serviceAccounts.signJwt"}):
 				f.Expected, f.Why = true, "the designed path: launchers and operators mint run tokens as the signer"
 			}
-			if !f.Expected && account == "" && f.Kind != SignerUnread {
-				// Only project-level bindings: a binding on one account is
-				// someone's grant, whoever the member is.
-				switch {
-				case googleServiceAgent(m, e.number):
-					f.Class = SignerGoogleAgent
-				case b.role == "roles/owner" && (strings.HasPrefix(m, "user:") || strings.HasPrefix(m, "group:") || strings.HasPrefix(m, "serviceAccount:")):
-					f.Class = SignerOwner
+			if !f.Expected && f.Kind != SignerUnread {
+				if why := e.managedGrant(f); why != "" {
+					f.Class, f.Why = SignerManaged, why
+				} else if account == "" {
+					// Only project-level bindings: a binding on one account is
+					// someone's grant, whoever the member is.
+					switch {
+					case googleServiceAgent(m, e.number):
+						f.Class = SignerGoogleAgent
+					case b.role == "roles/owner" && (strings.HasPrefix(m, "user:") || strings.HasPrefix(m, "group:") || strings.HasPrefix(m, "serviceAccount:")):
+						f.Class = SignerOwner
+					}
 				}
 			}
 			out = append(out, f)
 		}
 	}
 	return out
+}
+
+// managedGrant says why a binding is the managed deployment's own, designed
+// grant, and "" for every other one. Each of the two is recognised by the
+// exact shape Fugaro's own Terraform writes (internal/infra/tf), never by a
+// name that merely looks like it, so a grant nobody's apply made stays a
+// warning with the command that removes it:
+//
+//   - the deployer account (tf.DeployerAccount) holding one of the seven
+//     conditioned custom roles under exactly that role's own condition
+//     (tf.DeployerConditionExpression): the condition the module writes, whose
+//     title is tf.DeployerConditionTitle and whose clauses test the managed
+//     prefix tf.ManagedPrefix. Recognised byte for byte, so a binding whose
+//     condition is absent, widened or narrowed is a warning like any other.
+//     The condition is not what makes this grant safe, and the line the
+//     caller builds from these whys says why: the deployer's other,
+//     unconditioned role (tf.DeployerRole) creates an fmgd- account of the
+//     project the check is reading — the Firebase project, in the one layout
+//     these bindings are in — and the condition names exactly the accounts the
+//     deployer creates, so the account can grant itself the token-creator role
+//     on the one it made. Whether a service honours the condition at all is
+//     Check 68's to measure (docs/design/managed-deployer-fence.md); nothing
+//     here claims it does.
+//   - an operator the installation names (Managed.Operators) holding
+//     roles/iam.serviceAccountTokenCreator on the deployer account: the managed
+//     mode's one-time impersonation setup (Task 1.5 step 2 of
+//     docs/plans/2026-10-16-managed-projects.md), which is how the person at
+//     the terminal assumes the deployer. The account it is on is the deployer,
+//     and assuming the deployer reaches the create-and-grant path above.
+//
+// A Managed with no project (no local config) or no operators recognises
+// nothing.
+func (e *signerEval) managedGrant(f SignerFinding) string {
+	if e.managed.Project == "" {
+		return ""
+	}
+	if f.Account == "" && f.Condition != nil && strings.EqualFold(f.Member, "serviceAccount:"+tf.DeployerAccount(e.managed.Project)) {
+		role, ok := strings.CutPrefix(f.Role, "projects/"+e.managed.Project+"/roles/")
+		if !ok {
+			return ""
+		}
+		expr, ok := tf.DeployerConditionExpression(e.managed.Project, role)
+		if !ok || f.Condition.Title != tf.DeployerConditionTitle || f.Condition.Expression != expr {
+			return ""
+		}
+		return "the deployer account's " + f.Role + " under " + tf.DeployerConditionTitle + " (" + tf.ManagedPrefix +
+			"): the module's own binding, and a signing path here"
+	}
+	if strings.EqualFold(f.Account, tf.DeployerAccount(e.managed.Project)) && f.Role == tf.DeployerTokenCreatorRole && e.operator(f.Member) {
+		return f.Role + " on the deployer account: the managed mode's one-time setup, how the operators the installation names assume it"
+	}
+	return ""
+}
+
+// operator is whether member is one of the operators the installation names.
+// The comparison folds case, as the designed minter path's does: the member
+// the policy returns and the config's copy are the same principal either way.
+func (e *signerEval) operator(member string) bool {
+	return slices.ContainsFunc(e.managed.Operators, func(o string) bool { return strings.EqualFold(o, member) })
 }

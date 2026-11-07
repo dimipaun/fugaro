@@ -849,6 +849,11 @@ var doctorShorts = map[string]doctorShort{
 	"creds-unknown-state":          {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
 	"creds-rules":                  {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
 	"token-signers":                {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	// The managed deployer's own grants, the sweep's one warning that is the
+	// module's own binding: it carries no remove command, so its own sentence
+	// is the one the default view must print, and the sentence above is the
+	// path in the length one screen line allows.
+	"token-signers-managed": {"the managed deployer can sign here: it creates fmgd- accounts of this project and grants itself the token-creator role on them.", ""},
 }
 
 // doctorShortsByPrefix are the short forms for the checks doctor emits once
@@ -871,9 +876,10 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// member.
 	//
 	// A short form is only ever reached from the default view, and the info
-	// lines these prefixes also match (a sweep's own summary, a signer the
-	// installation designed for) are measurements, which that view never prints:
-	// the full text is what --all and --security show either way.
+	// lines these prefixes also match — token-signers-owners and
+	// token-signers-google-agents, the sweep's own measurements — are never
+	// printed by that view: the full text is what --all and --security show
+	// either way.
 	{prefix: "token-signers-", short: doctorShort{problem: "somebody who is not a signer Fugaro designs for can sign sign-in tokens, or the policy could not be read."}},
 	{prefix: "runs-bucket-iam-", short: doctorShort{problem: "a grant on the runs bucket that Fugaro does not write, or one it could not read."}},
 	{prefix: "job-token-grant-", short: doctorShort{problem: "a job account's read grant on the budget token objects is not one Fugaro writes, or could not be read."}},
