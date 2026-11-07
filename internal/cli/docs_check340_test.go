@@ -105,7 +105,87 @@ func TestDocsCheck340IsRegistered(t *testing.T) {
 			t.Errorf("%s is named by Check %s and does not exist: %v", path, check340Number, err)
 		}
 	}
+
+	// Who wrote it, cited as the plan cites it. §P8 names the number and says the
+	// task that implements each check writes its row and its section; it defines
+	// no task id for this one, so a section naming one would point a reader at a
+	// task that exists nowhere.
+	if !strings.Contains(flat, "the task that implemented check "+check340Number) {
+		t.Errorf("Check %s's section does not say who wrote it (the task that implemented Check %s): the register's rule is that the task which implements a check writes its row and its section, and a section that leaves that out reads as the register's own work", check340Number, check340Number)
+	}
+	if strings.Contains(section, "**CK340**") {
+		t.Errorf("Check %s's section cites a task id (`**CK340**`) that docs/periodic-reviews/implementation-plan.md does not define: the plan's §P8 allocates the number and no task, and a citation a reader cannot look up is worse than none", check340Number)
+	}
 }
+
+// TestDocsCheck340CensusReadsTheRegister: the design's own census of the
+// register is a reading of the register, and the two move together — the same
+// rule docs/coordinator/README.md's row is held to. This design's row said the
+// highest WRITTEN `## Check` section was 290 while this work's own 340 was
+// written below it, which is exactly the drift the coordinator's test exists to
+// catch for its own row.
+func TestDocsCheck340CensusReadsTheRegister(t *testing.T) {
+	highest := 0
+	for _, m := range check340NumberRE.FindAllStringSubmatch(readDoc(t, liveChecksDoc), -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > highest {
+			highest = n
+		}
+	}
+	if highest == 0 {
+		t.Fatalf("%s carries no `## Check` section: this assertion would otherwise pass whatever the census claims", liveChecksDoc)
+	}
+	const census = "docs/periodic-reviews/README.md"
+	m := check340CensusHighestRE.FindStringSubmatch(readDoc(t, census))
+	if m == nil {
+		t.Fatalf("%s's checks row no longer states the highest written `## Check` section: that statement is what a reader takes the register's progress from", census)
+	}
+	if claimed, _ := strconv.Atoi(m[1]); claimed != highest {
+		t.Errorf("%s's Checks 340–349 row says the register's highest written `## Check` section is %d, and the register's is %d: the row is a reading of the register, and this design is the one that wrote the section", census, claimed, highest)
+	}
+}
+
+// check340CensusHighestRE reads the census's own sentence rather than a table
+// cell: the row wraps across the whole line, and the number is the sentence's.
+var check340CensusHighestRE = regexp.MustCompile("The register's highest \\*\\*written\\*\\* `## Check` section is \\*\\*([0-9]+)\\*\\*")
+
+// TestDocsContributingOwnerRunRuleLinksTheChecklist: CONTRIBUTING.md is at the
+// repository root, so a link in it is written from there. The rule this work
+// added linked `gcp-live-checklist.md`, which resolves to nothing at the root —
+// a reader following it gets a 404 from a rule about being runnable.
+func TestDocsContributingOwnerRunRuleLinksTheChecklist(t *testing.T) {
+	const path = "CONTRIBUTING.md"
+	const want = "[docs/gcp-live-checklist.md](docs/gcp-live-checklist.md)"
+	if !strings.Contains(readDoc(t, path), want) {
+		t.Errorf("%s's owner-run-check rule does not link the checklist as %s: the file is at the repository root, so a link without `docs/` resolves to nothing", path, want)
+	}
+	// Every relative link in the file, resolved: the rule is one of a list, and a
+	// link that does not resolve is one a reader cannot follow.
+	for _, target := range relativeDocLinks(readDoc(t, path)) {
+		if _, err := os.Stat("../../" + target); err != nil {
+			t.Errorf("%s links %s and there is no such file at the repository root: %v", path, target, err)
+		}
+	}
+}
+
+// relativeDocLinks returns the targets of the markdown links in doc that are
+// paths into this repository, with any anchor removed.
+func relativeDocLinks(doc string) []string {
+	var out []string
+	for _, m := range check340LinkRE.FindAllStringSubmatch(doc, -1) {
+		target, ok := strings.CutPrefix(m[1], "#")
+		if ok || target == "" {
+			continue
+		}
+		if strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
+			continue
+		}
+		target, _, _ = strings.Cut(target, "#")
+		out = append(out, target)
+	}
+	return out
+}
+
+var check340LinkRE = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 
 // TestDocsCheck340ComesAfterTheHighestWrittenSection: the section is appended
 // where the register's written sections end rather than inserted among older

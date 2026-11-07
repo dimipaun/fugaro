@@ -600,7 +600,11 @@ person who wants the files, which is why `--dir` survives rather than being repl
   under the register's own rule for a work that reserved none
   (`docs/gcp-live-checklist.md:586`; `docs/run-limit-carry-over/README.md:55` and
   `docs/project-image-catalog/README.md:132` are the same
-  shape). The register is still not touched by this design.
+  shape). The register is still not touched by this design. **Amended 2026-11-07:** it is, by Check 340
+  alone — the task that implemented that check (§P8 of [implementation-plan.md](implementation-plan.md))
+  wrote the register's row and its `## Check 340` section, so the highest **written** `## Check` section
+  is 340, and 341 and 342 stay claims until their own tasks write them (the `Checks 340–349` row of
+  [README.md](README.md)).
 
 ## 6. The 2026-11-07 reconciliation: the reports job and the failures report
 

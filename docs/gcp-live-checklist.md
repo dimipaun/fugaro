@@ -11310,8 +11310,9 @@ failure, not a pass. **No agent runs any step of it.**
 
 ## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; NOT RUN)
 
-**NOT RUN.** Written by task **CK340** of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
-§P8 (its Check 340, the plan's **E4**) — **no step of it has been run, and nothing here is a claim that it
+**NOT RUN.** Written by the task that implemented Check 340 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+§P8 (the plan's **E4**) — §P8 names the number and leaves the row and this section to that task, which is the
+register's own rule for a work that reserved none — **no step of it has been run, and nothing here is a claim that it
 works.** It is the check **R12** waits on: R12's Terraform writes one conditioned binding per prefix for the
 reports job, and each binding's listing half names the `storage.googleapis.com/objectListPrefix` request
 attribute. What that attribute **carries** is unverified in this tree — `docs/design/bucket-iam.md` §4's H3 veto
@@ -11338,9 +11339,12 @@ the **full path** form only if the relative one failed. Each form is read the sa
 list, `reports/` must list, one `runs/` object must read, and the root listing and a `tokens/` read and a `tokens/`
 and a `cache/` listing must all be refused. The two listings and the read that must succeed are **retried** for
 `CHECK340_PROPAGATION_SECONDS` (150 seconds by default) before a failure is recorded, and the four refusals are
-read only once one of them has succeeded: IAM propagates a fresh grant and its condition asynchronously (V7's
-neighbour, §11 item **V5**), and reading one as a refusal would pick the wrong form — the one thing this check must
-not do. A refusal that is **allowed** instead is a grant wider than R12's two prefixes, and it fails that form.
+read only once one of those three has held under that form — if none did, they are recorded as **not read**, because
+a refusal then could be the fresh grant simply not being in effect yet. IAM propagates a fresh grant and its
+condition asynchronously (V7's neighbour, §11 item **V5**), and reading one as a refusal would pick the wrong form —
+the one thing this check must not do. A refusal that is **allowed** instead is a grant wider than R12's two prefixes,
+and it fails that form. A **grant the bucket refuses** is a third thing again: the run stops there, with exit `2` and
+an `aborted` row naming the binding, rather than reading a permission error as "this form does not list".
 
 **Reading the `CHECK 340 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
 `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry
