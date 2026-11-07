@@ -388,6 +388,17 @@ func layerRow(key, def, owner, doc string) Row {
 	}
 }
 
+// layerValueRow is layerRow for a layer key whose default is a value the layer
+// reader leaves in place rather than an "unset means" sentence: the two jobs:
+// keys default to paused, and true is what a layer that states nothing has to
+// be read as. TestRegistryDefaultsMatchApplyDefaults then pins the value
+// against the reader itself, which is the point of writing it as one.
+func layerValueRow(key, v, owner, doc string) Row {
+	r := layerRow(key, "", owner, doc)
+	r.Default = value(v, "")
+	return r
+}
+
 // loc is a row of the local config. The local file is its only store, and
 // `shared` stands in for a key the shared config also carries (spec §2.2).
 func loc(key, def, owner, doc string) Row {
@@ -549,8 +560,8 @@ var layerRows = []Row{
 	// carries neither of these. Owner update is the command that reads the
 	// layer file and applies the value into the installation; `fugaro settings
 	// set` refuses both keys, which is the state R13 ships.
-	layerRow("jobs.reports.paused", "true", "update", docPeriodicReviews),
-	layerRow("jobs.catalog_check.paused", "true", "update", docPeriodicReviews),
+	layerValueRow("jobs.reports.paused", "true", "update", docPeriodicReviews),
+	layerValueRow("jobs.catalog_check.paused", "true", "update", docPeriodicReviews),
 }
 
 // LocalPrefix marks a local row whose bare name a fugaro.yaml key already
