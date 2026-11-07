@@ -118,6 +118,11 @@ func assertAskConfirmRefuses(t *testing.T, isTerminal bool, registers []string, 
 func TestAskConfirmRefusesInAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.AgentMarkers {
 		t.Run(marker, func(t *testing.T) {
+			// The other markers are cleared so the row asserts the marker it
+			// set: a refusal names the first of AgentMarkers it finds, and a
+			// machine that runs the tests inside a coding agent's session has
+			// one of them set already.
+			clearAgentMarkers(t)
 			t.Setenv(marker, "1")
 			assertAskConfirmRefuses(t, true, []string{"ask"}, marker, "ask")
 		})
