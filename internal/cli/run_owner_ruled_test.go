@@ -104,6 +104,58 @@ func TestRunPROwnerRuledReadsAFileAndStdin(t *testing.T) {
 	}
 }
 
+// TestRunOwnerRuledIsRefusedWhenNothingIsWaiting: --owner-ruled is the answer
+// to the decisions a run left the owner, and the reviewers read it as that
+// answer (followup.RulingAddendum lists the decisions under it and tells them a
+// finding among those is settled). A launch whose previous run left nothing
+// waiting has no such decisions, so the text would reach the review levels as
+// an instruction from whoever launched it — the one thing a reviewer may not
+// take — and the launch is refused before anything is stored or started.
+// Mutation (drop the `od == nil &&` guard, or hand it false): this launch
+// proceeds and the test fails on the missing refusal and on the execution it
+// started.
+func TestRunOwnerRuledIsRefusedWhenNothingIsWaiting(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--owner-ruled", "ship it", "go on")
+	if err == nil {
+		t.Fatal("the launch went through; a ruling nothing answers must be refused")
+	}
+	got := err.Error() + errOut
+	for _, want := range []string{rootID, "PR #7", "no decisions to answer", "launch again without it"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, got)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("executions = %d, want none: a refusal starts nothing", n)
+	}
+}
+
+// TestRunOwnerRuledIsRefusedWhenTheLastRunsRecordIsGone: whether the previous
+// run left the owner anything is in its record, and a record that is not there
+// cannot say. The launch is refused rather than trusted: an unreadable record
+// is a refusal for the mode and the recipe already, and a ruling read as the
+// answer to nothing is the case this whole refusal exists for.
+func TestRunOwnerRuledIsRefusedWhenTheLastRunsRecordIsGone(t *testing.T) {
+	f := newCloudFixture(t)
+	seedWaitingRoot(t, f)
+	failRecordRead(t, runstore.ErrNotFound)
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--owner-ruled", "ship it", "go on")
+	if err == nil {
+		t.Fatal("the launch went through; a ruling over a record nobody can read must be refused")
+	}
+	got := err.Error() + errOut
+	for _, want := range []string{rootID, "has no record left", "start a new run instead"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, got)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("executions = %d, want none: a refusal starts nothing", n)
+	}
+}
+
 // TestRunOwnerRuledNeedsAPullRequest: the ruling answers findings a run on a
 // pull request left, so a launch with no --pr is refused rather than stored on
 // a task nothing will read it from.

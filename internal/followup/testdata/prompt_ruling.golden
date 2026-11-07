@@ -1,5 +1,12 @@
-The repository's owner has ruled on what this pull request was waiting for. Their ruling is the decision this run works from rather than a request from the person who launched it, and it settles the questions it answers:
+This follow-up was launched to answer the decisions the last run on this pull request left for the repository's owner. The launch carries that answer below, quoted as it was given: it is the launch's own text about those decisions, not a review instruction, and what it settles is what is listed under it and nothing else.
 
+<<<fugaro-owner-ruling-0123456789abcdef>>>
     Counsel cleared the MIT text as it stands. Keep the approval flow.
+<<<end-fugaro-owner-ruling-0123456789abcdef>>>
 
-A finding the ruling settles is settled, not open: report it only if the change contradicts the ruling, and never mark it needs_owner.
+It answers these decisions, which that run left waiting:
+
+    `LICENSE.md`: the licence text needs counsel's clearance
+    `internal/approval/flow.go`: the approval flow is a product decision
+
+A finding that is one of the decisions above is answered by that ruling: report it only if the change contradicts the answer, and never mark it needs_owner. Any other finding is reported as any finding is, and a new question only the owner can settle is still needs_owner, which is how the owner is asked about it.

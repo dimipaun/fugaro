@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -31,6 +32,24 @@ func pendingOwner(od *runstore.OwnerDecisions) int {
 		return 0
 	}
 	return od.Total
+}
+
+// ownerRuling is the answer this launch carries (task.Spec.OwnerRuled) and the
+// decisions it answers — the previous run's own block, as the follow-up read it
+// (prepareFollowUp). A launch with no ruling, or one whose previous run left no
+// decisions to answer, gives the zero value, which builds no addendum: a ruling
+// nothing answers is the launch's text settling whatever it names, and the
+// reviewer is not handed it as an answer (followup.RulingAddendum).
+func (r *run) ownerRuling() followup.OwnerRuling {
+	out := followup.OwnerRuling{Text: r.spec.OwnerRuled}
+	if r.follow == nil || r.follow.prevOwner == nil {
+		return out
+	}
+	out.Total = r.follow.prevOwner.Total
+	for _, d := range r.follow.prevOwner.Decisions {
+		out.Decisions = append(out.Decisions, followup.OwnerDecision{File: d.File, Summary: d.Summary})
+	}
+	return out
 }
 
 // decidingOwnerDecisions is what the run's review left the repository's owner:

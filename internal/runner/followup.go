@@ -39,6 +39,11 @@ type followState struct {
 	sel      followup.Selection // the comments the agent gets
 	nonce    string             // the comments block's delimiter nonce
 	restored restored           // the session to resume, or why not
+	// prevOwner is the previous run's own owner_decisions block, bounded as a
+	// reader may show it: the decisions the ruling this launch carries answers
+	// (OD1), listed in the review briefs so a reviewer can tell a finding that
+	// ruling settles from one it does not (ownerRuling).
+	prevOwner *runstore.OwnerDecisions
 	// prevAnswer is the previous follow-up's followup.md, as stored.
 	prevAnswer string
 	// rootTask and diffStat are a fresh session's context.
@@ -228,6 +233,10 @@ func (r *run) prepareFollowUp(ctx context.Context) error {
 		r.d.Log.Warn("reading the previous run's record failed", "previous_run", prevID, "err", r.redact(err.Error()))
 		return fmt.Errorf("previous run %s has no readable record", prevID)
 	}
+	// What that run left the repository's owner (OD1), bounded as the launcher
+	// bounded it before it accepted the ruling this launch carries: the review
+	// briefs list these beside the ruling (ownerRuling).
+	r.follow.prevOwner = prevRec.OwnerDecisions.Bounded()
 	prevTask, err := prev.ReadTask(ctx)
 	if err != nil {
 		prevTask = nil

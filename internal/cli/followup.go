@@ -197,11 +197,31 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	rec, err := readRunRecord(ctx, runstore.Open(env.bucket.Bucket, slug, c.Previous.RunID))
 	switch {
 	case errors.Is(err, runstore.ErrNotFound):
+		// A ruling answers the decisions a run left the owner, and this run's
+		// record is gone, so there is nothing to hold it to: the launch would
+		// reach the review stages as an answer to a question no reader can
+		// name (below). Refused rather than trusted, the way an unreadable
+		// record is.
+		if ruled {
+			return nil, userErr("run %s, the last to update PR #%d, has no record left, so whether it left the repository's owner any decisions cannot be known; --owner-ruled answers the decisions a run left waiting, so a launch carrying one here would reach the reviewers as an answer to nothing: start a new run instead", oneLine(c.Previous.Run), pr)
+		}
 	case corruptObject(err):
 		return nil, userErr("run %s's result.json is unreadable (%v), so the mode it ran under and the recipe the runner chose for it are unknown; nothing was launched", c.Previous.Run, err)
 	case err != nil:
 		return nil, remote(fmt.Errorf("reading the record of run %s to keep its mode and its recipe: %w; nothing was launched", c.Previous.Run, err))
 	default:
+		od := rec.OwnerDecisions.Bounded()
+		// A ruling is accepted only where there is something to answer (OD1).
+		// Without that, --owner-ruled is free text the launcher chooses, and
+		// the runner hands it to every review level as the answer that settles
+		// the findings it names (followup.RulingAddendum) — so a launcher, or
+		// whatever drives it, could talk the deciding reviewer out of real
+		// findings and turn the pull request ready. Held to the block, the flag
+		// answers what a run left waiting, which is the one thing it is for.
+		if od == nil && ruled {
+			return nil, userErr("run %s, the last to update PR #%d, left the repository's owner no decisions to answer, so there is nothing here for --owner-ruled to answer: the flag is the owner's ruling on the findings a run left waiting for them, and the reviewers read it as the answer to those; launch again without it",
+				oneLine(c.Previous.Run), pr)
+		}
 		// The previous run stopped on findings only the owner can settle
 		// (OD1): a follow-up launched without their answer would read the same
 		// diff, find the same finding and stop in the same place — which is
@@ -209,7 +229,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		// answers. Refused here, before anything is stored or launched, and
 		// the refusal names each decision so the person who can answer them
 		// has the question in front of them.
-		if od := rec.OwnerDecisions.Bounded(); od != nil && !ruled {
+		if od != nil && !ruled {
 			return nil, userErr("%s; answer them and launch again with --owner-ruled <text-or-file>, which is appended to this follow-up's brief verbatim",
 				ownerWaitingRefusal(c.Previous.Run, pr, od))
 		}
