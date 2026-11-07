@@ -101,9 +101,11 @@ func Report(s string) string {
 // changes nothing.
 func patternPass(s string) string {
 	// The block first, so a key goes whole rather than in the pieces a token
-	// shape happens to find in its body.
+	// shape happens to find in its body. The quoted header goes before the
+	// plain one, which would otherwise take the rest of its line.
 	s = keyBlock.ReplaceAllString(s, redacted)
-	s = authHeader.ReplaceAllString(s, "$1: "+redacted)
+	s = authHeaderQuoted.ReplaceAllString(s, `$1"`+redacted+`"`)
+	s = authHeader.ReplaceAllString(s, `$1`+redacted)
 	s = authScheme.ReplaceAllString(s, "$1 "+redacted)
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
 	for _, re := range tokenShapes {
@@ -113,12 +115,21 @@ func patternPass(s string) string {
 }
 
 var (
-	// authHeader is a header whose value is a credential whatever it is: the
-	// whole value goes, scheme word (Bearer, Basic) included, and the header
-	// name stays so the line still reads as what it was. The name may carry
-	// the closing quote of a JSON key, because a structured log is where a
-	// Terraform or gcloud error body often prints one.
-	authHeader = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*[^\r\n]*`)
+	// authHeaderQuoted is a header whose value is a credential whatever it is,
+	// where that value is a quoted string: the whole value goes, scheme word
+	// (Bearer, Basic) included, and it ends at its own closing quote, so the
+	// fields after it in a structured log survive. Those fields are the
+	// diagnosis, and a rule that ran to the end of the line would eat them.
+	// A backslash escape is stepped over so a value containing `\"` ends at
+	// the right quote. The name may carry the quotes of a JSON key.
+	authHeaderQuoted = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)("(?:\\.|[^"\\\r\n])*")`)
+
+	// authHeader is the same header in plain text, where the value is
+	// whatever follows the colon on the line and there is no record around it
+	// to protect. Its value has to start with a character that is neither
+	// whitespace nor a quote: a quoted value is the form above, already
+	// redacted, and matching it here would take the rest of the line with it.
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)([^\s"\r\n][^\r\n]*)`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The

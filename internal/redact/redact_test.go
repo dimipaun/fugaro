@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -96,8 +97,16 @@ var patternCases = []struct {
 	},
 	{
 		name: "header named inside a json object",
-		in:   `{"x-api-key": "` + fake(strings.Repeat("Zx9", 8)) + `"}`,
+		in: `{"severity":"ERROR","x-api-key":"` + fake(strings.Repeat("Zx9", 8)) +
+			`","message":"quota exceeded for project foo","step":"terraform apply"}`,
 		leak: strings.Repeat("Zx9", 8),
+		keep: `"message":"quota exceeded for project foo","step":"terraform apply"}`,
+	},
+	{
+		name: "quoted header value in plain text",
+		in:   `Authorization: "Bearer ` + fake(strings.Repeat("A1b2C3d4", 3)) + `" and then some`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+		keep: "and then some",
 	},
 	{
 		name: "bearer without a header name",
@@ -191,6 +200,36 @@ func TestReportRedactsThePerson(t *testing.T) {
 				t.Errorf("Report(%q) = %q: %q survived", tc.in, got, tc.leak)
 			}
 		})
+	}
+}
+
+// TestRedactKeepsAStructuredRecordReadable: a structured log is a record of
+// fields, and the fields around the credential are the diagnosis. A header
+// rule that ran to the end of the line would leave the record unparseable and
+// the message gone.
+func TestRedactKeepsAStructuredRecordReadable(t *testing.T) {
+	token := fake(strings.Repeat("A1b2C3d4", 3))
+	in := `{"severity":"ERROR","authorization":"Bearer ` + token +
+		`","message":"quota exceeded for project foo","step":"terraform apply"}`
+	got := Text(in, nil)
+	if strings.Contains(got, token) {
+		t.Errorf("Text = %q: the token survived", got)
+	}
+	var rec map[string]string
+	if err := json.Unmarshal([]byte(got), &rec); err != nil {
+		t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+	}
+	for field, want := range map[string]string{
+		"severity": "ERROR",
+		"message":  "quota exceeded for project foo",
+		"step":     "terraform apply",
+	} {
+		if rec[field] != want {
+			t.Errorf("Text lost %s: %#v", field, rec)
+		}
+	}
+	if rec["authorization"] != "[REDACTED]" {
+		t.Errorf("authorization = %q, want the marker", rec["authorization"])
 	}
 }
 
