@@ -330,16 +330,20 @@ func TestInstallOptionsReadsTheJobsPausedSettingFromTheLayer(t *testing.T) {
 }
 
 // TestTheInstallationTakesTheJobsSettingFromThePublishedLayer: the half of R13's
-// setting a machine with no local layer file cannot answer from the file. The
-// installation stage applies before the layer stage seeds that file from the
-// published object (D830), so reading the file alone would apply paused — and
-// stop a project-wide schedule the layer the run is about to seed from has
-// started — until the next update put it back. The published object is the
-// project's answer there, and a file that IS there always wins, whatever it
-// says: it is the one this run publishes.
+// setting a local layer file cannot always answer. The installation stage
+// applies before the layer stage, and that stage does not always leave the
+// file's bytes in place: it seeds a file that is not there FROM the published
+// object (D830), and it re-seeds one the object has moved past (D854's stale
+// state, where the file's bytes are discarded for the object's). Reading the
+// file alone in either state would apply paused — and stop a project-wide
+// schedule the published layer has started — until the next update put it back.
+// The published object is the project's answer there, and in every other state
+// the file wins, whatever it says: it is the one this run publishes.
 //
-// The read is the layer stage's own (layerPublishedRead), so the two agree about
-// the bucket and a config whose endpoints are fakes reads nothing here either.
+// The read is the layer stage's own (layerPlanFor, and through it
+// layerPublishedRead), so the two agree about the bucket and about which state
+// this run is in, and a config whose endpoints are fakes reads nothing here
+// either.
 func TestTheInstallationTakesTheJobsSettingFromThePublishedLayer(t *testing.T) {
 	const (
 		starts = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n"
@@ -355,19 +359,26 @@ func TestTheInstallationTakesTheJobsSettingFromThePublishedLayer(t *testing.T) {
 		file      string // "" writes no local layer file, "unreadable" one this CLI does not read
 		published string // "" publishes no layer at all
 		readErr   bool
-		want      bool
-		reads     bool // whether the run reads the bucket at all
+		// recorded is the generation this machine's config says its layer file
+		// was written from; "" is the first run, which has none to compare
+		// against. The stub publishes generation 7, so anything else is stale.
+		recorded string
+		want     bool
+		reads    bool // whether the run reads the bucket at all
 	}{
-		{"no local file, the published layer starts the check", "", starts, false, false, true},
-		{"no local file, the published layer says nothing", "", silent, false, true, true},
-		{"no local file, no published layer", "", "", false, true, true},
-		{"no local file, the bucket cannot be read", "", starts, true, true, true},
-		{"no local file, a published layer this CLI does not read", "", "version: 1\njobz: {}\n", false, true, true},
-		{"the local file says nothing, the published one starts the check", silent, starts, false, true, false},
-		{"the local file starts the check, the published one says nothing", starts, silent, false, false, false},
-		{"the local file is one this CLI does not read", "unreadable", starts, false, true, false},
+		{"no local file, the published layer starts the check", "", starts, false, "", false, true},
+		{"no local file, the published layer says nothing", "", silent, false, "", true, true},
+		{"no local file, no published layer", "", "", false, "", true, true},
+		{"no local file, the bucket cannot be read", "", starts, true, "", true, true},
+		{"no local file, a published layer this CLI does not read", "", "version: 1\njobz: {}\n", false, "", true, true},
+		{"the local file says nothing, the published one starts the check", silent, starts, false, "", true, true},
+		{"the local file starts the check, the published one says nothing", starts, silent, false, "", false, true},
+		{"the local file is one this CLI does not read", "unreadable", starts, false, "", true, false},
+		{"the local file is stale and says nothing, the published one starts the check", silent, starts, false, "3", false, true},
+		{"the local file is stale and starts the check, the published one says nothing", starts, silent, false, "3", true, true},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
+			lc.LayerGeneration = tc.recorded
 			path := localLayerPath(t)
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				t.Fatal(err)

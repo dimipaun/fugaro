@@ -1813,9 +1813,12 @@ const jobsSince = "0.22.0"
 // over writes jobs:, at any value: SetsJobs' question, and its reason — an
 // empty block (`jobs:`) is a line an older runner's decoder refuses just as a
 // populated one is, and Jobs' zero value cannot tell the two apart. The
-// configuration is read through launchFileConfig, so the layer both ways a
-// launch can reach it counts: the checkout's own resolution, and — outside a
-// checkout — the layer the task carries (launchLayerConfig).
+// configuration is launchFileConfig's, so the launch gates fire where the
+// sibling gates' do: from a checkout of the repository, where the layer the run
+// will read can be read here at all (checkoutConfig, or the ref's file resolved
+// over the layer the task carries, cascadeRefConfig). Outside one it is nil and
+// nothing is gated, which is the shape governanceSince and rigorSince have:
+// there only fugaro update --repo checks.
 func jobsLayerSet(cfg *config.Config) bool {
 	return cfg != nil && cfg.Layer.SetsJobs()
 }

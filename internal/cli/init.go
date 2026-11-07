@@ -1694,9 +1694,10 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 }
 
 // jobsPaused is the project layer's jobs: block (R13) as the installation's
-// options take it: whether each of the project's two scheduled jobs is
-// stopped, and nil for each value the layer does not state, which
-// infra.InstallOptions reads as paused.
+// options take it: whether each of the project's two scheduled jobs is stopped.
+// A file this run can read gives both values — the ones the layer states, and
+// paused where it states nothing (config.Jobs' own default) — and a file it
+// cannot read gives none at all, which infra.InstallOptions reads as paused.
 //
 // It reads the LOCAL layer file — the one the owner edits and the run's layer
 // stage publishes — because the installation stage runs before that stage and
@@ -1708,10 +1709,11 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 // while the one thing neither direction may do is start a schedule the owner
 // never asked for.
 //
-// The installation's own apply does not stop at that silence: with no local
-// layer file at all, the published object is the project's answer and
-// publishedJobsPaused takes it, because the stage that would seed the file
-// from it runs later.
+// The installation's own apply does not stop at that silence: where this run's
+// layer stage will not leave the local file's bytes in place — the file is not
+// there and is seeded from the published object, or it is stale and is
+// re-seeded from it (D854) — the published object is the project's answer, and
+// publishedJobsPaused takes it, because that stage runs after this one.
 func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
 	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
 	if err != nil {
@@ -1730,39 +1732,33 @@ func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
 }
 
 // publishedJobsPaused completes the installation's jobs: state from the
-// published project layer, for the one machine that has no local layer file to
-// read: the layer stage seeds that file FROM that object and it runs after the
-// installation stage, so without this a `fugaro update` on such a machine
-// would apply the silence of a file it does not have (paused) and stop a
-// schedule the project's own layer has started, until the next update.
+// published project layer, for the runs whose layer stage does not leave the
+// local file's own bytes in place: the stage seeds a file that is not there
+// FROM that object, and re-seeds one the object has moved past (D854's stale
+// state), and it runs after the installation stage. Without this, a `fugaro
+// update` on either machine would apply the silence of a file that is not the
+// project's answer (paused) and stop a schedule the published layer has
+// started, until the next update.
 //
-// A local layer file settles the question by itself, whatever it says: it is
-// the file the owner edits and the one the layer stage publishes, so silence in
-// it is its answer — paused — and nothing the published object says may
-// overrule a file this run is about to publish. A bucket that cannot be read, a
-// layer this CLI does not read and a spec that carries no catalog check all
-// leave the spec exactly as installOptions built it: paused, which is also what
-// the module defaults the value to, and the layer stage names the read that
-// failed a moment later.
+// Which of the two files this run leaves in place is the layer stage's own
+// decision, so it is the stage's own reading that answers it here (layerPlanFor)
+// rather than a second rule that could drift from it. Every other state — the
+// file is published as it stands, or it already is the published layer —
+// settles the question by itself, whatever it says: silence in the file the
+// stage publishes is its answer, and nothing the published object says may
+// overrule it. A bucket that cannot be read, a layer this CLI does not read and
+// a spec that carries no catalog check all leave the spec exactly as
+// installOptions built it: paused, which is also what the module defaults the
+// value to, and the layer stage names the read that failed a moment later.
 func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec) infra.InstallationSpec {
 	if spec.CatalogCheck == nil {
 		return spec
 	}
-	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
-	if err != nil {
+	p, err := layerPlanFor(ctx, lc)
+	if err != nil || p.skip != "" || (p.stale == nil && !p.seed) {
 		return spec
 	}
-	if _, err := readLayerFile(path); err == nil || !errors.Is(err, os.ErrNotExist) {
-		// A file that is there settles it, and one this CLI cannot read at all
-		// is not an answer to take from somewhere else: the layer stage refuses
-		// it, with the message that names the file.
-		return spec
-	}
-	data, _, exists, err := layerPublishedRead(ctx, lc, recordReadURL(lc))
-	if err != nil || !exists {
-		return spec
-	}
-	l, ps := projectLayerProblems(data, lc)
+	l, ps := projectLayerProblems(p.published, lc)
 	if len(ps) > 0 || l == nil {
 		return spec
 	}
@@ -2404,7 +2400,9 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (outs infra.InstallationOutputs, stop bool, err error) {
 	// The project's schedules, read before anything of this run is planned or
 	// applied: see publishedJobsPaused, which is the half of the setting the
-	// local layer file cannot answer on a machine that has none.
+	// local layer file cannot answer where this run's layer stage will not keep
+	// its bytes — a file that is not there, or one the published object has
+	// moved past (D854).
 	spec = r.publishedJobsPaused(ctx, lc, spec)
 	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
 		return outs, false, err
