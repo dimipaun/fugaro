@@ -794,7 +794,7 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
 	ps = append(ps, validateGovernance("governance", l.Governance)...)
 	ps = append(ps, validateAB("ab", l.AB)...)
-	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models}) {
+	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models, Crafts: ag.Crafts}) {
 		p.Path = "defaults." + p.Path
 		ps = append(ps, p)
 	}
