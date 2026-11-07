@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite the golden files")
@@ -83,6 +85,14 @@ routing:
 claude_accounts:
   acme-personal:
     allow_data_to: [acme/web]
+credentials:
+  - { name: openrouter-main, type: openrouter }
+  - { name: claude-one, type: claude-oauth }
+pools:
+  - { name: claude-pool, strategy: round-robin, members: [claude-one, vertex] }
+crafts:
+  coder: { model: deepseek-v4-1, access: openrouter-main }
+  senior-review: { model: claude-opus-5-5, access: claude-pool }
 batch:
   image: us-central1-docker.pkg.dev/my-project/fugaro/acme-web:1.2.3
   machine_type: e2-standard-4
@@ -124,7 +134,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// batch.service_account is published (it is an installation fact, not the
 	// deprecated build one), so the forbidden word would fail on the block
 	// this file now carries.
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "update_check", "commit_name", "commit_email", "Someone Else", "someone-else@users.noreply.github.com", "secret_rotation_days", "secret_expires", "2027-01-15"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "credentials:", "openrouter-main", "claude-one", "pools:", "claude-pool", "crafts:", "deepseek-v4-1", "update_check", "commit_name", "commit_email", "Someone Else", "someone-else@users.noreply.github.com", "secret_rotation_days", "secret_expires", "2027-01-15"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -137,7 +147,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// operator's own and stays in their config after it has been published to
 	// the node (nothing here reads it again, but Shared must not be the thing
 	// that clears it).
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil || lc.CommitName == "" || lc.CommitEmail == "" {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil || lc.CommitName == "" || lc.CommitEmail == "" || len(lc.Credentials) != 2 || len(lc.Pools) != 1 || lc.Crafts.Coder.Access != "openrouter-main" {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }
@@ -490,6 +500,31 @@ func TestSharedDropsBaseBranchAndBuildAccount(t *testing.T) {
 	m := MergeShared(sharedBase(t, "build: { machine_type: E2_HIGHCPU_8 }\n"), lc)
 	if m.Build.ServiceAccount != "" {
 		t.Errorf("merged build = %+v", m.Build)
+	}
+}
+
+// TestSharedDropsCredentialsPoolsAndCrafts: the installation's credentials, its
+// pools and the crafts that choose among them travel the account-choice keys'
+// way — into the policy node, never through the runs bucket's shared file —
+// and they are dropped here for their reason: a credential names a secret and
+// a craft's access decides which one a run's calls go out on, so a launcher who
+// could write either into the shared file could aim every teammate's runs at a
+// credential the owner never admitted (docs/model-crafts/reconciliation.md
+// F12, D1628).
+func TestSharedDropsCredentialsPoolsAndCrafts(t *testing.T) {
+	lc := fullLocalConfig(t)
+	s := lc.Shared()
+	if s.Credentials != nil || s.Pools != nil || s.Crafts != (config.Crafts{}) {
+		t.Errorf("shared = %+v %+v %+v", s.Credentials, s.Pools, s.Crafts)
+	}
+	if len(lc.Credentials) != 2 || len(lc.Pools) != 1 || lc.Crafts.Coder.Access == "" {
+		t.Errorf("the receiver changed: %+v %+v %+v", lc.Credentials, lc.Pools, lc.Crafts)
+	}
+	// A published object that carries them is not merged back in either: what
+	// Shared drops is never taken from published (MergeShared).
+	m := MergeShared(sharedBase(t, "credentials:\n  - {name: claude-one, type: claude-oauth}\ncrafts:\n  coder: { access: claude-one }\n"), lc)
+	if m.Credentials != nil || m.Crafts.Coder.Access != "" {
+		t.Errorf("a published credential was merged back in: %+v %+v", m.Credentials, m.Crafts)
 	}
 }
 

@@ -174,6 +174,19 @@ var yamlMeta = map[string]Row{
 		Default: unset("agent.model"),
 		Doc:     "docs/multi-model.md",
 	},
+	// The four crafts (docs/model-crafts/spec.md §3), the spec's own table
+	// read back: the coder and the senior review are what a run cannot do
+	// without, and the review and the security review follow the craft above
+	// them when they set nothing of their own.
+	"agent.crafts.coder.model":            {Owner: "models", Default: unset("required: the coder implements, so a run needs its model"), Doc: docCrafts},
+	"agent.crafts.coder.access":           {Owner: "accounts", Default: unset("required: the coder's calls go out on a credential or a pool"), Doc: docCrafts},
+	"agent.crafts.review.model":           {Owner: "models", Default: unset("the coder's model"), Doc: docCrafts},
+	"agent.crafts.review.access":          {Owner: "accounts", Default: unset("the coder's access"), Doc: docCrafts},
+	"agent.crafts.senior-review.model":    {Owner: "models", Default: unset("required: the senior review is the second opinion a run needs"), Doc: docCrafts},
+	"agent.crafts.senior-review.access":   {Owner: "accounts", Default: unset("required: the senior review's calls go out on a credential or a pool"), Doc: docCrafts},
+	"agent.crafts.security-review.model":  {Owner: "models", Default: unset("the senior review's model"), Doc: docCrafts},
+	"agent.crafts.security-review.access": {Owner: "accounts", Default: unset("the senior review's access"), Doc: docCrafts},
+
 	"agent.review_rounds": {Default: unset("the run's rigor mode decides (rigor.DefaultRounds)")},
 	"agent.max_budget_usd": {
 		Default: value("25", "config.DefaultMaxBudgetUSD"),
@@ -356,6 +369,7 @@ const (
 	docLayer  = "docs/project-layer.md"
 	docModels = "docs/multi-model.md"
 	docRigor  = "docs/rigor-modes/spec.md"
+	docCrafts = "docs/model-crafts/spec.md"
 	docImages = "docs/project-image-catalog/spec.md"
 	// docOrchestrator is the document that states the orchestrator daemon's
 	// guardrails. It is the work's plan rather than a spec because the guardrail
@@ -462,6 +476,19 @@ var layerRows = []Row{
 	layerRow("defaults.agent.models.coder", "defaults.agent.model", "models", docModels),
 	layerRow("defaults.agent.models.reviewer", "defaults.agent.model", "models", docModels),
 	layerRow("defaults.agent.models.background", "defaults.agent.model", "models", docModels),
+	// The crafts' models are the layer's to set, as the three models rows
+	// above are; their access is not, and the row says so rather than leaving
+	// the layer's reader to find out at publish time (config.Scopes refuses
+	// defaults.agent.crafts.<craft>.access for the reason agent.oauth_token is
+	// refused there: the layer is a launcher-writable bucket object).
+	layerRow("defaults.agent.crafts.coder.model", "defaults.agent.model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.coder.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	layerRow("defaults.agent.crafts.review.model", "the coder's model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	layerRow("defaults.agent.crafts.senior-review.model", "defaults.agent.model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.senior-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	layerRow("defaults.agent.crafts.security-review.model", "the senior review's model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.security-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	layerRow("defaults.agent.review_rounds", "the run's rigor mode decides (rigor.DefaultRounds)", "settings set", docLayer),
 	layerRow("defaults.agent.max_budget_usd", "25", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_review", "auto", "settings set", docLayer),
@@ -689,6 +716,25 @@ var localRows = []Row{
 		Doc:      docModels,
 		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under, so the project's own name is what confirms it, or --yes outside a coding agent's session",
 	},
+	// The installation's credentials, pools and crafts (docs/model-crafts/
+	// spec.md §1–3). They are local-only for claude_accounts' reason, and the
+	// one key here that names a credential rather than holding one is why: a
+	// launcher who could write one into the shared file could aim every
+	// teammate's runs at a credential the owner never admitted (F12, D1628).
+	locLocal("credentials.*.name", "required: the name a craft's access and a pool's members speak", "accounts", docCrafts),
+	locLocal("credentials.*.type", "required: the provider that serves it, one of "+strings.Join(config.SupportedCredentialTypes(), ", "), "accounts", docCrafts),
+	locLocal("pools.*.name", "required: the name a craft's access speaks", "accounts", docCrafts),
+	locLocal("pools.*.strategy", config.PoolStrategyFailover, "accounts", docCrafts),
+	locLocal("pools.*.members", "required: a pool with no members serves nothing", "accounts", docCrafts),
+	locLocal("crafts.coder.model", "required: the coder implements, so a run needs its model", "models", docCrafts),
+	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", "accounts", docCrafts),
+	locLocal("crafts.review.model", "the coder's model", "models", docCrafts),
+	locLocal("crafts.review.access", "the coder's access", "accounts", docCrafts),
+	locLocal("crafts.senior-review.model", "required: the senior review is the second opinion a run needs", "models", docCrafts),
+	locLocal("crafts.senior-review.access", "required: the senior review's calls go out on a credential or a pool", "accounts", docCrafts),
+	locLocal("crafts.security-review.model", "the senior review's model", "models", docCrafts),
+	locLocal("crafts.security-review.access", "the senior review's access", "accounts", docCrafts),
+
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
 

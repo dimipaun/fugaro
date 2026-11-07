@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"slices"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -81,6 +82,15 @@ func (c *Config) Shared() *Config {
 	s.Providers = nil
 	s.Routing = nil
 	s.ClaudeAccounts = nil
+	// The credentials, pools and crafts blocks travel claude_accounts' way,
+	// into the policy node, and are dropped here for its reason and one of
+	// their own: a credential names a secret and a craft's access decides
+	// which one a run's calls go out on, so a launcher who could write either
+	// into the runs bucket's shared file could aim every teammate's runs at a
+	// credential the owner never admitted (F12, D1628).
+	s.Credentials = nil
+	s.Pools = nil
+	s.Crafts = config.Crafts{}
 	s.ProjectSecrets = nil
 	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same

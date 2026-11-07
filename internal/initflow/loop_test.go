@@ -1386,6 +1386,92 @@ func TestBillingPauseLetsLocalStagesFinish(t *testing.T) {
 	}
 }
 
+// TestPlanViewPausedForBillingHoldsOnlyWhatNeedsBilling: the billing pause is
+// converge's `paused`, not its stops — the stages that need no billing run on
+// (NeedsBilling excludes the plugin and the checkout) — so the plan view may
+// not say they wait for the paused project, and --plan-only has to plan them.
+// What does wait for it is the stages that need billing, the same wait the run
+// reports as waiting-for-billing. The reading moved unnoticed once (#1836's
+// review): preview set its waiting stage for BillingPending as well, and no
+// test said either way.
+func TestPlanViewPausedForBillingHoldsOnlyWhatNeedsBilling(t *testing.T) {
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Project, Plugin, Repository)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).status = Status{State: BillingPending, Detail: "created; billing pending",
+		Left: &Left{Stage: Project, Kind: LeftCommand, Text: "link a billing account"}}
+	stages[2].(*fake).planSummary = "3 to write"
+	stages[3].(*fake).planSummary = "1 to onboard"
+	opts := yesOpts()
+	opts.PlanOnly, opts.Out = true, &out
+	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	lineOf := func(stage string) string { return planLine(got, stage) }
+	if l := lineOf(Plugin); l == "" || strings.Contains(l, Project) {
+		t.Errorf("the plan view has the plugin waiting for the billing-pending %s, which converge runs it past: %q\n%s", Project, l, got)
+	}
+	if !strings.Contains(got, "3 to write") {
+		t.Errorf("--plan-only did not plan the stage that needs no billing:\n%s", got)
+	}
+	if l := lineOf(Repository); !strings.Contains(l, Project) || strings.Contains(l, "1 to onboard") {
+		t.Errorf("the stage that needs billing is %q, want it waiting for the billing-pending %s and not planned:\n%s", l, Project, got)
+	}
+}
+
+// TestPlanViewWaitsForAStageWithSomethingToDo: the plan view stops waiting for
+// a stage only when that stage is a stop this one's row runs past
+// (RunsPastStop) — a stop the run is not going to clear by applying anything.
+// A stage with something to do is one this run applies, and the checkout, the
+// one row with a tolerance, waits for a repository that is merely will-do like
+// every stage behind the repository does. Read the tolerance alone (without
+// asking whether the stage waited for is a stop at all), --plan-only plans the
+// checkout's own steps ahead of the repository and layer stages the run
+// applies first.
+func TestPlanViewWaitsForAStageWithSomethingToDo(t *testing.T) {
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Repository, Layer, Checkout)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).planSummary = "1 to onboard"
+	stages[2].(*fake).planSummary = "1 to publish"
+	stages[3].(*fake).planSummary = "2 to write"
+	opts := yesOpts()
+	opts.PlanOnly, opts.Out = true, &out
+	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if l := planLine(got, Repository); !strings.Contains(l, "1 to onboard") {
+		t.Errorf("--plan-only did not plan the %s stage, the first with something to do: %q\n%s", Repository, l, got)
+	}
+	if l := planLine(got, Layer); !strings.Contains(l, Repository) || strings.Contains(l, "1 to publish") {
+		t.Errorf("the %s stage is %q, want it waiting for the %s stage the run applies first:\n%s", Layer, l, Repository, got)
+	}
+	// The checkout is the row with the tolerance, and it tolerates a stop: a
+	// stage with something to do is not one, and its own steps wait for it.
+	if l := planLine(got, Checkout); !strings.Contains(l, Repository) || strings.Contains(l, "2 to write") {
+		t.Errorf("--plan-only planned the checkout ahead of the %s stage, which the run applies first: %q\n%s", Repository, l, got)
+	}
+}
+
+// planLine is the plan view's line for one stage, "" when the view has none:
+// the line whose own fields name the stage.
+func planLine(view, stage string) string {
+	for _, l := range outputLines(view) {
+		if slices.Contains(strings.Fields(l), stage) {
+			return l
+		}
+	}
+	return ""
+}
+
 // convergeStages is a run with one stage already done, one to apply, one the
 // user still owes and one that waits for it: the four states a default view
 // has to tell apart, in the canonical order the loop runs them in.
@@ -1726,7 +1812,11 @@ func TestLoopPlanOnlyViewUnchanged(t *testing.T) {
 func TestLoopNoReporterPrintsAsToday(t *testing.T) {
 	// A nil reporter is the loop's own account, word for word: every caller
 	// that has not moved onto the reporter prints exactly what it printed
-	// before, closing line and all.
+	// before, closing line and all. One word moved with the gating rule
+	// (RunsPastStop, #1836): the plan view's "after X" names the stage that
+	// gates the line rather than the first one that is not done, so repository
+	// reads "after secrets" here -- the stage this run stops at, which the
+	// account below then says in full ("waits for secrets").
 	var log []string
 	var out bytes.Buffer
 	opts := yesOpts()
@@ -1739,7 +1829,7 @@ func TestLoopNoReporterPrintsAsToday(t *testing.T) {
   [done]       preflight
   [will do]    installation
   [needs you]  secrets
-  [will do]    repository       after installation
+  [will do]    repository       after secrets
 fugaro: result
 fugaro: project aurora (GCP aurora-prod, us-east5)
   [done]       preflight

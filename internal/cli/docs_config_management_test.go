@@ -96,7 +96,7 @@ const (
 // path and the two budget keys D1179 does, and the two documents whose argument
 // is made of this count carry the number the count produced.
 const (
-	cfmRegistryRows   = 345
+	cfmRegistryRows   = 374
 	cfmAllowlistNamed = 88
 )
 
@@ -324,11 +324,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 }
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
-// is made of is re-counted here rather than trusted. The registry holds 345 rows
+// is made of is re-counted here rather than trusted. The registry holds 374 rows
 // and the generic write path's allowlist carries eighty-eight of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
-// between the two -- fails here rather than leaving §1's "181 rows have no
+// between the two -- fails here rather than leaving §1's "210 rows have no
 // generic writer" reading as checked when it is not.
 //
 // The count moved with G0, which gained the allowlist the wildcard blocks
