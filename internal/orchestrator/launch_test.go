@@ -492,6 +492,35 @@ func TestEditedSpecIsNeverLaunched(t *testing.T) {
 	if a.Spec.Brief != "A different brief." {
 		t.Errorf("the launch carries the brief %q", a.Spec.Brief)
 	}
+
+	// The state a document may hold and ValidateState deliberately allows: a
+	// standing approval whose digest is not the item's current one. The approve
+	// op refuses a digest that has moved, so a person never writes one, and the
+	// refusal belongs here rather than in the validator — an item whose
+	// digested fields a later release digests differently must still load, and
+	// what must not happen is starting it under an approval nobody gave for
+	// this spec. Nothing else stops it: the item is queued, approved, and its
+	// attempt is unspent.
+	stale := o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)
+	stale.Brief = "A brief the approval never saw."
+	if stale.Approved.SpecDigest == orchestrator.SpecDigest(stale) {
+		t.Fatal("the item under test is approved over the spec it has")
+	}
+	if got := orchestrator.Plan(o6Node(t, now, stale), orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+		t.Fatalf("an item whose approval digest has moved planned %+v", got)
+	}
+
+	// A person who reads it and approves the spec it now holds is what starts
+	// it, and the digest the launch carries is that one.
+	fresh := o6Approve(t, o6Node(t, now, stale), "wi-1", now)
+	w, _ = fresh.Item("wi-1")
+	if w.Approved == nil || w.Approved.SpecDigest != orchestrator.SpecDigest(w) {
+		t.Fatalf("the re-approval left %+v", w.Approved)
+	}
+	launch := onlyAction(t, orchestrator.Plan(fresh, orchestrator.RunView{}, o6Caps(), now))
+	if launch.Kind != orchestrator.ActionLaunch || launch.Digest != orchestrator.SpecDigest(w) {
+		t.Errorf("the launch under the re-approval is %+v", launch)
+	}
 }
 
 // TestOneAutomaticRetryUnderTheSameApproval is the red step's second half: one
@@ -931,6 +960,39 @@ func TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent(t *testing.T) {
 	}
 	if o2.s.Intents[0].Outcome != orchestrator.OutcomeAbandoned {
 		t.Errorf("the intent of the cancelled item reads %+v", o2.s.Intents[0])
+	}
+
+	// The other phase an unstarted attempt can be met in is failed, and the
+	// phase table has no edge from failed to blocked. The attempt is recorded
+	// where the item stands instead: failed is a phase a person reads, and an
+	// abandon refused for its phase would leave the attempt open on every tick
+	// forever.
+	strandedItem := o6Item("wi-3", orchestrator.PhaseFailed, approvedAt)
+	strandedItem.RunID = "20261107-120000-dddd"
+	strandedItem.Attempts = 1
+	stranded := o6Node(t, now, strandedItem)
+	stranded.Intents = []orchestrator.Intent{{
+		ID:         orchestrator.IntentID("wi-3", 1),
+		RunID:      strandedItem.RunID,
+		SpecDigest: orchestrator.SpecDigest(strandedItem),
+		ApprovalAt: approvedAt.UTC(),
+		At:         now.UTC(),
+	}}
+	stranded = o6Edit(t, stranded, "wi-3", "A different brief.", now.Add(time.Minute))
+
+	a = onlyAction(t, orchestrator.Plan(stranded, orchestrator.RunView{}, o6Caps(), later))
+	if a.Kind != orchestrator.ActionAbandon || a.ItemID != "wi-3" {
+		t.Fatalf("recovery planned %+v for a failed item with an unstarted attempt", a)
+	}
+	o3 := newO6Starter(t, stranded, later)
+	if err := o3.run(a); err != nil {
+		t.Fatalf("closing the attempt of a failed item was refused: %v", err)
+	}
+	if w, _ := o3.s.Item("wi-3"); w.Phase != orchestrator.PhaseFailed {
+		t.Errorf("the item is %s after its attempt was closed, and failed is where a person reads it", w.Phase)
+	}
+	if o3.s.Intents[0].Outcome != orchestrator.OutcomeAbandoned {
+		t.Errorf("the intent of the failed item reads %+v", o3.s.Intents[0])
 	}
 }
 

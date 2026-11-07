@@ -245,16 +245,19 @@ func (d Starter) start(ctx context.Context, spec Spec, runID string) error {
 }
 
 // close abandons an attempt nothing may start. The intent records that nothing
-// ran under its run id, and the item is left blocked with the reason on it,
-// where a person can see it: an item left running with no run behind it is one
-// no tick could ever pick up again.
+// ran under its run id, and an item a run is moving through is left blocked
+// with the reason on it, where a person can see it: an item left running with
+// no run behind it is one no tick could ever pick up again. An item already
+// failed or blocked is left where it stands — both are states a person reads,
+// and the phase table has no edge from either to blocked, so writing one there
+// would be a refusal for every attempt of a failed item rather than a move.
 func (d Starter) abandon(ctx context.Context, s State, a Action, now time.Time) (State, error) {
 	if d.Commit == nil {
 		return s, errors.New("orchestrator: the starter carries no commit, and a change it cannot record is one it must not make")
 	}
 	outcome := OutcomeAbandoned
 	op := WorkItemOp{ID: a.ItemID, Intent: &IntentOp{ID: a.IntentID, Outcome: &outcome}}
-	if w, ok := s.Item(a.ItemID); ok && !w.Phase.Done() && w.Phase != PhaseBlocked {
+	if w, ok := s.Item(a.ItemID); ok && !w.Phase.Done() && w.Phase != PhaseBlocked && w.Phase != PhaseFailed {
 		blocked := PhaseBlocked
 		op.Phase = &blocked
 	}

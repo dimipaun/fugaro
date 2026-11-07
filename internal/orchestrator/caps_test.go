@@ -237,6 +237,22 @@ func TestRetryCountsTowardEveryCap(t *testing.T) {
 func TestOversizeStateStopsSpawning(t *testing.T) {
 	now := o6Now()
 	bloated := bloatedState(t, now)
+
+	// The item the node carries is approved over the spec it now holds — the
+	// fixture lengthens the brief after approving it, which leaves a stale
+	// approval, and a plan that starts nothing for that reason would pin the
+	// digest refusal rather than the size. With it put back, the size is the
+	// only thing between this item and a launch.
+	i := slices.IndexFunc(bloated.WorkItems, func(w orchestrator.WorkItem) bool { return w.ID == "wi-approved" })
+	if i < 0 {
+		t.Fatal("the node under test carries no approved item")
+	}
+	approved := approvedItem(t, "wi-approved", now, now.Add(-30*time.Minute))
+	bloated.WorkItems[i] = approved
+	if w := bloated.WorkItems[i]; w.Approved == nil || w.Approved.SpecDigest != orchestrator.SpecDigest(w) {
+		t.Fatalf("the item under test %+v is not approved over the spec it has", w.Approved)
+	}
+
 	if !orchestrator.OverCap(bloated) {
 		t.Fatalf("the state under test is %d bytes and the cap is %d", stateBytes(t, bloated), orchestrator.MaxStateBytes)
 	}
@@ -244,9 +260,8 @@ func TestOversizeStateStopsSpawning(t *testing.T) {
 		t.Fatalf("a node over its size cap planned %+v", got)
 	}
 
-	// The same approved item in a node with room: the size is what stopped it.
-	small := o6Node(t, now, approvedItem(t, "wi-approved", now, now.Add(-30*time.Minute)))
-	a := onlyAction(t, orchestrator.Plan(small, orchestrator.RunView{}, o6Caps(), now))
+	// The same item in a node with room: the size is what stopped it.
+	a := onlyAction(t, orchestrator.Plan(o6Node(t, now, approved), orchestrator.RunView{}, o6Caps(), now))
 	if a.ItemID != "wi-approved" || a.Kind != orchestrator.ActionLaunch {
 		t.Fatalf("the same item in a small node plans %+v", a)
 	}
