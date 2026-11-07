@@ -111,8 +111,8 @@ func TestRepoArgOwnerNameWinsOverADirectoryOfThatName(t *testing.T) {
 }
 
 // TestRepoArgRefusesWhatIsNotACheckout: a directory that exists and is in no
-// checkout, and a path with nothing at it, are both refused, and the refusal
-// names the path. A value with no directory behind it is still refused with
+// checkout is refused with a sentence naming it; a file is refused too; and a
+// value with no owner/name shape and no directory behind it is refused with
 // the owner/name sentence, so a mistyped repository name reads as a mistyped
 // repository name.
 func TestRepoArgRefusesWhatIsNotACheckout(t *testing.T) {
@@ -124,11 +124,16 @@ func TestRepoArgRefusesWhatIsNotACheckout(t *testing.T) {
 	if err := os.Mkdir(plain, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	file := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct{ name, value, says string }{
 		{"a directory that is no checkout", plain, plain},
-		{"a path with nothing at it", filepath.Join(dir, "gone"), "gone"},
+		{"a file", file, file},
 		{"a mistyped repository name", "acme-app", "owner/name"},
 		{"a URL", "https://github.com/acme/app", "owner/name"},
+		{"a path with nothing at it", filepath.Join(dir, "gone"), "owner/name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := repoArg(ctx, tc.value)
@@ -139,6 +144,31 @@ func TestRepoArgRefusesWhatIsNotACheckout(t *testing.T) {
 				t.Errorf("the refusal does not name %q: %v", tc.says, err)
 			}
 		})
+	}
+}
+
+// TestRepoArgNeverEchoesAValueWithNothingBehindIt: a value that reads as
+// neither owner/name nor a path on disk is refused without being printed, so a
+// secret pasted into the wrong flag stays out of the error (this is what
+// TestSecretsSetNeverEchoes relies on, for every command that takes --repo).
+// The owner/name sentence is the whole message: naming the value here would
+// make the refusal the one place a mistyped token is written down.
+func TestRepoArgNeverEchoesAValueWithNothingBehindIt(t *testing.T) {
+	testutil.IsolateGit(t)
+	ctx := context.Background()
+	t.Chdir(t.TempDir())
+	for _, value := range []string{"fake-token-EXAMPLEEXAMPLE", "acme/fake-token-EXAMPLEEXAMPLE.git/..", "acme/app.git/.."} {
+		_, err := repoArg(ctx, value)
+		if err == nil {
+			t.Errorf("repoArg(%q) was accepted", value)
+			continue
+		}
+		if strings.Contains(err.Error(), value) {
+			t.Errorf("repoArg(%q) echoed the value: %v", value, err)
+		}
+		if !strings.Contains(err.Error(), "--repo: the repository must look like owner/name") {
+			t.Errorf("repoArg(%q): %v", value, err)
+		}
 	}
 }
 
@@ -169,14 +199,19 @@ func TestRepoArgRefusesAnOriginThatNamesNoRepository(t *testing.T) {
 	}
 }
 
-// TestRepoArgQuotesThePathItNames: what was typed reaches the refusal through
+// TestRepoArgQuotesThePathItNames: a refusal that names the path -- here one
+// that is a directory outside any checkout -- puts what was typed through
 // safetext.Field, so a path carrying an escape sequence (or a bidi override:
 // it is argv text from anywhere) cannot rewrite the line a person reads.
 func TestRepoArgQuotesThePathItNames(t *testing.T) {
 	testutil.IsolateGit(t)
 	ctx := context.Background()
-	t.Chdir(t.TempDir())
-	hostile := "no-such-\x1b[31mdir‮gpj"
+	dir := t.TempDir()
+	t.Chdir(dir)
+	hostile := filepath.Join(dir, "no-such-\x1b[31mdir‮gpj")
+	if err := os.Mkdir(hostile, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	_, err := repoArg(ctx, hostile)
 	if err == nil {
 		t.Fatal("the path was accepted")

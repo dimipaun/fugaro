@@ -21,11 +21,14 @@ import (
 // remote of the checkout that holds it, through repoFromOrigin, the one
 // parser of a github or bitbucket remote URL this program has.
 //
-// A path that resolves to nothing usable is refused with a sentence naming it:
-// no directory there, not inside a git checkout, no origin remote, an origin
-// that names no repository, or a checkout whose repository this project's
-// config does not list. The value is printed through safetext.Field, never
-// raw: it is whatever was typed, and a path is text like any other.
+// A path that resolves to nothing usable is refused: not a directory there,
+// not inside a git checkout, no origin remote, an origin that names no
+// repository, or a checkout whose repository this project's config does not
+// list. Every refusal that names the value prints it through safetext.Field,
+// never raw: it is whatever was typed, and a path is text like any other. The
+// one that does not name it is the value with nothing at it, which is refused
+// with the owner/name sentence alone -- a value there may have been pasted
+// into the wrong flag, and an error never echoes what it was given.
 //
 // The empty value is returned as it is: the bare --repo means "the repository
 // this checkout belongs to", and each command resolves that default its own
@@ -40,8 +43,15 @@ func repoArg(ctx context.Context, value string) (string, error) {
 	}
 	dir := value
 	fi, err := os.Stat(dir)
-	if err != nil || !fi.IsDir() {
-		return "", userErr("--repo: the repository must look like owner/name, or be a path inside a git checkout, and %s is neither", safetext.Field(dir))
+	if err != nil {
+		// Nothing is at the value and it does not read as owner/name, so it is
+		// refused without being printed: whatever was typed there may have been
+		// meant for another flag, and a refusal never repeats it (this is
+		// task.CanonicalRepo's sentence, and TestSecretsSetNeverEchoes pins it).
+		return "", userErr("--repo: the repository must look like owner/name, or be a path inside a git checkout")
+	}
+	if !fi.IsDir() {
+		return "", userErr("--repo %s is a file, and a path must be a directory inside a git checkout whose origin names the repository", safetext.Field(dir))
 	}
 	out, err := gitCmd(ctx, dir, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
