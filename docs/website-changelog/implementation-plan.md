@@ -10,8 +10,8 @@ console and mobile releases, built from the repository's own release files with 
 answer to a decision is not a go. Owner answers that shaped the plan (2026-11-07): D1640 (files stay the
 source, newest three plus the link; the spec's API fetch is overridden), D1641 (CLI three plus a line per
 other stream, amended after review), D1642 (the release procedure's preview and promote deploy the change;
-no new workflow), D1643 (no date). Open: D1644–D1646 and D1648; the tasks below follow the
-recommendations and change with the answers.
+no new workflow), D1643 (no date). D1644–D1646 and D1648 were answered as recommended the same day, and D1641's
+amendment is confirmed; no decision is open.
 
 ## Conventions
 
