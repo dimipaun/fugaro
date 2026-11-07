@@ -428,7 +428,7 @@ What the reading found, and why this block is where it is:
   `docs/periodic-reviews/README.md:125` name as the next free number is **still free on `main`** — no
   decision is written there.
 - **The overlap this round fixes was not with `main`: it is with a claim.**
-  `docs/stateless-orchestrator/reconciliation.md:21` records that "`D1320-D1349`, the block the brief
+  `docs/stateless-orchestrator/reconciliation.md:22` records that "`D1320-D1349`, the block the brief
   named, is therefore free" — the block that design **considered and did not take** (it takes
   D1220–D1249, `docs/stateless-orchestrator/README.md:44`). A block another document has named, even in
   the sentence that declines it, is not a block to write in when a free one exists above it, so this
