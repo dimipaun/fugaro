@@ -1092,6 +1092,13 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		if msg := config.ValidClaudeAccountRef(p.DefaultClaudeAccount); msg != "" {
 			return nil, true, fmt.Errorf("projectpolicy: default_claude_account: %s", msg)
 		}
+		// The second value ValidClaudeAccountRef admits and this member cannot
+		// take: the project's own Anthropic API key names no account a run's
+		// stages can choose, so a node that would default a run to it is
+		// refused rather than published.
+		if p.DefaultClaudeAccount == config.AnthropicKeyAccount {
+			return nil, true, fmt.Errorf("projectpolicy: default_claude_account: %s", config.AnthropicKeyAccountChoiceMessage)
+		}
 	}
 	if sraw, ok := doc["claude_account_stages"]; ok && !IsNull(sraw) {
 		// The member names are stage names, so the duplicate check is
@@ -1122,6 +1129,11 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			}
 			if msg := config.ValidClaudeAccountRef(p.ClaudeAccountStages[stage]); msg != "" {
 				return nil, true, fmt.Errorf("projectpolicy: claude_account_stages.%s: %s", stage, msg)
+			}
+			// The same value as the default member above, refused for the same
+			// reason: a stage cannot be given an account no job mounts.
+			if p.ClaudeAccountStages[stage] == config.AnthropicKeyAccount {
+				return nil, true, fmt.Errorf("projectpolicy: claude_account_stages.%s: %s", stage, config.AnthropicKeyAccountChoiceMessage)
 			}
 		}
 		if len(p.ClaudeAccountStages) == 0 {

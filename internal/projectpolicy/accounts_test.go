@@ -617,3 +617,123 @@ func TestAccountsBlockRefusesTheReviewVariantSuffix(t *testing.T) {
 		t.Errorf("a profile serving the account %s was accepted", name)
 	}
 }
+
+// TestDeriveAccountsPublishesTheProjectsAnthropicKey: the project's own
+// Anthropic API key is an axis value the policy's accounts block must carry,
+// and this is the ONE path that writes that block (every publish, `fugaro
+// update` and the deployer's discovery call DeriveAccounts). Without an entry
+// for the sentinel the block would hold none, and the credentials service
+// intersects a repository's admission with that block (credsvc's
+// admittedAccounts reads shared.Accounts[name]) — so a sentinel no derive could
+// write is a review class no installation could ever be served by, however the
+// service's candidate list is built (the mutation is exactly that: taking the
+// sentinel's branch out of DeriveAccounts makes every case below red with "the
+// local config defines no claude_accounts entry").
+//
+// The list it publishes is the naming profiles' own allow_repos, and it is
+// kept to the reach the key itself has (config.ProjectSecretReaches: the
+// project_secrets entry where there is one, D2's sweep where there is not), so
+// the accounts block can never admit a repository the operator's own key entry
+// excludes. The last cases are the refusals, each naming the block the operator
+// edits.
+func TestDeriveAccountsPublishesTheProjectsAnthropicKey(t *testing.T) {
+	sentinel := config.AnthropicKeyAccount
+	profiles := func(accounts ...string) map[string]Profile {
+		return map[string]Profile{
+			"standard": {JobProfile: config.JobProfile{
+				Provider:       "github",
+				AllowRepos:     []string{"github/acme/app", "github/acme/tools"},
+				ClaudeAccounts: accounts,
+			}},
+		}
+	}
+	got, err := DeriveAccounts(profiles(sentinel), nil, nil)
+	if err != nil {
+		t.Fatalf("a profile naming the project's own key derived no block: %v", err)
+	}
+	if want := []string{"github/acme/app", "github/acme/tools"}; !slices.Equal(got[sentinel].AllowRepos, want) {
+		t.Errorf("accounts.%s.allow_repos = %v, want %v (the profile's own list as it stands)", sentinel, got[sentinel].AllowRepos, want)
+	}
+	// The derived block is what the node's own rules accept, written exactly as
+	// publish writes it: the profile lists the sentinel, the block carries it,
+	// and the subset rule (D3) is decided between them. This is the assertion
+	// the finding's "no supported path can write it" is about — a published
+	// node carrying the sentinel decodes.
+	block, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, _, err := Decode([]byte(accountsNode(string(block),
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","claude_accounts":["`+sentinel+`"],`+
+			`"allow_repos":["github/acme/app","github/acme/tools"]}}`)))
+	if err != nil {
+		t.Fatalf("the derived block was refused by the node's own rules: %v", err)
+	}
+	if want := []string{"github/acme/app", "github/acme/tools"}; !slices.Equal(node.Accounts[sentinel].AllowRepos, want) {
+		t.Errorf("the node's accounts.%s.allow_repos = %v, want %v", sentinel, node.Accounts[sentinel].AllowRepos, want)
+	}
+
+	// A project_secrets entry for the key narrows the list — a wildcard entry
+	// is a gate and never the list itself, because the published list is exact
+	// (D3) while a project_secrets entry may carry a segment wildcard.
+	for name, tc := range map[string]struct {
+		entry config.ProjectSecret
+		want  []string
+	}{
+		"an exact entry":     {config.ProjectSecret{AllowDataTo: []string{"acme/app"}}, []string{"github/acme/app"}},
+		"a segment wildcard": {config.ProjectSecret{AllowDataTo: []string{"acme/*"}}, []string{"github/acme/app", "github/acme/tools"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := DeriveAccounts(profiles(sentinel), nil, map[string]config.ProjectSecret{config.AnthropicSecret: tc.entry})
+			if err != nil {
+				t.Fatalf("an installation holding the key for %v: %v", tc.entry.AllowDataTo, err)
+			}
+			if !slices.Equal(got[sentinel].AllowRepos, tc.want) {
+				t.Errorf("accounts.%s.allow_repos = %v, want %v", sentinel, got[sentinel].AllowRepos, tc.want)
+			}
+		})
+	}
+
+	// The key's entry reaching none of the profile's repositories: refused, and
+	// the refusal names both lists' blocks — the profile's own allow_repos and
+	// the key's entry — because the two fixes it offers are on those two.
+	_, err = DeriveAccounts(profiles(sentinel), nil, map[string]config.ProjectSecret{config.AnthropicSecret: {AllowDataTo: []string{"acme/other"}}})
+	if err == nil || !strings.Contains(err.Error(), "may serve no repository") {
+		t.Fatalf("the key reaching none of the profile's repositories: %v", err)
+	}
+	for _, want := range []string{"profiles.standard.claude_accounts", "accounts." + sentinel + ".allow_repos", "profiles." + "standard" + ".allow_repos", "project_secrets." + config.AnthropicSecret + ".allow_data_to"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// A profile that names the sentinel and writes no allow_repos of its own is
+	// refused the same way: the list is built from that field, so there is
+	// nothing to publish (and D3's own refusal is about a profile that lists
+	// accounts without a list at all).
+	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{sentinel}}}}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "may serve no repository") {
+		t.Fatalf("a profile naming the key with no allow_repos of its own: %v", err)
+	}
+	// A wildcard on the profile's own list is refused at the derive (as it is
+	// for an account's entry): the published list is exact, and the refusal
+	// names the profile's list rather than reporting a value the profile's own
+	// rules would call a pattern.
+	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{
+		Provider: "github", AllowRepos: []string{"github/acme/*"}, ClaudeAccounts: []string{sentinel},
+	}}}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "a pattern, and the project's own key's list is published as accounts."+sentinel+".allow_repos, which is exact") {
+		t.Fatalf("a wildcard profile list under the sentinel: %v", err)
+	}
+	if strings.Contains(err.Error(), "is not a repository") {
+		t.Errorf("the refusal calls the pattern not a repository, which a profile's own list may spell: %v", err)
+	}
+	// A profile list this block cannot spell at all (an entry with no provider)
+	// is refused where the list is built, rather than reaching accounts.<name>
+	// as a value a run's own reader would then have to refuse.
+	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{
+		Provider: "github", AllowRepos: []string{"acme/app"}, ClaudeAccounts: []string{sentinel},
+	}}}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "which is not a repository as this block spells one") {
+		t.Fatalf("a profile list with no provider segment: %v", err)
+	}
+}
