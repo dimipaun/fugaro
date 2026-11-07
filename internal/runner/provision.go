@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/logtail"
@@ -40,9 +41,12 @@ import (
 // prints. Being FUGARO_-prefixed, config.ReservedEnv refuses it, so it stays
 // out of the agent's own environment.
 //
-// Named here, in the runner, for the same reason CheckoutEnv is: the runner is
-// what reads it; internal/infra (spec.go) sets it from this constant.
-const ImageEntryEnv = "FUGARO_IMAGE_ENTRY"
+// The name itself is spelled in internal/backend (backend.ImageEntryEnv),
+// beside the platform names both compute backends reserve: a launch entry
+// naming the stamp is refused on either backend, and neither backend may import
+// this package. This alias is what internal/infra (spec.go) sets the variable
+// from, the way it takes CheckoutEnv.
+const ImageEntryEnv = backend.ImageEntryEnv
 
 // CheckoutEnv is the job environment variable internal/infra sets to the
 // workflow's own config.Checkout value (clone or shared) on a workflow whose
