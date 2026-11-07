@@ -68,3 +68,36 @@ func TestSetsGitBaseBranch(t *testing.T) {
 		})
 	}
 }
+
+// TestGitBaseBranchOf pins the value its sibling answers about, for the caller
+// that holds one file and no layers: Resolve merges layers and answers such a
+// file with a nil config, so the value has to come out of the document's own
+// tree, and every way of writing the key that SetsGitBaseBranch calls unset is
+// one this cannot answer either.
+func TestGitBaseBranchOf(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		yaml  string
+		want  string
+		wantO bool
+	}{
+		{name: "set", yaml: "git:\n  base_branch: develop\n", want: "develop", wantO: true},
+		{name: "set to main", yaml: "git:\n  base_branch: main\n", want: "main", wantO: true},
+		{name: "beside another git key", yaml: "git: { provider: github, base_branch: release }\n", want: "release", wantO: true},
+		{name: "absent", yaml: "git:\n  provider: github\n"},
+		{name: "no git block", yaml: "version: 1\n"},
+		{name: "an empty document", yaml: ""},
+		{name: "explicit null", yaml: "git:\n  base_branch:\n"},
+		{name: "an empty value", yaml: "git:\n  base_branch: \"\"\n"},
+		{name: "another block's key", yaml: "agent:\n  base_branch: develop\n"},
+		{name: "not a mapping", yaml: "version: 1\ngit: []\n"},
+		{name: "merged in", yaml: "git:\n  <<: {base_branch: develop}\n", want: "develop", wantO: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := GitBaseBranchOf([]byte(tc.yaml))
+			if got != tc.want || ok != tc.wantO {
+				t.Errorf("GitBaseBranchOf(%q) = (%q, %v), want (%q, %v)", tc.yaml, got, ok, tc.want, tc.wantO)
+			}
+		})
+	}
+}

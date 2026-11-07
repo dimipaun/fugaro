@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -291,5 +292,80 @@ func TestSpinnerDrawsOnTheTerminalsOwnLine(t *testing.T) {
 	}
 	if !strings.Contains(got, "Updating recipes") {
 		t.Errorf("the result line lost the step's name:\n%q", got)
+	}
+}
+
+func TestPauseKeepsAPromptOnItsOwnLine(t *testing.T) {
+	// G1: a prompt is written on a line of its own. The line in flight goes
+	// down before the first byte of it, and comes back when the answer
+	// arrives — a stage that prompts in the middle of a long apply is still
+	// one somebody is watching.
+	was := spinInterval
+	spinInterval = time.Hour
+	t.Cleanup(func() { spinInterval = was })
+
+	var out bytes.Buffer
+	r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal})
+	step := r.Step("Creating the project")
+	// Nothing may be drawn on the prompt's line: it holds a carriage return
+	// back to column 0 and then the clear, and nothing between them.
+	r.Pause()
+	if got := out.String(); !strings.HasSuffix(got, "\r\x1b[K") {
+		t.Errorf("the line in flight was not taken down before the prompt: %q", got)
+	}
+	fmt.Fprint(&out, "Type aurora: ")
+	if got := out.String(); !strings.HasSuffix(got, "Type aurora: ") {
+		t.Errorf("the prompt is not the last thing on the screen: %q", got)
+	}
+	r.Resume()
+	if got := out.String(); !strings.HasSuffix(got, "Creating the project") {
+		t.Errorf("the answer did not put the line in flight back: %q", got)
+	}
+	// A resume with nothing paused draws nothing: the reporter is not a
+	// second caller's to animate.
+	before := out.String()
+	r.Resume()
+	if out.String() != before {
+		t.Errorf("a second resume drew again: %q", out.String())
+	}
+	step.Done("created")
+	// Two lines in flight — the step's own, before the pause and after it —
+	// and then the one result.
+	if got := strings.Count(out.String(), "Creating the project"); got != 3 {
+		t.Errorf("the run named the step %d times, want two lines in flight and one result:\n%q", got, out.String())
+	}
+	// And nothing is left animating after the run: a resume once the step
+	// ended draws nothing.
+	after := out.String()
+	r.Resume()
+	if out.String() != after {
+		t.Errorf("a resume after the step ended drew over the account: %q", out.String())
+	}
+}
+
+func TestAbandonTakesAStoppedRunsLineDown(t *testing.T) {
+	// A refusal stops the run before the stage has a result: nothing is
+	// printed for it, and the line in flight still comes down — it must not
+	// outlive the run that drew it.
+	was := spinInterval
+	spinInterval = time.Hour
+	t.Cleanup(func() { spinInterval = was })
+
+	var out bytes.Buffer
+	r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal})
+	step := r.Step("Creating the project")
+	step.Abandon()
+	if got := out.String(); !strings.HasSuffix(got, "\r\x1b[K") {
+		t.Errorf("the line in flight is still on the screen: %q", got)
+	}
+	if o := r.Summary(); o.Steps != 0 {
+		t.Errorf("an abandoned step counted %d steps, want none", o.Steps)
+	}
+	if s := out.String(); strings.Contains(s, "Creating the project\n") {
+		t.Errorf("an abandoned step printed a line:\n%q", s)
+	}
+	step.Done("late")
+	if s := out.String(); strings.Contains(s, glyphDone.sym) {
+		t.Errorf("a result after Abandon printed a line:\n%q", s)
 	}
 }

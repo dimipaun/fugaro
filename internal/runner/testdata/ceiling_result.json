@@ -76,6 +76,7 @@
       "model_usd": 1,
       "name": "implement",
       "repeats": 0,
+      "served_by": "api-key",
       "started_at": "<time>"
     },
     {
@@ -84,6 +85,7 @@
       "model_usd": 0.5,
       "name": "review",
       "repeats": 0,
+      "served_by": "api-key",
       "started_at": "<time>"
     }
   ],

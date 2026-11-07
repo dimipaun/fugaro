@@ -1,5 +1,11 @@
 # 0.14.0 operator steps (draft)
 
+**Status: the draft as task B1.13 part one wrote it, and 0.14.0 has shipped.** It is kept as written
+because it is what that release's `### For operators` section carried; the sentence below that the
+proxy "arrives in 0.15.0" did not happen — 0.15.0, and every release through 0.20.3, shipped without
+the proxy chain, which is unwritten today. [status-2026-11-07.md](status-2026-11-07.md) is the census
+of 2026-11-07: it says what is on `main`, what remains and which tasks can launch now.
+
 The ordered steps an installation must run after deploying 0.14.0. They are drafted here (plan task
 B1.13 part one) and copied into the release notes' `### For operators` section by the 0.14.0 release
 PR (`docs/releases/v0.14.0.md`), which is what an operator reads.

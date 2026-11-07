@@ -172,7 +172,8 @@ no plan shows (§5).
 writes and **nothing can remove**.
 
 **Recommendation: `fugaro accounts rm NAME` removes the account definition and its allow-list entry, and
-is admitted by the managed gate only when no profile and no repository still references it** (§5;
+is admitted by the managed gate only when no profile and no repository still references it — and
+never from a coding agent's session, where no read of those referrers is evidence** (§5;
 [managed spec](../managed-agent-converge/spec.md) §4.2). `add` with a widening `allow_data_to` is a
 widening (D868) and stays refused in a coding agent's session.
 
@@ -283,7 +284,7 @@ is visible in a document it produces before it writes; the rows are:
 | `settings set\|unset` with `--add-entry` / `--remove-entry` (§2.2) | Admitted when the entry adds no `allow_data_to` member and no `secrets` member | A `secrets` entry and an `allow_data_to` widening: refused by the widening rule, not by the gate's plan |
 | `fugaro workflow add\|rm` (§3.7) | Admitted as a `--layer repo` write, the one document an agent session may write today | An executable-key change (`image.apt`, `image.setup`, `commands.*`) without the owner's flag |
 | `fugaro rigor set` (§3.1) | Admitted for a mode at or above the resolved mode | `hotfix` (D834), a duplicate glob (D838), and a floor **lowered or removed** — the typed name, D1026 |
-| `fugaro accounts rm` (§3.3) | Admitted only when no profile and no repository references the account | Any token entry at all, and `allow_data_to` widened |
+| `fugaro accounts rm` (§3.3) | **Nothing** — a session's referrer check answers itself, so the removal is refused whatever it finds | Any token entry at all, and `allow_data_to` widened |
 | `fugaro secrets rm`, the secret policy flags (§3.2) | **Nothing** — a secret's removal and its policy are values no plan shows | The whole family: refused in a session, gate or not |
 | `fugaro project repos set`, `fugaro image add --image` | Admitted within the plan's caps, on the same rules the layer and the catalog already carry | A reserved key, an executable-key change, and an IAM widening |
 

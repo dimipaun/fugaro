@@ -1,6 +1,8 @@
 # Who reads Secret Manager today (reconciliation §3, audited against the code)
 
-**Status: the S0 audit, as a tested doc; it changes no behaviour.** One row per reader of a Secret
+**Status: the S0 audit, as a tested doc; it changes no behaviour** — built and merged as task B0.1,
+with its guard in `deploy/terraform/secret_readers_test.go` (B0.2); [status-2026-11-07.md](status-2026-11-07.md)
+is the census of 2026-11-07 and says which of these rows have since moved. One row per reader of a Secret
 Manager value — an account class or a Go file — with the decision that keeps it reading and the slice
 that ends it. The IDs are the key B0.2's guard uses: its exceptions table lists exactly these IDs, so
 a hit with no row, and a row with no hit, both fail the build.

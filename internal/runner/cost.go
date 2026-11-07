@@ -48,6 +48,12 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 		StartedAt: started.UTC(),
 		DurationS: r.d.Now().Sub(started).Seconds(),
 		Model:     r.stageModel(name),
+		// The credential that served this stage, which for every stage but an
+		// account's is the run's own: the auth its model path takes, "" for
+		// the auths that name no single credential class (F18, D1415). The
+		// account arm below overrides it, because the credential that served
+		// that stage is the account's and not the run's.
+		ServedBy: runstore.CredentialForAuth(r.modelAuth()),
 		// The stage's sub-agent tool calls, counted by the relay from its
 		// own stream for every auth mode. Always set: the relay counts even
 		// a stage that spawned none, and 0 sub-agents is a figure, unlike an
@@ -62,6 +68,10 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 		st.ModelUSD = claudeUSD
 		st.ModelNotionalUSD = claudeUSD
 		st.Credential = runstore.CredentialOAuth
+		// The account's credential is not the run's own, so this is the one
+		// stage whose ServedBy is not the auth above -- and the field carries
+		// it for every stage, where Credential carries it for this one alone.
+		st.ServedBy = runstore.CredentialOAuth
 		return st
 	}
 	r.mu.Lock()
