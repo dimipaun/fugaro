@@ -544,9 +544,9 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * `models`, so this row is the group's whole reachable argv. It takes no
  * argument at all and its child reaches no bucket, no database and no host.
  *
- * **The managed screens' two reads are this surface's twenty-fourth and
- * twenty-fifth argvs** (the managed screens' plan, CM4, D1472 to D1477 and D1480
- * and D1481): `managed status --json --project <name> [--config <path>]` and
+ * **The managed screens' two reads are the newest argvs on this surface** (the
+ * managed screens' plan, CM4, D1472 to D1477 and D1480 and D1481): `managed
+ * status --json --project <name> [--config <path>]` and
  * `project policy show --json --project <name> [--config <path>]`. The first is
  * one managed project's marks and the bounded subset of its newest audit record
  * -- never the record's `argv`, which is the disclosure bound the CLI's own
