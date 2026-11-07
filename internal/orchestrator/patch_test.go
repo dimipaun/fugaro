@@ -585,6 +585,161 @@ func TestAnAttemptStartsOnlyFromQueuedWithNothingInFlight(t *testing.T) {
 	}
 }
 
+// TestAnActorMustCarryAKnownClassAndServerTime pins the two checks Apply makes
+// before it looks at anything else, and it makes them first for the reason
+// they are there: every write in the document is attributed to a class and
+// stamped from the server clock, so an actor naming a class this release does
+// not have would be fenced by rules written for the classes that do exist, and
+// one with no time to stamp would put a revision, an approval or an attempt in
+// the document under a time no clock gave.
+//
+// Mutations: drop the class check and the first two cases write; drop the time
+// check and the third writes.
+func TestAnActorMustCarryAKnownClassAndServerTime(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	s := stateWithAQueuedItem(t, now)
+	op := factOp("last-sweep", "2026-11-07T09:00:00Z")
+	patch := orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{op}}
+
+	for _, tc := range []struct {
+		name  string
+		actor orchestrator.Actor
+		says  string
+	}{
+		{
+			name:  "a class this release does not have",
+			actor: orchestrator.Actor{Class: "robot", Name: "wall-e", Now: now},
+			says:  "is not a class of actor",
+		},
+		{
+			name:  "no class at all",
+			actor: orchestrator.Actor{Name: "nobody", Now: now},
+			says:  "is not a class of actor",
+		},
+		{
+			name:  "a known class and no server time",
+			actor: orchestrator.Actor{Class: orchestrator.Session, Name: "session-a"},
+			says:  "carries no server time",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := orchestrator.Apply(s, patch, tc.actor); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+				t.Fatalf("the write landed: err = %v, want %v", err, orchestrator.ErrActorNotAllowed)
+			} else if !strings.Contains(err.Error(), tc.says) {
+				t.Fatalf("the refusal says %q, and it has to say %q", err, tc.says)
+			}
+		})
+	}
+
+	// The same patch from an actor that carries both lands, so what the cases
+	// above refuse is the actor rather than the patch.
+	next := mustApply(t, s, orchestrator.Session, "session-a", now, op)
+	if got, ok := next.Facts["last-sweep"]; !ok || got.Value != "2026-11-07T09:00:00Z" {
+		t.Fatalf("the fact landed as %+v", next.Facts)
+	}
+}
+
+// TestAnIntentIsDeclaredForThisItemAndTheNextAttempt pins what a declaration
+// has to name, which is what makes intent-first (D1231) do its work: the id
+// names the item being launched and the attempt being made, and the digest is
+// the spec the approval covers. A daemon that got one of them wrong — an id
+// minted for another item, an attempt planned twice, a spec the approval was
+// not given for — stops at this write instead of starting a run under a
+// record that does not describe it.
+//
+// Mutations: drop the id check and the first two cases land (the second is
+// then reached by the validator, whose refusal is a different one); drop the
+// numbering check and the third lands; drop either half of the digest check
+// and the fourth or the fifth lands.
+func TestAnIntentIsDeclaredForThisItemAndTheNextAttempt(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	approved, digest := approvedState(t, now)
+	runID := "20261107-090000-abcd"
+	elsewhere := orchestrator.Digest("sha256:" + strings.Repeat("0", 64))
+
+	// declaring is built here rather than from intentDeclareOp because these
+	// cases are about the id naming something other than the item the op
+	// carries, which that helper cannot express.
+	declaring := func(itemID, intentID string, d orchestrator.Digest) orchestrator.Op {
+		return orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{
+			ID: itemID,
+			Intent: &orchestrator.IntentOp{
+				ID:         intentID,
+				RunID:      &runID,
+				SpecDigest: &d,
+				ApprovalAt: &now,
+			},
+		}}
+	}
+
+	// drifted is the document the fence has to survive rather than produce: an
+	// item whose spec no longer hashes to the digest its standing approval
+	// names, which the read path accepts (the approval is a launch's business,
+	// not a read's) and a launch must not.
+	drifted := approved.Clone()
+	drifted.WorkItems[0].Brief = drifted.WorkItems[0].Brief + " and then some more"
+
+	for _, tc := range []struct {
+		name  string
+		state orchestrator.State
+		op    orchestrator.Op
+		wants error
+		says  string
+	}{
+		{
+			name:  "an intent that names another item",
+			state: approved,
+			op:    declaring("wi-1", "wi-2:1", digest),
+			wants: orchestrator.ErrInvalid,
+			says:  "for this item",
+		},
+		{
+			name:  "an intent with no attempt number",
+			state: approved,
+			op:    declaring("wi-1", "wi-1", digest),
+			wants: orchestrator.ErrInvalid,
+			says:  "for this item",
+		},
+		{
+			name:  "an attempt that is not the next one",
+			state: approved,
+			op:    declaring("wi-1", "wi-1:2", digest),
+			wants: orchestrator.ErrInvalid,
+			says:  "the item's next attempt is 1",
+		},
+		{
+			name:  "a spec the approval does not cover",
+			state: approved,
+			op:    declaring("wi-1", "wi-1:1", elsewhere),
+			wants: orchestrator.ErrDigestMismatch,
+			says:  "not the one the approval covers",
+		},
+		{
+			name:  "a spec the item has drifted from",
+			state: drifted,
+			op:    declaring("wi-1", "wi-1:1", digest),
+			wants: orchestrator.ErrDigestMismatch,
+			says:  "not the one the approval covers",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := applyAs(t, tc.state, orchestrator.Daemon, "orchestrator-a", now, tc.op); !errors.Is(err, tc.wants) {
+				t.Fatalf("the declaration landed: err = %v, want %v", err, tc.wants)
+			} else if !strings.Contains(err.Error(), tc.says) {
+				t.Fatalf("the refusal says %q, and it has to say %q", err, tc.says)
+			}
+		})
+	}
+
+	// The declaration with nothing wrong with it lands, so what the cases
+	// above refuse is what the op says rather than declaring at all.
+	launched := mustApply(t, approved, orchestrator.Daemon, "orchestrator-a", now,
+		declaring("wi-1", "wi-1:1", digest))
+	if got := launched.WorkItems[0]; got.Phase != orchestrator.PhaseRunning || got.Attempts != 1 || got.RunID != runID {
+		t.Fatalf("the attempt landed as %s, run %q, attempt %d", got.Phase, got.RunID, got.Attempts)
+	}
+}
+
 // TestApprovalIsClearedWhenTheItemIsDoneOrCancelled pins the rule that keeps a
 // standing approval from outliving its item. A finished item left with one is
 // one a later tick could relaunch: the work is over, and the approval was for
