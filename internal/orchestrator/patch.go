@@ -393,7 +393,7 @@ func commitIntent(s *State, w *WorkItem, op IntentOp, a Actor) error {
 	if w.Phase != PhaseQueued {
 		return fmt.Errorf("%w: the item is %s, and an attempt starts from %s", ErrInvalid, w.Phase, PhaseQueued)
 	}
-	if open := openIntent(*s, w.ID); open != "" {
+	if open := openIntent(s.Intents, w.ID); open != "" {
 		return fmt.Errorf("%w: the attempt %s has not reported how it went, and one run at a time carries an item", ErrInvalid, safetext.OneLine(open))
 	}
 	s.Intents = append(s.Intents, Intent{
@@ -447,30 +447,28 @@ func applyApprove(s *State, op ApproveOp, a Actor) error {
 	return nil
 }
 
-// applyArchive moves an item out of the work list. It refuses while the item
-// is running — a run in flight must not vanish from under its intent — while
-// anything still in the list depends on it, because a dependency that is not
-// there is not done, and while an approval still stands on it, which an edit
-// to its spec clears. It cannot start anything: what it can do is stop work,
-// which is the direction a session should be able to push.
+// applyArchive moves an item out of the work list. What may leave is what
+// archivable says may, so retention and this op agree on every item, and the
+// refusal a caller gets names the reason: a phase that is not finished, a run
+// in flight, an approval still standing, or something still in the list that
+// names it. The run in flight is not the same question as the phase — an item
+// the daemon moved to cancelled under an attempt that has not reported is one
+// a run is still going in, and archiving it would take the run id, and the
+// phase the outcome lands in, away with it. It cannot start anything: what it
+// can do is stop work, which is the direction a session should be able to
+// push.
 func applyArchive(s *State, op ArchiveOp, a Actor) error {
 	i, ok := s.indexOf(op.ID)
 	if !ok {
 		return fmt.Errorf("%w: no work item %q", ErrNotFound, safetext.OneLine(op.ID))
 	}
-	w := s.WorkItems[i]
-	if w.Phase == PhaseRunning {
-		return fmt.Errorf("%w: %q is running, and a run in flight is not archived", ErrInvalid, safetext.OneLine(w.ID))
-	}
-	if w.Approved != nil {
-		return fmt.Errorf("%w: %q still carries an approval: an edit to its spec revokes it, and then it can be archived", ErrActorNotAllowed, safetext.OneLine(w.ID))
-	}
-	if !archivable(s.WorkItems, w) {
-		return fmt.Errorf("%w: a work item still in the list depends on %q", ErrInvalid, safetext.OneLine(w.ID))
-	}
 	outcome := cleanLine(op.Outcome, MaxOutcomeRunes)
 	if outcome == "" {
 		return fmt.Errorf("%w: an archived work item carries how it ended", ErrInvalid)
+	}
+	w := s.WorkItems[i]
+	if err := archivable(s.WorkItems, s.Intents, w); err != nil {
+		return err
 	}
 	s.Archived = append(s.Archived, Archived{ID: w.ID, Outcome: outcome, At: stamp(a.Now)})
 	s.WorkItems = append(s.WorkItems[:i], s.WorkItems[i+1:]...)

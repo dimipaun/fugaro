@@ -719,6 +719,160 @@ func TestRetryCountsOnlyIntentsOfTheStandingApproval(t *testing.T) {
 
 // stateWithAPersonDecision is a state with one queued work item and one
 // question waiting on a person.
+// TestArchiveMovesAFinishedItemOutOfTheList is the archive op end to end: what
+// leaves, what the record it leaves behind carries, and every refusal with the
+// reason it really is. The reason matters as much as the refusal — an item
+// refused as "a work item still depends on it" sends its caller looking for a
+// dependency that is not there.
+//
+// Mutation: put the refusal back on the phase alone and the run-in-flight case
+// below archives an item the attempt of which has not reported; blame the
+// dependent for every refusal and the phase cases say the wrong thing.
+func TestArchiveMovesAFinishedItemOutOfTheList(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	archive := orchestrator.Op{Op: orchestrator.OpWorkItemArchive, Archive: &orchestrator.ArchiveOp{ID: "wi-1", Outcome: "landed"}}
+
+	// A finished item leaves — cancelled is finished as much as done — and
+	// what the entry carries is how it ended and when the server said so.
+	for _, phase := range []orchestrator.Phase{orchestrator.PhaseDone, orchestrator.PhaseCancelled} {
+		after := mustApply(t, stateWithAnItemAt(t, phase, now), orchestrator.Session, "session:20261107-090000-abcd", now, archive)
+		if len(after.WorkItems) != 0 || len(after.Archived) != 1 {
+			t.Fatalf("archiving a %s item left %d items and %d archived", phase, len(after.WorkItems), len(after.Archived))
+		}
+		if got := after.Archived[0]; got.ID != "wi-1" || got.Outcome != "landed" || !got.At.Equal(now) {
+			t.Fatalf("the archived entry is %+v", got)
+		}
+	}
+
+	// An item that is not finished is refused for that, in every phase it can
+	// be in, whatever the item is: wi-1 is the only item here, so nothing
+	// depends on it and nothing else can be the reason.
+	for _, phase := range []orchestrator.Phase{
+		orchestrator.PhaseQueued, orchestrator.PhaseRunning, orchestrator.PhaseReview,
+		orchestrator.PhaseFailed, orchestrator.PhaseBlocked,
+	} {
+		_, err := applyAs(t, stateWithAnItemAt(t, phase, now), orchestrator.Session, "session:20261107-090000-abcd", now, archive)
+		if !errors.Is(err, orchestrator.ErrInvalid) {
+			t.Fatalf("a %s item was archived: err = %v, want %v", phase, err, orchestrator.ErrInvalid)
+		}
+		for _, says := range []string{string(phase), "only a finished item leaves the work list"} {
+			if !strings.Contains(err.Error(), says) {
+				t.Fatalf("the refusal of a %s item is %q, and it does not say %q", phase, err, says)
+			}
+		}
+	}
+
+	for _, tc := range []struct {
+		name  string
+		state func(*testing.T) orchestrator.State
+		want  error
+		says  string
+	}{
+		{
+			// The phase is not the question: the item reached a finished
+			// phase — which clears the approval — with its attempt still
+			// going, so the run would lose the run id, and the phase its
+			// outcome lands in, to the archive.
+			"an item a run is still going in",
+			func(t *testing.T) orchestrator.State { return cancelledUnderAnOpenAttempt(t, now) },
+			orchestrator.ErrInvalid, "has not reported how it went",
+		},
+		{
+			"an item an approval still stands on",
+			func(t *testing.T) orchestrator.State { return mustApprove(t, now) },
+			orchestrator.ErrActorNotAllowed, "still carries an approval",
+		},
+		{
+			"an item a live item still names",
+			func(t *testing.T) orchestrator.State { return withADependent(t, now) },
+			orchestrator.ErrInvalid, "still named by",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := applyAs(t, tc.state(t), orchestrator.Session, "session:20261107-090000-abcd", now, archive)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.says) {
+				t.Fatalf("the refusal is %q, and it does not say %q", err, tc.says)
+			}
+		})
+	}
+
+	// A finish has to be said: an archive with no outcome is refused before
+	// anything is touched, so the op cannot empty an item out of the record.
+	empty := orchestrator.Op{Op: orchestrator.OpWorkItemArchive, Archive: &orchestrator.ArchiveOp{ID: "wi-1"}}
+	_, err := applyAs(t, stateWithAnItemAt(t, orchestrator.PhaseDone, now), orchestrator.Session, "session:20261107-090000-abcd", now, empty)
+	if !errors.Is(err, orchestrator.ErrInvalid) || !strings.Contains(err.Error(), "how it ended") {
+		t.Fatalf("an archive with no outcome: err = %v", err)
+	}
+}
+
+// stateWithAnItemAt is one item standing in a phase, moved there by the
+// daemon's own ops rather than by a struct literal, so what a test archives or
+// ages out is an item the state machine produced.
+func stateWithAnItemAt(t *testing.T, phase orchestrator.Phase, now time.Time) orchestrator.State {
+	t.Helper()
+	runID := "20261107-090000-abcd"
+	s := stateWithAQueuedItem(t, now)
+	move := func(p orchestrator.Phase, run *string) {
+		t.Helper()
+		s = mustApply(t, s, orchestrator.Daemon, "orchestrator-a", now, phaseOp("wi-1", ptr(p), run))
+	}
+	switch phase {
+	case orchestrator.PhaseQueued:
+	case orchestrator.PhaseRunning:
+		move(orchestrator.PhaseRunning, &runID)
+	case orchestrator.PhaseReview:
+		move(orchestrator.PhaseRunning, &runID)
+		move(orchestrator.PhaseReview, nil)
+	case orchestrator.PhaseDone:
+		move(orchestrator.PhaseRunning, &runID)
+		move(orchestrator.PhaseDone, nil)
+	case orchestrator.PhaseFailed:
+		move(orchestrator.PhaseRunning, &runID)
+		move(orchestrator.PhaseFailed, nil)
+	case orchestrator.PhaseBlocked:
+		move(orchestrator.PhaseRunning, &runID)
+		move(orchestrator.PhaseBlocked, nil)
+	case orchestrator.PhaseCancelled:
+		move(orchestrator.PhaseRunning, &runID)
+		move(orchestrator.PhaseCancelled, nil)
+	default:
+		t.Fatalf("the helper does not know how to reach %s", phase)
+	}
+	return s
+}
+
+// cancelledUnderAnOpenAttempt is the item the daemon cancels while the attempt
+// it is running has not reported: the finished phase clears the approval on
+// the way, so nothing but the open attempt stands between it and an archive.
+func cancelledUnderAnOpenAttempt(t *testing.T, now time.Time) orchestrator.State {
+	t.Helper()
+	approved, digest := approvedState(t, now)
+	launched := mustApply(t, approved, orchestrator.Daemon, "orchestrator-a", now,
+		intentDeclareOp("wi-1:1", "20261107-090000-abcd", digest, now))
+	return mustApply(t, launched, orchestrator.Daemon, "orchestrator-a", now,
+		phaseOp("wi-1", ptr(orchestrator.PhaseCancelled), nil))
+}
+
+// withADependent is a finished item the list still names: wi-2 waits on wi-1,
+// so wi-1 leaving would leave wi-2 pointing at an item the document no longer
+// carries, which is a document this release does not read back.
+func withADependent(t *testing.T, now time.Time) orchestrator.State {
+	t.Helper()
+	s := stateWithAnItemAt(t, orchestrator.PhaseDone, now)
+	return mustApply(t, s, orchestrator.Session, "session:20261107-090000-abcd", now,
+		upsertOp("wi-2", func(o *orchestrator.WorkItemOp) {
+			o.Title = ptr("retire the old node")
+			o.Repo = ptr("owner/repo")
+			o.Recipe = ptr("standard")
+			o.RigorTier = ptr("medium")
+			o.Brief = ptr("Once wi-1 has landed, the old node goes.")
+			o.DependsOn = &[]string{"wi-1"}
+		}))
+}
+
 func stateWithAPersonDecision(t *testing.T, now time.Time) orchestrator.State {
 	t.Helper()
 	s := stateWithAQueuedItem(t, now)

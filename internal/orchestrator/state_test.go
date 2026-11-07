@@ -682,6 +682,43 @@ func TestRetentionNeverStrandsADependency(t *testing.T) {
 	}
 }
 
+// TestRetentionKeepsTheItemARunIsStillGoingIn is the archive rule read from
+// retention's side: Retain ages finished items out past its bound, and an item
+// whose attempt has not reported is not one it may age out. The attempt would
+// keep the item's run id and the phase its outcome lands in, both of which
+// leave with the item, so the run's result would be an upsert against an item
+// the document no longer carries — refused, with nothing left to relaunch
+// under and nothing to report to.
+//
+// Mutation: drop the open-attempt rule from archivable and the item goes while
+// its attempt stays, which is the state this refuses to produce.
+func TestRetentionKeepsTheItemARunIsStillGoingIn(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	s := stateWithAQueuedItem(t, now)
+	s.WorkItems = nil
+	for i := range 12 {
+		w := workItemOf(intentItemID(i))
+		w.Phase = orchestrator.PhaseDone
+		s.WorkItems = append(s.WorkItems, w)
+	}
+	// The fourth item's attempt has not reported, and it is inside the window,
+	// so the intent stays either way: what must not happen is the item going
+	// without it.
+	running := intentItemID(3)
+	s.Intents = []orchestrator.Intent{intentFor(t, running, 1, now.Add(-2*time.Hour), now.Add(-time.Hour))}
+
+	kept := orchestrator.Retain(s, now)
+	if _, ok := kept.Item(running); !ok {
+		t.Fatalf("retention archived %s out from under its attempt, which has not reported", running)
+	}
+	if len(kept.WorkItems) >= len(s.WorkItems) {
+		t.Fatalf("retention kept all %d finished items, so it never reached the one whose run is going", len(kept.WorkItems))
+	}
+	if len(kept.Intents) != 1 || kept.Intents[0].Outcome != "" {
+		t.Fatalf("the open attempt was taken as well: %+v", kept.Intents)
+	}
+}
+
 // TestRetentionNeverDropsAnIntentInsideTheCapWindow is the first of the three
 // never-evict rules, and the reason the caps can be trusted: they are derived
 // from the committed intents, so an intent that is inside the window a cap

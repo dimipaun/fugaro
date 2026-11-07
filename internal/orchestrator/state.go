@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
 
@@ -463,10 +464,10 @@ func IntentAttempt(id string) int {
 
 // openIntent is the id of an attempt of an item that has been declared and
 // has not reported how it went, or "" when every one of them has. An intent is
-// the record of a run, so one with no outcome is a run in flight, and the item
-// it carries may not have a second.
-func openIntent(s State, itemID string) string {
-	for _, it := range s.Intents {
+// the record of a run, so one with no outcome is a run in flight: the item may
+// not have a second, and it may not leave the list either.
+func openIntent(intents []Intent, itemID string) string {
+	for _, it := range intents {
 		if IntentItem(it.ID) == itemID && it.Outcome == "" {
 			return it.ID
 		}
@@ -694,7 +695,7 @@ func retainItems(s State, now time.Time) ([]WorkItem, []Archived) {
 		dropped := false
 		kept := make([]WorkItem, 0, len(work))
 		for _, w := range work {
-			if finished > keptTerminal && archivable(work, w) {
+			if finished > keptTerminal && archivable(work, s.Intents, w) == nil {
 				archived = append(archived, Archived{ID: w.ID, Outcome: string(w.Phase), At: now})
 				finished--
 				dropped = true
@@ -826,7 +827,7 @@ func shrink(s *State, now time.Time) bool {
 		}
 	}
 	for i, w := range s.WorkItems {
-		if archivable(s.WorkItems, w) {
+		if archivable(s.WorkItems, s.Intents, w) == nil {
 			s.WorkItems = append(s.WorkItems[:i], s.WorkItems[i+1:]...)
 			return true
 		}
@@ -845,26 +846,45 @@ func shrink(s *State, now time.Time) bool {
 	return false
 }
 
-// archivable reports whether an item may leave the list it is in: it is
-// finished, no approval still stands on it, and nothing left in the list names
-// it in DependsOn. A dependent that is still live would be stranded by the
-// loss — the loop cannot start an item whose dependency is not there — and a
+// archivable reports whether an item may leave the list it is in, and the
+// refusal that says why not when it may not, so that every caller says the
+// same thing about the same item: it is finished, no approval still stands on
+// it, no attempt of it is in flight, and nothing left in the list names it in
+// DependsOn.
+//
+// An attempt with no outcome is a run that has not reported: the item is what
+// carries its run id and the phase a result would land in, so an item archived
+// out from under one leaves an outcome with nowhere to go — and, the other way
+// round, the run is what stops the item from being read as one a tick may
+// launch again. A dependent that is still live would be stranded by the loss —
+// the loop cannot start an item whose dependency is not there — and a
 // dependent that is finished would be left holding a reference to an item the
 // document no longer carries, which is a document this release does not read
 // back.
-func archivable(work []WorkItem, w WorkItem) bool {
-	if !w.Phase.Done() || w.Approved != nil {
-		return false
+func archivable(work []WorkItem, intents []Intent, w WorkItem) error {
+	// The approval is asked first because it is the one refusal a caller can
+	// act on: an item an approval stands on is one whose spec may be edited,
+	// which revokes it, and then it can go — and an approved item is never a
+	// finished one (ValidateState refuses the pair), so the phase question
+	// would answer for it with something the caller cannot do anything about.
+	if w.Approved != nil {
+		return fmt.Errorf("%w: %q still carries an approval: an edit to its spec revokes it, and then it can be archived", ErrActorNotAllowed, safetext.OneLine(w.ID))
+	}
+	if !w.Phase.Done() {
+		return fmt.Errorf("%w: %q is %s, and only a finished item leaves the work list", ErrInvalid, safetext.OneLine(w.ID), w.Phase)
+	}
+	if open := openIntent(intents, w.ID); open != "" {
+		return fmt.Errorf("%w: the attempt %s has not reported how it went, and an item with a run in flight does not leave the list", ErrInvalid, safetext.OneLine(open))
 	}
 	for _, o := range work {
 		if o.ID == w.ID {
 			continue
 		}
 		if slices.Contains(o.DependsOn, w.ID) {
-			return false
+			return fmt.Errorf("%w: %q is still named by %q, and a dependency that is not there is not done", ErrInvalid, safetext.OneLine(w.ID), safetext.OneLine(o.ID))
 		}
 	}
-	return true
+	return nil
 }
 
 // TierKnown reports whether a work item's rigor tier is one of the four
