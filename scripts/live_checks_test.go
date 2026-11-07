@@ -26,7 +26,12 @@ import (
 // them is run by an agent. Check 130's fake is a fake `curl` alone, answering
 // the three anonymous GETs the check makes about a repository; its fake
 // `gcloud` and `fugaro` log any call and fail, so the test can say the check
-// never reaches a cloud tool.
+// never reaches a cloud tool. Check 361's fakes are a fake `gcloud` that mints a
+// token sentinel and a fake `curl` that answers the check's one read from files
+// the test writes and records the request -- the URL, the headers, and the
+// Authorization header of the `--config` file the check handed over -- so a case
+// can say the token travelled through a 0600 file and never onto a command line
+// or into the block.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -38,6 +43,7 @@ var liveCheckScripts = []struct {
 	{"check146.sh", "check146_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check340.sh", "check340_test.sh"},
+	{"check361.sh", "check361_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

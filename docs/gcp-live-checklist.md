@@ -813,6 +813,7 @@ probe account carries predefined grants only).
 | 290 | The mixed-credentials run on a real installation (design [`docs/design/mixed-credentials.md`](design/mixed-credentials.md) §5 and §11, the tasks **B1–B6**; the owner's ruling **B0**, 2026-11-04; [`docs/multi-model.md`](multi-model.md) §3): an `api-key` run of the sandbox repository whose **coder** stays on its provider route — a DeepSeek model priced through the budget gateway — while its **senior review** runs inside the same loop, direct to Anthropic on ONE stage-scoped Claude OAuth account and on an **Opus** model. It is the only place the mix meets a real run, and it reads back the seven facts the rule stands on: `stage_accounts.review` naming the account; the `review` stage's `credential: oauth`, its model an Opus one, and no `model call` line for it in the log; the verdict `ship`; no `Invalid API key` anywhere; the account's dollars inside `cost.model_usd` and outside `cost.total_usd`; the coder's stage carrying the gateway's routing and its call count; and the coder's own stage environment holding no token. It is what `docs/multi-model.md` and the design's §9 name as the evidence still missing | See "Check 290" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, with `budget.mode: enforce` (the gateway caps the coder; nobody caps the account's own subscription dollars), and **no agent runs any step of it** | One run of the sandbox repository on a task that changes one line: the coder's gateway-priced calls, one review round on the account, and the run's own report. The run commits that line, pushes its `fugaro/<id>` branch and opens a pull request — a task that changes nothing is no cleaner, since a run whose agent makes no commit is failed, given an empty commit and still pushed and opened as a draft (`internal/runner/runner.go`) — so the Restore closes the pull request, deletes the branch, takes the file back and republishes the policy. **USER-RUN, NOT RUN.** |
 | 291 | What a catalog image's `ENV` does in a run ([`docs/image-env/`](image-env/implementation-plan.md) §6, that work's task **IE4** and its live check; **D1381**; issue #1755; `docs/base-image.md`'s "Bring your own" is the rule it reads back): one catalog entry published on the sandbox whose Dockerfile sets an ordinary marker (`ENV NEXUS_BASEURL=https://example.invalid/repository/maven-public/`) and one reserved name (`ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null`) — **no credential and no secret-shaped value on the image**, which is the point — then `fugaro update --repo` so the job carries the stamp, and `fugaro doctor --all` read for that job's line: it names the catalog entry and the names the job itself sets that a run drops, with **no value printed** — and since an image's own `ENV` lives in the image and no read of a job can list it, the line says so, and the reservation appears in the report only once one reserved name is set on the job by hand (`--update-env-vars`, converged away again in the same step); then one trivial run on the entry's image, from whose transcript the marker is present in the environment of a command the run ran through `fugaro verify`, `GOOGLE_APPLICATION_CREDENTIALS` is absent, and the image's value appears nowhere; and the **refutation step** — the same workflow on a **repository-built** image (`dockerfile:` in the sandbox's `fugaro.yaml`) setting the same marker, whose variable must be **absent** from the run and whose `doctor --all` line must read not catalog-stamped — that is D1370's scope, and the half a code review cannot settle | See "Check 291" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | One catalog entry published and built, one repository-image rebuild, two `fugaro update --repo` runs and two trivial sandbox runs, and the pull requests they open — closed and their branches deleted by the Restore. **USER-RUN, NOT RUN.** |
 | 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, makes all fourteen readings and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** |
+| 361 | The workspace's own Firebase's sign-in providers ([`docs/workspaces/`](workspaces/spec.md) spec §3's provider pin, and that plan's **W3**): the Identity Platform configuration of the workspace's **own** project, read once over REST and judged against the pin — `google.com` and `password` enabled, `anonymous` and phone-number sign-in off, no other provider enabled, and public sign-up **not** disabled. It is the check W3's design says no hermetic test can hold: the project and its rules come from the installation path, but `fugaro setup`'s Identity Platform step initializes with **no provider** (`IdentityPlatformStep`, `internal/infra/identityplatform.go`) — right for a member's project and wrong for the workspace's — and `refusePublicSignUp` (`internal/cli/init_firebase.go`) deliberately does not police a workspace's providers in either direction, so the providers are enabled by you and this is the read-back. A workspace whose project carries no provider has nobody who can sign in, and one that carries a provider the pin refuses is a sign-in path the exchange never sees | See "Check 361" below; `bash scripts/live-checks/check361.sh --project <the workspace's own project>` is the whole of it — ONE read-only GET, nothing created and nothing deleted, so it is safe to run repeatedly — and **you** run it: a project whose name contains `belong` is refused before any call, and **no agent runs any step of it** | Nothing billable and no model call: one GET of the project's Identity Platform configuration with your own credentials. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -11441,3 +11442,74 @@ this check exists to produce.
 **What waits on it.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
 own writing to `reports/` (R10, Open item 5 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)):
 neither the Terraform nor anything it enables may land before this check answers.
+
+## Check 361: the workspace's own Firebase's sign-in providers — one script you run (the workspace's own project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that implemented Check 361 of [workspaces/implementation-plan.md](workspaces/implementation-plan.md)
+**W3** — that plan's §7 names the workspace's owner-run checks and numbers none of them, and the design's own
+reconciliation claims none either (its **F22**), so the number is the first free above the register's written
+sections — and **no step of it has been run, and nothing here is a claim that it works.** It settles the half of
+the workspace's Firebase that no hermetic test can hold: the **provider pin** of [workspaces/spec.md](workspaces/spec.md)
+§3. A workspace has a Firebase project of its own (D1290), and it is the one Firebase in this design where a person
+signs in with a real provider, so the workspace's signer endpoint accepts only the pinned set of
+`firebase.sign_in_provider` values — **`google.com` and `password`** — and refuses `custom` and `anonymous` (anyone
+holding `signBlob` on any service account in the project can mint a custom token with whatever `email` and
+`email_verified` they like, and an anonymous sign-in proves no address at all). The project, its rules and its
+database come from the installation path — your `fugaro setup` for the workspace root, then `fugaro update` — but
+Identity Platform is initialized there with **no sign-in provider**: that is right for a member's project and wrong
+for the workspace's (`IdentityPlatformStep`, `internal/infra/identityplatform.go`), and `refusePublicSignUp`
+(`internal/cli/init_firebase.go`) does not police a workspace's providers in either direction, because refusing them
+would fail `fugaro update` on exactly the project this work converges (the HARD RULE). So the providers are enabled
+by **you**, and this check is the read-back that the pin is what the project actually carries.
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check361.sh --project <the workspace's own project>
+```
+
+`--project` is the project the workspace is **named after** — the one `fugaro setup --name <workspace>` created —
+and it is required: the check never reads a project from a config that may name another, and a value that is not a
+project id is refused before any call. **You** run it, and **no agent runs any step of it**. A project whose name
+contains `belong` is refused before a single call, even though the check is read-only: a check pointed at the
+owner's own installation by a mistyped id would be a reading nobody asked for. You need an account that may read
+the project's Identity Platform configuration (the project's owner, or Firebase Admin); a refused read stops the
+run with exit `2` rather than reading as drift.
+
+**What it reads, and what the pin is.** ONE GET — `https://identitytoolkit.googleapis.com/admin/v2/projects/<project>/config`,
+the same document `infra.PublicSignUp` parses — with your own credentials, so nothing is created, granted, written
+or deleted and the check is idempotent. From that document: the password provider (`signIn.email.enabled`), every
+**enabled** entry of `defaultSupportedIdpConfigs` and `oauthIdpConfigs`, `signIn.anonymous.enabled`,
+`signIn.phoneNumber.enabled` and `client.permissions.disabledUserSignup`. The pin holds when **password and
+`google.com` are the only two enabled**, no other provider is enabled, anonymous and phone-number sign-in are off,
+and public sign-up is **not** disabled — the workspace's Firebase is the one that does not refuse public sign-up
+(spec §3), which is what lets a person who does not already hold a password create one and reach the workspace at
+all. `custom` is the half of the pin no configuration carries: it is not a toggle in this document, and what
+refuses it is the signer endpoint's own pin on the `firebase.sign_in_provider` claim (spec §3, **W4**) — so the
+block records it as an **INFO** row and never as a criterion this read settled.
+
+**Reading the `CHECK 361 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
+`FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 361 RESULT END (exit N)`. `project`, `belong`
+and `xtrace` say what the run was reading, `token` and `config` say whether the one read happened and what it
+answered, and the criteria are their own rows — `password`, `google`, `anonymous`, `phone`, `other-providers` and
+`public-signup` — followed by `custom` (**INFO**, never a criterion) and the verdict row **`pin`**, whose detail
+names every row that failed. Exit `0` means the pin holds exactly; `1` means it does not — a provider the pin admits
+is off or absent, one it refuses is on, public sign-up is disabled, or Identity Platform is not initialized in the
+project at all, which is the reading where nobody can sign in — and each row of that kind says what to change and
+where; `2` means the run could not tell (a guard stopped it, no token could be minted, the read did not answer or
+was refused, the document could not be parsed, a tool is missing, an internal error ended it) — `2` is not an
+answer about the providers, and the block's `aborted` row says so.
+
+**No credential is printed, logged or put on a command line.** The access token is minted with
+`gcloud auth print-access-token --quiet` into a `0600` config file inside a `0700` scratch directory, and curl
+reads it with `--config` — the pattern Check 91 uses, and for the same reason, `ps` shows a process's argv to every
+user on the machine. The file is removed whether the run passes, fails or is interrupted, and the block's
+`auth-conf` row reads that removal back. A shell that was started tracing (`-x`) is refused before anything is
+minted, because a trace would print that line, and the scratch directory is removed at the end either way.
+
+**Cost.** Nothing billable and no model call: one GET.
+
+**What waits on it.** The workspace's own signer (**W4**, and every member behind it) at its first run: the
+exchange is only as good as the claim it verifies, and the pinned set is what turns "the workspace's Firebase said
+so" into a statement a member can hold. It is also named in the release note's `### For operators` section
+(**W9**), which is where the enablement step itself is written down.
