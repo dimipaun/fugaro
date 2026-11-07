@@ -2,8 +2,8 @@
 
 **Status: design answered in part by the owner on 2026-11-07; plan only; nothing is implemented; no task
 approved.** This file amends [spec.md](spec.md) against the code. **Where it disagrees with the spec, it
-wins.** Checked against `origin/main` at `0fdc0909b` on 2026-11-07. **Independent review rounds have NOT
-been run on this package** (see §6).
+wins.** Checked against `origin/main` at `1ad2d3143` (main's tip on 2026-11-07; round 1 re-verified every finding below at that commit). **Round 1 (an independent security review) ran on 2026-11-07 and is applied here; see §7 for what was
+accepted and dismissed. No second round has run.**
 
 **Numbers.** This work holds **D1580–D1599** and **Checks 400–409** and reserves all of them. The
 siblings are `docs/no-prompt-policy` (D1540–D1559, PR #1906) and `docs/composite-commands`
@@ -63,9 +63,14 @@ never parse as a repository (RS1), not a refusal in `repos add`.
 repository the policy's `allow_repos` admits **at the moment of the check**; a newly enrolled repo is
 covered with no change to any grant, and a wildcard pattern is re-evaluated the same way (spec's own rule).
 
-**F8 — Wrong: "an image tied to a repo is managed by an admin of that repo".** There is no such image
-(§1 table). *Consequence:* today every catalog entry is a **project-level resource**, managed only
-by a project-scope admin; D1584 asks whether a catalog entry may later carry a repo binding.
+**F8 — Wrong, corrected in round 1: "an image tied to a repo".** Two things are true. The **catalog**
+(`projectpolicy.ImageCatalog = config.Catalog`) is a project-level node with no repo binding. But the
+**per-repository derived image still exists on main**: `fugaro image build [name] --workflow`
+(`internal/cli/image.go`) and `internal/cli/image_refresh_steps.go` still build and refresh a workflow's
+derived image, and only R0/R1 of `docs/repo-image-removal/` have merged. *Consequence:* catalog entries are
+project-level, project-scope admin only (D1584); **rebuilding a workflow's derived image is a repo-scoped
+action** (admin on that repo) until the removal chain deletes it, and RS6c covers it or depends on that
+chain.
 
 **F9 — Exists: "repo admins change settings only within the project guardrails".** The project layer and
 `internal/policy` merge already only tighten. *Consequence:* a repo-scoped admin's writes go through the
@@ -78,19 +83,19 @@ read cannot be a per-machine file. *Consequence:* D1585 (stored in the published
 `access` node; the IAM lists become **derived** from the project-scope pairs by the composite-commands
 step registry).
 
-**F11 — Rule: licensing keeps cancel and the kill switch in read-only use.** `docs/subscriptions`
-reconciliation F15/T12: after a lapse a User "cannot launch, cancel or change anything" in the Terms
-text, while T12 ruled that read-only keeps cancel and the kill switch. The spec says a viewer "can't
-launch jobs or change anything" and that a lapse drops users to viewer. *Consequence:* D1587.
+**F11 — Rule, corrected in round 1: the lapse is already ruled.** Subscription Terms §9.1 (counsel-approved
+2026-10-29, `docs/licensing`) keeps cancel and the kill switch in read-only use, and D436/T12
+(`docs/subscriptions/reconciliation.md` F15) ruled that after a lapse the console and the app read and
+cancel while the MIT CLI keeps working. *Consequence:* no new tension; the spec's "can't launch jobs or
+change anything" for a **lapsed** viewer is already amended by T12.
 
-**F12 — Rule, amends the spec: a lapse is not a role rewrite (D1582).** The spec's last acceptance
-criterion ("all users are limited to viewer") would also stop the **MIT core CLI**, which the licensing
-design keeps free. The owner's 2026-11-07 answer: only Subscription-edition surfaces (console, mobile
-and subscription features) drop to viewer; assignments are untouched and return on resume. A lapse is
-therefore a **licence-gate input** to the resolver, supplied through `ee/`'s seam (roles.md D694), and
-**does not differ from the spec's intent for those surfaces**. *Consequence:* the spec's acceptance
-sentence is replaced by "when a subscription lapses, the Subscription surfaces limit every user to
-viewer; no assignment is changed or lost; the core CLI is unaffected".
+**F12 — Rule: a lapse is not a role rewrite (D1582 restates D436).** The spec's last acceptance criterion
+("all users are limited to viewer") would also stop the **MIT core CLI**. The owner's 2026-11-07 answer
+(only Subscription-edition surfaces drop to viewer, assignments untouched and returned on resume) is
+D436 in this design's words. A lapse is a **licence-gate input** to the resolver, supplied through `ee/`'s
+seam (roles.md D694). The spec's acceptance sentence is replaced by "when a subscription lapses, the
+Subscription surfaces limit every user to viewer (cancel and the kill switch kept, T12); no assignment is
+changed or lost; the core CLI is unaffected".
 
 **F13 — Rule: a workspace is not the project scope.** `docs/workspaces` groups **projects**; D1295
 (answered 2026-11-04) refused any workspace role that maps to a member project's role. *Consequence:*
@@ -117,9 +122,9 @@ subset test over canonical patterns, RS1). (2) Removing the **last project admin
 self-removal stays refused (the existing `fugaro user rm` ruling). (3) The GCP project's **owners and
 editors are implicit project admins** and so are `budget_admins` (roles.md D689 answered as
 recommended). (4) A pattern grant is checked against the **canonical spelling** only; a case or
-`.git` variant is normalised by `Canonical` before it is stored. (5) The caller is the **authenticated
-Google identity**; a run's job account holds no role on the Firebase project and is on no list
-(roles.md §1.1), so an agent *inside a run* cannot grant anything.
+`.git` variant is normalised by `Canonical` before it is stored. (5) A run's job account holds no role on the Firebase project and is on no list (roles.md §1.1), so an
+agent *inside a run* cannot grant anything. **(The caller's identity is F21: it is NOT the Google
+identity today.)**
 
 **F18 — Resolved: where the code lives.** Enforcement of the three roles stays in MIT core (T16, D637);
 the role model's UX and the lapse input live in `ee/` through a `Set*` seam beside the governance ones
@@ -139,6 +144,96 @@ steps): the command writes the node, then the registry runs the IAM-list step, a
 "saved, not live yet" only on a failed step (that sibling's D1563). This plan has **no step of its own**
 and declares only what each change affects.
 
+**F21 — Wrong, round 1: the caller is not the authenticated identity today.** `meMember` (`internal/cli/roles.go`)
+and `pairMeLookup` (`internal/cli/pair.go`) read `localcfg.Config.Me`, which is the config's `user:` key,
+**else `git config user.email`** (`internal/localcfg/localcfg.go`, `Me`). Both are text a person or an
+agent can set. A role check built on it is a courtesy. *Consequence:* RS1 defines `access.Caller` as read
+from the **credential** the command will use (the token's email claim from the Google application-default
+or gcloud credential), never from config or git; RS5 and RS8 take it from there; pinned by
+`TestCallerIsTheCredentialNotGitConfig`. The existing `meMember` keeps its table-default use and is never
+fed to `access`.
+
+**F22 — Missing, BLOCKING, round 1: what each role and scope holds in the cloud, and who can write the
+grants.** Grants must live in the Realtime Database under `config/…`; `internal/budget/rules/rules.json.tmpl`
+gives `config/policy/*` and `config/admin/*` **`.write: false`**, so the only writers are IAM holders of
+`roles/firebasedatabase.admin` — the project's owners and editors and `budget_admins` (roles.md §1.2).
+The migrated **admins (today's `operators`) do not hold it.** Table (today, and after RS3/RS4):
+
+| Role and scope | Cloud grants it carries | Can it write the `access` node or any `config/policy/*` setting? |
+| --- | --- | --- |
+| viewer, project | the RS4 viewer list: RTDB viewer, spend viewer, read-only job role, log view, runs-bucket read | no |
+| operator, project | the launcher grants: `job_runner` on the jobs, `fugaroLauncher`, logs, runs bucket `runs/` and `tokens/` write | no |
+| admin, project | the `operators` grants: state bucket, build submitter, base-image writer, runs bucket whole | **no** — not by these grants |
+| owners, editors, `budget_admins` | `roles/owner`/`editor`, `firebasedatabase.admin` | **yes** (implicit project admins, F17.3) |
+| **any role at all-repos scope** | **none of its own** | no |
+| **any role at specific-repos scope** | **none of its own** | no |
+
+Three consequences. (a) **Repo-scoped and all-repos pairs carry no cloud grant before RS12**: they are a
+CLI/console policy check over grants the person already holds project-wide, or none. (b) **Anyone who is
+given the write the `access` node (or a repo's settings under `config/policy/repos/$slug`) needs is
+effectively a project admin**: `firebasedatabase.admin` writes everything under `config/`, including
+the `access` node itself, so a repo admin holding it could promote themselves to project admin. (c) The
+spec's acceptance criterion 2, the **team-lead example** and **Check 402** (a repo admin changes their
+repo's settings and images) therefore **cannot hold as stated** until a write path that checks the node
+exists. This was hidden by D1585's earlier text deriving cloud grants from project-scope pairs only; it is
+now D1591 (below) and RS5 depends on it.
+
+**F23 — Missing, round 1: check-then-write races.** `fugaro user grant`/`revoke` judge the caller's
+authority and the last-admin rule against a read, then write. Two concurrent writers could each pass the
+rule and together remove the last admin or both widen. `rtdb.Client.GetETag` and `PutIfMatch`
+(`internal/rtdb/client.go`) exist. *Consequence:* RS5 writes **conditionally on the ETag of the read it
+judged** and retries from the read on a mismatch, with a concurrency test (two writers, one wins, the
+other re-judges). The same test covers **self-demotion**: `grant --role operator` for oneself is a
+demotion and must obey the last-admin rule like `revoke`.
+
+**F24 — Missing, round 1: who may revoke or demote.** The spec says who may grant. *Consequence:* a
+revoke or demote of a pair is allowed only to a caller whose own role covers that pair's scope at admin;
+**a repo admin can never revoke or demote a project-scope or all-repos pair**, nor a pair whose scope is
+not a subset of their own (`TestRepoAdminCannotRevokeProjectGrant`).
+
+**F25 — Gap, round 1: the member forms of the old lists.** `localcfg` validates list members as `user:`,
+`group:`, `serviceAccount:` (and `domain:` for `launchers`/`operators`, `internal/localcfg/localcfg.go`
+validation); `fugaro user` writes only `user:`. A group or domain cannot be matched against a caller by
+the CLI. *Consequence (resolved):* `access` grants are **`user:` only**. A `group:`/`domain:`/
+`serviceAccount:` member already on a list at migration stays as a **legacy IAM-only member** at project
+scope: it keeps the cloud grant (RS3 keeps deriving it) and is listed by `ls` as legacy, but the CLI
+resolver does not rank it (it cannot know a caller's groups), so a command check treats such a caller by
+their own `user:` grant or as nobody. The migration test covers each form.
+
+**F26 — Rule, round 1: this design reverses answered decisions of `docs/design/roles.md`.** D1580
+reverses **D690(a)** ("the CLI does not rank its own commands") and **D691(a)** (the console does not
+know a role) and narrows **D446** ("enforced system-wide, the cloud included"); roles.md on main still
+shows D681–D695 with status `open` although the owner answered them on 2026-10-30. *Consequence:*
+RS10 records D681–D695 as answered and marks D690 and D691 **superseded by the owner's 2026-11-07 D1580
+answer**; the narrowing of D446 is stated beside it.
+
+**F28 — Wrong, round 1: the first D1585 put the grants where every run reads them.** `Policy.Access` in
+`projectpolicy.Policy` would sit in `config/policy/shared`, whose rule is `.read: TOKEN` (`rules.json.tmpl`):
+each run's agent could read every member's address and role. *Consequence:* D1585 amended (above); RS2
+stores the node under `config/admin/` and pins it with a rules test.
+
+**F27 — Resolved, round 1: smaller design points.**
+- **Implicit admins** (owners, editors, `budget_admins`) are an **input** to the resolver
+  (`access.Input.Implicit`, read from the installation's outputs), not a stored pair.
+- **"The member exists":** Fugaro has no directory. The check is that the member is a well-formed `user:`
+  address; GCP refuses an IAM member it cannot resolve when the derived list is applied, and that failure
+  is the composite command's partial-failure case. UNVERIFIED which GCP error an unknown address gives.
+- **`ls` "the repos a pattern matches now":** when `allow_repos` holds patterns the set of repos cannot be
+  enumerated. `ls` prints matches among the **repositories this machine's config lists and runs it has
+  seen**, labelled "known", and never claims completeness.
+- **A scope never admits a repo `allow_repos` does not** (a repo outside it cannot run at all).
+- **A renamed or recreated repo inherits a pattern grant** (matching is by name at check time); the docs
+  state it as a limit, and a rename is a new name.
+- **Size:** the node has no `MaxPolicyBytes` bound if it is not in the policy (F22/D1585 amended), so RS2
+  defines its own cap (a count and a byte bound) and refuses a write over it.
+- **An older CLI:** once the node is written, an older CLI's `fugaro update` could ignore or drop it.
+  RS3 adds a floor so an older CLI refuses naming `brew upgrade` and `fugaro update`; UNVERIFIED how an
+  older CLI treats an unknown `config/admin` member today (RS3's first step reads it).
+- **The `fugaro user ls --json` document** must not reuse the key `operators` or `launchers` with the new
+  meaning (CLAUDE.md "a field never changes meaning"): it gets new names (`grants`, `effective`) and the
+  old keys are removed with a version bump.
+- **The subset algorithm** is written down in RS1 (below) with hostile cases.
+
 ## 3. Decisions
 
 | # | Question | Recommendation and why | Alternative and its cost | Owner's answer |
@@ -148,43 +243,45 @@ and declares only what each change affects.
 | **D1582** | A lapse: everyone to viewer, or only the Subscription surfaces? | **Only Subscription-edition surfaces drop to viewer;** the MIT core CLI keeps working; assignments kept and returned on resume. A licence-gate input, not a role rewrite (F12) | All surfaces to viewer, as the spec says: stops the free core | **2026-11-07: as recommended; differs from the spec's acceptance sentence** (amended in F12). Why: the MIT core promise |
 | **D1583** | Scope grammar | **`project`, `all-repos`, or a comma-separated list of repo patterns; `*` stays inside one path segment; no `**`; patterns re-evaluated at check time; bare names refused with a hint** | Accept bare names when unique: ambiguous across owners and changes meaning when a second owner registers a same-named repo | **2026-11-07: as recommended in its text "owner/name or owner/pattern only"; AMENDED AFTER REVIEW below** |
 | **D1584** | May a catalog entry carry a repo binding so a repo admin manages it? | **No for now: every catalog entry is project-level, project-scope admin only** (F8). A `repos:` binding is a later change to `config.Catalog`, its schema and the published node | Add the binding now: a catalog shape change and the cover/policy rows in the same release | *(empty)* |
-| **D1585** | Where are the role/scope pairs stored? | **A new `access` node in the published project policy** (the one place every machine and the console read), with the IAM lists derived from the project-scope pairs by the step registry. Local `terraform.launchers/operators` become derived, then removed | Keep the per-machine config lists and add a scope column: drift between machines (the reason `user rm` refuses today) and the console cannot read them | *(empty)* |
+| **D1585** | Where are the role/scope pairs stored? **(amended after review, round 1)** | **A new `access` node in the Realtime Database under `config/admin/` (`.read: false`, `.write: false` in `rules.json.tmpl`), NOT in `config/policy/shared`**, which carries `.read: TOKEN` so every run's agent would read every member's address and role (F28). Read and written over IAM by CLI callers holding the database grant; derived IAM lists from the project-scope pairs by the step registry. The node has its own size and count cap (F27) and an RS2 **rules test that no run token reads it**. Local `terraform.launchers/operators` become derived, then removed | The published policy node (first recommendation): shared, but run-readable | **2026-11-07: the first text (policy node) was recommended and the owner answered the direction (a shared, published store) but not the location; the location is amended and the owner is asked to confirm** |
 | **D1586** | Does a viewer read spend, and per scope? | **Yes at project scope; a repo-scoped viewer reads only the runs and logs of those repos, and project-level spend is not shown to them.** Spend history is one Firestore collection per project (roles.md `datastore.viewer`), so a per-repo spend view is a CLI-side filter, not a barrier | Spend for everyone who has any role: simplest, exposes other repos' cost to a contractor | *(empty)* |
-| **D1587** | May an operator cancel a run another person started, and does a lapsed viewer keep cancel and the kill switch? | **Operator: yes, within scope** (today a launcher cancels any run, `fugaroLauncher`). **A lapse keeps cancel and the kill switch, as T12 ruled**; an ordinary viewer cannot cancel. The spec's "can't change anything" is amended for the lapse case | No cancel for a lapsed viewer: contradicts T12 and the Terms draft's read-only use | *(empty)* |
+| **D1587** | May an operator cancel a run another person started? **(lapse half dropped in round 1: already ruled by D436/T12, F11)** | **Yes, within scope** (today a launcher cancels any run, `fugaroLauncher`). An ordinary viewer cannot cancel; a lapsed viewer keeps cancel and the kill switch as T12 ruled | No cancel for any operator but the starter's own: needs a run-owner check the cloud cannot make (`fugaroLauncher` bundles cancel on every run) | *(empty)* |
 | **D1588** | A paired device and scopes | **A device inherits the highest PROJECT-scope role of the pairing user and may only lower it; a user with only repo-scoped roles cannot pair** (a device node has no scope field). Scoped devices need a node-shape change later | Add a `scope` child to the device node now: a rules and schema change and a version bump | *(empty)* |
 | **D1589** | Do the Terraform variable names (`launchers`, `operators`) change with the config words? | **No: config keys, flags and docs are renamed; the Terraform variable and resource names stay.** The plan is then empty for an installation that only renames, and no state move is needed | Rename the variables: state moves and a noisy plan for no user-visible gain | *(empty)* |
-| **D1590** | May a coding-agent session grant or revoke a role? | **No: a grant or revoke in an agent session refuses (not a prompt) and prints the exact command for the person** — the same shape as the sibling's cap-raise rule (no-prompt D1542). Every other command stays open to the agent *within the person's own role* | Yes: an agent in an admin's session can promote itself or anyone, defeating the role | *(empty)* |
+| **D1590** | May a coding-agent session grant or revoke a role? | **No: a grant or revoke in an agent session refuses (not a prompt) and prints the exact command for the person** — the same shape as the sibling's cap-raise rule (no-prompt D1542). Every other command stays open to the agent *within the person's own role*. **Stated honestly (round 1): agent sessions are detected by environment variables (`internal/agentenv`) that an agent can unset; this is a courtesy against accidents, not a barrier**, exactly as `agentenv.go` says of itself, and RS10's doc test pins that sentence | Yes: an agent in an admin's session can promote itself or anyone, defeating the role | *(empty)* |
+| **D1591** | How does a repo-scoped admin's write reach the cloud (F22)? Before RS12 a repo-scoped admin has no cloud grant, and anyone given the database write is effectively a project admin | **(c) Until RS12 a repo-scoped admin changes only what a person can change without a cloud write: their repo's `fugaro.yaml` through the repository's own review, and CLI-local actions; scoped operator and viewer roles are CLI/console checks over grants the person already holds. The `access` node and every `config/` write need a project-scope admin.** Honest and ships now | (a) A write path that checks the node before writing (a small service the repo admin may call, a new trust boundary: RS12). (b) Give repo admins `firebasedatabase.admin`: they become project admins in practice and can promote themselves | *(empty)* |
 
-### D1583 — amended after review
+### D1583 — amended after review (rewritten in round 1)
 
 The owner chose "owner/name or owner/pattern only; `*` stays inside one segment; bare names refused".
-The code fact that contradicts the premise (F5): the one spelling of a repository is
-**`<provider>/<owner>/<name>`**, and `projectpolicy.MatchRepo` **refuses a bare `owner/*`** because it
-names no provider. Keeping the owner's text literally would add a second spelling beside the allow-list's.
-**What changes:** a scope value's repo pattern is a **canonical pattern** (`github/acme/api-*`,
-`bitbucket/acme/*`, `*/acme/*`). The command accepts the shorthand `owner/name` or `owner/api-*` and
-**takes the provider from this machine's project config, exactly as `fugaro project repos add` does**,
-then stores the canonical form; the listing prints the canonical form. **What does not change:** `*`
-stays inside one segment, no `**`, patterns re-evaluated at check time, bare names (`frontend`) refused
-with a hint, `project`/`all-repos` keywords. **The owner is asked to confirm this amended text** (open
-item 1).
+Code facts (F5): the one spelling of a repository is **`<provider>/<owner>/<name>`**;
+`projectpolicy.MatchRepo` refuses a bare `owner/*` because it names no provider; and
+`canonicalRepoArg` (`internal/cli/project_enroll.go`) resolves a two-segment `owner/name` **only when
+that exact repository is listed in this machine's config** (`configRepo`), refusing anything else with
+"name it canonically". A Fugaro project has **no single provider**, so an `owner/pattern` shorthand has
+no provider to take. **What the scope grammar is:** the **stored and printed spelling is canonical**
+(`github/acme/api-*`, `bitbucket/acme/*`); the shorthand `owner/name` is accepted **only for an exact
+repository this machine's config lists** (as `repos add` does); a **pattern is always written canonical**;
+a **`*` in the provider segment is refused** (so the `*/acme/*` form `MatchRepo` allows is not a scope
+value; only the lone `*` is, and it means `all-repos`, which has its own keyword). Bare names
+(`frontend`) are refused with a hint; `*` stays inside one segment; no `**`; patterns re-evaluated at
+check time. The owner is asked to confirm this amended text (open item 1).
 
 ## 4. Open tensions and open items for the owner
 
-1. **Confirm D1583 as amended** (canonical `provider/owner/name`, shorthand resolved with the machine's
-   provider).
-2. **Tension — D1582 against the spec's lapse sentence and against the Terms text.** The spec limits all
-   users to viewer; the owner's answer limits only Subscription surfaces; and the Terms draft says a
-   User "cannot launch, cancel or change anything" while T12 keeps cancel and the kill switch (F11).
-   D1587 asks the owner to rule on the lapse rights; counsel's text (`docs/licensing`) is not this
-   plan's to change.
-3. **Tension — a role is a policy check, not a barrier (D1580).** A person with a project-wide IAM grant
-   can launch a repo they are not scoped to with `gcloud`. The docs must say so wherever a scoped role
-   is described; a contractor scoped to one repo must not be given the project-wide IAM list. Until
-   RS12 the safe way to hold a contractor is **no** IAM grant for the lists and a launch through a
-   coordinator that does not exist yet. The owner should rule whether **repo-scoped grants ship before
-   RS12** (a courtesy with a stated limit) or wait for it.
-4. **Open decisions D1584–D1590** above (empty answer cells).
+1. **Confirm D1583 as amended** (canonical stored spelling; shorthand only for an exact listed repo; no `*`
+   provider) **and D1585 as amended** (the node under `config/admin/`, not the policy node).
+2. **Tension — the spec's scoped examples against the cloud (F22, D1591).** Acceptance criterion 2, the
+   team-lead example and Check 402 need a repo admin to write repo settings and images; the database only
+   admits `firebasedatabase.admin` holders, who are project admins in practice. D1591 asks which of three
+   ways to take; the recommendation ships project-scope admin writes now and leaves repo-scoped admin
+   writes to RS12. **Acceptance criterion 2 is therefore met for the CLI's local and PR-based actions
+   only, until RS12.**
+3. **The role is a policy check, not a barrier (D1580)** for launch and read: a person with a
+   project-wide IAM grant can act on any repo with `gcloud`. The docs say so wherever a scoped role is
+   described (RS10 doc test). The owner should rule whether repo-scoped grants ship before RS12 as a
+   stated courtesy.
+4. **Open decisions D1584–D1591** above (empty answer cells).
 5. **Sibling dependencies.** Role changes use `docs/composite-commands`' step registry (D1561) and its
    partial-failure message (D1563); refusals use `docs/no-prompt-policy`. Neither is merged: RS5 and RS6
    wait for them.
@@ -193,26 +290,50 @@ item 1).
 
 | Spec text | Replaced by |
 | --- | --- |
-| "an image tied to a repo is managed by an admin of that repo" | F8, D1584: catalog entries are project-level |
+| "an image tied to a repo is managed by an admin of that repo" | F8, D1584: catalog entries are project-level; a workflow's derived image rebuild is repo-scoped until the removal chain lands |
 | "refuses to create or register a repo with either name" | F6: a test, no new refusal |
 | scope values "a comma-separated list of repo names, for example `frontend,api`" | D1583 amended: canonical patterns; bare names refused |
-| "When a subscription lapses, all users are limited to viewer" | F12, D1582, D1587 |
+| "When a subscription lapses, all users are limited to viewer" | F12, D1582 (restates D436/T12): Subscription surfaces only, cancel and the kill switch kept |
+| acceptance criterion 2 (a repo admin changes repo A's settings and images) | F22, D1591: only as far as a person needs no cloud write, until RS12 |
+| "Only a project admin can grant ... A repo admin can grant roles up to admin" | F17.1 subset rule, F24 revoke rule, F23 conditional write |
 | "no follow-up steps" | F20: composite step registry |
 
 ## 6. UNVERIFIED
 
-- **`meMember`'s identity source.** `internal/cli/roles.go` names the function; I did not read where it
-  gets the caller's address. The design assumes the authenticated Google identity (F17.5).
+- **How a CLI command obtains the credential's email claim** (F21). `access.Caller` is designed but the
+  exact reader (ADC token claim versus `gcloud auth list`) is RS1's first step; `localcfg.Me` is known to
+  be forgeable (read and cited).
 - **Which settings keys are "repo overrides".** `settingsManagedKeys` holds two scalar keys; per-repo
   budget caps exist (`budget set --repo`), per-repo `fugaro.yaml` lives in the customer's repository and
   is reviewed there. RS6b assigns each writable key a required role; the list is to be confirmed
   against `internal/settings`.
 - **Whether `fugaro project repos add` already refuses `project`/`all-repos`.** F6 reasons from the
   canonical spelling; the refusal's exact message was not read.
-- **Console surfaces.** The exact-argv read table (`consoleReadPaths`, `console/src/main/spawn.ts`) was
-  not opened on this pass; RS7 states the equality test the rule requires.
+- **Console surfaces.** `consoleReadPaths` lives in `internal/cli/project.go` (round 1 corrected the file);
+  its console-side half and the Go equality test were not re-read in full: RS7 states the test the rule
+  requires.
 - **Cloud mechanics of RS12** (per-job `run.invoker`, bucket prefix conditions and `objects.list`) are
   roles.md's reading (§4) and were not re-verified.
-- **No independent review round has run.** Every citation was grepped on `origin/main`; no fresh reviewer
-  has attacked the trust boundaries (a scoped admin widening their own scope, the derived IAM lists, the
-  last-admin lockout).
+- **Round 2 has not run.** Round 1's findings were each re-verified on `origin/main` (§7); no fresh
+  reviewer has attacked the amended text (the `config/admin/` node, the conditional write, the subset
+  algorithm).
+
+## 7. Round 1 (independent security review, 2026-11-07): accepted and dismissed
+
+Each finding was re-verified on `origin/main` at `1ad2d3143` before acting.
+
+| # | Finding | Verified | Action |
+| --- | --- | --- | --- |
+| 1 | No table of cloud grants per role and scope; the access node's writer | `rules.json.tmpl` gives `config/policy/*` `.write: false`; roles.md §1.2: only `firebasedatabase.admin` writes | **Accepted:** F22 table, D1591, RS5 depends on it, criterion 2 and Check 402 re-scoped |
+| 2 | Caller is not the authenticated identity | `localcfg.Config.Me`: config `user:` else `git config user.email`; `meMember`, `pairMeLookup` read it | **Accepted:** F21, RS1/RS5/RS8, `TestCallerIsTheCredentialNotGitConfig` |
+| 3 | `Policy.Access` readable by every run | `config/policy/shared` `.read: TOKEN` | **Accepted:** F28, D1585 amended, RS2 rules test |
+| 4 | Check-then-write races; self-demotion | `rtdb.Client.GetETag` / `PutIfMatch` exist | **Accepted:** F23, RS5 |
+| 5 | Who may revoke | spec silent | **Accepted:** F24, `TestRepoAdminCannotRevokeProjectGrant` |
+| 6 | D1583 amendment wrong (`repos add` shorthand) | `canonicalRepoArg` resolves a 2-segment arg only through `configRepo`; refuses otherwise | **Accepted:** D1583 rewritten; `*/acme/*` example dropped |
+| 7 | F8 wrong: derived image still exists | `image build --workflow` in `internal/cli/image.go`; `image_refresh_steps.go` exists | **Accepted with a correction:** the reviewer also named an `image dockerfile` command; there is none (`--dockerfile` is a flag of the catalog add, `image_catalog.go`), so F8 names the two that exist |
+| 8 | Stale lapse tension | Terms §9.1 and D436/T12 read in `docs/licensing`, `docs/subscriptions/reconciliation.md` F15 | **Accepted:** F11/F12 rewritten, D1587's lapse half and the tension dropped |
+| 9 | roles.md consistency | roles.md §9 shows D681–D695 `open` | **Accepted:** F26, RS10 records answers and supersessions |
+| 10 | D1590 overstated | `internal/agentenv/agentenv.go` says it is a mitigation, not a barrier | **Accepted:** D1590 states it, RS10 pins it |
+| lesser | RS4→RS5 edge; group/domain/serviceAccount members; implicit admins input; member-exists source; `ls` enumeration; `consoleReadPaths` file; `ls --json` keys; main's commit; D1586's filter in `budget.go`; subset algorithm; rename/recreate; scope ⊆ `allow_repos`; node size; older CLI; package docs test | each checked (F25, F27, `internal/cli/project.go`) | **Accepted** in F25, F27, the plan's edges, RS1, RS2, RS3, RS6c, RS7 and RS10 |
+
+Dismissed: none in full. One partial dismissal: the non-existent `image dockerfile` command (row 7).
