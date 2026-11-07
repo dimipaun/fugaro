@@ -1704,7 +1704,43 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 // as a diff a reviewer reads rather than as a match this test waves through.
 // M3's node is refused whole, so a path under it is the same shape.
 func isNamedAddition(p string) bool {
-	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth
+	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth || isNewWorkspacePath(p)
+}
+
+// isNewWorkspacePath reports whether p is one of the paths the workspace family
+// adds (docs/workspaces/implementation-plan.md W3, workspace.go): the record and
+// its four children, the admitted-token hashes, and the meter and the rollup by
+// month. Like the credentials family's, every one of them is an equality and
+// not a prefix — a path *under* `workspaces/$name` that is not named here is a
+// rule hidden under the record, which is the shape a client's read of it takes,
+// and it belongs in this test as a diff a reviewer reads rather than as a match
+// this function waves through.
+//
+// The paths are the family's whole output, so a node added to
+// workspace.json.tmpl without being named here fails this test — which is the
+// point: the workspace's database is the one whose readers are its own service
+// and the owner's CLI, and a rule that reached a client there would be a leak
+// with a public address.
+func isNewWorkspacePath(p string) bool {
+	for _, node := range []string{
+		WorkspaceRecordPath,
+		WorkspaceRecordPath + "/$name",
+		WorkspaceRecordPath + "/$name/version",
+		WorkspaceRecordPath + "/$name/name",
+		WorkspaceRecordPath + "/$name/members",
+		WorkspaceRecordPath + "/$name/cap",
+		WorkspaceTokenPath,
+		WorkspaceTokenPath + "/$hash",
+		WorkspaceMeterPath,
+		WorkspaceMeterPath + "/$month",
+		WorkspaceRollupPath,
+		WorkspaceRollupPath + "/$month",
+	} {
+		if p == node {
+			return true
+		}
+	}
+	return false
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the

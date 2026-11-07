@@ -49,18 +49,6 @@
         ".read": false,
         ".write": false
       }
-    },
-    "config": {
-      ".read": false,
-      ".write": false,
-      "limits": {
-        ".read": false,
-        ".write": false,
-        "$key": {
-          ".read": false,
-          ".write": false
-        }
-      }
     }
   }
 }
