@@ -355,9 +355,9 @@ export function parseYAML(raw: string, file: string): Value {
       const next = lines[i]
       if (next && next.indent > parentIndent) return block()
       // A key with nothing after it and nothing indented under it is null in YAML, and the
-      // file that writes it that way is `website/data/mobile-release-summaries.yaml`, whose
+      // file that needs it read that way is `website/data/mobile-release-summaries.yaml`, whose
       // `summaries:` key holds no entry until the app's first release. It is read as the null
-      // it is rather than refused here, because what an empty block mean is the loader's
+      // it is rather than refused here, because what an empty block means is the loader's
       // question and not this reader's — and a loader that needs a map, a list or a string
       // still refuses the null by name (`asMap`, `asList`, `asString` below), so a key that
       // lost its value to a bad edit is as loud as it was.

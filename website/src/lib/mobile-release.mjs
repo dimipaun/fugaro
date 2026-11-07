@@ -2,11 +2,13 @@
 //
 // The app releases on its own stream (`mobile-vX.Y.Z`, docs/release.md "Mobile releases"): its
 // notes are `docs/releases/mobile/vX.Y.Z.md` and its version line is `mobile/package.json`.
-// The rule is the console's (`src/lib/console-release.mjs`, which is this module line for line
-// with the other package manifest): the latest release is the newest notes file at or below the
-// version the package carries, so a notes file written ahead of the version bump is never named
-// and a version bump with no notes file names nothing new. No version is typed anywhere on the
-// site.
+// The rule is the console's (`src/lib/console-release.mjs`): the latest release is the newest
+// notes file at or below the version the package carries, so a notes file written ahead of the
+// version bump is never named and a version bump with no notes file names nothing new. No
+// version is typed anywhere on the site. The rule is repeated here rather than shared, because
+// the console's module is consumed as it is and each stream's tag is its own (`console-vX.Y.Z`
+// against `mobile-vX.Y.Z`); `website/test/changelog-page.mjs` reads both streams' directories
+// with one helper and holds the page to the same answer.
 //
 // **The app's stream has one difference the console's does not, and it is the page's rather
 // than this module's**: the app publishes no GitHub release, so the page renders its line with

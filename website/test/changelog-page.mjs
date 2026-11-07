@@ -778,8 +778,8 @@ test('the changelog page names the latest console release, linking its GitHub re
   const lines = streamLines(html)
   assert.deepEqual(
     lines.filter((line) => line.text.startsWith(CONSOLE_LABEL)).map((line) => line.text),
-    [`${CONSOLE_LABEL} ${release.version}`],
-    `the page's console line(s) are ${JSON.stringify(lines.map((line) => line.text))}, and ${CONSOLE.name}'s latest release is ${release.version}: the line names the newest notes file at or below the version console/package.json carries (D1641, D1644)`,
+    [`${CONSOLE_LABEL} v${release.version}`],
+    `the page's console line(s) are ${JSON.stringify(lines.map((line) => line.text))}, and ${CONSOLE.name}'s latest release is v${release.version}: the line names the newest notes file at or below the version console/package.json carries (D1641, D1644)`,
   )
   const console = lines.find((line) => line.text.startsWith(CONSOLE_LABEL))
   assert.equal(
@@ -848,8 +848,8 @@ test('the changelog page adds no sentence of its own', () => {
     NOTES_LABEL,
     'not yet released',
     MORE_LABEL,
-    ...(consoleRelease === null ? [] : [`${CONSOLE_LABEL} ${consoleRelease.version}`]),
-    ...(mobileRelease === null ? [] : [`${MOBILE_LABEL} ${mobileRelease.version}`]),
+    ...(consoleRelease === null ? [] : [`${CONSOLE_LABEL} v${consoleRelease.version}`]),
+    ...(mobileRelease === null ? [] : [`${MOBILE_LABEL} v${mobileRelease.version}`]),
     ...releaseFiles().map(tagOf),
   ])
 

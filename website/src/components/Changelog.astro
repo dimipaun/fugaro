@@ -110,7 +110,7 @@ interface Props {
 
 /** One of the two streams beside the CLI: its latest release, and the tag that release carries. */
 interface StreamRelease {
-  /** The version the line names: `0.120.0`. */
+  /** The version, without its `v` — the line prints it as `v0.120.0`. */
   version: string
   /** The tag its own notes and its GitHub release carry: `console-v0.120.0`. */
   tag: string
@@ -277,16 +277,13 @@ function summaryOf(entry: Entry): string {
     a release (D1644). */}
 {consoleRelease && (
   <p class="changelog-stream">
-    {CONSOLE_LABEL}{' '}
-    <a href={`${repository}/releases/tag/${consoleRelease.tag}`} rel="noopener">
-      {consoleRelease.version}
-    </a>
+    {CONSOLE_LABEL} <a href={`${repository}/releases/tag/${consoleRelease.tag}`} rel="noopener">v{consoleRelease.version}</a>
   </p>
 )}
 {mobileRelease && (
   <>
     <p class="changelog-stream" data-mobile-release={mobileRelease.tag}>
-      {MOBILE_LABEL} {mobileRelease.version}
+      {MOBILE_LABEL} v{mobileRelease.version}
     </p>
     <p class="changelog-stream-summary">{mobileRelease.summary}</p>
   </>
