@@ -219,7 +219,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		// findings and turn the pull request ready. Held to the block, the flag
 		// answers what a run left waiting, which is the one thing it is for.
 		if od == nil && ruled {
-			return nil, userErr("run %s, the last to update PR #%d, left the repository's owner no decisions to answer, so there is nothing here for --owner-ruled to answer: the flag is the owner's ruling on the findings a run left waiting for them, and the reviewers read it as the answer to those; launch again without it",
+			return nil, userErr("run %s, the last to update PR #%d, left the repository's owner no decisions to answer, so there is nothing here for --owner-ruled to answer: the flag is the owner's ruling on the findings a run left waiting for them, and the reviewers read it as the answer to those; launch again without it, or start a new follow-up",
 				oneLine(c.Previous.Run), pr)
 		}
 		// The previous run stopped on findings only the owner can settle
