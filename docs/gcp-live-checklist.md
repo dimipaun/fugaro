@@ -812,6 +812,12 @@ probe account carries predefined grants only).
 | 190 | git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy ([`docs/secrets-brokering/`](secrets-brokering/implementation-plan.md), its task **B0.4** and its "Checks 190–192"; the reconciliation's **F13**, **F14**, **U2**, **U7** and **U8**): against a sandbox Bitbucket repository, through a Cloud Run service deployed **with IAM required and no public invoker** — a **full clone** and a **blobless clone** (request count, bytes and time each), a **push above 32 MiB** on HTTP/1.1 (chunked) and what the front end answers, a **small push**, the **cold start** of the first git request after 35 idle minutes (D501: the service keeps scaling to zero), and what the front end does with a push held open past the service's **3600 s** timeout. It is the measurement S1's proxy is designed against: a large push that passes on HTTP/1.1 is what S1 is built on, and one that does not is what makes B1.5 serve h2c end to end | See "Check 190" below; **you** run it, on installation `fugaro` only (project `fugaro-dev`, region `us-east5`, hard-coded — the check refuses another installation), against a sandbox repository only, never `belong`, with the token file at mode `0600` that [secrets-brokering/check190-steps.md](secrets-brokering/check190-steps.md) writes; the script is `scripts/live-checks/check190.sh`, its own test `scripts/live-checks/check190_test.sh`, and **no agent runs any step of it** | One throwaway Cloud Run service with IAM required and no public invoker, the Artifact Registry repository and the image it is built into, the Secret Manager container that holds the sandbox repository's token for the proxy, its own staging bucket for the build's source, two grants to the installation's build account on those two only (registry writer, bucket object viewer), and one branch on the sandbox repository — every one of them deleted by the Restore, which asserts four counts read `0` and reads the bucket back; the installation's own `gs://fugaro-dev_cloudbuild` is not touched. **Wall clock, not money: about two hours at the terminal**, one build and one idle instance billed to the project while it runs. **USER-RUN, NOT RUN.** |
 | 290 | The mixed-credentials run on a real installation (design [`docs/design/mixed-credentials.md`](design/mixed-credentials.md) §5 and §11, the tasks **B1–B6**; the owner's ruling **B0**, 2026-11-04; [`docs/multi-model.md`](multi-model.md) §3): an `api-key` run of the sandbox repository whose **coder** stays on its provider route — a DeepSeek model priced through the budget gateway — while its **senior review** runs inside the same loop, direct to Anthropic on ONE stage-scoped Claude OAuth account and on an **Opus** model. It is the only place the mix meets a real run, and it reads back the seven facts the rule stands on: `stage_accounts.review` naming the account; the `review` stage's `credential: oauth`, its model an Opus one, and no `model call` line for it in the log; the verdict `ship`; no `Invalid API key` anywhere; the account's dollars inside `cost.model_usd` and outside `cost.total_usd`; the coder's stage carrying the gateway's routing and its call count; and the coder's own stage environment holding no token. It is what `docs/multi-model.md` and the design's §9 name as the evidence still missing | See "Check 290" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, with `budget.mode: enforce` (the gateway caps the coder; nobody caps the account's own subscription dollars), and **no agent runs any step of it** | One run of the sandbox repository on a task that changes one line: the coder's gateway-priced calls, one review round on the account, and the run's own report. The run commits that line, pushes its `fugaro/<id>` branch and opens a pull request — a task that changes nothing is no cleaner, since a run whose agent makes no commit is failed, given an empty commit and still pushed and opened as a draft (`internal/runner/runner.go`) — so the Restore closes the pull request, deletes the branch, takes the file back and republishes the policy. **USER-RUN, NOT RUN.** |
 | 291 | What a catalog image's `ENV` does in a run ([`docs/image-env/`](image-env/implementation-plan.md) §6, that work's task **IE4** and its live check; **D1381**; issue #1755; `docs/base-image.md`'s "Bring your own" is the rule it reads back): one catalog entry published on the sandbox whose Dockerfile sets an ordinary marker (`ENV NEXUS_BASEURL=https://example.invalid/repository/maven-public/`) and one reserved name (`ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null`) — **no credential and no secret-shaped value on the image**, which is the point — then `fugaro update --repo` so the job carries the stamp, and `fugaro doctor --all` read for that job's line: it names the catalog entry and the names the job itself sets that a run drops, with **no value printed** — and since an image's own `ENV` lives in the image and no read of a job can list it, the line says so, and the reservation appears in the report only once one reserved name is set on the job by hand (`--update-env-vars`, converged away again in the same step); then one trivial run on the entry's image, from whose transcript the marker is present in the environment of a command the run ran through `fugaro verify`, `GOOGLE_APPLICATION_CREDENTIALS` is absent, and the image's value appears nowhere; and the **refutation step** — the same workflow on a **repository-built** image (`dockerfile:` in the sandbox's `fugaro.yaml`) setting the same marker, whose variable must be **absent** from the run and whose `doctor --all` line must read not catalog-stamped — that is D1370's scope, and the half a code review cannot settle | See "Check 291" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | One catalog entry published and built, one repository-image rebuild, two `fugaro update --repo` runs and two trivial sandbox runs, and the pull requests they open — closed and their branches deleted by the Restore. **USER-RUN, NOT RUN.** |
+| 300 | The orchestrator subtree on a real installation ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O2** and its Check 300; **D1220** and **D1241**, answered 2026-11-04): one `fugaro update` on an installation that is **not** `belong` puts the `orchestrator/<id>/` subtree and its own generation marker (`config/limits/orchestratorRules`, never a `RulesVersion` bump) on the real database, and afterwards the person's own credential writes a state node while a client the rules evaluate — one carrying no credential at all — is refused the same node, the same method and the same body. The two token identities the rules are meant to refuse, a run-scoped job token and a minter-minted custom token, cannot be minted by this check: they are the emulator test `TestOrchestratorRefusesEveryTokenWriter`'s, and what the live run adds is the deployed document that test was written against and the refusal of the one token-less client it can be | See "Check 300" below; `bash scripts/live-checks/check300.sh --installation <name>` is the whole of it (`--skip-update` reads the installation as it stands and runs no command that changes it), and **you** run it on your own installation, **never `belong`** — a name that is not the one `fugaro doctor --json` reports is refused before anything is run, and so is `belong` whether you typed it or the config in force answers it; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus a handful of RTDB REST calls, which cost nothing: no model call, no run, no Cloud Build of its own. It writes exactly one node of its own, `orchestrator/check300`, an id no daemon uses, and its Restore deletes that node and reads it back as gone from the exit trap too. **USER-RUN, NOT RUN.** |
+| 301 | The daemon under launchd and systemd ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O9** and its Check 301 — the text O2 wrote, the command O9 builds; **T7**, ruled 2026-11-05; the HARD RULE): `fugaro orchestrator install` on the owner's Mac, then the terminal closed and the machine rebooted — the daemon running and exactly one instance holding the lease, with a second started by hand refusing it; then the upgrade half a fake cannot settle: a brew-style upgrade on a throwaway machine **with the daemon running**, where the daemon notices the new binary and exits so launchd starts it, **with no command typed**, and the same on a Linux machine under systemd; and then T7's own half — take that machine to a release that changes the unit's template, run **`fugaro update` and nothing else**, and confirm the unit file is re-rendered, the service reloaded and the daemon running under it, with a second `fugaro update` writing nothing | See "Check 301" below; **you** run it, on your own Mac and on a Linux machine, and **no agent runs any step of it** | Two throwaway machines (or one of each platform), one brew-style upgrade and one `fugaro update` per platform, and one reboot: no model call, no run and nothing billable. Nothing is restored — the daemon is meant to stay. **USER-RUN, NOT RUN.** |
+| 302 | The cutover to the daemon, and the manual rollback that is the whole of going back ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O11** and its Check 302 — the text O2 wrote; **T1**, ruled, and **D1242**, which gates nothing; **D1235**, no shadow week): the cutover run by hand on the owner's own installation, with the spend caps and the kill switch tested **first** and the scripts' **launching stopped** (their watching may stay, because the two share no launch key and both launching the same work would double-launch) — the daemon started, one finished run, one dependency-driven launch and one notification; then, at any point inside the **14 days the scripts stay on disk**, the second half: the manual rollback — `fugaro orchestrator uninstall`, the sweep, the watcher and the queue scripts re-armed, and one launch seen through them. **No rollback command is built**, so those steps are the whole rollback | See "Check 302" below; **you** run it, on your own installation, **never** the sandbox from an agent's session, and **no agent runs any step of it** | One finished run, one dependency-driven launch and one notification, plus the rollback's own launch through the scripts: the run's model spend, and nothing else. The Restore is the check's second half and not an undo of it — the scripts stay on disk for their 14 days, and the owner decides when they are removed. **USER-RUN, NOT RUN.** |
+| 303 | The bounded decision agent, and the cost of one cycle ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O12** and its Check 303 — the text O2 wrote; reconciliation **U4**, whose cost is a target until this check measures it; **Q4**, answered 2026-11-04, which makes this check the gate on slice 2): with the owner's own Claude login, one real decision call through the bounded agent — the model that answered it being the classifier's and not the output's — the count caps (6 calls an hour, 40 a day) and the breaker at 3 **proved by spending them**, and the cost of one cycle measured end to end. It runs **before O12 is started, not after**: Q4 approves slice 2 (O12, O13) only once slice 1 has run 14 days **and** this number is in | See "Check 303" below; **you** run it, with your own login, and **no agent runs any step of it** | The one thing here that is genuinely billable: one decision call, plus the calls the caps and the breaker spend proving themselves. Its whole point is the number it produces, which replaces U4's target and Q4's proposed bounds. **USER-RUN, NOT RUN.** |
+| 304 | The handoff between two people ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O17** and its Check 304 — the text O2 wrote, the `ee/` command O17 builds): an agent handed from one developer to another by an owner or an admin, on a real installation, with the two people in different sessions — the receiving person holding the agent, the giving person no longer able to act as it, and the project-owned agent that belongs to no person at all behaving as the registered extension it is | See "Check 304" below; **you** run it, on a real installation with a second person, and **no agent runs any step of it** | Two sessions and one handoff: no model call unless the agent is asked to work, and nothing billable in the handoff itself. **USER-RUN, NOT RUN.** |
+| 305 | The MCP state group and its scopes ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16** and its Check 305 — **the text is written when O16's files are named**, and this row and the section below reserve the number, which is never renumbered): `get_state`, `get_events` and `apply_patch` over the state store, behind `state:read` and `state:write`, with `apply_patch` also gated by **D1225**, and with no `spawn_task` anywhere in it (T2) | Not written yet: O16 writes "Check 305" when the MCP registry and its scope files exist (M7, T3, T4), and the register's number is held for it | Nothing to run and nothing to expect until the files are named: the number is reserved so that a later task writes the check into the register rather than renumbering it. **USER-RUN, NOT RUN.** |
 | 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, makes all fourteen readings and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -11341,6 +11347,217 @@ failure, not a pass. **No agent runs any step of it.**
 6. **Restore.** Close the pull requests the two runs opened and delete their branches (`gh pr close <n> --delete-branch` in the sandbox checkout), and take their `CHECK291.md` with them. Put the repository's `fugaro.yaml` back — the `commands.test` edit, the `dockerfile:` step 5 added and the covering key it took out go with it, and so does `.fugaro/<name>.Dockerfile` — remove the catalog entry (`fugaro image rm <name>`, the project's own config) and publish with `fugaro update`, then `fugaro update --repo <the sandbox repository>` so its job is redeployed from the restored config; that convergence is also what takes the name step 3 set by hand off the job. Confirm `fugaro doctor --all` reads the job as step 1 recorded it, and that one ordinary sandbox run still succeeds. If the hand-set name is still on the job after that, say so.
 
 **Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, both `doctor --all` readings of the job, the two transcripts' `marker:` and `reserved:` lines, the two run references and the workflow's name — and **never a secret and never a token value**. The one value this check's evidence carries is its own `https://example.invalid/...` marker, which resolves nowhere and is not a credential. Until this check runs, the passthrough is built and **unverified live**: `docs/base-image.md`'s "Bring your own" states the rule a reader acts on, and this check is the evidence `docs/image-env/implementation-plan.md` §6 names. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it — every step is yours.
+
+## Check 300: the orchestrator subtree on a real installation — one script you run (your own installation, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **O2** of the stateless orchestrator plan
+([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md), its **O2** and its Check 300;
+**D1220** and **D1241**, both answered 2026-11-04; **D166** for the device conjunct the person's read carries). The rules are
+**built** — the subtree, the marker of its own and the update step that writes both are on `main` — and **no run of it has met a real
+installation yet**, so nothing here is a claim that it works. It is **OWNER-RUN**: **no agent runs any step of it**, every step is
+yours, and **no step types, prints or pastes a credential** — the access token is read once into a variable, sent as an
+`Authorization` header, never written to a file and never pasted, and the block carries a row about it and never the token.
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check300.sh --installation <name>
+```
+
+**You** run it, on **your own installation and never `belong`**, and **no agent runs any step of it**. `<name>` is the Fugaro project
+name the local config in force carries (`fugaro doctor --json`'s `project.name`), and the answer is held to it: a name that is not
+the one doctor reports is a stop before anything is run, and `belong` is refused both as the name you typed and as the name doctor
+answers. `--skip-update` reads the installation as it stands and runs no command that changes it — the re-run of a check whose
+update has already run — and the `update` row then says `INFO` and that it proves nothing about the convergence, rather than
+passing as if it had run the command. The script is the whole check and asks you for nothing else. It runs **`fugaro update --yes`**,
+which is the one command this check is about and the same run you would make anyway; reads the installation's database address out
+of the installation's own config file (`budget.rtdb_url`, `budget.firebase_project`) rather than from memory; writes **exactly one
+node of its own**, `orchestrator/check300`, an id no daemon uses, so the Restore's delete can never take a live orchestrator's state
+with it; and reads the deployed document twice, before and after its own write.
+
+**Reading the `CHECK 300 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
+`FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 300 RESULT END (exit N)`. The rows are, in order:
+
+- **`installation`** — which installation this run is looking at, from `fugaro doctor --json` and held to the name you typed, with
+  `belong` refused either way. A run against the wrong installation is a stop, not a reading.
+- **`database`** — the installation's own database and its Firebase project, read out of the project's config file, and that your
+  access token was read and never printed.
+- **`update`** — `fugaro update --yes` exited 0, and whether its plan named `config/limits/orchestratorRules`: a plan that names it is
+  the run that converged the subtree's generation, and a plan that names nothing is what a database already on this generation
+  prints, which is why the marker row below, and not this one, is what says the generation is there. A non-zero exit is a FAIL that
+  prints the command's last lines above the block, and the rows after it still read what the database holds.
+- **`marker`** — `config/limits/orchestratorRules` read as you, against the generation **this binary** deploys
+  (`rules.OrchestratorRulesVersion`, `internal/budget/rules/marker.go`; the script holds the number on its `GEN=` line, and a bump
+  rewrites that line and this section). A marker that is absent, `null` or behind is a FAIL: the daemon's own gate reads the same
+  node before it writes any state, so a database the owner was told was up to date and whose marker is not this generation is a
+  daemon that refuses to start.
+- **`subtree`** — the deployed document, read as you, asked the three questions the fence is: the `/orchestrator` node is there, its
+  `.write` is the explicit boolean `false` (a grant spelled another way reads as `other`, and so does a `.write` that is true), its
+  `.read` carries both the paired phone's `mu` claim and the device conjunct (`config/admin/devices`, D166), and **no child of the
+  node carries a rule of its own** — a grant hidden one level down would widen the subtree without touching either key, and the row
+  counts the children it found.
+- **`person-write`** — **D1241's answer, live**: a `PUT` of `{"schemaVersion":1,"phase":"check300"}` to `/orchestrator/check300/state`
+  **as you** answers 200 and reads back as the document written (the JSON document, not its bytes: the API may return it with other
+  spacing). This is also the positive control for the row below — the same URL, the same method and the same body — so a refusal
+  there is this node's rule and not a malformed request.
+- **`token-refusal`** — the same call with **no credential at all**, which is the one client the rules evaluate that this check can be
+  without minting a token: the write and the read must both answer 401 or 403. It is a refusal of the node your own credential just
+  wrote, so it is this subtree's rule and not an empty database's.
+- **`untouched`** — the deployed document is byte-for-byte what it was before this check wrote: the only node written here is its own,
+  and a document that changed while the check ran means something else deployed rules and the readings above may not describe the same
+  document.
+- **`xtrace`** — this shell was not started with tracing on. `bash -x` prints the `Authorization` header this script builds, so a shell
+  that arrived tracing is stopped before the token is read, with this row saying why.
+- **`restore`** — the node this check wrote is deleted and reads back as `null`, and the scratch directory is gone. A delete the
+  database refused, or a read-back that is not `null`, is a FAILed row naming the node to delete by hand and the exact command to do
+  it with — never a silent pass — and that row's FAIL alone is enough to make the run exit 1.
+- **`aborted`** — present only when the run could not tell: a guard stopped it, a tool is missing, doctor did not answer, the config
+  has no database address, `gcloud` had no token, an internal error ended it. Every row that would have been measured then reads
+  `not reached`, and the block says so rather than offering them as a verdict about the subtree.
+
+Exit `0` means every fact passed; `1` means one FAILed (a stale marker, a widened subtree, a refused person write, an allowed token
+write, a Restore that could not confirm what it deleted); `2` means the run could not tell. **`1` is an answer about the installation;
+`2` is not an answer at all**, and the `aborted` row says which it was.
+
+**What the live run cannot settle, and what does.** The two token identities the fence is really about — a run-scoped job token and a
+custom token minted by the launcher's `signJwt` minter — cannot be minted by this check, which holds no such credential. They are
+`TestOrchestratorRefusesEveryTokenWriter`'s (`internal/budget/rules/emulator_orchestrator_test.go`, `//go:build firebase`), which
+first proves a person's write succeeds and then refuses both, so the deny is not vacuous; and what the live run adds is the
+**deployed document** that test was written against (the `subtree` row) and the refusal of the one credential-less client the check
+can be (the `token-refusal` row). The oversize and malformed-value cases are O0's client-side validator's test, not this one's:
+shape and size are never the rules' business, because a value that passes a shape check is still a write this subtree refuses.
+
+**Cost.** One `fugaro update` on your installation — Terraform plan and apply, the rules deploy, the images it rebuilds: the run you
+would make anyway — plus a handful of RTDB REST calls, which cost nothing. No model call, no run, no Cloud Build of its own.
+
+**Restore.** The script runs it itself, **from the exit trap too**, so a failed assertion or a Ctrl-C still leaves nothing behind:
+`/orchestrator/check300` is deleted and read back as gone, and the scratch directory (mode 0700, holding the token's own file
+descriptors and nothing of yours) is removed. The `restore` row says both, and a node that is still there is a FAIL that names it and
+the `curl` command to delete it with. What the check does **not** undo is the `fugaro update` it ran, which is the point of it.
+
+**Paste back:** the whole block into row 300 above and to the coordinator. The block carries no token, no secret and no document it
+read — the reader that parses the deployed rules prints a fixed vocabulary (`subtree=present write=false read=user children=0`) and
+never the document. Until this check runs, the subtree is built and **unverified live**:
+[`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md)'s O2 names this check as the
+evidence that is missing, and **no agent runs any step of it**. Its hermetic half is
+`scripts/live-checks/check300_test.sh`, driven by a fake `gcloud`, a fake `fugaro` and a fake RTDB behind a fake `curl` and run from
+`scripts/live_checks_test.go` — no network, no cloud project and no credential — which pins what the block reads for a converged
+installation, a stale marker, an absent marker, a missing subtree, a widened one, a hidden child rule, an update that failed, a
+`belong` name, a name that is not doctor's, a refused doctor, a missing token, no config, no tools, a tracing shell and a delete the
+database refused.
+
+## Check 301: the daemon under launchd and systemd — install, reboot, one lease, and a self-upgrade with no command typed (your own Mac and a Linux machine; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **O2** of the stateless orchestrator plan, for **O9**'s check
+([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md), its **O9** and its Check 301;
+**T7**, ruled 2026-11-05; the HARD RULE). The text is here and the command it names is O9's: **nothing in this section has been run**,
+and it is not a claim that the daemon installs, restarts or re-renders. It is **OWNER-RUN**: **no agent runs any step of it**, and no
+step needs a credential typed.
+
+**What it will read.** Four things a fake cannot settle, each of which the plan names:
+
+1. **The install and the lease.** `fugaro orchestrator install` on the owner's Mac, then the terminal closed and the machine
+   rebooted: the daemon is running, and **exactly one** instance holds the lease — start a second by hand and see it refuse.
+2. **The self-upgrade, with no command typed.** A brew-style upgrade on a throwaway machine **with the daemon running**: the daemon
+   notices the new binary and exits so launchd starts it. **FACT:** the new binary running under the unit, and no command typed by
+   anyone. On a Linux machine the same under systemd.
+3. **T7's half, which is the HARD RULE's own carve-out.** Take that machine to a release that changes the unit's **template**, run
+   **`fugaro update` and nothing else**, and confirm the unit file is re-rendered, the service reloaded and the daemon running under
+   it — and that a **second** `fugaro update` writes nothing and reloads nothing, so a repeated update is quiet.
+4. **The boundary.** `fugaro update` never **installs** a unit (that is `fugaro setup`'s and `fugaro orchestrator install`'s), and the
+   unit's step asks for a typed confirmation, which `--yes` does not cover and an agent-marker run never writes.
+
+**Restore.** Nothing is restored: the daemon is meant to stay installed and running. The throwaway machine the upgrade half uses is
+the owner's to discard, and no state this check makes is meant to be undone.
+
+**Paste back:** the unit's own state after each step (running, one lease, the reload), the template version the unit file carries
+before and after the `fugaro update`, and the fact that the second `fugaro update` wrote nothing — and **never a credential**. The
+hermetic half is O9's own tests (the render, the reload through a faked interface, the typed confirmation, no path outside the home),
+which never call `launchctl` or `systemctl`.
+
+## Check 302: the cutover and the manual rollback — the daemon takes over, the scripts stay 14 days (your own installation; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **O2** of the stateless orchestrator plan, for **O11**'s check
+([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md), its **O11** and its Check 302;
+**T1**, ruled — the rollback is manual, the scripts are kept 14 days, and **no rollback command is built**; **D1235**, no shadow week;
+**D1242**, which gates nothing). **Nothing in this section has been run.** It is **OWNER-RUN**, on the owner's own installation and
+never the sandbox from an agent's session: **no agent runs any step of it**.
+
+**What it will read.**
+
+1. **Before anything starts.** The spend caps and the kill switch tested **first**, and the scripts' **launching stopped** (their
+   watching may stay). The two share no launch key — the claim is per run id — so scripts and daemon both launching the same work
+   would **double-launch** it. This is the one thing this check must not get wrong.
+2. **The cutover.** The daemon started, and then: one finished run, one dependency-driven launch, one notification. **FACT:** each of
+   the three, named, with the run it was about.
+3. **The 14 days.** The scripts stay on disk for 14 days (T1's answer). Their launching stays stopped for that window.
+4. **The manual rollback, at any point inside the window.** `fugaro orchestrator uninstall`, then the sweep, the watcher and the queue
+   scripts re-armed, and one launch seen through them. **No rollback command exists**, so those steps are the whole rollback — and the
+   owner decides when the scripts are removed.
+
+**Restore.** This check's second half **is** a rollback and not an undo of the first: what it leaves behind is the daemon stopped,
+the scripts re-armed and on disk, and the 14-day window running. Say which state the machine is in when you stop.
+
+**Paste back:** the three cutover facts, the window's dates, and the rollback's one launch through the scripts — and **never a
+credential**.
+
+## Check 303: the bounded decision agent — the caps, the breaker, and the cost of one cycle (your own Claude login; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **O2** of the stateless orchestrator plan, for **O12**'s check
+([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md), its **O12** and its Check 303;
+reconciliation **U4**, whose cost of a cycle is a **target** until this check measures it; **Q4**, answered 2026-11-04, which makes
+this check the gate on slice 2). **Nothing in this section has been run, and it cannot run before O12 is built**: Q4 approves slice 2
+(O12, O13) only once slice 1 has **run 14 days** and this check has measured the cycle's cost, so it is run **before** O12 is started
+and not after. It is **OWNER-RUN**, with the owner's own Claude login: **no agent runs any step of it**, and no step pastes the
+login's credential.
+
+**What it will read.**
+
+1. **One real decision call**, through the bounded agent, on a case the plan's table names as a judgement case. **FACT:** the model
+   that answered is the one the **classifier** chose and not the one the output names.
+2. **The count caps, spent rather than read:** 6 calls an hour and 40 a day, proved by making the calls and seeing the cap refuse the
+   next one. **FACT:** the refusal, its reason, and the counter that produced it.
+3. **The breaker at 3**, proved the same way: three failures and the daemon pauses, with a decision raised. **FACT:** the pause, the
+   decision, and the daemon's state afterwards.
+4. **The cost of one cycle**, end to end, which is the number U4 is waiting for and the number Q4's gate reads. **FACT:** the dollars
+   and the calls, per cycle, with what they cover.
+
+**Restore.** The caps and the breaker leave the daemon paused: unpause it, or say that it is paused. Nothing else this check makes is
+meant to be undone.
+
+**Paste back:** the four facts above — the classifier's model, both cap refusals, the breaker's pause and the cycle's cost — and
+**never the login's credential and never a token**. The bounds D1228 proposes (6 an hour, 40 a day, a breaker at 3) stay **proposals**
+until this check's number confirms or replaces them.
+
+## Check 304: the handoff between two people (a real installation and a second person; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **O2** of the stateless orchestrator plan, for **O17**'s check
+([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md), its **O17** and its Check 304;
+the `ee/` registration and the core's extension point). **Nothing in this section has been run, and it cannot run before O17 is
+built.** It is **OWNER-RUN**, with **two people**: no agent runs any step of it.
+
+**What it will read.**
+
+1. **The handoff.** An agent handed from one developer to another by an **owner or an admin**, on a real installation. **FACT:** the
+   handoff succeeded for an owner and an admin, and is **refused** for anyone else.
+2. **The two sessions.** The receiving person holds the agent and can act as it; the giving person no longer can. **FACT:** both
+   readings, each from that person's own session.
+3. **The project-owned agent.** An agent owned by the project rather than by a person has **no person identity** — it is registered
+   the way the coordinator's CLI is, through the core's extension point and with no `ee/` import in the core.
+
+**Restore.** Hand the agent back to the person it came from, and say what the project-owned agent is left as.
+
+**Paste back:** who handed what to whom, both sessions' readings, and the refusals — and **never a credential**.
+
+## Check 305: the MCP state group and its scopes — the number is reserved, the text is written when O16's files are named (NOT RUN)
+
+**NOT RUN, and not yet written.** Task **O16** of the stateless orchestrator plan
+([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md)) names **Check 305** and leaves
+its text to the task that names the files: O16 builds `get_state`, `get_events` and `apply_patch` over the state store behind the
+`state:read` and `state:write` scopes, with `apply_patch` also gated by **D1225** and with **no `spawn_task`** anywhere in it (T2), and
+it cannot start until the MCP registry (M7) and its two amendments (T3, the scopes; T4, the threat model) land. This row and this
+section **reserve the number** — a check's number is allocated once and is never renumbered — so that O16 writes its section into the
+register rather than picking a new one. Nothing is run here until then, and **no agent runs any step of it**.
 
 ## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; NOT RUN)
 
