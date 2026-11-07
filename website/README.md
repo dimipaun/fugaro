@@ -1812,9 +1812,10 @@ line stops the build rather than going unmentioned. `website/test/changelog.mjs`
 generator to the files, and `website/test/changelog-page.mjs` holds the page to both sources:
 every release file has a summary entry and none is empty, the three entries the page renders
 are the newest three and each one renders the summary its own entry in the data file carries,
-and the page writes no sentence of its own — every sentence on it is a release file's, a
-summary's, or one of the words it adds for the three things beside the entries: the link to
-the full list and the two streams' labels.
+and the page writes only the words a sentence cannot come from a file: its title, the notes
+block's label, the "not yet released" marker, the tags (which come from the filenames), and
+the words it adds for the three things beside the entries — the link to the full list and the
+label of each stream's line.
 
 ## The console's downloads are derived, never written down
 
