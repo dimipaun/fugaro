@@ -253,20 +253,37 @@ func TestRunsDigestDueCountsAFutureReportAsNoDaysOld(t *testing.T) {
 	}
 }
 
-// TestRunsDigestDueIsOffline: the reading reaches nothing. The proof is not a
-// count of calls but the setup itself: a real checkout, an isolated config home
-// with no project config at all, and an empty PATH, so the cloud path has
-// nothing to select and no client to run. The control below shows the same
-// checkout cannot report a period at all, which is what makes this run's
-// success mean it opened nothing.
+// TestRunsDigestDueIsOffline: the reading reaches nothing, and the fixture is
+// the untrusted one rather than an absent one. A real checkout sits in an
+// installation whose cloud is configured and whose runs bucket is not there at
+// all, with the Cloud Run and Logging fakes counting what reaches them: a
+// reading that opened the bucket would fail or have to say so, and this one
+// answers with the folder's own lines and nothing else, byte for byte.
+//
+// The control is the same checkout's own report read, which does open that
+// bucket and cannot: so the bucket is really unreadable, and the answer above
+// is not a fixture that quietly read something else.
 //
 // It is also the reading of the default folder: this run names no --dir, so
 // the reports it reads are the checkout's own docs/fugaro-reviews.
 func TestRunsDigestDueIsOffline(t *testing.T) {
 	digestCheckout(t)
 	digestClock(t, "2026-10-27")
-	isolateProjects(t, t.TempDir())
-	t.Setenv("PATH", t.TempDir())
+	f := newCloudFixture(t)
+	// The installation names a runs bucket that is not there, so a read of it
+	// fails rather than returning nothing.
+	path := os.Getenv("FUGARO_CONFIG")
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := "file://" + filepath.Join(f.dir, "no-bucket")
+	if !strings.Contains(string(cfg), f.bucket) {
+		t.Fatalf("the fixture's config does not name its bucket %q:\n%s", f.bucket, cfg)
+	}
+	if err := os.WriteFile(path, bytes.ReplaceAll(cfg, []byte(f.bucket), []byte(broken)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(digest.Dir, "2026"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -278,17 +295,22 @@ func TestRunsDigestDueIsOffline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runs digest --due needs something it should not: %v (%s)", err, errOut)
 	}
-	if !strings.Contains(out, "6 periods are due under "+digest.Dir) || !strings.Contains(out, "2026-10-25 (day)") {
-		t.Errorf("--due did not read the checkout's own folder:\n%s", out)
+	want := "6 periods are due under " + digest.Dir + ":\n" +
+		"  2026-10-25 (day)\n  2026-10-24 (day)\n  2026-10-23 (day)\n" +
+		"  2026-10-22 (day)\n  2026-10-21 (day)\n  2026-10-20 (day)\n" +
+		"newest report: 2026-10-26 (day), 1 day old\n"
+	if out != want {
+		t.Errorf("--due printed\n%s\nwant exactly the folder's own reading, with nothing about the cloud it did not read:\n%s", out, want)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("--due made %d cloud call(s) (%v), want none: the read is the folder and this checkout's clock", len(calls), calls)
 	}
 
-	// The control: the same checkout with no project config cannot report a
-	// period, because reporting one reads the repository's runs bucket. So
-	// the success above is not a fixture that quietly answered from somewhere
-	// else.
+	// The control: the same installation cannot report a period, because
+	// reporting one reads the bucket -- the one this fixture does not have.
 	_, _, err = execute(t, "runs", "digest")
-	if err == nil || !strings.Contains(err.Error(), "no project config") {
-		t.Errorf("runs digest without a project config: err = %v, want the refusal to select one; the offline claim above proves nothing unless reporting a period needs the cloud", err)
+	if err == nil || !strings.Contains(err.Error(), "no-bucket") {
+		t.Errorf("runs digest over the missing bucket: err = %v, want the read of it to fail; the offline claim above proves nothing unless reporting a period needs that bucket", err)
 	}
 }
 
