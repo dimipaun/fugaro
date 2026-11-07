@@ -414,8 +414,10 @@ open pull request's head:
   `docs/catalog-build-context`'s block (merged as #1805), and **D1410–D1429 are free**. They are all
   written above and **not one is answered**; none is reserved unused.
 
-**The check block.** The register's highest **written** `## Check` section on `main` is **290**
-(`docs/gcp-live-checklist.md`, the mixed-credentials run). **291 is claimed** by `docs/image-env`;
+**The check block.** The register's highest **written** `## Check` section on `main` was **290** at
+this reading (`docs/gcp-live-checklist.md`, the mixed-credentials run), and is **291** since
+`docs/image-env`'s own check was written — the register's rule is that the task implementing a check
+writes its row and section under the number free at its merge, which is what its `## Check 291` is.
 **292 is claimed by `docs/catalog-build-context`** (merged on `main` as #1805, at its own README's
 numbers table and its implementation-plan's §6, both read for this folder's D1409 above);
 **293–299 are claimed by nobody**; `docs/stateless-orchestrator` claims **300–309** and

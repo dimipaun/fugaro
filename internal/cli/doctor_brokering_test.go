@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -22,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -74,8 +76,9 @@ func newBrokeringDirectRig(t *testing.T) *brokeringRig {
 }
 
 // newBrokeringUnoptedRig is the same checkout on an installation that never
-// opted in: no credentials_service block, so the checks that read the service
-// have nothing to say.
+// opted in: no credentials_service block, which is the state the ruling makes
+// the first of the service's six (the check reports it in one line and no
+// longer stays silent about it).
 func newBrokeringUnoptedRig(t *testing.T) *brokeringRig {
 	t.Helper()
 	r := newBrokeringCheckout(t, false)
@@ -87,7 +90,12 @@ func newBrokeringUnoptedRig(t *testing.T) *brokeringRig {
 // newBrokeringCheckout is the part the three rigs share: a checkout of
 // workspace-a/repo-a whose local config names the Cloud Run services fake
 // beside the jobs one, so a service's policy can be read, and — when
-// withService — the credentials_service block the opt-in writes.
+// withService — the credentials_service block the opt-in writes, with the
+// bundle container the same apply creates (the container carries the managed
+// label and no version, which is where the first `creds set` starts from: a
+// rig with the block and no container would be a half-applied installation
+// Terraform never leaves, and the check would answer for that, not for the
+// state the test is about).
 func newBrokeringCheckout(t *testing.T, withService bool) *brokeringRig {
 	t.Helper()
 	r := &brokeringRig{doctorRig: newDoctorRig(t), svcs: gcpfake.NewRunServices(t)}
@@ -100,6 +108,7 @@ func newBrokeringCheckout(t *testing.T, withService bool) *brokeringRig {
 	r.cfg = cfg
 	if withService {
 		addLocalLines(t, r.doctorRig, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")
+		r.putEmptyBundle(t)
 	}
 	return r
 }
@@ -221,6 +230,59 @@ func (r *brokeringRig) putBundle(t *testing.T, doc string) string {
 	return id
 }
 
+// putEmptyBundle creates the bundle container with no version in it, which is
+// the state the installation's own apply leaves and the first `creds set`
+// starts from: the service is deployed, and the loader has no document to
+// serve a run's credential out of.
+func (r *brokeringRig) putEmptyBundle(t *testing.T) string {
+	t.Helper()
+	id := credsvc.BundleSecretID("aurora")
+	r.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, nil)
+	return id
+}
+
+// publishPolicyNode points the rig's config at a Realtime Database holding the
+// project's published policy node, and returns it: the verifier list the
+// credentials service is deployed with is the node's whenever this checkout's
+// config states none of its own (localcfg.VerifierAccountsEffective), so that
+// is the document the check has to read. The marker, the deployed rules and
+// the project node are doctorPolicyRig's, because projectpolicy.Read gates on
+// the first two and every other policy check reads the same fake. An empty
+// policyNode publishes no node at all — a backend whose policy is not there.
+func (r *brokeringRig) publishPolicyNode(t *testing.T, policyNode string) *gcpfake.RTDB {
+	t.Helper()
+	db := gcpfake.NewRTDB(t)
+	db.Set("fugaro/project", "aurora")
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetRules(gen)
+	if policyNode != "" {
+		db.Set(projectpolicy.PathShared(), json.RawMessage(policyNode))
+	}
+	addLocalLines(t, r.doctorRig, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+" }\n")
+	return db
+}
+
+// policyNodeWithVerifiers is a published policy node an installation could
+// have, with its verifier list written exactly as the test spells it. The
+// member is appended by hand rather than set on the struct: projectpolicy's
+// own encoder drops an empty list (omitempty), and a node holding
+// `verifier_accounts: []` — the document a hand edit or an older writer leaves
+// — is exactly what the check has to be able to read.
+func policyNodeWithVerifiers(t *testing.T, verifiers string) string {
+	t.Helper()
+	base, err := json.Marshal(doctorPolicy(func(p *projectpolicy.Policy) {
+		p.AllowRepos = []string{"bitbucket/workspace-a/repo-a"}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSuffix(string(base), "}") + `,"verifier_accounts":` + verifiers + "}"
+}
+
 // bitbucketAnswer stands in for what an API root answers the token check: one
 // call per proxied repository — GET /repositories/<workspace>/<slug> — and
 // nothing else, which the counter pins.
@@ -302,12 +364,18 @@ func pinDoctorNow(t *testing.T, now func() time.Time) {
 // own policy, and it is a warning in both failing directions — a service the
 // installation opted into that is not there, and a service no job account may
 // invoke. Neither fails doctor without --strict: an installation mid-opt-in is
-// a legitimate state.
+// a legitimate state. The installation that never opted in is not silent here
+// either, and it is the first of the states
+// TestDoctorReportsTheServiceStateInOneLine owns.
 func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 	t.Run("deployed with the grant", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.svcs.AddService(infra.CredentialsServiceName)
 		r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		// The bundle holds a version, so the grant is the only question this
+		// rig leaves open: a bundle with nothing in it is a state of its own
+		// (TestDoctorReportsTheServiceStateInOneLine).
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 
 		o, err := r.doctor(t)
 		if err != nil {
@@ -316,6 +384,32 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		cs := checksByID(o, "credentials-service-deployed")
 		if len(cs) != 1 || !cs[0].OK {
 			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+	})
+
+	// The verifier half of the bundle read's rule: the local config of this rig
+	// writes no verifier_accounts at all, which does NOT admit nobody — an
+	// absent key leaves the module's own verifier account admitted, and a list
+	// written EMPTY is the one state that does not (the module's own three
+	// states, which localcfg.VerifierAccounts keeps verbatim). Reporting the
+	// absent key as the empty list would call every healthy installation a
+	// service that admits nobody.
+	t.Run("deployed with no verifier_accounts written", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+		if strings.Contains(cs[0].Problem, "admits nobody") {
+			t.Errorf("a config that writes no verifier_accounts leaves the installation's own account admitted, and the line says it admits nobody: %q", cs[0].Problem)
 		}
 	})
 
@@ -369,6 +463,7 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
 			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}},
 			gcpfake.Binding{Role: "projects/proj-1234/roles/deployer", Members: []string{"serviceAccount:someone-else@proj-1234.iam.gserviceaccount.com"}})
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 
 		o, err := r.doctor(t)
 		if err != nil {
@@ -399,16 +494,374 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		}
 	})
 
-	t.Run("not opted in", func(t *testing.T) {
-		r := newBrokeringUnoptedRig(t)
+}
+
+// TestDoctorVerifierListIsTheDeployedOne: the verify route's list is not this
+// checkout's file. It is the list the service is deployed with, which
+// localcfg.VerifierAccountsEffective derives from the file when the file
+// states one and from the published policy node otherwise, so a machine whose
+// config says nothing about the key and a node that holds an empty list is a
+// service that admits nobody — the one answer this line may not give as a
+// plain ok. The other direction is a healthy service: a node that names a
+// verifier is not the empty list, and calling it one would be as wrong as the
+// silence.
+func TestDoctorVerifierListIsTheDeployedOne(t *testing.T) {
+	// deployed is the service itself: up, admitting this installation's one
+	// job account, with a version in its bundle, so the verifier half is the
+	// only question the rig leaves open.
+	deployed := func(t *testing.T) *brokeringRig {
+		t.Helper()
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		return r
+	}
+	verifier := infra.VerifierAccountID + "@proj-1234.iam.gserviceaccount.com"
+
+	t.Run("an empty list in the node is the state, not a plain ok", func(t *testing.T) {
+		r := deployed(t)
+		r.publishPolicyNode(t, policyNodeWithVerifiers(t, "[]"))
+
 		o, err := r.doctor(t)
 		if err != nil {
 			t.Fatalf("doctor: %v", err)
 		}
-		if cs := checksByID(o, "credentials-service-deployed"); len(cs) != 0 {
-			t.Errorf("an installation with no credentials_service block got %+v", cs)
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("credentials-service-deployed = %+v, want one info measurement", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "admits nobody on the verify route") {
+			t.Errorf("a config that states no list, on a node that holds an empty one, is reported as a serving service: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Problem, "published policy") {
+			t.Errorf("the line does not name the layer that holds the empty list: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Fix, verifier) {
+			t.Errorf("the fix does not name the account the route should admit: %q", cs[0].Fix)
 		}
 	})
+
+	t.Run("a node that names a verifier is not called empty", func(t *testing.T) {
+		r := deployed(t)
+		r.publishPolicyNode(t, policyNodeWithVerifiers(t, `["`+verifier+`"]`))
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+		if strings.Contains(cs[0].Problem, "admits nobody") {
+			t.Errorf("a node that admits a verifier is reported as a service that admits nobody: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("this checkout's config wins over the node's list", func(t *testing.T) {
+		r := deployed(t)
+		r.publishPolicyNode(t, policyNodeWithVerifiers(t, `["`+verifier+`"]`))
+		addLocalLines(t, r.doctorRig, "verifier_accounts: []\n")
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "admits nobody on the verify route") {
+			t.Errorf("a config that writes an empty list is the list the next apply deploys, and the line does not say it admits nobody: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Problem, "this checkout's config") || strings.Contains(cs[0].Problem, "published policy") {
+			t.Errorf("the line does not name this checkout's config as the layer that emptied the list, or blames the node for it: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("a node that could not be read is a read that did not answer", func(t *testing.T) {
+		r := deployed(t)
+		db := r.publishPolicyNode(t, policyNodeWithVerifiers(t, `["`+verifier+`"]`))
+		db.DenyRead(projectpolicy.PathShared())
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a read that did not answer must not fail doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("credentials-service-deployed = %+v, want one info note about the read", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "could not be read") {
+			t.Errorf("the failed read is not reported as one: %q", cs[0].Problem)
+		}
+		if checksFail(cs, true) {
+			t.Errorf("a read that did not answer fails --strict: %+v", cs[0])
+		}
+		if def := doctorDefaultOutput(t, cs); strings.Contains(def, "credentials-service-deployed") {
+			t.Errorf("a read that did not answer is printed as an item of the default view:\n%s", def)
+		}
+	})
+}
+
+// brokeringServiceState is one row of the owner's table
+// (docs/credentials-service/default-on.md §3, DON7): a state the credentials
+// service can be in, the rig that holds it, the half of the service its line
+// has to name, and what --strict must answer for it.
+type brokeringServiceState struct {
+	name string
+	// names are the halves the line must name. A line that said one
+	// undifferentiated "not configured" would name none of them, which is the
+	// answer the ruling refused (§1.4).
+	names []string
+	// absent are the readings the line may not carry, and the one row that has
+	// them is the installation that never opted in: on this release the flag is
+	// the opt-in and taking it re-writes every repository root, so a line that
+	// called that state "not converged" and named a run that "deploys it on
+	// every installation" would be telling the operator of a working
+	// installation to run a step that can break its workflows.
+	absent   []string
+	severity string
+	// red is what --strict must answer: the four states a run cannot work
+	// around are warnings, and the two that are states rather than faults are
+	// measurements, which never fail doctor.
+	red   bool
+	build func(t *testing.T) *brokeringRig
+}
+
+// brokeringServiceStates are the six states of the service: the installation
+// that has not opted into it at all, the one whose block is written and
+// whose service is not deployed, the deployed service whose bundle holds no
+// version, the deployed service whose newest bundle version is disabled, the
+// deployed service whose verifier list admits nobody, and the deployed service
+// with a job account missing its invoker grant.
+func brokeringServiceStates() []brokeringServiceState {
+	// deployed is the service every state after the first two starts from:
+	// there, admitting this installation's one job account, with the bundle
+	// container its own apply creates (and no version in it).
+	deployed := func(t *testing.T) *brokeringRig {
+		t.Helper()
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		return r
+	}
+	return []brokeringServiceState{
+		{
+			// The opt-in this release gates behind DON1's flag, which is not
+			// the same state as an installation behind the release: the line
+			// may not read as "run this" (the flag re-writes every repository
+			// root and drops their jobs' model credential), so what is pinned
+			// here are the two things taking it needs and the confirmation it
+			// asks for.
+			name:     "the installation has not opted into the service",
+			names:    []string{infra.CredentialsServiceName, selfCommand() + " update --provision-credentials", "agent.auth: cascade", selfCommand() + " creds set github-app-key", "typed confirmation"},
+			absent:   []string{"has not converged", "deploys it on every installation", "nothing for a run to fetch"},
+			severity: "info",
+			build:    newBrokeringUnoptedRig,
+		},
+		{
+			name:     "the block is written and the service is not deployed",
+			names:    []string{infra.CredentialsServiceName, "proj-1234"},
+			severity: "warning",
+			red:      true,
+			build:    newBrokeringRig,
+		},
+		{
+			// deployed is this state already: the container its apply creates
+			// is there with no version in it, so the service has no document
+			// to serve a run's credential out of and admits nobody — and every
+			// model call of a run against it is refused, which is why the
+			// state is a warning and not a measurement: doctor may not answer
+			// "everything checked is ok" for an installation whose runs all
+			// fail.
+			name:     "the deployed service's bundle holds no version",
+			names:    []string{"creds set"},
+			severity: "warning",
+			red:      true,
+			build:    deployed,
+		},
+		{
+			// The bundle holds a version and Secret Manager will not serve it:
+			// DisableVersions is the state an operator's incident disable
+			// leaves, and the one `creds ls` and `creds set` both refuse as
+			// their own (credsDisabledRefusal). A check that read only whether
+			// a version exists answered the bare ok here.
+			name:     "the deployed service's newest bundle version is disabled",
+			names:    []string{infra.CredentialsServiceName, "DISABLED", "gcloud secrets versions enable"},
+			severity: "warning",
+			red:      true,
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := deployed(t)
+				r.sm.DisableVersions(r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token"))))
+				return r
+			},
+		},
+		{
+			name:     "the deployed service's verifier list admits nobody",
+			names:    []string{infra.VerifierAccountID},
+			severity: "info",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := deployed(t)
+				r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+				addLocalLines(t, r.doctorRig, "verifier_accounts: []\n")
+				return r
+			},
+		},
+		{
+			name:     "a job account the service does not admit",
+			names:    []string{"workspace-a/repo-a", "roles/run.invoker"},
+			severity: "warning",
+			red:      true,
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := newBrokeringRig(t)
+				r.svcs.AddService(infra.CredentialsServiceName)
+				return r
+			},
+		},
+	}
+}
+
+// TestDoctorReportsTheServiceStateInOneLine is DON7's headline: whatever the
+// service's state, this one check says it in exactly one line — the check is
+// never silent and never two lines — and the line's severity is the state's
+// own. The four states a run cannot work around fail --strict and print; the
+// two that are states rather than faults do neither, so the default view stays
+// the one line the owner asked for.
+func TestDoctorReportsTheServiceStateInOneLine(t *testing.T) {
+	for _, state := range brokeringServiceStates() {
+		t.Run(state.name, func(t *testing.T) {
+			o, err := state.build(t).doctor(t)
+			if err != nil {
+				t.Fatalf("a state of the service must not fail doctor without --strict: %v", err)
+			}
+			cs := checksByID(o, "credentials-service-deployed")
+			if len(cs) != 1 {
+				t.Fatalf("the state emitted %d credentials-service-deployed checks, want exactly one: %+v", len(cs), cs)
+			}
+			c := cs[0]
+			if c.Severity != state.severity {
+				t.Errorf("severity = %q, want %q: %+v", c.Severity, state.severity, c)
+			}
+			if c.Problem == "" || c.Fix == "" {
+				t.Errorf("the state's one line is not one line: %+v", c)
+			}
+			if checksFail(cs, false) {
+				t.Errorf("the state fails doctor without --strict: %+v", c)
+			}
+			if got := checksFail(cs, true); got != state.red {
+				t.Errorf("--strict = %v, want %v: %+v", got, state.red, c)
+			}
+			def := doctorDefaultOutput(t, cs)
+			if state.red {
+				if !strings.Contains(def, "credentials-service-deployed") {
+					t.Errorf("a warning is not an item of the default view:\n%s", def)
+				}
+			} else if def != "fugaro doctor: ok — everything checked is ok\n" {
+				t.Errorf("an installation that is behind the release printed an item:\n%s", def)
+			}
+			if all := doctorAllOutput(t, cs); !strings.Contains(all, c.Problem) {
+				t.Errorf("--all does not carry the state's line:\n%s", all)
+			}
+		})
+	}
+}
+
+// TestDoctorCountsABundleItCouldNotRead: the deployed service is a read doctor
+// owes an answer about, and a read that failed is not an "ok" line — the check
+// says the fact could not be read, the default view counts it rather than
+// prints it, and nothing about it fails doctor. It is the one state of this
+// check that is neither the service's nor the installation's: it is doctor's
+// own, and it may not be answered with silence.
+func TestDoctorCountsABundleItCouldNotRead(t *testing.T) {
+	r := newBrokeringRig(t)
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+		gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+	// The Secret Manager API the bundle read goes through, pointed at a port
+	// nothing answers on: the state under test is the read failing, which is
+	// not the bundle being empty, and the line may not report one as the other.
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := strings.Replace(string(data), "secret_manager: "+r.sm.URL+"/", "secret_manager: http://127.0.0.1:1/", 1)
+	if cfg == string(data) {
+		t.Fatal("the rig's config does not name the Secret Manager fake")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	o, _ := r.doctor(t)
+	cs := checksByID(o, "credentials-service-deployed")
+	if len(cs) != 1 {
+		t.Fatalf("the state emitted %d credentials-service-deployed checks, want exactly one: %+v", len(cs), cs)
+	}
+	c := cs[0]
+	if c.OK || c.Severity != "info" {
+		t.Errorf("a read that failed is reported as %+v, want the info note of a read that failed", c)
+	}
+	if !strings.Contains(c.Problem, "could not be read") {
+		t.Errorf("the line does not say the read did not answer: %q", c.Problem)
+	}
+	if c.Class != doctorClassAudit {
+		t.Errorf("the state is %q, want %q: a failed read is never a measurement", c.Class, doctorClassAudit)
+	}
+	if checksFail(cs, true) {
+		t.Errorf("a read that failed fails --strict: %+v", c)
+	}
+	def := doctorDefaultOutput(t, cs)
+	if strings.Contains(def, "credentials-service-deployed") {
+		t.Errorf("the default view prints the unread line instead of counting it:\n%s", def)
+	}
+	if !strings.Contains(def, "1 more finding") {
+		t.Errorf("the state is not counted in the default view:\n%s", def)
+	}
+	if all := doctorAllOutput(t, cs); !strings.Contains(all, "could not be read") {
+		t.Errorf("--all does not carry the line:\n%s", all)
+	}
+}
+
+// TestDoctorNamesTheMissingHalfNotNotConfigured is §1.4's one sentence that
+// must be true of every one of those states: the service is deployed (or not),
+// and the line names WHICH half is missing — the bundle, the verifier account,
+// the job accounts — rather than reporting one undifferentiated "not
+// configured", which sends a reader to a key name instead of to the thing that
+// is actually absent.
+func TestDoctorNamesTheMissingHalfNotNotConfigured(t *testing.T) {
+	for _, state := range brokeringServiceStates() {
+		t.Run(state.name, func(t *testing.T) {
+			o, err := state.build(t).doctor(t)
+			if err != nil {
+				t.Fatalf("doctor: %v", err)
+			}
+			cs := checksByID(o, "credentials-service-deployed")
+			if len(cs) != 1 {
+				t.Fatalf("%s emitted %d credentials-service-deployed checks, want exactly one: %+v", state.name, len(cs), cs)
+			}
+			c := cs[0]
+			if strings.Contains(strings.ToLower(c.Problem), "not configured") {
+				t.Errorf("the line reports one undifferentiated state: %q", c.Problem)
+			}
+			for _, want := range state.names {
+				if !strings.Contains(c.Problem+c.Fix, want) {
+					t.Errorf("the line does not name %q, which is what this state is missing: %q", want, c.Problem+" / "+c.Fix)
+				}
+			}
+			for _, unwanted := range state.absent {
+				if strings.Contains(strings.ToLower(c.Problem+" "+c.Fix), strings.ToLower(unwanted)) {
+					t.Errorf("the line reads as %q, which this state is not: %q", unwanted, c.Problem+" / "+c.Fix)
+				}
+			}
+		})
+	}
 }
 
 // TestDoctorBrokeringBundleBitbucketToken: the bundle's own check, and the
@@ -1206,6 +1659,16 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		}
 	}
 
+	// The default view prints the sentence the ID's short form gives, not the
+	// state's: the lookup has the ID and nothing else. So the sentence has to be
+	// true of every warning state of this check — the four a run cannot work
+	// around — and the two subtests below pin it against the two states a
+	// reader is most likely to meet, each with the fix the state words itself.
+	// The sentence the branch first shipped named the callers and the invoker
+	// grant, which is a problem the bundle states do not have: the screen said
+	// one thing and the command under it fixed another.
+	const sentence = "warning credentials-service-deployed: the credentials service is not deployed, does not admit a job account, or has nothing in its bundle to serve a run."
+
 	t.Run("the credentials service is missing", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		o, err := r.doctor(t)
@@ -1213,9 +1676,20 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
 		}
 		def := doctorDefaultOutput(t, o.Checks)
-		wants(t, def,
-			"warning credentials-service-deployed: the credentials service's callers could not be checked, or a job account it should admit cannot invoke it.",
-			"update --provision-credentials")
+		wants(t, def, sentence, "update --provision-credentials")
+	})
+
+	t.Run("the credentials service is deployed and its bundle holds no version", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		wants(t, def, sentence, "creds set NAME")
 	})
 
 	t.Run("the credentials service is deployed and its callers are granted", func(t *testing.T) {
@@ -1223,6 +1697,11 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		r.svcs.AddService(infra.CredentialsServiceName)
 		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
 			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		// A version in the bundle: the rig's container is empty, and an
+		// installation whose service has nothing to serve out of is a warning
+		// of its own (brokeringServiceStates), not the serving state this case
+		// is about.
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 		o, err := r.doctor(t)
 		if err != nil {
 			t.Fatalf("doctor: %v", err)
@@ -1458,6 +1937,10 @@ func TestDoctorBrokeringStrictFailsTheWarnings(t *testing.T) {
 				r.svcs.AddService(infra.CredentialsServiceName)
 				r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{
 					Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+				// The bundle holds a version: a deployed service with nothing
+				// to serve out of is a warning of its own (the row in
+				// brokeringServiceStates), and this case is the serving state.
+				r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 			}},
 		{name: "the bundle holds no token and a repository is proxied", id: "bundle-bitbucket-token", red: true, flag: true,
 			setup: func(t *testing.T, r *brokeringRig) {

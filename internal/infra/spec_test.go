@@ -3601,39 +3601,18 @@ func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
 	}
 }
 
-// TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv (#1752): a prebuilt entry's
-// image is the operator's own reference, shared by every repository that
-// names the entry, so it can bake no checkout of this repository: the run has
-// to clone one and the job must say from where. FUGARO_REMOTE is the
-// repository's own credential-free clone URL, exactly as on a clone or shared
-// job.
-//
-// FUGARO_CHECKOUT stays off that job: the entry's image holds the tools its
-// own build installed, so the run must not take the clone kind's path (a
-// blobless clone and a mise install), and the whole clone it makes instead is
-// what a follow-up and merge-base need.
-//
-// Mutation (run, restore): drop `|| ws.CatalogPrebuilt` from the remote's
-// condition in workflow() — this test then fails: the job carries no
-// FUGARO_REMOTE, and a run of it dies in bootstrap with "no git checkout and
-// no remote to clone".
-func TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv(t *testing.T) {
-	rs, err := Repo(catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, ws := range rs.Workflows {
-		if !ws.CatalogPrebuilt {
-			t.Fatalf("workflow %s runs %q, not a prebuilt entry: this test would prove nothing", name, ws.Image)
-		}
-		if got := ws.Env[RemoteEnv]; got != "https://github.com/acme/webapp.git" {
-			t.Errorf("%s's %s = %q, want the repository's clone URL: a prebuilt entry's image bakes no checkout, so the run clones one", name, RemoteEnv, got)
-		}
-		if got, ok := ws.Env[CheckoutEnv]; ok {
-			t.Errorf("%s carries %s = %q, want no such key: a prebuilt entry's image installed its own tools, so the run is no clone kind", name, CheckoutEnv, got)
-		}
-	}
-}
+// A prebuilt catalog entry used to reach a job here, and #1752's two tests —
+// TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv and
+// TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree — pinned the clone shape
+// that job carried (FUGARO_REMOTE and no FUGARO_CHECKOUT). R1 (#1698, D1191)
+// refuses a prebuilt entry on a baked workflow where the spec is built, and
+// the only two checkout kinds that leave the catalog inert — clone and shared
+// — make catalog.Applies false, so catalogJobImage returns an empty entry for
+// them and WorkflowSpec.CatalogPrebuilt is never set from this path: the
+// remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
+// configuration exercises it. The behaviour those tests were about — the
+// remote on a job whose image holds no checkout, credential-free — stays
+// covered by TestSpecCloneSetsRemoteEnv and TestSpecSharedRemoteIsCredentialFree.
 
 // TestSpecBuiltCatalogEntryCarriesNoRemoteEnv (#1752): the remote is for a job
 // whose image bakes no checkout, and a built entry's image is this
@@ -3656,33 +3635,6 @@ func TestSpecBuiltCatalogEntryCarriesNoRemoteEnv(t *testing.T) {
 		if got, ok := ws.Env[RemoteEnv]; ok {
 			t.Errorf("%s runs a built entry and carries %s = %q, want no such key: its image bakes the repository", name, RemoteEnv, got)
 		}
-	}
-}
-
-// TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree (#1752, security): the
-// remote a prebuilt entry's job clones from is the repository's own https,
-// credential-free clone URL, because it is written by the same repoURL-checked
-// value a clone job's is, and a URL carrying credentials is refused outright,
-// before any job spec exists. No token reaches that job's environment: the
-// clone's credential is the run's own git auth, the way it is for every other
-// job.
-func TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree(t *testing.T) {
-	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
-	in.RepoURL = "https://person-1:token-shaped@github.com/acme/webapp.git"
-	if _, err := Repo(in); err == nil {
-		t.Fatal("Repo accepted a clone URL carrying credentials for a prebuilt catalog entry's job")
-	}
-
-	rs, err := Repo(catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	remote := rs.Workflows["web"].Env[RemoteEnv]
-	if !strings.HasPrefix(remote, "https://") {
-		t.Errorf("web's %s = %q, want an https URL", RemoteEnv, remote)
-	}
-	if strings.Contains(remote, "@") || strings.Contains(remote, "person-1") {
-		t.Errorf("web's %s = %q, want the repository's own URL with no credential in it", RemoteEnv, remote)
 	}
 }
 
