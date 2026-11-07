@@ -590,11 +590,17 @@ func TestCoverJobBucketEnv(t *testing.T) {
 	// jobWithBucket is a covered job's container: one spec entry (which job it
 	// is decides which), a FUGARO_BUCKET of value — absent from the plan, and
 	// computed after apply, when value is nil — the job's image, and the
-	// command cmd/args, which a workflow job does not set.
-	jobWithBucket := func(cmd, args []any, specName, spec string, value any) ResourceChange {
-		env := []any{map[string]any{"name": specName, "value": spec}, map[string]any{"name": "FUGARO_BUCKET"}}
+	// command cmd/args, which a workflow job does not set. src writes the
+	// entry the way a mounted secret does, with a value_source a hand-edited
+	// plan could add beside the literal the module wrote.
+	jobWithBucket := func(cmd, args []any, specName, spec string, value any, src bool) ResourceChange {
+		env := []any{map[string]any{"name": specName, "value": spec}, map[string]any{"name": "FUGARO_BUCKET", "value_source": []any{}}}
 		if value != nil {
 			env[1].(map[string]any)["value"] = value
+		}
+		if src {
+			env[1].(map[string]any)["value_source"] = []any{map[string]any{"secret_key_ref": []any{
+				map[string]any{"secret": "a-bucket-name-in-a-secret", "version": "latest"}}}}
 		}
 		unk := map[string]any{}
 		if value == nil {
@@ -616,16 +622,27 @@ func TestCoverJobBucketEnv(t *testing.T) {
 		job     ResourceChange
 		covered bool
 	}{
-		"the repository check job, this run's bucket": {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "gs://fugaro-runs-proj-1"), true},
-		"the repository check job, another bucket":    {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "gs://someone-elses-bucket"), false},
-		"the catalog check job, this run's bucket":    {jobWithBucket(checkCmd, catalogArgs, "FUGARO_CATALOG_CHECK_SPEC", catalogSpec, "gs://fugaro-runs-proj-1"), true},
-		"the catalog check job, another bucket":       {jobWithBucket(checkCmd, catalogArgs, "FUGARO_CATALOG_CHECK_SPEC", catalogSpec, "gs://someone-elses-bucket"), false},
-		"a workflow job, this run's bucket":           {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", "gs://fugaro-runs-proj-1"), true},
-		"a workflow job, another bucket":              {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", "gs://someone-elses-bucket"), false},
-		"a bucket whose name starts with this run's":  {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "gs://fugaro-runs-proj-12"), false},
-		"the bucket name without the gs:// scheme":    {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "fugaro-runs-proj-1"), false},
-		"the value computed after apply":              {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, nil), false},
-		"the value computed after apply, a workflow":  {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", nil), false},
+		"the repository check job, this run's bucket": {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "gs://fugaro-runs-proj-1", false), true},
+		"the repository check job, another bucket":    {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "gs://someone-elses-bucket", false), false},
+		"the catalog check job, this run's bucket":    {jobWithBucket(checkCmd, catalogArgs, "FUGARO_CATALOG_CHECK_SPEC", catalogSpec, "gs://fugaro-runs-proj-1", false), true},
+		"the catalog check job, another bucket":       {jobWithBucket(checkCmd, catalogArgs, "FUGARO_CATALOG_CHECK_SPEC", catalogSpec, "gs://someone-elses-bucket", false), false},
+		"a workflow job, this run's bucket":           {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", "gs://fugaro-runs-proj-1", false), true},
+		"a workflow job, another bucket":              {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", "gs://someone-elses-bucket", false), false},
+		"a bucket whose name starts with this run's":  {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "gs://fugaro-runs-proj-12", false), false},
+		"the bucket name without the gs:// scheme":    {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "fugaro-runs-proj-1", false), false},
+		"the value computed after apply":              {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, nil, false), false},
+		"the value computed after apply, a workflow":  {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", nil, false), false},
+		// The module's literal with a secret beside it: the container's value
+		// is the secret's, so the row must be refused even though the literal
+		// this check reads is the run's own bucket. The Cloud Run API may
+		// refuse the pair itself, but the cover is what a hand-edited plan
+		// meets first, and it holds the job's bucket by the entry's value.
+		"this run's bucket and a secret beside it": {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "gs://fugaro-runs-proj-1", true), false},
+		// The other half of that shape: a source with no literal at all, which
+		// the module never writes and a plan would have to add. Either rule
+		// refuses it (the source, and the empty value), so this row pins that
+		// the shape is refused rather than that this branch is what refuses it.
+		"a value that is only a secret": {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, "", true), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{tc.job}}, nil)

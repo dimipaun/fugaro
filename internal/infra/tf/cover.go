@@ -2527,8 +2527,9 @@ func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creds crede
 // job's, which a hand-edited plan turns into a run whose records land in
 // another bucket — the same hole one job over, and under init's one
 // confirmation. The value must be the module's own literal, gs://<one of this
-// run's buckets>, and a computed one is refused as the specs' unknown values
-// are.
+// run's buckets>: a computed one is refused as the specs' unknown values are,
+// and so is an entry that takes its value from a secret, which carries the
+// variable's name and a value the module never set.
 func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string) string {
 	if unknownAt(unk, envPath...) {
 		return "an environment that is not known"
@@ -2542,6 +2543,16 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		}
 		name := str(e["name"])
 		if name == bucketEnv {
+			// A value that comes from a source (a secret_key_ref) is not the
+			// module's literal even when the entry carries one too: the
+			// credentials service's case refuses the same shape on its
+			// container for the same reason, a value the module never set, and
+			// a plan that kept gs://<this run's bucket> here and added a source
+			// would point the job's records wherever the secret says while this
+			// check read the literal.
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "a " + bucketEnv + " whose value comes from a secret rather than the module"
+			}
 			if unknownAt(unk, append(slices.Clone(ep), "value")...) {
 				return "a " + bucketEnv + " that is not known"
 			}
