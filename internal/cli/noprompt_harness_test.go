@@ -27,10 +27,11 @@ import (
 // today, and the deadline is the one that a prompt answering EOF by asking
 // again trips.
 //
-// The world every leaf runs in is one, and it is the hermetic installation this
-// package already builds: newBudgetFixture's temporary XDG, the local config
-// naming project aurora, the RTDB fake and a file:// runs bucket. Two things
-// are added to it. The outbound network is refused at once, by the same guard
+// The world a leaf runs in is the hermetic installation this package already
+// builds — newBudgetFixture's temporary XDG, the local config naming project
+// aurora, the RTDB fake and a file:// runs bucket — rebuilt for each leaf, so
+// that a run which writes cannot decide what the next one finds. Two things are
+// added to it. The outbound network is refused at once, by the same guard
 // the ee CLI mains use (HTTPS_PROXY to a closed loopback port, which Go bypasses
 // for loopback, so the fakes still answer); and no stream is a terminal and no
 // agent marker is set, so what a leaf does about the closed stdin is the only
@@ -38,19 +39,18 @@ import (
 // work is given them by closedStdinFixtures; a leaf that cannot be run
 // in-process at all belongs in closedStdinNotRun, with its reason.
 //
-// The list this file exists to hold — closedStdinPrompts — is the allow-list in
-// the shape the lint of T1 sets: a leaf that prints a question today is named
-// there with the task that removes it, a leaf that prints one and is not named
-// fails, and a named leaf that no longer prints one fails too, so the entry is
-// deleted by the commit that removes the prompt rather than left to rot. An
-// empty list is the goal, not the starting point: T3, T4, T5 and T7 own every
-// entry it carries.
+// The list this file exists to hold — closedStdinPrompts — is the allow-list the
+// plan gives the lint of T1: a leaf that prints a question today is named there
+// with the task that removes it, a leaf that prints one and is not named fails,
+// and a named leaf that no longer prints one fails too, so the entry is deleted
+// by the commit that removes the prompt rather than left to rot. It is the
+// harness's one debt list, and reaching empty is the goal.
 
 // closedStdinDeadline is how long a leaf may take with its stdin closed before
 // the harness calls it a wait. It is accounts_add_login_test's and askWithin's
-// own bound for the same question, against the package's ten-minute timeout:
-// every leaf but one returns in milliseconds, and the one that does not is the
-// failure this file is about.
+// own bound for the same question, against the package's ten-minute timeout,
+// and it is generous on purpose: every leaf returns in milliseconds, and the
+// one that does not is the failure this file is about.
 const closedStdinDeadline = 10 * time.Second
 
 // closedStdinQuestion matches the two shapes a run prints when it asks a person
@@ -81,6 +81,9 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// setting one from nothing is a loosening.
 	"fugaro budget set": {args: []string{"--global", "--per-run", "50"}, reaches: "global caps per-run: not set -> $50"},
 	// The project-wide kill switch is the one that asks; a repository's is not.
+	// Its sentence is the banner itself, because the kill is the whole of what
+	// the run has said by the time it asks: T3, which removes the ask, changes
+	// this sentence to whatever the run prints instead.
 	"fugaro budget kill": {args: []string{"--all"}, reaches: "⚠ CONFIRM (project aurora): this halts every run"},
 	// Nothing is killed in the fixture, so this one only has to reach the
 	// database to read what it changed.
@@ -101,15 +104,28 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 var closedStdinNotRun = map[string]string{}
 
 // closedStdinPrompts is the allow-list: the leaves that still print a question
-// with a closed stdin, and the task of the plan that removes it. Empty means
-// the policy holds everywhere the harness can reach.
-var closedStdinPrompts = map[string]string{}
+// with a closed stdin, each with the task of the plan that removes it. Every
+// entry is a promise to delete it in that task's commit, and the run's own check
+// holds the promise — a leaf that stops asking fails until its entry is gone.
+// The list reaching empty is what the policy's first constraint looks like from
+// here.
+var closedStdinPrompts = map[string]string{
+	// A raise asks for the project's name before it loosens the budget; T3
+	// removes the ask and leaves the owner-session fence in its place.
+	"fugaro budget set": "T3",
+	// The project-wide kill switch asks the same way, and T3 owns it too. A
+	// repository's kill switch does not ask, which is why this fixture is
+	// --all.
+	"fugaro budget kill": "T3",
+	// The account write asks before it rewrites the project's claude_accounts
+	// block and mints the account's secret version; T5 removes the ask.
+	"fugaro accounts add": "T5",
+}
 
 // TestEveryCommandRunsWithClosedStdin runs every leaf of the released tree with
 // its stdin closed and holds it to the policy: it returns, it reaches the work
 // its fixture is for, and it asks nothing.
 func TestEveryCommandRunsWithClosedStdin(t *testing.T) {
-	closedStdinWorld(t)
 	leaves := closedStdinLeaves(t)
 	ran := 0
 	for _, leaf := range leaves {
@@ -122,6 +138,9 @@ func TestEveryCommandRunsWithClosedStdin(t *testing.T) {
 		}
 		ran++
 		t.Run(path, func(t *testing.T) {
+			// One world per leaf: a run that writes must not decide what the
+			// next leaf finds, whatever order the tree walks in.
+			closedStdinWorld(t)
 			out, returned := closedStdinRun(t, path)
 			if !returned {
 				t.Fatalf("%s did not return within %s with its stdin closed: a read that waits for a person is a wait nobody can end", path, closedStdinDeadline)
