@@ -78,7 +78,7 @@ deviates, so there is no open tension).
 | D1524 | Codex | **Roadmap** (F11): there is no code | Coming soon: promises work nobody scheduled | **Recommended** — 2026-11-07 |
 | D1525 | Model-access wording | **Rewrite to the code** (F12–F14): no "any model"; Anthropic key Built, not enabled; OAuth Supported without failover | keep the spec's wording | **Recommended** — 2026-11-07 |
 | D1526 | Direct provider keys | **Split** (F15): Anthropic-compatible endpoints Supported, native OpenAI Roadmap | one row Coming soon | **Recommended** — 2026-11-07 |
-| D1527 | ChatGPT/Codex OAuth and Vertex | **ChatGPT/Codex OAuth Roadmap (F16). Vertex Supported** with the dollar-cap caveat (F17) | Vertex as Roadmap: understates the default route | **Recommended for ChatGPT/Codex OAuth — 2026-11-07. Vertex: AMENDED AFTER REVIEW.** The owner answered "Roadmap" on the premise that no Vertex run path exists; the code says Vertex is the default auth (F17). Intent kept (claim only what the code proves); the status follows the code. **Needs the owner's confirmation of the amended text (open item 3)** |
+| D1527 | ChatGPT/Codex OAuth and Vertex | **ChatGPT/Codex OAuth Roadmap (F16). Vertex Supported** with the dollar-cap caveat (F17) | Vertex as Roadmap: understates the default route | **Recommended for ChatGPT/Codex OAuth — 2026-11-07. Vertex: AMENDED AFTER REVIEW.** The owner answered "Roadmap" on the premise that no Vertex run path exists; the code says Vertex is the default auth (F17). Intent kept (claim only what the code proves); the status follows the code. **The owner confirmed the amended text on 2026-11-07** ("Vertex confirmed as amended") |
 | D1528 | Backends | **Remove gen 1**; Cloud Run (gen2) Supported; VM / Batch Built, not enabled (F19) | keep the spec's rows | **Recommended** — 2026-11-07 |
 | D1529 | Forges | **GitLab Roadmap; Bitbucket Data Center Not planned; GHES and GitLab self-managed Roadmap** (F21, F22) | keep Coming soon for GitLab | **Recommended** — 2026-11-07 |
 | D1530 | Tracker row | **Reworded** to the user's own agent reading the tracker and handing the task to Fugaro (F23); in-run tracker access and triggers Roadmap (F24) | keep "via MCP" Supported: false for runs | **Recommended** — 2026-11-07 |
@@ -94,7 +94,7 @@ deviates, so there is no open tension).
 
 ## 4. Open tensions and open items for the owner
 
-None between answers. Open items: **(3) D1527's amended Vertex answer, which the owner has not seen;** and (a) the page's final copy of each row's note is the build task's
+None between answers. Open items (D1527's amended Vertex answer was confirmed by the owner on 2026-11-07): (a) the page's final copy of each row's note is the build task's
 to draft and the owner's to read before the website promote, which the release procedure performs
 (the required reviewer was removed from the GitHub environments on 2026-11-07; `docs/release.md` still says otherwise until the stale-docs task DOC1 lands); (b) **(2) the navigation change needs the owner's explicit approval**, because `.claude/rules/website.md` keeps nav labels and URLs unless the owner approves a change: the build task proposes the entry (the "Project" group in `website/src/layouts/Base.astro` is the candidate) and does not add it before the owner says yes.
 
