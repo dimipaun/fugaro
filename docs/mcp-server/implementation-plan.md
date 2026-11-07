@@ -712,6 +712,12 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   the library's own on 2026-11-06: `zitadel/oidc` is Apache 2.0, which is what this task's `go.mod`
   entry is taken against, with the transitive dependencies' clearance and the gate file still the
   owner's** (the paragraph in §3 above, [reconciliation.md](reconciliation.md) §6 check 1).
+  **The pull request that builds this task is built while those two are still open**, which the gate
+  in §6 forbids and which is therefore the owner's decision taken knowingly rather than an
+  accident: **the two are that pull request's condition on merging and not work a later release
+  catches up on**, and a clearance that does not come sends D921 back to its alternatives — the
+  library out of `go.mod` and this task rebuilt without it
+  ([reconciliation.md](reconciliation.md) §6 check 1).
 
 ### M6 — Firebase at the authorize endpoint
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates M-a and H1,
@@ -882,9 +888,10 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
 
 ### M10 — The audit record, revocation, and what an operator sees
 
-- **Files (6):** `ee/coordinator/mcpauth/audit.go`, `audit_test.go`,
+- **Files (8):** `ee/coordinator/mcpauth/audit.go`, `audit_test.go`,
   `ee/coordinator/mcpauth/tool_revoke.go`, `tool_revoke_test.go`,
-  `ee/coordinator/mcpauth/audit_record.go`, `audit_record_test.go`.
+  `ee/coordinator/mcpauth/audit_record.go`, `audit_record_test.go`,
+  `ee/coordinator/mcpauth/registration_limit.go`, `registration_limit_test.go`.
 - **Interface:** one structured line per call and per refusal, naming the identity, the tool, the
   scopes and the outcome and never a value, on `internal/credsvc/audit.go`'s pattern; a bounded
   per-identity record an operator can read; and revocation reachable from the API and from a
@@ -909,6 +916,22 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
 - **SEC:** yes — it decides who can read the audit record and what revocation destroys, and both are
   now decided by an IAM binding rather than by a rule.
 - **Depends on:** M5, M7.
+- **Note — the two bounds the open registration endpoint owes, and this is the task that carries them
+  (2026-11-07).** spec.md §3 makes **rate-limited per source** one of the four rules openness is
+  bound by, and §8 names the residual risk the design accepts — record growth by an unauthenticated
+  caller — as bounded **by that rate limit and by registration records being expirable**. **M5 builds
+  the endpoint and neither bound**: a registration carries `CreatedAt`, the TTLs in `server.go` are
+  bounds on what a record is *read* as, `RevokeFamily` is the store's only delete and nothing sweeps
+  — which left `store.go` attributing both to M7, whose entry carries the Firebase escalation and
+  neither of these. Both are this task's, with their own rows:
+  **`TestRegistrationIsRateLimitedPerSource`** (a source over its limit is refused and writes no
+  record, and a second source is unaffected) and **`TestARegisteredClientIsExpiredAndSwept`** (a
+  registration past its lifetime no longer reads as a client and the sweep removes it), and the
+  lifetime the sweep honours is the one `CreatedAt` was written for. **The sweep reaches all three of
+  the unauthenticated records** — the registration, the pending authorize request and the
+  authorization code (M5's `store.go` note) — because a TTL that nothing enforces is not a bound for
+  a caller with a loop. The per-source counter is this task's own file, so §4's shared-files table
+  gains no row: `store.go` is already M10's at L6.
 - **The amendment's findings (2026-11-04).** The record is written **into the store of D935** through
   M2's `Store` and **not** into the `mcpauth` node, which is the tripwire; a client's chosen name is
   shown **marked unverified** (M5); and the bounded per-identity record **can be flushed by spam**,
@@ -930,7 +953,7 @@ leaves the first slice is M9's own work and the half of M10's that names a spawn
 | --- | --- | --- |
 | `ee/coordinator/mcpauth/limits.go` | M1 (L0), M9 (L5) | M1 defines `Limits` and `Narrow`; M9 reads them at submit |
 | `ee/coordinator/mcpauth/token.go` | M1 (L0), M2 (L1) | M1 defines the token's shape; M2 mints it |
-| `ee/coordinator/mcpauth/store.go` | M2 (L1), M5 (L2), M10 (L6) | M2 defines the store; M5 writes through it; M10 revokes through it |
+| `ee/coordinator/mcpauth/store.go` | M2 (L1), M5 (L2), M10 (L6) | M2 defines the store; M5 writes through it; M10 revokes through it and sweeps it |
 | `ee/coordinator/mcpauth/server.go` | M5 (L2), M7 (L3), M6 (L4) | M5 mounts the five endpoints; M7 adds the resource handler; M6 adds the authorize endpoint's verifier, off the critical path and therefore in the last of the three slots |
 | `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
 | `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |

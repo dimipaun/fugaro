@@ -170,7 +170,12 @@ M5 gate file is the owner's to create** — M5 does not start until a person has
 ([reconciliation.md](reconciliation.md) §6, check 1). **The owner confirmed the library's own licence
 on 2026-11-06** — `zitadel/oidc` is Apache 2.0, read from the module cache the dependency was
 fetched into — **so M5 takes the dependency against that confirmation, and the transitive
-dependencies' clearance and the gate file are what the check still holds.**
+dependencies' clearance and the gate file are what the check still holds.** **M5 is built while the
+check is half closed, and that is the owner's decision taken knowingly rather than a status line
+that overtook the rule** ([reconciliation.md](reconciliation.md) §6, check 1): the two items are the
+condition on the pull request's merge, and if counsel's clearance does not come, the answer is
+D921's alternatives — the library out of `go.mod` and M5 rebuilt without it — and not a dependency
+shipped ahead of its own gate.
 
 ## 2. The front door: transport, endpoint, and who may reach it
 

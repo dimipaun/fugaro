@@ -360,7 +360,7 @@ func TestTheTokenEndpointRefusesAFirebaseIDToken(t *testing.T) {
 
 	for _, want := range []GrantType{GrantAuthorizationCode, GrantRefreshToken, GrantClientCredentials} {
 		if got, err := ParseGrantType(string(want)); err != nil || got != want {
-			t.Errorf("ParseGrantType(%q) = %q, %v; the token endpoint's own grants are the three D929 and D930 name", want, got, err)
+			t.Errorf("ParseGrantType(%q) = %q, %v; the parse admits the three D929 and D930 name, of which the token endpoint refuses client_credentials itself", want, got, err)
 		}
 	}
 	for _, grant := range []string{
@@ -384,6 +384,9 @@ func TestTheTokenEndpointRefusesAFirebaseIDToken(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), tok) || strings.Contains(err.Error(), grant) && grant != "" {
 			t.Errorf("the refusal repeats the grant that failed it: %q", err)
+		}
+		if strings.Contains(err.Error(), "credential") {
+			t.Errorf("the refusal for an unknown grant is %q, which advertises a credentials grant: the endpoint refuses client_credentials itself (token.go), so naming it here tells a caller a grant is supported that is not", err)
 		}
 	}
 }

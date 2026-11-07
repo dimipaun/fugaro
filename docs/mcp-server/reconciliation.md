@@ -658,7 +658,14 @@ code task starts:
    library half of this check and leaves the other two things it names**: **counsel's clearance of
    the transitive dependencies** the library brings, and **the M5 gate file the owner is to create**.
    **M5's implementation is in the pull request that records this**, written against the confirmed
-   library, and those two are the owner's still.
+   library, and those two are the owner's still. **That is a decision, and it is written here rather
+   than left to be inferred from a status line:** this check is a gate and not a note — M5 does not
+   start until the licence is settled and a person has written the gate file — and M5 is built before
+   either closed, so **the two items above are the condition on this pull request's merge and not
+   work a later release catches up on.** The owner writes the gate file and counsel clears the
+   transitive set, or **the dependency does not land**: the answer to a licence that is not cleared
+   is D921's own alternatives, with the library taken out of `go.mod` and M5 rebuilt against them,
+   and not a shipped dependency waiting for a clearance that arrives later.
 2. **The endpoint really is reachable from the public internet** once D920's answer says so: a
    request from outside the project reaches the handler and gets the 401, rather than being refused
    by the platform. spec.md §8 says what follows if it is not.

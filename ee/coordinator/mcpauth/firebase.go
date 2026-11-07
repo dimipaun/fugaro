@@ -262,7 +262,7 @@ func ParseGrantType(s string) (GrantType, error) {
 	case GrantAuthorizationCode, GrantRefreshToken, GrantClientCredentials:
 		return g, nil
 	}
-	return "", fmt.Errorf("%w: this endpoint's grants are the authorization code, the rotating refresh token and a confidential client's own credentials, and a Firebase ID token is consumed at the authorize endpoint and is never a grant", ErrUnsupportedGrant)
+	return "", fmt.Errorf("%w: this endpoint's grants are the authorization code and the rotating refresh token, and a Firebase ID token is consumed at the authorize endpoint and is never a grant", ErrUnsupportedGrant)
 }
 
 // decodeIDToken decodes a compact JWT's header and payload WITHOUT verifying

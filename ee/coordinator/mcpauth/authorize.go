@@ -333,12 +333,20 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 // log line; the endpoint refuses one that arrives that way rather than
 // accepting it, and this is where "the body and nowhere else" is enforced.
 //
-// The entry is `user:<email>` and it is built from the verifier's own folded
-// address, which is the same spelling `fugaro user` writes and the same fold
-// its comparison applies: the front door's identity and the CLI's list are one
-// vocabulary, so an identity that signed in here is an identity that command
-// would have accepted. The uid is deliberately not the entry — D933's lists
-// name people by address, and a uid would be an identity no list can hold.
+// The entry is `user:<email>`, built from the address the verifier folded to
+// ASCII lower case, and the fold is this endpoint's own: it is not the rule the
+// project's own lists are read by, and nothing here claims the CLI agrees with
+// it. `internal/cli/roles.go` places and compares a member exactly
+// (`operatorMember` and `launcherMember` are a `slices.Contains` over the text),
+// `internal/cli/user.go`'s `userMember` writes the member it was handed without
+// folding it, and the one comparison over these members that folds at all is the
+// local self-removal guard's `strings.EqualFold` — a Unicode fold, which is what
+// `foldEmail` above exists to avoid. That the addresses the CLI derives are
+// lower-cased too (`internal/cli/init_members.go`, `internal/cli/pair.go`) makes
+// the two agree in practice; it is not a rule either side reads the other by,
+// and the spelling M7 matches these lists with is M7's to state. The uid is
+// deliberately not the entry — D933's lists name people by address, and a uid
+// would be an identity no list can hold.
 func (s *Server) verifySignIn(ctx context.Context, raw string) (string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", ErrUnverifiedIDToken

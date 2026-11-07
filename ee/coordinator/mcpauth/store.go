@@ -63,9 +63,10 @@ const (
 	// is written by the unauthenticated GET, so a stranger with a loop leaves
 	// one behind per iteration until its TTL passes. The TTL is a bound on
 	// what the record is *read* as and not on what is stored — nothing in
-	// this package sweeps an expired request or code — which is the same
-	// deferral Client.CreatedAt records, and it covers these two records as
-	// well as that one.
+	// this tree sweeps an expired request or code, RevokeFamily being the
+	// store's only delete — which is the same deferral Client.CreatedAt
+	// records, and it covers these two records as well as that one: the
+	// lifecycle M10 carries reaches all three of the shapes here.
 	requestPrefix = PathPrefix + "requests/"
 	codePrefix    = PathPrefix + "codes/"
 )
@@ -149,12 +150,14 @@ type Client struct {
 	// lifecycle reads, and it is deliberately the only thing here that
 	// anticipates one: spec.md §8 bounds an open registration endpoint's
 	// residual risk by a per-source rate limit and by these records being
-	// expirable, and neither bound is implemented in this package. Both are
-	// M7's (implementation-plan.md, the note in its entry), because M7 is the
-	// task that makes the endpoint reachable from a real binary; until then
-	// the exposure is latent and the record carries the timestamp the
-	// lifecycle will need. The flow's two records are in the same position and
-	// are named on requestPrefix above.
+	// expirable, and neither bound is implemented in this package or anywhere
+	// else in this tree. Both are M10's, with their own tests
+	// (implementation-plan.md, the note in its entry: registration is
+	// rate-limited per source and an expired registration is gone), and until
+	// M10 lands the exposure is latent only because no binary mounts these
+	// routes yet — the record carries the timestamp that lifecycle will read
+	// and nothing here enforces it. The flow's two records are in the same
+	// position and are named on requestPrefix above.
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -699,10 +702,14 @@ func (r records) ConsumeCode(ctx context.Context, hash string) (Code, error) {
 	case errors.Is(err, errMissing):
 		return Code{}, ErrCodeNotFound
 	case errors.Is(err, errConsumed):
-		// The code was spent by an earlier exchange. Its marker is read for
-		// the family that exchange minted, which is the whole of what a
+		// The code was spent by an earlier exchange, and its marker is read
+		// for the family that exchange minted, which is the whole of what a
 		// replay can act on: the caller revokes it, and the store does not
-		// decide that for it.
+		// decide that for it. The family is there for a replay that found the
+		// marker already written; the exchange that lost the compare-and-swap
+		// gets this same error with no marker and therefore no family, and
+		// `consume` above says why: the marker is bound after the mint, so
+		// there is nothing to read at the moment the race is lost.
 		var marker spentRecord
 		if len(spent) > 0 {
 			if err := json.Unmarshal(spent, &marker); err != nil {
@@ -773,8 +780,16 @@ var errConsumed = errors.New("mcpauth: the record was already spent")
 // consume reads one single-use record and spends it in the same act: the read
 // returns the generation the write below is matched against, so a caller that
 // lost a race is answered errConsumed rather than reading a record the winner
-// already spent. It answers the spent bytes on that refusal, because a caller
-// that lost the race is looking at the winner's marker and not at the record.
+// already spent.
+//
+// The spent bytes come back only when it is this call's own read that found them
+// spent, which is the sequential replay. A caller that lost the compare-and-swap
+// is answered errConsumed with nothing: the winner's marker is not re-read, and
+// the one thing that would make it worth reading — the family a spent code names
+// — is not written as part of this write but by BindCodeFamily, after the winner
+// has minted. So a second redemption that lost the race is refused as spent and
+// refused with no family to revoke, and what the caller does with that is the
+// caller's rule (ConsumeCode's own note below).
 func (r records) consume(ctx context.Context, key string, into any) ([]byte, error) {
 	data, gen, err := r.objs.read(ctx, key)
 	if err != nil {
