@@ -4,7 +4,7 @@
 explicit go; answering a decision is not approving a task. It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md). Answers that shaped it (2026-11-07): D1580 (CLI and console
 checks first), D1581 (rename and migrate in `update`), D1582 (a lapse limits only Subscription
-surfaces), D1583 (scope grammar, amended to canonical patterns, **owner to confirm**). **Round 1 of an independent review (2026-11-07) is applied**: D1585 is amended (the node lives under `config/admin/`), and D1591 (how a repo-scoped admin's write reaches the cloud) is a new open decision that RS5 depends on. Tasks that
+surfaces), D1583 (scope grammar, amended to canonical patterns, **confirmed 2026-11-07**). **Round 1 of an independent review (2026-11-07) is applied**: D1585 is amended (the node lives under `config/admin/`), and D1591 (how a repo-scoped admin's write reaches the cloud) was answered 2026-11-07 as recommended (option c); D1584 and D1586–D1590 are recorded as the recommendation. No decision is open; each task still needs its own go. Tasks that
 depend on an open decision say so; they cannot start before it is answered.
 
 **External dependencies (not in this folder).** `docs/composite-commands` (D1560–D1579): the named-step

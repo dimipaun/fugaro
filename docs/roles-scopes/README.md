@@ -18,4 +18,4 @@ project-wide IAM lists.
 (D1540–D1559), `docs/composite-commands` (D1560–D1579).
 
 **Owner answers of 2026-11-07:** D1580–D1582 as recommended; D1583 as recommended in words and **amended
-after review** (canonical stored spelling); D1585's location amended (`config/admin/`); D1584 and D1586–D1591 are open.
+after review** (canonical stored spelling); D1585's location amended (`config/admin/`); D1584 and D1586–D1590 recorded as the recommendation (owner delegated reading to the PR); D1591 as recommended (option c); the D1583 and D1585 amendments confirmed. No decision is open.
