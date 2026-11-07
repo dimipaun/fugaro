@@ -419,13 +419,15 @@ func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r 
 	} else {
 		up.SetBasicAuth(bitbucket.GitUsername, token)
 	}
-	up.ContentLength = contentLength
-	if contentLength < 0 && body != nil {
-		// A body with no length the caller named (a chunked push): the length
-		// is unknown here too, and the transport streams it chunked rather than
-		// holding it to find out.
-		up.ContentLength = -1
-		up.TransferEncoding = nil
+	if body != nil {
+		// A body with no length the caller named (a chunked push) keeps the
+		// unknown length it has: the transport streams it chunked rather than
+		// holding it to find out. A call with no body at all (every GET, and
+		// the two POSTs of git's advertisement and push that are decided before
+		// a byte is read) keeps the zero ContentLength NewRequest gave it — a
+		// negative length on a bodyless request is a length with no body, which
+		// the transport refuses rather than sends.
+		up.ContentLength = contentLength
 	}
 	resp, err := s.bitbucketClient().Do(up)
 	if err != nil {
