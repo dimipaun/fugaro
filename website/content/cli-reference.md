@@ -86,6 +86,7 @@ Subcommands:
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+- `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
 
 ## `fugaro accounts add`
 
@@ -253,6 +254,63 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name (default: this checkout's origin) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts rm`
+
+Remove a named Claude account, its secret and the job that served it
+
+Remove a named Claude OAuth account from this project and converge the
+installation on its absence.
+
+The account is removed in the order that cannot strand a running job. While a
+profile still lists it, the command refuses — naming each profile — because a
+profile's claude_accounts is a job this installation has deployed, and removing
+the account under a live job leaves a job the policy cannot describe:
+fugaro accounts rm NAME --profile PROFILE takes the name out of that profile's
+list alone, and this command removes the declaration, the secret and the job
+once no profile lists it.
+
+If a repository's committed fugaro.yaml still names the account in
+agent.oauth_token, the command warns instead, naming the repository and the run
+that stops at launch: that file belongs to the repository and not to this
+installation, so your own edit is not blocked by one this command cannot write.
+
+Removing the declaration also deletes the secret claude-oauth-token-<name>
+through Secret Manager's own delete. That delete cannot be undone — Secret
+Manager keeps no grace period for a secret — and the copy of the credential
+left behind is the token at the provider. The secret's ID is named in the
+confirmation before it goes, and the command says plainly that deleting the
+secret does not revoke the token at the provider: it stays valid until it
+expires or you revoke it in Anthropic's own console, which no command here
+reaches.
+
+Then it converges, in the same command and behind the same confirmation: the
+policy node the account was published in, the job set and this checkout's
+repository root, through the stages fugaro update runs.
+
+If the delete fails after the config was written, the config is put back the
+way it was and the command stops: an account whose declaration is gone while
+its secret is still there is the one state this command may not leave behind.
+
+Run it at your own terminal: this command deletes a credential, so a coding
+agent's session is refused, --yes included — a managed project's gate refuses
+the removal too, because the refs and the checkouts record its referrer check
+reads are documents the session writes, so no read here answers for what origin
+carries.
+
+Usage: `fugaro accounts rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--profile` | string | "" | no | the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time) |
+| `--yes` | bool | `false` | no | confirm the removal without a prompt |
 
 Subcommands:
 
@@ -2407,6 +2465,7 @@ Subcommands:
 
 - `fugaro managed apply` -- Apply the agent-authored Terraform root of a managed project, as the deployer account
 - `fugaro managed flag` -- Flag an existing GCP project as managed (the project's owner)
+- `fugaro managed status` -- Print a managed project's marks and its newest audit record
 - `fugaro managed unflag` -- Remove both marks that make a GCP project managed (the project's owner)
 
 ## `fugaro managed apply`
@@ -2542,6 +2601,58 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for flag |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro managed status`
+
+Print a managed project's marks and its newest audit record
+
+Print whether the selected project is managed, and what its audit trail
+records.
+
+This is the read a screen of a managed project is built on: one closed document
+about one project, holding the two marks' own answer and the bounded subset of
+the newest audit record — never a sentence to be parsed, whose next rewording
+would change what a screen draws.
+
+It reads the same two facts a managed apply reads, and changes no cloud object:
+whether the project is managed is the creation fact in its runs bucket and the
+fugaro_managed label on the project itself, which have to agree, and the trail
+is the records the managed commands file under gs://<runs bucket>/fugaro/managed-audit/.
+
+The trail is the newest record of the current UTC day, and of the previous day
+when today holds nothing, with the day and that day's count beside it. A day
+whose records could not be read is said rather than shown as an empty one: the
+two are different facts and only one of them is a reason to look further. A
+project that is not managed files no record at all, so its trail is not read and
+nothing is reported about it — and a project whose marker or label was removed
+is "not managed", never "revoked", which is a run-time decision of the gate and
+is recorded nowhere.
+
+What it prints is bounded on purpose: the record's time, its command, the gate's
+verdict, the account the write ran as and the plan digest. The record's argv is
+never printed, by this command or by anything that reads this document: it holds
+paths and titles an operator did not mean to publish.
+
+--json prints the document, which the desktop console reads as bytes: see the
+desktop console's JSON contract, section 6.21, for every member and what its
+emptiness means.
+
+Usage: `fugaro managed status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -3875,6 +3986,15 @@ ones up rather than reading records.
 block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
 writes a file, so a caller can read a report before committing it.
 
+--due is the cadence's own reading: it names the periods that have closed with no
+report under --dir, newest first -- the period that ended most recently is the
+first line, and of two that ended on the same day the longer one comes first --
+and how old the newest report it found is. It reads that folder and nothing else --
+no project, no credential, no bucket -- so it answers in a checkout that has never
+been set up, and it writes nothing: --period, --date, --repo, --stdout and
+--submit-draft have nothing to act on beside it and are refused by name. --json
+prints it as {version, dir, due[], newest}.
+
 --submit-draft prints neither: it prints a redacted learning draft a person can
 file as a "Skill learning" issue, and it sends nothing. The draft leaves the
 repository, so it carries no repository name and no run ID -- a period other
@@ -3896,6 +4016,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--date` | string | "" | no | any day inside the period (YYYY-MM-DD); default: the most recent closed period |
 | `--dir` | string | `docs/fugaro-reviews` | no | the folder the reports live in, relative to the working directory |
+| `--due` | bool | `false` | no | print the closed periods this checkout has no report for; reads the folder and nothing else |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for digest |
 | `--json` | bool | `false` | no | print the summary block and the patterns as JSON |

@@ -5,8 +5,9 @@
 This plan builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**, which
 wins where they differ. Base: `origin/main` at `e924481cd`, 2026-10-24.
 
-**Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the
-owner's explicit go; answering a decision approved none of them.
+**Status 2026-11-07: the plan is built, in part — [status-2026-11-07.md](status-2026-11-07.md)
+censuses every task below against `origin/main`; NO TASK IS APPROVED, and the census approves none.**
+Each task needs the owner's explicit go; answering a decision approved none of them.
 
 The owner's answers of 2026-10-24 that shape it:
 - **D300** the core stays MIT; **D301, amended 2026-10-24 by the owner's O2 answer (not the
