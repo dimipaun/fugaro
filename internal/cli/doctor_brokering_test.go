@@ -74,8 +74,9 @@ func newBrokeringDirectRig(t *testing.T) *brokeringRig {
 }
 
 // newBrokeringUnoptedRig is the same checkout on an installation that never
-// opted in: no credentials_service block, so the checks that read the service
-// have nothing to say.
+// opted in: no credentials_service block, which is the state the ruling makes
+// the first of the service's five (the check reports it in one line and no
+// longer stays silent about it).
 func newBrokeringUnoptedRig(t *testing.T) *brokeringRig {
 	t.Helper()
 	r := newBrokeringCheckout(t, false)
@@ -221,6 +222,17 @@ func (r *brokeringRig) putBundle(t *testing.T, doc string) string {
 	return id
 }
 
+// putEmptyBundle creates the bundle container with no version in it, which is
+// the state the installation's own apply leaves and the first `creds set`
+// starts from: the service is deployed, and the loader has no document to
+// serve a run's credential out of.
+func (r *brokeringRig) putEmptyBundle(t *testing.T) string {
+	t.Helper()
+	id := credsvc.BundleSecretID("aurora")
+	r.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, nil)
+	return id
+}
+
 // bitbucketAnswer stands in for what an API root answers the token check: one
 // call per proxied repository — GET /repositories/<workspace>/<slug> — and
 // nothing else, which the counter pins.
@@ -302,7 +314,9 @@ func pinDoctorNow(t *testing.T, now func() time.Time) {
 // own policy, and it is a warning in both failing directions — a service the
 // installation opted into that is not there, and a service no job account may
 // invoke. Neither fails doctor without --strict: an installation mid-opt-in is
-// a legitimate state.
+// a legitimate state. The installation that never opted in is not silent here
+// either, and it is the first of the five states
+// TestDoctorReportsTheServiceStateInOneLine owns.
 func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 	t.Run("deployed with the grant", func(t *testing.T) {
 		r := newBrokeringRig(t)
@@ -399,16 +413,167 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		}
 	})
 
-	t.Run("not opted in", func(t *testing.T) {
-		r := newBrokeringUnoptedRig(t)
-		o, err := r.doctor(t)
-		if err != nil {
-			t.Fatalf("doctor: %v", err)
-		}
-		if cs := checksByID(o, "credentials-service-deployed"); len(cs) != 0 {
-			t.Errorf("an installation with no credentials_service block got %+v", cs)
-		}
-	})
+}
+
+// brokeringServiceState is one row of the owner's table
+// (docs/credentials-service/default-on.md §3, DON7): a state the credentials
+// service can be in, the rig that holds it, the half of the service its line
+// has to name, and what --strict must answer for it.
+type brokeringServiceState struct {
+	name string
+	// names are the halves the line must name. A line that said one
+	// undifferentiated "not configured" would name none of them, which is the
+	// answer the ruling refused (§1.4).
+	names    []string
+	severity string
+	// red is what --strict must answer: the two states a run cannot work
+	// around are warnings, and the three that are the installation being
+	// behind the release are measurements, which never fail doctor.
+	red   bool
+	build func(t *testing.T) *brokeringRig
+}
+
+// brokeringServiceStates are the five states of the service: the installation
+// that has not converged on it at all, the one whose block is written and
+// whose service is not deployed, the deployed service whose bundle holds no
+// version, the deployed service whose verifier list admits nobody, and the
+// deployed service with a job account missing its invoker grant.
+func brokeringServiceStates() []brokeringServiceState {
+	// deployed is the service every state after the first two starts from:
+	// there, and admitting this installation's one job account.
+	deployed := func(t *testing.T) *brokeringRig {
+		t.Helper()
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		return r
+	}
+	return []brokeringServiceState{
+		{
+			name:     "the installation has not converged on the service",
+			names:    []string{infra.CredentialsServiceName, "fugaro update"},
+			severity: "info",
+			build:    newBrokeringUnoptedRig,
+		},
+		{
+			name:     "the block is written and the service is not deployed",
+			names:    []string{infra.CredentialsServiceName, "proj-1234"},
+			severity: "warning",
+			red:      true,
+			build:    newBrokeringRig,
+		},
+		{
+			name:     "the deployed service's bundle holds no version",
+			names:    []string{"creds set"},
+			severity: "info",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := deployed(t)
+				r.putEmptyBundle(t)
+				return r
+			},
+		},
+		{
+			name:     "the deployed service's verifier list admits nobody",
+			names:    []string{infra.VerifierAccountID},
+			severity: "info",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := deployed(t)
+				r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+				addLocalLines(t, r.doctorRig, "verifier_accounts: []\n")
+				return r
+			},
+		},
+		{
+			name:     "a job account the service does not admit",
+			names:    []string{"workspace-a/repo-a", "roles/run.invoker"},
+			severity: "warning",
+			red:      true,
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := newBrokeringRig(t)
+				r.svcs.AddService(infra.CredentialsServiceName)
+				return r
+			},
+		},
+	}
+}
+
+// TestDoctorReportsTheServiceStateInOneLine is DON7's headline: whatever the
+// service's state, this one check says it in exactly one line — the check is
+// never silent and never two lines — and the line's severity is the state's
+// own. The two states a run cannot work around fail --strict; the three that
+// follow from an installation that has not taken the release up do not, and
+// they are not items of the default view either: it stays one line.
+func TestDoctorReportsTheServiceStateInOneLine(t *testing.T) {
+	for _, state := range brokeringServiceStates() {
+		t.Run(state.name, func(t *testing.T) {
+			o, err := state.build(t).doctor(t)
+			if err != nil {
+				t.Fatalf("a state of the service must not fail doctor without --strict: %v", err)
+			}
+			cs := checksByID(o, "credentials-service-deployed")
+			if len(cs) != 1 {
+				t.Fatalf("the state emitted %d credentials-service-deployed checks, want exactly one: %+v", len(cs), cs)
+			}
+			c := cs[0]
+			if c.Severity != state.severity {
+				t.Errorf("severity = %q, want %q: %+v", c.Severity, state.severity, c)
+			}
+			if c.Problem == "" || c.Fix == "" {
+				t.Errorf("the state's one line is not one line: %+v", c)
+			}
+			if checksFail(cs, false) {
+				t.Errorf("the state fails doctor without --strict: %+v", c)
+			}
+			if got := checksFail(cs, true); got != state.red {
+				t.Errorf("--strict = %v, want %v: %+v", got, state.red, c)
+			}
+			def := doctorDefaultOutput(t, cs)
+			if state.red {
+				if !strings.Contains(def, "credentials-service-deployed") {
+					t.Errorf("a warning is not an item of the default view:\n%s", def)
+				}
+			} else if def != "fugaro doctor: ok — everything checked is ok\n" {
+				t.Errorf("an installation that is behind the release printed an item:\n%s", def)
+			}
+			if all := doctorAllOutput(t, cs); !strings.Contains(all, c.Problem) {
+				t.Errorf("--all does not carry the state's line:\n%s", all)
+			}
+		})
+	}
+}
+
+// TestDoctorNamesTheMissingHalfNotNotConfigured is §1.4's one sentence that
+// must be true of every one of those states: the service is deployed (or not),
+// and the line names WHICH half is missing — the bundle, the verifier account,
+// the job accounts — rather than reporting one undifferentiated "not
+// configured", which sends a reader to a key name instead of to the thing that
+// is actually absent.
+func TestDoctorNamesTheMissingHalfNotNotConfigured(t *testing.T) {
+	for _, state := range brokeringServiceStates() {
+		t.Run(state.name, func(t *testing.T) {
+			o, err := state.build(t).doctor(t)
+			if err != nil {
+				t.Fatalf("doctor: %v", err)
+			}
+			cs := checksByID(o, "credentials-service-deployed")
+			if len(cs) != 1 {
+				t.Fatalf("%s emitted %d credentials-service-deployed checks, want exactly one: %+v", state.name, len(cs), cs)
+			}
+			c := cs[0]
+			if strings.Contains(strings.ToLower(c.Problem), "not configured") {
+				t.Errorf("the line reports one undifferentiated state: %q", c.Problem)
+			}
+			for _, want := range state.names {
+				if !strings.Contains(c.Problem+c.Fix, want) {
+					t.Errorf("the line does not name %q, which is what this state is missing: %q", want, c.Problem+" / "+c.Fix)
+				}
+			}
+		})
+	}
 }
 
 // TestDoctorBrokeringBundleBitbucketToken: the bundle's own check, and the
