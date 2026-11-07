@@ -267,8 +267,10 @@ D1540–D1559 are reserved for this work (highest in use on `main` and in open p
 
 ## 5. Tensions: the owner's rulings (2026-11-07)
 
-The owner ruled T1–T4 and T6 on 2026-11-07 and held T5 open until the T8 spike (task T8S) reports. Each
-ruling is written here and carried into [implementation-plan.md](implementation-plan.md).
+The owner ruled T1–T4 and T6 on 2026-11-07, and held T5 open until the T8 spike (task T8S) reports. Each
+ruling is written here and carried into [implementation-plan.md](implementation-plan.md); one case inside T6 —
+an installation with no global caps — is named in its ruling and left open with the owner (the open items at the
+end of this section).
 
 **T1 (D1544 against the spec and D1547).** The spec says any prompt is a bug; the owner wants `--ask` honoured.
 **RULED 2026-11-07: yes, as proposed.** `--ask` is the single sanctioned exemption — opt-in per invocation,
@@ -313,10 +315,18 @@ one `doctor` line saying so. T10 and the lease design follow it: the enforce-on-
 (T16, one file group), with a converge test (HARD RULE: `fugaro update` is the whole upgrade; an installation at
 the previous mode converges). The trigger cannot be an absent mode node: `internal/infra/firebasedb.go` **seeds**
 `config/mode` = `observe` at install, so T16 records the owner's choice instead, and raises where there is none.
+**Where the caps are missing the raise cannot land:** `enforce` is refused without
+`config/caps/global` (D6, `RequireCapsForEnforce`), and neither `setup` nor `update` seeds that node — its only
+writer is `fugaro budget set --global` — so a managed installation whose caps were never set stays in observe
+even after T16, and once T10 removes the build count nothing bounds how many builds run (only
+`maxReserveMicros`, seeded at $5, bounds one build's lease, and the kill switches). The owner has not ruled on
+that case; it is named in T10 and in the open items below, and `doctor` reports it.
 
-**Open items:** T5 above, until the T8S spike reports; whether `doctor`'s observe warning (D1548) is a
-warning or an error; the meta repo's own design (out of this plan). Every decision D1540–D1555 is answered
-(2026-11-07).
+**Open items:** T5 above, until the T8S spike reports; the capless case of T6 — after T10, a managed
+installation with no `config/caps/global` stays in observe, where the lease does not bite, so an aggregate bound
+for it (or caps seeded from its policy) is the owner's call, and T16's `doctor` line names the missing caps;
+whether `doctor`'s observe warning (D1548) is a warning or an error; the meta repo's own design (out of this
+plan). Every decision D1540–D1555 is answered (2026-11-07).
 
 ## 6. UNVERIFIED
 

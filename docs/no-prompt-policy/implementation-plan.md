@@ -22,7 +22,8 @@ classification included), and the owner-session fence a courtesy against the acc
 against a hostile agent; **T6** (b) — `fugaro update` raises the budget mode to enforce on a managed project
 wherever the owner has not chosen one (the mode is *seeded* observe, so the trigger is a recorded choice, not an
 absent node), one `doctor` line says so, and the step is its own task (T16) with a converge test, T10 following
-it; **T5** stays open — the D1550 answer is held until the T8 spike (task **T8S**) reports,
+it — where the global caps are missing the raise cannot land at all (D6), so that installation stays observe and
+T10 names it, with the capless case open in the reconciliation; **T5** stays open — the D1550 answer is held until the T8 spike (task **T8S**) reports,
 and T8 waits on the spike only.
 
 ## Order against open pull requests
@@ -57,7 +58,7 @@ and T8 waits on the spike only.
 | Over-cap error: estimated cost, cap, spent, the one command, non-zero exit | T8 |
 | A missing or unknown Cloud Billing price **refuses**; a missing machine type refuses; local config cannot supply a rate | T8 |
 | Observe mode: the build proceeds and records; an absent mode is observe; only maxReserve and kill switches bite; `doctor` says so | T8, T9 |
-| `fugaro update` raises the mode to enforce on a managed project wherever the owner has not chosen one (an additive `config/modeSet` says which); one `doctor` line says so | T16 |
+| `fugaro update` raises the mode to enforce on a managed project wherever the owner has not chosen one (an additive `config/modeSet` says which); one `doctor` line says so, and where the global caps are missing the raise cannot land (D6): the mode stays observe, `doctor` names the caps, and the installation is unbounded | T16 |
 | The integrity refusals stay (listed in T9) and are in `TestIntegrityRefusalsStillRefuse` | T9 |
 | Out-of-table grants apply, are recorded and warned (session and `doctor`); the record is harder to erase | T9 |
 | The marker and catalog-check spec format changes converge an installation at the previous version | T10 |
@@ -223,11 +224,18 @@ and T8 waits on the spike only.
   `deploy/terraform/gcp/modules/installation/catalogcheck.tf` (if the job's account needs the lease path T8 wrote), the
   schemas the marker/spec shape appears in, tests. **Not** `image_refresh_managed.go` (T4 removed that call).
 - Marker version bump; `fugaro update` converges an installation at the previous version; the catalog check job
-  takes a lease through T8's estimator with its own per-run cap (D1554). **T6 is ruled (b): `fugaro update` sets
-  the mode to enforce on a managed project (T16), so a lease bites there; only an installation whose owner chose
-  observe is unbounded, and `doctor` says so (D1548).** **Tests:** `TestPreviousMarkerVersionConvergesOnUpdate`, `TestCatalogCheckJobLeasesEachBuild`.
+  takes a lease through T8's estimator with its own per-run cap (D1554). **T6 is ruled (b): `fugaro update`
+  raises the mode to enforce on a managed project (T16), so a lease bites there.** Two installations stay in
+  observe and take this removal as unbounded builds: one whose owner chose `observe` (D1548), and one with no
+  `config/caps/global` — T16's step sets no mode there, because `enforce` is refused without the global caps
+  (D6) and neither `setup` nor `update` seeds that node (`fugaro budget set --global` is its only writer). In
+  observe only `maxReserveMicros` (seeded at $5, so one build is bounded per lease) and the kill switches bite,
+  and nothing bounds how many builds run. `doctor` names the mode in both cases: T8's observe warning, and
+  T16's line, which names the missing caps. The caps are the operator's to set — no task here writes them — and
+  the capless case is one of the reconciliation's open items. **Tests:** `TestPreviousMarkerVersionConvergesOnUpdate`, `TestCatalogCheckJobLeasesEachBuild`.
 - **Depends on:** T4, T8, **T9** (golden plans and installation-module files are shared), **T16** (T6(b): the
-  mode is enforce before the count goes). **Release:** `### For operators`: "run `fugaro update`".
+  mode is enforce — where the caps are set — before the count goes; the capless installation above is the
+  owner's call, held open in the reconciliation). **Release:** `### For operators`: "run `fugaro update`".
   **Reviewer:** opus + review. **Commit:** `managed: the image build count is gone; update migrates the marker (T10)`.
 
 ### T15 — the non-money `Typed` steps get the owner-session-only fence (D1555)
@@ -256,8 +264,10 @@ and T8 waits on the spike only.
   **absent** (a seeded mode, including an installation from before this change) or says `update`, and leaves
   `config/modeSet = owner` alone, ever after. It stamps `config/modeSet = update` when it raises, so an `observe`
   the owner sets afterwards carries `modeSet = owner` and the next update is a no-op. `enforce` still needs the
-  project-wide caps (D6, the refusal `budget set` already carries): where they are missing the step sets no mode
-  and `doctor` names them. No location under `config` is writable by a run token (`internal/budget/rules`), and
+  project-wide caps (D6, the refusal `budget set` already carries): where they are missing the step sets no mode,
+  and `doctor` names the missing caps **and says the installation is unbounded** — the capless case T10 names and
+  the reconciliation holds open for the owner. No location under `config` is writable by a run token
+  (`internal/budget/rules`), and
   `modeSet` is written with operator credentials beside `config/mode`, so the rules carry no path for it.
 - **Why:** D1548 makes an absent mode observe, and in observe a lease does not bite, so without this step a
   default installation's nightly catalog-check lease (D1554) and every build are unbounded; this is T6(b), and
