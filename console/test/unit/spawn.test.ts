@@ -157,7 +157,10 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * the settings read, `settings.read`, the nineteenth, and the settings write,
  * `settings.edit`, the twentieth -- the same command's second row, since an edit
  * reads the project's configuration the read does -- and the graph plan's read,
- * CG9a's `graph.read`, the twenty-first. The
+ * CG9a's `graph.read`, the twenty-first, and the managed screens' plan's CM4's
+ * two reads, `managed.status` and `policy.show`, the twenty-second and
+ * twenty-third (the Project tab's managed state and its published policy node,
+ * the two commands the plan's CM3 put on `consoleReadPaths`). The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -186,6 +189,8 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'coordinator.status',
   'coordinator.show',
   'coordinator.intents',
+  'managed.status',
+  'policy.show',
   'run.launch',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
@@ -486,7 +491,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-three argvs, twenty-two commands, twenty-one of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-five argvs, twenty-three commands, twenty-three of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -508,7 +513,13 @@ describe('the spawn table and the argv it builds', () => {
     // installation's, no argument a renderer can fill -- and the settings write
     // the twenty-first, whose words are the group alone: its subcommand, its key
     // and its value are arguments, so the row's own word is `settings` and the
-    // rest of the argv is built from the main process's phase and layer. The Go
+    // rest of the argv is built from the main process's phase and layer. The
+    // managed screens' plan's CM4 added the two managed reads -- `managed status
+    // --json` and `project policy show --json`, the Project tab's managed state
+    // and its published policy node -- and both are rows whose whole argv is
+    // their own words: neither command has a positional word and both declare no
+    // argument at all, which is what keeps a caller from naming a project, a
+    // generation or a day (`src/main/ipc.ts`). The Go
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
@@ -536,6 +547,13 @@ describe('the spawn table and the argv it builds', () => {
       'coordinator status --from-store --all --json',
       'coordinator show --json',
       'coordinator intents --all --json',
+      // The two managed reads (the managed screens' plan's CM4): the Project
+      // tab's managed state with its audit trail, and the published policy node
+      // its runs read. Both rows are the command and `--json` and nothing else
+      // -- no argument of any kind -- and the two project flags are this row's
+      // own words, filled from the chosen installation like every other row's.
+      'managed status --json',
+      'project policy show --json',
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
@@ -568,10 +586,12 @@ describe('the spawn table and the argv it builds', () => {
         'coordinator status',
         'coordinator show',
         'coordinator intents',
+        'managed status',
+        'project policy show',
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(21)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(23)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -964,6 +984,55 @@ describe('the spawn table and the argv it builds', () => {
     // `--project`: no credential, no host, no path and no other command's flag.
     const argv = argvFor('coordinator.intents', {}, safeContext({ project: 'chosen' }))
     expect(argv.filter((word) => word.startsWith('--'))).toEqual(['--all', '--json', '--project'])
+  })
+
+  it('spawns the two managed reads as their command, `--json` and nothing else', () => {
+    // **CM4's pair, word for word** (the managed screens' plan, D1472 to D1477
+    // and D1480 and D1481; the design allow-list's `managed status --json` and
+    // `project policy show --json`). Both are the declarations read's shape
+    // again -- the argv is the row's own words and the caller fills none of them
+    // -- and both reads are the caller's own records: no credential of the
+    // host's, no provider and no host, which is what their empty argument
+    // schemas buy (`src/main/ipc.ts`). Spelled out here rather than read off the
+    // rows, so a change to either row is a failing test.
+    expect(argvFor('managed.status', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'managed',
+      'status',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    expect(argvFor('policy.show', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'project',
+      'policy',
+      'show',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    for (const operation of ['managed.status', 'policy.show'] as const) {
+      const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+      expect(row?.args, operation).toEqual([])
+      expect(row?.dirFlag, operation).toBe(false)
+      // A key neither row declares never reaches an element, which is the rule
+      // that keeps a payload from smuggling a flag in -- and the words these
+      // commands own but no row declares (`--config`, and the group's other
+      // subcommands) are refused like any other.
+      for (const key of ['project', 'config', 'generation', 'all', 'json', 'token']) {
+        expect(
+          () => argvFor(operation, { [key]: 'x' }, safeContext()),
+          `${operation} accepted ${key}`,
+        ).toThrow(/does not declare/)
+      }
+      // The argv's whole flag list is the row's one word plus the console's own
+      // `--project`: no credential, no host, no path and no other command's flag.
+      const argv = argvFor(operation, {}, safeContext({ project: 'chosen' }))
+      expect(argv.filter((word) => word.startsWith('--'))).toEqual(['--json', '--project'])
+    }
+    // `project policy show` and not `project show`: only the former's document
+    // omits the installation's caps (F18), so the row this surface carries has
+    // to be that command's.
+    expect(SPAWN_COMMANDS.map((row) => row.words.slice(0, 3).join(' '))).toContain('project policy show')
   })
 
   it('emits one array element per value, in the operation’s own order', () => {
