@@ -149,7 +149,7 @@ F21, F27, F28. **Depends on:** nothing. **Reviewer tier:** standard. **SEC:** no
 - **Files (6):** `internal/failure/failure.go` and `internal/failure/failure_test.go` (new — a new
   package, because `runstore` must import the type that its `Record` field carries and therefore
   cannot host it, F21), `internal/runstore/runstore.go` (`Record.FailureClass failure.Class` with
-  `json:"failure_class,omitempty"`, beside `Reason` at `:684`), `schemas/result.schema.json`,
+  `json:"failure_class,omitempty"`, beside `Reason` at `:721`), `schemas/result.schema.json`,
   `schemas/schemas_test.go`, `internal/cli/docs_pr_state_test.go`.
 - **Interfaces:** `type Class string`; `failure.Classes() []Class` — **the one slice**, in the
   document's own order, from which the schema's enum and the report's table are read;
@@ -626,7 +626,7 @@ pinned); D1462 is a rule every task above obeys — the pins go into the existin
 `internal/cli/docs_*_test.go` files, and no task adds one, because the docs-pin census counts them in
 one row (`ls internal/cli/docs_*_test.go | wc -l`, `docs/rigor-modes/reconciliation.md:752`, **101**
 on `main` today) that four folders' pins re-read: `internal/cli/docs_rigor_modes_test.go:388` runs the
-row's own command, and `docs_config_management_test.go:397`, `docs_managed_agent_converge_test.go:190`
+row's own command, and `docs_config_management_test.go:403`, `docs_managed_agent_converge_test.go:190`
 and `docs_repo_image_removal_test.go:525` compare the row against the tree's glob (F28, D1462).
 
 **If FC7's second half is dropped** (D1466 = the table alone), FC8 loses one document and one
