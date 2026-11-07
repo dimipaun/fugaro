@@ -1425,8 +1425,10 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 // and its Fix -- `secrets set <secret> --repo <repo>` -- then stored a
 // repository copy that wins over the project copy forever (§5, the footgun
 // the project-secret checks already name). A missing token's Fix is
-// therefore the bare command, which stores it where D2's default puts it,
-// reaching exactly the repositories the account's allow_data_to lists.
+// therefore `fugaro accounts add <name>` (spec accounts-add §8), the one
+// command that declares the account, stores its token where D2's default
+// puts it -- the project copy, reaching exactly the repositories the
+// account's allow_data_to lists -- and converges the installation.
 //
 // listed == nil or !projectOK means one of those listings could not be
 // attempted or failed (no origin, no credentials, Secret Manager
@@ -1475,7 +1477,7 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		secret := config.ClaudeAccountSecret(n)
 		if !have[secret] {
 			missing = append(missing, pluginwire.Printable(n))
-			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(secret))
+			cmds = append(cmds, selfCommand()+" accounts add "+quoteWord(n))
 		}
 	}
 	if len(missing) == 0 {
@@ -1693,7 +1695,15 @@ func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, pr
 		}
 		missing = append(missing, fmt.Sprintf("%s (profile %s, account %s, token %s)", j.Job,
 			pluginwire.Printable(j.Profile), pluginwire.Printable(j.Account), j.Token))
-		cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(j.Token)+" --project-wide")
+		if j.Account == config.DefaultClaudeAccount {
+			// The default account has no `accounts add` form: "default" is
+			// reserved (config.ValidateClaudeAccounts), and its token's
+			// container is the one the project_secrets entry admits
+			// project-wide, so the pair that mints and stores it stands.
+			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(j.Token)+" --project-wide")
+			continue
+		}
+		cmds = append(cmds, selfCommand()+" accounts add "+quoteWord(j.Account))
 	}
 	if len(missing) == 0 {
 		return &doctorCheck{ID: "project-account-stored", OK: true, Severity: "info",

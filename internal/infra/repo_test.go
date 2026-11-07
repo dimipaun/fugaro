@@ -435,6 +435,25 @@ func TestSecretCommands(t *testing.T) {
 	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}, "fugaro", func(s string) string { return s }); len(got) != 0 {
 		t.Fatalf("every secret stored, still: %+v", got)
 	}
+
+	// A named account's token is the one command that declares the account,
+	// stores its token project-wide and converges the installation (spec §8):
+	// the mint-then-store pair the default account keeps is the pair the
+	// named account used to get as well, and there is no scope for the owner
+	// to pick — `accounts add` stores this name where the shared job mounts
+	// it. The default account's own step is unchanged above, because
+	// `fugaro accounts add default` is refused (the name is reserved).
+	named, err := Repo(sandboxInputs(t, m5Additions+"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
+	got = SecretCommands(named, stored, "fugaro", func(s string) string { return s })
+	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: named.Secrets["claude-oauth-token-acme-personal"],
+		Commands: []string{"fugaro accounts add acme-personal"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands for a named account:\n%+v\nwant:\n%+v", got, want)
+	}
 }
 
 func TestRepoStateObjects(t *testing.T) {

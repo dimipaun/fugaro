@@ -590,8 +590,18 @@ func (s *secretsStage) Left() initflow.Left {
 			set += " --repo " + quoteWord(s.tg.repo)
 		}
 		switch {
-		case isClaudeOAuthSecret(name):
+		case name == config.ClaudeOAuthToken:
 			cmds = append(cmds, "claude setup-token", set)
+		case strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix):
+			// A named account's token is the one command that declares the
+			// account, stores the token where the shared job mounts it and
+			// converges the installation (spec accounts-add §8): the pair the
+			// default account above keeps is `claude setup-token` plus a
+			// `secrets set` the owner has to scope by hand, and for a named
+			// account both halves are `accounts add`'s own. "default" is
+			// reserved, so the command below is the only spelling and the
+			// default account has none.
+			cmds = append(cmds, selfCommand()+" accounts add "+quoteWord(strings.TrimPrefix(name, config.ClaudeOAuthTokenPrefix)))
 		case name == multilineSecret:
 			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	storage "google.golang.org/api/storage/v1"
 
@@ -301,7 +302,10 @@ func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) st
 //
 // Each step's command names the scope that name is stored at by default
 // (D2): the project's for a name spec's own eligibility accepts
-// project-wide, the repository's for the rest.
+// project-wide, the repository's for the rest. A named Claude account's
+// step is neither of those commands: `fugaro accounts add <name>` declares
+// the account, stores its token where the shared job mounts it and
+// converges the installation, so the scope is the command's own.
 func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote func(string) string) []SecretStep {
 	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
@@ -314,9 +318,18 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote f
 		// the repository-copy command otherwise.
 		set := SecretFix(spec, logical, bin, quote)
 		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
-		if logical == "claude-oauth-token" {
+		switch {
+		case logical == config.ClaudeOAuthToken:
 			st.Commands = []string{"claude setup-token", set}
-		} else {
+		case strings.HasPrefix(logical, config.ClaudeOAuthTokenPrefix):
+			// A named account's token is the one command that declares the
+			// account, stores the token project-wide -- where the shared job
+			// mounts it -- and converges the installation (spec accounts-add
+			// §8). "default" is reserved (config.ValidateClaudeAccounts), so
+			// `accounts add` has no form for the default account above, and
+			// every other name in this namespace is one it owns end to end.
+			st.Commands = []string{bin + " accounts add " + quote(strings.TrimPrefix(logical, config.ClaudeOAuthTokenPrefix))}
+		default:
 			st.Commands = []string{set + " < PATH-TO-THE-VALUE-FILE"}
 		}
 		out = append(out, st)

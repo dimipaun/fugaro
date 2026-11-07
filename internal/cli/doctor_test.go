@@ -868,13 +868,16 @@ func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
 	if !strings.Contains(c.Problem, "acme-personal") {
 		t.Fatalf("problem doesn't name the account: %q", c.Problem)
 	}
-	// The fix stores the token where D2 (plan Task 2.1) puts this name: the
-	// project copy, which is the one the job mounts and the reach the
-	// account's own allow_data_to already decided. `--repo acme/app` would
-	// store a repository copy that then wins over the project copy forever
-	// (§5, the footgun the project-secret checks name).
-	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal") {
-		t.Fatalf("fix doesn't name the exact commands: %q", c.Fix)
+	// The fix is the one command that declares the account, stores its token
+	// project-wide and converges the installation (spec §8): the pair it
+	// replaces minted a value and stored it in a scope the owner had to pick,
+	// and `--repo acme/app` left a repository copy winning over the project's
+	// forever (§5, the footgun the project-secret checks name).
+	if !strings.Contains(c.Fix, "accounts add acme-personal") {
+		t.Fatalf("fix doesn't name the one command that stores this account's token: %q", c.Fix)
+	}
+	if strings.Contains(c.Fix, "claude setup-token") || strings.Contains(c.Fix, "secrets set") {
+		t.Fatalf("the fix still hands the named account's old pair: %q", c.Fix)
 	}
 	if strings.Contains(c.Fix, "--repo") {
 		t.Fatalf("the fix asks for a repository copy that would override the project's: %q", c.Fix)
@@ -2477,9 +2480,18 @@ func TestDoctorProjectAccountStored(t *testing.T) {
 	if !strings.Contains(c.Problem, "every run of that job holds it") || !strings.Contains(c.Problem, "agent.auth is not oauth") {
 		t.Errorf("the problem does not state the default account's reach: %q", c.Problem)
 	}
-	for _, want := range []string{"claude setup-token", "secrets set claude-oauth-token-acme-personal --project-wide", "secrets set claude-oauth-token --project-wide"} {
+	// The named account's fix is the one command that stores it; the default
+	// account's stays the mint-then-store pair, because "default" is reserved
+	// and `fugaro accounts add default` is refused (config.ValidateClaudeAccounts).
+	if !strings.Contains(c.Fix, "accounts add acme-personal") {
+		t.Errorf("the fix %q does not name the one command that stores acme-personal's token", c.Fix)
+	}
+	if strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal") {
+		t.Errorf("the fix %q still hands the named account's old pair", c.Fix)
+	}
+	for _, want := range []string{"claude setup-token", "secrets set claude-oauth-token --project-wide"} {
 		if !strings.Contains(c.Fix, want) {
-			t.Errorf("the fix %q lacks %q", c.Fix, want)
+			t.Errorf("the fix %q lacks %q for the default account, which has no accounts-add form", c.Fix, want)
 		}
 	}
 	if a := r.sm.Accessed(); len(a) != 0 {
