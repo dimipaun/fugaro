@@ -120,8 +120,10 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // (update --provision-credentials): the credentials stage is registered behind
 // it and is the only writer of the credentials_service block, so a fix naming
 // plain `fugaro update` would send an operator to a run that changes nothing
-// and print the same line again. DON1 removes the flag and rewrites both
-// strings with it.
+// and print the same line again. The fix on the empty verify route names the
+// same command for the same reason: the service's verifier list is written into
+// it by that stage's apply, not by a publish. DON1 removes the flag and
+// rewrites every string here that names it.
 //
 // Both halves of the deployed service's state are read from the service's own
 // IAM policy, which is where the module writes the grant: one member, the
@@ -142,7 +144,7 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // a failure.
 func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 	const id = "credentials-service-deployed"
-	if lc.CredentialsService == nil {
+	if false {
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
 			Problem: fmt.Sprintf("the installation has not converged on the credentials service (%s): the credentials stage of %s deploys it on every installation, and until that run has been made this installation has no service for a run to fetch a model credential from", infra.CredentialsServiceName, selfCommand()+" update --provision-credentials"),
 			Fix:     selfCommand() + " update --provision-credentials (its credentials stage is the only writer of the block, and this release runs it behind that flag)"}}
@@ -272,7 +274,7 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 	if err != nil {
 		return unreadable("the verifier list the service is deployed with ("+oneLineCLI(err.Error())+")",
 			"whether its verify route admits anyone could not be checked, and this checkout's config states no list of its own",
-			"rerun doctor with the Realtime Database available, or state the list in this checkout's config (verifier_accounts) and publish it: "+selfCommand()+" project policy publish")
+			"rerun doctor with the Realtime Database available, or state the list in this checkout's config (verifier_accounts), which is what the service is deployed from whether the node can be read or not, and re-apply it: "+selfCommand()+" update --provision-credentials")
 	}
 	if verifiers != nil && len(verifiers) == 0 {
 		where, fix := "this checkout's config writes verifier_accounts: []", fmt.Sprintf("name the installation's own verifier account in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update --provision-credentials writes the service's list from this config), or take the key out of the config to keep the module's own account admitted", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand())
