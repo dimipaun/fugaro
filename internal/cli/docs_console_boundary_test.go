@@ -135,10 +135,22 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // ee/report, so §4 and §8's report row moved with them
 // (ee/report/cli/console_contract_test.go), read as bytes and embedding nothing
 // like the other two.
+//
+// The fourth is the settings-edit plan's C4, and it is the same kind of
+// exception: the console's hermetic CLI stub answers `fugaro settings --json`
+// with a committed document (console/test/fixtures/settings.json) that the e2e
+// spec draws as the CLI's own read, the schema that documents that document is
+// schemas/settings.schema.json, and the test that holds the one to the other is
+// the schema's own (schemas/schemas_test.go, TestSettingsConsoleFixture), which
+// is the file that already validates a document of this repository against a
+// schema it owns (TestProjectLayerDocsExample reads docs/project-layer.md). The
+// read is bytes: no import under console/, no go:embed, and no Go file that
+// builds against anything the console holds.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
 	"ee/coordinator/cli/console_contract_test.go",
 	"ee/report/cli/console_contract_test.go",
+	"schemas/schemas_test.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -748,11 +760,13 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// The count is pinned on purpose: a new entry is a deliberate widening
 		// of the boundary, argued for in the commit that adds it (plan Task 0.3
 		// a3) and in a comment on the entry itself. The second is ee-reorg
-		// E2.1b's (the coordinator's moved half) and the third E2.2b1's (the
+		// E2.1b's (the coordinator's moved half), the third E2.2b1's (the
 		// report's), each in the package its command and shapes moved to, and
-		// this number is what makes a fourth one impossible to add quietly.
-		if len(consoleBoundaryAllowList) != 3 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests and the moved halves of the coordinator's and the report's commands, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+		// the fourth the settings-edit plan's C4 (the console's settings fixture
+		// against the schema that documents it); this number is what makes a
+		// fifth one impossible to add quietly.
+		if len(consoleBoundaryAllowList) != 4 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, and the settings schema's own fixture check, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 

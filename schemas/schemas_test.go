@@ -4574,6 +4574,158 @@ settings:
 	}
 }
 
+// TestSettingsConsoleFixture: console/test/fixtures/settings.json is the answer
+// the console's hermetic CLI stub gives `fugaro settings --json`, and the e2e
+// spec that drives a setting's edit draws it as the CLI's own read (the
+// settings-edit plan's C4, D1118). A fixture that is not a document this CLI can
+// print would make that spec prove the window draws an impossible read, and the
+// goldens recorded from the same screen would carry its invented words, so the
+// fixture is validated against the schema that documents the document -- the
+// schema the command's own output is held to by TestSettingsJSONMatchesSchema in
+// internal/cli, which is where the command lives.
+//
+// Two facts the schema states in prose are asserted here instead, because a
+// validator cannot read a description: every row's `default` is the registry's
+// own string ($defs.keyDefaults, which TestSettingsSchema above pins to
+// settings.Rows(), and whose unset sentences are the ones `unset()` writes with
+// the `unset = ` prefix, internal/settings/registry.go), and the answer is the
+// one the console's row asks for -- `settings --json` and the two project flags,
+// with no `--repo` (contract §6.19) -- so every row is project-scoped, and the
+// built-in layer is the one every read lists first (a layer that was not read is
+// not listed, and the registry in memory is not a read: settingsRead.sources).
+//
+// Three more are rules one member of the document keeps about another, which the
+// schema can only hold one member at a time to: a row the read had to resolve
+// carries **the one level that decided it** and a row of the built-in default
+// carries none (settingsRead.projectRow appends the winning layer's own, and
+// only when a layer won); the layer a row won is **a layer this document's own
+// `sources` list read**, because a layer that was not read is not listed and a
+// row cannot win one that answered nothing; and the project layer is **the cache**
+// in this read -- readLayerCache is its one writer and settingsCloudLayers, the
+// read's one cloud call, is empty until S2 fills it -- so a document listing it
+// says `cached <age> ago` and every row it decided carries that age in its state
+// (staleState). Each of the three was wrong in the fixture this test was added
+// for, and the schema validated it anyway.
+func TestSettingsConsoleFixture(t *testing.T) {
+	const file = "../console/test/fixtures/settings.json"
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compile(t, "settings.schema.json").Validate(inst); err != nil {
+		t.Errorf("%s is not a document `settings --json` prints:\n%v", file, err)
+	}
+
+	var fixture struct {
+		Sources []struct {
+			Layer string `json:"layer"`
+			Note  string `json:"note"`
+		} `json:"sources"`
+		Settings []struct {
+			Key     string  `json:"key"`
+			Scope   string  `json:"scope"`
+			Value   *string `json:"value"`
+			Wins    string  `json:"wins"`
+			State   string  `json:"state"`
+			Default struct {
+				Value string `json:"value"`
+				Unset string `json:"unset"`
+			} `json:"default"`
+			Levels []struct {
+				Layer   string `json:"layer"`
+				Value   string `json:"value"`
+				Outcome string `json:"outcome"`
+			} `json:"levels"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	defaults := nodeOf(t, schema, "$defs", "keyDefaults", "properties")
+	for _, row := range fixture.Settings {
+		entry, ok := defaults[row.Key].(map[string]any)
+		if !ok {
+			t.Errorf("%s: the fixture carries a row $defs.keyDefaults has no key for, and no read prints such a row", row.Key)
+			continue
+		}
+		want, _ := entry["default"].(string)
+		got := row.Default.Value
+		if strings.HasPrefix(want, "unset = ") {
+			got = row.Default.Unset
+		}
+		if got != want {
+			t.Errorf("%s: the fixture's default is %q, and the registry's is %q", row.Key, got, want)
+		}
+		if row.Scope != "project" {
+			t.Errorf("%s: scope = %q, and the read the console runs names no --repo, so every row of it is project-scoped", row.Key, row.Scope)
+		}
+		switch {
+		case row.Wins == "default" && len(row.Levels) != 0:
+			t.Errorf("%s: wins = default and the fixture carries %d levels, and the read appends one only for a layer that decided the row (settingsRead.projectRow)", row.Key, len(row.Levels))
+		case row.Wins != "default":
+			if len(row.Levels) != 1 {
+				t.Errorf("%s: wins = %q and the fixture carries %d levels, and the read writes the winning layer's own and nothing else", row.Key, row.Wins, len(row.Levels))
+				continue
+			}
+			l := row.Levels[0]
+			if l.Layer != row.Wins || l.Outcome != "wins" {
+				t.Errorf("%s: its one level is %s/%s, and the read writes the layer that won with the outcome \"wins\"", row.Key, l.Layer, l.Outcome)
+			}
+			if row.Value != nil && l.Value != *row.Value {
+				t.Errorf("%s: the row's value is %q and its level's is %q, and the read writes the row's own value into the level it appended", row.Key, *row.Value, l.Value)
+			}
+		}
+	}
+	if len(fixture.Sources) == 0 || fixture.Sources[0].Layer != "default" {
+		t.Errorf("the fixture's sources begin with %v, and every read lists the built-in layer first (settingsRead.sources)", fixture.Sources)
+	}
+	read := map[string]bool{}
+	for _, src := range fixture.Sources {
+		read[src.Layer] = true
+	}
+	for _, row := range fixture.Settings {
+		if row.Wins != "default" && !read[row.Wins] {
+			t.Errorf("%s: wins = %q, and this document's sources list no such layer: a layer that was not read is not listed, so no row of it can have won one (settingsRead.sources)", row.Key, row.Wins)
+		}
+	}
+	// The project layer reaches this read one way only: readLayerCache, so the
+	// source listing it is the cached copy and says how old it is. A row that
+	// layer decided is stamped with the same age, and the two members are read
+	// off each other here because a fixture that spells them differently is a
+	// table whose STATE column contradicts the stamp above it.
+	for _, src := range fixture.Sources {
+		if src.Layer != "project" {
+			continue
+		}
+		age, okNote := strings.CutPrefix(src.Note, "cached ")
+		age, okAgo := strings.CutSuffix(age, " ago")
+		if !okNote || !okAgo {
+			t.Errorf("the fixture's project source is noted %q, and the read spells a cached layer's note \"cached <age> ago\" (settingsRead.sources)", src.Note)
+			continue
+		}
+		for _, row := range fixture.Settings {
+			if row.Wins != "project" {
+				continue
+			}
+			if want := "stale " + age; row.State != want {
+				t.Errorf("%s: wins = project and state = %q, and the layer that decided it is the cache this document's own project source calls %q: every row that layer decided carries staleState's age", row.Key, row.State, src.Note)
+			}
+		}
+	}
+}
+
 // TestSettingsWriteSchema holds schemas/settings-write.schema.json to the
 // document `fugaro settings set|unset … --dry-run --json` prints. That document
 // is what the console's confirmation window is drawn from (D1106), so its
