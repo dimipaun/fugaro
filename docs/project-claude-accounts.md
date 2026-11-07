@@ -83,25 +83,19 @@ checkout's origin), and `--profile NAME` names the profile whose jobs serve the 
 is the only profile, when the config holds exactly one). The rules §4 states are applied to the
 config this would write, before anything is written.
 
-**The token is read at one hidden prompt, and that prompt is the only path to the value.** It is the
-same echo-free terminal read `fugaro secrets set` performs; Fugaro holds the value in memory, clears
-it after the store, and never writes it to a file, a log, a message, an argument or an environment
-variable.
+**The token is read at one hidden prompt, and that prompt is the only path to the value:** the same
+echo-free terminal read `fugaro secrets set` performs, held in memory, cleared after the store, and
+never written to a file, a log, a message, an argument or an environment variable.
 
 `--claude` (`fugaro accounts add acme-team --claude`) runs Anthropic's own login first, on that same
-terminal — two acts, in this order:
-
-1. **The login.** Fugaro resolves `claude` on your `PATH`, prints the path it resolved and runs that
-   program directly, with your stdin, stdout and stderr. The login answers you and not Fugaro: what
-   it prints and what it asks are its own, and none of it is read.
-2. **One paste.** When the login has printed the token and returned, the command asks for it at the
-   hidden prompt above. What you paste there is the only token ever stored — so a login you cancelled
-   or that failed costs one paste rather than the command.
-
-`--claude` needs a terminal, and its refusal for one that is not names the same command without the
-flag. It also stops before running anything at all when `CLAUDE_CODE_OAUTH_TOKEN` or
-`ANTHROPIC_API_KEY` is exported: either one decides which account a login lands on, and a login that
-lands on the wrong account is a token you did not mean to store.
+terminal — two acts: the login, resolved on your `PATH` and run directly with your own stdin, stdout
+and stderr, which answers you and not Fugaro (what it prints and asks is its own, and none of it is
+read), and then the one paste at the hidden prompt above, which is the only token ever stored — so a
+login you cancelled or that failed costs one paste rather than the command. `--claude` needs a
+terminal, and its refusal for one that is not names the same command without the flag; it also stops
+before running anything when `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` is exported, because
+either one decides which account a login lands on, and a login that lands on the wrong account is a
+token you did not mean to store.
 
 Without `--claude` it is the same command for an owner who already has a token or would rather mint
 it elsewhere, and it is not a lesser path. `claude setup-token` is Anthropic's own command and the
@@ -109,21 +103,20 @@ only way to mint a token: Fugaro never mints one, never prints one and never tak
 argument. Run it as the person or team whose subscription the token belongs to — one token per
 account, signing in to the account that name is for. What Claude Code does when a machine already
 holds a token for another account (whether it logs out first, takes a flag, or wants a separate
-profile) is not verified by Fugaro — no live check has been run
-([design/named-oauth-tokens.md](design/named-oauth-tokens.md) §7, U2) — and
-`claude setup-token --help` in your own install is the authority. Nothing in Fugaro depends on the
-answer: what it stores is whatever value you paste.
+profile) is not verified by Fugaro, no live check having been run
+([design/named-oauth-tokens.md](design/named-oauth-tokens.md) §7, U2): `claude setup-token --help` in
+your own install is the authority, and nothing here depends on the answer, because what is stored is
+whatever value you paste.
 
 **Every command on this page carries placeholders, never a value:** `<name>` is the account's name
-and `<token>` is the value you paste, so a command is one you run as written with the value arriving
-at the prompt. `fugaro secrets set` reads a value only from stdin or a hidden prompt, and never from
-an argument, a flag or the environment.
+and `<token>` is the value you paste. `fugaro secrets set` reads a value only from stdin or a hidden
+prompt, never from an argument, a flag or the environment.
 
 **What the command does not do:**
 
-- **The `default` account's token.** An account is a *definition*, and `default` is reserved as one,
-  so the unsuffixed `claude-oauth-token` is still stored by hand — its `project_secrets` entry is
-  what says which repositories it is for:
+- **The `default` account's token**, which the unsuffixed name carries and `accounts add` will not
+  define — `default` is a legal reference for a profile and an illegal definition — so it is stored
+  by hand, project-wide, and `project_secrets` is what says which repositories it is for:
 
   ```bash
   fugaro secrets set claude-oauth-token --project-wide
@@ -143,12 +136,12 @@ an argument, a flag or the environment.
   ```bash
   fugaro secrets ls --project-wide
   ```
-- **Removing an account.** `fugaro accounts rm <name>` is the inverse and converges the same way. It
-  refuses while a profile still lists the account — naming each one, because a job is deployed for
-  it — and `fugaro accounts rm <name> --profile PROFILE` takes the name out of that profile's list
-  alone; once no profile lists it, the declaration, the secret and the job go together. A
-  repository's committed `fugaro.yaml` that still names the account in `agent.oauth_token` is
-  warned about rather than edited: that file belongs to the repository.
+- **Removing an account.** `fugaro accounts rm <name>` is the inverse and converges the same way: it
+  refuses while a profile still lists the account — `fugaro accounts rm <name> --profile PROFILE`
+  takes the name out of one profile's list alone — and once no profile lists it, the declaration,
+  the secret and the job go together. A committed `fugaro.yaml` that still names the account in
+  `agent.oauth_token` is warned about rather than edited — that file belongs to the repository, not
+  to this installation.
 
 ## 3. What the command writes
 
