@@ -122,7 +122,7 @@ type GitForward struct {
 	o       GitForwardOptions
 	log     *slog.Logger
 	service string // the service's URL, with no trailing slash
-	url     string // the address git is pointed at: the service's route, on loopback
+	url     string // this listener's address with the proxy route's prefix on it
 	client  *http.Client
 	srv     *http.Server
 	ln      net.Listener
@@ -273,10 +273,14 @@ func (f *GitForward) upstream(w http.ResponseWriter, r *http.Request) (*http.Req
 // dropForwardRequestHeaders are the headers of the caller's request that never
 // go to the service.
 //
-// Authorization is the credential the caller presented — G5's rule, and the one
-// this whole listener exists for: it holds none, so it can present none on. The
-// X-Fugaro- headers are the contract's own (the model path's forward.go drops
-// them from a request too, by the same prefix), plus the hop-by-hop headers of
+// Authorization is the credential the caller presented, and the job's own ID
+// token is written there instead (G5): that header is the one Cloud Run IAM
+// reads, so what reaches the service has to be this job's identity and never
+// whatever the caller put in it — a caller that minted the job's ID token
+// itself gains nothing here, and one that put anything else in the header does
+// not get to send it. The X-Fugaro- headers are the contract's own (the model
+// path's forward.go drops them from a request too, by the same prefix), plus
+// the hop-by-hop headers of
 // RFC 9110, which describe this hop and not the next one, plus Host and
 // Content-Length, which net/http recomputes from the URL and the body. What is
 // left is what git and the REST adapter actually send (Content-Type, Accept,

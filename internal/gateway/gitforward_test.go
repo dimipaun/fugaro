@@ -41,10 +41,10 @@ func newForwardService(t *testing.T, answer func(http.ResponseWriter, *http.Requ
 
 func (s *forwardService) serve(w http.ResponseWriter, r *http.Request) {
 	if s.answer != nil {
-		// A case that answers for itself reads the body itself: the body of a
-		// streaming case is still arriving while its answer is being written,
-		// and a fake that read it whole first would be the buffering this
-		// package's forwarder must not do.
+		// A case that answers for itself reads the body itself: a streaming
+		// case's body is still arriving when its answer is written, and a fake
+		// that read the body whole first would be the buffering this package's
+		// forwarder must not do.
 		s.record(r, nil)
 		s.answer(w, r)
 		return
@@ -339,9 +339,14 @@ func TestGitForwardRefusesWithoutIdentity(t *testing.T) {
 			if n := svc.count(); n != 0 {
 				t.Errorf("the service was sent %d requests for a forward with no identity, want none", n)
 			}
-			if strings.Contains(body, forwardIdentity(t, "job-id-token")) ||
-				strings.Contains(body, forwardIdentity(t, "run-identity")) {
-				t.Errorf("the refusal echoed an identity: %q", body)
+			// The class and nothing else: the cause is the run's own log line
+			// and never the caller's answer, which is text git shows whoever
+			// ran it.
+			if !strings.Contains(body, c.class) {
+				t.Errorf("the answer = %q, want the class %q", body, c.class)
+			}
+			if strings.Contains(body, "metadata") {
+				t.Errorf("the answer carried the cause: %q", body)
 			}
 			lines := logs.lines(t)
 			if len(lines) != 1 {
@@ -351,7 +356,7 @@ func TestGitForwardRefusesWithoutIdentity(t *testing.T) {
 				t.Errorf("the log line's reason = %q, want %q", got, c.class)
 			}
 			if s, _ := lines[0]["msg"].(string); strings.Contains(s, "metadata") {
-				t.Errorf("the log line carries the mint's own text: %q", s)
+				t.Errorf("the log line's message carries the mint's own text: %q", s)
 			}
 		})
 	}
