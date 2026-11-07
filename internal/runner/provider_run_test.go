@@ -998,10 +998,14 @@ func TestResultJSONCacheTokenTotals(t *testing.T) {
 // is exactly the case `credential` excludes -- and names a stage-scoped
 // account's beside `credential` where an account took the stage.
 //
-// Two runs, because telling the two configurations apart is the whole point:
-// an api-key run whose every stage the run's own key served through the
-// gateway, and the mixed run, whose coder stage the key served and whose
-// review stage the account did.
+// Three runs, because telling the configurations apart is the whole point: an
+// api-key run whose every stage the run's own key served through the gateway,
+// an oauth run with no gateway at all, whose every stage the run's own
+// subscription token served, and the mixed run, whose coder stage the key
+// served and whose review stage the account did. The oauth one is the case
+// the field's other value is for: without it, a mapping that named the key's
+// class and nothing else would leave a subscription run's stages unnamed and
+// no test would say so.
 func TestStageNamesTheCredentialThatServedIt(t *testing.T) {
 	t.Run("a stage the run's own api-key credential served", func(t *testing.T) {
 		g := newGW(t, gwConfig(t, ""), "enforce", "50", out4k())
@@ -1019,6 +1023,33 @@ func TestStageNamesTheCredentialThatServedIt(t *testing.T) {
 			}
 			if s.Credential != "" {
 				t.Errorf("stage %s: credential = %q, want absent: that field's case is a credential that is not the run's own",
+					s.Name, s.Credential)
+			}
+		}
+	})
+	t.Run("a stage the run's own oauth token served", func(t *testing.T) {
+		// An oauth run with no gateway (GatewayOn is false for it), whose
+		// stages' figures are Claude Code's own: the run's own subscription
+		// token is the credential that served every one of them, and the
+		// field's case for it is "oauth" rather than the absent value -- the
+		// run's own is what this field is for.
+		oauthCfg := strings.Replace(gwRolesConfig(t), "auth: api-key", "auth: oauth", 1)
+		g := newGW(t, oauthCfg, "observe", "")
+		g.deps.Env = append(filterEnv(g.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef")
+		rec, err := g.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review") {
+			t.Fatalf("stages = %v", got)
+		}
+		for _, s := range rec.Stages {
+			if s.ServedBy != runstore.CredentialOAuth {
+				t.Errorf("stage %s: served_by = %q, want %q: the run's own subscription token served it",
+					s.Name, s.ServedBy, runstore.CredentialOAuth)
+			}
+			if s.Credential != "" {
+				t.Errorf("stage %s: credential = %q, want absent: no account took this stage",
 					s.Name, s.Credential)
 			}
 		}

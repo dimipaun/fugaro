@@ -1023,3 +1023,34 @@ func schemaNames(props map[string]any) []string {
 	slices.Sort(out)
 	return out
 }
+
+// TestCredentialForAuth pins the whole mapping the runner's stage-recording
+// path writes ServedBy from (AK3, D1415) -- all five auths the config allows
+// (config.AgentAuths), not only the two the record's field is ever named
+// for. A case that fell through to "api-key" would put a metered key on a
+// vertex run's service-account stages, a cascade run's service-answered ones
+// and a review class run's, and an "oauth" case returning "" would leave
+// every stage of a subscription run unnamed while the record still read as
+// complete: both are quiet in every run that only ever exercises one auth.
+func TestCredentialForAuth(t *testing.T) {
+	for _, tt := range []struct {
+		auth string
+		want string
+	}{
+		{"oauth", CredentialOAuth},
+		{"api-key", CredentialAPIKey},
+		// The auths whose credential is not one class: a vertex run's service
+		// account, and a cascade run's calls, which the credentials service
+		// answers one at a time. A review class run takes the cascade path
+		// too (runner.modelAuth), so it is this case and not a third one.
+		{"vertex", ""},
+		{"cascade", ""},
+		// Not an auth any config allows, and the answer is still not a class:
+		// the mapping names a credential only where the auth names one.
+		{"", ""},
+	} {
+		if got := CredentialForAuth(tt.auth); got != tt.want {
+			t.Errorf("CredentialForAuth(%q) = %q, want %q", tt.auth, got, tt.want)
+		}
+	}
+}
