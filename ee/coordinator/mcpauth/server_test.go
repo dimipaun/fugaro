@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -86,12 +87,18 @@ func newTestServerClock(t *testing.T, cfg Config, now func() time.Time) *testSer
 // server's member lists are an option rather than an argument (WithRoster), so
 // a test of the MCP endpoint has to be able to pass one. No caller here passes
 // any, and a server built without one admits nobody.
+//
+// The logger below is the other M7 option, and it is set for the same kind of
+// reason: every refusal of the MCP endpoint is one WARN line (finding M-e), the
+// server's default logger is the process's own, and a test that refuses a
+// request has no business printing it. The one test that reads the line passes
+// its own logger, and a caller's option comes after this one, so it wins.
 func newTestServerOver(t *testing.T, cfg Config, now func() time.Time, wrap func(objects) objects, opts ...ServerOption) *testServer {
 	t.Helper()
 	fs := newFakeStoreOver(t, wrap)
 	counting := &countingStore{Store: fs.Store, keys: map[string]bool{}}
 	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
-	srv, err := NewServer(cfg, counting, v, append([]ServerOption{WithServerClock(now)}, opts...)...)
+	srv, err := NewServer(cfg, counting, v, append([]ServerOption{WithServerClock(now), WithLogger(slog.New(slog.DiscardHandler))}, opts...)...)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

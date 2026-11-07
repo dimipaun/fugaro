@@ -260,9 +260,14 @@ func wantToolText(t *testing.T, ans rpcAnswer) (text string, isError bool) {
 	return result.Content[0].Text, result.IsError
 }
 
-// wantBearerRefusal checks the refusal RFC 6750 §3 asks for: the status and the
-// error the caller names, the challenge carrying this resource's metadata URL,
-// and a body that is never cached.
+// wantBearerRefusal checks the refusal RFC 6750 §3 asks for: the status, the
+// error the caller reads in the body, the challenge carrying this resource's
+// metadata URL, and an answer that is never cached.
+//
+// What the challenge carries *beside* the metadata URL is not checked here,
+// because the parameter set differs with the refusal — a request that carried
+// no credential is given no error information at all — and the test below is
+// the one place that pins each shape.
 func wantBearerRefusal(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantError string) oauthRefusal {
 	t.Helper()
 	refusal := refusalOf(t, rec)
@@ -270,8 +275,8 @@ func wantBearerRefusal(t *testing.T, rec *httptest.ResponseRecorder, wantStatus 
 		t.Fatalf("the refusal is %d with error %q (%s); want %d with %q", rec.Code, refusal.Error, strings.TrimSpace(rec.Body.String()), wantStatus, wantError)
 	}
 	challenge := rec.Header().Get("WWW-Authenticate")
-	if !strings.HasPrefix(challenge, `Bearer error="`+wantError+`"`) {
-		t.Errorf("the challenge is %q; want it to begin with the error this refusal is", challenge)
+	if !strings.HasPrefix(challenge, "Bearer ") {
+		t.Errorf("the refusal carries WWW-Authenticate %q, which names no Bearer challenge: RFC 9728 puts the metadata document's URL in that header and nowhere else", challenge)
 	}
 	if want := `resource_metadata="` + testIssuer + ProtectedResourcePath + `"`; !strings.Contains(challenge, want) {
 		t.Errorf("the challenge %q does not name the resource metadata document: a client that reads it has no other way to find the flow", challenge)
@@ -555,6 +560,144 @@ func TestTheBearerCredentialIsTheOnlyWayIn(t *testing.T) {
 		_, fresh := ts.runFlow(t, testClientRedirect)
 		wantResult(t, ts.rpc(t, fresh.AccessToken, toolsListBody))
 	})
+}
+
+// wantChallenge pins the parameters of a refusal's WWW-Authenticate challenge:
+// the resource metadata URL, which every refusal carries, and the error and the
+// scope only where this refusal has one to name. An empty wantError is the
+// assertion that the challenge carries no error information at all, which is
+// what RFC 6750 §3.1 asks of a request that presented no credential.
+func wantChallenge(t *testing.T, rec *httptest.ResponseRecorder, wantError, wantScope string) {
+	t.Helper()
+	challenge := rec.Header().Get("WWW-Authenticate")
+	if !strings.HasPrefix(challenge, "Bearer ") {
+		t.Fatalf("the challenge is %q; want a Bearer challenge", challenge)
+	}
+	if got, want := resourceMetadataURL(t, challenge), testIssuer+ProtectedResourcePath; got != want {
+		t.Errorf("the challenge names %q and this resource's metadata document is at %q", got, want)
+	}
+	for _, param := range []struct {
+		name  string
+		value string
+	}{
+		{"error", wantError},
+		{"scope", wantScope},
+	} {
+		carried := strings.Contains(challenge, param.name+"=")
+		if param.value == "" {
+			if carried {
+				t.Errorf("the challenge %q carries a %s parameter: this refusal has none to name, and RFC 6750 §3.1 withholds the error information from a request that carried no credential at all — the challenge is what a client acts on, and an error code there describes a refusal it did not get", challenge, param.name)
+			}
+			continue
+		}
+		if want := param.name + `="` + param.value + `"`; !strings.Contains(challenge, want) {
+			t.Errorf("the challenge %q does not carry %s: a client reads which of the two things went wrong out of the challenge and nowhere else, and a caller that could ask for a wider scope has no other way to learn which one", challenge, want)
+		}
+	}
+}
+
+// TestTheChallengeNamesAnErrorOnlyWhereThereIsOne is RFC 6750 §3.1 at this
+// door, and it is written for what is *absent* as much as for what is present.
+// A caller that presented no Bearer credential is not a caller whose token was
+// refused — it was not attempting to authenticate — so the challenge names the
+// metadata document and no error at all; the error the body carries is M5's
+// shape and stays. Every other refusal names one, because the caller did
+// present something and the code is the only thing it can act on.
+func TestTheChallengeNamesAnErrorOnlyWhereThereIsOne(t *testing.T) {
+	ts := newResourceServer(t)
+	ts.serve(t, "record_override", func(context.Context, Call) (any, error) { return "recorded", nil })
+	ts.serve(t, "get_project_state", func(context.Context, Call) (any, error) { return "ok", nil })
+	_, tokens := ts.runFlowScoped(t, testClientRedirect, ScopeTasksRead)
+
+	t.Run("a request that carried no credential", func(t *testing.T) {
+		rec := ts.rpcHeader(t, "", toolsListBody)
+		wantBearerRefusal(t, rec, http.StatusUnauthorized, "invalid_token")
+		wantChallenge(t, rec, "", "")
+	})
+
+	t.Run("a value this installation never minted", func(t *testing.T) {
+		rec := ts.rpc(t, testSeededToken, toolsListBody)
+		wantBearerRefusal(t, rec, http.StatusUnauthorized, "invalid_token")
+		wantChallenge(t, rec, "invalid_token", "")
+	})
+
+	t.Run("a token that holds no scope for the tool it called", func(t *testing.T) {
+		rec := ts.rpc(t, tokens.AccessToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"record_override","arguments":{"reason":"a decision"}}}`)
+		wantBearerRefusal(t, rec, http.StatusForbidden, "insufficient_scope")
+		wantChallenge(t, rec, "insufficient_scope", ScopeTasksWrite)
+	})
+
+	t.Run("an identity on neither list", func(t *testing.T) {
+		// The token is this installation's own and holds both scopes, so the
+		// refusal is about who it acts for: it names the code and no scope,
+		// because no wider scope would help.
+		off := newResourceServer(t, WithRoster(rosterOf(Members{})))
+		_, stranger := off.runFlow(t, testClientRedirect)
+		rec := off.rpc(t, stranger.AccessToken, toolsListBody)
+		wantBearerRefusal(t, rec, http.StatusForbidden, "insufficient_scope")
+		wantChallenge(t, rec, "insufficient_scope", "")
+	})
+}
+
+// TestAStoreThatCannotBeReadIsNotAnsweredAsABadToken is the same distinction
+// the revoke path and resolveIdentity make, at this door's lookup: a token this
+// installation never issued and a store that could not be read are two
+// different facts, and answering the second as the first tells a person holding
+// a good token that it was never minted — after which they stop asking. The
+// control at the end is the same token against a store that answers.
+func TestAStoreThatCannotBeReadIsNotAnsweredAsABadToken(t *testing.T) {
+	ts := newResourceServer(t)
+	_, tokens := ts.runFlow(t, testClientRedirect)
+	wantResult(t, ts.rpc(t, tokens.AccessToken, toolsListBody))
+
+	// The flow above ran against the real store, so what is replaced here is a
+	// working store and not a broken one everything else also stands on.
+	ts.Server.store = unreadableStore{Store: ts.store}
+
+	rec := ts.rpc(t, tokens.AccessToken, toolsListBody)
+	wantBearerRefusal(t, rec, http.StatusInternalServerError, "server_error")
+	wantChallenge(t, rec, "", "")
+	if body := rec.Body.String(); !strings.Contains(body, "could not read this installation's token records") {
+		t.Errorf("the refusal says %s; want it naming the read that failed: the caller's token is not what is wrong, and a statement about it would send them to sign in again", strings.TrimSpace(body))
+	}
+}
+
+// TestTheBodyBoundIsWhatStopsARequestPastIt is this endpoint's half of M5's
+// form bound: readRequest's MaxBytesReader is the only per-request memory bound
+// a public endpoint with no rate limit has, and a caller past it is refused
+// rather than read.
+//
+// The two bodies below are well-formed JSON-RPC requests that differ in nothing
+// but their size — the padding is inside a member the request does not read —
+// so the refusal is about the size and not about the body. The control at
+// exactly the bound is the same request, answered on its merits: with the
+// MaxBytesReader gone it is answered 200 instead of 400, so a test that
+// asserted only the status of the large one would pass either way.
+func TestTheBodyBoundIsWhatStopsARequestPastIt(t *testing.T) {
+	ts := newResourceServer(t)
+	_, tokens := ts.runFlow(t, testClientRedirect)
+
+	const padding = `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"padding":"%s"}}`
+	bodyOf := func(n int) string {
+		pad := n - (len(padding) - len("%s"))
+		if pad < 0 {
+			t.Fatalf("a body of %d bytes cannot hold this request: the two bodies below have to differ in size and in nothing else", n)
+		}
+		return fmt.Sprintf(padding, strings.Repeat("a", pad))
+	}
+	if got := len(bodyOf(maxRequestBytes)); got != maxRequestBytes {
+		t.Fatalf("the padded request is %d bytes; want exactly %d: the bound is what the two requests below differ by", got, maxRequestBytes)
+	}
+
+	rec := ts.rpc(t, tokens.AccessToken, bodyOf(maxRequestBytes+1))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("a %d-byte body answered %d (%s); want 400: the endpoint reads a bounded body, and a caller that sends more is refused rather than read", maxRequestBytes+1, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "not one this endpoint can read") {
+		t.Errorf("the refusal for a %d-byte body is %s; want it naming the body it could not read: with the bound gone the same request is read and answered", maxRequestBytes+1, strings.TrimSpace(body))
+	}
+
+	wantResult(t, ts.rpc(t, tokens.AccessToken, bodyOf(maxRequestBytes)))
 }
 
 // TestAnExpiredTokenIsRefused is the one bound on an access token that nothing

@@ -155,28 +155,44 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 // that it is not usable here and nothing else, and a caller holding a real
 // token is told which of the five refused it, because that is a fact about its
 // own token and the only way it can act on it.
+//
+// The lookup is the one place where "the token is not usable" is not the only
+// thing that can be true: a store that cannot be read is a fault of the
+// installation, answered as one, because reporting it as "not issued here"
+// would be a false statement about a good token (ErrTokenNotFound is the
+// absence and every other error is the failure, store.go's own distinction).
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (authorized, bool) {
 	value, ok := bearerToken(r)
 	if !ok {
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "", "the MCP endpoint needs one bearer token in an Authorization header: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in")
+		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "", "the MCP endpoint needs one bearer token in an Authorization header: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in", challengeBare)
 		return authorized{}, false
 	}
 	rec, err := s.store.LookupByHash(r.Context(), TokenHash(value))
 	if err != nil {
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "", "the bearer token is not one this endpoint can use: it was not issued here, or the family it belongs to was revoked; the resource metadata document named in the WWW-Authenticate header says how to get one")
+		if !errors.Is(err, ErrTokenNotFound) {
+			// The store could not be read, which is a fault of the
+			// installation and not a fact about the token: answering
+			// "not issued here" would tell a person holding a good token that
+			// it was never minted, and they would stop asking. It is the same
+			// distinction the revoke path and resolveIdentity make, and the
+			// same reason for it.
+			s.refuseBearer(w, http.StatusInternalServerError, "server_error", "", "", "the front door could not read this installation's token records, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
+			return authorized{}, false
+		}
+		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "", "the bearer token is not one this endpoint can use: it was not issued here, or the family it belongs to was revoked; the resource metadata document named in the WWW-Authenticate header says how to get one", challengeNamesTheError)
 		return authorized{}, false
 	}
 	if err := usable(rec, s.now()); err != nil {
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", rec.Token.Identity, err.Error()+": the resource metadata document named in the WWW-Authenticate header says how to get another one")
+		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", rec.Token.Identity, err.Error()+": the resource metadata document named in the WWW-Authenticate header says how to get another one", challengeNamesTheError)
 		return authorized{}, false
 	}
 	role, err := s.resolveIdentity(r.Context(), rec.Token.Identity)
 	if err != nil {
 		if errors.Is(err, ErrIdentityOffTheLists) {
-			s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", "", rec.Token.Identity, "this identity holds no role at this installation: the front door serves the people on its launcher and operator lists, and fugaro user is the command that changes them")
+			s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", "", rec.Token.Identity, "this identity holds no role at this installation: the front door serves the people on its launcher and operator lists, and fugaro user is the command that changes them", challengeNamesTheError)
 			return authorized{}, false
 		}
-		s.refuseBearer(w, http.StatusInternalServerError, "server_error", "", rec.Token.Identity, "the front door could not read this installation's member lists, so it admits nobody: this is a fault of the installation and not of this token")
+		s.refuseBearer(w, http.StatusInternalServerError, "server_error", "", rec.Token.Identity, "the front door could not read this installation's member lists, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
 		return authorized{}, false
 	}
 	return authorized{
@@ -303,7 +319,7 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorize
 		return
 	}
 	if !slices.Contains(auth.scopes, scope) {
-		s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", scope, auth.identity, fmt.Sprintf("the tool %q maps to the scope %q, which this token does not hold", params.Name, scope))
+		s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", scope, auth.identity, fmt.Sprintf("the tool %q maps to the scope %q, which this token does not hold", params.Name, scope), challengeNamesTheError)
 		return
 	}
 	if !argumentsAreAnObject(params.Arguments) {
@@ -458,6 +474,34 @@ func (s *Server) rpcError(w http.ResponseWriter, status int, id json.RawMessage,
 	})
 }
 
+// bearerChallenge is whether a refusal of the MCP endpoint may name its error
+// in the WWW-Authenticate challenge.
+//
+// RFC 6750 §3.1 gives the challenge two codes this door uses — invalid_token
+// and insufficient_scope — and gives them to a request that carried
+// authentication information. Two refusals are outside that vocabulary, and
+// this is what tells refuseBearer about them: a request that carried no
+// credential at all is a client that was not attempting to authenticate
+// ("the resource server SHOULD NOT include an error code or other error
+// information"), and a request refused because this installation's own store
+// could not be read is a fault RFC 6750 has no code for at all. Naming either
+// of them invalid_token would put a statement about a token in a challenge
+// where no token was refused — the same false report the store's own
+// ErrTokenNotFound distinction exists to avoid.
+type bearerChallenge int
+
+const (
+	// challengeNamesTheError is the refusal of a request whose credential this
+	// door read and refused, and of one whose token holds no scope for what it
+	// asked for: the challenge names the code, and the scope it is about.
+	challengeNamesTheError bearerChallenge = iota
+	// challengeBare is the refusal of a request that carried no credential, and
+	// of one refused for a fault of the installation: the challenge names the
+	// resource metadata document and nothing else, and the body is where such a
+	// caller reads what happened.
+	challengeBare
+)
+
 // refuseBearer answers a request whose bearer credential did not resolve to a
 // caller this installation admits: the RFC 6750 §3 answer, with the
 // WWW-Authenticate challenge that carries the resource metadata URL — the
@@ -476,7 +520,7 @@ func (s *Server) rpcError(w http.ResponseWriter, status int, id json.RawMessage,
 //
 // The five authenticated paths of the OAuth flow are untouched by this
 // function: it is the refusal of the MCP endpoint alone.
-func (s *Server) refuseBearer(w http.ResponseWriter, status int, errType, scope, identity, description string) {
+func (s *Server) refuseBearer(w http.ResponseWriter, status int, errType, scope, identity, description string, challenge bearerChallenge) {
 	logger := s.logger
 	if logger == nil {
 		logger = slog.Default()
@@ -490,11 +534,14 @@ func (s *Server) refuseBearer(w http.ResponseWriter, status int, errType, scope,
 	}
 	logger.Warn("the MCP endpoint refused a request", line...)
 
-	challenge := []string{`Bearer error="` + errType + `"`}
-	if scope != "" {
-		challenge = append(challenge, `scope="`+scope+`"`)
+	params := []string{}
+	if challenge == challengeNamesTheError {
+		params = append(params, `error="`+errType+`"`)
 	}
-	challenge = append(challenge, `resource_metadata="`+s.cfg.Issuer+ProtectedResourcePath+`"`)
-	w.Header().Set("WWW-Authenticate", strings.Join(challenge, ", "))
+	if scope != "" {
+		params = append(params, `scope="`+scope+`"`)
+	}
+	params = append(params, `resource_metadata="`+s.cfg.Issuer+ProtectedResourcePath+`"`)
+	w.Header().Set("WWW-Authenticate", "Bearer "+strings.Join(params, ", "))
 	writeJSONStatus(w, status, map[string]string{"error": errType, "error_description": description})
 }
