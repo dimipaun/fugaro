@@ -69,6 +69,17 @@ const MaxClaudeAccountNameLen = 31
 // tier-B entry — the review-only variant mounts nothing at all (O1), which is
 // why the value rides the account axis rather than a profile's secrets.
 //
+// A profile that names it is publishable today and DEPLOYABLE by no
+// installation yet: every reader of the account axis on the way to a job —
+// internal/infra's ProjectJobAccounts and projectAccountMount, this file's
+// ProjectJobTokenAccount, modules/project's job.account validation — reads a
+// profile's claude_accounts as the Claude OAuth tokens its jobs mount, and the
+// project's own key is no token of any job's. An installation that publishes a
+// profile naming the sentinel is therefore refused by fugaro update before
+// terraform is planned, which is fail-closed and deliberate: the route that
+// deploys its review variant is the api-key review plan's next task (AK5), and
+// no message here may send an operator at a route that does not exist.
+//
 // Which repositories it may serve is decided where every other axis value's is
 // (projectpolicy's accounts block, D3), and its own source is the profiles that
 // name it: the key is stored project-wide rather than for a list of
@@ -171,7 +182,9 @@ func ProjectJobAccounts(pr JobProfile) []string {
 // one plus one per account it lists, so:
 //
 //   - an account the profile lists is a job of its own, and the job holds that
-//     account's token;
+//     account's token — unless it is the sentinel, which is no account's token
+//     at all (AnthropicKeyAccount): a profile that lists it adds a job name and
+//     no mount;
 //   - the no-account job holds the default account's token when the profile
 //     lists "default" — D5's one case of an account riding a job that is not
 //     its own, the job every profile has — and no token at all when it does
@@ -188,6 +201,16 @@ func ProjectJobTokenAccount(pr JobProfile, account string) (string, bool) {
 	name := account
 	if name == "" {
 		name = DefaultClaudeAccount
+	}
+	// The sentinel names no token, whichever profile lists it: the credential
+	// under it is the project's own Anthropic API key, held by the platform and
+	// served to a review caller by the credentials service, and the review-only
+	// variant that carries it mounts nothing at all (O1). So the job whose
+	// account segment is the sentinel holds no Claude token — the answer the
+	// launcher's gate and the runner's re-check are built on, a job holding no
+	// token being one an OAuth run must not land on.
+	if name == AnthropicKeyAccount {
+		return "", false
 	}
 	if !slices.Contains(pr.ClaudeAccounts, name) {
 		return "", false
@@ -238,7 +261,13 @@ const reservedAccountNameMessage = "this name is reserved: the platform holds an
 // claude_accounts KEY is refused. It never echoes the name, and it names both
 // the reason and the fix — the operator writing it as a key meant to configure
 // an account whose token does not exist.
-const anthropicKeyAccountNameMessage = `this is the account axis's value for the project's own Anthropic API key, not a Claude account: its credential is the project's own, held by the platform, so there is no token to store under this name — write it as a profile's claude_accounts entry, where it names the key, or pick a different account name`
+//
+// The fix it names is a different name, not a profile entry: a profile that
+// names the sentinel is published today and refused by fugaro update (this
+// constant's comment in AnthropicKeyAccount), so a sentence sending the
+// operator there would hand them a route that ends in a refusal. The clause
+// changes when that variant is deployed (AK5).
+const anthropicKeyAccountNameMessage = `this is the account axis's value for the project's own Anthropic API key, not a Claude account: its credential is the project's own, held by the platform, so there is no token to store under this name, and no job serves a profile that names it yet — pick a different account name`
 
 // ReviewVariantAccount is one entry of ProjectJobAccounts' axis as the
 // review-only variant's names spell it: the policy's own spelling of the
@@ -435,7 +464,9 @@ func MountsAnthropicKey(secret string) bool {
 // neither block: it names the project's own Anthropic API key, whose
 // credential the platform holds, so an installation states it and never
 // defines it — a file that demanded a claude_accounts entry for it would
-// refuse the one shape the sentinel exists for.
+// refuse the one shape the sentinel exists for. Stating it is what this
+// function allows; whether an installation can then deploy the profile is not
+// this file's question and is not true yet (AnthropicKeyAccount's comment).
 //
 // What it does NOT check is the key's reach, and that is deliberate: the key
 // is stored project-wide (D2's sweep) rather than for a list of repositories,

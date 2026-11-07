@@ -525,6 +525,17 @@ func TestAnthropicKeyAccountIsAReferenceAndNotADefinition(t *testing.T) {
 	if strings.Contains(def[0].Message, AnthropicKeyAccount) {
 		t.Errorf("the refusal echoes the name: %q", def[0].Message)
 	}
+	// The fix it names is a different name and not a profile entry: a profile
+	// that lists the sentinel is published today and refused by fugaro update
+	// (the route that deploys a job for it is not built yet), so a sentence
+	// sending the operator there would hand them a route that ends in another
+	// refusal, and the two would read as each other's remedy.
+	//
+	// Mutation (run, restore): restore the "write it as a profile's
+	// claude_accounts entry" clause — red here.
+	if !strings.Contains(def[0].Message, "pick a different account name") || strings.Contains(def[0].Message, "claude_accounts") {
+		t.Errorf("the definition half answers the sentinel with %q: it must name the fix an installation can carry out today (a different account name), not a profile entry that fugaro update refuses", def[0].Message)
+	}
 	// And the entry is refused whatever else it says: the config it is written
 	// in would otherwise be one whose accounts block holds a credential no
 	// bundle can carry.
@@ -564,5 +575,33 @@ func TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt(t *testing.T) {
 	ps = ValidateProfileClaudeAccounts(ghost, nil, nil)
 	if len(ps) != 1 || !strings.Contains(ps[0].Message, "is not defined here") {
 		t.Fatalf("an undefined account = %+v, want the resolution's own refusal", ps)
+	}
+}
+
+// TestAnthropicKeyAccountIsNoJobsToken: the sentinel is a job name and no
+// mount. A profile that lists it is publishable (above) and deployable by no
+// installation yet — every reader on the way to a job reads a profile's
+// claude_accounts as the tokens its jobs mount (AnthropicKeyAccount's comment)
+// — and ProjectJobTokenAccount is the one they all ask, so its answer is what
+// keeps the halves of that axis from disagreeing: the sentinel resolves to no
+// token account, whatever the profile lists.
+//
+// The mutation is dropping the sentinel's arm: the join answers with the axis
+// value itself, claiming a job holds a token no secret exists for, which is
+// what the launcher's gate and doctor read.
+func TestAnthropicKeyAccountIsNoJobsToken(t *testing.T) {
+	pr := JobProfile{ClaudeAccounts: []string{AnthropicKeyAccount}}
+	if got, serves := ProjectJobTokenAccount(pr, AnthropicKeyAccount); got != "" || serves {
+		t.Errorf("ProjectJobTokenAccount(%v, %q) = (%q, %v), want no token account: the project's own key is held by the platform, and no job mounts it as a Claude token", pr.ClaudeAccounts, AnthropicKeyAccount, got, serves)
+	}
+	// It is still an entry of the job axis: a job set is computed from the
+	// profile's list, so the sentinel adds a job name and no mount.
+	if got := ProjectJobAccounts(pr); !slices.Contains(got, AnthropicKeyAccount) {
+		t.Errorf("ProjectJobAccounts(%v) = %v, want the sentinel among them: the axis value a profile states is a job of its own", pr.ClaudeAccounts, got)
+	}
+	// And a token-bearing entry beside it is unaffected.
+	both := JobProfile{ClaudeAccounts: []string{AnthropicKeyAccount, DefaultClaudeAccount}}
+	if got, serves := ProjectJobTokenAccount(both, ""); got != DefaultClaudeAccount || !serves {
+		t.Errorf("ProjectJobTokenAccount(%v, \"\") = (%q, %v), want the default account's token on the no-account job", both.ClaudeAccounts, got, serves)
 	}
 }

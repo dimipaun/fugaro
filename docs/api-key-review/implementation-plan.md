@@ -1,7 +1,11 @@
 # The api-key review path — implementation plan
 
-**Status: plan only; nothing is implemented; no task approved.** Every task below needs the owner's
-own explicit go, and the first of them needs an answer before it — see §6 and
+**Status: one task implemented — AK4, and no other started.** AK4 lets the review class's one
+credential be the project's own Anthropic API key: a policy naming the sentinel is publishable and the
+credentials service serves it, and **no installation can deploy it yet** (AK4's own section and
+**§6.8** — an installation that publishes a profile naming the sentinel is refused by `fugaro update`,
+fail-closed, until **AK5** deploys the route). Nothing else in this file has moved: every other task
+below still needs the owner's own explicit go, and every task still carries its own gate — see §6 and
 [reconciliation.md](reconciliation.md) §9. Where this file and
 [reconciliation.md](reconciliation.md) disagree about the code, the reconciliation wins.
 
@@ -69,6 +73,11 @@ levels has to say so here first.
 | `internal/cli/run.go` | L2 | AK5 |
 | `internal/infra/projectjobs.go` | L2 | AK5 |
 | `internal/infra/projectjobs_test.go` | L2 | AK5 |
+| `deploy/terraform/gcp/modules/project/variables.tf` | L2 | AK5 (the `job.account` validation) |
+| `schemas/task.schema.json` | L2 | AK5 (if the axis value reaches a task's `oauth_token`) |
+| `internal/task/task.go` | L2 | AK5 (the same) |
+| `internal/task/task_test.go` | L2 | AK5 (the same) |
+| `docs/project-layer.md` | L2 | AK5 (the axis's prose) |
 | `internal/credsvc/bundle.go` | L3 | AK6 |
 | `internal/credsvc/bundle_test.go` | L3 | AK6 |
 | `internal/credsvc/forward.go` | L3 | AK6 |
@@ -233,14 +242,42 @@ credential and no fallback** (**F13**). The sentinel is published like every oth
 the same function: `DeriveAccounts` derives its entry from the profiles that name it (their own
 `allow_repos`, kept to the reach the key itself has, `config.ProjectSecretReaches`), refuses the pair
 where that list is empty, and the child admissions are the same block inverted — so a policy naming
-the sentinel is writable, and **AK5**'s deployment claim (**F17**) rests on a path that exists.
-Nothing in `internal/credsvc/forward.go` changes: the
+the sentinel is **writable**, which is the whole of what this task makes it. **No installation can
+deploy it yet**: the sentinel is publishable and *not* deployable, an installation that publishes a
+profile naming it is refused by `fugaro update` rather than misconfigured, and **AK5**'s deployment
+claim (**F17**) is the task that closes that gap. Nothing in `internal/credsvc/forward.go` changes: the
 tier-B arm already builds `gateway.Upstream{Kind: upstreamKindAnthropic, APIKey: e.Value()}` and
 attaches it with `gateway.UpstreamHeaders` (**F12**), and that is the whole reason this task is
 small.
 
+**What AK4 does not make possible — the sentinel's deployment route.** Publishing is not deploying,
+and every reader of the account axis on the way to a job reads a profile's `claude_accounts` as *the
+Claude OAuth tokens this profile's jobs mount*. The sentinel is no job's token, so each of them needs
+an answer AK4 does not write:
+
+- `internal/infra/projectjobs.go`'s `projectAccountMount` refuses an account whose project-wide
+  container the installation does not create — for the sentinel with a sentence prescribing
+  `claude_accounts.anthropic-api-key--project.allow_data_to`, the one key `ValidateClaudeAccounts`
+  refuses. That is the refusal an installation publishing the sentinel lands in, it is fail-closed,
+  and **AK5** replaces it with the sentinel's own answer (no mount — the review-only variant mounts
+  nothing at all, **O1**).
+- `config.ProjectJobTokenAccount` answered `(sentinel, true)`: a job holding a token no secret exists
+  for, where the true answer is `("", false)`. **AK4 fixes this one**, because it is a claim about a
+  credential and the launcher's gate and `doctor` both read it.
+- `deploy/terraform/gcp/modules/project/variables.tf` validates `job.account` as *empty or a Claude
+  account name*, and the sentinel is neither — so a sentinel-naming profile's coding job **and** its
+  review variant fail `terraform plan` the moment the refusal above stops firing. **AK5** books that
+  file, and decides with it what the job whose account segment is the sentinel *is*.
+- `internal/task/task.go` and `schemas/task.schema.json` hold a spec's `oauth_token` to
+  `ClaudeAccountNameRE` too, so the axis value reaches a task's spec only if **AK5** decides it must.
+  **AK5** books both.
+
+**The unmade decision this exposes belongs to AK5 and is recorded in §6**, not taken here: whether a
+profile that names the sentinel gets a coding job at all, what that job's account segment is, and
+what `ReviewJobAccountsFor` and the deployer then agree the review variant's segment is.
+
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/config/ ./internal/projectpolicy/ -run 'TestReviewPairingMayNameTheProjectsAnthropicKey|TestReviewCandidateListIsExactlyOneCredential|TestReviewCallerIsNeverOfferedAProviderKey|TestReviewCandidateListStillOffersThePairingAccount|TestAnthropicKeyAccountIsAReferenceAndNotADefinition|TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt|TestProjectSecretReaches|TestDeriveAccountsPublishesTheProjectsAnthropicKey' -count=1`
+`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/config/ ./internal/projectpolicy/ -run 'TestReviewPairingMayNameTheProjectsAnthropicKey|TestReviewCandidateListIsExactlyOneCredential|TestReviewCallerIsNeverOfferedAProviderKey|TestReviewCandidateListStillOffersThePairingAccount|TestAnthropicKeyAccountIsAReferenceAndNotADefinition|TestAnthropicKeyAccountIsNoJobsToken|TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt|TestProjectSecretReaches|TestDeriveAccountsPublishesTheProjectsAnthropicKey' -count=1`
 
 - `TestReviewPairingMayNameTheProjectsAnthropicKey` — a review caller whose pairing names the
   sentinel is served by the bundle's `config.AnthropicSecret` entry, and the forwarded call carries
@@ -254,10 +291,12 @@ small.
 - `TestDeriveAccountsPublishesTheProjectsAnthropicKey` — the publish half, and the one the plan
   itself did not book: the sentinel's `accounts` entry is derived from the profiles that name it, kept
   to the key's own reach, and the derived block is a node the policy's own rules accept.
-- `TestAnthropicKeyAccountIsAReferenceAndNotADefinition`, `TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt`
-  and `TestProjectSecretReaches` — the config half: the sentinel is spelled where an account is
-  referenced, refused where one is defined with its own sentence, needs no local entry behind it, and
-  the reach the derive reads is the deployer's own eligibility rule.
+- `TestAnthropicKeyAccountIsAReferenceAndNotADefinition`, `TestAnthropicKeyAccountIsNoJobsToken`,
+  `TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt` and `TestProjectSecretReaches` — the
+  config half: the sentinel is spelled where an account is referenced, refused where one is defined
+  with its own sentence (whose named fix is a different account name, never a profile entry that
+  `fugaro update` refuses), answers no job's token question, needs no local entry behind it, and the
+  reach the derive reads is the deployer's own eligibility rule.
 
 **Red step:** `TestReviewPairingMayNameTheProjectsAnthropicKey` fails today, for the reason **F13**
 names: `reviewCandidates` offers the pairing's tier-A account and nothing else, so a pairing naming
@@ -277,17 +316,30 @@ security-sensitive surface (`internal/credsvc/review.go` says so in its header).
 **Slice:** cloud, Anthropic key (L2). **Depends on:** AK4 (a runner path to a service that cannot
 serve it is a halt), **D1422**.
 
-**Files (5):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
-`internal/cli/run.go`, `internal/infra/projectjobs.go`, `internal/infra/projectjobs_test.go`.
+**Files (9):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
+`internal/cli/run.go`, `internal/infra/projectjobs.go`, `internal/infra/projectjobs_test.go`,
+`deploy/terraform/gcp/modules/project/variables.tf`, `internal/task/task.go`,
+`internal/task/task_test.go` and `schemas/task.schema.json` — the last four because AK4 makes the
+sentinel publishable and servable and **not deployable**, and this is the task that deploys it (AK4's
+own section lists the four readers of the account axis that must yield; the last three only if the
+axis value is to reach a task's `oauth_token` at all).
 
 **Interfaces:** `internal/runner/routing.go`'s `checkReviewClassModelPath` admits the review class's
 new credential — the pairing's sentinel — beside `"oauth"` and `config.AuthCascade`, and refuses
 `"api-key"` and `"vertex"` exactly as it does today; `internal/cli/run.go`'s `claudeAccountFor` and
 `mixedRunAccount` resolve the sentinel to the review variant that is deployed for it; and
 `internal/infra/projectjobs.go` deploys that variant, so an installation that publishes the sentinel
-and no Claude account has a review job at all (**F17**). The class's door is unchanged:
-`reviewClassRun`'s conjunction of the run's mode and the job it was admitted to is what keeps a
-review job from being traded for a coding one, and nothing here weakens it.
+and no Claude account has a review job at all (**F17**) — where today the same profile is refused by
+`projectAccountMount` (whose sentinel sentence prescribes a `claude_accounts` key
+`ValidateClaudeAccounts` refuses) and, past it, by `modules/project`'s `job.account` validation
+(`ClaudeAccountNameRE`, which the sentinel does not match). **This task takes the decision AK4
+booked in §6 and did not take**: whether a profile naming the sentinel gets a coding job at all, what
+that job's account segment is (the module admits an empty account — a job that runs as no Claude
+account — or a Claude account name, and the sentinel is neither), and what
+`credsvc.ReviewJobAccountsFor` and the deployer then agree the review variant's segment is. The
+class's door is unchanged: `reviewClassRun`'s conjunction of the run's mode and the job it was
+admitted to is what keeps a review job from being traded for a coding one, and nothing here weakens
+it.
 
 **Tests and command:**
 `GOFLAGS=-p=2 go test ./internal/runner/ ./internal/cli/ ./internal/infra/ -run 'TestReviewRunIsServedByTheProjectsAnthropicKey|TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn|TestReviewJobIsDeployedForAProjectWithNoClaudeAccount|TestReviewAccountsAreTheNamesProjectJobsDeploys' -count=1`
@@ -502,3 +554,15 @@ any installation whose budget mode is `off` — the review class refuses a run w
    owner's live checks. Those tasks make the cloud path *served by a key*; they do not make it
    *launchable*, and a plan that implied otherwise would be selling a path nobody can run. Nothing
    here takes E7, and no release of this design is worth anything to a user until it is met.
+8. **AK5 is gated on the sentinel's job shape, and AK4 does not take it.** AK4 makes the sentinel
+   publishable and servable; no installation can *deploy* it, and the four readers of the account
+   axis that must yield are listed in AK4's section and booked in §2. What is **not** decided
+   anywhere yet, and is a product question rather than a mechanical one: whether a profile that names
+   the sentinel gets a coding job at all, what that job's account segment is
+   (`modules/project`'s `job.account` validation admits an empty account or a Claude account name,
+   and the sentinel is neither), and what `credsvc.ReviewJobAccountsFor` and the deployer then agree
+   the review variant's account segment is. An installation that publishes a profile naming the
+   sentinel is refused by `fugaro update` — fail-closed, and with a sentence in
+   `internal/infra/projectjobs.go` that names a `claude_accounts` key this tree refuses, which AK5
+   replaces with the route's own answer — so the state is safe and honest, but it is not a state to
+   ship a release on.
