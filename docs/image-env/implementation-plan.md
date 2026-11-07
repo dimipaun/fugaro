@@ -377,8 +377,10 @@ work runs in).
    catalog-stamped. This is D1370's scope, and it is the half a code review cannot settle.
 
 **Number:** **Check 291** — the first number free above the register's highest **written** section
-(**290**: the `## Check 290` section at `docs/gcp-live-checklist.md:11207`, and its summary-table row
-at `:791`), and no open pull request claims **291** itself: the claims other work holds above that
+(**290**: `docs/gcp-live-checklist.md`'s `## Check 290`, the mixed-credentials run, and its
+summary-table row — named by content and not by line, which is what the register's own paragraphs do
+and what keeps a citation off a number the next insertion moves), and no open pull request claims
+**291** itself: the claims other work holds above that
 section start higher and leave 291 free (`docs/stateless-orchestrator`'s 300–309 and #1780's 311–314,
 read 2026-11-06). **A claim, not a reservation**: the register's own rule is that whichever of two
 claims merges second renumbers itself,
