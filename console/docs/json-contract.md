@@ -2606,8 +2606,17 @@ takes the next number free rather than the claim written down first.
 show a card when there is none (F10); `graph` asks the project's database what
 the coordinator's sweep stored — the read §6.13 already makes, through the
 caller's own credentials (`roles/firebasedatabase.viewer`) — so a scope paints
-with no checkout at all. **The plan scope keeps its checkout and its card**; the
-new scopes are what the dropdown adds beside it (D1356).
+with no checkout at all. **The one fact it does take from the local config is
+each repository's provider**, which that repository's slug is keyed by (§6.13's
+`provider` row is the same resolution): a `repos` entry that leaves `provider`
+out has no provider to find unless the working directory *is* that repository's
+checkout, so in a console child it is refused with the sentence that names the
+entry to set — a refusal of the whole read, with no document, which the console
+answers as it answers any other (T3, keep the plan scope and show the sentence),
+and never a `down` or `unreadable` state. Every config `fugaro init` writes
+names every repository's provider, so this is the hand-edited entry and not the
+ordinary one. **The plan scope keeps its checkout and its card**; the new scopes
+are what the dropdown adds beside it (D1356).
 
 **`--source` selects the scope, and the set is closed.** `all` is the default and
 is the union of the scopes that exist — today the coordinator alone —
@@ -2650,7 +2659,7 @@ one entry of `sources`:
 | --- | --- | --- | --- | --- |
 | `source` | string | never | never | the scope this state is about, exactly as it is written on the command line (`graph.Scope.String`): `all`, `coordinator`, `orchestrator:<id>` or `local:<id>`. It is the source half of every `key` that came from it, and the value the console sends back as `--source` |
 | `state` | string | never | never | one of the four words below. **The whole answer**, so a screen draws it as a word and never as a colour alone (H3, H10) |
-| `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good — for the coordinator scope, the sweep's stored time (CG2). **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it |
+| `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good. **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it — it draws one from this field when it is set, and never from `generated_at`. **The coordinator's stored view carries no time of its own** — it is a function of its inputs, which is why the Coordinator screen claims no age for it (CG2) — so a caller that read the views without knowing when the sweep stored them has none to give and prints null, and **`graph --json`, a one-shot read, is that caller**: its coordinator scope has a null `as_of` and is never stale by age. The stream (CG7) is the caller that knows its own read's time and can fill it; the sweep's own marker is a separate fact and not this field |
 | `reason` | string | never | never | why, in words, when the state is not `up`; `""` when it is. The read's own sentence, sanitised like every other string here, and the field a screen shows **beside** the state rather than instead of it |
 
 **The four states, defined.** A scope that is down is a **state and not an
@@ -2660,19 +2669,31 @@ exit** (H3): the read answered, and this entry is its answer.
 - `down` — the source could not be reached: a withdrawn RTDB stream, a local
   orchestrator whose node is gone. The other scopes keep their figures, and a
   stream keeps streaming.
-- `stale` — the source answered with data known to be old: the coordinator's
-  stored view is stale once it is older than twice the sweep period (the sweep
-  is the 15-minute Scheduler job, F16; CG2), and the instant it is old as of is
-  `as_of`.
+- `stale` — the source answered with data known to be old. The coordinator's
+  scope is stale when the sweep's own marker stands beside a view it could not
+  recompute (CG2's `RepoView.Stale`): that marker is the age fact the stored read
+  carries, and its `reason` is the scope's. The other way is a caller that
+  supplied an `as_of` older than twice the sweep period (the sweep is the
+  15-minute Scheduler job, F16; CG2), and the instant it is old as of is then
+  that `as_of` — which a one-shot read, `graph --json`'s, does not supply, so for
+  it `stale` is the marker alone.
 - `unreadable` — the source answered with something this build cannot read. It
-  is a state of the source, never a refusal of the whole read.
+  is a state of the source, never a refusal of the whole read: the coordinator's
+  scope answers it when the database holds a view, or a stale marker, that its
+  strict decoding refuses — an unknown field, a value of another shape — and
+  `reason` is that refusal's own sentence, so a screen says what it could not
+  read rather than showing a graph with records quietly missing.
 
 **A refused read is the other case, and it is terminal.** An invalid `--source`
 (H1), or a scope this build does not have (`orchestrator:` and `local:` before
 CG4 and CG5), is an error with a non-zero exit and **no document at all**, naming
 the command — which is what the console reads as "this CLI has no graph" and
-answers by keeping the plan scope and a refusal sentence (T3, CG10). A refusal
-and a `down` source are told apart by exactly that: one is a process that printed
+answers by keeping the plan scope and a refusal sentence (T3, CG10). A repository
+whose `repos` entry names no provider is refused the same way (above), and so is
+a database the scope's read could not reach — an IAM refusal, a connection that
+failed: those reads made no answer at all, where `unreadable` is an answer this
+build cannot read and a `down` source is one with nothing in it. A refusal and a
+`down` source are told apart by exactly that: one is a process that printed
 nothing and failed, the other is a document with the state in it.
 
 one entry of `nodes`:

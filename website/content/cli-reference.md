@@ -1900,8 +1900,12 @@ Print the project's dependency graph
 Print the project's dependency graph as one versioned document.
 Every scope is read from the project's database through the caller's own
 credential: the coordinator's stored view is what the coordinator's sweep
-already wrote, so this command needs no checkout and opens no host, and it
-works in a directory that is not a checkout at all.
+already wrote, so this command opens no host and works in a directory that
+is not a checkout. The one fact it needs is each repository's git
+provider, which the project config's repos entries carry and which the
+repository's slug is keyed by: a repository whose entry leaves provider
+out is refused with the sentence that says where to set it, rather than
+graphed from a guess.
 
 --source selects the scope, and the set is closed: all (the default) is
 every scope that exists, which today is the coordinator's stored view;

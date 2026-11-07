@@ -110,10 +110,16 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 //     is where the coordinator's switch lives — so a read gated on it would
 //     report the coordinator off on every machine but the owner's.
 //
-// It resolves no git provider and no checkout: RepoView.Provider is a field of
-// the document `coordinator status` writes and not part of this read, so that
+// It stamps no provider of its own: RepoView.Provider is a field of the
+// document `coordinator status` writes and not part of this read, so that
 // command stamps it (coordinatorStatusProviders) and a caller with no use for a
-// host — the graph names none — never reaches for one.
+// host — the graph names none — never reaches for one. What the read does
+// resolve is the slug, because the node it reads is keyed by it: repoSlug,
+// which takes the provider from the repository's repos entry in the local
+// config and falls back to a checkout's fugaro.yaml only when the working
+// directory is that repository's checkout. A repository with neither is refused
+// there, naming the entry to set, and that is the one case in which this read
+// is not checkout-free.
 func StoredProject(ctx context.Context, env *fcli.Cloud, repos []string, since time.Time, warn io.Writer) (coordinator.StoredProjectView, error) {
 	store, err := openCoordinatorStore(ctx, env.Config())
 	if err != nil {
