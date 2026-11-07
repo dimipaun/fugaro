@@ -5,7 +5,7 @@ writes. It goes to counsel with the Subscription Terms
 ([`docs/licensing/subscription-terms.md`](../licensing/subscription-terms.md)) in the round
 [S8.4](implementation-plan.md#slice-s8-the-owners-counsels-and-the-accountants-steps) records, and it
 asks **only what the Terms' own list for counsel does not already ask**: the draft counsel was given
-carried seventeen questions (#1146), of which 12–18 were added with the owner's answers, and that
+carried eighteen questions (#1146), of which 12–18 were added with the owner's answers, and that
 list is the eight items counsel's restructured text ends with today. Nothing here is legal advice,
 and nothing here decides anything: every question is counsel's, and every ruling it cites is the
 owner's, already recorded in
@@ -15,9 +15,10 @@ owner's, already recorded in
 sit in and never by their value — the two figures the owner ruled into the Terms (the liability cap
 in section 10.5 and the late-payment rate in section 12.2) are referred to the same way. Prices,
 discounts, fee rates and the Enterprise minimum are in the owner's private business repository, not
-here. The scan
-[subscriptions S0.1](implementation-plan.md#s01-a-docs-test-that-no-price-figure-enters-the-repository)
-writes holds that over this folder, and the plan makes it this document's gate.
+here. [Subscriptions S0.1](implementation-plan.md#s01-a-docs-test-that-no-price-figure-enters-the-repository)
+writes the scan that holds this over the folder, and the plan makes it this document's gate; S0.1
+has not landed yet (the census of 2026-11-07 lists it NOT STARTED), so until it does this document
+holds the rule by construction and the Docs suite is its only test.
 
 **What has moved since the questions were written.** The Terms have changed twice. Counsel
 restructured them on 2026-10-28 into Parts A–G and sections 1 to 34 (they were the draft's sections
@@ -35,7 +36,10 @@ The clauses named below:
 | §4.3(a) | §10.2(a) | the free seat, one per legal person |
 | §4.3(b) | §10.2(b) | open-source teams |
 | §5.1 | §5.1 | the seat rule |
+| §5.3 | §5.4 | one individual per seat, and the reassignment period |
+| §6.2 | §14 | the annual renewal's cancellation notice |
 | §7.2 | §12.2 | the late-payment rate |
+| §7.4 | §15 | the refund window |
 | §8.1 | §6.1 | the License Key and what it states |
 | §8.2 | §6.2 | verification and the grace period |
 | §8.3 | §6.3 | issue of License Keys |
@@ -52,18 +56,19 @@ Counsel has applied and approved these, and the Terms' own list for counsel reco
 4, 5 and 7), so this packet asks none of them again:
 
 - **T12 — read-only use keeps cancel.** After the grace period a User may still cancel a Job and use
-  the kill switch, and may not initiate or modify anything else (§9.1); §27.4(a) refers the
-  destruction duty to it. That is ruling T12, in place of the draft's "cannot launch, cancel or
-  change anything".
+  the kill switch, and may not initiate or modify anything else (§9.1); §27.4(a) is where the
+  production right ends and §27.4(b) is the destruction duty that goes with it. That is ruling T12,
+  in place of the draft's "cannot launch, cancel or change anything".
 - **The key binding — one key per organisation.** One License Key per Customer for its organisation,
-  stating its User Seats, replaces the draft's key per User (§§2, 5.3, 6.1, 6.3, 6.4, 7.5, 9.1).
+  stating its User Seats, replaces the draft's key per User (§§2, 5.3, 6.1, 6.3, 6.4, 7.5, 9.1 — the
+  Terms' own list, item 4, in counsel's numbering; §5.3 there is Roles, which carries the key).
 - **O4 — expiry only.** The covered-versions date is gone (§§6.1, 8.2).
 - **T15, first half — the free seat per legal person.** §10.2(a) holds one free User Seat for a legal
   person with no Paid Plan, and a legal person and its Affiliates together hold no more than one
   (§§6.3, 7.5, 10.2(a)).
 - **T24 — the contract figures stay in the Terms.** The support targets and hours (§8.1), the annual
   renewal's cancellation notice (§14), the refund window (§15) and the seat reassignment period
-  (§5.3) are printed, as the owner ruled.
+  (§5.4) are printed, as the owner ruled.
 - **The coordinator** is part of the Software and not of the Core (§7.1; the owner's ruling of
   2026-10-29), and **crash reporting** is opt-in, per User and off by default (§7.3; the owner's
   ruling of 2026-10-31, counsel approved).
@@ -98,27 +103,40 @@ Software's behaviour**: "the Software requires a valid License Key to operate, s
 
 ### A2 — one binary, a mixed licence, and the MIT commands inside it (T21)
 
-From 0.13.0 the release is built with the `ee` tag: one binary carries the MIT core and the
-business-licensed parts ([`LICENSING.md`](../../LICENSING.md), "`ee/`, the Subscription Edition"),
-and every licence label says so. The licence's "Software" is every file under `ee/`, `console/` and
-`mobile/` "including code from those directories compiled into a released binary", and clause 1.1
-conditions production use of the Software on a subscription for the correct number of user seats.
-Ruling T21 chose the single binary over a second core-only download precisely so this could be
-answered: its option (a) was one binary "with counsel confirming that MIT commands need no seat".
+The release that carries the business-licensed parts is built with the `ee` tag: one binary carries
+the MIT core and the business-licensed parts ([`LICENSING.md`](../../LICENSING.md), "`ee/`, the
+Subscription Edition"), and every licence label says so. The licence's "Software" is every file
+under `ee/`, `console/` and `mobile/` "including code from those directories compiled into a
+released binary", and clause 1.1 conditions production use of the Software on a subscription for the
+correct number of user seats. Ruling T21 chose the single binary over a second core-only download
+precisely so this could be answered: its option (a) was one binary "with counsel confirming that MIT
+commands need no seat".
 
-The draft carried a note to §3.3 saying what moved and that one mixed-licence binary ships. Counsel's
-text has no such note — §2's "Core" and "Software" definitions do the work instead — so the Terms
-today say nothing about which commands a seat reaches.
+Counsel's text answers the launcher half of that. §5.1(a) requires a User Seat for each individual
+who "initiates a Job by any means, including through the desktop console, the mobile app, the
+Command-line tool, or any AI agent or automated process directed by that individual", so the person
+who runs `fugaro run` is counted like any other launcher; and §5.2 states that the Command-line tool
+is licensed under the MIT licence and is not part of the Software, that §5.1 sets only the number of
+User Seats and therefore the Fees, and that §5.1 limits no right granted under the MIT licence.
 
-1. In the released binary, does clause 1.1 reach a person who runs only a core command in
-   production: `fugaro run` to launch a Job, `fugaro runs digest`, `fugaro diagnose`, `fugaro watch`?
-   D433 makes a seat anyone who launches Jobs by any means, and those commands launch none.
-2. If it does not reach them, should the Terms say so, and where — §3.1's plan table, §5.1's seat
-   rule, or §9.2, which already carves the Command-line tool out of the lapse ("Nothing in this
-   section limits the use of the Command-line tool under the MIT licence, including to initiate and
-   cancel Jobs")?
-3. If it does reach them, does §5.1 need to say that the Command-line tool is a launcher like any
-   other, so a Customer reading §5.1 alone counts the people who use it?
+What the text does not answer is the mixed binary itself. The Terms' §2 and the licence define the
+Software the same way — every file under `ee/`, `console/` and `mobile/`, "including code from those
+directories compiled into a released binary or application" — so the binary a person downloads is
+the Software even when they run only a command that initiates no Job, and nothing in the text says
+whether clause 1.1's condition reaches them. The draft carried a note to §3.3 saying what moved and
+that one mixed-licence binary ships; counsel's text has no such note — §2's "Core" and "Software"
+definitions do the work instead.
+
+1. In the released binary, does clause 1.1 reach a person who runs only a command that initiates no
+   Job — `fugaro runs digest`, `fugaro diagnose`, `fugaro watch` — given that the binary carries the
+   Software compiled into it while §5.2 says the Command-line tool is not part of the Software?
+   (`fugaro run` launches a Job, so §5.1(a) counts whoever runs it whatever the answer here.)
+2. If it does not reach them, should the Terms say so, and where — §2's "Software" definition, §5.1's
+   seat rule, §5.2, or §9.2, which already carves the Command-line tool out of the lapse ("Nothing in
+   this section limits the use of the Command-line tool under the MIT licence, including to initiate
+   and cancel Jobs")?
+3. If it does reach them, should §5.2 say that its "not part of the Software" holds for the released
+   binary too, so a Customer reading §5.2 does not take it for a carve-out of the binary?
 
 ### A3 — an individual, "businesses only", and the free seat (T15)
 
@@ -153,7 +171,7 @@ accepted the leakage as a risk (T25), against the recommendation, which was a sh
 ### A5 — the contract figures printed in a public Terms text (T24)
 
 The Terms print the support targets and hours (§8.1), the annual renewal's cancellation notice
-(§14), the refund window (§15), the seat reassignment period (§5.3), and the two figures the owner
+(§14), the refund window (§15), the seat reassignment period (§5.4), and the two figures the owner
 ruled in on 2026-10-29 (the liability cap in §10.5, the late-payment rate in §12.2). Prices,
 discounts, fee rates and the Enterprise minimum stay on the Order Form and out of the repository
 (D430, T22), so the published text carries the contract terms and not the commercial ones.
@@ -161,7 +179,7 @@ discounts, fee rates and the Enterprise minimum stay on the Order Form and out o
 1. Is that split the right one for a text published at a URL the licence pins — do the support
    targets, the renewal notice, the refund window and the reassignment period belong in the Terms,
    or should any of them move to the Order Form?
-2. §5.3's reassignment period is the one of them that is a product rule rather than a commercial
+2. §5.4's reassignment period is the one of them that is a product rule rather than a commercial
    term: does it need to be a contract figure at all, or would "at most once per Subscription
    period" carry it without a number?
 
@@ -199,8 +217,9 @@ What is still open, and what A1–A6 feed:
 - **§6.3** — T26's renewal 30 days before expiry, T13's hand minting, and the paid-key path (A6).
 - **§1.3** — T15's second half: an individual as an organisation of one (A3).
 - **§15 or §6.4** — the refund leakage (A4).
-- **The draft's §3.3 note**, gone from counsel's text with no replacement — whether the Terms say
-  which commands need a seat (A2).
+- **The draft's §3.3 note**, gone from counsel's text with no replacement — whether the commands
+  that initiate no Job need a seat in the mixed-licence binary, which §5.2's "not part of the
+  Software" does not settle on its own (A2).
 - **T24's split** — the contract figures in the Terms and the commercial ones on the Order Form
   (A5).
 
