@@ -59,8 +59,8 @@ copy is shared code.
 **F3: Exists. The two allow-lists are exact, closed and mutation-proof.** `CONSOLE_OPERATIONS`
 (`console/src/main/ipc.ts:529`) is **thirty-one** operations — twenty-five on the day this was
 written, and six since: C1's `settings.read`, C3's `settings.edit` and four the console grew
-beside them; `ALLOWED_OPERATION_FLAGS` (`:1408`) admits
-four fixed flags; `NEVER_REACHABLE` (`:1480`) is the never table, with the `argv` shape that lets
+beside them; `ALLOWED_OPERATION_FLAGS` (`:1408`) admits four fixed flags;
+`NEVER_REACHABLE` (`:1480`) is the never table, with the `argv` shape that lets
 one exact `run` vector through while refusing every sibling (`NeverReachableShape`, `:1448`); and
 `assertReachableSurface` (`:3206`) refuses at startup a table that drives a never entry. The spawn
 side is `argvFor` (`console/src/main/spawn.ts:1333`), the only place an argv is built, and
