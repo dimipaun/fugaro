@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -360,6 +362,117 @@ func TestGitForwardRefusesWithoutIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGitForwardFiltersTheAnswerHeaders: the service's answer reaches the
+// caller as it was answered, with the headers that are not this listener's to
+// hand back left out. The redirect destination is the one that matters: this
+// listener follows no redirect (upstreamClient), so a Location handed to the
+// caller is a hop the CALLER would make, to a host no rule named — the service
+// drops bitbucket.org's own redirects for the same reason (B1.5's
+// stripRedirect) and this is the outside hop of that chain. A listener that
+// writes no per-request line and discards its ErrorLog would lose all of this
+// silently, which is what this case exists to not happen.
+func TestGitForwardFiltersTheAnswerHeaders(t *testing.T) {
+	// A hop's own headers, the seven of RFC 9110 a service can put on an answer
+	// and net/http will carry: Transfer-Encoding is the eighth and is not here,
+	// because a transport reads it off the answer itself and refuses one it did
+	// not write — there is no answer this listener could be sent that has it.
+	hopHeaders := []string{"Connection", "Keep-Alive", "Proxy-Connection", "Proxy-Authenticate", "Te", "Trailer", "Upgrade"}
+
+	t.Run("a redirect and the hop's own headers are not handed back", func(t *testing.T) {
+		// Anything that followed the redirect would arrive here, and this
+		// counts what did.
+		elsewhere := newForwardService(t, nil)
+		body := "moved"
+		svc := newForwardService(t, func(w http.ResponseWriter, r *http.Request) {
+			for _, k := range hopHeaders {
+				w.Header().Set(k, "probe")
+			}
+			w.Header().Set("Location", elsewhere.url+"/"+forwardPath)
+			w.Header().Set("Content-Location", elsewhere.url+"/"+forwardPath)
+			// The service's claim about a body, for a body it does not have:
+			// relaying it would leave the caller waiting for bytes that never
+			// come, so the length the caller reads is this listener's count.
+			w.Header().Set("Content-Length", "999999")
+			w.WriteHeader(http.StatusFound)
+			_, _ = io.WriteString(w, body)
+		})
+		f := startForward(t, svc.url, nil)
+
+		resp, got := forwardGet(t, f, nil)
+		if resp.StatusCode != http.StatusFound {
+			t.Errorf("the answer's status = %d, want the service's 302", resp.StatusCode)
+		}
+		if got != body {
+			t.Errorf("the answer's body = %q, want %q", got, body)
+		}
+		if v := resp.Header.Get("Location"); v != "" {
+			t.Errorf("the caller was handed Location: %q", v)
+		}
+		if v := resp.Header.Get("Content-Location"); v != "" {
+			t.Errorf("the caller was handed Content-Location: %q", v)
+		}
+		if n := elsewhere.count(); n != 0 {
+			t.Errorf("the redirect was followed: the caller reached the destination %d times", n)
+		}
+		for _, k := range hopHeaders {
+			if v := resp.Header.Get(k); v != "" {
+				t.Errorf("the caller was handed %s: %q, a header of this hop", k, v)
+			}
+		}
+		if resp.ContentLength != int64(len(body)) {
+			t.Errorf("the answer's length = %d, want the %d bytes this listener copied", resp.ContentLength, len(body))
+		}
+	})
+
+	t.Run("everything else is relayed", func(t *testing.T) {
+		// A pack, gzipped by whoever answered and unpacked by nobody: the
+		// caller here asks for nothing and unpacks nothing, as the forwarder's
+		// own client does (upstreamClient). A client that sent Accept-Encoding
+		// would have the header taken off its answer and the body opened, and
+		// both are what this case reads.
+		var pack bytes.Buffer
+		zw := gzip.NewWriter(&pack)
+		_, _ = zw.Write([]byte("a pack"))
+		_ = zw.Close()
+		const contentType = "application/x-git-upload-pack-advertisement"
+		svc := newForwardService(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("X-Request-Id", forwardIdentity(t, "request-id"))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(pack.Bytes())
+		})
+		f := startForward(t, svc.url, nil)
+
+		req, err := http.NewRequest(http.MethodGet, f.URL()+forwardPath, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("the forwarder: %v", err)
+		}
+		defer resp.Body.Close()
+		got, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, pack.Bytes()) {
+			t.Errorf("the answer carried %d bytes, want the %d the service answered", len(got), pack.Len())
+		}
+		for k, want := range map[string]string{
+			"Content-Type":     contentType,
+			"Content-Encoding": "gzip",
+			"X-Request-Id":     forwardIdentity(t, "request-id"),
+		} {
+			if got := resp.Header.Get(k); got != want {
+				t.Errorf("the answer's %s = %q, want %q", k, got, want)
+			}
+		}
+	})
 }
 
 // TestGitForwardUnreachableCarriesNoPath: a forward that could not reach the
