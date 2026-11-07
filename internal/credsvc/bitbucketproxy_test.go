@@ -729,6 +729,31 @@ func TestBitbucketRoutePRWriteChecksSource(t *testing.T) {
 	}
 }
 
+// TestBitbucketRouteUserCallNamesNoRepository: GET /user is the one admitted
+// call that names no repository at all (G4) — the adapter asks it which user
+// the token is, so Fugaro's own comments can be told from other people's. The
+// route must address it without a repository to rebuild from, and the policy's
+// own admission is what decides it.
+func TestBitbucketRouteUserCallNamesNoRepository(t *testing.T) {
+	s, up, token := proxySvc(t)
+	up.answerWith(http.StatusOK, `{"uuid":"{user}"}`)
+
+	resp, ans := s.proxyCall(t, http.MethodGet, proxyPath("2.0/user"), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	got := up.only(t)
+	if got.host != "api.bitbucket.org" || got.path != "/2.0/user" {
+		t.Errorf("the call was addressed to %s%s, want api.bitbucket.org/2.0/user", got.host, got.path)
+	}
+	if got.auth != "Bearer "+token {
+		t.Errorf("the call was shown %q, want the bundle's token as a REST bearer", got.auth)
+	}
+	if line := s.onlyAuditLine(t); line["purpose"] != PurposeBitbucketAPI {
+		t.Errorf("the audit line = %v, want the Bitbucket API purpose", line)
+	}
+}
+
 // TestBitbucketRoutePRCreateIsCheckedOnItsBody: a create names a pull request
 // that does not exist yet, so there is no fact for this service to read and the
 // source it names is checked in the body it is about to send (G12). Two things
