@@ -951,6 +951,39 @@ func TestUpdateEscapesTheRemovedRepositoryItPrints(t *testing.T) {
 	}
 }
 
+// TestUpdateEscapesWhatTheRecordMigrationEchoes: the version-0 node is read with
+// the record's own parser (workspace.Parse, migrateWorkspaceV0ToV1), and that
+// parser's messages echo the repositories they refuse — which reaches the
+// operator's terminal through this stage's refusal. A repository is the one
+// string of this document nothing holds to a grammar, so those echoes quote
+// what they name: a hand-written node carrying an escape would otherwise
+// rewrite the line that refuses it.
+func TestUpdateEscapesWhatTheRecordMigrationEchoes(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	// A version-0 node (the record's own file shape) whose repositories are out
+	// of order, the first of them carrying an escape.
+	p.db.Set(projectpolicy.PathWorkspace("workspace-alpha"), map[string]any{
+		"name": "workspace-alpha",
+		"members": []any{
+			map[string]any{"project": "member-b", "repos": []any{"owner/z\x1b[2K", "owner/a"}},
+		},
+		"cap": map[string]any{"monthly": 25},
+	})
+
+	r := newWSUpdateRig(t, h)
+	_, out, err := r.apply(t, true)
+	if err == nil {
+		t.Fatalf("a version-0 node with unsorted repositories was migrated:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "out of order after") {
+		t.Errorf("the refusal does not say what the record's own reader refused: %v\n%s", err, out)
+	}
+	if strings.ContainsAny(err.Error()+out, "\x1b\r") {
+		t.Errorf("the repository the record's reader refused reached the terminal raw:\n%q\n%v", out, err)
+	}
+}
+
 // TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn: the stage's own
 // D1017 read, which is the FIRST thing after the record is built from the
 // config and the reason it is there rather than after the node read — this
