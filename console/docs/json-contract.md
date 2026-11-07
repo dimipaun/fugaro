@@ -2588,13 +2588,14 @@ the Coordinator tab's, because its `all` scope is the coordinator's stored view
 `graph.NodeKey` and the `--source` value parsed by `graph.ParseScope`
 (`ee/graph/key.go`). Cited by symbol, not by line, for §6.11's reason.
 
-**The command this section describes is not on `main` yet, and the section is
-written first on purpose.** CG1 (the document, the key and the scope pattern)
-has landed; CG3 (`graph --json`), CG7 (`graph --watch --json`) and the console's
-own read (CG9a, CG9b) are the tasks that follow, in that order. Every field
-below is read off `ee/graph/document.go`'s struct tags and every rule off the
-plan's H1 to H5, so a later task that finds the code disagreeing with this
-section has found a defect in one of the two.
+**`fugaro graph --json` has landed; the stream and the console's own read have
+not.** CG1 (the document, the key and the scope pattern) and CG3 (`graph
+--json`, the coordinator scope) are on `main`, so the command, its `--source`
+set and every field below are what the released CLI writes; CG7 (`graph --watch
+--json`) and the console's own read of this document (CG9a, CG9b) are the tasks
+that follow, in that order. The fields are read off `ee/graph/document.go`'s
+struct tags and the rules off the plan's H1 to H5, so a task that finds the code
+disagreeing with this section has found a defect in one of the two.
 
 **The section is numbered §6.22, and that is not a typo.** §6.21 is already
 claimed for another command's document: `docs/console-managed-screens/implementation-plan.md`

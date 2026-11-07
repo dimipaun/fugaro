@@ -89,8 +89,11 @@ func NewGraphCmd() *cobra.Command {
 			"before anything is read.\n\n" +
 			"The coordinator's scope is every repository the local config lists, and a\n" +
 			"repository the sweep has never reconciled is read as its runs alone — the\n" +
-			"half of the view that needs no credential — rather than dropped: the\n" +
-			"document says which of the two halves it is holding.\n\n" +
+			"half of the view that needs no credential — rather than dropped. Which\n" +
+			"half it is is a fact about the repository and not about the scope: the\n" +
+			"scope's state is down when the project lists repositories and the sweep\n" +
+			"has stored a view for none of them, and up once it has stored one, beside\n" +
+			"records that may still be the runs half.\n\n" +
 			"With --json the document is printed as the console reads it: its version,\n" +
 			"when it was assembled, one entry per scope in sources, the nodes, the edges\n" +
 			"(the coordinator's view has none) and the warnings. Without it, a short\n" +
@@ -162,10 +165,14 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 		src := graph.CoordinatorSource{View: project, Now: now}
 		nodes, state, err := src.Nodes()
 		if err != nil {
-			// An identity this build cannot key: the database's own data is what
-			// a reader here cannot read, which is how the read this command
-			// shares classifies the same case (a node that does not decode).
-			return fcli.RemoteErr(err)
+			// The database answered with a record whose identity this build
+			// cannot carry: sanitising it would rewrite the key, and a rewritten
+			// key is one two things can share (D1356, Sanitise). That is the
+			// same class as a node that does not decode — an answer this build
+			// cannot read — and §6.22 gives it the same state rather than the
+			// refusal the console would draw as "this CLI has no graph".
+			doc = graphUnreadable(now, err, &warned)
+			break
 		}
 		doc = graph.Document{
 			Version:     graph.DocumentVersion,
@@ -178,25 +185,12 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	case errors.Is(err, coordinator.ErrUnreadable):
 		// The database answered, and what the coordinator's subtree holds is a
 		// document this build cannot read — a newer sweep's field, a value of
-		// another shape. That is the contract's `unreadable` (§6.22): a state of
-		// the scope and never a refusal of the whole read, because a refusal is
-		// exactly what the console reads as "this CLI has no graph" (T3), and it
-		// would say that about a project whose database it can read and whose
-		// coordinator has simply written something this build does not know. The
-		// nodes stay empty: a scope that answered with something unreadable has
-		// nothing this reader can draw, and the state beside them says so.
-		doc = graph.Document{
-			Version:     graph.DocumentVersion,
-			GeneratedAt: now,
-			Sources: []graph.SourceState{{
-				Source: graph.Scope{Kind: graph.ScopeCoordinator}.String(),
-				State:  graph.SourceUnreadable,
-				Reason: err.Error(),
-			}},
-			Nodes:    []graph.Node{},
-			Edges:    []graph.Edge{},
-			Warnings: graphWarningLines(&warned),
-		}
+		// another shape. §6.22's `unreadable` is a state of the scope and never
+		// a refusal of the whole read, because a refusal is exactly what the
+		// console reads as "this CLI has no graph" (T3), and it would say that
+		// about a project whose database it can read and whose coordinator has
+		// simply written something this build does not know.
+		doc = graphUnreadable(now, err, &warned)
 	default:
 		return err
 	}
@@ -213,6 +207,32 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	// read warns on. With --json they are in the document instead.
 	_, _ = cmd.ErrOrStderr().Write(warned.Bytes())
 	return writeGraphText(cmd.OutOrStdout(), doc)
+}
+
+// graphUnreadable is the document of a scope that answered with something this
+// build cannot read (§6.22): one source in the state `unreadable`, the read's
+// own sentence as its reason, and no nodes, because a scope whose answer this
+// reader cannot read has nothing it can draw — and the state beside the empty
+// list is what tells a screen that from a scope with nothing to draw.
+//
+// Two failures reach it, and they are one class: a stored node whose decoding
+// this build refuses (coordinator.ErrUnreadable), and a record whose identity
+// sanitising would rewrite, which the source refuses rather than printing a key
+// that could merge two things (D1356, Sanitise). Neither is a read that made no
+// answer, which is what a refusal is.
+func graphUnreadable(now time.Time, reason error, warned *bytes.Buffer) graph.Document {
+	return graph.Document{
+		Version:     graph.DocumentVersion,
+		GeneratedAt: now,
+		Sources: []graph.SourceState{{
+			Source: graph.Scope{Kind: graph.ScopeCoordinator}.String(),
+			State:  graph.SourceUnreadable,
+			Reason: reason.Error(),
+		}},
+		Nodes:    []graph.Node{},
+		Edges:    []graph.Edge{},
+		Warnings: graphWarningLines(warned),
+	}
 }
 
 // graphRepos is the repositories the coordinator scope covers: every one the

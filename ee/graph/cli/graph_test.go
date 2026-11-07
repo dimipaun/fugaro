@@ -26,9 +26,11 @@ package cli
 //     one fact it does need from the project config, the provider each
 //     repository's slug is keyed by, which a config that leaves it out is
 //     refused for by name rather than guessed at.
-//   - TestGraphUnreadableStoredViewIsAStateNotARefusal: a stored node this build
-//     cannot read is the scope's `unreadable` state with a document printed, not
-//     a terminal refusal the console would read as "this CLI has no graph".
+//   - TestGraphUnreadableStoredViewIsAStateNotARefusal: an answer this build
+//     cannot read — a node whose decoding it refuses, or a record whose identity
+//     sanitising would rewrite — is the scope's `unreadable` state with a
+//     document printed, not a terminal refusal the console would read as "this
+//     CLI has no graph".
 //   - TestGraphEmptyProjectIsAnEmptyDocument: a project that lists no repository
 //     is an empty document and not a refusal, because the refusal would be read
 //     as "this CLI has no graph".
@@ -561,13 +563,15 @@ func TestGraphNeedsNoCheckout(t *testing.T) {
 	})
 }
 
-// TestGraphUnreadableStoredViewIsAStateNotARefusal: a node the database holds
+// TestGraphUnreadableStoredViewIsAStateNotARefusal: an answer the database gave
 // and this build cannot read is the contract's `unreadable` — a state of the
 // scope, with the document printed and the process succeeding (§6.22, H3) — and
 // never a refusal of the whole read, which is what the console reads as "this
-// CLI has no graph" (T3). What it is told apart from is the other failure of
-// the same read: a database that could not be reached stays a terminal error
-// with no document, and a scope this build has no reader for stays the other.
+// CLI has no graph" (T3). Both shapes of that class are here: a stored node
+// whose decoding this build refuses, and a record whose identity sanitising
+// would rewrite. What they are told apart from is the other failure of the same
+// read: a database that could not be reached, or a repository whose config
+// names no provider, stays a terminal error with no document.
 func TestGraphUnreadableStoredViewIsAStateNotARefusal(t *testing.T) {
 	f := newGraphFixture(t)
 	// What a sweep of a later build leaves behind: a view carrying a field this
@@ -609,6 +613,44 @@ func TestGraphUnreadableStoredViewIsAStateNotARefusal(t *testing.T) {
 	if !strings.Contains(text, "coordinator: "+graph.SourceUnreadable) {
 		t.Errorf("the table does not say the scope is %s:\n%s", graph.SourceUnreadable, text)
 	}
+
+	// The other shape of the same class: the node decodes, and its identity is
+	// one this build cannot carry. The run a run-only record is keyed by holds a
+	// bidi override, which safetext.Field would drop — so a key rebuilt from the
+	// sanitised id could be a key another record already has, which the source
+	// refuses rather than printing (D1356, Sanitise).
+	t.Run("a record whose identity this build refuses", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, coordinator.View{
+			Repo: "acme/app",
+			Records: []coordinator.Record{{
+				Runs: []coordinator.Run{{
+					ID: "20261013-100000-a\u202eaaa", Status: "running", Branch: "release/v0.11.0",
+					DeclaredBy: "someone@example.com", Files: []string{},
+				}},
+				Branch: "release/v0.11.0", Release: "0.11.0", InFlight: true,
+				Files: []string{}, Services: []string{},
+			}},
+			Collisions: []coordinator.Collision{},
+		})
+		out, errOut, err := execute(t, "graph", "--json")
+		if err != nil {
+			t.Fatalf("a record whose identity this build refuses refused the whole read: %v (stderr: %s)", err, errOut)
+		}
+		doc, err := graph.ParseDocument([]byte(out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(doc.Sources) != 1 || doc.Sources[0].State != graph.SourceUnreadable {
+			t.Fatalf("the scope of an unkeyable record is %+v, want one source in the state %q", doc.Sources, graph.SourceUnreadable)
+		}
+		if doc.Sources[0].Reason == "" {
+			t.Error("the unreadable scope carries no reason: a screen has nothing to show beside the state")
+		}
+		if len(doc.Nodes) != 0 {
+			t.Errorf("the scope drew %d nodes, want none: a key this build cannot build is not one it can print", len(doc.Nodes))
+		}
+	})
 }
 
 // TestGraphEmptyProjectIsAnEmptyDocument: a project that lists no repository is

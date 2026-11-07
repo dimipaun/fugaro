@@ -1917,8 +1917,11 @@ before anything is read.
 
 The coordinator's scope is every repository the local config lists, and a
 repository the sweep has never reconciled is read as its runs alone — the
-half of the view that needs no credential — rather than dropped: the
-document says which of the two halves it is holding.
+half of the view that needs no credential — rather than dropped. Which
+half it is is a fact about the repository and not about the scope: the
+scope's state is down when the project lists repositories and the sweep
+has stored a view for none of them, and up once it has stored one, beside
+records that may still be the runs half.
 
 With --json the document is printed as the console reads it: its version,
 when it was assembled, one entry per scope in sources, the nodes, the edges
