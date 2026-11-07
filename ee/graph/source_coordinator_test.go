@@ -15,7 +15,7 @@ import (
 
 // loadStoredView reads the fixture the coordinator scope's tests share: a
 // stored project view, the document `fugaro coordinator status --from-store
-// --all --json` prints (console/docs/json-contract.md §6.13), with one
+// --all --json` prints (json-contract.md §6.13), with one
 // repository the sweep has reconciled and one it has never touched. It is
 // decoded strictly, the way every wire format here is read, so a fixture that
 // drifted from `coordinator.RepoView` fails here rather than in a test that
