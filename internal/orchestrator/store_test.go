@@ -19,12 +19,12 @@ import (
 // The state store's tests (O3, F5, G9).
 //
 // The state node is where every decision a daemon makes lives, so these are
-// the tests of what may write it: a conditional write under the ETag the
-// caller read, a bounded re-read when that ETag moved with the lease
-// re-checked before every retry, a refusal rather than a forced write when
-// neither is available, and a load that fails closed on a document this
-// release cannot read. Everything runs on internal/gcpfake's Realtime Database
-// fake: no live cloud, no clock, no key and no secret.
+// the tests of what may write it: one conditional write under the ETag the
+// caller read, the lease re-checked before that write, a refusal rather than a
+// forced write when either the ETag or the lease has moved, and a load that
+// fails closed on a document this release cannot read. Everything runs on
+// internal/gcpfake's Realtime Database fake: no live cloud, no clock, no key
+// and no secret.
 //
 // The other half of G9 is TestHeartbeatDoesNotMoveTheStateETag below: `state`,
 // `lease` and `audit` are siblings under `orchestrator/<id>`, and a heartbeat
@@ -38,8 +38,9 @@ import (
 // success.
 //
 // Mutation: drop the If-Match (write with PutIfMatch's etag replaced by an
-// unconditional PUT) and the stale write lands; give the unleased writer
-// saveAttempts retries and the first case's write count stops being one.
+// unconditional PUT) and the stale write lands; re-read the ETag after a 412
+// and write the caller's body under it and the third case's one write becomes
+// several, each of them over a document the caller never read.
 func TestStaleSaveIsRefusedNotForced(t *testing.T) {
 	ctx := context.Background()
 
@@ -72,7 +73,7 @@ func TestStaleSaveIsRefusedNotForced(t *testing.T) {
 			t.Fatalf("a save under a moved ETag ended as %v, not ErrStateMoved", saveErr)
 		}
 		if counting.puts != 3 {
-			t.Errorf("the writer made %d writes; a writer with no lease gets one attempt per save", counting.puts)
+			t.Errorf("the writer made %d writes for three saves (create, the other writer's, the refused one): one conditional write each", counting.puts)
 		}
 		if got := storedRev(t, f, node); got != 7 {
 			t.Errorf("the node says rev %v after the refused write: a stale writer's state landed", got)
@@ -100,7 +101,7 @@ func TestStaleSaveIsRefusedNotForced(t *testing.T) {
 		}
 	})
 
-	t.Run("a node that keeps moving ends the save after the bound", func(t *testing.T) {
+	t.Run("a node that moved is never written over, however many times it is asked", func(t *testing.T) {
 		f := gcpfake.NewRTDB(t)
 		refusing := &refusingCAS{inner: rtdbClient(t, f)}
 		node := mustNode(t, refusing, &stubLease{held: true})
@@ -109,13 +110,14 @@ func TestStaleSaveIsRefusedNotForced(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the load: %v", err)
 		}
-		saveErr := node.Save(ctx, fresh, etag)
-		if !errors.Is(saveErr, orchestrator.ErrStateMoved) {
-			t.Fatalf("a node that moved under every attempt ended as %v, not ErrStateMoved", saveErr)
+		for i := 0; i < 3; i++ {
+			if saveErr := node.Save(ctx, fresh, etag); !errors.Is(saveErr, orchestrator.ErrStateMoved) {
+				t.Fatalf("save %d ended as %v, not ErrStateMoved", i+1, saveErr)
+			}
 		}
-		if refusing.puts != orchestrator.SaveAttempts {
-			t.Errorf("the save wrote %d times for a bound of %d: the retry is not the bound it says it is",
-				refusing.puts, orchestrator.SaveAttempts)
+		if refusing.puts != 3 {
+			t.Errorf("three refused saves reached the node %d times: a body derived from the document the caller read is written once, never pushed again under a fresher ETag",
+				refusing.puts)
 		}
 		if f.Value(mustPath(t, orchestrator.PathState)) != nil {
 			t.Error("a save that lost every race still created the node")
@@ -124,16 +126,22 @@ func TestStaleSaveIsRefusedNotForced(t *testing.T) {
 }
 
 // TestSaveRechecksTheLeaseBeforeARetry is G9's second half, and the reason the
-// lease is not the fence: the lease and the state ETag are separate nodes, so
-// a daemon that lost its lease can still win a PutIfMatch after a re-read. The
-// only thing that stops it is the check between the attempts.
+// lease is not the fence: the lease and the state ETag are separate nodes, so a
+// daemon that lost its lease can still hold a fresh state ETag. The name is the
+// plan's, and the answer here is stronger than a re-check between attempts:
+// there is one attempt and the lease is checked before it, so a daemon whose
+// lease went to another machine cannot record the intent it would then act on —
+// and a lost race is refused rather than pushed again under a fresher ETag
+// (TestStaleSaveIsRefusedNotForced says why). The cases below cover both: the
+// write that would have been a second, retried write, and the write that must
+// not happen at all.
 //
-// Mutation: move Node.checkLease out of the retry (check once, before the
-// first attempt) and the second case's write lands after the lease is gone.
+// Mutation: drop Node.checkLease and both of the last two cases write while the
+// lease is not this daemon's.
 func TestSaveRechecksTheLeaseBeforeARetry(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("a retry under a held lease re-reads the ETag and lands", func(t *testing.T) {
+	t.Run("a save whose write lost the race is refused, not written twice", func(t *testing.T) {
 		f := gcpfake.NewRTDB(t)
 		flaky := &flakyCAS{inner: rtdbClient(t, f), refuse: 1}
 		lease := &stubLease{held: true}
@@ -143,21 +151,23 @@ func TestSaveRechecksTheLeaseBeforeARetry(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the load: %v", err)
 		}
-		if err := node.Save(ctx, fresh, etag); err != nil {
-			t.Fatalf("a save whose first write lost the race and whose retry did not: %v", err)
+		saveErr := node.Save(ctx, fresh, etag)
+		if !errors.Is(saveErr, orchestrator.ErrStateMoved) {
+			t.Fatalf("a save whose write lost the race ended as %v, not ErrStateMoved", saveErr)
 		}
-		if flaky.puts != 2 {
-			t.Errorf("the save wrote %d times; a lost race is one re-read and one more write", flaky.puts)
+		if flaky.puts != 1 {
+			t.Errorf("the save wrote %d times under one held lease: a second attempt would push a body derived from the document the caller read",
+				flaky.puts)
 		}
 		if lease.checks != 1 {
-			t.Errorf("the lease was checked %d times before the retry, not once", lease.checks)
+			t.Errorf("the lease was checked %d times for one write, not once", lease.checks)
 		}
-		if got := storedRev(t, f, node); got != 0 {
-			t.Errorf("the saved state reads back as rev %v, not the one written", got)
+		if f.Value(mustPath(t, orchestrator.PathState)) != nil {
+			t.Error("a save that lost the race created the node anyway")
 		}
 	})
 
-	t.Run("a retry with the lease gone writes nothing", func(t *testing.T) {
+	t.Run("a save with the lease gone writes nothing", func(t *testing.T) {
 		f := gcpfake.NewRTDB(t)
 		refusing := &refusingCAS{inner: rtdbClient(t, f)}
 		lease := &stubLease{held: false}
@@ -171,8 +181,8 @@ func TestSaveRechecksTheLeaseBeforeARetry(t *testing.T) {
 		if !errors.Is(saveErr, orchestrator.ErrLeaseLost) {
 			t.Fatalf("a save that lost its lease ended as %v, not ErrLeaseLost", saveErr)
 		}
-		if refusing.puts != 1 || lease.checks != 1 {
-			t.Errorf("the save wrote %d times after %d lease checks: a lost lease is checked before the retry and then no write",
+		if refusing.puts != 0 || lease.checks != 1 {
+			t.Errorf("the save wrote %d times after %d lease checks: a lease that is not this daemon's is checked before the write and then no write",
 				refusing.puts, lease.checks)
 		}
 		if f.Value(mustPath(t, orchestrator.PathState)) != nil {
@@ -194,7 +204,7 @@ func TestSaveRechecksTheLeaseBeforeARetry(t *testing.T) {
 		if saveErr == nil || errors.Is(saveErr, orchestrator.ErrLeaseLost) {
 			t.Fatalf("an unreadable lease ended as %v: a daemon that cannot tell whether it holds the id must fail closed", saveErr)
 		}
-		if refusing.puts != 1 {
+		if refusing.puts != 0 {
 			t.Errorf("the save wrote %d times over an unreadable lease", refusing.puts)
 		}
 		if !strings.Contains(saveErr.Error(), "lease") {
@@ -333,6 +343,11 @@ func TestHeartbeatDoesNotMoveTheStateETag(t *testing.T) {
 	node := mustNode(t, db, lease)
 	audit := mustAudit(t, db, now)
 
+	// The lease first, as a daemon does: the state is written by whoever holds
+	// the id, so this test cannot even create it before the claim.
+	if _, err := lease.Acquire(ctx); err != nil {
+		t.Fatalf("taking the lease: %v", err)
+	}
 	fresh, etag, err := node.Load(ctx)
 	if err != nil {
 		t.Fatalf("the load: %v", err)
@@ -345,9 +360,6 @@ func TestHeartbeatDoesNotMoveTheStateETag(t *testing.T) {
 		t.Fatalf("reading the state's ETag: %v", err)
 	}
 
-	if _, err := lease.Acquire(ctx); err != nil {
-		t.Fatalf("taking the lease: %v", err)
-	}
 	for i := 0; i < 3; i++ {
 		clock = clock.Add(orchestrator.LeaseBeat)
 		if err := lease.Beat(ctx); err != nil {
@@ -479,8 +491,8 @@ func (l *stubLease) Held(context.Context) (bool, error) {
 }
 
 // flakyCAS refuses the first n conditional writes the way a moved ETag does
-// and is the real store after that, which is what a lost race that a re-read
-// resolves looks like.
+// and is the real store after that, so a save whose write lost a race can be
+// watched as the refusal it is.
 type flakyCAS struct {
 	inner  orchestrator.CAS
 	refuse int

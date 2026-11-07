@@ -45,8 +45,8 @@ const (
 // The refusals this node's three siblings share. They wrap like the patch's
 // own (patch.go), so a caller tells a lost race from a refusal from an outage.
 var (
-	// ErrStateMoved is a save refused because another writer moved the node
-	// under every attempt. Nothing was written.
+	// ErrStateMoved is a save refused because the node moved since the caller
+	// read it, and a write with no ETag of its own. Nothing was written.
 	ErrStateMoved = errors.New("orchestrator: the state moved and is not this writer's")
 	// ErrLeaseLost is a write (or a beat) refused because this daemon no
 	// longer holds the lease: something else owns the orchestrator id now, and
@@ -65,13 +65,6 @@ var (
 	// (D1230): an unavailable server time is a refusal, not a fallback.
 	ErrNoServerTime = errors.New("orchestrator: no server time has been read")
 )
-
-// saveAttempts bounds the re-read a lost race is answered with. Five is this
-// repo's number for that loop (internal/budget's SetAttempts, the mailbox's
-// LeaseAttempts, ee/coordinator's writeAttempts): a race that survives five
-// re-reads is not a race but another writer, and a store that kept spinning
-// would be a daemon that never ticked.
-const saveAttempts = 5
 
 // CAS is the compare-and-swap half of the Realtime Database client
 // (internal/rtdb). It is an interface because the fence is what this package
@@ -123,19 +116,18 @@ type NodeOptions struct {
 	// other's work as their own.
 	Role string
 	// Lease is the fence this writer holds, or nil for a writer that holds
-	// none — a person's own patch (D1241). A writer with no lease makes
-	// exactly one attempt per save: see Save.
+	// none — a person's own patch (D1241), which is why the fence is checked
+	// only when there is one: see Save.
 	Lease LeaseGuard
 }
 
 // Node is one orchestrator's state node.
 type Node struct {
-	db       CAS
-	agentID  string
-	role     string
-	lease    LeaseGuard
-	path     string
-	attempts int
+	db      CAS
+	agentID string
+	role    string
+	lease   LeaseGuard
+	path    string
 }
 
 // The store the daemon is handed is this one, and the client it is handed is
@@ -160,11 +152,7 @@ func NewNode(opts NodeOptions) (*Node, error) {
 	if !roleRE.MatchString(opts.Role) {
 		return nil, fmt.Errorf("%w: the role %q is not a loop's name", ErrInvalid, safetext.OneLine(opts.Role))
 	}
-	attempts := saveAttempts
-	if opts.Lease == nil {
-		attempts = 1
-	}
-	return &Node{db: opts.DB, agentID: opts.AgentID, role: opts.Role, lease: opts.Lease, path: path, attempts: attempts}, nil
+	return &Node{db: opts.DB, agentID: opts.AgentID, role: opts.Role, lease: opts.Lease, path: path}, nil
 }
 
 // Path returns the node's path, `orchestrator/<id>/state`.
@@ -205,19 +193,25 @@ func (n *Node) Load(ctx context.Context) (State, ETag, error) {
 
 // Save writes s at the state node, under etag.
 //
-// The write is conditional, always: an empty ETag is refused rather than
-// turned into a PUT, so no path through this method forces a write past the
-// node's current version (F5, G9). A 412 is a lost race, and the answer is a
-// bounded re-read — at most saveAttempts writes in all, then ErrStateMoved —
-// with the lease re-checked before every retry, because a daemon that lost its
-// lease can still win a PutIfMatch after a re-read.
+// The write is conditional, always: an empty ETag is refused rather than turned
+// into a PUT, so no path through this method forces a write past the node's
+// current version (F5, G9). A 412 is a lost race and comes back as
+// ErrStateMoved, **without a second attempt**: s was derived from the document
+// the caller read at etag, so pushing it again under a fresher ETag would write
+// over whatever landed in between — the lost update the compare-and-swap exists
+// to prevent, and a revision that would stand for two different documents. The
+// plan's bounded re-read is bounded by that, at one write, and the caller
+// re-reads and derives the action again from the state as it now is, which is
+// what level-triggered means (D1229).
 //
-// A writer that holds no lease gets exactly one attempt. A retry there would
-// be a re-read with no fence above it: a person's patch (O5) would overwrite
-// whatever landed between its own read and its write, losing a daemon's work
-// silently. So the refusal is handed back and the caller re-reads, which is
-// what level-triggered means (D1229) — the next tick or the next command
-// derives the action again from the state as it now is.
+// The lease is checked before the write, and that is where G9's re-check before
+// a retry lands once there is no retry: the state write is what records the
+// intent a daemon then acts on ("only the committed intent stops the second
+// spawn", D1231), so a daemon whose lease went to another machine must not
+// write one, however fresh its ETag is (the two are separate nodes and the
+// lease moving does not move the state). A writer that holds no lease — the
+// person's own patch (O5) — is not fenced here and gets the one conditional
+// write its ETag already bounds.
 func (n *Node) Save(ctx context.Context, s State, etag ETag) error {
 	if err := n.owns(s.AgentID, s.Role); err != nil {
 		return err
@@ -229,30 +223,20 @@ func (n *Node) Save(ctx context.Context, s State, etag ETag) error {
 	if etag == "" {
 		return fmt.Errorf("%w: a write with no ETag is a forced write, and this store never forces one", ErrStateMoved)
 	}
-	var last error
-	for attempt := 0; attempt < n.attempts; attempt++ {
-		if attempt > 0 {
-			if err := n.checkLease(ctx); err != nil {
-				return err
-			}
-			etag, err = n.reload(ctx)
-			if err != nil {
-				return err
-			}
-		}
-		err = n.db.PutIfMatch(ctx, n.path, string(etag), json.RawMessage(raw))
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, rtdb.ErrPrecondition) {
-			return err
-		}
-		last = err
+	if err := n.checkLease(ctx); err != nil {
+		return err
 	}
-	return fmt.Errorf("%w: %d writes, each refused by a moved ETag: %w", ErrStateMoved, n.attempts, last)
+	err = n.db.PutIfMatch(ctx, n.path, string(etag), json.RawMessage(raw))
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, rtdb.ErrPrecondition) {
+		return err
+	}
+	return fmt.Errorf("%w: the state node moved since it was read: %w", ErrStateMoved, err)
 }
 
-// checkLease is the fence the retry needs. An unreadable lease is a refusal
+// checkLease is the fence on the one write. An unreadable lease is a refusal
 // too, not a reason to write: a daemon that cannot say whether it still holds
 // the orchestrator id is a daemon that does not write the state.
 func (n *Node) checkLease(ctx context.Context) error {
@@ -261,23 +245,12 @@ func (n *Node) checkLease(ctx context.Context) error {
 	}
 	held, err := n.lease.Held(ctx)
 	if err != nil {
-		return fmt.Errorf("checking the lease before a retry: %w", err)
+		return fmt.Errorf("checking the lease before writing the state: %w", err)
 	}
 	if !held {
-		return fmt.Errorf("%w: the state moved and this daemon no longer holds the lease", ErrLeaseLost)
+		return fmt.Errorf("%w: the lease is not this daemon's, so the state is not written", ErrLeaseLost)
 	}
 	return nil
-}
-
-// reload is the fresh precondition for a retry: the ETag alone, because a
-// caller that wanted the state would have loaded it and derived the write
-// again rather than pushing the one it built from the old document.
-func (n *Node) reload(ctx context.Context) (ETag, error) {
-	etag, _, err := n.db.GetETag(ctx, n.path, nil)
-	if err != nil {
-		return "", err
-	}
-	return ETag(etag), nil
 }
 
 func (n *Node) owns(agentID, role string) error {

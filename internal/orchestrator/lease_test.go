@@ -333,8 +333,8 @@ func (c *countingCAS) PutIfMatch(ctx context.Context, path, etag string, v any) 
 }
 
 // refusingCAS answers every conditional write the way a moved ETag does and
-// every read with the real node, so a caller that retries without re-deciding
-// retries for ever.
+// every read with the real node, so a store that pushed its body again under a
+// fresher ETag would write over a document it never read.
 type refusingCAS struct {
 	inner orchestrator.CAS
 	gets  int
