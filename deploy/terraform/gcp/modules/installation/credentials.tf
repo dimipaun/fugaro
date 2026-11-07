@@ -404,9 +404,10 @@ resource "google_cloud_run_v2_service" "credentials" {
       # reads exactly these names, and internal/infra/tf's
       # credentialsServiceEnv is the allow-list that refuses anything else at
       # plan time). Seven of them are always set and the process REQUIRES
-      # them; the two below, the verifier list and the read mint's admitted
-      # people, are rendered only when the installation names the accounts they
-      # carry and are read as optional values. No
+      # them; the rest are read as optional values, and — the verifier list
+      # alone excepted, which is rendered in every state of its own list
+      # (CSR14) — are rendered only when the installation names the accounts
+      # they carry. No
       # credential is among them: it reads the one bundle secret as
       # its own account, by the name it derives from FUGARO_PROJECT (the
       # project-wide container of the logical name "creds-bundle",
@@ -464,6 +465,30 @@ resource "google_cloud_run_v2_service" "credentials" {
       env {
         name  = "FUGARO_JOB_ACCOUNTS"
         value = jsonencode(var.credentials_service.job_accounts)
+      }
+      # The review class's admitted set (C3.9a): the installation's
+      # review-only job variants, as the same kind of document — the
+      # {profile, provider, account} triple each variant's job and service
+      # account are derived from, plus the Claude account the variant's calls
+      # are served by. It is the same rule as the table above and the same
+      # reason: the emails are that derivation's output, so a list of them
+      # here would be a second spelling that can drift from the accounts the
+      # deployer creates. The one thing the triple cannot carry is the Claude
+      # account the pairing serves a review call by, and the service cannot
+      # read the published policy for it (D143: a revision's start-up depends
+      # on no installation state), so it travels here.
+      #
+      # It is rendered only on an installation that deploys a variant, for the
+      # reason the three lists below are: the process reads the name as an
+      # optional value, so an installation with no review job starts with an
+      # EMPTY review set — a service that admits no review caller, which is the
+      # fail-closed state — rather than refusing to bind a port.
+      dynamic "env" {
+        for_each = length(var.credentials_service.review_job_accounts) == 0 ? [] : [jsonencode(var.credentials_service.review_job_accounts)]
+        content {
+          name  = "FUGARO_REVIEW_JOB_ACCOUNTS"
+          value = env.value
+        }
       }
       # The verifier list: the addresses that may ask the verify route whether
       # a verdict's signature is this service's (C3.9g1, D1068).
