@@ -404,7 +404,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		}
 	}
 	if todo[initflow.Installation2] {
-		fmt.Fprintln(w, "  installation-2: Terraform apply of the installation root again, deploying the history job (planned when applied)")
+		fmt.Fprintln(w, "  installation-2: Terraform apply of the installation root again once the images stage has put the history image and the catalog's base image in place, deploying the jobs that run FROM them (planned when applied)")
 	}
 	if todo[initflow.Repository] {
 		repo := "the checkout's repository"
