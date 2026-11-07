@@ -319,3 +319,11 @@ the meta repo's own design (out of this plan).
   verified: list prices need the Cloud Billing API enabled, not a project role; contract prices need a role on the
   billing account that a project module cannot grant; and the CLI runs on the person's own credentials, so the
   grant may not be needed at all. T8's first step is a spike that decides the mechanism before any grant is written.
+  **Resolved 2026-11-07, [`billing-price-spike.md`](billing-price-spike.md):** all three guesses hold. Public list
+  prices need no IAM grant — Google documents "You don't need any specific IAM permissions" — so no `iam.tf` edit
+  and **no new `grantRules` row**; the only installation change is enabling `cloudbilling.googleapis.com` in
+  `apis.tf`; and contract prices are **not reachable from a project** (their roles' lowest grant level is the billing
+  account), which is why the estimator uses the list price, an upper bound, and never wants them. Two facts the
+  spike could not verify without a credential remain, and are its one gate before T8 starts: whether an OAuth
+  caller with no billing role reads public prices (one `curl`), and the Cloud Build machine-minute SKUs and their
+  machine-type→SKU→region mapping (two `curl`s).

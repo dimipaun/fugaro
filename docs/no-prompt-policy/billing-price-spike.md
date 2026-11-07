@@ -1,0 +1,412 @@
+# The build price: the Cloud Billing spike T8 was held for
+
+**Status: spike. Docs only: no code, no grant written, no write to any cloud.** It resolves the
+UNVERIFIED the plan left open — *"D1550's Billing grant"* (reconciliation §6) — and answers the six
+questions the owner asked of it. Everything below is either a quotation from Google's own
+documentation (by URL, in §7), a fact read out of this repository (by path and symbol), or marked
+**UNVERIFIED**. Nothing here is a live cloud read: the only network calls the spike made were to
+Google's public documentation and two unauthenticated requests to a public endpoint (§1.4).
+
+**Decisions this answers:** D1550 (the rate is queried from Cloud Billing at run time), tension T5,
+F19 (the lease path), F5 (the estimator), and T8's file list (`iam.tf` *"only if the spike finds a
+grant is needed"*).
+
+## 0. The answer, in one screen
+
+| Question | Answer |
+| --- | --- |
+| Which API | `cloudbilling.googleapis.com`, the **Cloud Billing Catalog API**: `services.list` then `services.skus.list` (GA, `v1`), whose `Sku.pricingInfo` carries the public list-price timeline. The newer **Google Cloud Pricing API** (`v2beta/services`, `v2beta/skus`, `v1beta/skus/<id>/price`) is **Preview** and does the same for public data. |
+| Which role | **None.** Google documents *"You don't need any specific IAM permissions to make this API call"* for the public services and SKUs. |
+| Which grant to write in `iam.tf` | **None.** Not a new `grantRules` row either. The only installation change is enabling the API (§3). |
+| Which credential | The launching identity's own credentials are enough in principle; the documented examples use an **API key**. Which of the two the endpoint actually accepts for an OAuth caller is **UNVERIFIED** (§1.4) and is the one call the owner should make before T8 starts. |
+| Contract prices | **Not reachable from a project**, by design: they need `billing.billingAccountSkus.list` / `billing.billingAccountPrice.get` on the **Cloud Billing account** (`roles/billing.viewer`/`roles/billing.admin`, whose lowest grant level is the billing account). A project module cannot grant it. The cap needs an upper bound, and the **list price is one** — so this is a limit we do not need to cross. |
+| The recommendation | The lookup, as D1550 says, with three amendments and a per-process cache (§6). One fact must be verified first (§1.4); if it fails, the fallback is the pinned dated table, which is the smallest design that still caps builds in dollars. |
+
+## 1. Which API gives a Cloud Build machine-minute price
+
+### 1.1 Two APIs, one data source
+
+| | Cloud Billing Catalog API (`v1`, GA) | Google Cloud Pricing API (`v1beta`/`v2beta`, **Preview**) |
+| --- | --- | --- |
+| Services | `GET /v1/services` | `GET /v2beta/services` |
+| SKUs | `GET /v1/services/{serviceId}/skus` | `GET /v2beta/skus?filter=service="services/<id>"` |
+| Price | inside `Sku.pricingInfo` (`effectiveTime`, `summary`, `pricingExpression`, `aggregationInfo`) | `GET /v1beta/skus/{skuId}/price`, and `…/prices` for all |
+| Region | `Sku.serviceRegions` | `geoTaxonomy` (`REGIONAL` + `regionalMetadata.region`) |
+| Audience | everyone | everyone |
+
+The Preview page describes itself as *"a set of API resources that helps you get the prices and
+other information for Google Cloud services"* and says of the public half: *"To get information
+about public services, SKUs, or prices, you must create an API key."* It is under the Pre-GA terms
+(*"Preview … subject to the 'Pre-GA Offerings Terms'"*), which is a reason to prefer the GA `v1`
+catalog for a launch-path read.
+
+Both give the **list price**. The billing-account half of the Preview API is the only thing that
+returns `contractPrice`, and it is out of reach (§1.3).
+
+`PricingExpression` is the shape to be careful with, because the *unit* is data, not a constant:
+`usageUnit` (`"h"`, `"GiBy.mo"`, …), `usageUnitDescription`, `baseUnit`, `baseUnitConversionFactor`
+and `tieredRates[]` (descending tiers, `startUsageAmount` + `unitPrice`). A Cloud Build
+machine-minute SKU is expected to come back with a per-minute or per-second `usageUnit`; **the code
+must read the unit and refuse anything it does not recognise**, the same way it refuses an unknown
+machine type (§4).
+
+### 1.2 Enabling it, and on which project
+
+The public-price page says: *"Before you begin: Enable the Cloud Billing API, if it is not already
+enabled."* Enabling needs `serviceusage.services.enable` (`roles/owner`, or
+`roles/serviceusage.serviceUsageAdmin`). The API is enabled **on a project**: the API key's project
+for the key route, or the caller's quota project for the OAuth route.
+
+This matters here, twice over:
+
+- `deploy/terraform/gcp/modules/installation/apis.tf` enables `run`, `storage`, `secretmanager`,
+  `artifactregistry`, `cloudbuild`, `cloudscheduler`, `logging`, `monitoring`, `iam`,
+  `cloudresourcemanager`, `cloudasset` and (conditionally) `aiplatform`/`billingbudgets` —
+  **`cloudbilling.googleapis.com` is not in that list**. Fugaro's own live checklist has the
+  operator enable it by hand today, on the **ADC quota project**
+  (`docs/gcp-live-checklist.md:1339`), which is exactly the trap `internal/infra/firebase.go:498`
+  and `internal/billing/accounts.go` already report as an error (a *quota project* that does
+  not have the API).
+- The CLI sets the quota project of its API clients to the installation project
+  (`internal/backend/gcp/gcp.go:78-82`, `option.WithQuotaProject(o.GCPProject)`), and
+  `roles/serviceusage.serviceUsageConsumer` — the one permission set that lets user credentials use
+  a project as a quota project — is already granted to the installation's people and accounts
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:109`, and the `grantRules` row for
+  `google_project_iam_member` in `internal/infra/tf/cover.go:139`).
+
+So the enablement, if the lookup ships, is one line in `apis.tf`'s `local.apis` — a
+`google_project_service`, a type `allowedTypes` already covers (`internal/infra/tf/cover.go:22`), and
+*no* `grantRules` change.
+
+### 1.3 Contract and negotiated prices
+
+The billing-account half needs, verbatim from the same page: `billing.billingAccountServices.list`,
+`billing.billingAccountSkus.list`, `billing.billingAccountSkuGroups.list`,
+`billing.billingAccountSkuGroupSkus.list` and `billing.billingAccountPrice.get` — *"If you're calling
+the API using a service account, the service account must have the permissions"* — and the only
+predefined roles holding them are **Billing Account Administrator** and **Billing Account Viewer**.
+`https://cloud.google.com/billing/docs/how-to/billing-access` (and its IAM twin,
+`https://cloud.google.com/iam/docs/roles-permissions/billing`) states their lowest grant level
+explicitly: *"Lowest-level resources where you can grant this role: Billing Account."*
+
+Three consequences, and they are the heart of this spike:
+
+1. A project module — every module in `deploy/terraform/gcp/modules/**` — **cannot** grant them. A
+   `google_project_iam_member` with `roles/billing.viewer` would be a no-op at best; the role's
+   permissions over a contract live on the billing account.
+2. Therefore **the lookup must be built on public list prices.** It does not need a grant at all.
+3. That is the *correct* number anyway: the estimator is an **upper bound used to reserve** (D1543:
+   *"build timeout × machine rate, an upper bound"*), the settle uses actual spend, so a list price
+   at or above the contract price reserves conservatively. *Assumption, stated:* a negotiated
+   contract price is not **above** the public list price. If an installation's contract ever priced
+   a SKU above list, the reservation would be optimistic by the difference — and the per-run cap
+   would still bound it. Fugaro cannot see that case without a billing-account role, so it cannot
+   detect it; the assumption is written here so a reader can attack it.
+
+### 1.4 Credential: API key or the caller's own credentials — **UNVERIFIED**
+
+What is verified:
+
+- Every public example on the pricing page sends `…?key=API_KEY`, and the page says *"you must
+  create an API key"*.
+- Every billing-account example sends `-H "Authorization: Bearer $(gcloud auth print-access-token)"`
+  and is what the IAM permissions above are for.
+- A request to the public endpoint with no credential at all is refused with
+  *"Method doesn't allow unregistered callers … Please use API Key or other form of API consumer
+  identity to call this API."* (`GET https://cloudbilling.googleapis.com/v1/services`, no
+  credential, HTTP 403, run 2026-11-07). With a syntactically valid but unissued key it answers
+  `API_KEY_INVALID` (HTTP 400). So the endpoint wants **an identity**, and an API key is one form of
+  it — but this says nothing about which IAM a *token* would need.
+- No Cloud Billing IAM role or permission for the **public** catalog exists at all: neither
+  `https://cloud.google.com/billing/docs/how-to/billing-access` nor
+  `https://cloud.google.com/iam/docs/roles-permissions/billing` lists a `services.skus.*`
+  permission, while both list the `billingAccount*` ones the private half needs.
+- This repository's own plan already assumed the token route works:
+  `docs/plans/2026-09-27-m4-gcp-backend.md:3838` — *"…or an `Authorization: Bearer $(gcloud
+  auth print-access-token)` header, sent through `curl --config` so the token stays out of argv."*
+
+**UNVERIFIED:** that an OAuth caller with **no billing role and no API key** receives public prices.
+The documentation's "no specific IAM permissions" sentence sits under the API-key examples, and the
+GA `v1` reference lists OAuth scopes without an IAM section. This is exactly one call to make, with
+any Google account, before T8 is started:
+
+```sh
+curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://cloudbilling.googleapis.com/v1/services?pageSize=5"
+```
+
+*If it answers with services, the token route is real and no key exists anywhere in the design. If it
+answers 403, the lookup needs an API key — and §3 and §6 change accordingly.*
+
+### 1.5 The Cloud Build machine-minute SKU — **UNVERIFIED**
+
+**UNVERIFIED, and the second thing to verify:** the catalog's SKU ids and `displayName`s for Cloud
+Build machine-minutes, and with them the SKU→machine-type→region mapping. The spike cannot read
+them without a credential. What is known:
+
+- Cloud Build bills build-minutes: *"Cloud Build charges for build-minutes consumed. A build-minute
+  is incurred every minute that a build is in process. Partial minutes are billed at the actual
+  number of seconds consumed."* The rate is a function of **machine type and region**
+  (`https://cloud.google.com/build/pricing`, machine-type tables per region).
+- Each billing account has *"2,500 free build-minutes per month"* (e2-standard-2, default pool).
+  The estimator must **ignore** it: Fugaro cannot know how much of the month's free tier is left,
+  so ignoring it keeps the number an upper bound.
+- Private-pool (worker pool) pricing is a separate table; Fugaro submits to the default pool
+  (`internal/backend/gcp/build.go:227` names only the service account and machine type), so the
+  default-pool table is the right one.
+- The probe that settles it (either form of identity from §1.4):
+
+```sh
+curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://cloudbilling.googleapis.com/v1/services?pageSize=1000"      # find the Cloud Build serviceId
+curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://cloudbilling.googleapis.com/v1/services/<serviceId>/skus?pageSize=5000"  # SKUs, regions, pricingInfo
+```
+
+## 2. Which identity launches builds, and what each would need
+
+All three paths submit through the Go Cloud Build client with the caller's Application Default
+Credentials (`internal/backend/gcp/build.go:398-410` `NewBuilder`, `:483` `Submit`, `:496` `create`),
+and **the build always runs as the repository's own build account**, never the project default and
+never a person: `internal/backend/gcp/build.go:227` sets
+`b.ServiceAccount = projects/<p>/serviceAccounts/<s.ServiceAccount>`, and `:363` refuses any account
+that is not `fugaro-b-<repo>@<project>.iam.gserviceaccount.com`.
+
+| Path | Submit identity (the credential the API call carries) | Build runs as | Submitting today | What a billing read would add |
+| --- | --- | --- | --- | --- |
+| A person's CLI at a terminal | Their **ADC** — `authorized_user`, i.e. the person (`internal/cli/init_project.go:489` `credentialNote` names it; `GOOGLE_APPLICATION_CREDENTIALS` can override it with a service-account key). `gcloud auth application-default login` is the documented way to get it. | The repository's build account | `cloudbuild.builds.create` through the custom role `roles/fugaroBuildSubmitter` (`installation/iam.tf:35`, granted to `var.operators` at `:77` `operator_build_submitter`) | Nothing to grant. `cloudbilling.googleapis.com` **enabled** on the quota project (which `internal/backend/gcp/gcp.go:78-82` sets to the installation project), and `serviceusage.services.use` there — already held (`roles/serviceusage.serviceUsageConsumer`, `firebase/iam.tf:109`). |
+| An agent's session, on the person's credentials | **The same identity.** Nothing in the credential path reads `internal/agentenv`'s markers: an agent runs the same binary with the same ADC, so it submits as the person and reads prices as the person. | The repository's build account | the same `roles/fugaroBuildSubmitter` | The same, and no more. A price is public, read-only data: an agent that can build can already spend the money, and reading the rate it is charged at is not a privilege change (F20's trust probes are unchanged). |
+| The catalog check job (`fugaro-catalog-check`) | Its **own service account** (`installation/catalogcheck.tf:43`), on the job `fugaro image check --job --catalog` (`:99`, `:125`) | Each repository's build account, per repository | `projects/<p>/roles/fugaroBuildSubmitter`, granted by `installation/catalogcheck.tf:33-41` `catalog_check_build_submitter`, plus `roles/iam.serviceAccountUser` on each repo's build account (`modules/repo/catalogcheck.tf:24`) | The API enabled on the project, and — for the **key** route — the key delivered to the job. That is a new secret on the launch path and *a new `grantRules` row* (§3). For the **token** route, nothing: the job's own SA token is the identity. |
+
+Two notes a reader should not have to rediscover:
+
+- The Go comment at `internal/infra/catalogcheck.go:53` and `internal/cli/image_check_catalog.go:50`
+  says the job's account *"holds no project role at all"*. Read against the Terraform that is
+  narrower than it sounds — the job **must** hold `roles/fugaroBuildSubmitter` to submit anything
+  (`catalogcheck.tf:33-41`). The comment is about *database* roles in the sentence before it (the
+  published catalog is an RTDB node); it reads as a stronger claim than the fact. Worth a wording fix
+  in T10, not a code change here.
+- The deployer service account (`fugaro-deployer`) is **not** on the build path: it is assumed only
+  by a managed Terraform apply (`internal/managed/deployer.go`). Nothing in the lookup needs it, and
+  nothing here widens it.
+
+## 3. The smallest grant, if any, and where it would live
+
+**The recommendation needs no IAM grant, and no new `grantRule`.**
+
+| Change | Where | Needed? |
+| --- | --- | --- |
+| Enable `cloudbilling.googleapis.com` | `deploy/terraform/gcp/modules/installation/apis.tf`, in `local.apis` | **Yes**, if the lookup ships. A `google_project_service`, already in `allowedTypes` (`internal/infra/tf/cover.go:22`), so no cover change. It is not enabled today. |
+| Any `google_project_iam_member` granting a billing role | `installation/iam.tf` | **No.** A project grant of `roles/billing.viewer` would not carry the permissions anyway (§1.3). Do not write it. |
+| A new `grantRules` row | `internal/infra/tf/cover.go:139` | **No** for the token route. |
+| A new `grantRules` row for a **secret**, if an API key is chosen | `cover.go`'s `google_secret_manager_secret_iam_member` row | **Yes, and it is a widening.** The catalog check account is its own principal kind (`toCatalogCheck`, `cover.go:123`, matched by `isCatalogCheckMember` at `:732`) and **no row accepts it** (`:103-113`: every grant to it is refused by the plan review today). An API key handed to the job therefore means a new row admitting `toCatalogCheck`. Prefer the token route to avoid it. |
+
+So T8's `deploy/terraform/gcp/modules/installation/iam.tf` edit — *"only if the spike finds a grant
+is needed"* (implementation plan, T8) — **is not needed**, and tension T5's *"a new grant in a
+security-sensitive module"* **does not arise**.
+
+One more cover fact the owner should have beside this, because it is the hostile-config surface
+(§5): the plan review validates the *build service account* and the *base images* of a check spec
+(`internal/infra/tf/cover.go:2354` `checkCatalogSpec`, `:2394` `buildAccount`) and **not the machine
+type**; and the local config's own validation of it is a charset rule, not an allowlist
+(`internal/localcfg/localcfg.go:1230` `machineTypeRE = ^[A-Za-z0-9_-]{1,40}$`, checked at `:1720`).
+A hostile local config can already choose the machine type. §5 says why that is survivable, and what
+the estimator must do so it stays survivable.
+
+## 4. Failure modes
+
+| Cause | Signal | Behaviour | Precedent in the repo |
+| --- | --- | --- | --- |
+| API disabled on the project | 403 with `google.rpc.ErrorInfo`, `reason: SERVICE_DISABLED`, `metadata.service = cloudbilling.googleapis.com` | **Refuse**, and name the API and the project with the `gcloud services enable … --project <p>` line | `internal/infra/apis.go:82-99` `serviceDisabled`; `internal/infra/firebase.go:517-536` `disabledConsumer` (already used for this very API) |
+| No quota project on the ADC | 403 naming a Google-owned quota project | **Refuse**, telling the operator `gcloud auth application-default set-quota-project <p>` | `internal/billing/accounts.go:168-174` `ErrNoQuotaProject`; `internal/infra/firebase.go:499-503` |
+| Permission denied | 403 without `SERVICE_DISABLED` | **Refuse** | `internal/billing/accounts.go:150-159` `ErrNoPermission` |
+| Quota / rate limit | 429 `RESOURCE_EXHAUSTED` | Retry with a small bound, then **refuse**. A build is one lookup per command (§6), so this should be rare | the same shape `internal/billing` uses for its paged read |
+| Offline, DNS, TLS | transport error | **Refuse.** Note it is *not* a new offline scenario: submitting the build itself needs the network. What is new is that a transient failure of a **second** API now blocks a paid action that would otherwise have proceeded — which is the argument for the cache in §6 | — |
+| Unknown SKU, unmapped machine type, unexpected `usageUnit` | the catalog answers, but nothing matches | **Refuse** (the owner's rule: *"a missing or unknown price refuses, never defaults"*). This is also the hostile-config defence | — |
+| Price changes between the lookup and the build | no signal | Accept. The looked-up price is the **reservation**; the settle uses actual spend (`internal/budget/lease.go`). Record the SKU id, the price and the read time *in the lease node* so a later price change cannot rewrite what was reserved | `internal/budget/model.go:30-72` names the node paths |
+
+**A cached price, with an age limit.** Two forms, and they are not equivalent:
+
+1. **Per-process (recommended).** One lookup per command invocation, held in memory, reused for
+   every build that invocation submits — a `fugaro image refresh` builds several images, the catalog
+   check job builds many. No persistence, so no age limit is needed: the value cannot outlive the
+   command that read it. It costs nothing, adds no node, no writer and no rules change.
+2. **Persisted, with an age limit (not recommended as part of the smallest design).** A small node
+   (the lease's own key space, `buildleases/<slug>/<id>` — T8's, never `runs/`) keyed by SKU id,
+   holding `{micros, currency, priceReadAt, source}`; served while `now - priceReadAt ≤ 7d`; on
+   expiry the lookup must succeed or the build refuses. It is **not** a default — it is a recorded
+   observation with an expiry, which is what makes it compatible with *"a missing or unknown price
+   refuses"*. It buys availability when the Billing API is briefly unreachable, and it costs a
+   writer on a new rules path (a generation bump and an `update` migration, HARD RULE) — a poor
+   trade for a number that is only ever used to reserve. If the owner wants it anyway, the age limit
+   belongs next to the lease's other constants, and `doctor` should report the cached price's age
+   (not its absence).
+
+## 5. The SKU-to-machine-type mapping, and what a hostile local config changes
+
+**The chain, as the code has it today:**
+
+```
+local config: build.machine_type   (default E2_HIGHCPU_8; internal/localcfg/localcfg.go:1489)
+              build.region, else region                     (:1126-1130, :2227-2231 BuildRegion)
+        │
+        ├─ internal/cli/image.go:307 → cloudBuildSpec(…, lc.Build.MachineType, …)  → :461
+        ├─ internal/cli/image_build_catalog.go:358
+        ├─ internal/cli/init.go:4589 (converge), image_refresh_steps.go:416 (refresh)
+        ├─ internal/infra/spec.go:1641   (FUGARO_CHECK_SPEC, the repo daily check job)
+        └─ internal/infra/catalogcheck.go:211 (FUGARO_CATALOG_CHECK_SPEC)
+        │
+        ▼
+internal/backend/gcp/build.go:231  b.Options.MachineType = s.MachineType
+internal/backend/gcp/build.go:233  b.Timeout = "3600s"        ← fixed, not configurable
+        │
+        ▼
+Cloud Build machine  ──── the rate ────▶  a Cloud Billing SKU
+```
+
+The last arrow is the **UNVERIFIED** one (§1.5). Three things make it harder than it looks:
+
+- **Two spellings.** Cloud Build's enum is `E2_HIGHCPU_8` (`.../build/docs/build-config-file-schema`:
+  `"machineType": "E2_HIGHCPU_8"`, and *"The default machine type is e2-standard-2"*), while the
+  pricing page's table is `e2-highcpu-8`. The mapping between them is by hand.
+- **Aliases.** *"Cloud Build continues to offer n1-highcpu-8 and n1-highcpu-32 machine types. They
+  are offered at the same price as e2-highcpu-8 and e2-highcpu-32."* Two names, one SKU.
+- **Region.** The SKU is regional (`Sku.serviceRegions` in `v1`; `geoTaxonomy.type = REGIONAL` in the
+  Preview API), and the region comes from `build.region`/`region` in the local config.
+
+*Indicative numbers, for the shape of the estimate* (`https://cloud.google.com/build/pricing`,
+default pool, read 2026-11-07): `e2-highcpu-8` **$0.0156/min**; with the fixed 3600 s timeout the
+upper bound is **$0.936** per build. `e2-standard-2` is $0.006/min → $0.36. The free tier
+(2,500 min/account/month) is deliberately **not** subtracted (§1.5).
+
+**What a hostile local config can change, and what it cannot:**
+
+- It **can** set `build.machine_type` (any 1–40 char token: `^[A-Za-z0-9_-]{1,40}$`) and
+  `build.region`, and those reach `b.Options.MachineType` and the build location on every path above.
+  It can also reach the two check jobs' specs when it is the machine that runs `fugaro update`.
+- It **cannot** make the estimate disagree with the build, provided one rule holds: **the rate is
+  looked up for the same machine type and region that go into the request**, and an unknown
+  type/region **refuses**. Then the worst a hostile config does is buy a more expensive machine
+  *and reserve the matching, larger amount* — which is what a cap is for.
+- It **must never** be able to supply the rate. No config key, local or published, may carry a price
+  (spec §2 of the reconnaissance: *"local config can supply neither"*). A rate read from config is a
+  rate an agent sets, and the cap stops meaning anything.
+- An unknown machine type at submit time is rejected by Cloud Build itself — the blast radius is a
+  failed build, not a wrong estimate *provided the estimator refuses first*. (That Cloud Build
+  rejects it is **UNVERIFIED** here; it is the safe assumption.)
+- If a hostile config picks a region where the requested type is unavailable and Cloud Build falls
+  back to `e2-standard-2`, the actual cost is **lower** than the estimate. The reservation stays an
+  upper bound. Worth a line in the test.
+
+## 6. Recommendation
+
+**Take D1550 as written — the price is read from Cloud Billing at run time, and a missing or unknown
+price refuses — with three amendments.**
+
+1. **Read the GA `v1` Cloud Billing Catalog API**, not the Preview pricing endpoints: `services.list`
+   once (cache the Cloud Build `serviceId` in code, or pin it once verified) and `services.skus.list`
+   filtered to it, taking `Sku.pricingInfo` and `Sku.serviceRegions`. A Preview (Pre-GA) API on the
+   launch path of every paid build is a business risk the GA catalog does not carry.
+2. **Pin the mapping, not the price.** A small reviewed table in `internal/budget/buildcost.go` maps
+   Cloud Build's machine-type enum (`E2_HIGHCPU_8`, `e2-medium`, the `n1-highcpu-*` aliases) to the
+   **SKU id** (or SKU display-name predicate) per region family; the lookup supplies only the
+   *number*. `TestBuildCostIsAnUpperBound` freezes the SKU ids and the arithmetic. This is what turns
+   a silent mapping bug into a failing test — and a silent mapping bug is the one way this design
+   under-estimates.
+3. **No grant, and no key.** The installation change is `cloudbilling.googleapis.com` in
+   `apis.tf`. No `iam.tf` edit, no `grantRules` row, no secret, no API key — provided §1.4's probe
+   says the token route works.
+
+**The exact grant, stated once:** *none*. Federated out: nothing in `installation/iam.tf`, nothing in
+`cover.go`'s `grantRules`, one line in `apis.tf`.
+
+**The cache rule, stated once:** one lookup per command, held in memory, reused for every build that
+command submits; never persisted, so it never ages and needs no limit. If the owner later wants
+availability across commands, the persisted form — the second one in §4 — is the one to build, with a 7-day limit
+and a `doctor` line for its age.
+
+**The one gate before T8 starts.** Run the §1.4 probe and the §1.5 probe with any Google account. If
+the token route returns services (expected), the design above stands as the smallest one that meets
+the requirement. **If it does not** — if an API key is unavoidable — then the smallest safe design is
+*no longer the lookup*: a key is a bearer secret that would have to reach the catalog check job
+through a new `grantRules` row (§3), which is a wider change than the whole rest of T8, in exchange
+for a number used only to reserve.
+
+**The fallback, if either probe fails — and it is the smallest alternative that still meets the
+requirement:** a **pinned, dated price table in the repository**, keyed by Cloud Build machine type,
+holding the *list* price per minute, with the date it was read — the pattern this repo already uses
+twice (`internal/backend/gcp/prices.go:9-27`, Cloud Run jobs, *"checked 2026-09-27"*;
+`internal/backend/batch/prices.go:326-329` `priceReadAt = "2026-10-15"`, whose own comment says
+**UNVERIFIED**). The rules are then:
+
+- the table is the **allowlist**: a machine type absent from it **refuses** a build (that is T8's
+  *"a missing machine type refuses"*, unchanged);
+- the estimate is `3600 s × the table's rate`, an upper bound, and the table holds **list** prices,
+  so a contract discount only makes it more conservative;
+- the local config still supplies only the machine type, never the rate;
+- **`doctor` warns when the table's read date is older than 180 days** — a warning, not a refusal: an
+  installation that cannot reach the network (or has an old binary) must still build, and the HARD
+  RULE forbids making the owner run anything but `fugaro update`. `fugaro update` refreshing the
+  table is what makes the warning disappear.
+- what it costs: `fugaro update` must carry a re-read price whenever a price moves (the release
+  checklist gains one line), and the table can silently under-reserve if a price were to *rise*
+  between releases.
+
+**And one thing T8 must not do either way:** the estimate is client-side only. A direct
+`gcloud builds submit` bypasses it (F19, T2) — the lookup does not change that, and no grant here
+should be read as making it true.
+
+## 7. Sources
+
+Google's documentation (fetched 2026-11-07; "Last updated" as Google prints it):
+
+| URL | Used for | Last updated |
+| --- | --- | --- |
+| `https://cloud.google.com/billing/docs/how-to/get-pricing-information-api` | The whole of §1: what the Pricing API is, public vs contract data, "you must create an API key", "You don't need any specific IAM permissions", the exact billing-account permissions, "Enable the Cloud Billing API" | 2026-11-04 |
+| `https://cloud.google.com/billing/v1/getting-started` | The Catalog API's scope: *"Programmatic access to the entire public Google Cloud catalog … Billable SKUs, Public pricing, Relevant metadata"* | 2026-11-04 |
+| `https://cloud.google.com/billing/docs/reference/rest` | The `v1` resource list (`services`, `services.skus`) and "Lists all publicly available SKUs for a given cloud service" | 2025-09-04 |
+| `https://cloud.google.com/billing/docs/reference/rest/v1/services.skus/list` | `Sku`, `PricingInfo`, `PricingExpression`, `TierRate`, `serviceRegions`, and the OAuth scopes (`cloud-platform`, `cloud-billing`, `cloud-billing.readonly`) | — |
+| `https://cloud.google.com/billing/docs/how-to/billing-access` | Role scopes: *"Lowest-level resources where you can grant this role: Billing Account"* for Billing Account Viewer | 2026-11-04 |
+| `https://cloud.google.com/iam/docs/roles-permissions/billing` | The permission list: the `billingAccount*` permissions exist, no public-catalog permission does | 2026-11-04 |
+| `https://cloud.google.com/build/pricing` | Build-minutes, the free tier, per-machine-type per-minute prices, the `n1-highcpu-*` aliases, private-pool pricing | — |
+| `https://cloud.google.com/build/docs/build-config-file-schema` | *"The default machine type is e2-standard-2"*, `machineType: 'E2_HIGHCPU_8'` | — |
+| `https://cloud.google.com/build/docs/iam-roles-permissions` | `cloudbuild.builds.create` is what submits a build; the caution about running as the Cloud Build legacy service account | 2026-10-26 |
+| `https://cloud.google.com/build/docs/cloud-build-service-account` | The default *build* identity is a service account — which is why `build.go:227` always names one | — |
+
+The repository, by path and symbol:
+
+| Path | Used for |
+| --- | --- |
+| `docs/no-prompt-policy/reconciliation.md` §3 D1543/D1548, §4 D1550, §5 T5, F5, F18, F19, F20, §6 | The decisions and the UNVERIFIED this spike answers |
+| `docs/no-prompt-policy/implementation-plan.md` T8 | The file list, and *"the grant in `iam.tf` is UNVERIFIED until then"* |
+| `internal/backend/gcp/build.go:227,231,233,363,398-410,483,496` | The build request: service account, machine type, the fixed 3600 s timeout, the submit path |
+| `internal/backend/gcp/gcp.go:78-82` | ADC as the identity, quota project = the installation project |
+| `internal/cli/init_project.go:437,489` | `adcInfo`/`credentialNote`: `authorized_user` is the person |
+| `internal/billing/accounts.go:41-68,150-174,249-271` | The repo's existing Cloud Billing client: ADC only, `billingAccounts.list`, the permission/quota-project/API-disabled errors |
+| `internal/infra/apis.go:20-31,82-99`; `internal/infra/firebase.go:498-536` | Disabled-API detection, and that `cloudbilling.googleapis.com` is not enabled by the installation |
+| `deploy/terraform/gcp/modules/installation/apis.tf:4-25` | The enabled-API list |
+| `deploy/terraform/gcp/modules/installation/iam.tf:35-42,70-83` | `fugaroBuildSubmitter`, and the operator grant |
+| `deploy/terraform/gcp/modules/installation/catalogcheck.tf:24-46,99,125` | The catalog check job and its account's grants |
+| `deploy/terraform/gcp/modules/repo/*.tf`, `modules/repo/catalogcheck.tf:24` | The repository build account and the per-repo actAs grant |
+| `internal/infra/tf/cover.go:22,123,139,271,732,1866,2394` | `allowedTypes`, the principal kinds, `grantRules`, `allowedRoles`, `isCatalogCheckMember`, `buildAccount`, `checkCatalogSpec` |
+| `internal/localcfg/localcfg.go:1126-1130,1230,1489,1717-1721,2227-2231` | `build.machine_type`/`build.region`, the charset rule, the default, the region fallback |
+| `internal/backend/gcp/prices.go:9-27`; `internal/backend/batch/prices.go:47-79,326-329` | The repo's pinned-price-table precedent, dates included |
+| `docs/plans/2026-09-27-m4-gcp-backend.md:3838` | The repo's own earlier recipe for a catalog read with a bearer token |
+| `docs/gcp-live-checklist.md:1339,2668` | The operator's today's-by-hand `cloudbilling.googleapis.com` enablement on the ADC quota project |
+
+## 8. UNVERIFIED, collected
+
+1. **That an OAuth caller with no billing role can read public prices** (§1.4). One `curl`. The
+   whole "no grant" conclusion rests on it; the docs' "no specific IAM permissions" sentence sits
+   under API-key examples, and the IAM pages list no public-catalog permission at all.
+2. **The Cloud Build machine-minute SKUs**: their ids, `displayName`s, `usageUnit`s and
+   `serviceRegions`, and therefore the machine-type→SKU→region mapping (§1.5). Two `curl`s.
+3. That Cloud Build rejects an unknown `machineType` at submit time rather than falling back to the
+   default (§5). Assumed in the safe direction.
+4. That a negotiated contract price is never **above** the public list price (§1.3) — assumed, and
+   stated so a reviewer can attack it.
+5. Whether `fugaro update`'s own apply would be refused by `cover.go` if a future task ever adds the
+   `google_project_service` row for this API. Not checked: the type is allowed and the change is
+   one entry, but the golden plans were not re-rendered in a docs-only change.
+6. Whether the console or the mobile app read the marker or the budget record in a way the build
+   lease's settled price would have to appear in. Out of this spike's scope; T8 owns it.
