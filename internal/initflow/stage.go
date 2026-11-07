@@ -146,11 +146,13 @@ type slot struct {
 // stopped stopped with a step only the user can give (NeedsYou) and the loop
 // has nothing else to go on. It is the one place that answers it, and the
 // answer is a property of the stage: every row of order is empty but the
-// checkout's, whose own steps read no repository file, because the user's fix
-// for a stopped stage can be weeks away and the door the run's lines name is
-// `fugaro update` (the owner's rule of 2026-10-30: one fugaro update is the
-// whole upgrade) — a door that must not be left unable to clear the one line
-// it is the remedy for (#1836).
+// checkout's, whose pin and plugin read no repository state, because the
+// user's fix for a stopped stage can be weeks away and the door the run's
+// lines name is `fugaro update` (the owner's rule of 2026-10-30: one fugaro
+// update is the whole upgrade) — a door that must not be left unable to clear
+// the one line it is the remedy for (#1836). Which steps of a tolerant row may
+// not run past the stop is the row's own business, and the stage is told what
+// it is running past for it (PastStops).
 func RunsPastStop(name, stopped string) bool {
 	for _, s := range order {
 		if s.name == name {
