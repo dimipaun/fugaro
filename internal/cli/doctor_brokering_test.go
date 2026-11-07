@@ -1659,6 +1659,16 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		}
 	}
 
+	// The default view prints the sentence the ID's short form gives, not the
+	// state's: the lookup has the ID and nothing else. So the sentence has to be
+	// true of every warning state of this check — the four a run cannot work
+	// around — and the two subtests below pin it against the two states a
+	// reader is most likely to meet, each with the fix the state words itself.
+	// The sentence the branch first shipped named the callers and the invoker
+	// grant, which is a problem the bundle states do not have: the screen said
+	// one thing and the command under it fixed another.
+	const sentence = "warning credentials-service-deployed: the credentials service is not deployed, does not admit a job account, or has nothing in its bundle to serve a run."
+
 	t.Run("the credentials service is missing", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		o, err := r.doctor(t)
@@ -1666,9 +1676,20 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
 		}
 		def := doctorDefaultOutput(t, o.Checks)
-		wants(t, def,
-			"warning credentials-service-deployed: the credentials service's callers could not be checked, or a job account it should admit cannot invoke it.",
-			"update --provision-credentials")
+		wants(t, def, sentence, "update --provision-credentials")
+	})
+
+	t.Run("the credentials service is deployed and its bundle holds no version", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		def := doctorDefaultOutput(t, o.Checks)
+		wants(t, def, sentence, "creds set NAME")
 	})
 
 	t.Run("the credentials service is deployed and its callers are granted", func(t *testing.T) {

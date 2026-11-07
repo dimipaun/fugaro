@@ -808,15 +808,24 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
 
 **Decisions:** the ruling of 2026-11-05. **Verification:** `internal/cli`.
 
-- **Files:** `internal/cli/doctor_brokering.go`, `internal/cli/doctor_brokering_test.go`. **2 files.**
-  **`internal/cli/doctor.go` is deliberately NOT this task's** — its two flag-naming strings (`:693`,
-  `:696`) are DON4's, so that no level holds two writers of one file (§4).
+- **Files:** `internal/cli/doctor_brokering.go`, `internal/cli/doctor_brokering_test.go`, and the one
+  short form the default view needs in `internal/cli/doctor_render.go` (`:829`, the sentence the
+  one screen prints for this ID). **3 files.** **`internal/cli/doctor.go` is deliberately NOT this
+  task's** — its two flag-naming strings (`:693`, `:696`) are DON4's, so that no level holds two
+  writers of one file (§4); `doctor_render.go` is no task's in §4's table, and the entry is the one
+  this check's line cannot be correct without.
 - **Interfaces:** `doctorCredentialsServiceDeployed` (`internal/cli/doctor_brokering.go:102`) stops
   returning `nil` for an installation with no `credentials_service` block — that early return
   (`if lc.CredentialsService == nil { return nil }`) is exactly the sentence the ruling makes false: an
   installation that has not taken the opt-in is now a state worth reporting rather than one worth
   staying silent about. It produces **one line**, in the shape the other checks already use (an `ID`, a
-  `Severity`, a `Problem`, a `Fix`) that names **which** half is missing. The line for an installation
+  `Severity`, a `Problem`, a `Fix`) that names **which** half is missing. **What the one screen prints
+  is the ID's short form and not the state's** (`doctor_render.go:829`): the lookup has the ID and
+  nothing else, so that sentence has to be true of every state this check reports as a **warning** —
+  the service not deployed, a job account it does not admit, an empty bundle, a newest version Secret
+  Manager will not serve — while the state's own `Fix` stays the line under it. A short form that named
+  one state's problem (the callers, the invoker grant) put a sentence and a command about two different
+  things on one screen for the two bundle states. The line for an installation
   that never opted in says that state and not one of being behind: **on this release the flag is the
   opt-in**, what it changes is the installation's own workflows, and a doctor line is read as a step to
   take, so that line says what the opt-in asks for and does rather than presenting a run that re-writes
