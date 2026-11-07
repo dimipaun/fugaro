@@ -448,9 +448,9 @@ func TestSharedDropsBaseBranchAndBuildAccount(t *testing.T) {
 // TestSharedDropsCredentialsPoolsAndCrafts: the installation's credentials, its
 // pools and the crafts that choose among them travel the account-choice keys'
 // way — into the policy node, never through the runs bucket's shared file —
-// and they are dropped here for their reason: a key naming a credential is a
-// way around that credential's own allow_data_to, so a launcher who could
-// write one into the shared file could aim every teammate's runs at a
+// and they are dropped here for their reason: a credential names a secret and
+// a craft's access decides which one a run's calls go out on, so a launcher who
+// could write either into the shared file could aim every teammate's runs at a
 // credential the owner never admitted (docs/model-crafts/reconciliation.md
 // F12, D1628).
 func TestSharedDropsCredentialsPoolsAndCrafts(t *testing.T) {

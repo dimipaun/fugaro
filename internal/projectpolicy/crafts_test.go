@@ -2,6 +2,7 @@ package projectpolicy
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -97,6 +98,54 @@ func TestCraftBlockRoundTrips(t *testing.T) {
 	}
 	if *back.Crafts != *p.Crafts {
 		t.Errorf("the round trip = %+v, want %+v", *back.Crafts, *p.Crafts)
+	}
+}
+
+// TestCraftMembersAreUnknownToAReaderThatPredatesThem: the three members are
+// additive and optional, so no policy Version moves for them (version.go): what
+// moves a version is a *runner* having to enforce something it does not know,
+// and nothing here is enforced by one — the reader that resolves a craft's
+// access is MC2's resolver, and it ships in the same release as the keys. The
+// same node is decoded twice, once under this Fugaro's keys and once under a
+// copy of the list as it stood before the three, and the reader that predates
+// them lists them and goes on: that is the node a CLI of that age refuses at
+// publish time (project_cmd.go's "publishing would drop them") and a runner of
+// it logs (P8), which is why the publisher keeps them and writes none of them.
+func TestCraftMembersAreUnknownToAReaderThatPredatesThem(t *testing.T) {
+	if Version != 4 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 4: update both together, deliberately", Version)
+	}
+	raw := []byte(`{"version":4,"budget":{"mode":"observe"},` +
+		`"craft_credentials":[{"name":"acme-main","type":"openrouter"}],` +
+		`"craft_pools":[{"name":"acme-pool","members":["acme-main"]}],` +
+		`"crafts":{"coder":{"model":"claude-opus-5-5","access":"acme-pool"}}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found || p == nil {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: the three are keys this Fugaro reads", p.UnknownKeys)
+	}
+	if len(p.CraftCredentials) != 1 || len(p.CraftPools) != 1 || p.Crafts == nil {
+		t.Errorf("the node was not read whole: %+v %+v %+v", p.CraftCredentials, p.CraftPools, p.Crafts)
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	for _, k := range []string{"crafts", "craft_credentials", "craft_pools"} {
+		delete(preKey, k)
+	}
+	q, found, err := decodeWithKeys(raw, preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the keys refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{"craft_credentials", "craft_pools", "crafts"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the keys lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
+	}
+	if q.Budget.Mode != "observe" {
+		t.Errorf("Budget.Mode = %q, want observe: the rest of the policy stays in force beside keys the reader does not know", q.Budget.Mode)
 	}
 }
 

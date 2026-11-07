@@ -237,11 +237,14 @@ type SharedAnchor struct {
 // closed on, and localcfg.Config.Shared nils them.
 //
 // credentials, pools and crafts are that same rule one step further out
-// (docs/model-crafts/reconciliation.md F12, D1628): a credential is defined
-// with an allow_data_to, a craft's access names one, and a launcher who could
-// write either into the shared file could aim every teammate's runs at a
-// credential the owner never admitted — so the three are the owner's own, they
-// are published through the policy node, and localcfg.Config.Shared nils them.
+// (docs/model-crafts/reconciliation.md F12, D1628): a credential is the name of
+// a secret, a pool is an ordered list of them, and a craft's access is what
+// decides which of them a run's calls go out on — a spending and data-egress
+// grant, whose admission per repository is the account it generalises'
+// (D1621, F10). A launcher who could write the three into the shared file could
+// aim every teammate's runs at a credential the owner never admitted, so they
+// are the owner's own, they are published through the policy node, and
+// localcfg.Config.Shared nils them.
 //
 // workspace, workspace_pin, workspace_members and workspace_cap are the
 // workspace keys, and workspace_pin is the sharpest of them: the pin is the
