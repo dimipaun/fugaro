@@ -100,29 +100,31 @@ func TestWorkingSkillNeverSubmitsOnItsOwn(t *testing.T) {
 }
 
 // TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace (R3, D962, E1, E8):
-// the cadence is kept only if a reader can tell it lapsed, and a report is
-// generated into the project's runs bucket now rather than into the
-// repository's own docs tree. The skill names `fugaro runs digest --due` --
-// the offline reading of a checkout's own report folder -- and says where a
-// report lands: the bucket by default, `--dir` for a checkout, and the opt-in
-// commit as the way one reaches a repository.
+// the cadence is kept only if a reader can tell it lapsed, and the skill has
+// to say where a report lands in the CLI that ships. That is the checkout's
+// own `docs/fugaro-reviews/` today (`--dir` names the folder; the writer, the
+// reader and `--due` all work on it), with the commit as a separate opt-in
+// step. The bucket the 2026-11-05 rulings (E1, E7, E8) move reports into is
+// R10's writer, which the plan ships in the same release as R1 and R3: the
+// wording here is the shipped one, and R10's PR is where both this file and
+// the skill change together.
 func TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace(t *testing.T) {
 	files := workingSkillFiles(t)
 	ref, ok := files["skills/working/reference/periodic-reviews.md"]
 	if !ok {
 		t.Fatal("the working skill has no reference/periodic-reviews.md")
 	}
-	// The cadence's own reading, the report's new place and the fifth rule
-	// are the reference's, where the cadence and the rules are described.
+	// The cadence's own reading, the report's place and the fifth rule are
+	// the reference's, where the cadence and the rules are described.
 	for _, want := range []struct{ what, text string }{
 		{"the due signal with its command", "fugaro runs digest --due"},
-		{"the report's place, the project's runs bucket", "project's runs bucket"},
-		{"`--dir` as the write into a checkout", "into a checkout"},
+		{"the report's place, the checkout's report folder", "docs/fugaro-reviews/"},
+		{"`--dir` as the folder's name", "`--dir` names the folder"},
 		{"the commit as a separate opt-in run", "opt-in"},
 		{"the fifth rule's name, where the rules are listed", "cost_per_run_rising"},
 	} {
 		if !strings.Contains(ref, want.text) {
-			t.Errorf("reference/periodic-reviews.md never names %s (%q): a reader who never hears of `--due` cannot tell the cadence lapsed, a reader told the old place looks for a report that is not there, and a report prints five rules", want.what, want.text)
+			t.Errorf("reference/periodic-reviews.md never names %s (%q): a reader who never hears of `--due` cannot tell the cadence lapsed, a reader not told where a report lands looks in the wrong folder, and a report prints five rules", want.what, want.text)
 		}
 	}
 	// SKILL.md is what an agent always reads, so the two sentences a reader
@@ -131,7 +133,7 @@ func TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace(t *testing.T) {
 	if !ok {
 		t.Fatal("the working skill has no SKILL.md")
 	}
-	for _, want := range []string{"fugaro runs digest --due", "project's runs bucket", "opt-in"} {
+	for _, want := range []string{"fugaro runs digest --due", "docs/fugaro-reviews/", "opt-in"} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("skills/working/SKILL.md never says %q: the due signal and where a report lands are the two things the review section is read for", want)
 		}
