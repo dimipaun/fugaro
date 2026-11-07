@@ -8,6 +8,27 @@
         "repo": "acme/app",
         "records": [
           {
+            "runs": [
+              {
+                "id": "20261013-140000-eeee",
+                "status": "running",
+                "branch": "fugaro/20261013-140000-eeee",
+                "declared_by": "someone@example.com",
+                "files": [
+                  "internal/coordinator/view.go"
+                ]
+              }
+            ],
+            "branch": "fugaro/20261013-140000-eeee",
+            "in_flight": true,
+            "files": [
+              "internal/coordinator/view.go"
+            ],
+            "services": [
+              "internal/coordinator"
+            ]
+          },
+          {
             "pr": {
               "number": 12,
               "url": "https://github.com/acme/app/pull/12",
@@ -64,27 +85,6 @@
             "services": []
           },
           {
-            "runs": [
-              {
-                "id": "20261013-140000-eeee",
-                "status": "running",
-                "branch": "fugaro/20261013-140000-eeee",
-                "declared_by": "someone@example.com",
-                "files": [
-                  "internal/coordinator/view.go"
-                ]
-              }
-            ],
-            "branch": "fugaro/20261013-140000-eeee",
-            "in_flight": true,
-            "files": [
-              "internal/coordinator/view.go"
-            ],
-            "services": [
-              "internal/coordinator"
-            ]
-          },
-          {
             "pr": {
               "number": 17,
               "title": "Hand-written change no run opened",
@@ -104,7 +104,7 @@
               }
             ],
             "branch": "topic/hand-written",
-            "in_flight": true,
+            "in_flight": false,
             "files": [],
             "services": []
           }

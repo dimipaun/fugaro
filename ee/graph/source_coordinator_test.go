@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -15,11 +16,21 @@ import (
 
 // loadStoredView reads the fixture the coordinator scope's tests share: a
 // stored project view, the document `fugaro coordinator status --from-store
-// --all --json` prints (json-contract.md §6.13), with one
-// repository the sweep has reconciled and one it has never touched. It is
-// decoded strictly, the way every wire format here is read, so a fixture that
-// drifted from `coordinator.RepoView` fails here rather than in a test that
-// then asserts nothing.
+// --all --json` prints (json-contract.md §6.13), with one repository the sweep
+// has reconciled and one it has never touched. It is decoded strictly, the way
+// every wire format here is read, so a fixture that drifted from
+// `coordinator.RepoView` fails here rather than in a test that then asserts
+// nothing.
+//
+// The fixture says it is the document that command prints, and §6.13 pins two
+// things about that document's records: their order (work still in flight
+// first, then by pull request number, then by run ID) and their `in_flight`.
+// Both are `coordinator.Join`'s own output, so each view here is rebuilt from
+// its own pull requests and runs and must come back identical. A fixture whose
+// records sit in an order the join cannot produce — or whose `in_flight`
+// contradicts it — would otherwise be pinned by the tests below as "the view's
+// own order", and a reader would take a document the command never prints for
+// the shape it prints.
 func loadStoredView(t *testing.T) coordinator.StoredProjectView {
 	t.Helper()
 	data, err := os.ReadFile("testdata/view.golden.json")
@@ -31,6 +42,19 @@ func loadStoredView(t *testing.T) coordinator.StoredProjectView {
 	var v coordinator.StoredProjectView
 	if err := dec.Decode(&v); err != nil {
 		t.Fatalf("testdata/view.golden.json is not a stored project view: %v", err)
+	}
+	for _, rv := range v.Repos {
+		var prs []coordinator.PullRequest
+		var runs []coordinator.Run
+		for _, rec := range rv.View.Records {
+			if rec.PR != nil {
+				prs = append(prs, *rec.PR)
+			}
+			runs = append(runs, rec.Runs...)
+		}
+		if want := coordinator.Join(rv.Repo, prs, runs); !reflect.DeepEqual(want, rv.View) {
+			t.Fatalf("testdata/view.golden.json's %s view is not what coordinator.Join makes of its own pull requests and runs, so it is not the document the command prints (json-contract.md §6.13):\n fixture %+v\n command %+v", rv.Repo, rv.View, want)
+		}
 	}
 	return v
 }
@@ -47,10 +71,18 @@ var coordinatorAt = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 // the same pull request number in two repositories is two nodes, because the
 // key is unique within the source and the source is the whole project.
 //
+// The nodes come out in the view's own order, which is the fixture's: the
+// fixture is a document the command printed, so its records are already what
+// sortRecords produces — the orphan run first (it has no number to sort by),
+// then the numbered ones, then the record the join found out of flight. This
+// test is where that order is pinned: a source that re-sorted, or that walked
+// the records some other way, draws the same five nodes in another sequence.
+//
 // Hand mutation this fails on: keying a node by its pull request number alone,
 // which makes acme/app#12 and acme/lib#12 one node; dropping the record's
-// release, which empties the 0.11.0 expectation; and reading the state off the
-// pull request alone, which leaves the host-silent node with no state.
+// release, which empties the 0.11.0 expectation; reading the state off the
+// pull request alone, which leaves the host-silent node with no state; and
+// drawing the records in any order but the view's.
 func TestCoordinatorNodesPerRepoAndRelease(t *testing.T) {
 	now := coordinatorAt
 	nodes, state, err := CoordinatorSource{
@@ -70,6 +102,10 @@ func TestCoordinatorNodesPerRepoAndRelease(t *testing.T) {
 
 	want := []Node{
 		{
+			Key: "coordinator:acme/app#20261013-140000-eeee", Source: "coordinator", Kind: NodeRun,
+			ID: "acme/app#20261013-140000-eeee", Repo: "acme/app", State: "running",
+		},
+		{
 			Key: "coordinator:acme/app#12", Source: "coordinator", Kind: NodePullRequest,
 			ID: "acme/app#12", Title: "Add search to the catalogue", Repo: "acme/app", State: "open",
 		},
@@ -77,10 +113,6 @@ func TestCoordinatorNodesPerRepoAndRelease(t *testing.T) {
 			Key: "coordinator:acme/app#15", Source: "coordinator", Kind: NodePullRequest,
 			ID: "acme/app#15", Title: "Release 0.11.0", Repo: "acme/app", State: "open",
 			Release: "0.11.0",
-		},
-		{
-			Key: "coordinator:acme/app#20261013-140000-eeee", Source: "coordinator", Kind: NodeRun,
-			ID: "acme/app#20261013-140000-eeee", Repo: "acme/app", State: "running",
 		},
 		{
 			Key: "coordinator:acme/app#17", Source: "coordinator", Kind: NodePullRequest,
