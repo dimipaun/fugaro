@@ -1571,6 +1571,20 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	}
 }
 
+// consoleOnlyFlags reports whether every token is a flag: a word of the argv
+// that starts with a dash, brackets included (`[--config`, `--json]` are how the
+// design's optional and alternative words are written). A bare word is a word of
+// the command -- a subcommand or a positional -- rather than a flag, which is
+// the distinction the spawn check below turns on.
+func consoleOnlyFlags(tokens []string) bool {
+	for _, tok := range tokens {
+		if !strings.HasPrefix(strings.TrimLeft(tok, "["), "-") {
+			return false
+		}
+	}
+	return true
+}
+
 // consoleIpcPath is the main process's IPC module, which carries
 // `CONSOLE_OPERATIONS` -- the constant §5.1 rule 5's count is the count of --
 // and the operations `SPAWN_COMMANDS` spawns. Reading it from Go is the
@@ -1706,9 +1720,16 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     `managed.status` and `policy.show`, whose rule 6 rows CM3 already wrote --
 //     is the next, on thirty-four.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
-//     the row's own words lead some row of the design's table, so a spawn the
-//     design does not allow is a failure here and not only in the console's copy
-//     of the list.
+//     the row's own words lead some row of the design's table **and what that row
+//     carries after them is flags, nothing else**. The second half is the whole
+//     check rather than a refinement of it: on a leading-words test alone a row
+//     cut back to its group word reads as admitted -- `['project']` against
+//     `project policy show --json …`, `['coordinator']` against `coordinator
+//     intents --all --json` -- which is a spawn that lost its subcommand passing
+//     as an argv the design allows. A bare word after the row's words is another
+//     word of the command, and the one exception is the design's own: the
+//     `settings.edit` row states the `set`/`unset` its `op` argument becomes
+//     while `SPAWN_COMMANDS` carries `['settings']`.
 //
 // The other direction -- a design row the console does not spawn yet -- is
 // deliberately **not** asserted: a fence may be ahead of the surface (that is
@@ -1718,11 +1739,13 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 // Mutations that prove it: add an entry to `CONSOLE_OPERATIONS` and leave rule 5's
 // count alone (this test fails naming the constant's length and the word the
 // design spells); move rule 5's count and leave the constant alone (the same
-// failure, from the other side); and add a row to `SPAWN_COMMANDS` whose words no
-// row of the table leads (this test fails naming the operation). None of the
-// three numbers is remembered in Go: the count is read off the design's sentence
-// and the surface's size off the constant, so the task that lands an operation
-// moves the sentence alone and edits nothing here.
+// failure, from the other side); cut a row's words back to their group word
+// (`['coordinator']` for `coordinator.intents`, `['project']` for a `policy.show`
+// row) -- which the leading-words half alone admits, and this test fails; and
+// give a row a word no row of the table leads (it fails naming the operation).
+// None of the three numbers is remembered in Go: the count is read off the
+// design's sentence and the surface's size off the constant, so the task that
+// lands an operation moves the sentence alone and edits nothing here.
 func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
@@ -1768,7 +1791,25 @@ func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 		found := false
 		for _, argv := range admitted {
 			words := consoleArgvWords(argv)
-			if len(words) >= len(row.words) && slices.Equal(words[:len(row.words)], row.words) {
+			if len(words) < len(row.words) || !slices.Equal(words[:len(row.words)], row.words) {
+				continue
+			}
+			rest := words[len(row.words):]
+			// The settings write is the one row whose design row spells a word
+			// the row itself does not carry: its subcommand is the operation's
+			// own `op` argument (`words: ['settings']`), and the table's row
+			// states the `set`/`unset` it becomes.
+			if row.operation == "settings.edit" && len(rest) > 0 && (rest[0] == "set" || rest[0] == "unset") {
+				rest = rest[1:]
+			}
+			// What the design row carries after the row's own words must be
+			// flags and nothing else. A prefix alone admits a row cut back to
+			// its group word -- `['project']` would pass against `project policy
+			// show --json …`, and `['coordinator']` against `coordinator intents
+			// --all --json` -- so a spawn that lost its subcommand would read as
+			// an argv the design allows, which is the hole this half exists to
+			// close.
+			if consoleOnlyFlags(rest) {
 				found = true
 				break
 			}
