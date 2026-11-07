@@ -1242,6 +1242,12 @@ func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
 // setup --repo` records nothing either: its door is not the update's, and a
 // first onboarding is not the last update of anything.
 //
+// The record is keyed by project, and an update converges the repository its
+// checkout belongs to (the converge's repository stage runs this engine for
+// "."): what it holds is the retirement of the last update, which is one
+// repository's per run. "The last update retired nothing" is exactly that
+// sentence, and At says which run it was.
+//
 // It is best effort in the direction the whole upgrade depends on (CLAUDE.md's
 // HARD RULE): a state directory that cannot be written warns and the update
 // finishes, because the record is the console's and the installation's update
@@ -1265,7 +1271,7 @@ func (r *initRun) recordUpdate(ctx context.Context, lc *localcfg.Config, rets []
 		if n, err := runsInFlight(ctx, db, lc); err == nil {
 			up.RunsInFlight = &n
 		} else {
-			r.warn(fmt.Sprintf("could not count the runs in flight while %s's retirement was settled (%v); the record under the state directory carries no runs_in_flight", lc.Name, err))
+			r.warn(fmt.Sprintf("could not count the runs in flight while %s's retirement was settled (%v); this update's record says nothing about them", lc.Name, err))
 		}
 	}
 	if err := localcfg.RecordUpdate(os.Getenv, r.projectName, up); err != nil {
