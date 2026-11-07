@@ -58,15 +58,24 @@ func reportCopy(rec *runstore.Record, status runstore.Status, outcome runstore.O
 // family of cause that cap is. The governance arm reads the one slice the
 // checkpoint schema and the digest are pinned to, so a tripwire added there is
 // classed without a second list to keep in step.
+//
+// Two of the reasons carry "budget" in their name and are not in the budget
+// family, which is the design's §3 rows and not a reading of this switch:
+// halted_budget is the dollar and token caps, whose remedy is "once the cap is
+// raised", while budget_unavailable and budget_token_expired are the budget
+// database or the credential refusing — halted_credential's own definition,
+// "no credential became usable, or the budget database refused", kind infra,
+// its remedy an account that answers again (for the expired token, a relaunch
+// after the wait), never a cap raised.
 func haltClass(reason runstore.HaltReason) failure.Class {
 	switch reason {
 	case runstore.HaltKillSwitch:
 		return failure.HaltedKillSwitch
 	case runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
-		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable,
-		runstore.HaltBudgetTokenExpired:
+		runstore.HaltNoCap, runstore.HaltTokenCap:
 		return failure.HaltedBudget
-	case runstore.HaltNoCredential, runstore.HaltCredsRulesDenied:
+	case runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
+		runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired:
 		return failure.HaltedCredential
 	}
 	if slices.Contains(runstore.GovernanceHaltReasons(), reason) {

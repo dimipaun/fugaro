@@ -6,6 +6,8 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -156,18 +158,116 @@ func TestNoClassIsWrittenWhereTheRunDidNotFail(t *testing.T) {
 // comment states, and the reason the class is not hung on the run's first
 // failure reason (r.failure(), which the pull request's section reads and the
 // record no longer holds).
+//
+// Every reason of the closed set is walked, not the one that happens to be
+// first: the class is durable (the report counts runs by it and nothing
+// rewrites it), so a reason left on the wrong arm is a figure a reader acts on
+// with the wrong remedy, and nothing else in the tree reads this switch.
 func TestHaltedRunCarriesItsHaltsClass(t *testing.T) {
-	r := &run{rec: &runstore.Record{}}
-	r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, failure.TestsFailed, "tests failing on the final commit")
-	halt := &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run"}
-	r.rec.Halt = halt
-	r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), "the per-run dollar cap was reached")
-	if r.rec.Status != runstore.StatusHalted {
-		t.Errorf("the record's status is %q, want halted: the halt's call is the last one", r.rec.Status)
+	// The family per reason, from the design's §3 rows: the dollar and token
+	// caps are halted_budget; halted_credential is its own definition, "no
+	// credential became usable, or the budget database refused", which is what
+	// budget_unavailable (the backend never answered) and budget_token_expired
+	// (the run waited past its own budget token) are — their remedy is an
+	// account that answers again, never a cap raised; the governance tripwires
+	// are halted_governance, the slice the checkpoint schema is pinned to; and
+	// the project's switch is halted_kill_switch.
+	families := map[runstore.HaltReason]failure.Class{
+		runstore.HaltKillSwitch:         failure.HaltedKillSwitch,
+		runstore.HaltRunCap:             failure.HaltedBudget,
+		runstore.HaltRepoDailyCap:       failure.HaltedBudget,
+		runstore.HaltGlobalDailyCap:     failure.HaltedBudget,
+		runstore.HaltNoCap:              failure.HaltedBudget,
+		runstore.HaltTokenCap:           failure.HaltedBudget,
+		runstore.HaltBudgetUnavailable:  failure.HaltedCredential,
+		runstore.HaltBudgetTokenExpired: failure.HaltedCredential,
+		runstore.HaltNoCredential:       failure.HaltedCredential,
+		runstore.HaltCredsRulesDenied:   failure.HaltedCredential,
+		runstore.HaltStageBudget:        failure.HaltedGovernance,
+		runstore.HaltReviewRatio:        failure.HaltedGovernance,
+		runstore.HaltFanout:             failure.HaltedGovernance,
+		runstore.HaltReviewScope:        failure.HaltedGovernance,
+		runstore.HaltExpectedExceeded:   failure.HaltedGovernance,
 	}
-	if r.rec.FailureClass != failure.HaltedBudget {
-		t.Errorf("the record's class is %q, want %q: the class describes the status the record carries, and a class left over from the failure before the halt describes a sentence the record no longer holds", r.rec.FailureClass, failure.HaltedBudget)
+
+	reasons := haltReasonConstants(t)
+	if got := len(reasons); got != len(families) {
+		t.Errorf("runstore declares %d halt reasons and this walk places %d: a reason with no family is classed by nothing, and the count is how the two are held together", got, len(families))
 	}
+	for _, reason := range reasons {
+		class, ok := families[reason]
+		if !ok {
+			t.Errorf("runstore's %q has no family here: a new reason is a class a report prints and a reader acts on, so it is placed deliberately and not left to the switch's default", reason)
+			continue
+		}
+		t.Run(string(reason), func(t *testing.T) {
+			if got := haltClass(reason); got != class {
+				t.Errorf("haltClass(%q) is %q, want %q: the reason is a name, the class is the cause's family and the remedy the report prints for it", reason, got, class)
+			}
+			r := &run{rec: &runstore.Record{}}
+			r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, failure.TestsFailed, "tests failing on the final commit")
+			r.rec.Halt = &runstore.Halt{Reason: reason, Scope: "run"}
+			r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(reason), "a halt the runner recorded")
+			if r.rec.Status != runstore.StatusHalted {
+				t.Errorf("the record's status is %q, want halted: the halt's call is the last one", r.rec.Status)
+			}
+			if r.rec.FailureClass != class {
+				t.Errorf("the record's class is %q, want %q: the class describes the status the record carries, and a class left over from the failure before the halt describes a sentence the record no longer holds", r.rec.FailureClass, class)
+			}
+		})
+	}
+	for reason := range families {
+		if !slices.Contains(reasons, reason) {
+			t.Errorf("this walk places a family for %q, which runstore no longer declares: a family for a reason no run can hold is a rule about a value that does not exist", reason)
+		}
+	}
+}
+
+// haltReasonConstants is the closed set of halt reasons, read from runstore's
+// own source in the order it declares them.
+//
+// There is no slice to range over — GovernanceHaltReasons is the governance
+// arm alone — so the source is the only complete list, and reading it is what
+// makes the walk above cover a reason added later rather than the fifteen of
+// today.
+func haltReasonConstants(t *testing.T) []runstore.HaltReason {
+	t.Helper()
+	const src = "../runstore/runstore.go"
+	file, err := parser.ParseFile(token.NewFileSet(), src, nil, 0)
+	if err != nil {
+		t.Fatalf("%s does not parse: %v", src, err)
+	}
+	var out []runstore.HaltReason
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if ident, ok := vs.Type.(*ast.Ident); !ok || ident.Name != "HaltReason" {
+				continue
+			}
+			for _, value := range vs.Values {
+				lit, ok := value.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("%s: a HaltReason constant without a string value", src)
+				}
+				unquoted, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatalf("%s: %v", src, err)
+				}
+				out = append(out, runstore.HaltReason(unquoted))
+			}
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("no HaltReason constants found in %s: the walk above would pass against a tree with no reasons in it", src)
+	}
+	return out
 }
 
 // statusSitesIn is every statement of one parsed file that writes a Status

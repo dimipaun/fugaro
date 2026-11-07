@@ -158,9 +158,9 @@ knows what to do without reading a sentence:
 | `tests_failed` | the final commit's test record failed (`tests failing on the final commit`, `outcome.go:52`) | quality | no | yes |
 | `unverified_final_commit` | the pushed head carries no passing test: no test record on that commit, or work committed at finalize after the last verified run (`ReasonNoVerifiedTest`, `outcome.go:26`; `internal/runner/runner.go:4243`) | quality | no | yes |
 | `no_commits` | the agent made no commits (`internal/runner/runner.go:4196`) | quality | no | yes |
-| `halted_budget` | a dollar or token cap stopped the run: `run_cap`, `repo_daily_cap`, `global_daily_cap`, `token_cap`, `no_cap` (`runstore.go:48`–`52`) | budget | yes, once the cap is raised | yes |
+| `halted_budget` | a dollar or token cap stopped the run: `run_cap`, `repo_daily_cap`, `global_daily_cap`, `token_cap`, `no_cap` (`runstore.go:49`–`53`) | budget | yes, once the cap is raised | yes |
 | `halted_governance` | a governance tripwire stopped the run: `stage_budget`, `review_ratio`, `fanout`, `review_scope`, `expected_exceeded` (`runstore.go:81`–`95`, `GovernanceHaltReasons`, `:103`). The checkpoint says what it would have done next. | budget | no, until the checkpoint is read | yes |
-| `halted_credential` | no credential became usable, or the budget database refused: `no_credential`, `creds_rules_denied`, `budget_unavailable`, `budget_token_expired` (`runstore.go:54`–`70`) | infra | yes, once the account is usable | yes |
+| `halted_credential` | no credential became usable, or the budget database refused: `no_credential`, `creds_rules_denied`, `budget_unavailable`, `budget_token_expired` (`runstore.go:54`–`71`) | infra | yes, once the account is usable | yes |
 | `halted_kill_switch` | the project's or the repository's kill switch was on (`HaltKillSwitch`, `runstore.go:47`) | infra | yes, once the switch is off | yes |
 | `cancelled` | a person cancelled the run (`markCancelled`, `halt.go:101`, and the reason `cancelled`) | other | yes | no |
 | `provider_auth_refused` | the model route or the credential refused the call: `403` from the provider, or a failed authentication (§4.3) | infra | no | yes |
