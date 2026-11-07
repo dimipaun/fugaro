@@ -27,8 +27,10 @@ with it, **reconciliation wins**.
 
 ## What it is
 
-The Project tab draws five panels today, from three commands: `budget show --json`,
-`accounts ls --json` and `secrets ls --json` (`PROJECTS_SOURCE_LINES`,
+The Project tab draws five panels today, from **five** commands: `budget show --json`,
+`accounts ls --json` and `secrets ls --json` — the three on the day this was written — and, since,
+`models ls --json` (console 0.119.0's models panel) and `settings --json` (this design's **C1**, the
+read the pencil rests on) (`PROJECTS_SOURCE_LINES`,
 `console/src/renderer/screens/projects.ts:108`). What it shows is caps, kill switches, repositories,
 accounts and a secrets inventory — and two panels that say they have no command at all. The owner's
 ask is about **those values**: the settings of this one project, each of them editable from the

@@ -7,8 +7,14 @@ disagrees with [spec.md](spec.md), it wins.**
 ## 1. What was reconciled against
 
 - **`origin/main` at `d1585a6f`** (the merge of #1532), read with `grep -n`, offset reads and `git
-  show`. Every `console/…` and `internal/…` citation below is a line of that commit unless it says
-  otherwise.
+  show`. **The findings below were read on that commit, and their `console/…` and `internal/…`
+  citations were re-read on `main` at `6fb92f44` on 2026-11-07**, because everything this folder
+  designed has landed since and every line under a citation moved with it: the prerequisites
+  **P1–P4** — `fugaro settings` can be aimed at an installation, the read carries
+  `writable`/`owner`/`target_layer`, `set|unset` have `--dry-run --json`, and `--yes` answers a
+  widening — and the console tasks **C1–C6**. So a citation points at the tree the reader has, a
+  finding's tense is the tree it was read on, and every finding the tree has refuted says so in
+  place rather than in a footnote: **F1**, **F3**, **F5**, **F10**, **F11**, **F12** and **F13**.
 - **S5, `fugaro settings get|set|unset`, pull request #1525**, branch `fugaro/20261101-151752-0d66`,
   head `f7871b3a` — **read while it was open, and merged into `main` as #1525
   (`f09f10e5`) while this design was in review**, unchanged, so every line number taken from it above
@@ -35,15 +41,19 @@ rather than guessing.
 ## 2. What exists
 
 **F1: Exists. The Project tab, and what it draws today.** `PROJECTS_SOURCE_LINES`
-(`console/src/renderer/screens/projects.ts:108`) names three commands — `fugaro budget show --json`,
-`fugaro accounts ls --json`, `fugaro secrets ls --json` — and `PROJECT_PANEL_KEYS` (`:166`) draws
-seven panels: `caps`, `kill`, `repositories`, `accounts`, `secrets`, `policy`, `enrollment`. The
-last two are `not-built` on purpose (`POLICY_SOURCE_LINE`, `:122`; `ENROLLMENT_SOURCE_LINE`,
-`:126`), and the screen's own header says it makes **one** read, `budget show`, after the jobs panel
-and its `runs ls --json` were removed (owner's report of 2026-10-31). *Consequence:* the values the
-owner means by "each of those values" are **not on this tab today**. The pencil's row set is a new
-read, and the panels that carry pencils are new panels — this design adds a section, it does not
-decorate five existing ones.
+(`console/src/renderer/screens/projects.ts:108`) names **five** commands on this tree — **three** on
+the day this was written (`fugaro budget show --json`, `fugaro accounts ls --json`,
+`fugaro secrets ls --json`) and two since: `models.list`'s `fugaro models ls --json` (console
+0.119.0's models panel) and `settings.read`'s `fugaro settings --json` (this design's own **C1**, the
+read the pencil rests on) — and `PROJECT_PANEL_KEYS` (`:166`) draws seven panels: `caps`, `kill`,
+`repositories`, `accounts`, `secrets`, `policy`, `enrollment`. The last two are `not-built` on
+purpose (`POLICY_SOURCE_LINE`, `:122`; `ENROLLMENT_SOURCE_LINE`, `:126`), and the screen's own
+header calls `budget show` its **first** read, after the jobs panel and its `runs ls --json` were
+removed (owner's report of 2026-10-31) and with the models panel — console 0.119.0's
+`models ls --json` — now the second. *Consequence, as of `d1585a6f`:* the
+values the owner means by "each of those values" are **not on this tab today**. The pencil's row set
+is a new read, and the panels that carry pencils are new panels — this design adds a section, it does
+not decorate five existing ones.
 
 **F2: Exists. Rule 11's confirmation window, and the seam it fills.** `createConfirmWindow`
 (`console/src/main/confirm.ts:299`) builds one modal `BrowserWindow` over
@@ -86,10 +96,12 @@ confirmation is the window (F2), not the marker. **F9** and **D1111** are the ot
 line diff, the confirmation, the agent-session refusal, the compare-and-swap re-read
 (`readSettingsCurrent`, `:235`), the backup and the atomic write. Its ordinary confirmation is
 `confirmSettingsWrite` (`:254`) — `--yes` answers it — and its typed one is `confirmTypedStrict`
-(`internal/cli/budget.go:251`), which **no flag answers** as it stands: **D1107** is the owner's
-ruling that `--yes` answers that one too, outside an agent session, and the plan's **P4** is the
-task that makes it so. Every successful write ends with `next:
-fugaro update` (`runSettingsSet`, **S5 #1525** `internal/cli/settings_set.go:1387`). *Consequence:*
+(`internal/cli/budget.go:251`), which **no flag answered** as it stood: **D1107** is the owner's
+ruling that `--yes` answers that one too, outside an agent session, and the plan's **P4** was the
+task that makes it so — *(Amended 2026-11-07: **P4 has landed**, so `--yes` answers the typed
+confirmation too, outside an agent session, which is the argv the console spawns.)* Every successful
+write ends with `next: fugaro update` (`runSettingsSet`, **S5 #1525**
+`internal/cli/settings_set.go:1387`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
 re-implements the diff (**D1103**).
 
@@ -130,35 +142,42 @@ brief assumes**, and **D1111** records the set as it is rather than inventing a 
 owner wants a managed-project refusal on `settings set`, it is a change to S5 and it belongs in
 **P1**'s commit, not in a console task.
 
-**F10: Missing. Nothing in `settings --json` says which rows are writable, or by whom.** The
-registry's `Owner` and the allow-list of F7 are **CLI-side facts with no reader outside
-`internal/cli`**: `settingsJSON` (F8) has no `owner`, no `writable`, no `layers` and no
-`target_layer`. `settingsWriteRow` (**S5 #1525** `internal/cli/settings_set.go:405`) prints "X is
-written by `fugaro rigor set`, not by the generic path" — a sentence on a **refusal**, reachable
-only by asking the CLI to write something it will not write. *Consequence:* **the console cannot
-draw the pencil from the CLI's output as S5 stands.** Either it keeps a copy of
-`settingsGenericKeys` (which the brief forbids, and which is the fourth-copy defect the settings
-design's own F12 exists to prevent), or the read grows the field. **D1102**, and prerequisite
-**P2**.
+**F10: Missing on `d1585a6f` — P2 has since landed.** Nothing in `settings --json` said which rows
+are writable, or by whom: the registry's `Owner` and the allow-list of F7 were **CLI-side facts with
+no reader outside `internal/cli`**, and `settingsJSON` (F8) had no `owner`, no `writable`, no
+`layers` and no `target_layer`. *(Amended 2026-11-07: **P2 landed**, and this finding is the one it
+answered — `settingsJSON` carries `writable`, `owner` and `target_layer`
+(`internal/cli/settings_render.go:53-55`), written on every row and documented at
+`console/docs/json-contract.md:2451-2453`, so the read grew exactly the fields the paragraph below
+asks it to grow, and the console draws the pencil from the CLI's own output with no copy of
+`settingsGenericKeys`.)* `settingsWriteRow` (**S5 #1525** `internal/cli/settings_set.go:405`) prints
+"X is written by `fugaro rigor set`, not by the generic path" — a sentence on a **refusal**,
+reachable only by asking the CLI to write something it will not write. *Consequence, as of
+`d1585a6f`:* **the console cannot draw the pencil from the CLI's output as S5 stands.** Either it
+keeps a copy of `settingsGenericKeys` (which the brief forbids, and which is the fourth-copy defect
+the settings design's own F12 exists to prevent), or the read grows the field. **D1102**, and
+prerequisite **P2**.
 
-**F11: Missing. `settings set|unset` has no machine-readable output, no dry run, and no
-classification.** The flags are `--layer`, `--repo`, `--yes`, `--add` and `--remove` and nothing
-else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:292`; `newSettingsUnsetCmd`,
-`:357`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
+**F11: Missing on `d1585a6f` — P3 has since landed. `settings set|unset` had no machine-readable
+output, no dry run, and no classification.** The flags were `--layer`, `--repo`, `--yes`, `--add` and
+`--remove` and nothing else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:292`;
+`newSettingsUnsetCmd`, `:357`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
 `internal/cli/settings_set.go:1294`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1103`),
 `settingsLoosens` (`:1231`) and `settingsListSubset` (`:1276`) — and is **never printed as a field**;
 it becomes a prompt. The only outputs are prose on stdout and `userErr`'s exit code. *Consequence:*
 the console cannot ask "is this a widening?" and must not re-derive it — the classification rules
 are S5's, and a copy in TypeScript is a second answer that will drift the day D846's set changes.
-**D1106**, and prerequisite **P3**.
+**D1106**, and prerequisite **P3**. *(Amended 2026-11-07: **P3 landed** — `set` and `unset` carry
+`--dry-run` and `--json`, and the dry run's document is what the console's window draws and what
+decides the widening tick, so the console still asks the CLI and re-derives nothing.)*
 
-**F12: Conflicts. `fugaro settings` cannot be aimed at an installation.** `newSettingsCmd`
-(`internal/cli/settings.go:61`, on `main` since #1484) registers no `--project` and no `--config`;
-the flags it has are `--repo`, `--all-repos`, `--layer`, `--grep`, `--changed`, `--why`,
-`--offline`, `--json` (`settingsOptions`, `:21`). Both the read and the write build a
-`localcfg.SelectInput` with **`Project`, `Config` and `Checkout` all empty** (`readSettings`, **S5
-#1525** `internal/cli/settings_read.go:154`, whose `SelectInput` is at `:155`; `settingsSelection`,
-**S5 #1525** `internal/cli/settings_set.go:574`) — so `localcfg.Select`
+**F12: Conflicts on `d1585a6f` — P1 has since landed. `fugaro settings` could not be aimed at an
+installation.** `newSettingsCmd` (`internal/cli/settings.go:61`, on `main` since #1484) registered no
+`--project` and no `--config`; the flags it had were `--repo`, `--all-repos`, `--layer`, `--grep`,
+`--changed`, `--why`, `--offline`, `--json` (`settingsOptions`, `:21`). Both the read and the write
+built a `localcfg.SelectInput` with **`Project`, `Config` and `Checkout` all empty** (`readSettings`,
+**S5 #1525** `internal/cli/settings_read.go:154`, whose `SelectInput` is at `:156`;
+`settingsSelection`, **S5 #1525** `internal/cli/settings_set.go:574`) — so `localcfg.Select`
 (`internal/localcfg/select.go:104`) reaches step 6, "exactly one project config", with steps 1–5 all
 unavailable. The console's child carries no `FUGARO_PROJECT` and no `FUGARO_CONFIG` (F4) and its
 working directory is the installation's checkout (`createBoundSource`, cited in `ipc.ts`'s
@@ -166,16 +185,22 @@ working directory is the installation's checkout (`createBoundSource`, cited in 
 **only if `Checkout` were filled — and it is not**. *Consequence, and it is the largest finding
 here:* on a machine with the owner's two installations, **every** `fugaro settings` argv the console
 could spawn is refused with "the projects are: …", and on a machine with one it silently reads
-whichever installation is the only one. **No console task in this plan can start before P1 lands.**
-The other allow-listed rows do not have this problem because `addCloudFlags`
-(`internal/cli/cloud.go:51`) gives them `--project` and `--config` and §3.4 rule 3 makes the console
-pass both.
+whichever installation is the only one, so **no console task in this plan could start before P1** —
+which it did: *(Amended 2026-11-07: **P1 has landed** — `settingsAimFlags`
+(`internal/cli/settings.go:52`, called from `newSettingsCmd` at `:91`) gives the family `--project`
+and `--config`, so the read's `SelectInput` is no longer empty of them and a console spawn names the
+installation. The paragraph above records the tree the design was written against.)* The other
+allow-listed rows did not have this problem because `addCloudFlags` (`internal/cli/cloud.go:51`) gives
+them `--project` and `--config` and §3.4 rule 3 makes the console pass both.
 
-**F13: Missing. `settings set` prints no document, so a write has no decoded result.** The read has
-`--json`; the write has prose and an exit code. *Consequence:* the console's result handling for an
-edit is "exit code plus the CLI's own sentence" unless **P3** gives the write a small result
-document. **D1106** recommends one, because a refusal the console must show verbatim is exactly the
-case `MAX_REPLY_REASON_LENGTH` (`console/src/main/ipc.ts:151`) already bounds.
+**F13: Missing on `d1585a6f` — P3 has since landed. `settings set` printed no document, so a write
+had no decoded result.** The read has `--json`; the write had prose and an exit code. *Consequence,
+as of `d1585a6f`:* the console's result handling for an edit is "exit code plus the CLI's own
+sentence" unless **P3** gives the write a small result document. **D1106** recommends one, because a
+refusal the console must show verbatim is exactly the case `MAX_REPLY_REASON_LENGTH`
+(`console/src/main/ipc.ts:151`) already bounds. *(Amended 2026-11-07: **P3 landed** — a `set`/`unset`
+dry run prints its document with `--json`, which is what the console's window draws and what the
+refusal path reads.)*
 
 **F14: Exists. The compare-and-swap refusal, and its sentence.** `applySettingsEdit` re-reads the
 file through `readSettingsCurrent` and refuses with "`%s` changed since it was read: nothing was
