@@ -1159,8 +1159,9 @@ const SHARED_DRAWER = '../../shared/notice.ts'
 const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the ten screens', () => {
+  it('reads every screen module on the tree', () => {
     expect([...SCREEN_FILES]).toEqual([
+      'accountkeys.ts',
       'coordinator.ts',
       'degraded.ts',
       'graph.ts',
@@ -1499,6 +1500,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/layout.ts',
       'graph/model.ts',
       'installations.ts',
+      'screens/accountkeys.ts',
       'screens/coordinator.ts',
       'screens/degraded.ts',
       'screens/graph.ts',
