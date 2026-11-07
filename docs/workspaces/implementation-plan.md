@@ -278,7 +278,12 @@ not exist, and the migration half is the reason it exists — an installation th
 workspace node from an older release must converge, not be asked to publish again.
 
 **Tests.** `TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace`,
-`TestUpdateRefusesToPublishAWorkspaceWithNoMembers`,
+`TestUpdateSkipsAPublishWithNoMembers` (a record that lists no member is a workspace that admits
+nobody, so nothing is published — and the stage is SKIPPED, never an error: a cap-only config is one
+`fugaro workspace cap set` writes and `fugaro workspace member rm` leaves behind, and a Check that
+failed on it would stop the run with every stage after it blocked, which is the HARD RULE's one
+command failing on a config the release reads),
+`TestUpdateWithACapAndNoMemberRunsOn` (the same state through the whole command),
 `TestUpdateNamesTheOneCommandAndNoOther` (no `workspace publish` anywhere in the output),
 `TestUpdateLeavesAMemberWithNoWorkspaceAlone`,
 `TestUpdateOnAMemberNeverWritesTheWorkspaceNode` (the member holds no grant; a stage that tried would
