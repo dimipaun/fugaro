@@ -11215,8 +11215,16 @@ place the value lives. Each `--repo owner/name=<checkout path>` is one of the tw
 repositories and the checkout the check runs `fugaro update --repo` in, one pair each.
 `--probe-repo` is the sandbox repository added to the same Bitbucket project afterwards (step 7),
 which must **not** be in `project_secrets`. `--new-token-file`, `--source`, `--gcloud-config` and
-`--merge` are optional. The script plans first (`--dry-run` prints the plan and touches nothing),
-refuses any installation but the sandbox one, and refuses `belong` at every step. Its driver is
+`--merge` are optional. The script plans first (`--dry-run` prints the plan and touches nothing) and
+refuses `belong` by name at every step — as `--installation`, as either repository's workspace, as
+the probe repository and as the installation `fugaro doctor --project` selects. That and one stop
+are the whole of its installation guard: it reads the installation you name with `fugaro doctor
+--project` and **stops** if the installation the doctor reports is not the name you typed, so a typo
+measures nothing — but it accepts **any** installation the doctor agrees with, and only `belong` is
+refused outright. **Point it at your sandbox installation and no other**: it stores a project-wide
+secret, launches billed runs, pushes, approves, merges and rotates the token, and nothing in the
+script proves the installation you named is the sandbox one beyond what the two guards above say. Its
+driver is
 `scripts/live-checks/check180_test.sh`, which runs offline — fake `fugaro`, `gcloud`, `go` and `git`
 on `PATH` and a fake Bitbucket Cloud on a loopback port — inside `go test ./scripts`. **No agent runs
 any step of this check**, only that test; and no step types, prints or pastes a token or a key value:

@@ -198,6 +198,14 @@ func TestDocsCheck180StatesWhatOnlyATokenSettles(t *testing.T) {
 		// names the directory rather than report a pass it cannot make.
 		"`--gcloud-config <dir>`",
 		"**no credential is copied** into the scratch home",
+		// What the script's installation guard actually is. The reader decides,
+		// from this paragraph, whether to point at an installation a check that
+		// stores a project-wide secret, launches billed runs, pushes and merges
+		// pull requests: the script refuses `belong` by name and stops when the
+		// installation `fugaro doctor --project` reports is not the one typed,
+		// and that is all — a sentence promising more is a guard the reader
+		// relies on and the script does not have.
+		"it accepts **any** installation the doctor agrees with, and only `belong` is refused outright",
 		// How the verdict is read. A step that could not verify its criterion
 		// has to make the block's last line say so: an UNVERIFIED row inside a
 		// block that exits 0 reads as a pass, which is exactly the way this
