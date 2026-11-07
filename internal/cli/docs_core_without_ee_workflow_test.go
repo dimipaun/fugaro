@@ -178,34 +178,16 @@ func TestDocsCoreWithoutEEWorkflow(t *testing.T) {
 	}
 
 	// --- The trigger surface ------------------------------------------------
-	// A push to main and a manual dispatch, in that order and nothing else: a
-	// pull request would run the job on every branch of the repository, and a
-	// second branch would run it on a tree no release is cut from. The decode
-	// above refuses an unknown key anywhere in the file, so a third trigger
-	// cannot slip in beside these two.
+	// A manual dispatch and nothing else (owner's ruling 2026-11-07: CI is
+	// dispatched by hand, in batches). The decode above refuses an unknown key
+	// anywhere in the file, so a push or pull_request trigger cannot slip back in.
 	triggers := coreWithoutEETriggers(t, path, wf.On)
 	var names []string
 	for _, tr := range triggers {
 		names = append(names, tr.name)
 	}
-	if want := []string{"push", "workflow_dispatch"}; !slices.Equal(names, want) {
-		t.Errorf("%s triggers on %q, want %q: a push to main is what proves the core still builds without ee/, and the dispatch is how the owner starts it by hand", path, names, want)
-	}
-	if len(triggers) > 0 && triggers[0].name == "push" {
-		push := triggers[0].body
-		if push.Kind != yaml.MappingNode || len(push.Content) != 2 {
-			t.Fatalf("%s: the push trigger carries more than a branch filter (kind %v, %d keys): a paths filter would leave the job unrun on the change that breaks it", path, push.Kind, len(push.Content)/2)
-		}
-		if key := push.Content[0].Value; key != "branches" {
-			t.Errorf("%s: the push trigger's only key is %q, want branches", path, key)
-		}
-		var branches []string
-		if err := push.Content[1].Decode(&branches); err != nil {
-			t.Fatalf("%s: the push trigger's branches do not decode: %v", path, err)
-		}
-		if want := []string{"main"}; !slices.Equal(branches, want) {
-			t.Errorf("%s pushes on %q, want %q: main is where every release is cut from", path, branches, want)
-		}
+	if want := []string{"workflow_dispatch"}; !slices.Equal(names, want) {
+		t.Errorf("%s triggers on %q, want %q: the owner's ruling of 2026-11-07 is that CI runs by hand only", path, names, want)
 	}
 
 	// --- Permissions, secrets, pins, timeout --------------------------------
