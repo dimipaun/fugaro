@@ -1355,7 +1355,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session admitted a member to the workspace:\n%s", got)
 	}
-	head := "[needs you]  " + initflow.Workspace
+	head := markLeft + " " + initflow.Workspace + ":"
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
 	}
@@ -1406,7 +1406,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the workspace's first record:\n%s", got)
 	}
-	head := "[needs you]  " + initflow.Workspace
+	head := markLeft + " " + initflow.Workspace + ":"
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
 	}
