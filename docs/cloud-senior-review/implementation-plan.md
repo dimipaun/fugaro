@@ -1648,8 +1648,8 @@ the service opt-in, and they stay correct the day it is not.
       comment is that every ordinary run rewrites the tfvars from a spec that never sets the key) — **its
       one `verifier_accounts` member aside, which the carry writes from the effective list, below** — the
       writer that recomputes the list is `prepare`, which every ordinary `fugaro update` runs
-      (`internal/cli/init.go:2501`) and which reads the node the **previous** update published
-      (`internal/cli/init.go:2533`) — so between those runs the block is frozen **except for the
+      (`internal/cli/init.go:2089`) and which reads the node the **previous** update published
+      (`internal/cli/init.go:2561`) — so between those runs the block is frozen **except for the
       one member the effective list decides** (the carry's own half, below), and the module
       is the only writer the apply that creates the account has. **The carried-null block converges in one
       ordinary update because of exactly this**: null is the state the default is for, and the account is

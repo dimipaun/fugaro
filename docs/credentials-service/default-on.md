@@ -920,8 +920,22 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   from `infra`'s spec at `internal/cli/init.go:4488`). **The record is written where the root is
   applied, and only there** (the header's second *amended after review* row): `fugaro update --repo PATH`
   — and the converge's repository stage, which is the same engine — reads the bundle once and refreshes
-  the entry for the repository whose root it applies; `fugaro update`'s installation door writes no
-  record at all, because it applies no repository root. The reason is the grant: the thing that makes the
+  the entry for the repository whose root it applies. **The installation door applies no repository root,
+  so it writes no record for one — with one exception, and it is the migration this release owes**
+  (added by the follow-up run; the word *backfill* is this record's). An installation that opted in under
+  an earlier release has roots whose tfvars already carry `installation.credentials_service` and entries
+  whose record was never written, because a record written `false` and no record at all are the same
+  document (`localcfg`'s `omitempty`), so nothing on the machine tells such an installation from one that
+  never opted in — and this release's launcher reads the record. `fugaro update`'s installation door
+  therefore calls `backfillCredentialsServiceReady` (`internal/cli/init_credentials.go`, from `install()`
+  before `writeConfig`) once, for every entry that carries **no record** and whose **own** root's tfvars
+  say the service is on — `infra.RepoWorkdir` → `infra.ReadWorkdirVars` → the same
+  `infra.RepoCredentialsServiceDeployed` predicate DON7 reads, so the evidence is the root that was
+  applied and never a blanket yes: a repository this machine holds no document for, or one whose document
+  says the service is off, keeps the record it has. It is the same evidence the repository door's own
+  refresh is built on, one door earlier, because the repository stage converges the checkout's own root
+  alone and the siblings would otherwise need one `fugaro update --repo` each — an operator step beside
+  `fugaro update`, which CLAUDE.md's HARD RULE forbids. The reason is the grant: the thing that makes the
   service usable to a repository is the `roles/run.invoker` grant its **own** root's apply makes
   (`deploy/terraform/gcp/modules/workflow/sa.tf`'s `google_cloud_run_v2_service_iam_member.credentials`;
   the installation root grants `run.invoker` to the operators, the coordinator and the verifier and to no
