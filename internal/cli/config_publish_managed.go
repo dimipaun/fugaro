@@ -192,6 +192,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 	rules = append(rules, layerWideningRules(prev, l)...)
 	rules = append(rules, layerRigorRules(prev, l)...)
 	rules = append(rules, layerRoundsRules(prev, l, at.old, marker)...)
+	rules = append(rules, layerAllowlistRules(at.old, data, marker)...)
 	if local {
 		if r := layerStaleRule(env.lc, prev, gen); r != "" {
 			rules = append(rules, r)
@@ -223,7 +224,9 @@ func layerAdmittedRules(local bool, marker string) []string {
 		"the document lowers no rigor floor and removes no rigor rule",
 	}
 	if marker != "" {
-		rules = append(rules, "the document lowers no review round and turns no review level off, level 1's own first-line switch and count included (the floor keys D1027 holds a coding agent's session to)")
+		rules = append(rules,
+			"the document lowers no review round and turns no review level off, level 1's own first-line switch and count included (the floor keys D1027 holds a coding agent's session to)",
+			"the document changes no key outside the allowlist D1027 gives a coding agent's session (the settings door's own list, which admits the two round counts above and nothing else)")
 	}
 	if local {
 		rules = append(rules, "this machine's local layer file was written from the published layer's generation")
@@ -301,28 +304,61 @@ func layerDocumentRules(data []byte) []string {
 // layerKeyPaths is the document's key paths, one per leaf and one per key the
 // registry knows: the paths the two rules above are decided over. `*` stands in
 // for an element of a list of blocks, which is how the registry spells one
-// (`defaults.rigor.areas.*.mode`).
+// (`defaults.rigor.areas.*.mode`). See layerWalkKeys for the walk itself.
+func layerKeyPaths(data []byte) ([][]string, bool) {
+	var paths [][]string
+	if !layerWalkKeys(data, func(path []string, _ []string) {
+		paths = append(paths, slices.Clone(path))
+	}) {
+		return nil, false
+	}
+	return paths, true
+}
+
+// layerKeyValues is one document as the comparison layerAllowlistRules makes
+// reads it: every path the same walk yields, under the key the registry spells
+// it with (layerPathKey), and the value(s) the document holds there. A path
+// written more than once — the `*` of a list of blocks stands for each of its
+// elements — carries one entry per element, in document order.
+func layerKeyValues(data []byte) (map[string][]string, bool) {
+	out := map[string][]string{}
+	if !layerWalkKeys(data, func(path []string, value []string) {
+		key := layerPathKey(path)
+		out[key] = append(out[key], value...)
+	}) {
+		return nil, false
+	}
+	return out, true
+}
+
+// layerWalkKeys is the walk both readings above are made of: it visits every
+// leaf of a layer document and every key the registry knows, and answers false
+// for a document it cannot follow.
 //
 // The walk stops at a path the registry knows, and that is the whole reason it
 // has to be a walk: `layer.claude_models` is one registry row holding a block
 // of its own, so descending into it would judge provider and model names
 // against keys the registry deliberately does not have.
-func layerKeyPaths(data []byte) ([][]string, bool) {
+//
+// A document it cannot follow is a refusal rather than an empty reading: YAML
+// it cannot parse, a key that is not a string, and an anchor or the alias that
+// copies it (a merge key included, which is an alias under another name) are
+// each answered false, and both callers refuse the document on that answer.
+func layerWalkKeys(data []byte, visit func(path []string, value []string)) bool {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, false
+		return false
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, false
+		return false
 	}
-	var paths [][]string
 	var walk func(path []string, n *yaml.Node) bool
 	walk = func(path []string, n *yaml.Node) bool {
 		if n.Anchor != "" || n.Alias != nil {
 			return false
 		}
 		if len(path) > 0 && layerRegistryExact(path) {
-			paths = append(paths, path)
+			visit(path, []string{layerNodeValue(n)})
 			return true
 		}
 		switch n.Kind {
@@ -338,7 +374,7 @@ func layerKeyPaths(data []byte) ([][]string, bool) {
 			}
 		case yaml.SequenceNode:
 			if !layerListOfBlocks(n) {
-				paths = append(paths, path)
+				visit(path, []string{layerNodeValue(n)})
 				return true
 			}
 			for _, e := range n.Content {
@@ -347,14 +383,38 @@ func layerKeyPaths(data []byte) ([][]string, bool) {
 				}
 			}
 		default:
-			paths = append(paths, path)
+			visit(path, []string{layerNodeValue(n)})
 		}
 		return true
 	}
-	if !walk(nil, doc.Content[0]) {
-		return nil, false
+	return walk(nil, doc.Content[0])
+}
+
+// layerNodeValue is the node at a key as the comparison reads it: a scalar's
+// own tag and text, and a block or a list rendered member by member. Two
+// documents that say the same thing therefore compare equal however they were
+// written — a re-indent, a flow style or a re-ordered mapping is not a change —
+// and two that say different things never do. The tag is part of the value
+// because a re-typed scalar (`5` written as `"5"`) is a different document,
+// which the fail-closed direction of every read of this gate answers with a
+// refusal rather than with a comparison nobody can make.
+func layerNodeValue(n *yaml.Node) string {
+	switch n.Kind {
+	case yaml.MappingNode:
+		members := make([]string, 0, len(n.Content)/2)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			members = append(members, n.Content[i].Value+"="+layerNodeValue(n.Content[i+1]))
+		}
+		slices.Sort(members)
+		return "{" + strings.Join(members, ", ") + "}"
+	case yaml.SequenceNode:
+		members := make([]string, 0, len(n.Content))
+		for _, e := range n.Content {
+			members = append(members, layerNodeValue(e))
+		}
+		return "[" + strings.Join(members, ", ") + "]"
 	}
-	return paths, true
+	return n.ShortTag() + " " + n.Value
 }
 
 // layerListOfBlocks reports whether a list holds blocks, so its elements are
@@ -611,6 +671,90 @@ func layerRoundsRules(prev, next *config.ProjectLayer, published []byte, marker 
 		add("turns review level 1 off (defaults.agent.first_line_review: off), so a run of the project spends no first-line review", "turns off")
 	}
 	return rules
+}
+
+// layerAllowlistRules names every key this document changes, against the layer
+// it replaces, that D1027's allowlist does not admit for a coding agent's
+// session — and it is empty for a person, whose own terminal the owner's ruling
+// of 2026-11-06 leaves to every key of the layer.
+//
+// Why the whole document and not the keys the rules above read. `fugaro config
+// publish` writes the whole published layer and `fugaro settings set` writes
+// one key of it, and D1027 is the owner's decision about what a session may
+// move, not about which command it names to move it. The rules above judge the
+// DIRECTIONS the layer writes could weaken a run with — a cap, a claim, a
+// floor, a round — and every one of them admits a change that takes nothing
+// away: a recipe the project did not run, another reviewer model, a level's
+// model, effort or focus, a key no rule here reads at all. Each of those is one
+// the settings door refuses a session outright, so a session with the whole
+// document in hand could otherwise reach through this door every key the
+// settings door holds it back from, which is the hole the owner's ruling names.
+// The list itself is the settings door's (settingsManagedKeys) and not a second
+// copy of it: one writer of the list is the whole point, because two would be
+// two answers to what a session may move and the drift between them is the hole
+// again — and the direction rule over the two keys it does admit stays where it
+// is, in layerRoundsRules, which judges a raise of them and nothing else.
+//
+// The comparison is of the two documents key by key (layerKeyValues), and it is
+// a comparison of documents rather than of bytes: an added key, a removed key
+// and a changed key are each a change, and a block re-indented, a mapping
+// re-ordered or a value written in flow style is not. What the walk cannot read
+// is already refused: a document whose keys it cannot follow is refused by
+// layerDocumentRules, and a published object the parse cannot read is refused
+// by configPublishConverge before any rule is decided against it — so this rule
+// claims no comparison there rather than naming one that never ran.
+//
+// A published layer that is NOT THERE yet is the fail-closed case, and the one
+// this rule cannot delegate: with no predecessor there is no document the
+// new one's keys can be shown unchanged in, so every key of it counts as added
+// and a session that has never published a layer may publish only the
+// allowlist's keys. The alternative — reading a missing predecessor as "nothing
+// changed" — would admit the first publish of any document at all, which is the
+// hole with a fresh installation in front of it. A predecessor the bucket could
+// not be read from at all is refused earlier still, by the rule that says so.
+func layerAllowlistRules(published, next []byte, marker string) []string {
+	if marker == "" {
+		return nil
+	}
+	was := map[string][]string{}
+	if len(published) > 0 {
+		var ok bool
+		if was, ok = layerKeyValues(published); !ok {
+			// Unreachable today: the object is read as a layer before this rule
+			// runs, and every shape this walk refuses is one that parse refuses
+			// too. Kept because the answer is the fail-closed one, and the other
+			// answer — comparing against nothing — admits the whole document.
+			return []string{"the published project layer's keys cannot be read as a document this gate compares, so no key of this write was judged against it, and the project's owner publishes from their own terminal"}
+		}
+	}
+	now, ok := layerKeyValues(next)
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(was)+len(now))
+	for k := range was {
+		keys = append(keys, k)
+	}
+	for k := range now {
+		if _, held := was[k]; !held {
+			keys = append(keys, k)
+		}
+	}
+	var changed []string
+	for _, key := range sortedUnique(keys) {
+		if settingsManagedAdmits(key) {
+			continue
+		}
+		if !slices.Equal(was[key], now[key]) {
+			changed = append(changed, key)
+		}
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	return []string{"the document changes the key(s) " + safetext.FieldListLine(changed) +
+		", which are no keys the gate's allowlist admits for a coding agent's session: it admits " +
+		strings.Join(settingsManagedKeys, " and ") + " and nothing else, each only raised, so every other key of the layer is the project's owner's to publish at their own terminal"}
 }
 
 // layerLevelOff is the name of every review level next turns off that the layer

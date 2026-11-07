@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,12 @@ func managedPublishMarker() []byte {
 // keys only, no executable key, nothing that widens a route, an A/B block or a
 // cap.
 const managedLayer = minimalAnchored + "defaults:\n  agent: { auth: vertex }\n"
+
+// agentAdmittedLayer is the shape of a document this gate admits in a coding
+// agent's session: minimalAnchored, which is the layer already published, plus
+// the one thing D1027 lets a session move — a round count, raised to the number
+// a run spends today when the layer sets none (the strictest mode's row).
+const agentAdmittedLayer = minimalAnchored + "defaults:\n  agent: { review_rounds: 5 }\n"
 
 // managedPublishRig is one managed installation: both marks, the clients over
 // the fakes, and the cloud fixture the command reads its config from.
@@ -241,14 +248,14 @@ func TestConfigPublishManagedAdmitsAFileWhileTheLocalLayerIsStale(t *testing.T) 
 		t.Fatal(err)
 	}
 	setConfigScalar(t, "layer_generation", `"7"`)
-	out, errOut, err := execute(t, "config", "publish", layerFile(t, managedLayer))
+	out, errOut, err := execute(t, "config", "publish", layerFile(t, agentAdmittedLayer))
 	if err != nil {
 		t.Fatalf("a publish of a layer kept elsewhere was refused by the state of this machine's own file: %v\n%s", err, errOut)
 	}
 	if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
 		t.Errorf("the session does not read that the step proceeded: %q", out)
 	}
-	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != managedLayer {
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != agentAdmittedLayer {
 		t.Fatalf("the bucket holds %q, want the published layer", got)
 	}
 	rec := r.audits(t)
@@ -262,12 +269,15 @@ func TestConfigPublishManagedAdmitsAFileWhileTheLocalLayerIsStale(t *testing.T) 
 
 // The other side: a layer every rule passes is admitted in a managed project's
 // coding agent's session, the session reads AgentProceeded, the object is
-// published, and the admission leaves its record.
-func TestConfigPublishManagedAdmitsARegistryKey(t *testing.T) {
+// published, and the admission leaves its record. What every rule passes is a
+// document against a published predecessor it does not differ from outside the
+// allowlist: an agent's session may move the round counts D1027 admits and
+// nothing else (layerAllowlistRules).
+func TestConfigPublishManagedAdmitsALayerEveryRulePasses(t *testing.T) {
 	r := newManagedPublishRig(t)
 	agentSession(t)
-	publishedLayer(t, r.cloudFixture, "")
-	out, errOut, err := execute(t, "config", "publish", layerFile(t, managedLayer))
+	publishedLayer(t, r.cloudFixture, minimalAnchored)
+	out, errOut, err := execute(t, "config", "publish", layerFile(t, agentAdmittedLayer))
 	if err != nil {
 		t.Fatalf("a layer every rule passes was refused: %v\n%s", err, errOut)
 	}
@@ -283,7 +293,7 @@ func TestConfigPublishManagedAdmitsARegistryKey(t *testing.T) {
 	if !strings.Contains(out, "published the project layer") {
 		t.Errorf("the admitted step published nothing: %q", out)
 	}
-	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != managedLayer {
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != agentAdmittedLayer {
 		t.Fatalf("the bucket holds %q, want the admitted layer", got)
 	}
 	got := r.audits(t)
@@ -293,7 +303,7 @@ func TestConfigPublishManagedAdmitsARegistryKey(t *testing.T) {
 	if got[0].Verdict != managedmode.AuditAdmitted {
 		t.Errorf("the record's verdict is %q, want %q", got[0].Verdict, managedmode.AuditAdmitted)
 	}
-	if got[0].PlanDigest != gateDigest([]byte(managedLayer)) {
+	if got[0].PlanDigest != gateDigest([]byte(agentAdmittedLayer)) {
 		t.Errorf("the record's digest is %q, and the document the gate saw is not the one it names", got[0].PlanDigest)
 	}
 }
@@ -530,16 +540,17 @@ func TestConfigPublishManagedRefusesACapRaised(t *testing.T) {
 	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != minimalAnchored {
 		t.Fatalf("the published layer moved: %q", got)
 	}
+	// The other side of the widening rule: the same key written lower is the
+	// narrowing that rule admits, and the allowlist beside it is what refuses a
+	// coding agent's session the write today — a cap is not a key D1027 admits.
+	// The rule's own direction is asked of a person, who may narrow the layer.
 	lower := minimalAnchored + "defaults:\n  agent: { max_budget_usd: 10 }\n"
-	out, errOut, err := execute(t, "config", "publish", layerFile(t, lower))
-	if err != nil {
-		t.Fatalf("a layer lowering the cap was refused: %v\n%s", err, errOut)
+	if _, _, err := execute(t, "config", "publish", layerFile(t, lower)); err == nil {
+		t.Fatal("a layer lowering the agent's spend cap was published in a coding agent's session")
 	}
-	if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
-		t.Errorf("the session does not read that the step proceeded: %q", out)
-	}
-	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != lower {
-		t.Fatalf("the bucket holds %q, want the narrowing layer", got)
+	conv := personConverge(t, r, lower)
+	if err := conv.Refuse(); err != nil {
+		t.Fatalf("a person's own publish of a layer lowering the cap was refused: %v", err)
 	}
 }
 
@@ -554,7 +565,7 @@ func TestConfigPublishManagedRefusesACapRaised(t *testing.T) {
 func TestConfigPublishManagedRecordsAnAdmissionThatFailedLate(t *testing.T) {
 	r := newManagedPublishRig(t)
 	agentSession(t)
-	publishedLayer(t, r.cloudFixture, "")
+	publishedLayer(t, r.cloudFixture, minimalAnchored)
 	cfg, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
 	if err != nil {
 		t.Fatal(err)
@@ -564,7 +575,7 @@ func TestConfigPublishManagedRecordsAnAdmissionThatFailedLate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", long)
-	if err := os.WriteFile(localLayerPath(t), []byte(managedLayer), 0o600); err != nil {
+	if err := os.WriteFile(localLayerPath(t), []byte(agentAdmittedLayer), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err = execute(t, "config", "publish")
@@ -574,7 +585,7 @@ func TestConfigPublishManagedRecordsAnAdmissionThatFailedLate(t *testing.T) {
 	if !strings.Contains(err.Error(), "recording the published project layer's generation") {
 		t.Errorf("the failure is not the one the write's aftermath met: %v", err)
 	}
-	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != managedLayer {
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != agentAdmittedLayer {
 		t.Fatalf("the write did not land, so there is no late failure to record: the bucket holds %q", got)
 	}
 	if got := r.audits(t); len(got) != 1 || got[0].Verdict != managedmode.AuditAdmitted {
@@ -629,24 +640,29 @@ func TestConfigPublishManagedRefusesALoweredRigorFloor(t *testing.T) {
 		})
 	}
 
-	// The other side: a raise, and a rule the published layer did not have.
+	// The other side: a raise, and a rule the published layer did not have. The
+	// rigor rule admits both, and an agent's session reaches neither — a floor
+	// is no key D1027 admits, so the allowlist refuses the whole document — so
+	// the rule's own direction is asked of a person, who may move the floors of
+	// their own project.
 	t.Run("a raised floor and a new rule", func(t *testing.T) {
 		r := newManagedPublishRig(t)
 		agentSession(t)
 		publishedLayer(t, r.cloudFixture, rigorBlock("pro", "startup"))
 		raised := minimalAnchored + "defaults:\n  rigor:\n    default: critical\n    areas:\n      - { name: db, match: \"db/*\", mode: critical }\n      - { name: web, match: \"web/*\", mode: pro }\n"
-		out, errOut, err := execute(t, "config", "publish", layerFile(t, raised))
-		if err != nil {
-			t.Fatalf("a layer raising every floor was refused: %v\n%s", err, errOut)
+		_, _, err := execute(t, "config", "publish", layerFile(t, raised))
+		if err == nil {
+			t.Fatal("a layer raising the project's rigor floors was published in a coding agent's session")
 		}
-		if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
-			t.Errorf("the session does not read that the step proceeded: %q", out)
+		if !strings.Contains(err.Error(), "layer.defaults.rigor.default") || !strings.Contains(err.Error(), "allowlist") {
+			t.Errorf("the refusal does not name the floor keys the allowlist refused: %v", err)
 		}
-		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != raised {
-			t.Fatalf("the bucket holds %q, want the raised layer", got)
+		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != rigorBlock("pro", "startup") {
+			t.Fatalf("the published layer moved: %q", got)
 		}
-		if got := r.audits(t); len(got) != 1 || got[0].Verdict != managedmode.AuditAdmitted {
-			t.Errorf("the record is %v, want one admission", got)
+		conv := personConverge(t, r, raised)
+		if err := conv.Refuse(); err != nil {
+			t.Fatalf("a person's own publish of a layer raising every floor was refused: %v", err)
 		}
 	})
 }
@@ -704,7 +720,7 @@ func TestConfigPublishManagedRefusesAWriteAgainstAChangedObject(t *testing.T) {
 	configPublishRace = func(context.Context, *blobx.Bucket) {
 		writeBucketFile(t, r.cloudFixture, config.LayerKey, other)
 	}
-	_, _, err := execute(t, "config", "publish", layerFile(t, managedLayer))
+	_, _, err := execute(t, "config", "publish", layerFile(t, agentAdmittedLayer))
 	if err == nil {
 		t.Fatal("a layer was written over an object that changed after the gate judged it")
 	}
@@ -807,21 +823,27 @@ func TestConfigPublishManagedRefusesEachWidening(t *testing.T) {
 
 	// The other side of all four at once: the claim and the challenger dropped,
 	// the rate and the daily count lowered. Nothing there states a rule about a
-	// key being present — each of the five is a comparison of two layers.
+	// key being present — each of the five is a comparison of two layers, which
+	// is why the narrowing is admitted, and it is asked of a person: the allowlist
+	// refuses a coding agent's session every one of those keys, so the rule's own
+	// direction is not observable through this door for a session.
 	t.Run("narrowing every lever at once", func(t *testing.T) {
 		r := newManagedPublishRig(t)
 		agentSession(t)
 		publishedLayer(t, r.cloudFixture, minimalAnchored+claim+abBlock("0.05", "9", v3, k2))
 		narrow := minimalAnchored + abBlock("0.01", "1", v3)
-		out, errOut, err := execute(t, "config", "publish", layerFile(t, narrow))
-		if err != nil {
-			t.Fatalf("a layer narrowing every lever was refused: %v\n%s", err, errOut)
+		if _, _, err := execute(t, "config", "publish", layerFile(t, narrow)); err == nil {
+			t.Fatal("a layer narrowing every lever was published in a coding agent's session")
 		}
-		if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
-			t.Errorf("the session does not read that the step proceeded: %q", out)
+		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != minimalAnchored+claim+abBlock("0.05", "9", v3, k2) {
+			t.Fatalf("the published layer moved: %q", got)
 		}
-		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != narrow {
-			t.Fatalf("the bucket holds %q, want the narrowing layer", got)
+		conv := personConverge(t, r, narrow)
+		if err := conv.Refuse(); err != nil {
+			t.Fatalf("a person's own publish of a layer narrowing every lever was refused: %v", err)
+		}
+		if rules := strings.Join(conv.Rules(), " "); !strings.Contains(rules, "widens no model claim") {
+			t.Errorf("the record does not name the widening rule among the ones that passed: %q", rules)
 		}
 	})
 }
@@ -954,11 +976,15 @@ func TestConfigPublishManagedRefusesAReviewLevelTurnedOff(t *testing.T) {
 		r := newManagedPublishRig(t)
 		agentSession(t)
 		publishedLayer(t, r.cloudFixture, levelOffLayer("l2"))
-		if _, errOut, err := execute(t, "config", "publish", layerFile(t, minimalAnchored)); err != nil {
-			t.Fatalf("a layer turning a review level back on was refused: %v\n%s", err, errOut)
+		if _, _, err := execute(t, "config", "publish", layerFile(t, minimalAnchored)); err == nil {
+			t.Fatal("a layer turning a review level back on was published in a coding agent's session")
 		}
-		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != minimalAnchored {
-			t.Fatalf("the bucket holds %q, want the layer with the level back on", got)
+		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != levelOffLayer("l2") {
+			t.Fatalf("the published layer moved: %q", got)
+		}
+		conv := personConverge(t, r, minimalAnchored)
+		if err := conv.Refuse(); err != nil {
+			t.Fatalf("a person's own publish of a layer turning a review level back on was refused: %v", err)
 		}
 	})
 }
@@ -1012,8 +1038,10 @@ func TestConfigPublishManagedRefusesTheFirstLineReviewTurnedOff(t *testing.T) {
 	// The other sides. A layer that already says off changes nothing, and
 	// every value that is not off lets level 1 run again — `on` outright, and
 	// `auto` (or no value at all, which reads as auto) where the run's models
-	// and providers decide — so the rule admits them, as it admits a level
-	// turned back on in the levels block.
+	// and providers decide — so the direction rule admits them, as it admits a
+	// level turned back on in the levels block. Neither key is one the allowlist
+	// admits, so a coding agent's session reaches the admission through nobody's
+	// publish but a person's own (personConverge).
 	t.Run("a layer that already says off", func(t *testing.T) {
 		r := newManagedPublishRig(t)
 		agentSession(t)
@@ -1035,11 +1063,15 @@ func TestConfigPublishManagedRefusesTheFirstLineReviewTurnedOff(t *testing.T) {
 			r := newManagedPublishRig(t)
 			agentSession(t)
 			publishedLayer(t, r.cloudFixture, tc.published)
-			if _, errOut, err := execute(t, "config", "publish", layerFile(t, tc.next)); err != nil {
-				t.Fatalf("a layer letting the first-line review run again was refused: %v\n%s", err, errOut)
+			if _, _, err := execute(t, "config", "publish", layerFile(t, tc.next)); err == nil {
+				t.Fatal("a layer letting the first-line review run again was published in a coding agent's session")
 			}
-			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.next {
-				t.Fatalf("the bucket holds %q, want the published layer", got)
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.published {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			conv := personConverge(t, r, tc.next)
+			if err := conv.Refuse(); err != nil {
+				t.Fatalf("a person's own publish of a layer letting the first-line review run again was refused: %v", err)
 			}
 		})
 	}
@@ -1048,6 +1080,12 @@ func TestConfigPublishManagedRefusesTheFirstLineReviewTurnedOff(t *testing.T) {
 // The other direction of the same rule: raising a round count, and publishing
 // a layer that changes nothing about it, are both admitted — and the record of
 // an admission names the rule among the ones that were applied and passed.
+//
+// Only the two counts the allowlist admits are here: level 1's own count is
+// judged by the direction rule beside them (a raise of it takes nothing away)
+// but is no key D1027 admits, so a session's publish of it is refused by the
+// allowlist (TestConfigPublishManagedRefusesAKeyOutsideTheAllowlist) and the
+// raise is asked of a person.
 func TestConfigPublishManagedAdmitsARaisedReviewRound(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -1058,8 +1096,6 @@ func TestConfigPublishManagedAdmitsARaisedReviewRound(t *testing.T) {
 		{"a raised adversarial_rounds", roundsLayer("adversarial_rounds", "2"), roundsLayer("adversarial_rounds", "6")},
 		{"an unchanged review_rounds", roundsLayer("review_rounds", "3"), roundsLayer("review_rounds", "3")},
 		{"a number the layer never set, at the strictest mode's row", minimalAnchored, roundsLayer("review_rounds", "5")},
-		{"a raised first_line_rounds", roundsLayer("first_line_rounds", "1"), roundsLayer("first_line_rounds", "2")},
-		{"a first-line count the layer never set, at its own row", minimalAnchored, roundsLayer("first_line_rounds", "3")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1087,12 +1123,269 @@ func TestConfigPublishManagedAdmitsARaisedReviewRound(t *testing.T) {
 	}
 }
 
+// layerAgentBody is minimalAnchored with a defaults.agent block whose body is
+// the case's own lines, each already indented four spaces: a document that
+// carries one key of the block, written the way the case needs it.
+func layerAgentBody(body string) string {
+	return minimalAnchored + "defaults:\n  agent:\n" + body
+}
+
+// The owner's ruling of 2026-11-06 at this door: `fugaro config publish` writes
+// the same published layer `fugaro settings set` writes one key of, so a coding
+// agent's session may change through it only what the settings door's allowlist
+// admits (D1027) — the two review-round keys, and only upward. Every other key
+// of the layer is refused HERE, however the settings door never saw it: the
+// class the owner named (a recipe, the reviewer's model, a level's
+// model/effort/focus) and any other key outside the allowlist, added, changed
+// or removed.
+//
+// Each case is refused by the allowlist rule itself — no other rule of the gate
+// has anything to say about these keys, which is what makes the refusal
+// evidence for this rule rather than for one beside it — and the refusal names
+// the keys the document changed.
+func TestConfigPublishManagedRefusesAKeyOutsideTheAllowlist(t *testing.T) {
+	cases := []struct {
+		name      string
+		published string
+		next      string
+		names     string
+		// registry is a case the document's own key rules refuse before this
+		// one is reached: a key the registry does not know is refused by
+		// layerDocumentRules and by the parse as well, so no document naming
+		// one is published by anyone — the key is still named, and it is named
+		// by the rule that refused it.
+		registry bool
+	}{
+		{
+			"a recipe changed",
+			layerAgentBody("    recipe: standard\n"),
+			layerAgentBody("    recipe: strict\n"),
+			"layer.defaults.agent.recipe",
+			false,
+		},
+		{
+			"a reviewer model added",
+			minimalAnchored,
+			layerAgentBody("    models: { reviewer: claude-opus-5-5 }\n"),
+			"layer.defaults.agent.models.reviewer",
+			false,
+		},
+		{
+			"a level's model added",
+			minimalAnchored,
+			layerAgentBody("    levels:\n      l1: { model: claude-sonnet-5 }\n"),
+			"layer.defaults.agent.levels.l1.model",
+			false,
+		},
+		{
+			"a level's effort set",
+			minimalAnchored,
+			layerAgentBody("    levels:\n      l2: { effort: high }\n"),
+			"layer.defaults.agent.levels.l2.effort",
+			false,
+		},
+		{
+			"a level's focus set",
+			minimalAnchored,
+			layerAgentBody("    levels:\n      l2: { focus: the migration }\n"),
+			"layer.defaults.agent.levels.l2.focus",
+			false,
+		},
+		{
+			"a first-line round raised",
+			roundsLayer("first_line_rounds", "1"),
+			roundsLayer("first_line_rounds", "3"),
+			"layer.defaults.agent.first_line_rounds",
+			false,
+		},
+		{
+			"a key removed",
+			layerAgentBody("    models: { reviewer: claude-opus-5-5 }\n"),
+			minimalAnchored,
+			"layer.defaults.agent.models.reviewer",
+			false,
+		},
+		{
+			"a key the registry does not know",
+			minimalAnchored,
+			layerAgentBody("    mystery_key: 1\n"),
+			"mystery_key",
+			true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			_, _, err := execute(t, "config", "publish", layerFile(t, tc.next))
+			if err == nil {
+				t.Fatalf("%s was published in a coding agent's session", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the refusal does not name %s as the key that refused: %v", tc.names, err)
+			}
+			if !tc.registry && !strings.Contains(err.Error(), "allowlist") {
+				t.Errorf("the refusal does not name the allowlist as the rule that refused %s: %v", tc.names, err)
+			}
+			if strings.Contains(err.Error(), "your own terminal") {
+				t.Errorf("the marker's own refusal answered instead of the gate's: %v", err)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.published {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			rec := r.audits(t)
+			if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+				t.Fatalf("the record is %v, want one refusal", rec)
+			}
+			if rules := strings.Join(rec[0].Rules, " "); !strings.Contains(rules, tc.names) {
+				t.Errorf("the record does not name the key that refused: %q", rules)
+			}
+		})
+	}
+}
+
+// The other side of the allowlist rule: a document that changes the allowlisted
+// keys and nothing else is admitted, whether it raises one, leaves it alone, or
+// says the same keys in another shape. The comparison is over the two documents
+// as documents — a block re-indented or written in flow style is not a change —
+// and never over their bytes.
+func TestConfigPublishManagedAdmitsAnAllowlistOnlyChange(t *testing.T) {
+	base := layerAgentBody("    recipe: standard\n    models: { reviewer: claude-opus-5-5 }\n")
+	cases := []struct {
+		name      string
+		published string
+		next      string
+	}{
+		{"a raised review_rounds", base, layerAgentBody("    recipe: standard\n    models: { reviewer: claude-opus-5-5 }\n    review_rounds: 5\n")},
+		{"a raised review_rounds beside a raised adversarial_rounds", roundsAgentLayer(3, 2), roundsAgentLayer(5, 4)},
+		{"the same keys in another shape", minimalAnchored + "defaults: { agent: { models: { reviewer: claude-opus-5-5 } } }\n", layerAgentBody("    models: { reviewer: claude-opus-5-5 }\n")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			out, errOut, err := execute(t, "config", "publish", layerFile(t, tc.next))
+			if err != nil {
+				t.Fatalf("a document that changes only the allowlist's keys was refused: %v\n%s", err, errOut)
+			}
+			if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+				t.Errorf("the session does not read that the step proceeded: %q", out)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.next {
+				t.Fatalf("the bucket holds %q, want the published layer", got)
+			}
+			rec := r.audits(t)
+			if len(rec) != 1 || rec[0].Verdict != managedmode.AuditAdmitted {
+				t.Fatalf("the record is %v, want one admission", rec)
+			}
+			if rules := strings.Join(rec[0].Rules, " "); !strings.Contains(rules, "allowlist") {
+				t.Errorf("the admission's record does not name the allowlist rule among the ones that passed: %q", rules)
+			}
+		})
+	}
+}
+
+// roundsAgentLayer is a layer carrying both allowlisted round counts, so a case
+// can move them without touching a key outside the allowlist.
+func roundsAgentLayer(review, adversarial int) string {
+	return layerAgentBody("    review_rounds: " + strconv.Itoa(review) + "\n    adversarial_rounds: " + strconv.Itoa(adversarial) + "\n")
+}
+
+// Fail closed with nothing to compare against. A publish whose predecessor is
+// absent has no document its keys can be shown unchanged in, so every key of
+// the new document counts as added — and an added key outside the allowlist is
+// exactly what this rule refuses. The unreadable predecessor is the same answer
+// one step earlier: configPublishConverge refuses the document before any rule
+// is decided against it.
+func TestConfigPublishManagedRefusesAnAllowlistOnlyChangeWithNoComparableLayer(t *testing.T) {
+	t.Run("nothing is published yet", func(t *testing.T) {
+		r := newManagedPublishRig(t)
+		agentSession(t)
+		publishedLayer(t, r.cloudFixture, "")
+		_, _, err := execute(t, "config", "publish", layerFile(t, roundsAgentLayer(5, 3)))
+		if err == nil {
+			t.Fatal("a session published a first layer with no predecessor to compare it against")
+		}
+		if !strings.Contains(err.Error(), "layer.version") || !strings.Contains(err.Error(), "allowlist") {
+			t.Errorf("the refusal does not name the keys the missing predecessor makes new: %v", err)
+		}
+		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != "" {
+			t.Fatalf("a document refused for its missing predecessor reached the bucket: %q", got)
+		}
+	})
+	t.Run("the published layer cannot be read", func(t *testing.T) {
+		r := newManagedPublishRig(t)
+		agentSession(t)
+		unreadable := minimalAnchored + "this_key_does_not_exist: 1\n"
+		publishedLayer(t, r.cloudFixture, unreadable)
+		_, _, err := execute(t, "config", "publish", layerFile(t, layerAgentBody("    review_rounds: 5\n")))
+		if err == nil {
+			t.Fatal("a session published over a predecessor no rule could compare")
+		}
+		if !strings.Contains(err.Error(), "not a layer this program can read") {
+			t.Errorf("the refusal does not name the predecessor it could not judge against: %v", err)
+		}
+		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != unreadable {
+			t.Fatalf("the published layer moved: %q", got)
+		}
+	})
+}
+
+// personConverge is one document judged the way a person's own publish judges
+// it: no marker, so the two rules that bind only a coding agent's session — the
+// allowlist and the floor directions — are not applied and every other rule is.
+// It is the only surface those rules' other side is observable through, because
+// a person's own run never reads the gate at all (config_publish.go's marker),
+// and it is asked with the empty marker the settings door reads for a person.
+func personConverge(t *testing.T, r *managedPublishRig, next string) managedmode.Converge {
+	t.Helper()
+	noAgentSession(t)
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+	if err != nil {
+		t.Fatalf("opening the fixture's cloud environment: %v", err)
+	}
+	defer env.Close()
+	conv, _ := configPublishConverge(context.Background(), env, []byte(next), false, "")
+	return conv
+}
+
+// The same changes, for a person at their own terminal: the allowlist is the
+// owner's ruling about a coding agent's session and binds nobody else, so every
+// key the test above refuses is admitted when no marker is there — and the
+// record of that admission names no allowlist rule.
+func TestConfigPublishManagedAdmitsAPersonsKeyOutsideTheAllowlist(t *testing.T) {
+	cases := []struct {
+		name      string
+		published string
+		next      string
+	}{
+		{"a recipe changed", layerAgentBody("    recipe: standard\n"), layerAgentBody("    recipe: strict\n")},
+		{"a reviewer model added", minimalAnchored, layerAgentBody("    models: { reviewer: claude-opus-5-5 }\n")},
+		{"a level's model and focus added", minimalAnchored, layerAgentBody("    levels:\n      l1: { model: claude-sonnet-5, focus: the migration }\n")},
+		{"a first-line round raised", roundsLayer("first_line_rounds", "1"), roundsLayer("first_line_rounds", "3")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			conv := personConverge(t, r, tc.next)
+			if err := conv.Refuse(); err != nil {
+				t.Fatalf("a person's own publish was refused by the allowlist: %v", err)
+			}
+			if rules := strings.Join(conv.Rules(), " "); strings.Contains(rules, "allowlist") {
+				t.Errorf("the record claims the allowlist rule ran for a person's write: %q", rules)
+			}
+		})
+	}
+}
+
 // The owner's ruling of 2026-11-06: the allowlist and the floors bind a coding
 // agent's session, and a person at their own terminal may lower them. The
-// verdict is asked for directly here — a person's own publish never reads the
-// gate at all (config_publish.go's marker), so the command is not the surface
-// this half is observable through — and it is asked with the empty marker the
-// settings door reads for a person.
+// verdict is asked for directly here (personConverge), because a person's own
+// publish never reads the gate at all (config_publish.go's marker) and so is
+// not observable through the command.
 func TestConfigPublishManagedAdmitsAPersonsLoweredReviewRound(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -1108,14 +1401,8 @@ func TestConfigPublishManagedAdmitsAPersonsLoweredReviewRound(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newManagedPublishRig(t)
-			noAgentSession(t)
 			publishedLayer(t, r.cloudFixture, tc.published)
-			env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
-			if err != nil {
-				t.Fatalf("opening the fixture's cloud environment: %v", err)
-			}
-			defer env.Close()
-			conv, _ := configPublishConverge(context.Background(), env, []byte(tc.next), false, "")
+			conv := personConverge(t, r, tc.next)
 			if err := conv.Refuse(); err != nil {
 				t.Fatalf("a person's own publish of a weakened layer was refused by the floor rule: %v", err)
 			}
