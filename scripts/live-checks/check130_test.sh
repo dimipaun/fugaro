@@ -220,20 +220,40 @@ setup_case() { # NAME [ORIGIN] [MODULE] [LICENSING]
 # run130 [ARGS...] — runs the check on the case at hand, from the case's
 # checkout. Sets $status, $out and $dir/err. RUN130_MODE is which answer the fake
 # curl gives (`ok` by default, so a case that says nothing reads the happy path),
-# and RUN130_DIR runs the check from somewhere else (a directory that is not a
-# git checkout at all). Both are cleared after each run: a mode that outlived its
+# RUN130_DIR runs the check from somewhere else (a directory that is not a git
+# checkout at all), and RUN130_PATH prefixes PATH (for a fake tool that has to
+# come first). All three are cleared after each run: a mode that outlived its
 # case would make the next case read a different answer than it wrote.
 RUN130_MODE=""
 RUN130_DIR=""
+RUN130_PATH=""
 run130() {
   status=0
   (cd "${RUN130_DIR:-$dir/checkout}" &&
     exec env TMPDIR="$dir/tmp" FAKE130_DIR="$dir/state" \
       FAKE130_MODE="${RUN130_MODE:-ok}" HOME="$dir/home" \
-      PATH="$dir/bin:$PATH" bash "$script" "$@") >"$dir/out" 2>"$dir/err" || status=$?
+      PATH="${RUN130_PATH:+$RUN130_PATH:}$dir/bin:$PATH" bash "$script" "$@") >"$dir/out" 2>"$dir/err" || status=$?
   RUN130_MODE=""
   RUN130_DIR=""
+  RUN130_PATH=""
   out=$(cat "$dir/out")
+}
+
+# write_failing_rm dir — a `rm` that fails, first on PATH. The exit trap's
+# `rm -rf` on the scratch directory is the one thing this check can leave
+# behind, and the `restore` row is where it reports that it could not: the row
+# exists for a machine where that removal fails (a read-only parent, a file
+# somebody else holds), and the block and the exit status have to agree about
+# it. A fake failing tool is the only way to reach that path without breaking
+# the test's own machine.
+write_failing_rm() { # dir
+  mkdir -p "$1/norm"
+  cat >"$1/norm/rm" <<'RM_EOF'
+#!/usr/bin/env bash
+printf 'rm %s\n' "$*" >>"$FAKE130_DIR/rm.calls"
+exit 1
+RM_EOF
+  chmod +x "$1/norm/rm"
 }
 
 # ---------------------------------------------------------------- the assertions
@@ -476,6 +496,31 @@ test_teardown_runs_on_a_failed_assertion() {
   expect_scratch_gone "failed assertion"
 }
 
+test_a_restore_that_failed_is_a_fail() {
+  setup_case restore-failed
+  write_failing_rm "$dir"
+  RUN130_PATH="$dir/norm" run130
+  # Every row the check measured passed; the one that did not is the restore.
+  # The table's contract is that one FAILed row is exit 1, so a block whose last
+  # line is FAIL may not sit next to an exit status of 0.
+  expect_status "$status" 1 "restore failed"
+  expect_contains "$out" "FACT licence-api: PASS — " "restore failed: the rows it did measure passed"
+  expect_contains "$out" "FACT restore: FAIL — " "restore failed: the row"
+  expect_contains "$out" "is STILL THERE" "restore failed: the row names the directory left behind"
+  expect_contains "$out" "remove it yourself" "restore failed: and tells the owner to"
+  expect_contains "$out" "CHECK 130 RESULT: FAIL" "restore failed: the verdict"
+  expect_contains "$(cat "$dir/state/rm.calls")" "rm -rf" "restore failed: the trap did try"
+  # The block's last line is the verdict, and it is the one the exit status
+  # agrees with.
+  last=$(printf '%s\n' "$out" | tail -n 1)
+  expect_contains "$last" "CHECK 130 RESULT: FAIL" "restore failed: the block's last line"
+  # The directory the row says is still there really is: this run is the one
+  # case whose scratch outlives it, and the test removes it.
+  scratch=$(scratch_of "$dir")
+  [ -n "$scratch" ] && [ -d "$scratch" ] || fail "restore failed: the run said it could not remove $scratch, and nothing is there to have failed on"
+  rm -rf "$scratch"
+}
+
 test_xtrace_is_refused() {
   setup_case xtrace
   status=0
@@ -527,6 +572,7 @@ t test_a_licence_endpoint_that_answers_404_is_a_fail
 t test_every_guard_stops
 t test_the_block_shape_is_fixed_on_a_stopped_run
 t test_teardown_runs_on_a_failed_assertion
+t test_a_restore_that_failed_is_a_fail
 t test_xtrace_is_refused
 t test_usage
 

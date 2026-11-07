@@ -730,7 +730,10 @@ pin, moved the table's row from 98 to 99. Amended 2026-11-05:
 SECURITY.md, moved the table's row from 99 to 100: it is a ruling's pin rather than
 a folder's, and the figure is the tree's either way. Amended 2026-11-07:
 `internal/cli/docs_cli_output_console_graph_test.go`, the CLI output and console
-graph folder's pin, moved the table's row from 100 to 101.) They
+graph folder's pin, moved the table's row from 100 to 101. Amended 2026-11-07:
+`internal/cli/docs_check130_test.go`, the licensing folder's pin over the register's
+Check 130 section (plan L1.10, run by L1.11), moved the table's row from 101 to
+102.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

@@ -231,6 +231,15 @@ finish() {
     local note="this check created nothing and changed nothing anywhere — no project, no installation, no credential and no file of yours — and its scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
     facts="${facts}"$'\n'"restore|$restore|${note}"
   fi
+  # The restore row is a row this run measured, and main decided its status from
+  # the facts file before the row existed: a block whose last line is
+  # `CHECK 130 RESULT: FAIL` next to an exit status of 0 is the check telling two
+  # stories, and the section promises the status the block gives. So a finished
+  # run whose verdict is FAIL exits 1 — and only that: 2 (the run could not tell)
+  # and 130 (interrupted) keep their meanings.
+  if [ "$REACHED_END" = yes ] && [ "$status" -eq 0 ] && [ "$(verdict_of "$facts")" = FAIL ]; then
+    status=1
+  fi
   if [ -z "$PRINTED" ]; then
     PRINTED=1
     print_block "$facts" "$status"

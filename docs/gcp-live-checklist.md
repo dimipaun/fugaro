@@ -10485,9 +10485,12 @@ at all. Nothing else: no token, no cookie, and no page of any other repository. 
 runs, **U1** — that GitHub keeps reporting MIT once `LICENSING.md` sits beside `LICENSE` — is
 **UNVERIFIED**, and its row stays **NOT RUN**.
 
-**Restore.** Nothing is created, so there is nothing to undo: no project, no installation, no
-`fugaro` command, no bucket, no node and no file. The check's whole footprint is three anonymous
-`GET`s to `api.github.com`, one page and one blob read in a browser, and the browser's own history.
+**Restore.** Nothing of yours is created, so there is nothing of yours to undo: no project, no
+installation, no `fugaro` command, no bucket, no node and no file of yours. The script's whole
+footprint is three anonymous `GET`s to `api.github.com` — whose answers it writes into a scratch
+directory of its own (0700, outside every git work tree) that its exit trap removes on every path,
+including a Ctrl-C and a failed assertion, with the `restore` row reporting whether it really went —
+one page and one blob read in a browser, and the browser's own history.
 
 - **Close the tabs** you opened, if you would rather not keep them; nothing depends on them.
 - **Forget the checkout** the guard read the repository's name out of: no step of the check writes
