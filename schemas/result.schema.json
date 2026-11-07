@@ -452,8 +452,9 @@
       "properties": {
         "decisions": {
           "type": "array",
+          "minItems": 1,
           "maxItems": 100,
-          "description": "One entry per pending decision, in the reviewer's order. Never empty: a run with nothing pending carries no block at all. Shorter than total only when the review left more than 100, which the cap makes a record of the first 100 rather than of the whole set.",
+          "description": "One entry per pending decision, in the reviewer's order. Never empty (minItems 1, and runstore.NewOwnerDecisions returns no block at all when it has nothing to put in one): a run with nothing pending carries no block, which is a different fact from a block that lists none. Shorter than total only when the review left more than 100, which the cap makes a record of the first 100 rather than of the whole set.",
           "items": {
             "type": "object",
             "additionalProperties": false,
