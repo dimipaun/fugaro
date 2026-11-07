@@ -462,7 +462,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
-		return true, r.gateRefused(err, doc, verdict)
+		return true, r.gateRefused(err, doc, verdict, cover, imports)
 	}
 	// D55's one rule, asked with this run's conditions — a coding agent's
 	// session or the owner's own terminal, which is the whole of who may
@@ -733,16 +733,18 @@ func (r *initRun) gateApplied(ctx context.Context) error {
 const gateUnreadable = "the managed gate did not admit this step: the document it was to judge could not be produced, and a document nobody could read is never applied here (D1012)"
 
 // gateRefused is the GatedError of a step this gate did not admit, from the
-// error M6's admit answered with, the plan's own bytes and the verdict they
-// were judged by.
+// error M6's admit answered with, the plan's own bytes, the verdict they were
+// judged by, and the cover and the imports the gate asked them with.
 //
 // It is one function rather than a struct literal at the call site because the
 // shape of the refusal is a decision about this command's own document, and it
-// takes all three: the plan and the verdict are what say whether the owner's
+// takes all five: the plan and the verdict are what say whether the owner's
 // flag admits a removal here (gateDeleteLeft — which rule refused, and whether
-// the flag clears what they refused), and the error is what says whether the
-// gate judged anything at all (gateRefusalOf). The two stages whose document is
-// not a plan can only ever be the last, so they ask gateRefusalOf themselves.
+// the flag clears what they refused), the cover and its imports are what say
+// whether the same flag would apply something no rule read (a replace's create
+// half), and the error is what says whether the gate judged anything at all
+// (gateRefusalOf). The two stages whose document is not a plan can only ever be
+// the last, so they ask gateRefusalOf themselves.
 //
 // The plan's answer is asked only of a plan the gate REFUSED (gateRefusalOf's
 // plan answer, i.e. managed.ErrNotConverged): a step the gate reached no verdict
@@ -752,12 +754,12 @@ const gateUnreadable = "the managed gate did not admit this step: the document i
 // turns out to carry. A mark read that failed takes the same document down a
 // different road than a rule that refused it, and the two roads' answers must
 // not be handed one another's command.
-func (r *initRun) gateRefused(err error, doc []byte, verdict managedmode.Verdict) *initflow.GatedError {
+func (r *initRun) gateRefused(err error, doc []byte, verdict managedmode.Verdict, cover managedmode.Cover, imports []tf.ImportKey) *initflow.GatedError {
 	refusal := gateRefusalOf(err)
 	if refusal != initflow.GateRefusedPlan {
 		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
 	}
-	if owner, ok := r.gateDeleteLeft(err.Error(), doc, verdict); ok {
+	if owner, ok := r.gateDeleteLeft(err.Error(), doc, verdict, cover, imports); ok {
 		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: initflow.GateRefusedDelete, Owner: owner}
 	}
 	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
@@ -796,14 +798,17 @@ func gateRefusalOf(err error) initflow.GateRefusal {
 // a removal they can approve is being sent to work that does not close the loop
 // the refusal opened.
 //
-// Two questions come before it, and both are about the command being one that
-// can help rather than about the sentence: the verdict says whether the delete
-// rule is the only thing that refused the plan (RefusedOnlyForRemovals — the
-// flag turns the whole gate off, not one rule of it), and the plan's own bytes
-// say whether the step the flag produces will apply it (the guard it will run,
-// and the project-job rule that runs beside it). Each of them, answered the
-// other way, is a command the owner would run and watch refuse — or worse, one
-// that applies a change the cover refused with no rule left to read it.
+// Four questions come before it, and all of them are about the command being
+// one that can help rather than about the sentence: the verdict says whether
+// the delete rule is the only thing that refused the plan
+// (RefusedOnlyForRemovals — the flag turns the whole gate off, not one rule of
+// it), the plan's own bytes say whether the step the flag produces will apply
+// it (the guard it will run, and the project-job rule that runs beside it), and
+// the cover the gate itself asked says whether what the plan does BESIDES those
+// removals is judged at all (tf.WithoutRemovals, which is the create half of
+// every replace among them). Each of them, answered the other way, is a command
+// the owner would run and watch refuse — or worse, one that applies a change no
+// rule ever read.
 //
 // What it asks the plan, and not the gate's sentence: tf.Listable is exactly
 // the set --allow-delete admits — a removal (a delete, or a replace, whose
@@ -815,6 +820,19 @@ func gateRefusalOf(err error) initflow.GateRefusal {
 // itself judged, which are already in hand (D1022's document), so the addresses
 // in the command and the identity printed beside them are the ones that plan
 // carries.
+//
+// A replace is the one shape the addresses cannot tell from a removal, and the
+// cover is where the difference shows. --allow-delete admits a delete AND a
+// replace (tf.Listable), while the cover refuses a change carrying a delete as
+// ONE fact — "<address> (actions delete, create)" — and reads nothing inside it
+// (tf.Cover.NotCovered's first branch). So the create half of a replace at an
+// address on that list is a change no rule of the gate ever judged, and the run
+// that passes the flag applies it with the gate stood down. The owner's
+// approval is the removal, so the create half is asked here, as the create it
+// is, of the cover the gate itself asked (tf.WithoutRemovals): a replace whose
+// create half grants a role to somebody the review did not list, or to
+// allUsers, leaves no command, while one whose create half the cover admits
+// keeps the command a removal leaves.
 //
 // The identity is the promise §4.3 makes to the owner — "where the refusal is a
 // delete the owner did not approve, it prints the identity the plan's before
@@ -832,7 +850,7 @@ func gateRefusalOf(err error) initflow.GateRefusal {
 // RemoveIdentityText gives is then the whole of what the owner has to go on,
 // which is why it is printed rather than dropped. What no flag reaches is what
 // tf.Listable already leaves out (the paragraph above), and nothing else.
-func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.Verdict) (initflow.Left, bool) {
+func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.Verdict, cover managedmode.Cover, imports []tf.ImportKey) (initflow.Left, bool) {
 	var plan tf.Plan
 	if err := json.Unmarshal(doc, &plan); err != nil {
 		// A document this binary cannot read is not one whose removals can be
@@ -868,6 +886,17 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 		return initflow.Left{}, false
 	}
 	if err := tf.Guard(&plan, admits); err != nil {
+		return initflow.Left{}, false
+	}
+	// And only where what the flag applies BESIDE those removals is judged: the
+	// removals themselves are the owner's approval and nothing reads them
+	// again, but a replace carries a create beside its removal, and the gate's
+	// own cover never looked inside the change it refused for the delete
+	// (tf.Cover.NotCovered). The create half is asked of that same cover here,
+	// so a plan whose create half it refuses — a grant to somebody the review
+	// did not list, an allUsers one — leaves the owner no command rather than
+	// one that applies it with the gate stood down and no rule left to read it.
+	if why := cover.NotCovered(tf.WithoutRemovals(&plan, admits), imports); len(why) > 0 {
 		return initflow.Left{}, false
 	}
 	identities := make(map[string]string, len(admits))

@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -291,6 +292,29 @@ func TestUpdateManagedRemovalNoFlagAdmitsLeavesNoCommand(t *testing.T) {
 	}
 }
 
+// outsiderReplace is one change that is a removal and a creation at once, at an
+// address the flag clears, whose create half grants the whole world. It is the
+// plan the addresses cannot tell from a removal: the cover refuses a change
+// carrying a delete as ONE fact ("actions delete, create") and never looks
+// inside it (tf.Cover.NotCovered), so this plan's create half is the one part
+// of it no rule of the gate judged when the gate refused the plan — and the
+// flag, which stands the gate down for the run that passes it, would apply that
+// grant with nothing left to read it.
+func outsiderReplace() planChange {
+	const member = "allUsers"
+	return planChange{
+		"address": `module.installation.google_storage_bucket_iam_member.runs_reader["` + member + `"]`,
+		"type":    "google_storage_bucket_iam_member",
+		"change": map[string]any{
+			"actions": []string{"delete", "create"},
+			"before": map[string]any{"role": "roles/storage.objectViewer", "member": member,
+				"bucket": "fugaro-runs-" + initProject},
+			"after": map[string]any{"role": "roles/storage.objectAdmin", "member": member,
+				"bucket": "fugaro-runs-" + initProject, "condition": []any{}},
+		},
+	}
+}
+
 // The other boundary, and the one a plan carrying two kinds of refusal reaches:
 // the command gateDeleteLeft offers is the delete rule's own way past the delete
 // rule, and --allow-delete shapes the installation, so the run that passes it
@@ -300,16 +324,18 @@ func TestUpdateManagedRemovalNoFlagAdmitsLeavesNoCommand(t *testing.T) {
 // with no rule left to read it — an outsider's grant, a GPU the cost list
 // blocks — with the owner told the removal was theirs alone.
 //
-// The three plans are that one shape from three sides: a bucket this
-// installation removes (the guard's refusal, which --allow-delete does reach)
-// beside a change no list reaches at all, and one address that is both — the
-// job below replaced, where the guard refuses the removal and the cost list the
-// GPU its create half states, so the address is on the list the flag clears and
-// the flag would still apply what the cost list blocked. The left-for-you has
-// to be the plan refusal's, with no command, and nothing may be applied. The
-// mutation this is for is a gateDeleteLeft that asks what the plan's addresses
-// are and never which rule refused: every arm hands the owner a command that
-// applies the other refusal.
+// The four plans are that one shape from four sides: a bucket this installation
+// removes (the guard's refusal, which --allow-delete does reach) beside a change
+// no list reaches at all, one address that is both — the job below replaced,
+// where the guard refuses the removal and the cost list the GPU its create half
+// states, so the address is on the list the flag clears and the flag would still
+// apply what the cost list blocked — and a replace whose CREATE half no rule
+// read, which the flag would apply as it stands (a grant to allUsers). The
+// left-for-you has to be the plan refusal's, with no command, and nothing may be
+// applied. The mutation this is for is a gateDeleteLeft that asks what the
+// plan's addresses are and never which rule refused, and one that treats a
+// replace as the pure removal its address looks like: every arm hands the owner
+// a command that applies the other refusal.
 func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -324,6 +350,7 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 			[]planChange{uploadsBucketRemoval(), grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")}, "user:a@example.com"},
 		{"a job the cost list blocks beside the removal", []planChange{uploadsBucketRemoval(), gpuJobPlan()}, "nvidia-l4"},
 		{"a replace the cost list blocks at the removal's own address", []planChange{gpuJobReplace()}, "nvidia-l4"},
+		{"a replace whose create half grants the world", []planChange{outsiderReplace()}, "allUsers"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateManagedRig(t)
@@ -357,6 +384,35 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 	}
 }
 
+// The other side of the create-half question, so that it is not read as "a
+// replace is never the owner's": a replace whose create half the cover admits
+// is a removal --allow-delete clears like any other, and the command stays. The
+// mutation this is for is the check answering too much — refusing the command
+// for every change carrying a create, which is what asking the cover about the
+// whole change rather than about what it creates would do (the cover refuses
+// that change for its delete half, which is the half the flag clears).
+func TestUpdateManagedCoveredReplaceLeavesTheCommand(t *testing.T) {
+	ch := coveredJobReplace()
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, ch)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run applied a plan that replaces a job:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran: the gate refused the plan", n)
+	}
+	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
+	if left == "" {
+		t.Fatalf("a replace whose create half the cover admits left the owner no command:\n%s", got)
+	}
+	if want := "fugaro update --allow-delete " + ch["address"].(string); !strings.Contains(left, want) {
+		t.Errorf("the left-for-you does not carry the owner's command (%q):\n%s", want, left)
+	}
+}
+
 // The third question gateDeleteLeft asks, and the one neither the addresses nor
 // the verdict can answer: a plan whose removals are ALL on the list the flag
 // clears can still be a plan the owner's own run refuses, because the run that
@@ -369,6 +425,11 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 // second run below is the witness that the command could not help: the owner
 // runs it with both flags and their own run refuses it and applies nothing.
 //
+// The job's create half is the one the cover admits (coveredJobReplace), so
+// nothing but the project-job rule stands between this plan and the command:
+// the create half is judged and passes, which is what keeps this the pin on
+// that rule rather than on the create-half question beside it.
+//
 // Mutation (run, restore): drop infra.RefuseProjectJobDeletes from
 // gateDeleteLeft — the left-for-you offers "fugaro update --allow-delete
 // <grant> --allow-delete <job>".
@@ -380,10 +441,14 @@ func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
 		return planChange{"address": address, "type": typ, "mode": "managed",
 			"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": map[string]any{}}}
 	}
+	jobReplace := coveredJobReplace()
+	jobReplace["address"] = job
+	jobAndGrant := func() []planChange {
+		return []planChange{removal(grant, "google_cloud_run_v2_job_iam_member", "delete"), jobReplace}
+	}
 	r := updateManagedRig(t)
 	updating(t, r)
-	r.setPlan(t, removal(grant, "google_cloud_run_v2_job_iam_member", "delete"),
-		removal(job, "google_cloud_run_v2_job", "delete", "create"))
+	r.setPlan(t, jobAndGrant()...)
 
 	got, err := updateRun(t, r, "update", "--yes")
 	if err == nil {
@@ -407,12 +472,11 @@ func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
 	}
 
 	// And what the offered command would have done, which is the whole reason
-	// the three questions come before it: the owner's own run with both flags
+	// the questions come before it: the owner's own run with both flags
 	// refuses the same plan, with the project-job sentence, and applies nothing.
 	r2 := updateManagedRig(t)
 	updating(t, r2)
-	r2.setPlan(t, removal(grant, "google_cloud_run_v2_job_iam_member", "delete"),
-		removal(job, "google_cloud_run_v2_job", "delete", "create"))
+	r2.setPlan(t, jobAndGrant()...)
 	got2, err2 := updateRun(t, r2, "update", "--yes", "--allow-delete", grant, "--allow-delete", job)
 	if err2 == nil || !strings.Contains(got2, "retiring a project job is not supported yet") {
 		t.Errorf("the owner's own run with the flags the refusal would have offered did not refuse the project job (err %v):\n%s", err2, got2)
@@ -420,6 +484,16 @@ func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
 	if n := len(r2.ran(t, "apply")); n != 0 {
 		t.Errorf("%d terraform apply(s) ran in the run that passed the flag", n)
 	}
+}
+
+// admittingCover is the cover the direct gateRefused tests hand the gate: a
+// step's cover that refuses no plan. Those tests are about the questions the
+// plan, the verdict and the step's own guard answer, and a cover that refused
+// the document would answer the refusal for a question that is not theirs —
+// the create half of a replace has its arm in
+// TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand.
+func admittingCover() managedmode.Cover {
+	return stepCover{notCovered: func(*tf.Plan, []tf.ImportKey) []string { return nil }}
 }
 
 // The pair's other half, asked of a document the gate's own verdict would carry
@@ -447,7 +521,7 @@ func TestGateDeleteLeftAsksTheGuardAboutTheWholePlan(t *testing.T) {
 		{Gate: "cover", Address: removal, Why: "actions delete"},
 	}}
 	got := (&initRun{o: &initOptions{door: updateDoor.name}}).gateRefused(
-		fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged), doc, verdict)
+		fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged), doc, verdict, admittingCover(), nil)
 	if got.Refusal != initflow.GateRefusedPlan {
 		t.Errorf("gateRefused().Refusal = %v, want the plan refusal: the plan carries a change the guard the owner's run asks refuses", got.Refusal)
 	}
@@ -493,7 +567,7 @@ func TestGateRefusedAsksTheDeleteQuestionOnlyOfARefusal(t *testing.T) {
 			managedmode.Verdict{Refusals: []managedmode.Refusal{removal}}, initflow.GateRefusedUnread},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := (&initRun{o: &initOptions{door: updateDoor.name}}).gateRefused(tc.err, doc, tc.verdict)
+			got := (&initRun{o: &initOptions{door: updateDoor.name}}).gateRefused(tc.err, doc, tc.verdict, admittingCover(), nil)
 			if got.Refusal != tc.want {
 				t.Errorf("gateRefused(%v).Refusal = %v, want %v", tc.err, got.Refusal, tc.want)
 			}
@@ -849,7 +923,17 @@ func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
 // job the cover admits — one container, an image of this run's own registry, no
 // command, which is the workflow jobs' own shape — with a GPU, which is the
 // cost list's (managedCostGPU).
-func gpuJobPlan() planChange {
+func gpuJobPlan() planChange { return jobPlan("nvidia-l4") }
+
+// jobPlan is the job both fixtures are: one container, an image of this run's
+// own registry, no command, and the accelerator the caller names — none when it
+// names none, which is the shape the cover admits and the cost list fires
+// nothing for.
+func jobPlan(accelerator string) planChange {
+	inner := map[string]any{"containers": []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-runner:0.2.0"}}}
+	if accelerator != "" {
+		inner["node_selector"] = []any{map[string]any{"accelerator": accelerator}}
+	}
 	return planChange{
 		"address": "module.installation.google_cloud_run_v2_job.runner",
 		"type":    "google_cloud_run_v2_job",
@@ -858,10 +942,7 @@ func gpuJobPlan() planChange {
 		// it is a plan the cost list reads as nothing to check and admits.
 		"mode": "managed",
 		"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{}, "after": map[string]any{
-			"template": []any{map[string]any{"template": []any{map[string]any{
-				"containers":    []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-runner:0.2.0"}},
-				"node_selector": []any{map[string]any{"accelerator": "nvidia-l4"}},
-			}}}},
+			"template": []any{map[string]any{"template": []any{inner}}},
 		}},
 	}
 }
@@ -874,6 +955,16 @@ func gpuJobPlan() planChange {
 // rule wrote the line as well.
 func gpuJobReplace() planChange {
 	ch := gpuJobPlan()
+	ch["change"].(map[string]any)["actions"] = []string{"delete", "create"}
+	return ch
+}
+
+// coveredJobReplace is the same replace without the accelerator: a removal the
+// flag clears whose create half the cover admits and the cost list fires
+// nothing for. It is the shape in which the flag IS offered for a replace,
+// because what the same change creates is judged like any other create.
+func coveredJobReplace() planChange {
+	ch := jobPlan("")
 	ch["change"].(map[string]any)["actions"] = []string{"delete", "create"}
 	return ch
 }
