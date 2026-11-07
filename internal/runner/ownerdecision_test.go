@@ -227,3 +227,89 @@ func TestOwnerDecisionIsHonoredAtFixCostOne(t *testing.T) {
 		t.Fatalf("owner decisions = %+v, want the cheap finding listed", rec.OwnerDecisions)
 	}
 }
+
+// TestShippedSeniorRoundWithAnOwnerDecisionSurvivesLevel3: level 3 overwrites
+// the round readiness is decided on, and the decisions a run owes the owner are
+// not that round's alone. A senior review that shipped while carrying a finding
+// only the owner can settle, followed by a clean adversarial round, is still a
+// run waiting for the owner: with only the deciding round read, the pull
+// request went READY with the question recorded nowhere — nothing listed it and
+// the follow-up that answers it was launched blind over it (OD1).
+func TestShippedSeniorRoundWithAnOwnerDecisionSurvivesLevel3(t *testing.T) {
+	h := newHarnessFiles(t, levelsCfg(t, ""), nil, levelsFiles)
+	rec, err := h.run(t,
+		implement("feature"),
+		review("ship", 0), // review_first
+		reviewScored("ship", ownerFinding("LICENSE.md", "the licence text needs counsel's clearance")), // review: the senior level ships carrying it
+		review("ship", 0), // adversarial, clean
+	)
+	if err != nil {
+		t.Fatalf("the run failed: %v", err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "adversarial") {
+		t.Fatalf("stages = %v, want one round at every level", got)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %s (reason %q), want a draft: level 3 shipping does not answer what level 2 left the owner", rec.Outcome, rec.Reason)
+	}
+	if want := "review is waiting on 1 owner decision"; rec.Reason != want {
+		t.Errorf("reason = %q, want %q", rec.Reason, want)
+	}
+	if rec.Halt != nil {
+		t.Errorf("halt = %+v, want none: the loop ran to its own end, Decide kept the pull request a draft", rec.Halt)
+	}
+	if rec.OwnerDecisions == nil || len(rec.OwnerDecisions.Decisions) != 1 ||
+		rec.OwnerDecisions.Decisions[0].File != "LICENSE.md" {
+		t.Fatalf("owner decisions = %+v, want the senior round's finding listed", rec.OwnerDecisions)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft {
+		t.Errorf("the pull request is not a draft: %+v", pr)
+	}
+	for _, want := range []string{"**Waiting on you**", "`LICENSE.md`", "the licence text needs counsel's clearance"} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("the status section does not carry %q:\n%s", want, pr.Body)
+		}
+	}
+}
+
+// TestMixedSeniorRoundOutOfRoundsStillLeavesTheBlock: the same loss from the
+// other side. A senior round that ran out of rounds with one fixable finding
+// beside the owner's, followed by level 3 shipping clean, leaves the pull
+// request a draft because level 2's last verdict is not a ship — and that
+// draft has to carry the question, or the owner is never asked and the
+// follow-up that answers it is not refused (OD1).
+func TestMixedSeniorRoundOutOfRoundsStillLeavesTheBlock(t *testing.T) {
+	h := newHarnessFiles(t, levelsCfg(t, ""), nil, levelsFiles)
+	mixed := reviewScored("changes",
+		fixableFinding("ledger.go", "a partial write is not rolled back"),
+		ownerFinding("LICENSE.md", "the licence text needs counsel's clearance"))
+	rec, err := h.run(t,
+		implement("feature"),
+		review("ship", 0), // review_first
+		mixed,             // review, round 1
+		fixStep,
+		review("ship", 0), // review_first, the bounce
+		mixed,             // review, round 2: review_rounds is 2, so the level is out of rounds
+		review("ship", 0), // adversarial, clean
+	)
+	if err != nil {
+		t.Fatalf("the run failed: %v", err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "fix", "review_first", "review", "adversarial") {
+		t.Fatalf("stages = %v", got)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %s, want a draft: level 2's last round did not ship", rec.Outcome)
+	}
+	if rec.OwnerDecisions == nil || len(rec.OwnerDecisions.Decisions) != 1 ||
+		rec.OwnerDecisions.Decisions[0].File != "LICENSE.md" {
+		t.Fatalf("owner decisions = %+v, want the last senior round's owner finding listed", rec.OwnerDecisions)
+	}
+	if want := "review is waiting on 1 owner decision"; rec.Reason != want {
+		t.Errorf("reason = %q, want %q: the question is what the draft waits on, not only the held-back level", rec.Reason, want)
+	}
+	if body := onlyPR(t, h.provider).Body; !strings.Contains(body, "`LICENSE.md`") {
+		t.Errorf("the status section does not carry the pending decision:\n%s", body)
+	}
+}

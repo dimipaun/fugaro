@@ -34,25 +34,46 @@ func pendingOwner(od *runstore.OwnerDecisions) int {
 }
 
 // decidingOwnerDecisions is what the run's review left the repository's owner:
-// the deciding round's needs_owner findings, redacted and bounded as the
-// record stores them, nil when that round left none.
+// the needs_owner findings of the last round of every enabled outer review
+// level, redacted and bounded as the record stores them, nil when they left
+// none.
 //
-// It reads the deciding round — the last round of the level readiness is
-// decided on (decidingReview) — and not every round the run held, because that
-// is the round the pull request's outcome is read from: a round a later one
-// superseded is not what the pull request is waiting for, and a first line
-// under an outer level advises that level and never decides (seniorReview).
+// It reads every enabled outer level and not only the deciding one (the last
+// round of the highest level that ran, decidingReview) because both are levels
+// the pull request's readiness is read from: level 3 overwrites the senior
+// level's round in lastSenior, so a senior round that shipped while carrying a
+// decision — or that ran out of rounds with one beside a fixable finding, which
+// leaves the pull request a draft because that level did not ship — would
+// otherwise record the question nowhere: nothing would list it for the owner
+// and the follow-up that answers it would be launched blind over it, which is
+// the loop this whole change exists to end. The rounds before a level's last
+// one are not read: a later round of the same level superseded them.
+//
+// A first line under an outer level advises that level and never decides
+// (seniorReview), so its rounds are not read here; where no outer level ran it
+// is the deciding level, and lastSenior holds its round.
+//
 // The verdict beside the findings is not read: a round that shipped while
-// naming one of these still leaves the question open, and Decide's gate is
-// what keeps the pull request a draft for it.
+// naming one of these still leaves the question open, and Decide's gate is what
+// keeps the pull request a draft for it.
 func (r *run) decidingOwnerDecisions() *runstore.OwnerDecisions {
-	findings := ownerFindings(r.lastSenior.Findings)
-	if len(findings) == 0 {
-		return nil
+	var ds []runstore.OwnerDecision
+	seen := make(map[runstore.OwnerDecision]bool)
+	// Senior before the deciding round, which is the adversarial level's where
+	// it ran: a decision both levels left is one entry, listed under the level
+	// that raised it first.
+	for _, round := range []seniorRound{r.seniorLevelLast, r.lastSenior} {
+		for _, f := range ownerFindings(round.Findings) {
+			d := runstore.OwnerDecision{File: r.redact(f.File), Summary: r.redact(f.Summary)}
+			if seen[d] {
+				continue
+			}
+			seen[d] = true
+			ds = append(ds, d)
+		}
 	}
-	ds := make([]runstore.OwnerDecision, 0, len(findings))
-	for _, f := range findings {
-		ds = append(ds, runstore.OwnerDecision{File: r.redact(f.File), Summary: r.redact(f.Summary)})
+	if len(ds) == 0 {
+		return nil
 	}
 	return runstore.NewOwnerDecisions(ds)
 }

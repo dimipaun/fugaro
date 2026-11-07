@@ -462,6 +462,16 @@ type run struct {
 	// returns, which is the only one readiness reads: level 3's where it ran,
 	// level 2's otherwise, and level 1's where no outer level ran at all.
 	lastSenior seniorRound
+	// seniorLevelLast is the senior level's own last round, kept beside
+	// lastSenior because level 3 overwrites that one. Readiness is decided on
+	// the highest enabled level, but the decisions the run owes the owner are
+	// what the last round of every enabled OUTER level left (OD1,
+	// decidingOwnerDecisions): without this, a senior round that shipped while
+	// carrying one — or that ran out of rounds with one beside a fixable
+	// finding — would be forgotten the moment the adversarial review ran, and
+	// the run would go ready, or end a draft with the question recorded
+	// nowhere and the follow-up that answers it launched blind.
+	seniorLevelLast seniorRound
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
@@ -2766,6 +2776,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		if !parsed {
 			r.lastSenior = seniorRound{Round: round}
+			r.seniorLevelLast = r.lastSenior
 			model, effort := r.reviewFacts("review")
 			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort})
 			r.save(ctx)
@@ -2774,8 +2785,11 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		// The round is kept whole as well as counted: the mode's threshold
 		// table reads the findings' scores, which the summary does not carry
-		// (outcome.go, T3.1).
+		// (outcome.go, T3.1). The senior level's own copy of it is kept too, so
+		// the owner decisions it left survive level 3's round overwriting this
+		// one (seniorLevelLast).
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
+		r.seniorLevelLast = r.lastSenior
 		model, effort := r.reviewFacts("review")
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
