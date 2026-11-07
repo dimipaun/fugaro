@@ -4,9 +4,9 @@
 
 Every command and flag `fugaro` ships, generated from the command tree
 (`internal/cli.NewRootCmd`) by `go run ./ee/clidoc`. Cobra's own `help`
-and `completion` commands, the root's `-v, --version` flag, and the
-`-h, --help` flag of every command, are part of what `fugaro --help` lists,
-so they are here too. Commands the CLI
+and `completion` commands, the root's `-v, --verbose` and `--version`
+flags, and the `-h, --help` flag of every command, are part of what
+`fugaro --help` lists, so they are here too. Commands the CLI
 hides are not listed: they are internal, and a hidden command is not user
 documentation.
 
@@ -21,7 +21,8 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for fugaro |
-| `-v`, `--version` | bool | `false` | no | version for fugaro |
+| `-v`, `--verbose` | bool | `false` | no | print the run's full output as it goes, not one line per step |
+| `--version` | bool | `false` | no | version for fugaro |
 
 Subcommands:
 
@@ -3365,7 +3366,7 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--verbose` | bool | `false` | no | also print each recipe's use_when and steps |
+| `-v`, `--verbose` | bool | `false` | no | also print each recipe's use_when and steps |
 
 Subcommands:
 
