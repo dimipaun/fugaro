@@ -19,6 +19,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/yamledit"
@@ -1136,6 +1137,27 @@ func settingsModeRank(mode string) int {
 	}
 }
 
+// settingsDecisionModelRank orders a decision model by the tier order the
+// orchestrator's block is written in (policy.DecisionModels, least capable
+// first), and -1 for a name the order does not hold. The block's own writers
+// refuse a name outside the order (policy.ValidOrchestrator), so one can only
+// come from a node written by hand, and -1 sits below every tier rather than at
+// the cheapest one — the two sides of settingsLoosens' comparison then read it
+// as D846's asymmetry asks. A new value outside the order is looser than any
+// name inside it, so an edit that writes one takes the typed name even though
+// nobody can prove it tightens; an old value outside the order is lower than
+// every tier, so a node repaired by naming a model the order holds is not a
+// loosening. Two values outside the order compare equal, the one pair nothing
+// is proven about either way.
+//
+// The write path never reaches this — the allowlist refuses the block's keys —
+// but the publish door does: policyCeilingMembers names a member per class, so
+// a node republished with a class moved down the order is a loosening there and
+// one moved up is not (D1234, G6).
+func settingsDecisionModelRank(name string) int {
+	return slices.Index(policy.DecisionModels, name)
+}
+
 // settingsCeilingBase is the value a ceiling write is compared against (D846):
 // the tighter of what the file holds and what a run gets today, which the
 // read's own resolver answers — the shared or published node, the project
@@ -1225,9 +1247,10 @@ func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 }
 
 // settingsLoosens reports whether newValue is looser than oldValue for a
-// ceiling key: a larger cap, a cap removed, a weaker mode, or a wider model
-// list. A key no layer sets has nothing to loosen, so a first write of a cap
-// is never the typed form — a first write of 0 is, because 0 is not a cap.
+// ceiling key: a larger cap, a cap removed, a weaker mode, a wider model list,
+// or a decision model moved down the tier order. A key no layer sets has
+// nothing to loosen, so a first write of a cap is never the typed form — a
+// first write of 0 is, because 0 is not a cap.
 func settingsLoosens(key, oldValue, newValue string) bool {
 	if key == "budget.mode" {
 		if oldValue == "" {
@@ -1240,6 +1263,9 @@ func settingsLoosens(key, oldValue, newValue string) bool {
 			return false
 		}
 		return !settingsListSubset(newValue, oldValue)
+	}
+	if strings.HasPrefix(key, policyDecisionModelPrefix) {
+		return settingsDecisionModelRank(newValue) < settingsDecisionModelRank(oldValue)
 	}
 	oldN, oldErr := strconv.ParseFloat(oldValue, 64)
 	newN, newErr := strconv.ParseFloat(newValue, 64)

@@ -25,9 +25,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { NoInstallation, PLAN_STATUS_MIN_INTERVAL_MS, createBoundSource } from '../../src/source/cli'
+import { NoInstallation, GRAPH_READ_MIN_INTERVAL_MS, PLAN_STATUS_MIN_INTERVAL_MS, createBoundSource } from '../../src/source/cli'
 import type { BoundInstallation, CliSource } from '../../src/source/cli'
-import { NO_PLAN_CHECKOUT, SourceRefusal } from '../../src/source/source'
+import { NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SourceRefusal } from '../../src/source/source'
 import type { Snapshot } from '../../src/source/source'
 
 /** FIRST and SECOND are the two installations the cases below move between. */
@@ -397,6 +397,121 @@ describe('the plan read, whose directory is the binding’s', () => {
     installation = { ...FIRST, checkout: '/home/operator/src/other' }
     expect((await source.planStatus({})).document, 'the previous directory’s graph was served').toEqual({ read: 4 })
     expect(spawned).toHaveLength(4)
+  })
+})
+
+describe('the graph read, whose scope a previous answer taught', () => {
+  /** aGraphSource is a `CliSource`-shaped stand-in whose graph read answers one
+   * document per call: `documents` is what each call returns, in order, and the
+   * calls themselves are recorded -- so "no child ran" is a count and not a
+   * reading of the refusal's sentence. */
+  function aGraphSource(
+    documents: readonly Record<string, unknown>[],
+    spawned: unknown[],
+  ): CliSource {
+    let calls = 0
+    return {
+      version: async () => ({ text: FIRST.id, receivedAt: '2026-11-07T12:00:00Z' }),
+      close: async () => undefined,
+      graphRead: async (args: unknown): Promise<Snapshot> => {
+        spawned.push(args)
+        const document = documents[calls] ?? documents[documents.length - 1] ?? {}
+        calls += 1
+        return {
+          document,
+          receivedAt: '2026-11-07T12:00:00Z',
+          sequence: 1,
+          day: null,
+          rolled: false,
+          notices: [],
+        }
+      },
+    } as unknown as CliSource
+  }
+
+  it('refuses a scope no answer of this installation listed, and spawns nothing for it', async () => {
+    // **Finding F21's second half, and the reason it is here rather than in the
+    // spawn table.** The id grammar admits an id that exists nowhere, so a
+    // renderer could name one; the surface closes that by admitting an id only
+    // when a previous answer of the same installation listed it. `all` is the
+    // one value admitted without being listed, because it is the selector rather
+    // than a source -- the read a screen opens on -- and the refusal is thrown
+    // **before** `resolve`, so no binary is probed and no child runs.
+    const built: string[] = []
+    const spawned: unknown[] = []
+    const source = createBoundSource({
+      installation: () => FIRST,
+      create: async (each) => {
+        built.push(each.id)
+        return aGraphSource([{ sources: [{ source: 'coordinator' }] }], spawned)
+      },
+    })
+
+    const error = await refusalOf(source.graphRead({ source: 'orchestrator:o9' }))
+    expect(error, 'a scope no answer had listed was not refused').toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
+    expect(built, 'the refusal built a source, which is a child').toEqual([])
+    expect(spawned, 'the refusal spawned a read after all').toEqual([])
+
+    // The first answer is the one that teaches the surface: `all` is admitted
+    // with nothing listed, and its own `sources[]` are what may be asked for
+    // afterwards. `orchestrator:o9` is refused again once they are known.
+    const all = await source.graphRead({})
+    expect(all.document['sources']).toEqual([{ source: 'coordinator' }])
+    expect((await source.graphRead({ source: 'coordinator' })).document['sources']).toEqual([
+      { source: 'coordinator' },
+    ])
+    expect(spawned).toHaveLength(2)
+    const still = await refusalOf(source.graphRead({ source: 'orchestrator:o9' }))
+    expect((still as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
+    expect(spawned, 'the refused scope reached the source').toHaveLength(2)
+  })
+
+  it('keeps every scope an answer listed, serves one inside the minute, and forgets it with the installation', async () => {
+    // **What is recorded is a union, and the reading is deliberate.** A scoped
+    // read answers about its own scope alone, so a rule that kept only the most
+    // recent answer would withdraw every other scope a screen is still drawing
+    // the moment one scope was re-read -- and the read is a *lesson* about which
+    // scopes exist rather than a snapshot of them. The cadence is
+    // `GRAPH_READ_MIN_INTERVAL_MS`, keyed by the binding **and** the scope, on
+    // the same terms as the plan read's above.
+    const spawned: unknown[] = []
+    const at = Date.parse('2026-11-07T12:00:00Z')
+    let now = at
+    const learned = [
+      { sources: [{ source: 'coordinator' }, { source: 'local:o1' }] },
+      { sources: [{ source: 'local:o1' }] },
+    ]
+    let installation: BoundInstallation | null = FIRST
+    const source = createBoundSource({
+      installation: () => installation,
+      clock: () => new Date(now),
+      create: async () => aGraphSource(learned, spawned),
+    })
+
+    await source.graphRead({})
+    expect(spawned).toHaveLength(1)
+    // The second call is inside the minute, so it is the first read's answer --
+    // and the scoped read that follows is its own key, which is why it spawns.
+    expect((await source.graphRead({})).document['sources']).toEqual(learned[0]?.['sources'])
+    expect(spawned).toHaveLength(1)
+    await source.graphRead({ source: 'local:o1' })
+    expect(spawned).toHaveLength(2)
+    // The scoped answer listed `local:o1` alone, and `coordinator` is still
+    // admitted: nothing withdraws a scope an earlier answer named.
+    now = at + GRAPH_READ_MIN_INTERVAL_MS
+    expect((await source.graphRead({ source: 'coordinator' })).document['sources']).toEqual([
+      { source: 'local:o1' },
+    ])
+    expect(spawned).toHaveLength(3)
+
+    // A different installation has learned nothing: the scopes are the
+    // project's own answers, so a switch is a clean slate rather than a licence
+    // for another project's graph.
+    installation = SECOND
+    const afterSwitch = await refusalOf(source.graphRead({ source: 'coordinator' }))
+    expect((afterSwitch as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
+    expect(spawned, 'the previous installation’s scopes were still admitted').toHaveLength(3)
   })
 })
 

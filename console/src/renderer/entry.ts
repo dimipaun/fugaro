@@ -467,13 +467,14 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the fifteen reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the sixteen reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
  * Coordinator's jobs-free totals read -- and `listModels`, the Project tab's
  * models panel, and the settings-edit plan's C1 added `readSettings`, the same
- * tab's settings panel), named one by one
+ * tab's settings panel, and the graph plan's CG9a added `graphRead`, the Graph
+ * tab's read of the versioned graph document), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -499,9 +500,10 @@ export interface ReadBridge {
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  graphRead(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the fifteen reads over the structural bridge. A missing
+/** readBridgeFrom is the sixteen reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -539,6 +541,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
     planStatus: (args) => ask('planStatus', args),
+    graphRead: (args) => ask('graphRead', args),
   }
 }
 
