@@ -288,8 +288,23 @@ func projectJobAccountFor(p *projectpolicy.Policy, profile string, pr projectpol
 	// place and targets that same no-account job, whatever its task.json or a
 	// stale selection says.
 	account := ""
-	if auth == "oauth" {
+	switch {
+	case auth == "oauth":
 		account = projectJobAccount(selected)
+	case auth == "api-key" && selected == config.AnthropicKeyAccount:
+		// The axis's one value that is not a Claude account (D1417, D1422): it
+		// names the project's own Anthropic API key, and a profile that lists it
+		// deploys a job whose account segment is the sentinel itself
+		// (internal/infra's ProjectJobs, mounting no token on it). A launch that
+		// names it targets that job, and it is what the review class needs: the
+		// review-only variant of THAT job is the pairing the key is served from,
+		// so a launch resolving the profile's no-account job instead would run
+		// in a variant the run refuses as a pairing that names no key. It is no
+		// second way onto an account's job — the sentinel's job holds no token
+		// for a run to pick up, and api-key is the one auth the sentinel
+		// survives claudeAccountAllowed under, which is the auth D1417 pairs the
+		// key with.
+		account = selected
 	}
 	// The job that account names, and the token it holds. Both are the
 	// profile's own claude_accounts list, read by the two functions the
@@ -375,20 +390,36 @@ func projectJobReviewFor(profile, provider, account string, timeout time.Duratio
 // release's selections do: a repository that must run as another account
 // belongs on a profile that serves it.
 //
-// The two cases the caller reaches this with are the run's own credential being
-// the default account on a profile that does not list it — including a profile
-// that lists nothing, which is every profile of an installation that has not
-// adopted accounts — and a named account the profile does not list. Both are
-// refusals of the same rule, and both name the token and the account: an OAuth
-// run on a profile that serves no Claude account would start with no credential
-// at all, and the runner refuses exactly that, so the launch stops here, before
-// the claim and before the token, rather than at a run that halts.
+// The three cases the caller reaches this with are the run's own credential
+// being the default account on a profile that does not list it — including a
+// profile that lists nothing, which is every profile of an installation that has
+// not adopted accounts — a named account the profile does not list, and the
+// account axis's one non-account value, the project's own Anthropic API key
+// (config.AnthropicKeyAccount), which no claude_accounts entry may define and
+// which has a sentence of its own below. The first two are refusals of the same
+// rule, and both name the token and the account: an OAuth run on a profile that
+// serves no Claude account would start with no credential at all, and the runner
+// refuses exactly that, so the launch stops here, before the claim and before
+// the token, rather than at a run that halts.
 //
 // The default account is spelled the way the model spells it everywhere: the
 // default account (config.DefaultClaudeAccount) and a profile that serves no
 // Claude account are both the empty account on a job's axis
 // (config.ProjectJobAccounts, config.ProjectJobTokenAccount).
 func checkProjectJobAccount(profile string, pr projectpolicy.Profile, selected string) error {
+	// The axis's one value that is no account at all, and the sentence for it
+	// cannot be the one below: that one names the account's token and the
+	// claude_accounts entry whose allow_data_to list bounds it, while the
+	// sentinel has no token and config.ValidateClaudeAccounts refuses to define
+	// it in claude_accounts — so the move it names would be a key the operator
+	// may not write. What this says instead is what the value is and where its
+	// job comes from (D1417, D1422): the profile's own claude_accounts list is
+	// what deploys it, and the key's own reach in the local config is what its
+	// published list is derived from.
+	if selected == config.AnthropicKeyAccount {
+		return userErr("this run's own credential is %s, the project's own Anthropic API key, which is not a Claude account and is no job of the profile %q: a project job's Claude credential is fixed where the job is deployed — one job per (profile, provider, account), the account segment of the job's own name — and the key's job is the one a profile deploys by listing it, whose review-only variant is what a review of such a repository runs on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Add %s to profiles.%s.claude_accounts in the project's local config — the profile's own allow_repos are then the repositories the key serves, and project_secrets.%s.allow_data_to must reach them — and run fugaro update to deploy the job and its review variant",
+			config.AnthropicKeyAccount, profile, config.AnthropicKeyAccount, profile, config.AnthropicSecret)
+	}
 	secret := config.ClaudeAccountSecret(projectJobAccount(selected))
 	chose := fmt.Sprintf("the default Claude OAuth account, whose token is %s", secret)
 	if selected != "" {
