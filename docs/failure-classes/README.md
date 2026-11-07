@@ -21,7 +21,7 @@ this folder, by this repository's rule. The ask is reproduced in [spec.md](spec.
 verbatim copy of the design.
 
 **What it is.** Today a run that did not succeed says why in one free-text `reason`
-(`runstore.Record.Reason`, `internal/runstore/runstore.go:684`), and nothing groups those sentences:
+(`runstore.Record.Reason`, `internal/runstore/runstore.go:721`), and nothing groups those sentences:
 `fugaro runs stats` counts runs by *person* and buckets statuses, `fugaro runs digest` writes six
 per-run flags and no cause, and `fugaro diagnose` explains one run at a time. The design adds
 `failure_class` — a closed enum of nineteen values, each with `kind`, `retryable` and `needs_owner` —

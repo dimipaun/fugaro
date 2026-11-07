@@ -103,7 +103,7 @@ which is harmless and true), and FC3–FC9 simply start later.
 | File | Writers (level) | Note |
 | --- | --- | --- |
 | `internal/failure/failure.go`, `internal/failure/failure_test.go` | FC1 (L0) | new: the class type, `Classes()`, the one table and its properties |
-| `internal/runstore/runstore.go` | FC1 (L0) | `Record.FailureClass` beside `Reason` (`:684`), and nothing else |
+| `internal/runstore/runstore.go` | FC1 (L0) | `Record.FailureClass` beside `Reason` (`:721`), and nothing else |
 | `schemas/result.schema.json` | FC1 (L0) | the property and its enum, in the commit that adds the Go field (the schema is `additionalProperties: false`, F8) |
 | `internal/cli/docs_pr_state_test.go` | FC1 (L0), FC2 (L1) | FC1 adds the vocabulary's sentence to the design's pin; FC2 **rewrites the census pin**, which reaches its `statements == 0` fatal the moment `recordEnd` takes the status (F25) |
 | `internal/runner/recordend.go` | FC2 (L1) | new, if **D1452** answers the recommendation: the one writer |
@@ -158,9 +158,9 @@ F21, F27, F28. **Depends on:** nothing. **Reviewer tier:** standard. **SEC:** no
   The record's field is **not** in the schema's `required` (a succeeded record carries none, F8), and
   `result.json`'s `"version"` stays `const 1` (`schemas/result.schema.json:10`).
 - **Tests:** `TestResultSchemaFailureClassesAgreeWithGo` — **the shape `TestResultSchemaHaltReasonsAgreeWithGo`
-  uses (`schemas/schemas_test.go:1978`), not the `…StatusesAgreeWithGo` the design names, which does
+  uses (`schemas/schemas_test.go:1985`), not the `…StatusesAgreeWithGo` the design names, which does
   not exist** (F15): the schema's enum is `failure.Classes()`, in order. `TestFailureClassesAreClosedAndPropertyComplete`
-  (every class has its row, every row its class). `TestResultSchemaAcceptsRunnerRecords` (`:694`,
+  (every class has its row, every row its class). `TestResultSchemaAcceptsRunnerRecords` (`:696`,
   re-run: the fully-populated record carries the field).
 - **Red step:** write the schema's enum from the Go slice before the slice exists — the test fails
   because the two lists disagree (an empty slice against a written enum), which is the failure the
@@ -240,12 +240,12 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   `outcome.Decide` already returns at `internal/runner/outcome.go:46`, beside it) and
   `haltClass(h runstore.HaltReason) failure.Class`. **The halt table is the load-bearing one**
   (D1455): the writer's `haltClass` and the reader's legacy mapping (FC5) must agree halt reason by
-  halt reason, including `HaltBudgetUnavailable` (`internal/runstore/runstore.go:53`), which the
-  design's `halted_credential` range `:54–70` misses (F17) and which is a **budget** halt. The one
-  slice is `runstore.GovernanceHaltReasons()` (`:103`) plus the budget and credential families, and
+  halt reason, including `HaltBudgetUnavailable` (`internal/runstore/runstore.go:54`), which the
+  design's `halted_credential` range `:55–71` misses (F17) and which is a **budget** halt. The one
+  slice is `runstore.GovernanceHaltReasons()` (`:104`) plus the budget and credential families, and
   the agreement test walks it.
 - **Tests:** `TestDecideRefusalsCarryTheirClass`, `TestHaltReasonsMapToTheirFamily` (every value of
-  the closed `HaltReason` set, including `:53`), `TestConfigRefusalIsConfigInvalid`, and
+  the closed `HaltReason` set, including `:54`), `TestConfigRefusalIsConfigInvalid`, and
   `TestHaltClassesAgreeWithTheReadersTable` — the test D1455 exists for: the same walk over the same
   slice, asserted against the reader's mapping, so a rename in one place and not the other is red.
 - **Red step:** every class assertion fails against a tree where the class is `unclassified` — the
@@ -626,7 +626,7 @@ pinned); D1462 is a rule every task above obeys — the pins go into the existin
 `internal/cli/docs_*_test.go` files, and no task adds one, because the docs-pin census counts them in
 one row (`ls internal/cli/docs_*_test.go | wc -l`, `docs/rigor-modes/reconciliation.md:752`, **101**
 on `main` today) that four folders' pins re-read: `internal/cli/docs_rigor_modes_test.go:388` runs the
-row's own command, and `docs_config_management_test.go:397`, `docs_managed_agent_converge_test.go:160`
+row's own command, and `docs_config_management_test.go:397`, `docs_managed_agent_converge_test.go:190`
 and `docs_repo_image_removal_test.go:525` compare the row against the tree's glob (F28, D1462).
 
 **If FC7's second half is dropped** (D1466 = the table alone), FC8 loses one document and one
