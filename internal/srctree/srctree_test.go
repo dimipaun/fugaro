@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -652,6 +653,99 @@ func TestATreeSymlinkIsNotFollowed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestATreeWhoseGitIsSomewhereElseIsRebuilt is the same attack one level
+// deeper: git writes into whatever ".git" names, and a link, a "gitdir:" file
+// and a commondir file name another repository of the user's just as well as
+// the tree directory itself could be a link. The repository named is left at
+// its own HEAD, and the cache gets a tree of its own instead.
+func TestATreeWhoseGitIsSomewhereElseIsRebuilt(t *testing.T) {
+	r := newRemote(t, "v1.0.0")
+	plants := map[string]func(t *testing.T, tree, gitdir string){
+		"a link": func(t *testing.T, tree, gitdir string) {
+			if err := os.Symlink(gitdir, filepath.Join(tree, ".git")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a gitdir file": func(t *testing.T, tree, gitdir string) {
+			if err := os.WriteFile(filepath.Join(tree, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a commondir file": func(t *testing.T, tree, gitdir string) {
+			if err := os.MkdirAll(filepath.Join(tree, ".git"), cacheDirMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(tree, ".git", "commondir"), []byte(gitdir+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, plant := range plants {
+		t.Run(name, func(t *testing.T) {
+			o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+			// Another repository of this person's, with its own work in it.
+			mine := t.TempDir()
+			testutil.Git(t, mine, "init", "--quiet", "-b", "main")
+			testutil.WriteFiles(t, mine, map[string]string{"notes": "mine\n"})
+			testutil.Git(t, mine, "add", "-A")
+			testutil.Git(t, mine, "commit", "--quiet", "-m", "mine")
+			head := read(t, filepath.Join(mine, ".git", "HEAD"))
+			before := treeNames(t, mine)
+
+			tree := filepath.Join(cacheRootOf(t, o), treeName)
+			if err := os.MkdirAll(tree, cacheDirMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(tree, "VERSION"), []byte("v0.9.0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			plant(t, tree, filepath.Join(mine, ".git"))
+
+			dir, _, err := Ensure(context.Background(), o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after := read(t, filepath.Join(mine, ".git", "HEAD")); after != head {
+				t.Fatalf("the repository the tree's .git named was rewritten: %q became %q", head, after)
+			}
+			if after := treeNames(t, mine); !slices.Equal(before, after) {
+				t.Fatalf("the repository the tree's .git named was written into: %v became %v", before, after)
+			}
+			if got := read(t, filepath.Join(mine, "notes")); got != "mine\n" {
+				t.Fatalf("the repository the tree's .git named lost its work: %q", got)
+			}
+			if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.0.0\n" {
+				t.Fatalf("the tree holds %q", got)
+			}
+		})
+	}
+}
+
+// treeNames is everything under a directory, relative and sorted, for
+// comparing a repository before and after a call that must not have written
+// into it. A whole listing rather than HEAD alone: an object or a ref landing
+// in someone's repository is the harm, and where git puts it is its business.
+func treeNames(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		out = append(out, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // names is what a directory holds, for comparing a directory before and after

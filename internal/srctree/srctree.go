@@ -254,6 +254,26 @@ func newestTag(ctx context.Context, o Options) (string, error) {
 	return "", fmt.Errorf("%s publishes no release tag", o.SourceURL)
 }
 
+// isRepository reports whether the tree at dir holds a repository git may be
+// run in, rather than a name that leads to one somewhere else. git follows
+// ".git" wherever it points, and a link, a "gitdir:" file, and a commondir
+// file inside a real directory all make it read and write another
+// repository's refs and object store — the HEAD of a working copy of the
+// person's, say — while the call looks like a cache being filled. Only a
+// plain directory, of the kind this package's own "git init" makes, answers
+// yes; anything else is a tree to rebuild.
+func isRepository(dir string) bool {
+	at := filepath.Join(dir, ".git")
+	fi, err := os.Lstat(at)
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	if _, err := os.Lstat(filepath.Join(at, "commondir")); err == nil {
+		return false
+	}
+	return true
+}
+
 // gitTree fetches ref into the tree and checks it out detached. The commit
 // HEAD ends at is what the Record keeps, and for a build that carries a
 // commit it must be that commit: the tree is only ever read, so a wrong one
@@ -281,9 +301,12 @@ func gitTree(ctx context.Context, o Options, root string, w want) (string, error
 	case !errors.Is(err, fs.ErrNotExist):
 		return "", err
 	}
-	if _, err := os.Lstat(filepath.Join(dir, ".git")); errors.Is(err, fs.ErrNotExist) {
-		// A tree from the tarball transport is not a repository to fetch
-		// into: it is replaced.
+	if !isRepository(dir) {
+		// A tree that is not this cache's own repository — one from the
+		// tarball transport, or one whose .git names a repository somewhere
+		// else — is replaced rather than fetched into: git would init, fetch
+		// and detach the HEAD of whatever that name points at, which is
+		// another repository's history, not a cache.
 		if err := removeTree(dir); err != nil {
 			return "", err
 		}
