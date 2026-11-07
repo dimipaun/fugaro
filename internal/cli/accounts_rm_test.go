@@ -403,6 +403,18 @@ func TestAccountsRmRefusesACodingAgentsSession(t *testing.T) {
 	if !strings.Contains(rmErr.Error(), "nothing was read off this session") || !strings.Contains(rmErr.Error(), id) {
 		t.Errorf("the refusal is not this command's own — it does not say that nothing was read off the session and that the secret %s is still there: %v", id, rmErr)
 	}
+	// The reason, and not an admission this command does not have: a session's
+	// removal is refused whatever the referrer walk found, because every
+	// document that walk reads is one the session writes.
+	if !strings.Contains(rmErr.Error(), "no read a session makes is evidence about origin") {
+		t.Errorf("the refusal does not give the reason a session is refused whatever the walk found (the gate's own rule, %q): %v", accountsRmSessionRule, rmErr)
+	}
+	// A4's withdrawn rule read the other way round: it said a gate admits a
+	// session's removal once the walk comes back clean, which is an admission a
+	// check the session writes its own answer into cannot make.
+	if strings.Contains(rmErr.Error(), "no profile and no repository may still name the account") || strings.Contains(rmErr.Error(), "only a managed project's gate admits") {
+		t.Errorf("the refusal states the withdrawn rule that a clean referrer walk admits a session's removal: %v", rmErr)
+	}
 	if strings.Contains(rmErr.Error(), "refusing to write") {
 		t.Errorf("the settings write path refused this run and this command's own refusal never fired: %v", rmErr)
 	}

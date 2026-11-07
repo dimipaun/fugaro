@@ -51,9 +51,11 @@ import (
 // about the repository and goes on — that file is a repository's and not this
 // installation's, so their edit may not be blocked by one this command cannot
 // write (spec §4 step 2, D783's shape) — while a coding agent's session is
-// admitted only by a managed project's gate, whose rules are those referrers
-// read back (managed spec §4.2, D1180). Everywhere else a session keeps the
-// refusal this command has always made.
+// refused outright, whatever the walk found: the refs and the records that check
+// reads are the session's own, so a clean read is its own word for what origin
+// carries (D1172, managed spec §4.1), and the way out is the same removal in the
+// person's own terminal window, where it prints every reference it finds and asks
+// to be confirmed.
 //
 // The local config half is internal/yamledit's edit and the settings commands'
 // shared write path, as add's is (D847); the converge is add's own runner,
@@ -175,11 +177,12 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 
 	// The managed gate, before anything is screened and written
 	// (accounts_managed.go, add's own file, and the helper below): in a managed
-	// project's coding agent's session it decides whether this removal is a step
-	// the session may take, admitting one whose referrers are checked and clean
-	// and refusing one whose are not — before the diff is shown, so a refusal
+	// project's coding agent's session it refuses this removal outright, because
+	// every document its referrer check would read is one the session writes
+	// (accountsRmRules's session rule) — before the diff is shown, so a refusal
 	// leaves the file and the secret exactly as they were. Everywhere else it
-	// answers the zero Managed, which is every fence below unchanged.
+	// answers the zero Managed, which is the fence below unchanged: the refusal
+	// this command makes itself.
 	m, gate, err := accountsRmGate(cmd.Context(), cmd, lc, plan, next, read)
 	if err != nil {
 		return err
@@ -618,16 +621,16 @@ func accountsRmNoEntry(name, want string, serving []string) error {
 		pluginwire.Printable(want), pluginwire.Printable(want), pluginwire.Printable(name), accountsAddProfiles(serving))
 }
 
-// accountsRmSession is spec §4's last line as the managed gate leaves it
-// (managed spec §4.2, D1181): the refusal a coding agent's session reads when no
-// admission covers this removal. A managed project's gate admits an `accounts
-// rm` whose referrers are checked and clean, and that is the only thing that
-// does; a removal the gate refused returns the gate's own sentence instead of
-// this one (accountsRmGate), so what reaches here is a project this program
-// could not read as managed, or a mark read that did not answer — the two cases
-// a mark that cannot be read is not a permission for.
+// accountsRmSession is this command's own refusal in a coding agent's session
+// (spec §4's last line, D1181's rule): what a session reads when no gate spoke
+// at all — a project this program could not read as managed, or a mark read that
+// did not answer, the two cases a mark that cannot be read is not a permission
+// for. A managed project's gate refuses a session's `accounts rm` as a class
+// (accountsRmRules's session rule: the refs and the records its check reads are
+// the session's own), and that refusal reaches the session in the gate's own
+// words instead of this one (accountsRmGate).
 func accountsRmSession(marker string, plan accountsRmPlan, command string) error {
-	return userErr("refusing to remove %s in a coding agent's session (%s is set): this command deletes a credential, and only a managed project's gate admits it — with no admission covering this removal (no profile and no repository may still name the account, spec §4.2) nothing was read off this session, nothing was written and the secret %s is still there; run this yourself at your own terminal: %s",
+	return userErr("refusing to remove %s in a coding agent's session (%s is set): this command deletes a credential, and no read a session makes is evidence about origin — the refs the referrer check resolves, this machine's record of its checkouts and the installation's own list of enrolled repositories are documents the session writes, so a clean read is the session's own word for what origin carries — nothing was read off this session, nothing was written and the secret %s is still there; run this yourself at your own terminal: %s",
 		pluginwire.Printable(plan.name), marker, plan.secretID, command)
 }
 
