@@ -427,3 +427,52 @@ func TestLeaseFailsClosedOnWhatItCannotRead(t *testing.T) {
 		}
 	})
 }
+
+// TestLeaseGivesUpAfterTheBound is the other half of the fence: a lease node
+// that keeps moving is not a race a daemon may spin on. Acquire, Beat and
+// Release each read, decide and write a bounded number of times — the bound the
+// code uses, asserted here through LeaseAttempts rather than a copy of the
+// number written into the test — and then hand back ErrLeaseContention, which a
+// caller can tell from an outage. The node is written by the daemon that reads
+// it in the ordinary case, so a node that never stops moving is something else
+// (a rule that stopped granting, a person editing the live tree) and the answer
+// is a refusal the daemon reports, not a tick that never ends.
+//
+// Mutation: return the last rtdb error instead of ErrLeaseContention and the
+// caller can no longer tell contention from a broken store; drop the bound and
+// these cases never finish.
+func TestLeaseGivesUpAfterTheBound(t *testing.T) {
+	ctx := context.Background()
+	path := mustPath(t, orchestrator.PathLease)
+
+	for _, tc := range []struct {
+		name string
+		call func(*orchestrator.Lease) error
+	}{
+		{"a claim", func(l *orchestrator.Lease) error { _, err := l.Acquire(ctx); return err }},
+		{"a beat", func(l *orchestrator.Lease) error { return l.Beat(ctx) }},
+		{"a release", func(l *orchestrator.Lease) error { _, err := l.Release(ctx); return err }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := gcpfake.NewRTDB(t)
+			// The node names this daemon and is fresh, so the holder check lets
+			// the beat and the release through: what refuses them is only the
+			// ETag that never stops moving.
+			f.Set(path, map[string]any{"holder": winnerHolder, "at": leaseAt.Format(time.RFC3339)})
+			refusing := &refusingCAS{inner: rtdbClient(t, f)}
+			lease := mustLease(t, refusing, winnerHolder, clockAt(leaseAt))
+
+			err := tc.call(lease)
+			if !errors.Is(err, orchestrator.ErrLeaseContention) {
+				t.Fatalf("%s under a node that always moves ended as %v, not ErrLeaseContention", tc.name, err)
+			}
+			if refusing.gets != orchestrator.LeaseAttempts || refusing.puts != orchestrator.LeaseAttempts {
+				t.Errorf("%s read %d and wrote %d times for a bound of %d: the bound is not the one the code uses",
+					tc.name, refusing.gets, refusing.puts, orchestrator.LeaseAttempts)
+			}
+			if got := nodeText(t, nodeObject(t, f.Value(path), "the lease"), "holder"); got != winnerHolder {
+				t.Errorf("the node names %q after a refused %s: it was written anyway", got, tc.name)
+			}
+		})
+	}
+}

@@ -397,7 +397,11 @@ func TestHeartbeatDoesNotMoveTheStateETag(t *testing.T) {
 // previous generation really wrote rather than a shape invented here.
 //
 // Two of the fixture's facts are rekeyed here, and that is a defect this task
-// reports rather than one it hides: the fixture's own `repo.primary` and
+// reports rather than one it hides — the pull request carries it under "A
+// defect to report before a daemon writes real state", with the reproduction
+// (validateOp, applyFactSet, ValidateState and EncodeState all pass; Save then
+// fails with the database's 400) and the two candidate fixes. The fixture's own
+// `repo.primary` and
 // `sweep.retired` are names the state model and
 // schemas/orchestrator-state.schema.json both allow — the schema's
 // propertyNames pattern admits a dot — while the Realtime Database refuses a

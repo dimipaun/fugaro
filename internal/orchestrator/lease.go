@@ -48,8 +48,11 @@ const (
 	LeaseSkew = 30 * time.Second
 )
 
-// leaseAttempts bounds the re-read a lost race is answered with, exactly as
-// saveAttempts bounds the state's.
+// leaseAttempts bounds the re-read a lost lease race is answered with: a claim,
+// a beat or a release re-reads and re-decides this many times and then reports
+// ErrLeaseContention. The state node has no such bound — its Save writes once
+// (store.go) — because a state body is derived from the document the caller
+// read, so a second attempt would write over one the caller never saw.
 const leaseAttempts = 5
 
 // leaseDoc is the lease node's shape on the wire: the holder and the server
