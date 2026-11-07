@@ -271,8 +271,9 @@ Cloud Build and the daily image check read), and an image that is not the one
 the checkout resolves to now: a workflow whose image was last built from
 settings it no longer resolves to, and, for a workflow whose image is the
 project's catalog's own entry, an entry no build has built or one whose
-definition moved (fugaro image build <entry>). Every one of these degrades
-with a note instead of failing when the bucket is unreachable.
+definition moved (fugaro image build <entry>). None of these fails when the
+bucket is unreachable: the layer line falls back to the offline cache and says
+so, and an image check doctor cannot read says nothing.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
 CI. --strict makes a stale, unpinned, foreign or unwired plugin fail the
