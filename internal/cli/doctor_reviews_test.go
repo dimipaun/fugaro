@@ -207,6 +207,30 @@ func TestDoctorReviewsDueIsInTheDefaultView(t *testing.T) {
 		t.Errorf("the info line is not a decision the default view prints:\n%s", out)
 	}
 
+	// The wiring, which the class is worth nothing without: doctor runs the
+	// check on the checkout it stands in. A rig installation whose checkout
+	// holds the same folder, on the same day, has the line among the checks it
+	// ran and prints it.
+	r := newDoctorRig(t)
+	noProjectLayerBucket(t)
+	oldNow := budgetNow
+	budgetNow = func() time.Time { return reviewsDay(t, "2026-10-27") }
+	t.Cleanup(func() { budgetNow = oldNow })
+	checkout := gitCheckout(t, filepath.Join(r.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n")
+	t.Chdir(checkout)
+	reviewsWrite(t, checkout, "2026-10-23")
+	o := doctorJSON(t)
+	wired, ok := doctorCheckByID(o.Checks, "reviews-due-old")
+	if !ok {
+		t.Fatalf("doctor did not run the reviews-due check: %+v", o.Checks)
+	}
+	if wired.Class != doctorClassDecision {
+		t.Errorf("doctor classed its own reviews-due-old line %q, want %q", wired.Class, doctorClassDecision)
+	}
+	if out := doctorDefaultOutput(t, o.Checks); !strings.Contains(out, "reviews-due-old:") {
+		t.Errorf("doctor ran the check and its default view does not print it:\n%s", out)
+	}
+
 	// The control: the same two lines with the info one's ID unclassified --
 	// which is what a class nobody named leaves them -- are not printed at
 	// all, only counted. That is the state the task exists to keep out of.
