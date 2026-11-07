@@ -4621,9 +4621,12 @@ settings:
 // produces. The fixture this branch corrected spelled `target_layer` "project"
 // on the row whose write lands in `repo` and `""` on two rows that each name a
 // layer, and it said `writable` on two rows that carry an owner word -- the
-// drift this half exists for. What it cannot answer is the owner word's own
-// spelling (the read prints a family's name from a map internal/cli holds), and
-// that stays pinned where the drawn rows are, in the console's own tests.
+// drift this half exists for. What this half cannot answer is `owner` and
+// `writable` themselves, whose answers are settingsFamilyCommands and
+// settingsWriteRow and live in internal/cli:
+// TestSettingsConsoleFixtureOwnerAndWritable
+// (internal/cli/settings_console_fixture_test.go) holds the fixture to those
+// two, from the package that owns them.
 func TestSettingsConsoleFixture(t *testing.T) {
 	const file = "../console/test/fixtures/settings.json"
 	data, err := os.ReadFile(file)
