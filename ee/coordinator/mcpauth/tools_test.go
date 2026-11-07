@@ -132,9 +132,19 @@ func TestAToolWithNoScopeIsRefused(t *testing.T) {
 			{"no handler", Tool{Name: "get_project_state", InputSchema: testSchema}},
 			{"no input schema", Tool{Name: "get_project_state", Handler: handler}},
 			{"no name", Tool{InputSchema: testSchema, Handler: handler}},
+			// A schema that is present and is not JSON is the one refusal here
+			// that is not about a missing member: it would be written to the wire
+			// with every other declaration, so the encoder would fail on the
+			// whole answer and every client's tools/list with it — the ten sound
+			// tools included. The row is the probe's own value.
+			{"an input schema that is not JSON", Tool{Name: "get_project_state", InputSchema: json.RawMessage(`{"type":`), Handler: handler}},
 		} {
-			if err := NewRegistry().Register(tc.tool); !errors.Is(err, ErrToolIncomplete) {
+			r := NewRegistry()
+			if err := r.Register(tc.tool); !errors.Is(err, ErrToolIncomplete) {
 				t.Errorf("Register(%s) = %v; want ErrToolIncomplete", tc.what, err)
+			}
+			if got := r.List(); len(got) != 0 {
+				t.Errorf("a registry served %d tools after refusing %q: the tool is registered or it is not, and a refused one must not make the list unencodable", len(got), tc.what)
 			}
 		}
 	})

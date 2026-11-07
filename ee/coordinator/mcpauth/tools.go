@@ -229,10 +229,18 @@ func NewRegistry() *Registry {
 // Every refusal below is a deployment mistake rather than a request's, so each
 // is answered here, where it can be read by whoever wired the tool up, instead
 // of on the call that discovers it: a name the catalogue does not map (the
-// scope question nobody has answered), a declaration missing its handler or
-// its schema, and a second registration of a name that is already served.
+// scope question nobody has answered), a declaration missing its handler or its
+// schema, a schema that is not JSON, and a second registration of a name that
+// is already served.
+//
+// The schema has to be JSON and not merely present, because a declaration is
+// written to the wire with the rest of the list: the encoder fails on the whole
+// answer, not on the one member, so a tool registered with a schema nothing can
+// encode is not a tool that is missing from tools/list — it is every client's
+// tools/list failing, the ten sound declarations included (server.go's
+// writeJSONStatus has nowhere to put a partial answer).
 func (r *Registry) Register(t Tool) error {
-	if t.Name == "" || t.Handler == nil || len(t.InputSchema) == 0 {
+	if t.Name == "" || t.Handler == nil || !json.Valid(t.InputSchema) {
 		return fmt.Errorf("mcpauth: %q: %w", t.Name, ErrToolIncomplete)
 	}
 	spec, mapped := catalogueEntry(t.Name)

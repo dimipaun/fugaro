@@ -53,7 +53,7 @@ found the same defect (`ee/coordinator/mcpauth/limits.go:298`). **The tree has g
 **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first half (#1716) are merged** — M4's
 half being its account, the front door service and its public invoker binding
 (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **and what is left
-is M4's store half, M5, M5b and M7–M10** ([reconciliation.md](reconciliation.md) §4a, "What has happened
+is M4's store half, M5b and M8–M10** ([reconciliation.md](reconciliation.md) §4a, "What has happened
 since").
 
 **Asked by.** The owner, on 2026-10-24: a hosted MCP server inside the coordinator, with OAuth 2.1
