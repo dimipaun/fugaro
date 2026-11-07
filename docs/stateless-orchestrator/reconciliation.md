@@ -179,7 +179,8 @@ reader is sent to, and O1 now classes them Sensitive: the npm manifest and its l
 checksums a reader checks a build against), and `website/content/security.md` (**`SECURITY.md`** byte for byte **below a generated header**, the one website path
 `.claude/rules/credentials-service.md` scopes as security-sensitive). **The same sweep was owed to `docs/**`, which the rule does put on the light side**, and a
 later round of the same review found it: `docs/release-streams.yaml` is the release gate's own catalogue (read by `internal/streams`, `scripts/release.sh` and the
-CI guard on a bump), `docs/console-dependency-graph/implementation-plan.graph.json` is an artifact the console's plan reader opens, and
+CI guard on a bump), the plan graph artifacts — `docs/**/*.graph.json`, the class and not the one file, because a graph is drawn beside its plan at any depth and
+`internal/cli/plan_status.go` walks the tree for the suffix — are what a tool reads rather than what a reader reads, and
 `docs/website/redesign/capture-screenshots.mjs` and `docs/website/redesign/sample-logo-hue.py` are scripts committed to be re-runnable. They are exceptions now, on
 the plan's own line that a file in a routine tree which is not reading matter is Sensitive. The rest of `website/**` stays routine as the plan states it. **Still the owner's to
 rule:** whether the site's *code* — its layouts, its client scripts and its build config — is Sensitive too, which would take the whole tree off the allowlist. The

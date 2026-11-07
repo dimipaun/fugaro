@@ -155,12 +155,21 @@ func TestUnlistedPathIsSensitive(t *testing.T) {
 		"docs/Pending-Workflows/evil.yml",
 		"docs/PENDING-WORKFLOWS/evil.yml",
 		// The docs tree's own exceptions: files under it that are not reading
-		// matter — the release gate's catalogue, an artifact a tool draws, and
+		// matter — the release gate's catalogue, the plan graph artifacts, and
 		// two scripts that are committed to be re-runnable. docs/ is the tree a
 		// reader reads, so a file in it that code opens or runs is the same kind
 		// of hole the website's five were.
 		"docs/release-streams.yaml",
 		"docs/console-dependency-graph/implementation-plan.graph.json",
+		// The graph artifacts are a class and not that one file: a plan's graph
+		// is drawn beside the plan, at any depth, and internal/cli/plan_status.go
+		// reads every `.graph.json` it finds under docs/. A path that reaches
+		// the class by its own name, one that would be written under a folder
+		// that does not exist yet, and the same class spelled in capitals, which
+		// the owner's macOS resolves into the folder it names.
+		"docs/plans/2026-10-31-a-plan.graph.json",
+		"docs/plans/nested/a-plan.graph.json",
+		"docs/PLANS/A-PLAN.GRAPH.JSON",
 		"docs/website/redesign/capture-screenshots.mjs",
 		"docs/website/redesign/sample-logo-hue.py",
 		// The website's own exceptions: what a reader installs, runs or verifies
@@ -315,13 +324,14 @@ var beyondTheRoutingText = map[string]bool{"mobile": true, "the console": true}
 
 // theRoutineTrees and theRoutineExceptions are the allowlist the plan's O1
 // states (D1234), as globs: the two trees a change may be Routine in, and what
-// inside them is not — a `/**` suffix is a tree, and a bare path is one file.
+// inside them is not — a `/**` suffix is a tree, `/**/*<suffix>` is the class of
+// files that end in those bytes, and a bare path is one file.
 var (
 	theRoutineTrees      = []string{"docs/**", "website/**"}
 	theRoutineExceptions = []string{
 		"docs/pending-workflows/**",
 		"docs/release-streams.yaml",
-		"docs/console-dependency-graph/implementation-plan.graph.json",
+		"docs/**/*.graph.json",
 		"docs/website/redesign/capture-screenshots.mjs",
 		"docs/website/redesign/sample-logo-hue.py",
 		"website/package.json",
@@ -338,9 +348,10 @@ var (
 // category the fixture carries is a category of the owner's routing rule as
 // reconciliation.md F15 documents it for reviewers, and no routine rule admits
 // a path of one. The routine half: the trees the table opens are the ones the
-// plan's O1 names, and the trees and files it opens and closes again are the
-// exceptions it names. A table that widened itself, or a doc that lost a
-// category, is red here rather than a cheaper review nobody notices.
+// plan's O1 names, and the trees, the files and the one file class it opens and
+// closes again are the exceptions it names. A table that widened itself, or a
+// doc that lost a category, is red here rather than a cheaper review nobody
+// notices.
 func TestRulesTableMatchesTheReviewerRoutingText(t *testing.T) {
 	text := routingText(t)
 	routine := sensitivity.RoutineRules()
@@ -359,8 +370,11 @@ func TestRulesTableMatchesTheReviewerRoutingText(t *testing.T) {
 					t.Errorf("the routine rule %q (%q) admits %q, which the routing text calls security-sensitive", r.Name, r.Prefix, p)
 				}
 			}
+			// The exceptions are asked through the matcher Classify uses and
+			// not through their prefixes: a line that names one file covers
+			// that file and not every path that starts with its name.
 			for _, e := range exceptions {
-				if strings.HasPrefix(p, e.Prefix) {
+				if e.Covers(p) {
 					t.Errorf("the exception %q (%q) covers %q, a path of the routing rule's own category", e.Name, e.Prefix, p)
 				}
 			}
@@ -373,10 +387,10 @@ func TestRulesTableMatchesTheReviewerRoutingText(t *testing.T) {
 			t.Errorf("%s's O1 no longer names %s as an allowlisted tree or exception", planDoc, want)
 		}
 	}
-	if got, want := prefixes(routine), prefixesOf(theRoutineTrees); !reflect.DeepEqual(got, want) {
+	if got, want := globs(routine), theRoutineTrees; !reflect.DeepEqual(got, want) {
 		t.Errorf("the routine table is %q, want the plan's O1 trees %q", got, want)
 	}
-	if got, want := prefixes(exceptions), prefixesOf(theRoutineExceptions); !reflect.DeepEqual(got, want) {
+	if got, want := globs(exceptions), theRoutineExceptions; !reflect.DeepEqual(got, want) {
 		t.Errorf("the exception table is %q, want the plan's O1 exceptions %q", got, want)
 	}
 }
@@ -415,21 +429,23 @@ func planO1(t *testing.T) string {
 	return strings.Join(strings.Fields(doc[start:end]), " ")
 }
 
-func prefixes(rows []sensitivity.RuleRow) []string {
+// globs writes a table back the way the plan's O1 states it: a rule that admits
+// a tree is `prefix/**`, one that names the class of files ending in those bytes
+// is `prefix/**/*suffix`, and one that names a single file is already its own
+// glob. The equality in TestRulesTableMatchesTheReviewerRoutingText is what
+// makes the two spellings one statement, so a shape the plan cannot write is a
+// shape the table may not hold either.
+func globs(rows []sensitivity.RuleRow) []string {
 	got := make([]string, 0, len(rows))
 	for _, r := range rows {
-		got = append(got, r.Prefix)
-	}
-	return got
-}
-
-// prefixesOf turns the plan's globs into the path prefixes the table matches
-// with: `docs/**` and the prefix `docs/` are the same tree, and a glob that
-// names one file is already the path the table holds.
-func prefixesOf(globs []string) []string {
-	got := make([]string, 0, len(globs))
-	for _, g := range globs {
-		got = append(got, strings.TrimSuffix(g, "**"))
+		switch {
+		case r.Suffix != "":
+			got = append(got, r.Prefix+"**/*"+r.Suffix)
+		case strings.HasSuffix(r.Prefix, "/"):
+			got = append(got, r.Prefix+"**")
+		default:
+			got = append(got, r.Prefix)
+		}
 	}
 	return got
 }

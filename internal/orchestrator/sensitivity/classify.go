@@ -43,10 +43,14 @@ const (
 )
 
 // rule is one line of a table: a name the routing text's words can be held
-// against, and the repository-relative path prefix it matches.
+// against, and the repository-relative path prefix it matches. A line that
+// carries a suffix matches the class of files under its prefix that end in
+// those bytes, which is the one shape a boundary inside a tree can have when
+// the files it names sit at any depth.
 type rule struct {
 	name   string
 	prefix string
+	suffix string
 }
 
 // routineRules is the allowlist (D1234): the trees a change may be Routine in.
@@ -62,11 +66,13 @@ var routineRules = []rule{
 // Sensitive, which is why a line may be added to it from a review rather than
 // from a person deciding a tree: nothing here can make a change cheaper.
 //
-// Two shapes. A prefix that ends in a slash is a tree, and the exception covers
-// it and the files in it: CI is a category of the routing rule, and
+// Three shapes. A prefix that ends in a slash is a tree, and the exception
+// covers it and the files in it: CI is a category of the routing rule, and
 // docs/pending-workflows/ holds the workflow files a person copies into
 // .github/workflows. A prefix that names a file is that one path and nothing
-// else.
+// else. A prefix with a suffix is the class of files under that prefix that end
+// in those bytes, which is what a path this classifier cannot enumerate by name
+// needs: the class, not one member of it.
 //
 // The website's lines are files because the tree's routine part is its copy:
 // these carry what a reader installs, runs or verifies — the npm manifest and
@@ -77,19 +83,23 @@ var routineRules = []rule{
 // one website path .claude/rules/credentials-service.md scopes as
 // security-sensitive.
 //
-// The docs tree's lines are files for the same reason, and the same one that
-// already puts docs/pending-workflows/ on this table: docs is the tree a reader
-// reads, and these are not reading matter. docs/release-streams.yaml is the release
-// gate's own catalogue — internal/streams refuses a file that breaks it,
-// scripts/release.sh takes the CLI stream's name and version from it, and a CI
+// The docs tree's lines are files or one class of file for the same reason, and
+// the same one that already puts docs/pending-workflows/ on this table: docs is
+// the tree a reader reads, and these are not reading matter. docs/release-streams.yaml
+// is the release gate's own catalogue — internal/streams refuses a file that breaks
+// it, scripts/release.sh takes the CLI stream's name and version from it, and a CI
 // guard fails on a bump that leaves it behind. The two scripts under
 // docs/website/redesign/ are what produced the redesign brief's evidence and are
-// committed to be re-runnable. A `.graph.json` is the artifact a tool draws and
-// the console's plan reader opens beside a plan.
+// committed to be re-runnable. The `.graph.json` line is a class because the
+// artifact is drawn beside the plan it belongs to: internal/cli/plan_status.go
+// walks the whole docs tree for the suffix and reads every file it finds, so
+// naming today's one artifact would leave the next one — written here or in a
+// repository that took Fugaro — in the cheap class until somebody remembered a
+// line of this table, and a guard that depends on remembering is not one.
 var sensitiveExceptions = []rule{
 	{name: "CI", prefix: "docs/pending-workflows/"},
 	{name: "the release streams", prefix: "docs/release-streams.yaml"},
-	{name: "the dependency graph artifact", prefix: "docs/console-dependency-graph/implementation-plan.graph.json"},
+	{name: "the plan graph artifacts", prefix: "docs/", suffix: ".graph.json"},
 	{name: "the screenshot script", prefix: "docs/website/redesign/capture-screenshots.mjs"},
 	{name: "the logo script", prefix: "docs/website/redesign/sample-logo-hue.py"},
 	{name: "the website's dependencies", prefix: "website/package.json"},
@@ -156,8 +166,9 @@ func withinTree(p, prefix string) bool {
 }
 
 // covers reports whether an exception line covers p. A prefix ending in a slash
-// names a tree; one that does not names a single file, so an exception for
-// `website/package.json` does not reach `website/package.json.bak`.
+// names a tree, a prefix with a suffix names the class of files under it that
+// end in those bytes, and a prefix that does neither names a single file, so an
+// exception for `website/package.json` does not reach `website/package.json.bak`.
 //
 // Exceptions are matched without case, and only they are: a checkout on the
 // owner's macOS, whose filesystem does not distinguish `docs/pending-workflows`
@@ -168,7 +179,10 @@ func withinTree(p, prefix string) bool {
 // stays Sensitive. Folding the case of one side only moves paths toward
 // Sensitive, which is the direction this table exists for.
 func (e rule) covers(p string) bool {
-	p, prefix := strings.ToLower(p), strings.ToLower(e.prefix)
+	p, prefix, suffix := strings.ToLower(p), strings.ToLower(e.prefix), strings.ToLower(e.suffix)
+	if suffix != "" {
+		return strings.HasPrefix(p, prefix) && strings.HasSuffix(p, suffix)
+	}
 	if strings.HasSuffix(prefix, "/") {
 		return withinTree(p, prefix)
 	}

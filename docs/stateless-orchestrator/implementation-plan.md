@@ -178,21 +178,23 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Files (4):** `internal/orchestrator/sensitivity/classify.go` (new), `internal/orchestrator/sensitivity/classify_test.go` (new),
   `internal/orchestrator/sensitivity/testdata/paths.txt` (new), `internal/orchestrator/sensitivity/export_test.go` (new).
 - **Interfaces:** `func Classify(changedPaths []string) Class` (`Routine|Sensitive`), by path only. **An allowlist, not a denylist:** `Routine` only
-  when **every** path matches an allowlisted routine prefix (`docs/**` except `docs/pending-workflows/**`, `website/**` except the files below; **`mobile/**` and the console renderer are not on it** (`mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js` and `mac.js` hold credentials and MACs); a `_test.go` file is routine only inside an allowlisted tree, so a test edit in `internal/orchestrator`, `internal/initflow`,
+  when **every** path matches an allowlisted routine prefix (`docs/**` and `website/**`, each minus the tree's and the files' exceptions named below; **`mobile/**` and the console renderer are not on it** (`mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js` and `mac.js` hold credentials and MACs); a `_test.go` file is routine only inside an allowlisted tree, so a test edit in `internal/orchestrator`, `internal/initflow`,
   `internal/agentenv`, `internal/managed`, `schemas/`, `ee/` or `.claude/` is Sensitive). **Everything else, and every unknown, unmatched or malformed
   path, is Sensitive**, so the classifier's own package, the daemon and the guards default to Sensitive. The owner's routing rule (credentials, writes
   and guards, the managed gate, Terraform and IAM, the agent environment and gateway, agent prompts, recipes, `CLAUDE.md`, `AGENTS.md`, `.claude/**`,
   plugin skills, CI) is a test fixture the allowlist must never contradict; the fixture also lists `mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js`, `mobile/src/mailbox/mac.js` and the console's pairing and write paths, which must never be Routine. No input but paths: a title or description cannot lower it.
-- **The exceptions inside the two routine trees are files, and the review rounds of 2026-11-07 added them.** Both trees are on the allowlist for what a reader reads, so
-  a file under one that is not reading matter is the file an exception names — the same reason `docs/pending-workflows/**` was already one. **In `website/**`** (the
+- **The exceptions inside the two routine trees are what a reader does not read: a file, or the class of files a tool reads, and the review rounds of 2026-11-07 added them.** Both trees are on the allowlist for what a reader reads, so
+  a path under one that is not reading matter is the path an exception names — the same reason `docs/pending-workflows/**` was already one. **In `website/**`** (the
   routing rule gives the light reviewer docs, tests and design, and the website is this plan's own allowance for a tree that is mostly rendered copy):
   `website/package.json` and `website/package-lock.json` (the install scripts CI and the owner's machine run), `website/content/downloads.json` and
   `website/data/console-sha256sums.txt` (the URLs and the checksums a reader checks a console build against), `website/data/install.yaml` (the install commands a
   reader pastes) and `website/content/security.md` (the published security policy — `SECURITY.md` byte for byte **below a generated header**, and the one website path
   `.claude/rules/credentials-service.md` scopes as security-sensitive). **In `docs/**`**: `docs/release-streams.yaml` (the release gate's own catalogue —
   `internal/streams` refuses a file that breaks it, `scripts/release.sh` takes the CLI stream's name and version from it, and a CI guard fails on a bump that leaves
-  its `current` behind), `docs/console-dependency-graph/implementation-plan.graph.json` (the artifact a tool draws and the console's plan reader opens beside a plan;
-  the reader accepts one beside any plan under `docs/`, and **the next artifact a plan writes belongs on this list in the commit that writes it**),
+  its `current` behind), `docs/**/*.graph.json` (**the class** of plan graph artifacts rather than the one file it is written for today — a tool draws a graph
+  beside the plan it belongs to, `internal/cli/plan_status.go` walks the whole `docs/` tree for that suffix and reads what it finds, so an entry naming only
+  `docs/console-dependency-graph/implementation-plan.graph.json` would leave the next artifact, here or in a repository that took Fugaro, in the cheap class until
+  somebody remembered to extend this list; a guard that depends on remembering is not one),
   `docs/website/redesign/capture-screenshots.mjs` and `docs/website/redesign/sample-logo-hue.py` (scripts, committed to be re-runnable). Narrowing an allowlist is the
   direction a review may move it in on its own; **open for the owner is the wider half of that finding** — whether the site's *code* (its layouts, its client scripts
   and its build config: `website/src/layouts/`, `website/public/scripts/`, `website/astro.config.mjs`) should be Sensitive too, which would take the whole tree off
