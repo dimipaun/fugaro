@@ -1008,7 +1008,7 @@ func runImageStatus(cmd *cobra.Command, o cloudOptions, only string, asJSON bool
 		return err
 	}
 	defer env.Close()
-	if only, err = repoArg(ctx, only); err != nil {
+	if only, err = repoArg(ctx, o, only); err != nil {
 		return err
 	}
 	repos := slices.Sorted(maps.Keys(env.lc.Repos))

@@ -199,7 +199,7 @@ func runRunsSummary(cmd *cobra.Command, o *summaryOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
 		return err
 	}
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {

@@ -179,7 +179,7 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 	ctx := cmd.Context()
 	repo := o.repo
 	var err error
-	if repo, err = repoArg(ctx, repo); err != nil {
+	if repo, err = repoArg(ctx, o.cloud, repo); err != nil {
 		return err
 	}
 	if repo == "" {

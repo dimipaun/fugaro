@@ -235,7 +235,7 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 		return err
 	}
 	defer env.Close()
-	repo, slug, err := digestRepo(ctx, env, o.repo)
+	repo, slug, err := digestRepo(ctx, env, o.cloud, o.repo)
 	if err != nil {
 		return err
 	}
@@ -372,9 +372,9 @@ func digestPeriod(dim digest.Dim, date string, now time.Time) (digest.Period, er
 // checkout's own origin, as fugaro run resolves it. It returns both the
 // owner/name a record's own repo field is compared against and the slug the
 // runs bucket keeps that repository's runs under.
-func digestRepo(ctx context.Context, env *cloudEnv, repo string) (string, string, error) {
+func digestRepo(ctx context.Context, env *cloudEnv, o cloudOptions, repo string) (string, string, error) {
 	var err error
-	if repo, err = repoArg(ctx, repo); err != nil {
+	if repo, err = repoArg(ctx, o, repo); err != nil {
 		return "", "", err
 	}
 	if repo == "" {

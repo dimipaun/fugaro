@@ -420,11 +420,11 @@ type secretRepo struct {
 // resolveSecretRepo resolves --repo to its slug and label. flag is empty for
 // a bare --repo (NormalizeRepoArgs rewrites it to --repo=) and for a caller
 // that passed no flag at all, and both mean this checkout's origin.
-func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretRepo, error) {
+func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, o cloudOptions, flag string) (*secretRepo, error) {
 	ctx := cmd.Context()
 	r := &secretRepo{repo: flag}
 	var err error
-	if r.repo, err = repoArg(ctx, flag); err != nil {
+	if r.repo, err = repoArg(ctx, o, flag); err != nil {
 		return nil, err
 	}
 	if r.repo == "" {
@@ -622,7 +622,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name, repo)) {
 		return secretsSetProjectWide(cmd, env, o, name)
 	}
-	r, err := resolveSecretRepo(cmd, env, o.repo)
+	r, err := resolveSecretRepo(cmd, env, o.cloud, o.repo)
 	if err != nil {
 		return err
 	}
@@ -1730,7 +1730,7 @@ there may be stored per repository and perfectly present.`,
 			if o.projectWide || !cmd.Flags().Changed("repo") {
 				return listProjectWide(cmd, env, o)
 			}
-			r, err := resolveSecretRepo(cmd, env, o.repo)
+			r, err := resolveSecretRepo(cmd, env, o.cloud, o.repo)
 			if err != nil {
 				return err
 			}

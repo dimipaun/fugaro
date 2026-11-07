@@ -1418,7 +1418,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		return err
 	}
 	var err error
-	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+	if o.repo, err = repoArg(cmd.Context(), settingsAim(o.project, o.config), o.repo); err != nil {
 		return err
 	}
 	edits := 0
@@ -1621,7 +1621,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		return err
 	}
 	var err error
-	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+	if o.repo, err = repoArg(cmd.Context(), settingsAim(o.project, o.config), o.repo); err != nil {
 		return err
 	}
 	if len(args) != 1 {

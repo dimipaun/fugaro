@@ -224,7 +224,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	repoFlag := o.repo
 	if repoFlag != "" {
 		var err error
-		if repoFlag, err = repoArg(ctx, repoFlag); err != nil {
+		if repoFlag, err = repoArg(ctx, o.cloud, repoFlag); err != nil {
 			return nil, err
 		}
 	}

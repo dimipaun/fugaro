@@ -23,8 +23,16 @@ import (
 //
 // A path that resolves to nothing usable is refused: not a directory there,
 // not inside a git checkout, no origin remote, an origin that names no
-// repository, or a checkout whose repository this project's config does not
-// list. Every refusal that names the value prints it through safetext.Field,
+// repository, or a checkout whose repository the selected project's config
+// does not list. o is the caller's own cloud flags, so that last check asks
+// the question the command asks: the project is the one --config, --project,
+// the checkout's fugaro.yaml, $FUGARO_PROJECT or $FUGARO_CONFIG selects, never
+// one the caller could not name. That selection is read only -- sharedOK is
+// cleared here, so it never fetches the shared config, and resolveCheckout
+// never remembers a checkout -- because resolving a --repo is not a command
+// that may write anything.
+//
+// Every refusal that names the value prints it through safetext.Field,
 // never raw: it is whatever was typed, and a path is text like any other. The
 // one that does not name it is the value with nothing at it, which is refused
 // with the owner/name sentence alone -- a value there may have been pasted
@@ -34,7 +42,7 @@ import (
 // this checkout belongs to", and each command resolves that default its own
 // way (originRepo). A path never becomes a default and a default never
 // becomes a path.
-func repoArg(ctx context.Context, value string) (string, error) {
+func repoArg(ctx context.Context, o cloudOptions, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
@@ -67,9 +75,11 @@ func repoArg(ctx context.Context, value string) (string, error) {
 	if !ok {
 		return "", userErr("--repo %s: the checkout's origin %s does not name owner/name (a github.com or bitbucket.org remote, as https, ssh or scp-like)", safetext.Field(dir), gcp.RedactURL(image.HTTPSOrigin(raw)))
 	}
-	if lc := selectedProjectConfigReadOnly(ctx); lc != nil {
+	opts := o
+	opts.sharedOK = false
+	if lc, _ := selectedProjectErr(ctx, opts, resolveCheckout); lc != nil {
 		if _, known := lc.RepoFor(repo); !known {
-			return "", userErr("--repo %s is a checkout of %s, which is not one of project %s's repositories in the local config: a path may only name a checkout of this project (fugaro update --repo in that checkout onboards it)", safetext.Field(dir), safetext.Field(repo), safetext.Field(lc.Name))
+			return "", userErr("--repo %s is a checkout of %s, which is not one of project %s's repositories in the local config: a path may only name a checkout of the selected project (fugaro update --repo in that checkout onboards it)", safetext.Field(dir), safetext.Field(repo), safetext.Field(lc.Name))
 		}
 	}
 	return repo, nil

@@ -498,7 +498,7 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		return userErr("--repo and --all don't go together")
 	}
 	var err error
-	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
 		return err
 	}
 	lc, db, err := openBudget(ctx, o.cloud)
@@ -1275,9 +1275,9 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 // the value acme-app -- the argv rewrite leaves a --repo with a token after it
 // alone -- and it must never be read as "no value" and answered with the
 // checkout's repository instead.
-func namedRepo(ctx context.Context, repo string) (string, error) {
+func namedRepo(ctx context.Context, o cloudOptions, repo string) (string, error) {
 	var err error
-	if repo, err = repoArg(ctx, repo); err != nil {
+	if repo, err = repoArg(ctx, o, repo); err != nil {
 		return "", err
 	}
 	if repo == "" {
@@ -1306,7 +1306,7 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	}
 	slug := ""
 	if p.scope == "repo" {
-		if p.repo, err = namedRepo(ctx, p.repo); err != nil {
+		if p.repo, err = namedRepo(ctx, o.cloud, p.repo); err != nil {
 			return err
 		}
 		if slug, err = repoSlugOf(ctx, lc, p.repo); err != nil {
@@ -1447,7 +1447,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	}
 	path, what := budget.PathKillGlobal, "project "+lc.Name
 	if !o.all {
-		repo, err := namedRepo(ctx, o.repo)
+		repo, err := namedRepo(ctx, o.cloud, o.repo)
 		if err != nil {
 			return err
 		}

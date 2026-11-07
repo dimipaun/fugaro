@@ -472,7 +472,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		return err
 	}
 	repo := o.repo
-	if repo, err = repoArg(ctx, repo); err != nil {
+	if repo, err = repoArg(ctx, o.cloud, repo); err != nil {
 		return err
 	}
 	if repo == "" {

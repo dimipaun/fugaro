@@ -299,7 +299,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		o.since = prLookback
 	}
 	var err error
-	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
 		return err
 	}
 	since, err := parseSince(o.since)

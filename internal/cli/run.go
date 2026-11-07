@@ -439,7 +439,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// and reviewSpec each read o.repo for themselves). Not higher, because the
 	// flags above refused the launch before this ever ran, and their sentences
 	// are still the ones a caller gets.
-	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
 		return err
 	}
 
@@ -1465,7 +1465,7 @@ type attemptPlan struct {
 func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total time.Duration, warn io.Writer, forAttempts bool) (*attemptPlan, error) {
 	repo := o.repo
 	var err error
-	if repo, err = repoArg(ctx, repo); err != nil {
+	if repo, err = repoArg(ctx, o.cloud, repo); err != nil {
 		return nil, err
 	}
 	if repo == "" {
@@ -1770,7 +1770,7 @@ func printBatch(w io.Writer, batch string, attempts int, incomplete bool, result
 func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedRecipe, text string, total time.Duration, warn io.Writer) (string, *task.Spec, error) {
 	repo := o.repo
 	var err error
-	if repo, err = repoArg(ctx, repo); err != nil {
+	if repo, err = repoArg(ctx, o.cloud, repo); err != nil {
 		return "", nil, err
 	}
 	if repo == "" {

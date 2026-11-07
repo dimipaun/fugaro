@@ -234,7 +234,7 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		return userErr("--interval must be positive")
 	}
 	var err error
-	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
 		return err
 	}
 	if o.json && o.plain {

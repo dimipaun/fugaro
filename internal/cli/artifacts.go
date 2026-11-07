@@ -248,7 +248,7 @@ func runArtifactsLs(cmd *cobra.Command, o *artifactsLsOptions, ref string) error
 		return err
 	}
 	defer env.Close()
-	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
 		return err
 	}
 
@@ -369,7 +369,7 @@ func runArtifactsGet(cmd *cobra.Command, o *artifactsGetOptions, ref, name strin
 		return err
 	}
 	defer env.Close()
-	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
 		return err
 	}
 

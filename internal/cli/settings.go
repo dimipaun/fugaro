@@ -55,6 +55,15 @@ func settingsAimFlags(cmd *cobra.Command, project, config *string) {
 	f.StringVar(config, "config", "", "the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml)")
 }
 
+// settingsAim is the cloudOptions these two flags correspond to, for the one
+// thing outside the settings family that reads a value against the aimed
+// installation: repoArg judges a --repo path against the project the command
+// acts on, and for a settings command that is what --config and --project
+// select (settingsAimedSelection).
+func settingsAim(project, config string) cloudOptions {
+	return cloudOptions{config: config, project: project}
+}
+
 // newSettingsCmd is `fugaro settings`: the read over the registry. It writes
 // nothing — no file, no cache, no cloud object — so it runs anywhere, a coding
 // agent's session included (D850).
@@ -113,7 +122,7 @@ func runSettings(cmd *cobra.Command, args []string, o settingsOptions) error {
 		}
 	}
 	var err error
-	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+	if o.repo, err = repoArg(cmd.Context(), settingsAim(o.project, o.config), o.repo); err != nil {
 		return err
 	}
 	// --repo names a repository the way a scope is spelled — `repo:owner/name`,

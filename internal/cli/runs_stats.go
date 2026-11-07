@@ -206,7 +206,7 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 		return userErr("--max-runs %d: use at least 1", o.maxRuns)
 	}
 	var err error
-	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+	if o.repo, err = repoArg(cmd.Context(), o.cloud, o.repo); err != nil {
 		return err
 	}
 	since, err := parseSince(o.since)

@@ -41,7 +41,7 @@ func repoArgCheckout(t *testing.T, dir string, remotes ...string) string {
 func TestRepoArgPassesOwnerNameThrough(t *testing.T) {
 	ctx := context.Background()
 	for _, value := range []string{"acme/app", "group/sub/app", "Acme/App", "acme/app.git", "acme/a_b.c-d"} {
-		got, err := repoArg(ctx, value)
+		got, err := repoArg(ctx, cloudOptions{}, value)
 		if err != nil {
 			t.Errorf("repoArg(%q) = %v", value, err)
 			continue
@@ -75,7 +75,7 @@ func TestRepoArgResolvesACheckoutPath(t *testing.T) {
 				{"relative", "../.."},
 				{"absolute", root},
 			} {
-				got, err := repoArg(ctx, tc.value)
+				got, err := repoArg(ctx, cloudOptions{}, tc.value)
 				if err != nil {
 					t.Errorf("%s: repoArg(%q) = %v", tc.name, tc.value, err)
 					continue
@@ -101,12 +101,67 @@ func TestRepoArgOwnerNameWinsOverADirectoryOfThatName(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cwd, "acme", "app", ".git")); err != nil {
 		t.Fatalf("the shadowing checkout was not made: %v", err)
 	}
-	got, err := repoArg(ctx, "acme/app")
+	got, err := repoArg(ctx, cloudOptions{}, "acme/app")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "acme/app" {
 		t.Fatalf("repoArg(acme/app) = %q, want acme/app (the directory of that name shadowed it)", got)
+	}
+}
+
+// TestRepoArgJudgesAPathAgainstTheProjectTheFlagsSelect: the project a
+// checkout path is held to is the one the command's own flags select, not
+// whatever the environment or the working directory would have picked. A
+// checkout of acme/other, which only the second installation's config lists,
+// is refused while the ambient config (aurora) selects -- and accepted as the
+// same path once --config or --project names that second installation, which
+// is the project the command is about to act on.
+func TestRepoArgJudgesAPathAgainstTheProjectTheFlagsSelect(t *testing.T) {
+	testutil.IsolateGit(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	aurora := isolateProjects(t, dir)
+	other := filepath.Join(filepath.Dir(aurora), "other.yaml")
+	writeRepoArgConfig(t, aurora, "aurora", "acme/app")
+	writeRepoArgConfig(t, other, "other", "acme/other")
+	t.Setenv("FUGARO_CONFIG", aurora)
+	checkout := repoArgCheckout(t, filepath.Join(dir, "other-checkout"), "https://github.com/acme/other.git")
+
+	if _, err := repoArg(ctx, cloudOptions{}, checkout); err == nil {
+		t.Fatal("a checkout of acme/other was accepted against project aurora, which does not list it")
+	} else if !strings.Contains(err.Error(), "not one of project aurora's repositories") {
+		t.Errorf("the ambient refusal does not name the project it judged against: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		o    cloudOptions
+	}{
+		{"--config", cloudOptions{config: other}},
+		{"--project", cloudOptions{project: "other"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := repoArg(ctx, tc.o, checkout)
+			if err != nil {
+				t.Fatalf("%s naming project other refused its own repository: %v", tc.name, err)
+			}
+			if got != "acme/other" {
+				t.Fatalf("repoArg = %q, want acme/other", got)
+			}
+		})
+	}
+}
+
+// writeRepoArgConfig writes a project config listing one repository, the shape
+// localcfg reads: name, GCP project and region, a runs bucket, and repos.
+func writeRepoArgConfig(t *testing.T, path, name, repo string) {
+	t.Helper()
+	cfg := "version: 1\nname: " + name + "\ngcp_project: proj-1234\nregion: us-east5\n" +
+		"runs_bucket: bucket-" + name + "\nbucket_url: file:///tmp/" + name + "\n" +
+		"user: someone@example.com\nmax_parallel: 2\n" +
+		"repos:\n  " + repo + ": { provider: github, base_branch: main, workflows: [web] }\n"
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -136,7 +191,7 @@ func TestRepoArgRefusesWhatIsNotACheckout(t *testing.T) {
 		{"a path with nothing at it", filepath.Join(dir, "gone"), "owner/name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := repoArg(ctx, tc.value)
+			_, err := repoArg(ctx, cloudOptions{}, tc.value)
 			if err == nil {
 				t.Fatalf("repoArg(%q) was accepted", tc.value)
 			}
@@ -158,7 +213,7 @@ func TestRepoArgNeverEchoesAValueWithNothingBehindIt(t *testing.T) {
 	ctx := context.Background()
 	t.Chdir(t.TempDir())
 	for _, value := range []string{"fake-token-EXAMPLEEXAMPLE", "acme/fake-token-EXAMPLEEXAMPLE.git/..", "acme/app.git/.."} {
-		_, err := repoArg(ctx, value)
+		_, err := repoArg(ctx, cloudOptions{}, value)
 		if err == nil {
 			t.Errorf("repoArg(%q) was accepted", value)
 			continue
@@ -188,7 +243,7 @@ func TestRepoArgRefusesAnOriginThatNamesNoRepository(t *testing.T) {
 		{"an origin that names no owner/name", nested, "does not name owner/name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := repoArg(ctx, tc.dir)
+			_, err := repoArg(ctx, cloudOptions{}, tc.dir)
 			if err == nil {
 				t.Fatalf("repoArg(%q) was accepted", tc.dir)
 			}
@@ -212,7 +267,7 @@ func TestRepoArgQuotesThePathItNames(t *testing.T) {
 	if err := os.Mkdir(hostile, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := repoArg(ctx, hostile)
+	_, err := repoArg(ctx, cloudOptions{}, hostile)
 	if err == nil {
 		t.Fatal("the path was accepted")
 	}
