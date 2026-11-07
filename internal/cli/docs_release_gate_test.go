@@ -1,7 +1,7 @@
 package cli
 
 // S0.7 (D448, T17): console 0.113.0 and the mobile app's first release are the
-// first release of their streams under a business licence, and both wait for
+// first releases of their streams under a business licence, and both wait for
 // counsel's sign-off of D432, D433 and D436 (S8.4) before they ship. They are
 // honour-based -- the release states what the licence requires and checks no
 // key -- and enforcement arrives with the key service in a later release.
