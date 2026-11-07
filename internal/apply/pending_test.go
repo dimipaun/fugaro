@@ -255,6 +255,14 @@ func TestPendingRefusesAProjectMismatch(t *testing.T) {
 // round-trips member for member, and a document carrying a member this build
 // does not know is refused (the format decodes strictly, CLAUDE.md).
 func TestPendingFileVersioned(t *testing.T) {
+	// The schema states this build's version, and the two are one fact in two
+	// files: the schema's own $comment claims the mirror, and a bump of the
+	// constant that left the schema behind would publish a contract stating a
+	// version no binary of this build writes.
+	if got := schemaVersion(t, readSchema(t)); got != PendingVersion {
+		t.Errorf("the schema's version const is %d, want PendingVersion (%d)", got, PendingVersion)
+	}
+
 	getenv := pendingHome(t)
 	path, err := PendingPath(getenv, "workspace-a")
 	if err != nil {
@@ -517,6 +525,18 @@ func readSchema(t *testing.T) map[string]any {
 		t.Fatal(err)
 	}
 	return doc
+}
+
+// schemaVersion is the version the schema declares for the document: the const
+// at properties.version, which is what a document of another version is refused
+// on.
+func schemaVersion(t *testing.T, doc map[string]any) int {
+	t.Helper()
+	constV, ok := schemaAt(t, doc, "properties", "version")["const"].(float64)
+	if !ok {
+		t.Fatalf("the schema declares no version const")
+	}
+	return int(constV)
 }
 
 // schemaMembers walks the schema down path and returns the member names the

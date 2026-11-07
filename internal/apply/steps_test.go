@@ -55,6 +55,44 @@ func TestStepsTableNamesOnlyKnownStages(t *testing.T) {
 	}
 }
 
+// TestStepsMatchesRealSettingKeys: the setting half of the table is matched by
+// prefix, and a prefix row is only right if the keys it stands for are the ones
+// the registry declares. Feeding Steps the rows' own prefixes — what the table
+// test above does, since `image_catalog.` stands for every `image_catalog.*`
+// key — cannot tell a prefix match from an exact one: an exact-match lookup
+// answers each row correctly for its own prefix and leaves every real key with
+// no steps at all, so a change to a key the registry declares would be saved
+// with nothing to make it live. These are keys as `fugaro settings` spells them
+// (internal/settings/registry.go), held to the row that owns them.
+func TestStepsMatchesRealSettingKeys(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		steps []string
+	}{
+		// A catalog entry's keys are the family's, and owe what the image
+		// resource type owes: the build, the redeploy and the publish.
+		{"image_catalog.entries.*.name", []string{CatalogBuild, initflow.Repository, initflow.Policy}},
+		{"image_catalog.entries.*.source.inline", []string{CatalogBuild, initflow.Repository, initflow.Policy}},
+		// The project layer's keys are published by the layer stage.
+		{"layer.defaults.agent.auth", []string{initflow.Layer}},
+		{"layer.ab.judge_model", []string{initflow.Layer}},
+		// The four workspace families, the bare key among them.
+		{"workspace", []string{initflow.Workspace}},
+		{"workspace_pin.issuer", []string{initflow.Workspace}},
+		{"workspace_members.*.repos", []string{initflow.Workspace}},
+		{"workspace_cap.monthly", []string{initflow.Workspace}},
+	} {
+		got, ok := Steps(Change{Kind: Setting, Key: tc.key})
+		if !ok {
+			t.Errorf("Steps(setting %s) declares nothing, and internal/settings declares that key", tc.key)
+			continue
+		}
+		if want := Order(tc.steps); !slices.Equal(got, want) {
+			t.Errorf("Steps(setting %s) = %v, want %v", tc.key, got, want)
+		}
+	}
+}
+
 // checkStepsRow is one row of the table, held to all three halves.
 func checkStepsRow(t *testing.T, change Change, row string, steps []string) {
 	t.Helper()
