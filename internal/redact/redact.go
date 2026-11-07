@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -75,7 +76,7 @@ func ExactFunc(exact []string) func(string) string {
 // replaced first, then the shapes no value list can name. It is what text
 // leaving for a model or a log passes through.
 func Text(s string, exact []string) string {
-	return Exact(s, exact)
+	return patternPass(Exact(s, exact))
 }
 
 // Report is the pattern pass plus what only an issue report has to lose: the
@@ -83,8 +84,78 @@ func Text(s string, exact []string) string {
 // otherwise name the person filing it. Its caller runs the exact pass over
 // the same text with the credentials in hand (Text) and hands the result on.
 func Report(s string) string {
+	s = patternPass(s)
+	s = email.ReplaceAllString(s, redacted)
+	return homePath.ReplaceAllString(s, redacted)
+}
+
+// redacted is what both passes substitute; they never drop the text around a
+// match, so a reader can still see that something was there.
+const redacted = "[REDACTED]"
+
+// patternPass is the credentials a value list cannot name, because Fugaro
+// never held them: a bearer token a failing cloud call printed, a signed URL,
+// a private-key block. The rules are ordered so that the widest match wins —
+// a header's whole value goes rather than the token inside it — and every
+// replacement is [REDACTED], which no rule matches, so running the pass again
+// changes nothing.
+func patternPass(s string) string {
+	// The block first, so a key goes whole rather than in the pieces a token
+	// shape happens to find in its body.
+	s = keyBlock.ReplaceAllString(s, redacted)
+	s = authHeader.ReplaceAllString(s, "$1: "+redacted)
+	s = authScheme.ReplaceAllString(s, "$1 "+redacted)
+	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
+	for _, re := range tokenShapes {
+		s = re.ReplaceAllString(s, redacted)
+	}
 	return s
 }
+
+var (
+	// authHeader is a header whose value is a credential whatever it is: the
+	// whole value goes, scheme word (Bearer, Basic) included, and the header
+	// name stays so the line still reads as what it was.
+	authHeader = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)\s*:\s*[^\r\n]*`)
+
+	// authScheme is the same credential where no header name introduces it:
+	// a curl line or an error body prints `Bearer <token>` on its own. The
+	// value has to be long enough that the word after "bearer" in a sentence
+	// is not mistaken for one.
+	authScheme = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}`)
+
+	// signedParam is the query parameter of a signed URL: the signature and
+	// the credential it was made with are the secret part, and everything
+	// else in the URL (the bucket, the object, the expiry) stays readable.
+	signedParam = regexp.MustCompile(`(?i)([?&])(x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|googleaccessid|awsaccesskeyid|signature|sig|access_token|id_token|refresh_token|api_key|apikey|client_secret|password|token)=([^&\s"'<>]*)`)
+
+	// keyBlock is a PEM private key, terminated or not: an unterminated block
+	// is still a key, so an END that never comes redacts to the end of the
+	// text rather than leaving the body in place.
+	keyBlock = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----|\z)`)
+
+	// tokenShapes are the credentials whose own spelling names them, so a
+	// value list is not needed to know they are one. Each needs its full
+	// length: a short match would redact ordinary words.
+	tokenShapes = []*regexp.Regexp{
+		regexp.MustCompile(`\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{24,}`),                           // Anthropic, OpenAI
+		regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}`),                       // Stripe
+		regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}`),                                     // GitHub
+		regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{22,}`),                                   // GitHub, fine-grained
+		regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}`),                                       // GitLab
+		regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}`),                                   // Slack
+		regexp.MustCompile(`\b(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA|ABIA|ACCA)[A-Z0-9]{16}\b`), // AWS access key id
+		regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`),                                          // Google API key
+		regexp.MustCompile(`\bya29\.[0-9A-Za-z_-]{20,}`),                                       // Google OAuth access token
+		regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`),     // JWT
+	}
+
+	// email and homePath are what only the report has to lose: the report is
+	// posted in public, and an address or a path under a home directory names
+	// the person filing it.
+	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+`)
+	homePath = regexp.MustCompile(`(?:/(?:root|home|Users)\b|[A-Za-z]:\\Users\b)(?:[/\\][^\s"'<>]*)?`)
+)
 
 // Forms returns the strings to redact for secrets, longest first so a secret
 // that contains another is replaced whole.
