@@ -848,12 +848,16 @@ func seedRepoSecrets(t *testing.T, r *initRig, names ...string) {
 	}
 }
 
-// catalogTeam is the operator's catalog: one entry whose source is a
-// prebuilt reference, which no Fugaro build writes and no default marker, so
-// only a workflow that pins it by name runs it.
+// catalogTeam is the operator's catalog: one entry and no default marker, so
+// only a workflow that pins it by name runs it. Its source is an inline
+// definition rather than a prebuilt reference because a baked workflow's chosen
+// entry may not be one: an entry whose source is a prebuilt image is refused
+// where the job spec is built (D1191, internal/infra's unbuiltOnBaked), so the
+// two tests below — about the workflow a catalog entry gives its image to, and
+// the per-repository build such a workflow is not offered — need an entry a
+// Fugaro build writes.
 func catalogTeam() string {
-	ref := gcp.DefaultRegistryHost("us-east5", initProject) + "/" + gcp.SharedRegistryRepoID() + "/team-image:1"
-	return "image_catalog:\n  entries:\n    - name: team\n      source: { kind: image, image: \"" + ref + "\" }\n"
+	return "image_catalog:\n  entries:\n    - name: team\n      source: { kind: inline, inline: \"FROM scratch\\n\" }\n"
 }
 
 // #1749's repository: its only workflow runs a catalog entry, so its job
