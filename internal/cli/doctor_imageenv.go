@@ -7,6 +7,7 @@ import (
 
 	runapi "google.golang.org/api/run/v2"
 
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -21,7 +22,7 @@ import (
 const doctorImageEnvUnreadID = "image-env-unread"
 
 // doctorImageEnvChecks is option 3 of issue #1755: per Cloud Run job, the names
-// in that job's own environment that reach no agent (docs/image-env,
+// the job sets itself that a run does not pass to its agent (docs/image-env,
 // reconciliation D1377). It is the report half of the change that an image's
 // ENV reaching a run is, and it exists because the drop was silent: no command
 // read a job's environment, so an operator learned about it from a failed run
@@ -29,11 +30,19 @@ const doctorImageEnvUnreadID = "image-env-unread"
 //
 // The subtraction is runner.ImageEnvDroppedNames — the same function the
 // passthrough computes the variables it hands the agent with (D1378), so a name
-// this report calls dropped is a name the passthrough dropped. What it names is
-// the job's own environment, which is all Jobs.Get carries: the variables an
-// image declares for itself are in no API doctor (or the deploy) can read, so
-// the line is a lower bound — every name it prints will not reach a run, and a
-// name it does not print either passes or was never visible here.
+// this report calls dropped is a name the passthrough dropped — over the job's
+// own environment minus the names Fugaro's own deployment writes into it
+// (doctorFugaroWritten). What is left was set on the job by someone else, and
+// those are the names an operator has to be told about; the deployment's own
+// are the run's configuration, and calling them dropped would say a job that
+// works reaches no run.
+//
+// The one thing no read here can see is an image's own ENV: Cloud Run keeps it
+// in the image, and Jobs.Get carries the job's template alone, so nothing in a
+// job's environment tells an image's variable from an operator's. The line says
+// so rather than leaving "drops none" to read as "your image's variables all
+// reach runs", and the line is a lower bound in the other direction too: every
+// name it prints will not reach a run.
 //
 // Names only, never a value (D1375). A job with no stamp — deployed before the
 // stamp, or a repository-built image — is reported as not catalog-stamped
@@ -96,13 +105,55 @@ func doctorImageEnvCheck(job string, j *runapi.GoogleCloudRunV2Job) doctorCheck 
 	// declared is the job's own FUGARO_SECRET_ENVS: no run is in hand here, and a
 	// name the job itself declares reaches runs, so it is not one this line calls
 	// dropped (ImageEnvDroppedNames).
-	dropped := runner.ImageEnvDroppedNames(env, runner.SecretEnvNames(env))
-	c.Problem = "the job's image is catalog entry " + pluginwire.Printable(entry) + ", and a run drops none of the names the job's environment carries"
+	dropped := runner.ImageEnvDroppedNames(doctorJobForeignEnv(env), runner.SecretEnvNames(env))
+	c.Problem = "the job's image is catalog entry " + pluginwire.Printable(entry) + ", and a run drops none of the names the job sets itself — the rest of its environment is Fugaro's own, which configures the run" + doctorImageEnvCaveat
 	if len(dropped) > 0 {
-		c.Problem = "the job's image is catalog entry " + pluginwire.Printable(entry) + fmt.Sprintf(", and a run drops %d name(s) the job's environment carries: ", len(dropped)) +
-			strings.Join(dropped, ", ") + " — Fugaro reserves them, so nothing an image sets under them can shadow the routing, the credentials or a declared secret"
+		c.Problem = "the job's image is catalog entry " + pluginwire.Printable(entry) + fmt.Sprintf(", and a run drops %d name(s) the job sets itself: ", len(dropped)) +
+			strings.Join(dropped, ", ") + " — Fugaro reserves them, so nothing an image sets under them can shadow the routing, the credentials or a declared secret" + doctorImageEnvCaveat
 	}
 	return c
+}
+
+// doctorImageEnvCaveat is the limit every stamped job's line states, in the
+// words the reader needs: what an image declares is in the image, and no read
+// of a job can list it. Without it, "a run drops none of the names the job sets
+// itself" reads as "everything your image declares reaches a run", which is a
+// claim this line cannot make either way.
+const doctorImageEnvCaveat = " (an image's own ENV lives in the image and not in the job, so what that image declares is not in this line)"
+
+// doctorFugaroEnvPrefix is the family every name Fugaro's own deployment writes
+// into a job belongs to, the Vertex pair below aside. A test pins it to
+// config.ReservedEnvPrefixes, which carries it as the reservation that makes
+// the whole family unreachable for an image.
+const doctorFugaroEnvPrefix = "FUGARO_"
+
+// doctorFugaroWritten reports whether name is one internal/infra's spec writes
+// into a job's environment: the FUGARO_ family (the platform's five, the stamp,
+// the checkout and remote markers, the budget, provider and prices variables)
+// and the two Vertex variables a vertex-auth job carries. Those two are the
+// whole reason this is more than a prefix test, and the report would otherwise
+// call them dropped on every vertex installation.
+//
+// The launch and platform names are not here and cannot be: the launcher writes
+// FUGARO_RUN as an override at run time and Cloud Run writes its own names into
+// the container, so neither is in the job's template for this read to see.
+func doctorFugaroWritten(name string) bool {
+	u := strings.ToUpper(name)
+	return strings.HasPrefix(u, doctorFugaroEnvPrefix) || u == infra.VertexRegionEnv || u == infra.VertexProjectEnv
+}
+
+// doctorJobForeignEnv is a job's own environment minus the names the deployment
+// wrote into it: what is left was set on the job by someone else. The
+// subtraction the report makes runs over this, so a name Fugaro's own
+// deployment wrote is never reported as one a run drops.
+func doctorJobForeignEnv(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env))
+	for name, value := range env {
+		if !doctorFugaroWritten(name) {
+			out[name] = value
+		}
+	}
+	return out
 }
 
 // doctorJobEnv is a job's own container environment as Jobs.Get reports it:

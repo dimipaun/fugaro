@@ -2,10 +2,15 @@ package cli
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // envJob is a Cloud Run job of the rig's installation carrying env, as
@@ -16,13 +21,14 @@ func (r *doctorRig) envJob(t *testing.T, name string, env map[string]string) {
 	r.run.SetJobEnv(name, env)
 }
 
-// The report of what a run drops, per job: the names in the job's own
-// environment that reach no agent, computed by the same function the
-// passthrough hands the agent's variables with (docs/image-env, reconciliation
-// D1377, D1378). A name the operator's image sets for itself — issue #1755's
-// NEXUS_BASEURL — is not one of them, a reserved name is, and neither is a name
-// the job itself declares as a secret: that reaches runs through the declared
-// secret path, which is not this one.
+// The report of what a run drops, per job: the names the job sets itself that
+// reach no agent, computed by the same function the passthrough hands the
+// agent's variables with (docs/image-env, reconciliation D1377, D1378). A name
+// the operator's image sets for itself — issue #1755's NEXUS_BASEURL — is not
+// one of them, a reserved name an operator set on the job is, and neither is a
+// name the job itself declares as a secret (that reaches runs through the
+// declared secret path) nor any of the names Fugaro's own deployment writes
+// (that is the next test's subject).
 //
 // Mutation (verified, run and restored): drop the doctorImageEnvChecks call
 // from runDoctor — the report is absent from --all and --json, which is the
@@ -48,14 +54,90 @@ func TestDoctorAllNamesAJobsDroppedImageVariables(t *testing.T) {
 	if !found {
 		t.Fatal("--json carries no report for the job")
 	}
-	for _, name := range []string{"JAVA_TOOL_OPTIONS", "FUGARO_IMAGE_ENTRY"} {
-		if !strings.Contains(c.Problem, name) {
-			t.Errorf("the job's line does not name the dropped %s: %s", name, c.Problem)
+	if !strings.Contains(c.Problem, "JAVA_TOOL_OPTIONS") {
+		t.Errorf("the job's line does not name the dropped JAVA_TOOL_OPTIONS: %s", c.Problem)
+	}
+	for _, name := range []string{"FUGARO_IMAGE_ENTRY", "NEXUS_BASEURL", "NPM_TOKEN"} {
+		if strings.Contains(c.Problem, name) {
+			t.Errorf("the job's line calls %s dropped: it is Fugaro's own, reaches a run as an image's own name, or arrives through the declared secret path: %s", name, c.Problem)
 		}
 	}
-	for _, name := range []string{"NEXUS_BASEURL", "NPM_TOKEN"} {
+}
+
+// The job's own environment on a real installation is what Fugaro's deployment
+// writes into it (internal/infra's spec: the FUGARO_ family, and CLOUD_ML_REGION
+// and ANTHROPIC_VERTEX_PROJECT_ID on a vertex job). None of that is an image's
+// variable, all of it is what the run reads to find its bucket, its project, its
+// budget and its credentials, and all of it the job that deployed it keeps —
+// so a line listing them as "names a run drops" tells an operator their working
+// job is broken and buries the names this report is for.
+//
+// Mutation (verified, run and restored): drop the doctorJobForeignEnv call, so
+// the subtraction runs over the job's whole environment — the deployment's own
+// names are reported as dropped and this test fails on each of them.
+func TestDoctorAllLeavesTheDeploymentsOwnNamesOut(t *testing.T) {
+	r := newDoctorRig(t)
+	deployed := map[string]string{
+		"FUGARO_BUCKET":               "gs://fugaro-runs-proj-1234",
+		"FUGARO_BACKEND":              "cloudrun",
+		"FUGARO_GCP_PROJECT":          "proj-1234",
+		"FUGARO_PROJECT":              "aurora",
+		"FUGARO_REGION":               "us-east5",
+		"FUGARO_IMAGE_ENTRY":          "acme-base",
+		"FUGARO_SECRET_ENVS":          "",
+		"CLOUD_ML_REGION":             "us-east5",
+		"ANTHROPIC_VERTEX_PROJECT_ID": "proj-1234",
+	}
+	r.envJob(t, "fugaro-acme-app-web", deployed)
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "image-env-fugaro-acme-app-web")
+	if !found {
+		t.Fatal("--json carries no report for the job")
+	}
+	if !strings.Contains(c.Problem, "acme-base") {
+		t.Errorf("the job's line does not name the catalog entry its image came from: %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "drops none") {
+		t.Errorf("a job whose environment is only the deployment's own does not read as dropping none of it: %s", c.Problem)
+	}
+	for name := range deployed {
 		if strings.Contains(c.Problem, name) {
-			t.Errorf("the job's line calls %s dropped: it reaches a run (an image's own name) or arrives through the declared secret path: %s", name, c.Problem)
+			t.Errorf("the job's line calls %s — a name Fugaro's own deployment writes — dropped: %s", name, c.Problem)
+		}
+	}
+}
+
+// doctorFugaroWritten is the line between the names this report leaves out and
+// the names it is about, and both halves are pinned here: every name the
+// deployment writes into a job (internal/infra's spec, whose constants are what
+// a rename would move) is Fugaro's own whatever it is spelled, and a name an
+// operator or an image can set is not. The prefix is also pinned to
+// config.ReservedEnvPrefixes, which is what makes the family unreachable for an
+// image in the first place: a report may only leave out names an image could
+// not have set.
+func TestDoctorFugaroWrittenIsTheDeploymentsOwnNames(t *testing.T) {
+	own := []string{
+		infra.BucketEnv, infra.BackendEnv, infra.GCPProjectEnv, infra.ProjectEnv, infra.RegionEnv,
+		infra.VertexRegionEnv, infra.VertexProjectEnv,
+		runner.ImageEntryEnv, runner.SecretEnvsVar, runner.CheckoutEnv, runner.RemoteEnv,
+		runner.ModelProvidersEnv, runner.ModelPricesEnv, runner.MaxRunTokensEnv, runner.AllowedModelsEnv,
+		runner.MaxRunUSDEnv, runner.RTDBURLEnv, runner.FirebaseAPIKeyEnv, runner.BudgetModeEnv,
+		providers.EnvGitHubAppID,
+		// Case, as an environment name is read: the reservation is
+		// case-insensitive, so this line is too.
+		strings.ToLower(infra.BucketEnv),
+	}
+	for _, name := range own {
+		if !doctorFugaroWritten(name) {
+			t.Errorf("%s is a name the deployment writes, and the report does not leave it out", name)
+		}
+	}
+	if !slices.Contains(config.ReservedEnvPrefixes, doctorFugaroEnvPrefix) {
+		t.Errorf("%s is not a reserved prefix: the report would leave out a name an image may set", doctorFugaroEnvPrefix)
+	}
+	for _, name := range []string{"JAVA_TOOL_OPTIONS", "PATH", "NEXUS_BASEURL", "NPM_TOKEN", "CLOUD_RUN_JOB", "LD_PRELOAD"} {
+		if doctorFugaroWritten(name) {
+			t.Errorf("%s is not a name the deployment writes, and the report leaves it out", name)
 		}
 	}
 }
