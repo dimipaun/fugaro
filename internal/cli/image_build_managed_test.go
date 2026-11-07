@@ -688,6 +688,34 @@ func TestImageBuildManagedAcceptsACanonicalRepoSpelling(t *testing.T) {
 	}
 }
 
+// The same rule through the command, which is where the finding lived: the
+// command's own guard compares canonical forms, so `--repo ACME/App` is this
+// checkout's origin and the build is submitted — and a rule stated over the raw
+// strings refused it a moment later, on a managed project only. The person at
+// that terminal read a refusal for a command that had prompted and worked
+// before, which is the false refusal this pins.
+func TestImageBuildManagedAcceptsACanonicalRepoSpellingAtTheCommand(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+	w := managedBuildWorld(t, f, managedBuildMarker(1))
+	noAgentSession(t)
+	fakeTerminal(t)
+	lc := fixtureConfig(t)
+	stdin := &unreadStdin{}
+
+	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--repo", "ACME/App", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("--repo ACME/App is this checkout's origin: %v\n%s%s", err, out, errOut)
+	}
+	assertNotAsked(t, errOut, catalogBuildPlan(t, lc, []string{"alpha"}, "alpha", 1, 0).What)
+	if stdin.read {
+		t.Error("a managed project's own terminal was asked to type the project's name")
+	}
+	if buildPosts(fb) != 1 {
+		t.Errorf("submitted %d builds, want the one that was admitted", buildPosts(fb))
+	}
+	oneRecord(t, w, managedmode.AuditAdmitted)
+}
+
 // A coding agent's session on the same managed project is refused exactly as it
 // has always been, before the local config, the bucket or any mark is touched:
 // the refusal this door stands beside is catalogBuildNotConfirmable's, and

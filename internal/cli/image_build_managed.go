@@ -42,8 +42,11 @@ import (
 // catalog entry — the entry exists in the effective catalog, the build account
 // is the project's own for that entry's source repository, and the count is
 // within D1013's max_image_builds bound" (docs/repo-image-removal/spec.md §6,
-// D1206). The derived arm — `--workflow`, or a checkout with no catalog — is
-// written by no row anywhere, and the design's own boundary is why: a billable
+// D1206). That row is stated for the command the removal leaves, which has no
+// derived arm; until the removal lands, the catalog arm is the part of today's
+// command the row covers. The derived arm — `--workflow`, or a checkout with no
+// catalog — is written by no row anywhere, and the design's own boundary is
+// why: a billable
 // build's prompt is taken away only where the design gave that path a document
 // AND a bound (docs/managed-agent-converge/spec.md §3.1). So the derived arm
 // keeps confirmBuild exactly as it stands, and so does the converge's own first
