@@ -80,11 +80,10 @@ func (s *stepRun) redaction() []string {
 // the value a command read, and each long enough line of a multi-line one, the
 // way the converge's own slots hold what a stage prompts for (initEngine.hold,
 // heldValues). The run keeps it rather than releasing it at the store call,
-// because the log covers the whole command and a stage behind the store may
-// echo what it was given — what a run no longer needs is released by the run
-// ending. Nothing here fails: a value is either registered in full or not at
-// all, and a registration that cannot be made would be the one failure this
-// could be, so the list grows instead of being capped.
+// because the log covers the whole command and a child behind the store may
+// echo what it was given. It cannot fail: the converge's slots are a fixed
+// list that has to refuse a value it has no room for, while one of these
+// commands holds one value at a time and this list simply grows.
 func (s *stepRun) hold(value []byte) {
 	vals := heldValues(value)
 	s.mu.Lock()
