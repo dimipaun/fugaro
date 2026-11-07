@@ -407,8 +407,6 @@ func secretMatches(storedHash, presented string) bool {
 
 // writeToken answers a grant with the minted pair.
 func writeToken(w http.ResponseWriter, access, refresh string, scopes []string) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Pragma", "no-cache")
 	writeJSONStatus(w, http.StatusOK, tokenResponse{
 		AccessToken:  access,
 		TokenType:    "Bearer",

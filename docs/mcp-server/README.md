@@ -181,7 +181,7 @@ README, in its own diff, is where the block above D1189 is written.
   coordinator ran it on 2026-11-04) and its findings are answered in
   [reconciliation.md](reconciliation.md) §4a; **M4 and M6 were cancelled by those findings** and were
   to be **rerun from the amended plan**, and **M1 and M3 may continue** — **and the tree has gone past
-  that**, five tasks merged and the rest of the plan not started
+  that**, five tasks merged, M5 built in this pull request and the rest of the plan not started
   ([reconciliation.md](reconciliation.md) §4a, "What has happened since"). Something else still gates
   every task: **the M5 gate file is the owner's to create** (§6, the first owner check), and the one
   **UNVERIFIED** half of D935.

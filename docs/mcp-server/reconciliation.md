@@ -386,8 +386,9 @@ independent barriers rather than one of two. §6 and §8 state all of this.
 node) — and **every launcher and operator holds `signJwt` on the project's signer**
 (`deploy/terraform/gcp/modules/firebase/iam.tf:35-41`) and can read `config/admin/devices` through
 `roles/firebasedatabase.viewer` (`:44-50`). So **any launcher can mint a device token and sign in as
-an operator's device** at `GET /oauth/authorize`. The repository's own rules comment says the same
-thing from the other side: the `mu` claim "binds nothing against a minter"
+an operator's device** at the authorize endpoint's approve step (`POST /oauth/authorize`, M-a's
+single-use POST). The repository's own rules comment says the same thing from the other side: the
+`mu` claim "binds nothing against a minter"
 (`internal/budget/rules/rules.go:482-487`). The review's recommendation was a **device-held signing
 key registered at pairing**; **the owner accepted the residual risk and asked for it documented
 instead** — not built, not in any task. It stands in §3 and §8 as an **ACCEPTED residual risk with

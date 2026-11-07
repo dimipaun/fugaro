@@ -430,6 +430,80 @@ func TestAuthorizeRefusesWhatItCannotAnswer(t *testing.T) {
 	}
 }
 
+// TestAnUnknownScopeIsRefusedNotDropped is D927's rule at the door it is
+// checked on first, and M-c's "before the library sees it": a scope outside the
+// vocabulary is refused, and it is refused while there is still nothing to read
+// it out of.
+//
+// The scope is the one value in an authorization request that a client chooses
+// and that decides what the token may do, so the failure this test has to rule
+// out is the quiet one: a server that dropped the scope it did not know would
+// leave its holder believing it holds a permission the token does not carry,
+// and every later check would be reading a shorter list than the client asked
+// for with nothing anywhere saying so.
+//
+// "Before the library sees it" is held as the store's own state rather than as
+// an ordering claim in a comment: every refusal below is answered while the
+// store holds the client record and nothing else, so no pending request, no
+// code and no token exists for a request this server refused.
+func TestAnUnknownScopeIsRefusedNotDropped(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	host := redirectHost(testClientRedirect)
+
+	for _, c := range []struct{ scope, unknown string }{
+		{"runs:read", "runs:read"},
+		// Near misses of a scope this server does mint, written to look like
+		// one from one side or the other: a suffix, a case, a third field.
+		{"tasks:admin", "tasks:admin"},
+		{"Tasks:read", "Tasks:read"},
+		{"tasks:read:all", "tasks:read:all"},
+		// A known scope beside the unknown one. The refusal has to be about
+		// the scope this server does not mint and not about a request that
+		// carried more than one.
+		{"tasks:read runs:read", "runs:read"},
+	} {
+		q := authorizeQuery(clientID, testClientRedirect)
+		q.Set("scope", c.scope)
+		rec := ts.authorizeRequest(t, q)
+		if got := oauthErrorOf(t, rec, host); got != string(oidc.InvalidScope) {
+			t.Errorf("an authorization request asking for the scope %q was refused with %q; want %q: an unknown scope is refused rather than dropped, because a token that quietly lost one leaves its holder with a permission it does not have", c.scope, got, oidc.InvalidScope)
+		}
+		u, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatalf("the refusal of the scope %q is not a URL: %v", c.scope, err)
+		}
+		// The scope the client asked for is named, because that is the one
+		// thing that lets a client fix its own request; the vocabulary it is
+		// measured against is in the message and not in the query.
+		if !strings.Contains(u.Query().Get("error_description"), c.unknown) {
+			t.Errorf("the refusal of the scope %q says %q; want %q named in it: a client that is told only that a scope is wrong, with four of them, has nothing to act on", c.scope, u.Query().Get("error_description"), c.unknown)
+		}
+	}
+
+	// The control: a scope this server does mint is answered, so the refusals
+	// above are about the scopes and not about the parameter being read at all.
+	q := authorizeQuery(clientID, testClientRedirect)
+	q.Set("scope", ScopeTasksRead)
+	if rec := ts.authorizeRequest(t, q); rec.Code != http.StatusOK {
+		t.Errorf("an authorization request asking for %q answered %d (%s); want the consent page: that scope is one of the two D927 mints", ScopeTasksRead, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	// The five refusals wrote nothing, and the one accepted request wrote one
+	// pending request: the store holds the client this test registered and that
+	// one flow, so the check above happened before any record of the scope
+	// existed to be read back.
+	objects := ts.store.objects(t)
+	if len(objects) != 2 {
+		t.Errorf("the store holds %d objects; want the one client and the one pending request of the accepted flow: a refused scope is refused before anything is written, and a request recorded for it would be a record of a flow this server will never answer", len(objects))
+	}
+	for key := range objects {
+		if !strings.HasPrefix(key, clientPrefix) && !strings.HasPrefix(key, requestPrefix) {
+			t.Errorf("a refused scope left %s behind: the refusals happen before the request, the code or any token is written", key)
+		}
+	}
+}
+
 // TestRefreshTokenIsSingleUse is D930 at the endpoint: a refresh token rotates
 // on every use, and the token that was rotated away is the theft signal that
 // revokes the family.

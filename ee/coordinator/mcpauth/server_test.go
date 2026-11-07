@@ -251,3 +251,53 @@ func TestNoRecordIsWrittenOutsideTheStore(t *testing.T) {
 		}
 	}
 }
+
+// TestNoAnswerOfThisServerIsCacheable: every answer these endpoints write says
+// no-store, and it is one rule rather than a line each caller remembers
+// (writeJSONStatus).
+//
+// It is worth a test of its own because every answer here carries something a
+// shared cache must not keep: an access token, a rotating refresh token, a
+// client's secret, an authorization code, or a URL naming this installation
+// rather than another one. The registration answer is the case that made the
+// rule a rule — it carried the client's secret and was the one credential-
+// bearing answer with no such header — so what this pins is the property and
+// not the one endpoint that was missing it.
+func TestNoAnswerOfThisServerIsCacheable(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	redirect := ts.approve(t, binding, number)
+	if redirect.Code != http.StatusFound {
+		t.Fatalf("the approval answered %d (%s); want the redirect that carries the code", redirect.Code, strings.TrimSpace(redirect.Body.String()))
+	}
+	tokenAnswer, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	})
+	if tokenAnswer.Code != http.StatusOK {
+		t.Fatalf("the refresh grant answered %d; want a token pair", tokenAnswer.Code)
+	}
+
+	for _, answer := range []struct {
+		name string
+		rec  *httptest.ResponseRecorder
+	}{
+		{"the protected-resource metadata document", ts.get(t, ProtectedResourcePath)},
+		{"the authorization server's metadata document", ts.get(t, AuthorizationServerPath)},
+		{"the registration answer, which carries the client's secret", ts.postJSON(t, RegisterPath, registrationRequest{RedirectURIs: []string{testClientRedirect}, ClientName: "an editor"})},
+		{"the consent page", ts.authorizeRequest(t, authorizeQuery(clientID, testClientRedirect))},
+		{"a refusal page", ts.get(t, AuthorizePath+"?client_id=no-such-client&redirect_uri="+url.QueryEscape(testClientRedirect))},
+		{"the redirect that carries the code", redirect},
+		{"an OAuth error body", ts.postForm(t, TokenPath, url.Values{"grant_type": {"client_credentials"}, "client_id": {clientID}})},
+		{"the token answer, which carries the pair", tokenAnswer},
+		{"the MCP endpoint's 401", ts.get(t, MCPPath)},
+		{"the revocation answer", ts.postForm(t, RevokePath, url.Values{"token": {tokens.AccessToken}, "client_id": {clientID}})},
+	} {
+		if got := answer.rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s carries Cache-Control %q; want no-store: every answer of this server carries a token, a secret, a code or an address of this installation, and a shared cache holding one is a credential kept, or a client sent, by somebody else", answer.name, got)
+		}
+	}
+}

@@ -58,6 +58,14 @@ const (
 	// answers, and the code that consent produces. Both are single-use, and
 	// both are spent by a compare-and-swap rather than by a read and a
 	// delete (consume).
+	//
+	// Both are also written before a person has proved anything: the request
+	// is written by the unauthenticated GET, so a stranger with a loop leaves
+	// one behind per iteration until its TTL passes. The TTL is a bound on
+	// what the record is *read* as and not on what is stored — nothing in
+	// this package sweeps an expired request or code — which is the same
+	// deferral Client.CreatedAt records, and it covers these two records as
+	// well as that one.
 	requestPrefix = PathPrefix + "requests/"
 	codePrefix    = PathPrefix + "codes/"
 )
@@ -145,7 +153,8 @@ type Client struct {
 	// M7's (implementation-plan.md, the note in its entry), because M7 is the
 	// task that makes the endpoint reachable from a real binary; until then
 	// the exposure is latent and the record carries the timestamp the
-	// lifecycle will need.
+	// lifecycle will need. The flow's two records are in the same position and
+	// are named on requestPrefix above.
 	CreatedAt time.Time `json:"created_at"`
 }
 

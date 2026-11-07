@@ -9,9 +9,9 @@ package mcpauth
 // design's §8 lean on. First, the token checks themselves: the issuer is built
 // from the project id, the audience is the bare project id, the signature is
 // the published key's, and a refusal names the check that failed and never the
-// value that failed it. Second, the one consumer: the token is accepted at
-// GET /oauth/authorize and is never a grant at POST /oauth/token, and no code
-// path in this package mints one.
+// value that failed it. Second, the one consumer: the token is accepted at the
+// approve step's POST /oauth/authorize and is never a grant at POST
+// /oauth/token, and no code path in this package mints one.
 //
 // Every token here is signed by a key the test generates, and the key set the
 // verifier reads is served by the test's own server or handed to it as a fixed

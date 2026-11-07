@@ -148,8 +148,8 @@ this amended plan, because M4's draft predates the D934 and M-e answers and M6's
 **Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first
 half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
 public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
-`:527`) — **and M4's store half, M5 and M7–M10 are not started**. **What each built task still owes is
-named in its own section below**
+`:527`) — **M5 is built in this pull request, and M4's store half and M7–M10 are not started**. **What
+each built task still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
 ### The decision the amendment added
@@ -670,7 +670,8 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   `metadata_test.go`, `register.go`, `register_test.go`, `authorize.go`, `token.go`,
   `authorize_test.go`.
 - **Interface:** `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`,
-  `POST /oauth/register`, `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke`, mounted
+  `POST /oauth/register`, `GET /oauth/authorize` and the approve step's `POST /oauth/authorize`,
+  `POST /oauth/token`, `POST /oauth/revoke`, mounted
   on the service M4 creates. **Every record it writes — a registered client, a code, an access token,
   a refresh token, a revocation — goes through M2's `Store`, and nothing here opens a database or a
   bucket of its own** (D935): the store is the one place a token record is at rest, and the endpoints
@@ -716,9 +717,9 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates M-a and H1,
 and both change what this task must say and where its verifier is called from. **What merged as
 #1714 is that draft**: the verifier is in the tree and the token endpoint refuses an ID token, while
-**M-a's change is still to be built** — the approve step's single-use POST and
-`TestAnIDTokenInAQueryStringIsRefused` — because nothing calls the verifier from an approve step yet
-and M5, which defines that step, is not started.
+**M-a's change landed with M5** — the approve step's single-use POST and
+`TestAnIDTokenInAQueryStringIsRefused` — so the verifier is called from an approve step now, and what
+this task still owes is its own rerun against M-a and H1 rather than that step.
 
 - **M-a and H1 (2026-11-04).** The verifier is called from **the approve step** — a **single-use
   POST** that carries the ID token in its body and never in a URL — and
@@ -736,8 +737,9 @@ and M5, which defines that step, is not started.
 - **Interface:** `VerifyIDToken(ctx, raw string) (Identity, error)`, sharing the verification rules
   `internal/credsvc` already implements (issuer built from the project id, audience compared to the
   bare project id, keys from the public endpoint) and never echoing a token in a refusal. It is
-  called from **`GET /oauth/authorize` and from nowhere else** (D923's answer of 2026-11-04): the ID
-  token is the proof of the sign-in step, and the token endpoint has no path that accepts one. The
+  called from **the approve step's `POST /oauth/authorize` and from nowhere else** (D923's answer of
+  2026-11-04, amended the same day by M-a: the token is in that POST's body and never in a URL): the
+  ID token is the proof of the sign-in step, and the token endpoint has no path that accepts one. The
   task carries the other half of that answer too: **the coordinator mints no Firebase custom token
   and holds no signer role**, so there is no minting code here for a reviewer to find, and no way for
   a compromised coordinator to assert an identity the paired device did not approve.

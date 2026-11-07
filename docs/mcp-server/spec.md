@@ -239,11 +239,12 @@ therefore bound the service, and they are the service's own, not the handler's:
 **The metadata document's shape.** A Firebase ID token's audience is the bare project id rather than
 a URL, which is the gotcha the owner's spec names. The design answers it exactly as the spec says it
 should: the coordinator issues its own tokens and never passes a Firebase token through as a bearer.
-A Firebase ID token is accepted at **one** endpoint, **`GET /oauth/authorize`** — the owner's answer
-of 2026-11-04, and not at `POST /oauth/token` as an earlier draft of this design had it: it is the
-proof of the *sign-in* step, which is the authorize step, and it is never a grant the token endpoint
-accepts. The access token the coordinator mints afterwards carries a real resource audience — the
-coordinator's own URL — so a client's standard check works.
+A Firebase ID token is accepted at **one** endpoint, the **approve step's `POST /oauth/authorize`** —
+the owner's answer of 2026-11-04, amended the same day (M-a) so that the token travels in that POST's
+body and **never in a GET URL** — and not at `POST /oauth/token` as an earlier draft of this design
+had it: it is the proof of the *sign-in* step, which is the authorize step, and it is never a grant
+the token endpoint accepts. The access token the coordinator mints afterwards carries a real resource
+audience — the coordinator's own URL — so a client's standard check works.
 
 ## 3. The authorization server
 
@@ -728,12 +729,13 @@ the same limits. Rotation is what turns the theft into an event: the next time t
 presents the rotated-away token, the family is revoked and the theft is visible in the audit record
 rather than silent.
 
-**What a stolen Firebase ID token reaches.** One thing: **`GET /oauth/authorize`** — the single
-endpoint that consumes one (the owner's answer of 2026-11-04; an earlier draft had it at
-`POST /oauth/token`) — and only while it is unexpired and only if its issuer and audience match the
-project, and only for an identity the project's own lists admit. It is never a bearer for the MCP
-endpoint and it is never a grant at the token endpoint, which is the whole reason the coordinator
-mints its own tokens, and it is why the design will not accept a Firebase token as an access token
+**What a stolen Firebase ID token reaches.** One thing: **the approve step's `POST /oauth/authorize`**
+— the single endpoint that consumes one (the owner's answer of 2026-11-04, amended the same day by
+M-a; an earlier draft had it at `POST /oauth/token`) — and only while it is unexpired and only if its
+issuer and audience match the project, and only for an identity the project's own lists admit. It is
+never a bearer for the MCP endpoint and it is never a grant at the token endpoint, which is the whole
+reason the coordinator mints its own tokens, and it is why the design will not accept a Firebase
+token as an access token
 "just for convenience". **The coordinator mints no Firebase token of its own** either: it holds no
 signer role, so a compromised coordinator cannot answer "this person signed in" for somebody who
 did not — that is the paired device's act (§3), and the coordinator only verifies what the device's

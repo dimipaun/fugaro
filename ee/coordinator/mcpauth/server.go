@@ -176,15 +176,11 @@ func (s *Server) Mount(svc *coordinator.Service) {
 // to get another one the same way.
 func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+s.cfg.Issuer+ProtectedResourcePath+`"`)
-	w.Header().Set("Cache-Control", "no-store")
 	writeJSONStatus(w, http.StatusUnauthorized, map[string]string{
 		"error":             "invalid_token",
 		"error_description": "the MCP endpoint needs a bearer token: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in",
 	})
 }
-
-// metadataURL is the protected-resource metadata document's absolute URL.
-func (s *Server) metadataURL() string { return s.cfg.Issuer + ProtectedResourcePath }
 
 // readForm parses a form body with the server's own bound and returns the
 // refusal a caller sees when it is not one. Every endpoint below takes a form
@@ -201,12 +197,22 @@ func readForm(w http.ResponseWriter, r *http.Request) (url.Values, error) {
 // fail on the shapes this package writes, and a failure has nowhere to go once
 // the status line is out: the body is what a client reads, and half of it is
 // not a body.
+//
+// Nothing this package writes may be cached, and the rule is stated here rather
+// than at each caller because it is true of every answer: the bodies carry
+// access and refresh tokens, an authorization code, a client's secret and the
+// metadata documents' own URLs, and a shared cache holding any of them is a
+// credential or an installation a client is sent to by somebody else. The one
+// answer that does not come through here (serveRevoke) sets the same two headers
+// itself.
 func writeJSONStatus(w http.ResponseWriter, status int, body any) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		http.Error(w, "the answer could not be encoded", http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(data)
@@ -216,7 +222,6 @@ func writeJSONStatus(w http.ResponseWriter, status int, body any) {
 // these documents name this installation's own URLs and a shared cache holding
 // one is a client sent to an installation that is not this one.
 func writeJSON(w http.ResponseWriter, body any) {
-	w.Header().Set("Cache-Control", "no-store")
 	writeJSONStatus(w, http.StatusOK, body)
 }
 
@@ -238,7 +243,5 @@ func oauthError(template *oidc.Error, description string) *oidc.Error {
 // at the site that refused, and the token, the code and the verifier are the
 // caller's own text.
 func writeOAuthError(w http.ResponseWriter, status int, e *oidc.Error) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Pragma", "no-cache")
 	writeJSONStatus(w, status, e)
 }
