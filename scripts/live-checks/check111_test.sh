@@ -1012,6 +1012,43 @@ test_a_missing_ids_file_stops() {
   expect_scratch_gone "$dir" "missing ids file"
 }
 
+# --account-names is the file every capture is grepped against, so each of the
+# three ways it can fail to hold a display name — the file is not there, it is
+# empty, it is nothing but blank lines — has to stop the run before anything is
+# called. Without one of the three guards the check would grep the captures for
+# nothing, find nothing, and report every mode leak-free: the one result this
+# check must never produce for a reason that is not the picker's. The row's own
+# PASS is what may not appear, since it is the reading a register is filled in
+# from.
+test_a_names_file_that_cannot_read_a_leak_stops() {
+  local what phrase
+  for what in missing empty blank; do
+    setup_case "names-$what"
+    sandbox_args
+    case "$what" in
+    missing)
+      phrase="does not exist, and --account-names is what a leak is read against"
+      rm -f "$dir/names.txt"
+      ;;
+    empty)
+      phrase="is empty, so a leak could not be told from a pass"
+      : >"$dir/names.txt"
+      ;;
+    blank)
+      phrase="holds no display name, only blank lines"
+      printf '\n   \n\t\n' >"$dir/names.txt"
+      ;;
+    esac
+    run111
+    expect_status "$status" 2 "account-names: $what"
+    [ -s "$dir/calls" ] && fail "account-names: $what: a tool was called: $(tr '\n' ';' <"$dir/calls")"
+    expect_contains "$(cat "$dir/err")" "$dir/names.txt $phrase" "account-names: $what: the stop is that shape's own guard"
+    expect_absent "$out" "FACT account-names: PASS" "account-names: $what: no row reads the file as a set of names to grep for"
+    expect_absent "$out" "CHECK 111 RESULT: PASS" "account-names: $what: no verdict"
+    expect_scratch_gone "$dir" "account-names: $what"
+  done
+}
+
 # An unrun mode is not a pass: with --modes naming one run, the other six read
 # FAIL — not run and the verdict is FAIL, whatever the one run that did run said.
 test_an_unrun_mode_is_not_a_pass() {
@@ -1283,6 +1320,7 @@ t test_criterion_3_detects_one_of_the_owners_ids
 t test_criterion_3_detects_a_display_name
 t test_criterion_3_detects_a_numbered_line
 t test_a_missing_ids_file_stops
+t test_a_names_file_that_cannot_read_a_leak_stops
 t test_an_unrun_mode_is_not_a_pass
 t test_mode_2s_premise_missing_is_not_run
 t test_only_mode_2_runs_under_the_second_login
