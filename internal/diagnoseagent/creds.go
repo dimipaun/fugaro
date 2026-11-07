@@ -58,6 +58,51 @@ type Handle struct {
 	own bool
 }
 
+// handleFields is Handle without its methods, so the methods below can print a
+// copy without calling themselves.
+type handleFields Handle
+
+// redactedValue is what a credential prints as.
+const redactedValue = "<redacted>"
+
+// redacted is a copy of h whose credential loses its value: the environment
+// keeps the variable's name and the account keeps its own, and the value itself
+// becomes redactedValue. h is not changed.
+//
+// A Handle carries the one credential a diagnosis has (F7), and prints are
+// where such a value leaks: a debug line, an error that formats what it was
+// given, a transcript. internal/backend keeps the same rule for the budget
+// seal key (LaunchSpec.Format), and for the same reason — the type that holds a
+// secret is the place to make it unprintable, because the caller that formats
+// it is not thinking about the secret.
+func (h Handle) redacted() handleFields {
+	c := handleFields(h)
+	if h.secret != "" {
+		c.secret = redactedValue
+	}
+	c.env = make([]string, len(h.env))
+	for i, kv := range h.env {
+		if name, _, ok := strings.Cut(kv, "="); ok && name != "" {
+			c.env[i] = name + "=" + redactedValue
+		} else {
+			c.env[i] = redactedValue
+		}
+	}
+	return c
+}
+
+// Format prints the handle under any verb with the credential redacted, so no
+// line that formats one can carry the account's token.
+func (h Handle) Format(f fmt.State, verb rune) {
+	fmt.Fprintf(f, fmt.FormatString(f, verb), h.redacted())
+}
+
+// String is the handle as %v prints it, the credential redacted.
+func (h Handle) String() string { return fmt.Sprintf("%+v", h.redacted()) }
+
+// GoString is the handle as %#v prints it, the credential redacted.
+func (h Handle) GoString() string { return fmt.Sprintf("%#v", h.redacted()) }
+
 // Env is the environment of the one child the credential is handed to: the
 // credential under its own variable name, in os.Environ's form, and nothing
 // else. A caller that starts a child with it holds this credential and no
@@ -197,6 +242,14 @@ func Resolve(env []string, accounts Accounts, read SecretReader) (Handle, error)
 	// config.AllowedClaudeAccounts, the one place that decides the question —
 	// the same answer the launcher uses to pick the job that mounts the token,
 	// so a diagnosis cannot reach an account a run could not.
+	//
+	// That list admits "default" for every repository, and it is right to: the
+	// unsuffixed claude-oauth-token is the repository's own credential, which is
+	// what config.DefaultClaudeAccount means, and a run chooses it without an
+	// allow_data_to entry existing for it (the guard above is what keeps this
+	// account out of a command that has no repository at all). A diagnosis that
+	// were stricter here than the launcher would refuse to explain a run whose
+	// own account is the one it cannot resolve.
 	if !slices.Contains(config.AllowedClaudeAccounts(accounts.Block, accounts.Repo), name) {
 		return Handle{}, fmt.Errorf("the Claude account %s may not be used for %s: claude_accounts.%s.allow_data_to %s, and that list decides which repositories may have their code, logs and configuration sent to the account's token. Add %s to it in the project config, choose an account that lists it, or set %s (or %s) in this environment to diagnose on your own credential",
 			pluginwire.Printable(name), pluginwire.Printable(accounts.Repo),

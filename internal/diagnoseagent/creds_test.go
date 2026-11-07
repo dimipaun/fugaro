@@ -1,7 +1,9 @@
 package diagnoseagent
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -219,6 +221,11 @@ func TestCredsResolveFailsClosedOutsideACheckout(t *testing.T) {
 // gcloud config, a cache, a temporary file — is pointed at one directory made
 // read-only, so a resolution that persisted anything would fail here rather
 // than pass unnoticed, and the directory is required to be empty afterwards.
+//
+// The second half is the other place "not written" has to hold: the process's
+// own environment. A resolver that exported the token (os.Setenv) would make it
+// ambient for every child started afterwards, which is the opposite of the one
+// child environment the handle exists to be.
 func TestCredsResolveWritesNothingToDisk(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o500); err != nil {
@@ -229,11 +236,18 @@ func TestCredsResolveWritesNothingToDisk(t *testing.T) {
 			t.Errorf("restoring the fixture directory's mode: %v", err)
 		}
 	})
+	t.Setenv("HOME", dir)
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("CLOUDSDK_CONFIG", dir)
 	env := []string{
 		"HOME=" + dir, "TMPDIR=" + dir, "CLOUDSDK_CONFIG=" + dir,
 		"XDG_CONFIG_HOME=" + dir, "XDG_CACHE_HOME=" + dir, "XDG_STATE_HOME=" + dir,
 	}
 	value := credsValue(t, "ondisk")
+	before := map[string]string{}
+	for _, name := range []string{credsOAuthVar, credsKeyVar} {
+		before[name] = os.Getenv(name)
+	}
 	h, err := Resolve(env, credsAccounts("team-b"), func(string) (string, error) { return value, nil })
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -251,6 +265,54 @@ func TestCredsResolveWritesNothingToDisk(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Errorf("resolving the credential wrote %v: F7's rule is that the project's token is held in memory only", names)
+	}
+	// What the process holds before and after, rather than "nothing": the
+	// environment this test runs in is somebody's, and a test that required it
+	// empty would be about the machine rather than about the resolver.
+	for _, name := range []string{credsOAuthVar, credsKeyVar} {
+		if got := os.Getenv(name); got != before[name] {
+			t.Errorf("resolving the credential changed %s in this process's own environment: the credential belongs to the one child environment the handle yields, and to nothing else", name)
+		}
+	}
+}
+
+// TestCredsHandleNeverPrintsTheCredential: the handle is the credential's only
+// home (F7), so every way Go prints a value has to redact it — a debug line, an
+// error that formats what it was handed, a transcript. The verbs are the ones
+// fmt reaches without any wrapper, and the JSON form is checked because it is
+// what a --json caller would hand an encoder.
+func TestCredsHandleNeverPrintsTheCredential(t *testing.T) {
+	value := credsValue(t, "printed")
+	h, err := Resolve([]string{credsOAuthVar + "=" + value}, credsAccounts("team-b"), credsUnread(t))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	for _, printed := range []struct {
+		what string
+		out  string
+	}{
+		{"%v", fmt.Sprintf("%v", h)},
+		{"%+v", fmt.Sprintf("%+v", h)},
+		{"%s", fmt.Sprintf("%s", h)},
+		{"%#v", fmt.Sprintf("%#v", h)},
+	} {
+		if strings.Contains(printed.out, value) {
+			t.Errorf("%s of the handle carries the credential: %s", printed.what, printed.out)
+		}
+		if !strings.Contains(printed.out, redactedValue) {
+			t.Errorf("%s of the handle does not redact the credential: %s", printed.what, printed.out)
+		}
+	}
+	// The handle is no wire shape: its fields are unexported, so JSON is the
+	// empty object and an encoder can carry nothing. The credential is exported
+	// nowhere, which is what this pins — the day a field is, this test is the
+	// one that says so.
+	raw, err := json.Marshal(h)
+	if err != nil {
+		t.Fatalf("marshalling the handle: %v", err)
+	}
+	if strings.Contains(string(raw), value) || string(raw) != "{}" {
+		t.Errorf("the handle marshals as %s, and it must carry nothing at all", raw)
 	}
 }
 
