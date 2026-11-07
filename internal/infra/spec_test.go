@@ -2311,14 +2311,17 @@ const repoRootCascadeAgent = `agent: { auth: cascade }`
 // `fugaro update` writes when the bundle it read holds a model credential
 // (localcfg.Repo.CredentialsServiceReady, internal/cli/init.go's
 // writeRepoConfig). It is the half of the switch a spec build cannot answer
-// for itself: internal/infra reads no cloud.
+// for itself: internal/infra reads no cloud. A RECORD is what it writes and not
+// an absent one, which is the distinction the field's pointer makes: the switch
+// reads both as off (localcfg.Repo.CredentialsServiceOn), while MergeShared
+// carries a published record over a missing one.
 func serviceReady(t *testing.T, lc *localcfg.Config, repo string) {
 	t.Helper()
 	r, ok := lc.Repos[repo]
 	if !ok {
 		t.Fatalf("the fixture's local config has no repos.%s entry: %v", repo, slices.Sorted(maps.Keys(lc.Repos)))
 	}
-	r.CredentialsServiceReady = true
+	r.CredentialsServiceReady = localcfg.RecordSwitch(true)
 	lc.Repos[repo] = r
 }
 

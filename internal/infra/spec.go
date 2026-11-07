@@ -266,7 +266,12 @@ type CredentialsService struct {
 //     with — a record of an apply, so it carries the auth that apply was made
 //     for, and an owner who applies a root before committing the cascade
 //     reads false here until a run of its own applies it again — because this
-//     package reads no cloud.
+//     package reads no cloud. The record is read through
+//     localcfg.Repo.CredentialsServiceOn: an entry with no record at all and
+//     one whose record says false are the same answer to the switch, and they
+//     differ only where the config is published (internal/localcfg's
+//     MergeShared, which must not let a machine that holds no record erase
+//     one another machine wrote).
 //   - auth: the repository's agent.auth is one the service serves, which is
 //     config.AuthCascade alone. It is READ LIVE from the repository's
 //     fugaro.yaml at every build of its spec and never stored: a stored copy
@@ -633,7 +638,7 @@ func resolve(in Inputs) (*repoCtx, error) {
 	if err := c.resolveBitbucketProxied(); err != nil {
 		return nil, err
 	}
-	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceReady, in.Cfg.Agent.Auth)
+	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth)
 	return c, nil
 }
 

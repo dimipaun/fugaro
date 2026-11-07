@@ -1211,11 +1211,31 @@ type Repo struct {
 	// `oauth` being withheld whatever the record says.
 	//
 	// "Writes it" and not "sets it to true": the write is the value the run
-	// read, so clearing it is a write like any other. The member is then
-	// ABSENT rather than `false` (omitempty, the same shape Repo.Vertex has),
-	// which is the same answer to every reader — an absent member decodes as
-	// false — and it keeps the published shared config of an installation
-	// nothing is ready for byte for byte what it was.
+	// read, so clearing it is a write like any other.
+	//
+	// It is a POINTER because "no record" and a recorded `false` are two
+	// different documents, and the difference decides what publishing does
+	// (the review of 2026-11-07's fourth round). Nil is "no machine has
+	// applied this repository's root with the service on as far as this
+	// config knows" — a machine that onboarded the repository with `fugaro
+	// update --repo` under a release before this field, a teammate who never
+	// applied that root, a CI box whose file came from the published one —
+	// and a written `false` is "the apply I made said off". Only the second
+	// may answer for the installation: the record travels in the published
+	// shared config, so a machine whose own entry has no record would
+	// otherwise publish `false` over another machine's `true` and switch a
+	// `cascade` repository — whose jobs have already given their model
+	// mounts up — off for everyone, with nothing in its own config to repair
+	// it from (MergeShared carries the published record over a nil one, and
+	// the upgrade backfill re-reads the root's own apply).
+	//
+	// `omitempty` then means what it says: a nil record is absent from the
+	// file, and a recorded false is written as `false`. A recorded false is
+	// what an emptied bundle, or an auth the service does not serve, leaves
+	// behind (see the fail-safe direction above) — and it must be written, or
+	// the switch-off could never travel to a machine that reads the published
+	// config. Every reader judges the field the same way through
+	// CredentialsServiceOn; only the merge tells the two apart.
 	//
 	// It is recorded rather than read where it is used because the reader
 	// is internal/infra's spec builder, which reads no cloud: this is the
@@ -1223,8 +1243,24 @@ type Repo struct {
 	// config is the only source of. The installation's own block is read
 	// where the spec is built, and the repository's agent.auth is read there
 	// too, live from the fugaro.yaml the runs read.
-	CredentialsServiceReady bool `yaml:"credentials_service_ready,omitempty"`
+	CredentialsServiceReady *bool `yaml:"credentials_service_ready,omitempty"`
 }
+
+// CredentialsServiceOn is the record as every reader of the switch judges it:
+// true exactly where a run recorded this repository's root as applied with the
+// service on. A nil record (no machine wrote one) and a recorded false are the
+// same answer here, which is the switch's own answer
+// (infra.CredentialsServiceServes' second condition); the two differ in one
+// place only, MergeShared, where a nil record must not erase the record
+// another machine wrote.
+func (r Repo) CredentialsServiceOn() bool {
+	return r.CredentialsServiceReady != nil && *r.CredentialsServiceReady
+}
+
+// RecordSwitch is the record a run writes for one repository entry: a pointer
+// to its own copy of on, so two entries never share one record — the field is a
+// pointer only so that "no record at all" is a document a config can hold.
+func RecordSwitch(on bool) *bool { return &on }
 
 // UsesVertex reports whether any repository the config records uses
 // Vertex AI.

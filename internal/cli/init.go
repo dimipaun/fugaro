@@ -2204,10 +2204,13 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	// The one write this door does make is the backfill an UPGRADE owes: a
 	// repository whose root a PREVIOUS release already applied with the service
 	// on carries no record, because the field did not exist then, and this
-	// release's launcher reads the record. The evidence is that root's own
-	// tfvars, so this vouches for a grant that was made and not for one this
-	// run's installation root never makes.
-	r.backfillCredentialsServiceReady(ctx, lc, outs)
+	// release's launcher reads the record. The evidence is the installation's
+	// own state — the repository root's objects in the state bucket, which is
+	// the installation's one copy and not this machine's — so this vouches for
+	// a grant that was made and not for one this run's installation root never
+	// makes, and it holds for a root applied from another machine or another
+	// checkout, where this machine holds no tfvars at all.
+	r.backfillCredentialsServiceReady(ctx, c, spec.StateBucket, lc, outs)
 	// 8. The local config.
 	return r.writeConfig(ctx, lc, spec, outs, path, old, r.res.Applied)
 }
@@ -3598,7 +3601,15 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// the spec was built with — so the record cannot claim a grant the plan
 	// did not make. Only this repository's entry moves: it is the only root
 	// this door applies.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Agent.Auth)
+	//
+	// A repository this config does not hold YET — a first onboarding — gets
+	// its entry made here, before infra.Repo below reads it, which is the one
+	// thing this call must not leave to writeRepoConfig: that runs after the
+	// apply, so an entry created there would leave this run planning a
+	// held-off root and only the NEXT run's plan switched on (the review of
+	// 2026-11-07's fourth round). On main one run sufficed, and one run still
+	// does.
+	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth)
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -4481,15 +4492,27 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// whose plan was made held off — the state the switch exists to make
 	// impossible, since that job's account holds no roles/run.invoker and a
 	// `cascade` run has nothing of its own to fall back to (D143). A
-	// repository this config does not hold yet is exactly that case: its spec
-	// was built with no entry to read, so its first run deploys the held-off
-	// root and records false, and the next run in the same checkout is the one
-	// that switches it on.
+	// repository this config did not hold at all is not that case any more:
+	// recordCredentialsServiceReady makes its entry, with the provider, before
+	// infra.Repo reads it, so the run that onboards plans that root and records
+	// the switch the same way every later run does (the review of 2026-11-07's
+	// fourth round; before it, the first `fugaro update --repo` of a cascade
+	// repository deployed the held-off root and the run after it was the one
+	// that switched the service on).
 	//
 	// The value is written as false as well as true: a bundle that is later
 	// emptied switches the repository off again, which puts its mounts back,
 	// and that is the fail-safe direction.
-	ready := false
+	//
+	// A NIL record is carried through as nil, deliberately, and it is the
+	// second half of the same care: the field tells "no machine has recorded
+	// this" from "a run recorded off" (localcfg.Repo.CredentialsServiceReady is
+	// a pointer, and MergeShared carries a published record over a missing one),
+	// so a run that read NOTHING — a coding agent's session, a run's own
+	// process, a bundle read that failed — must not turn another machine's
+	// record into a false one from here. recordCredentialsServiceReady leaves
+	// exactly those runs' entries alone, and this write owes the same.
+	var ready *bool
 	if entry, ok := lc.Repos[key]; ok {
 		ready = entry.CredentialsServiceReady
 	}

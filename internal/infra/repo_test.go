@@ -165,6 +165,85 @@ func TestForgetRepoStateDeletesOnlyThatRepository(t *testing.T) {
 	}
 }
 
+// TestRepoCredentialsServiceAppliedReadsTheSharedState: the upgrade's backfill
+// asks whether a repository root's apply made the service usable to that
+// repository, and the answer has to come from the installation's own copy of
+// that root's state — the objects under its prefix in the state bucket, written
+// by whichever machine ran the apply — and never from a document one machine
+// happens to hold.
+//
+// The three falses are the three states that are all "no evidence a job may
+// invoke the service": a root never applied anywhere (no object at all), one
+// applied with the switch off (the resource is not planned, so its address is
+// absent), and one whose only object is another repository's. The error is the
+// one a caller may not read as a no: a state object that is not a state. A
+// record written from any of them is what leaves a `cascade` run of that
+// repository with no model mounts and no address (D143).
+func TestRepoCredentialsServiceAppliedReadsTheSharedState(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	b := f.gcs.Bucket(t, testStateBucket)
+	spec := sandboxSpec(t)
+	other := "other-0123456789abcdef"
+	write := func(name, doc string) {
+		t.Helper()
+		if err := b.WriteAll(ctx, name, []byte(doc), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func(addresses ...string) string {
+		res := make([]map[string]any, 0, len(addresses))
+		for _, a := range addresses {
+			res = append(res, map[string]any{"address": a})
+		}
+		doc, err := json.Marshal(map[string]any{
+			"format_version": "1.0",
+			"values":         map[string]any{"root_module": map[string]any{"child_modules": []map[string]any{{"resources": res}}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(doc)
+	}
+
+	// Never applied anywhere.
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || on {
+		t.Fatalf("a repository with no state at all: on %v, err %v", on, err)
+	}
+	// Applied with the service off: the root's own resources are there, the
+	// invoker grant is not.
+	write(RepoStatePrefix(spec.Slug)+"/default.tfstate", state(`module.repo.module.workflow["web"].google_cloud_run_v2_job.workflow`))
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || on {
+		t.Fatalf("a root applied with the service off: on %v, err %v", on, err)
+	}
+	// Another repository's grant is not this one's.
+	write(RepoStatePrefix(other)+"/default.tfstate", state(`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`))
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || on {
+		t.Fatalf("another repository's state: on %v, err %v", on, err)
+	}
+	// Applied with the service on.
+	write(RepoStatePrefix(spec.Slug)+"/default.tfstate", state(
+		`module.repo.module.workflow["web"].google_cloud_run_v2_job.workflow`,
+		`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`))
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || !on {
+		t.Fatalf("a root applied with the service on: on %v, err %v", on, err)
+	}
+	// A second workflow's grant counts too: the module plans one per workflow.
+	write(RepoStatePrefix(spec.Slug)+"/default.tfstate", state(
+		`module.repo.module.workflow["build"].google_cloud_run_v2_service_iam_member.credentials[0]`))
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || !on {
+		t.Fatalf("a grant in another workflow's module: on %v, err %v", on, err)
+	}
+	// A state object that cannot be read is the error, never a no — even when
+	// the objects beside it hold no grant, since the unreadable one might.
+	write(RepoStatePrefix(spec.Slug)+"/default.tfstate", state(`module.repo.module.workflow["web"].google_cloud_run_v2_job.workflow`))
+	write(RepoStatePrefix(spec.Slug)+"/extra.tfstate", "not a state")
+	if _, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err == nil {
+		t.Error("an unreadable state object answered instead of erroring")
+	}
+}
+
 // seedVersions makes every secret of spec exist with our marks, and gives
 // the ones in with a version.
 func (f *cloud) seedVersions(spec RepoSpec, with ...string) {

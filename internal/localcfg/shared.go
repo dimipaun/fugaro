@@ -1,6 +1,7 @@
 package localcfg
 
 import (
+	"maps"
 	"reflect"
 	"slices"
 
@@ -182,7 +183,8 @@ func SameInstallation(published, local *Config) bool {
 // shared subset of local (Shared), filled in from published so that a
 // machine that lacks what another onboarded does not erase it. Map fields
 // (repos, base_images, model_prices, compute_prices, mailbox.keychain_item)
-// are unioned, the local entry winning a key clash; scalar and pointer fields
+// are unioned, the local entry winning a key clash — with one field inside
+// repos read the other way round (mergeRepoRecords); scalar and pointer fields
 // take the local value when it is non-zero, else the published one; name,
 // gcp_project, runs_bucket and version always come from local. What Shared
 // drops is
@@ -193,7 +195,7 @@ func MergeShared(published, local *Config) *Config {
 	if !SameInstallation(published, local) {
 		return out
 	}
-	out.Repos = withoutBaseBranches(unionMaps(published.Repos, out.Repos))
+	out.Repos = withoutBaseBranches(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
 	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)
@@ -280,6 +282,75 @@ func MergeShared(published, local *Config) *Config {
 	return out
 }
 
+// mergeRepoRecords is unionMaps over the repository entries with one field
+// carried rather than won: a local entry with NO record of the credentials
+// service's switch takes the published entry's record.
+//
+// It is the one field here that is not the local entry's to overwrite, because
+// it is the only one that answers for the INSTALLATION rather than for this
+// machine: the record says "this repository's root has been applied with the
+// service on", the root is one object shared by every checkout, and the
+// publish writes the whole installation's file. A machine that holds no record
+// for that repository — the field is new, so every entry written before this
+// release has none, and so has every entry on a machine that never applied
+// that root — would otherwise publish its own `false`/absence over a record
+// another machine wrote from an apply it made. The cost is a `cascade` run of
+// that repository: its job gave its model mounts up to the apply that wrote
+// the record, so with no record it is handed no address either and halts at
+// the service's door (D143), on every machine that reads the published file.
+//
+// A record the local entry DOES hold wins, in both directions and whatever it
+// says: only the door that applies that root writes one
+// (internal/cli's recordCredentialsServiceReady and the upgrade backfill), so
+// a recorded `false` is an apply that ran with the switch off — the emptied
+// bundle, or an auth the service does not serve — and it has to travel to the
+// other machines, or a switch-off would never reach anyone.
+//
+// unionMaps' local-wins rule covers every other field of the entry, and a
+// fresh map is returned, so neither argument is modified.
+func mergeRepoRecords(published, local map[string]Repo) map[string]Repo {
+	out := unionMaps(published, local)
+	for name, l := range local {
+		p, ok := published[name]
+		if !ok || l.CredentialsServiceReady != nil {
+			continue
+		}
+		l.CredentialsServiceReady = p.CredentialsServiceReady
+		out[name] = l
+	}
+	return out
+}
+
+// withoutUnwrittenRecord is a published repository entry as publishing again
+// would leave it, for the comparison SharedDiff makes: where the local entry
+// carries NO record of the credentials service's switch, mergeRepoRecords
+// carries the published one over it, so that key is not a difference — the
+// publish would write it back unchanged, and reporting it would nag every
+// machine about a repository whose root another machine applied, which is
+// exactly the file the shared config is meant to be. A local entry that HAS a
+// record keeps the comparison whole: publishing it does change the published
+// file whenever the two disagree.
+//
+// Both arguments are the YAML forms SharedDiff compares (so "carries no
+// record" is the key's absence, which is what omitempty writes). The published
+// entry is never modified.
+func withoutUnwrittenRecord(local, published any) any {
+	le, lok := local.(map[string]any)
+	pe, pok := published.(map[string]any)
+	if !lok || !pok {
+		return published
+	}
+	if _, ok := le["credentials_service_ready"]; ok {
+		return published
+	}
+	if _, ok := pe["credentials_service_ready"]; !ok {
+		return published
+	}
+	out := maps.Clone(pe)
+	delete(out, "credentials_service_ready")
+	return out
+}
+
 // unionMaps is a new map with every entry of a, and every entry of b over
 // it; nil when both are empty.
 func unionMaps[K comparable, V any](a, b map[K]V) map[K]V {
@@ -338,7 +409,11 @@ func SharedDiff(published, local *Config) []string {
 			return false
 		}
 		for name, v := range lm {
-			if !reflect.DeepEqual(v, pm[name]) {
+			pv := pm[name]
+			if k == "repos" {
+				pv = withoutUnwrittenRecord(v, pv)
+			}
+			if !reflect.DeepEqual(v, pv) {
 				return true
 			}
 		}

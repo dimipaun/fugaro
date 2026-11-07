@@ -242,10 +242,28 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 // at all and so writes no record — which is also why a run outside a checkout,
 // whose repository stage is skipped, leaves every entry as it was.
 //
+// A repository the local config does not hold yet gets its entry from this
+// function, provider and nothing else, and that is the onboarding's one-run
+// rule (the review of 2026-11-07's fourth round): the spec below reads the
+// entry, so an onboarding that created it only in the write after the apply
+// deployed a held-off root on its first `fugaro update --repo` — mounts kept,
+// no invoker grant — and the next launch, reading the record that write left
+// (false), withheld the address too, leaving a `cascade` run with no model
+// credential and nothing to swap it for until a second, unannounced update
+// in the same checkout. The entry is created here, before infra.Repo reads
+// it, so the plan and the record are the same answer on the run that onboards
+// — which is what they are on every later run.
+//
 // The value is written false as well as true: a bundle that is later emptied —
 // or a checkout edited back to an auth the service does not serve — switches
 // the repository off again on the next run, and that is the fail-safe direction
-// (see writeRepoConfig).
+// (see writeRepoConfig). Recorded and not merely "on": since the review's
+// fourth round the field tells "no record" from a recorded false
+// (localcfg.Repo.CredentialsServiceReady is a pointer, and
+// localcfg.MergeShared carries a published record over a missing one), so this
+// write is what lets a switch-off travel to the other machines — and the
+// nothing-written case below is what keeps a machine that read nothing from
+// erasing theirs.
 //
 // auth is the repository's agent.auth as the RUN will read it, which is the
 // document the spec below is built from and not this working tree's
@@ -282,21 +300,32 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 // PRESENCE is read for that — the bundle's container is derived from the
 // project and the installation's name (openBundleStore) — so a URL the first
 // apply could not know yet is not a reason to answer false.
-func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, auth string) {
-	if lc == nil || len(lc.Repos) == 0 {
+func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, provider, auth string) {
+	if lc == nil {
 		return
 	}
 	key := repoConfigKey(lc, repo)
 	entry, ok := lc.Repos[key]
 	if !ok {
-		// A repository the local config does not hold has nothing for the
-		// spec below to read, so this run deploys its root held off — mounts
-		// kept, no invoker grant — and its record has to stay false: the
-		// write at the end of this door creates the entry from the value the
-		// spec was built with, and the run after this one, in the same
-		// checkout, is the one that switches it on. Recording it ready here
-		// would be a record of a grant this run never made.
-		return
+		// A repository the local config does not hold gets its entry HERE,
+		// before the spec below reads it, and not only in the write after the
+		// apply (writeRepoConfig, init.go): the spec is built from this
+		// value, so a first onboarding whose entry is created afterwards is
+		// deployed with the switch off — mounts kept, no invoker grant — and
+		// the cascade the owner just committed keeps no address until a
+		// SECOND `fugaro update --repo` in the same checkout, which the run
+		// neither asks for nor announces. `fugaro update --repo` is the
+		// documented onboarding, and CLAUDE.md's HARD RULE is that it is the
+		// whole upgrade: one run, the same one main ran.
+		//
+		// The entry is the shell the write after the apply fills in (provider
+		// and nothing else), and it is this map's only use of it that matters
+		// before then: infra.Repo reads the KEY (via RepoFor) and, from the
+		// rest, the provider — which the checkout's own fugaro.yaml has just
+		// been held to (repoEngine resolves the config first) — and the base
+		// branch the repository's own file sets. Everything else the spec
+		// reads comes from that document and not from repos:.
+		entry = localcfg.Repo{Provider: provider}
 	}
 	installed := outs.CredentialsService != nil
 	ready, record := false, true
@@ -321,7 +350,10 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 	// of the bundle — which the probe answers false for, without a read, when
 	// no block is known — so the record cannot come out differently from the
 	// plan it is the record of.
-	entry.CredentialsServiceReady = infra.CredentialsServiceServes(installed, ready, auth)
+	entry.CredentialsServiceReady = localcfg.RecordSwitch(infra.CredentialsServiceServes(installed, ready, auth))
+	if lc.Repos == nil {
+		lc.Repos = map[string]localcfg.Repo{}
+	}
 	lc.Repos[key] = entry
 }
 
@@ -346,15 +378,13 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 	return &withBlock
 }
 
-// backfillCredentialsServiceReady records the bundle's readiness on every
-// repository entry whose root THIS MACHINE has already applied with the
-// credentials service on, and whose entry carries no record yet.
+// backfillCredentialsServiceReady records the switch on every repository entry
+// whose root has already been applied with the credentials service on — by any
+// machine, from any checkout — and whose entry carries no record yet.
 //
 // It is the upgrade path of docs/credentials-service/default-on.md's DON1, and
-// it exists because the record is new in this release: the field's absence and
-// a written false are the same document (localcfg.Repo.CredentialsServiceReady
-// is omitempty on purpose, since false is the shape every earlier config
-// already had), so an installation that opted in under an earlier release is
+// it exists because the record is new in this release: an entry written before
+// it carries none, so an installation that opted in under an earlier release is
 // indistinguishable from one that never did. Such an installation's roots were
 // applied with the service on — their jobs mount no model credential and their
 // accounts hold roles/run.invoker — and this release's launcher, which reads
@@ -371,16 +401,24 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // operator step beside `fugaro update` — and CLAUDE.md's HARD RULE is that
 // `fugaro update` is the whole upgrade.
 //
-// The evidence is the deployed root's own document, never a guess
-// (deployedRepoCredentialsService): the tfvars the last apply of that root was
-// built from carry the service exactly when that apply dropped the job's
-// mounts and made its grant. A repository this machine holds no such document
-// for — a sibling never applied here, a first onboarding — is left alone, and
-// so is one whose document says the service is off: the record vouches for a
-// grant, and neither is evidence of one. The value is this run's bundle
-// reading, the same one the repository door writes, and the write is therefore
-// inert where it agrees: a bundle that is empty writes false over an absent
-// field, which is the same document and the same answer to every reader.
+// The evidence is the SHARED root's own state, never a guess and never this
+// machine's copy of it (appliedRepoCredentialsService, over
+// infra.RepoCredentialsServiceApplied): the objects under the repository's
+// prefix in the installation's state bucket carry the invoker grant exactly
+// when that root's apply made it. It reads the state and not the tfvars a
+// workdir holds — which is what the review of 2026-11-07's fourth round found
+// — because those are per-machine (<state>/fugaro/terraform/<project>/repos/
+// <slug>) and the question is the installation's: a repository whose root was
+// applied from another machine, or from another checkout of this one, has no
+// document here, so a workdir read would report "never applied" for a root
+// that is applied — and the upgrade would converge one checkout at a time, the
+// operator step this function exists to remove. The state is also the honest
+// half of the pair: the tfvars are what a run HANDED Terraform, so an apply
+// that failed leaves a document ahead of the state. A repository whose state
+// holds no such grant — never applied anywhere, applied with the service off,
+// or forgotten — is left alone: the record vouches for a grant, and none of
+// those is evidence of one. The value is this run's bundle reading, the same
+// one the repository door writes.
 //
 // Nothing is written where the bundle was not read (credentialsBundleReady's
 // second answer): in a coding agent's session or in a run's own process, and on
@@ -390,19 +428,27 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // costs this door a convergence rather than a wrong write: an entry it cannot
 // judge stays unrecorded, so an installation whose opt-in predates this release
 // converges on the next run that CAN read the bundle — which is the same door,
-// the next time it works, and never a second command.
-func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs) {
+// the next time it works, and never a second command. A state it cannot read
+// is the same shape, one repository at a time.
+func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.Clients, stateBucket string, lc *localcfg.Config, outs infra.InstallationOutputs) {
 	if lc == nil || len(lc.Repos) == 0 {
 		return
 	}
 	var switched []string
 	for key := range lc.Repos {
-		if lc.Repos[key].CredentialsServiceReady {
+		// A record at all — either value — is a door's judgement of that root
+		// (recordCredentialsServiceReady, or a previous backfill), and this one
+		// only fills a gap. The distinction is why the field is a pointer: a
+		// recorded false is an apply that ran with the switch off, so it is
+		// evidence and not an absence, and re-reading the state for it on every
+		// update would be a cloud call per repository per run for an answer the
+		// repository's own door is the one to change.
+		if lc.Repos[key].CredentialsServiceReady != nil {
 			continue
 		}
-		on, err := deployedRepoCredentialsService(lc, key)
+		on, err := appliedRepoCredentialsService(ctx, c, stateBucket, lc, key)
 		if err != nil {
-			r.warn(fmt.Sprintf("whether %s's repository root carries the credentials service could not be read (%s): its record is left as it is, and a run of it may not be handed the service's address until the next update reads the document", key, oneLineCLI(err.Error())))
+			r.warn(fmt.Sprintf("whether %s's repository root carries the credentials service could not be read (%s): its record is left as it is, and a run of it may not be handed the service's address until the next update reads the state", key, oneLineCLI(err.Error())))
 			continue
 		}
 		if on {
@@ -424,9 +470,44 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, lc *local
 	}
 	for _, key := range switched {
 		entry := lc.Repos[key]
-		entry.CredentialsServiceReady = ready
+		entry.CredentialsServiceReady = localcfg.RecordSwitch(ready)
 		lc.Repos[key] = entry
 	}
+}
+
+// appliedRepoCredentialsService reports whether the repository root has been
+// applied with the installation's credentials service on, read from the
+// installation's own copy of that root's state
+// (infra.RepoCredentialsServiceApplied: the objects under the repository's
+// prefix in the state bucket, whichever machine applied them).
+//
+// It is the upgrade backfill's reader
+// (backfillCredentialsServiceReady), and it is deliberately not
+// deployedRepoCredentialsService beside it: that one reads the tfvars a
+// workdir holds, which are THIS machine's copy of what a run handed Terraform.
+// The question here is the installation's — was that root applied with the
+// service on, by anyone — so the answer has to come from the installation's
+// own state (the review of 2026-11-07's fourth round).
+//
+// A repository the local config does not hold, one it cannot name a slug for,
+// and a run with no state bucket to read all answer false: none of them names
+// a root whose state could carry the grant.
+func appliedRepoCredentialsService(ctx context.Context, c *infra.Clients, stateBucket string, lc *localcfg.Config, repo string) (bool, error) {
+	if lc == nil || c == nil || stateBucket == "" {
+		return false, nil
+	}
+	entry, ok := lc.RepoFor(repo)
+	if !ok {
+		return false, nil
+	}
+	slug, err := task.Slug(entry.Provider, repo)
+	if err != nil {
+		// A repository whose provider this config cannot name has no state
+		// prefix to have written the root's state under: the slug is what
+		// names it (repoEngine's own derivation).
+		return false, nil
+	}
+	return infra.RepoCredentialsServiceApplied(ctx, c, stateBucket, slug)
 }
 
 // deployedRepoCredentialsService reports whether the repository root this
@@ -435,20 +516,23 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, lc *local
 // (infra.RepoWorkdir, ReadWorkdirVars, infra.RepoCredentialsServiceDeployed).
 //
 // It answers the one question neither the local config nor the repository's
-// fugaro.yaml can, and it has two readers:
+// fugaro.yaml can, and it has ONE reader: a launch that cannot read the run's
+// own document at all — `fugaro run --repo X` from a directory that holds no
+// checkout of X, so there is no file to read and no ref to read one out of
+// (run.go's launchFileConfig) — which has no agent.auth to judge the switch's
+// third condition on. The root's own apply already made that decision: it
+// dropped the job's model mounts and granted its account roles/run.invoker
+// exactly when this key is there, and a job is handed the service's address to
+// match the containers it runs (run.go's credentialsServiceLaunchEnv call
+// site).
 //
-//   - a launch that cannot read the run's own document at all — `fugaro run
-//     --repo X` from a directory that holds no checkout of X, so there is no
-//     file to read and no ref to read one out of (run.go's launchFileConfig) —
-//     has no agent.auth to judge the switch's third condition on, and the
-//     root's own apply already made that decision: it dropped the job's model
-//     mounts and granted its account roles/run.invoker exactly when this key
-//     is there, and a job is handed the service's address to match the
-//     containers it runs (run.go's credentialsServiceLaunchEnv call site).
-//   - the installation door's backfill on an upgrade
-//     (backfillCredentialsServiceReady): an installation that opted into the
-//     service under an earlier release has roots that carry it and no record
-//     of the fact.
+// The upgrade backfill used to read this too, and does not any more: it asks
+// about roots another machine or another checkout applied, and those wrote no
+// document into THIS machine's workdir (appliedRepoCredentialsService, over
+// the installation's own state). A launch keeps the workdir read because it is
+// the one this machine can afford: the state bucket is the operator's — it is
+// created so that project Viewers cannot read it — and a developer launching a
+// run holds no grant on it.
 //
 // A repository the local config does not hold, one it cannot name a slug for,
 // and one whose root was applied with the service off (the key null, which is
@@ -464,7 +548,10 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, lc *local
 // would be handed an address it cannot use. The authoritative read is the
 // Cloud Run service's IAM policy (doctor_brokering.go's
 // doctorCredentialsServiceDeployed), which costs a permission the operator
-// holds by role and a developer launching a run need not.
+// holds by role and a developer launching a run need not; the backfill reads
+// the state, which is the same fact one step earlier (the apply's own
+// addresses) at a permission this machine already spends on every repository
+// root it plans.
 func deployedRepoCredentialsService(lc *localcfg.Config, repo string) (bool, error) {
 	if lc == nil || lc.GCPProject == "" {
 		return false, nil

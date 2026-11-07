@@ -200,7 +200,7 @@ func TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService(t *testing.T) {
 func TestCredentialsServiceLaunchEnv(t *testing.T) {
 	optedIn := &localcfg.Config{
 		CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL},
-		Repos:              map[string]localcfg.Repo{"acme/app": {CredentialsServiceReady: true}},
+		Repos:              map[string]localcfg.Repo{"acme/app": {CredentialsServiceReady: localcfg.RecordSwitch(true)}},
 	}
 	for name, lc := range map[string]*localcfg.Config{
 		"no config":       nil,
@@ -271,10 +271,13 @@ func seedRepoRootCredentialsService(t *testing.T, slug string) {
 }
 
 // seedRepoRootVars writes a repository root's tfvars, verbatim, where the last
-// apply of that root left them: the state a PREVIOUS release's run left on this
-// machine, which no command of this binary produces any more, and the evidence
-// the upgrade's backfill reads (update_switch_test.go's
-// TestAnOptedInInstallationConvergesWithOneUpdate).
+// apply of that root left them, in THIS machine's workdir: what a launch
+// outside a checkout reads the deployed root's answer from
+// (deployedRepoCredentialsService), and a document the upgrade's backfill
+// deliberately does NOT read any more (the review of 2026-11-07's fourth
+// round: it asked about roots another machine applies, and those write no
+// document here — appliedRepoCredentialsService reads the installation's own
+// state instead).
 func seedRepoRootVars(t *testing.T, slug, doc string) {
 	t.Helper()
 	dir, err := infra.RepoWorkdir(os.Getenv, initProject, slug)

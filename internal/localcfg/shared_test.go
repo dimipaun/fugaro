@@ -225,6 +225,64 @@ func TestMergeSharedLocalRepoWinsAndNewIsAdded(t *testing.T) {
 	}
 }
 
+// TestMergeSharedCarriesTheRepositoriesCredentialsServiceRecord is the one
+// field of a repository entry that is not the local entry's to overwrite: the
+// credentials service's record answers for the INSTALLATION — "this
+// repository's root has been applied with the service on", and that root is one
+// object every checkout shares — while every other field of the entry is this
+// machine's own answer about it.
+//
+// Without the rule (unionMaps alone, the local entry winning whole) any machine
+// whose entry carries no record publishes that absence over the record another
+// machine wrote, from an apply it made: the runs bucket's file is the
+// installation's one copy of it, so a `cascade` repository's every launch — its
+// job gave its model mounts up to the apply that wrote the record — is handed
+// no service address and halts at the service's door (D143). The field is a
+// pointer for the same reason: a recorded false is an apply that ran with the
+// switch OFF, which has to travel, while no record at all must not.
+//
+// Mutation (verified, run and restored): merge repos with unionMaps alone
+// (drop the mergeRepoRecords call) and the first half fails, the published
+// record gone from the merged config and from the file it marshals to.
+func TestMergeSharedCarriesTheRepositoriesCredentialsServiceRecord(t *testing.T) {
+	published := sharedBase(t, "repos:\n  acme/web: { provider: github, workflows: [web], credentials_service_ready: true }\n  acme/half: { provider: github, workflows: [web], credentials_service_ready: false }\n")
+	local := sharedBase(t, "repos:\n  acme/web: { provider: github, workflows: [api] }\n  acme/half: { provider: github, workflows: [api] }\n")
+
+	got := MergeShared(published, local)
+	if !got.Repos["acme/web"].CredentialsServiceOn() {
+		t.Errorf("a publish from a machine with no record for acme/web dropped the published one: that machine's own entry carries none — it never applied that root — and the record a teammate's apply wrote is the installation's only record that this repository's job may call the service at all (D143)")
+	}
+	if got.Repos["acme/half"].CredentialsServiceOn() {
+		t.Errorf("the published record false for acme/half was overwritten by the local entry's absence: a recorded false is a run that applied that root with the switch OFF, so it has to travel — the fail-safe direction is the mounts back on, and a merge that erased it leaves the installation's file saying the service is ready for a root whose apply held it off")
+	}
+	out, err := got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "acme/web:") || !strings.Contains(string(out), "credentials_service_ready: true") {
+		t.Errorf("the merged config marshals without the record it kept:\n%s", out)
+	}
+
+	// A record the local entry DOES hold wins, in both directions: only the
+	// door that applies that root writes one (internal/cli's
+	// recordCredentialsServiceReady and the upgrade backfill), so this is the
+	// switch-off reaching the other machines.
+	off := sharedBase(t, "repos:\n  acme/web: { provider: github, workflows: [api], credentials_service_ready: false }\n")
+	if MergeShared(published, off).Repos["acme/web"].CredentialsServiceOn() {
+		t.Errorf("a local record of false did not win over the published true: the repository was switched off by an apply, and a record that cannot say so keeps every machine handing the job an address the service no longer serves it at")
+	}
+	on := sharedBase(t, "repos:\n  acme/half: { provider: github, workflows: [api], credentials_service_ready: true }\n")
+	if !MergeShared(published, on).Repos["acme/half"].CredentialsServiceOn() {
+		t.Errorf("a local record of true did not win over the published false")
+	}
+
+	// Neither argument is modified: the caller keeps its own entries (the local
+	// file is written from `next`, not from this result).
+	if local.Repos["acme/web"].CredentialsServiceReady != nil || published.Repos["acme/web"].CredentialsServiceReady == nil {
+		t.Errorf("MergeShared modified an input's record: local %v, published %v", local.Repos["acme/web"].CredentialsServiceReady, published.Repos["acme/web"].CredentialsServiceReady)
+	}
+}
+
 // TestMergeSharedKeepsThePublishedBatchBlock: the batch block is published —
 // it is the installation's facts (the image a run's job runs, its machine
 // type, the network and subnetwork its VMs are placed in, the account they run

@@ -3810,7 +3810,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, de
 	// to put on a job's environment either.
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	local, _ := lc.RepoFor(repo)
-	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceReady, auth)
+	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth)
 	if auth == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the deployed root alone — the same two facts

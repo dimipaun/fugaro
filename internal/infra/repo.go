@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // slugRE is the shape task.Slug gives: the readable part, then 16 hex
@@ -110,6 +112,65 @@ func RepoStateObjects(ctx context.Context, c *Clients, stateBucket, slug string)
 	}
 	slices.Sort(names)
 	return names, nil
+}
+
+// credentialsMemberAddress is where a repository root's state keeps the
+// workflow module's invoker grant, one instance per workflow:
+// modules/workflow/sa.tf's
+// google_cloud_run_v2_service_iam_member.credentials, planned with count 0/1
+// on that root's installation.credentials_service, so an address with this
+// suffix is in the state exactly when that root was applied with the service
+// on. The suffix is the whole address's tail — module.repo.module.workflow
+// ["<name>"].google_cloud_run_v2_service_iam_member.credentials[0] — and it is
+// the same spelling the spec's own address list carries (spec.go's
+// repoAddresses), so a state and a spec name one resource the same way.
+const credentialsMemberAddress = "google_cloud_run_v2_service_iam_member.credentials[0]"
+
+// RepoCredentialsServiceApplied reports whether the repository root's STATE —
+// the objects under RepoStatePrefix in the installation's state bucket, which
+// belongs to the installation and not to one machine — holds that invoker
+// grant.
+//
+// It is the shared evidence for "this repository's root has been applied with
+// the credentials service on", where the tfvars a workdir holds
+// (RepoCredentialsServiceDeployed) are only this machine's: the workdir is
+// per-machine state (<state>/fugaro/terraform/<project>/repos/<slug>), so a
+// repository whose root was applied from another machine, or from another
+// checkout of this one, has no document here at all — which is exactly the
+// installation an upgrade has to converge (internal/cli's
+// backfillCredentialsServiceReady). The state bucket is the installation's
+// one copy, written by whichever machine ran the apply, and its addresses are
+// what that apply actually made rather than what a run handed Terraform: a
+// root whose apply failed or was refused leaves a document ahead of its
+// state, and the state is the one that counts.
+//
+// False is "this repository's state holds no such grant", and it is one
+// answer for three states that are all "not evidence a job may invoke the
+// service": a root never applied anywhere (no state object), one applied with
+// the service off (the resource is not planned), and one whose state
+// --forget removed. A state object that cannot be read, or that is not JSON,
+// is the error, and no caller may read it as a no (Global Constraint 3).
+func RepoCredentialsServiceApplied(ctx context.Context, c *Clients, stateBucket, slug string) (bool, error) {
+	names, err := RepoStateObjects(ctx, c, stateBucket, slug)
+	if err != nil {
+		return false, err
+	}
+	for _, name := range names {
+		data, err := ReadStateObject(ctx, c, stateBucket, name)
+		if err != nil {
+			return false, err
+		}
+		var st tf.State
+		if err := json.Unmarshal(data, &st); err != nil {
+			return false, fmt.Errorf("gs://%s/%s is not a state this program can read: %w", stateBucket, name, err)
+		}
+		for _, a := range st.Addresses() {
+			if strings.HasSuffix(a, credentialsMemberAddress) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // StateBucketVersioned reports whether the state bucket keeps noncurrent
