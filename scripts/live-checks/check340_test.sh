@@ -97,7 +97,9 @@ unknown() {
   exit 64
 }
 deny() { # permission
-  printf 'ERROR: (gcloud.storage) HTTPError 403: %s does not have %s access to the Google Cloud Storage object.\n' "$impersonate" "$1" >&2
+  # FAKE340_DENY_PERM makes the refusal name a permission of another kind, which
+  # is what a refusal for a reason other than the clause reads like.
+  printf 'ERROR: (gcloud.storage) HTTPError 403: %s does not have %s access to the Google Cloud Storage object.\n' "$impersonate" "${FAKE340_DENY_PERM:-$1}" >&2
   exit 1
 }
 
@@ -821,6 +823,19 @@ test_a_half_granted_pair_is_still_torn_down() {
   expect_scratch_gone "half-granted pair"
 }
 
+# A refusal that names a permission of another kind: the row says so, because an
+# account holding the two conditioned object roles holds no bucket-level
+# permission, and a command asking for one is refused whatever the clause says.
+# Read as "this form does not work", that refusal would pick the wrong form.
+test_a_refusal_of_another_kind_is_flagged() {
+  setup_case other-permission none
+  RUN340_ENV=(FAKE340_DENY_PERM=storage.buckets.get)
+  run340_default
+  expect_status "$status" 1 "another permission"
+  expect_contains "$out" "NOTE: the refusal names storage.buckets.get" "another permission: the row says the refusal is of another kind"
+  expect_bucket_clean "another permission"
+}
+
 # A bucket named with its gs:// prefix and a trailing slash is the same bucket:
 # the two arguments are the ones a person types.
 test_a_gs_prefix_and_a_trailing_slash_are_accepted() {
@@ -858,6 +873,7 @@ t test_a_read_that_arrives_late_is_not_a_refusal
 t test_refusals_are_not_read_when_nothing_held
 t test_a_refused_grant_is_could_not_tell
 t test_a_half_granted_pair_is_still_torn_down
+t test_a_refusal_of_another_kind_is_flagged
 t test_belong_is_refused_in_both_places
 t test_a_dry_run_prints_the_plan_and_makes_no_call
 t test_a_dry_run_still_refuses_belong
