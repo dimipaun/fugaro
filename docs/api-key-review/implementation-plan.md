@@ -411,7 +411,7 @@ register.
   rules out a key of its own for the credential. **D1413** is the one decision that could add a key
   (how a project says "the key, not the account"), and it is **answered: the key wins when the owner
   asks for it explicitly** — the spelling of that request is this plan's to design, and no task here
-  names it yet.
+  names it yet, which **§6 records as work this plan still owes** rather than leaving it unsaid.
 - **No second Anthropic key secret** (**D1412**), and no second secret name in
   `internal/config/config.go`'s `ReservedSecrets` or `internal/infra/spec.go`'s `SecretMounts`.
 - **No per-key attribution.** `runstore.Cost.ModelBy` and `RouteBy` are what the tree has and what
@@ -502,3 +502,10 @@ may not start and the cloud path is not launchable. A reader must take those two
    owner's live checks. Those tasks make the cloud path *served by a key*; they do not make it
    *launchable*, and a plan that implied otherwise would be selling a path nobody can run. Nothing
    here takes E7, and no release of this design is worth anything to a user until it is met.
+
+**One answer leaves work that no gate and no task carries yet, and it is named here so it is not
+lost:** **D1413** settles *that* the key wins when the owner asks for it explicitly, and **the
+spelling of that request is this plan's to design** (reconciliation §7, §9.3), but **no task in
+AK1–AK8 names it** (§4). It is not an owner decision waiting to be taken and it blocks no task: it is
+design work this plan still owes, and the task that writes the explicit-request path is the one that
+will have to spell it.

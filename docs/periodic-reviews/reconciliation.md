@@ -729,8 +729,8 @@ register's own rule for a work that reserved none (`docs/gcp-live-checklist.md:5
 ### 6.4 Decisions D1430–D1449
 
 **Every one of these is answered, as recommended, on 2026-11-07.** Each row carries the
-recommendation, the alternative with its cost, and **the owner's dated answer** — asked one at a
-time through `AskUserQuestion`, he took the recommendation each time, and approved every task in
+recommendation, the alternative with its cost, and **the owner's dated answer** — asked through
+`AskUserQuestion`, every option the recommended one, and he took all of them — and approved every task in
 [implementation-plan.md](implementation-plan.md) the same day (owner: "All tasks approved.
 Jobmax").
 

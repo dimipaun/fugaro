@@ -151,7 +151,8 @@ as a docs-only change. `docs/release-streams.yaml` has the CLI stream's `current
 **The reconciliation behind it is [reconciliation.md](reconciliation.md) §6**: findings **F25–F34** and
 the decisions **D1430–D1449**, read against `main` at `56c91f66` on 2026-11-07 and **answered the
 same day, each as recommended** — each is a row with the recommendation, the alternative with its
-cost, and the owner's dated answer, put to him one at a time through `AskUserQuestion`. **Every task
+cost, and the owner's dated answer, put to him through `AskUserQuestion` with every option the
+recommended one. **Every task
 in the plan is approved** (2026-11-07, owner: "All tasks approved. Jobmax"). **[spec.md](spec.md) is
 not rewritten**: it keeps its
 2026-11-04 text and is read through §5 and §6 of the reconciliation, exactly as the 2026-11-05 rulings

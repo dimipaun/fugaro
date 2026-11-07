@@ -7,12 +7,13 @@ in-job half and the cloud half; **D1411 and D1412 Path A, and no second Anthropi
 key wins when the owner asks for it explicitly**; **D1414 no** — an `oauth` run's review does not
 move onto an API key; and **D1415 a new additive field** on `StageTiming`, never a new value on
 `credential`. This is a design for the owner to read. It adds no code, no schema, no config key and
-no Terraform; it edits no file outside `docs/`. **Nothing in it waits on a further decision from the
-owner**: the answers of 2026-11-07 and the approval of the same day are the last word the plan
-needed, and items 1–5 of [implementation-plan.md](implementation-plan.md) §6 are satisfied. **The
-two gates that remain are not decisions and are named there**: the mandatory security review owed
-before **AK4–AK7** land, and **E7** — not met — so the cloud half stays unlaunchable and those four
-tasks may not start.
+no Terraform; it edits no file outside `docs/`. **The decisions are answered and every task is
+approved (2026-11-07), and items 1–5 of [implementation-plan.md](implementation-plan.md) §6 are
+satisfied.** Three things are still owed, none of them a further answer from the owner, and each is
+named where it stands: **items 6 and 7 of that list** — the mandatory security review owed before
+**AK4–AK7** land, and **E7**, not met, so those four tasks may not start and the cloud half stays
+unlaunchable — and **D1413's spelling**, which that section records as design work this plan still
+owes because no task names it yet.
 
 **Asked by:** the repository owner, in a message of **2026-11-07** — "the api-key review path: let's
 start a design". The role is the one the ask's own clauses describe: the person who owns the

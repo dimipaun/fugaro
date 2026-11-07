@@ -374,9 +374,10 @@ the class's own credential*, never to let the repository supply one.
 ## 7. Owner decisions D1410–D1429
 
 Recommendation first in each, with the reason; then the alternative and its cost. **The owner's
-answer cell carries his ruling of 2026-11-07 in every row: asked one at a time through
-`AskUserQuestion`, he took the recommendation each time**, and the same day he approved every task
-in [implementation-plan.md](implementation-plan.md) (owner: "All tasks approved. Jobmax").
+answer cell carries his ruling in every row: the questions went to him through `AskUserQuestion`,
+every option offered was the recommended one, and he took all of them** (2026-11-07), approving
+every task in [implementation-plan.md](implementation-plan.md) the same day (owner: "All tasks
+approved. Jobmax").
 **D1410–D1429 are this work's block** (§8).
 
 | # | The question | Recommended, and why | The alternative, and its cost | Owner's answer |
