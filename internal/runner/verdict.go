@@ -23,7 +23,15 @@ import (
 // A finding's score is three anchored 1–5 axes and a class (D1, D3). All four
 // are optional, so a verdict written before them still validates and still
 // parses, and severity stays the free-form label it is (D2).
-const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"needs_owner":{"type":"boolean"},"file":{"type":"string"},"summary":{"type":"string"}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
+//
+// A summary is the one thing a finding must carry, and it is a sentence: the
+// key is required and it may not be empty. The model is constrained by this
+// schema as it decodes, so minLength is what keeps a finding the owner must
+// settle (needs_owner) from arriving with nothing for them to read — the
+// reader does not enforce the schema (decodeVerdict), so the runner stores a
+// decision with a sentence of its own when a verdict reaches it without one
+// (ownerDecision).
+const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"needs_owner":{"type":"boolean"},"file":{"type":"string"},"summary":{"type":"string","minLength":1}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
 
 // Finding is one issue a review asks to fix.
 type Finding struct {

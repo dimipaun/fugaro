@@ -1014,7 +1014,9 @@ type Record struct {
 	// run that worked from no ruling, and for one whose ruling answered nothing
 	// a reader may show: the block is bounded on read like OwnerDecisions, and
 	// a ruling with no decisions beside it is text that settles nothing, which
-	// no brief is handed as an answer.
+	// no brief is handed as an answer. A reader that inherits the pair holds
+	// the ruling to task.ValidateOwnerRuled and drops both when it fails, so
+	// what a record says the run worked from is always text a brief may hold.
 	OwnerRuledDecisions *OwnerDecisions `json:"owner_ruled_decisions,omitempty"`
 	// Checkpoint is the report a governance halt left (T6.1, D329, G7):
 	// what stopped the run, why it is over and what it would have done

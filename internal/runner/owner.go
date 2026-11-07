@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -96,6 +97,35 @@ func (r *run) ownerRuling() followup.OwnerRuling {
 	return out
 }
 
+// ownerNoSummary is the sentence a decision is stored with when the review
+// left the finding to the owner and no words for it.
+//
+// VerdictSchema asks the model for a summary of at least one character, but it
+// constrains a model as it decodes and the runner does not enforce it on a
+// verdict it reads (decodeVerdict): a finding can still reach the loop marked
+// needs_owner with the key present and nothing in it, and
+// runstore.NewOwnerDecisions stores no decision without one. The block would
+// then be dropped whole, which is not "a decision nobody could answer" but
+// "no decision at all": the run would end the draft any clean run ends
+// instead of the one waiting on the owner, Decide's gate would never fire,
+// the status section would carry the generic draft note instead of "Waiting
+// on you", and the launcher would let the next blind follow-up through — the
+// loop this whole change exists to end, started by a sentence nobody wrote.
+// The sentence says only what happened, so a reader is told the question is
+// there without words being put in the reviewer's mouth.
+const ownerNoSummary = "the reviewer left this finding to the owner with no summary of it"
+
+// ownerDecision is one needs_owner finding as the record stores it: the path
+// the reviewer named and their sentence for it, both redacted, or
+// ownerNoSummary where they left none (above).
+func (r *run) ownerDecision(f Finding) runstore.OwnerDecision {
+	summary := r.redact(f.Summary)
+	if strings.TrimSpace(summary) == "" {
+		summary = ownerNoSummary
+	}
+	return runstore.OwnerDecision{File: r.redact(f.File), Summary: summary}
+}
+
 // decidingOwnerDecisions is what the run's review left the repository's owner:
 // the needs_owner findings of the last round of every enabled outer review
 // level, redacted and bounded as the record stores them, nil when they left
@@ -127,7 +157,7 @@ func (r *run) decidingOwnerDecisions() *runstore.OwnerDecisions {
 	// that raised it first.
 	for _, round := range []seniorRound{r.seniorLevelLast, r.lastSenior} {
 		for _, f := range ownerFindings(round.Findings) {
-			d := runstore.OwnerDecision{File: r.redact(f.File), Summary: r.redact(f.Summary)}
+			d := r.ownerDecision(f)
 			if seen[d] {
 				continue
 			}
@@ -159,10 +189,11 @@ func (r *run) recordOwnerDecisions(halt *runstore.Halt) bool {
 	}
 	blk := r.decidingOwnerDecisions()
 	if blk == nil {
-		// A needs_owner finding with no summary at all: nothing a person could
-		// answer, so nothing is recorded and the round is read as the round it
-		// otherwise is. It cannot happen through the stage's own schema, whose
-		// findings require a summary; a hand-built verdict is the case.
+		// The review left nothing for the owner: no block, no halt, and the
+		// round is read as the round it otherwise is. A finding that is one of
+		// these always reaches the record with a sentence (ownerDecision), so
+		// nil here is an empty list, never a list whose sentences were
+		// unreadable.
 		return false
 	}
 	r.mu.Lock()
@@ -186,14 +217,15 @@ func (r *run) recordOwnerDecisions(halt *runstore.Halt) bool {
 func (r *run) ownerStop(ctx context.Context, findings []Finding) bool {
 	ds := make([]runstore.OwnerDecision, 0, len(findings))
 	for _, f := range findings {
-		ds = append(ds, runstore.OwnerDecision{File: r.redact(f.File), Summary: r.redact(f.Summary)})
+		ds = append(ds, r.ownerDecision(f))
 	}
 	blk := runstore.NewOwnerDecisions(ds)
 	if blk == nil {
-		// A needs_owner finding with no summary at all: nothing a person could
-		// answer, so nothing is recorded and the round is read as the round it
-		// otherwise is. It cannot happen through the stage's own schema, whose
-		// findings require a summary; a hand-built verdict is the case.
+		// Unreachable through the round that calls this, which passed at least
+		// one finding and every one of them is stored with a sentence
+		// (ownerDecision); it is the answer for a caller that passed none at
+		// all: nothing a person could answer, so nothing is recorded and no
+		// halt is taken.
 		return false
 	}
 	if !r.haltNow(runstore.Halt{Reason: runstore.HaltOwnerDecision, Scope: "run", At: r.d.Now().UTC(),

@@ -293,6 +293,28 @@ func TestOwnerRuledValidation(t *testing.T) {
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("a plain ruling: %v", err)
 	}
+	// And the rule as the exported function it is, because a reader of a run
+	// record applies it to the ruling inherited from that record
+	// (internal/runner, prepareFollowUp): empty is no ruling at all and passes,
+	// and every text the task refuses is refused there too.
+	if err := ValidateOwnerRuled(""); err != nil {
+		t.Errorf(`ValidateOwnerRuled("") = %v, want nil: a record with no ruling is a run that works from none`, err)
+	}
+	for _, c := range cases {
+		if c.name == "no follow-up" {
+			continue
+		}
+		err := ValidateOwnerRuled(c.ruled)
+		if c.want == "" {
+			if err != nil {
+				t.Errorf("ValidateOwnerRuled(%q) = %v, want the ruling accepted", c.ruled, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("ValidateOwnerRuled(%q) = %v, want it to mention %q", c.ruled, err, c.want)
+		}
+	}
 }
 
 func TestApply(t *testing.T) {

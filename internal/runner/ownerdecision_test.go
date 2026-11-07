@@ -73,6 +73,78 @@ func TestOwnerDecisionStopsTheLoopWithoutAFixRound(t *testing.T) {
 	}
 }
 
+// TestOwnerDecisionWithNoSummaryStillStopsTheRun: VerdictSchema requires a
+// finding's summary key, not a word in it, so a reviewer may mark a finding
+// the owner's and leave the sentence empty. That must not read as "nothing is
+// pending": runstore.NewOwnerDecisions stores no decision without a sentence,
+// so the block would be dropped whole — no halt, the generic draft instead of
+// "Waiting on you", Decide's gate never firing, and a launcher that lets the
+// next blind follow-up through: the loop OD1 exists to end, started by a
+// sentence nobody wrote. The decision is stored with one that says only what
+// happened, so the owner is asked and can open the report for the rest.
+func TestOwnerDecisionWithNoSummaryStillStopsTheRun(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implement("feature"), reviewScored("changes", ownerFinding("LICENSE.md", "")))
+	if err != nil {
+		t.Fatalf("the run failed: %v", err)
+	}
+	if got := countStage(rec, "fix"); got != 0 {
+		t.Fatalf("fix stages = %d, want 0: an owner decision is not handed to a fixer", got)
+	}
+	if want := "review is waiting on 1 owner decision"; rec.Reason != want {
+		t.Errorf("reason = %q, want %q", rec.Reason, want)
+	}
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltOwnerDecision {
+		t.Errorf("halt = %+v, want the owner-decision halt", rec.Halt)
+	}
+	if rec.OwnerDecisions == nil || len(rec.OwnerDecisions.Decisions) != 1 {
+		t.Fatalf("owner decisions = %+v, want the finding recorded even with no sentence", rec.OwnerDecisions)
+	}
+	d := rec.OwnerDecisions.Decisions[0]
+	if d.File != "LICENSE.md" || strings.TrimSpace(d.Summary) == "" {
+		t.Errorf("decision = %+v, want the file and a sentence a reader can act on", d)
+	}
+	pr := onlyPR(t, h.provider)
+	for _, want := range []string{"**Waiting on you**", "`LICENSE.md`", d.Summary} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("the status section does not carry %q:\n%s", want, pr.Body)
+		}
+	}
+}
+
+// TestOneDecisionWithNoSummaryDoesNotPadTheCount: a round that left two
+// decisions, one of them without a sentence, counts two and shows two. The
+// count is what the status section, the launcher's refusal and the review
+// brief read ("and N more"), so a decision that was dropped from the list
+// while the total counted it is a reader told about a question nobody can see.
+func TestOneDecisionWithNoSummaryDoesNotPadTheCount(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implement("feature"), reviewScored("ship",
+		ownerFinding("LICENSE.md", "the licence text needs counsel's clearance"),
+		ownerFinding("flow.go", "")))
+	if err != nil {
+		t.Fatalf("the run failed: %v", err)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %q, want a draft: a shipped round carrying a decision is not ready", rec.Outcome)
+	}
+	if rec.OwnerDecisions == nil {
+		t.Fatalf("owner decisions = %+v, want the round's two", rec.OwnerDecisions)
+	}
+	if rec.OwnerDecisions.Total != len(rec.OwnerDecisions.Decisions) {
+		t.Errorf("owner decisions = %+v, want every counted decision readable", rec.OwnerDecisions)
+	}
+	pr := onlyPR(t, h.provider)
+	for _, want := range []string{"`LICENSE.md`", "`flow.go`"} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("the status section does not carry %q:\n%s", want, pr.Body)
+		}
+	}
+	if strings.Contains(pr.Body, "and 1 more") {
+		t.Errorf("the status section counts a decision it does not show:\n%s", pr.Body)
+	}
+}
+
 // TestMixedVerdictFixesTheFixableOneThenStops: a round carrying one fixable
 // finding and one the owner must settle fixes the first and never the second,
 // and the next round's all-owner verdict is where the loop stops.

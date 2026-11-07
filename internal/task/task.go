@@ -414,6 +414,34 @@ type Spec struct {
 // that reads it.
 const MaxOwnerRuledBytes = 4 << 10
 
+// ValidateOwnerRuled reports whether text is a ruling a brief and a record may
+// carry: text a terminal and a prompt can hold, no longer than
+// MaxOwnerRuledBytes and not blank. Empty is no ruling at all, and valid.
+//
+// Spec.Validate applies it to the ruling a launcher gave, and a reader of a run
+// record applies it to the ruling inherited from that record (internal/runner's
+// prepareFollowUp): a record is an object the job's service account writes, and
+// the text a later run's brief works from is held to the same rule the
+// launcher's own is. Text that fails it is no ruling at all, because a control
+// character in a brief can forge the structure around it.
+func ValidateOwnerRuled(text string) error {
+	if text == "" {
+		return nil
+	}
+	if len(text) > MaxOwnerRuledBytes {
+		return fmt.Errorf("owner_ruled is longer than %d bytes", MaxOwnerRuledBytes)
+	}
+	if strings.TrimSpace(text) == "" {
+		return errors.New("owner_ruled is blank")
+	}
+	for _, r := range text {
+		if r != '\n' && r != '\t' && (r < 0x20 || r == 0x7f) {
+			return errors.New("owner_ruled carries a control character: it is text a brief and a run record carry")
+		}
+	}
+	return nil
+}
+
 // Mutate is one mutation check a launch asked for: File is Go source in the
 // reviewed head, spelled relative and slash-separated, and Test is the name of
 // the test that must fail once the runner has flipped a boolean literal in it
@@ -1077,22 +1105,15 @@ func (s *Spec) Validate() error {
 	// The owner's ruling (OD1) is a follow-up's, and a follow-up's alone: it
 	// answers findings a run on that pull request left, so a task carrying one
 	// without a pull request to continue is a task nobody could have meant.
-	// It is text a brief and a record carry, so a control character other than
-	// a newline or a tab is refused rather than written.
+	// The text itself is held to ValidateOwnerRuled's rule, which is also what
+	// a reader of a run record applies to the ruling inherited from it.
 	switch {
 	case s.OwnerRuled == "":
 	case !allFollowUp:
 		bad("task spec: owner_ruled answers findings a run on a pull request left, so it needs branch, pr and previous_run")
-	case len(s.OwnerRuled) > MaxOwnerRuledBytes:
-		bad("task spec: owner_ruled is longer than %d bytes", MaxOwnerRuledBytes)
-	case strings.TrimSpace(s.OwnerRuled) == "":
-		bad("task spec: owner_ruled is blank")
 	default:
-		for _, r := range s.OwnerRuled {
-			if r != '\n' && r != '\t' && (r < 0x20 || r == 0x7f) {
-				bad("task spec: owner_ruled carries a control character: it is text a brief and a run record carry")
-				break
-			}
+		if err := ValidateOwnerRuled(s.OwnerRuled); err != nil {
+			bad("task spec: %v", err)
 		}
 	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {

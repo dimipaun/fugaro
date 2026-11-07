@@ -246,10 +246,22 @@ func (r *run) prepareFollowUp(ctx context.Context) error {
 	// And what that run itself worked from, with the decisions its ruling
 	// answered: this follow-up inherits the pair when its own launch carries no
 	// ruling, so a question the owner has already settled is not raised and
-	// halted on again (workingRuling). Both are the previous record's own
-	// fields, bounded again on read for the reason above.
+	// halted on again (workingRuling). The decisions are the record's own
+	// block, bounded again on read for the reason above, and the ruling is text
+	// out of the same record, held to the rule a launcher's own ruling is held
+	// to (task.ValidateOwnerRuled): a record is an object the job's service
+	// account writes, and text a brief cannot carry — a control character, a
+	// length no task may state — is no ruling at all. The pair is dropped
+	// together when it is not one, and the reason logged: a ruling with no
+	// decisions answers nothing, and the decisions with no ruling settle
+	// nothing a reviewer may be told to be silent about.
 	r.follow.prevRuled = prevRec.OwnerRuled
 	r.follow.prevRuledDecisions = prevRec.OwnerRuledDecisions.Bounded()
+	if err := task.ValidateOwnerRuled(r.follow.prevRuled); err != nil {
+		r.d.Log.Warn("the record of the run before this one carries a ruling no brief may hold; this run inherits none",
+			"previous_run", prevID, "err", err)
+		r.follow.prevRuled, r.follow.prevRuledDecisions = "", nil
+	}
 	prevTask, err := prev.ReadTask(ctx)
 	if err != nil {
 		prevTask = nil
