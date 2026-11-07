@@ -570,7 +570,7 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 		"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE",
 		"claude setup-token",
 		"fugaro secrets set claude-oauth-token --repo acme/app",
-		"fugaro accounts add acme-personal",
+		"fugaro accounts add acme-personal --repos acme/app",
 	}
 	cmds := strings.Join(res.Left[0].Commands, "\n")
 	if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(wantCmds) {
@@ -612,11 +612,37 @@ func TestInitSecretsNamesTheProfileThatServesTheAccount(t *testing.T) {
 		t.Fatalf("%v, left %v", err, res.Left)
 	}
 	cmds := strings.Join(res.Left[0].Commands, "\n")
-	if !strings.Contains(cmds, "fugaro accounts add acme-personal --profile zeta") {
+	if !strings.Contains(cmds, "fugaro accounts add acme-personal --repos acme/app --profile zeta") {
 		t.Errorf("the account's command does not name the profile that already serves it: %q", cmds)
 	}
 	if strings.Contains(cmds, "--profile alpha") {
 		t.Errorf("a profile that does not serve the account was named: %q", cmds)
+	}
+}
+
+// TestInitSecretsNamesTheCheckoutsRepositoryInTheAccountsAddLine: the line
+// init hands the operator for a named account's token carries --repos with
+// this checkout's own repository, because `fugaro accounts add` defaults
+// --repos to the origin of whatever checkout the line is pasted into — the
+// same line run elsewhere would bind the account to that repository instead.
+// It is the repository the command is about, not the account's own
+// allow_data_to list: an account allowed for several repositories still gets
+// the one this checkout is for (which is a union, so it cannot narrow it).
+func TestInitSecretsNamesTheCheckoutsRepositoryInTheAccountsAddLine(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app", "acme/other"}},
+	}
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if !strings.Contains(cmds, "fugaro accounts add acme-personal --repos acme/app") {
+		t.Errorf("the account's command does not name this checkout's repository: %q", cmds)
+	}
+	if strings.Contains(cmds, "acme/other") {
+		t.Errorf("the account's own list was printed instead of this checkout: %q", cmds)
 	}
 }
 

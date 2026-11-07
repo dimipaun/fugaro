@@ -604,7 +604,16 @@ func (s *secretsStage) Left() initflow.Left {
 			// reserved, so the command below is the only spelling and the
 			// default account has none.
 			account := strings.TrimPrefix(name, config.ClaudeOAuthTokenPrefix)
-			add := selfCommand() + " accounts add " + quoteWord(account)
+			// --repos is this checkout's own repository, which is the one the
+			// command is about: accountsAddRepos defaults it to the origin of
+			// whatever checkout the line is pasted into, so the same line run
+			// from another checkout would bind the account to that repository
+			// instead of this one — and the widening the confirmation is meant
+			// to state would be measured against that checkout too, so it would
+			// say nothing. It is a union with the list the account already has
+			// (accountsAddWhat reads it back from the config the command would
+			// write), so naming this repository cannot narrow it.
+			add := selfCommand() + " accounts add " + quoteWord(account) + " --repos " + quoteWord(s.tg.repo)
 			// The profile whose claude_accounts already lists the account, for
 			// the reason doctor's own account fixes carry it: without --profile
 			// the command stops in a project with several profiles

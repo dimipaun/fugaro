@@ -306,9 +306,11 @@ func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) st
 // step is neither of those commands: `fugaro accounts add <name>` declares
 // the account, stores its token where the shared job mounts it and
 // converges the installation, so the scope is the command's own. It carries
-// --profile when the project has one for that account (spec.AccountProfiles),
-// since the command must name the profile whose claude_accounts gains the name,
-// or refuse.
+// --repos with this repository (spec.Name), because the command would
+// otherwise take the origin of whatever checkout it is pasted into, and
+// --profile when the project has one for that account
+// (spec.AccountProfiles), since the command must name the profile whose
+// claude_accounts gains the name, or refuse.
 func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote func(string) string) []SecretStep {
 	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
@@ -332,7 +334,15 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote f
 			// `accounts add` has no form for the default account above, and
 			// every other name in this namespace is one it owns end to end.
 			account := strings.TrimPrefix(logical, config.ClaudeOAuthTokenPrefix)
-			add := bin + " accounts add " + quote(account)
+			// --repos is the repository this root is for (spec.Name), and not
+			// the origin of whatever checkout the line is pasted into:
+			// accountsAddRepos defaults it to that origin, so the same line run
+			// elsewhere would bind the account to the wrong repository — and
+			// accountsAddBeyond measures the widening against that checkout as
+			// well, so the confirmation would say nothing about it. Naming this
+			// repository is a union with the list the account already has, so
+			// it cannot narrow it.
+			add := bin + " accounts add " + quote(account) + " --repos " + quote(spec.Name)
 			// The profile whose claude_accounts already lists the account: the
 			// command refuses to pick one in a project with several
 			// (accountsAddProfile), and with exactly one it would add the

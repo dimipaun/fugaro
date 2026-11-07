@@ -441,7 +441,9 @@ func TestSecretCommands(t *testing.T) {
 	// the mint-then-store pair the default account keeps is the pair the
 	// named account used to get as well, and there is no scope for the owner
 	// to pick — `accounts add` stores this name where the shared job mounts
-	// it. The default account's own step is unchanged above, because
+	// it. It does carry --repos with this repository, because the command
+	// would otherwise take the origin of whatever checkout it is pasted
+	// into. The default account's own step is unchanged above, because
 	// `fugaro accounts add default` is refused (the name is reserved).
 	named, err := Repo(sandboxInputs(t, m5Additions+"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"))
 	if err != nil {
@@ -450,7 +452,7 @@ func TestSecretCommands(t *testing.T) {
 	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
 	got = SecretCommands(named, stored, "fugaro", func(s string) string { return s })
 	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: named.Secrets["claude-oauth-token-acme-personal"],
-		Commands: []string{"fugaro accounts add acme-personal"}}}
+		Commands: []string{"fugaro accounts add acme-personal --repos acme/sandbox"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands for a named account:\n%+v\nwant:\n%+v", got, want)
 	}
@@ -469,9 +471,31 @@ func TestSecretCommands(t *testing.T) {
 	}
 	got = SecretCommands(served, stored, "fugaro", func(s string) string { return s })
 	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: served.Secrets["claude-oauth-token-acme-personal"],
-		Commands: []string{"fugaro accounts add acme-personal --profile zeta"}}}
+		Commands: []string{"fugaro accounts add acme-personal --repos acme/sandbox --profile zeta"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands for a served named account:\n%+v\nwant:\n%+v", got, want)
+	}
+}
+
+// TestSecretCommandsNamesTheRepositoryItIsFor pins the repository the
+// named-account line carries: spec.Name, the one the step's other commands
+// already use (SecretFix), and never a checkout's origin — `fugaro accounts
+// add` defaults --repos to the origin of whatever checkout it is pasted
+// into, so a line that did not name this repository would bind the account
+// to another one.
+func TestSecretCommandsNamesTheRepositoryItIsFor(t *testing.T) {
+	spec, err := Repo(sandboxInputs(t, m5Additions+"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
+	for _, name := range []string{"acme/sandbox", "acme/other"} {
+		spec.Name = name
+		got := SecretCommands(spec, stored, "fugaro", func(s string) string { return s })
+		want := "fugaro accounts add acme-personal --repos " + name
+		if len(got) != 1 || len(got[0].Commands) != 1 || got[0].Commands[0] != want {
+			t.Fatalf("steps for %s:\n%+v\nwant one step %q", name, got, want)
+		}
 	}
 }
 
