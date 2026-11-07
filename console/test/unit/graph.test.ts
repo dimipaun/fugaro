@@ -1761,7 +1761,10 @@ const SCOPE_REFUSAL = 'this installation’s CLI has no graph command'
  * `<repo>#<number>` for a pull request and `<repo>#<run id>` for a run, so the
  * key of each of those two nodes carries the repository as well -- which is what
  * a reader that split a key on a colon rather than taking the `source` and `id`
- * beside it would get wrong. */
+ * beside it would get wrong. **The repository in the id is also what makes the
+ * pull-request cell's own case what it is**: the id goes through its wire key's
+ * class, and that class placeholders a repository path, so the cell is drawn
+ * `[redacted]#42` rather than the id whole. */
 const SCOPE_RAW: Readonly<Record<string, unknown>> = {
   version: GRAPH_DOCUMENT_VERSION,
   stream_id: '',
@@ -1925,12 +1928,24 @@ describe('the graph screen and its scope', () => {
     // The text is the source's own id rather than the digits alone: this document
     // has no number field (§6.22), the id is the number "as that source writes
     // it", and an id is identity, so the screen draws what it was given.
+    //
+    // **And what it was given is the sanitizer's answer, which is the class's and
+    // not the screen's.** The field goes through `scopeText` with the class the
+    // wire key `id` declares -- `label`, a free-text class -- and that class
+    // placeholders the `<owner>/<name>` a coordinator id begins with: the console
+    // reads it as a repository named in prose, which is the false positive
+    // `REPO_TOKEN_RE`'s own comment owns out loud. The digits the cell exists for
+    // are kept, so the row for `acme/widgets#42` draws `[redacted]#42`. A cell that
+    // read `acme/widgets#42` whole would be the console drawing a repository path
+    // out of a free-text field, which is what the rule is there to stop -- and the
+    // repository itself is drawn whole in its own cell beside this one, from the
+    // `repo` key and its `repository` class, which is where a reader reads it.
     const pull = stateRow(drawn, 'coordinator:acme/widgets#42')
     expect(classedIn(pull, 'graph-scope-title')[0]?.textContent).toBe('Tidy the widget loader')
     expect(classedIn(pull, 'graph-scope-repo')[0]?.textContent).toBe('acme/widgets')
     expect(classedIn(pull, 'graph-word')[0]?.textContent).toBe('open')
     const number = classedIn(pull, 'graph-scope-pr')[0]
-    expect(number?.textContent).toBe('acme/widgets#42')
+    expect(number?.textContent).toBe('[redacted]#42')
     expect(number?.getAttribute('title')).toBe(GRAPH_PR_NO_LINK_REASON)
     // **The run's node draws no door**: a coordinator node names no run of the
     // console's list, and a tooltip promising one would be a door that opens
@@ -1968,11 +1983,22 @@ describe('the graph screen and its scope', () => {
     const { screen } = screenWith()
     await screen.load(DOCUMENT, RUNS)
     const planDrawn = drawingOf(screen)
+    // **The plan's other drawing of the same nodes is asked for by name**: a
+    // `graph-row` is an `li` only the list view draws, so a case that read the
+    // two drawings the screen happens to be on would find no row at all and hold
+    // the rule to nothing.
+    const list = screen.change({ view: 'list' })
+    if (list === null) throw new Error('the list view drew nothing')
+    const listDrawn = mounted(list)
     await screen.loadScope(SCOPE_DOCUMENT)
     const scopeDrawn = drawingOf(screen)
     const kinds = ['graph-node', 'graph-row', 'graph-scope-node'] as const
     for (const kind of kinds) {
-      const drawnNodes = [...classedIn(planDrawn, kind), ...classedIn(scopeDrawn, kind)]
+      const drawnNodes = [
+        ...classedIn(planDrawn, kind),
+        ...classedIn(listDrawn, kind),
+        ...classedIn(scopeDrawn, kind),
+      ]
       expect(drawnNodes.length, kind).toBeGreaterThan(0)
       for (const node of drawnNodes) {
         const spelled = drawnWords(node).filter(([word, text]) => word !== '' && text === word)

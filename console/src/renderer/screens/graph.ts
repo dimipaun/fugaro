@@ -2136,11 +2136,15 @@ function scopeRelease(factory: ScreenFactory, release: ScopeRelease): ScreenElem
  * **That cell is text and carries no destination**, exactly as a plan card's
  * number does: no document this console reads names the provider a URL would be
  * built from (design §5.1 rule 2, gap 7), so the cell's tooltip is the console's
- * own sentence saying so. Nothing here reads a `href` or builds one. It is drawn
- * as the source wrote it -- the coordinator spells a pull request's id
- * `acme/widgets#42` -- because the document carries no number field and an id is
- * identity rather than prose (D1356), so this screen neither cuts one down nor
- * reformats one.
+ * own sentence saying so. Nothing here reads a `href` or builds one.
+ *
+ * **The screen draws the value the model sanitized and never a decision of its
+ * own about it**: the document carries no number field, so the id is the number,
+ * and the class its wire key declares decides what a reader sees -- a coordinator
+ * id begins with `<owner>/<name>`, which that class placeholders, so the cell for
+ * `acme/widgets#42` reads `[redacted]#42` (`graph/model.ts` carries the whole
+ * reasoning). What this screen adds is that it neither cuts an id down to its
+ * digits nor reformats one: an id is identity rather than prose (D1356).
  *
  * **A coordinator node opens no run**, which is why there is no door on this row
  * and no `data-run-id`: the console's run list is one *installation's* own, and a

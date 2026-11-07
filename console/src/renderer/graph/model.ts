@@ -664,13 +664,25 @@ export interface ScopeSource {
  * Everything else is a `Sanitized` value with the class its wire key declares.
  *
  * `pullRequest` is the node's id **only** for a pull request, drawn as the text
- * it is and with no destination: this document has no number field of its own —
+ * it is and with no destination: this document has no number field of its own, so
  * the id *is* the pull request's number "as that source writes it" (§6.22), which
- * for the coordinator is `acme/widgets#42` — and it is drawn as the source
- * spelled it rather than cut down to the digits, because an id is identity and
- * not prose (D1356), and another source's spelling is not this console's to
- * take apart. No document this console reads names the provider a URL would have
- * to be built from, so there is none to build (design §5.1 rule 2, gap 7). */
+ * for the coordinator is `acme/widgets#42`.
+ *
+ * **What a reader sees there is the class's answer and not this module's.** The
+ * field goes through `scopeText` like every other one, with the class the wire key
+ * `id` declares — `label`, a free-text class (`schema.ts`) — and that class
+ * placeholders the `<owner>/<name>` a coordinator id begins with, because the
+ * console's own repository rule reads it as a repository named in prose: the row
+ * for `acme/widgets#42` draws `[redacted]#42`. The digits, which are what the cell
+ * is for, are kept. Drawing the id whole would take a class that keeps a
+ * repository path, and that is a decision about the sanitizer rather than about
+ * this drawing.
+ *
+ * What this module does decide is that the id is **never cut down to its digits
+ * or reformatted**: an id is identity and not prose (D1356), and another source's
+ * spelling is not this console's to take apart. No document this console reads
+ * names the provider a URL would have to be built from, so there is none to build
+ * (design §5.1 rule 2, gap 7). */
 export interface ScopeNode {
   readonly key: string
   readonly source: Sanitized
