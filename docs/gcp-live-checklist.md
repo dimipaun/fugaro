@@ -593,16 +593,18 @@ is **NOT RUN**.
 
 **Check 291 is the image-`ENV` work's, and it is the number free above the register's own top**
 (`docs/image-env/implementation-plan.md` §6, its task **IE4**, the owner's approval of 2026-11-07;
-reconciliation **D1381**). The highest **written** `## Check` section is **290** above, and every
-claim above it starts higher: `docs/stateless-orchestrator` claims **300–309**
+reconciliation **D1381**). The highest **written** `## Check` section in this file, **read at
+`4dc17549` — the commit this change is based on**, was **290**, and every claim above it starts
+higher: `docs/stateless-orchestrator` claims **300–309**
 (`docs/stateless-orchestrator/implementation-plan.md`: "Checks come from the reserved block
 **300-309**", 306–309 reserved), `docs/cli-output-console-graph` claims **310–314** (its README's
 checks row: "Checks **310-314**", none written into this file), `docs/catalog-build-context` claims
-**292** and `docs/api-key-review` claims **330** — so **291 is the number free at this change's
+**292** and `docs/api-key-review` claims **330** — so **291 was the number free at this change's
 merge**, which is the register's rule for a work that reserved none, and this paragraph is the
-record of the one taken. Like every claim above the highest written section it is **claimed, not
-reserved**: a claim is settled at its merge, and whichever of two claims merges second renumbers
-itself. Its subject is **what a catalog image's `ENV` does in a run** (issue #1755): one catalog
+record of the one taken — the reading is pinned to that commit rather than left to a grep of the
+working tree, which now returns **291** itself. Like every claim above the highest written section
+it is **claimed, not reserved**: a claim is settled at its merge, and whichever of two claims merges
+second renumbers itself. Its subject is **what a catalog image's `ENV` does in a run** (issue #1755): one catalog
 entry on the sandbox whose Dockerfile sets an ordinary marker and one reserved name, one run on that
 entry's image, and the facts read back — the marker present in a command the agent ran through
 `fugaro verify`, the reserved name absent, the image's value nowhere in the transcript, and
