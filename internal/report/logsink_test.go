@@ -728,17 +728,22 @@ func TestLogFileIsCreatedExclusively(t *testing.T) {
 	})
 
 	t.Run("a symlink is already there", func(t *testing.T) {
+		// The link's target is inside the state directory on purpose: the root
+		// refuses a link that leaves it before the open's flags matter, so a
+		// link to a file outside would stay green with O_EXCL dropped. Inside,
+		// the root follows the link, and O_EXCL is the only thing refusing the
+		// name.
 		state, env := logStateDir(t)
 		dir := logDirOf(state)
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		victim := filepath.Join(t.TempDir(), "victim.txt")
+		victim := filepath.Join(state, "victim.txt")
 		if err := os.WriteFile(victim, []byte("not this run's output\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		name := logName("update", logNow, os.Getpid())
-		if err := os.Symlink(victim, filepath.Join(dir, name)); err != nil {
+		if err := os.Symlink(filepath.Join("..", "..", "victim.txt"), filepath.Join(dir, name)); err != nil {
 			t.Skipf("this filesystem has no symlinks: %v", err)
 		}
 		sink, err := OpenLog("update", env, "linux", logFixedNow, func() []string { return []string{"s3cret-token-value"} })

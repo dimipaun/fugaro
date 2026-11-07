@@ -175,9 +175,13 @@ func checkLogDir(root *os.Root, name string) error {
 		return fmt.Errorf("%s is not this user's directory", name)
 	}
 	// An existing directory is tightened only here, past both checks: the
-	// Lstat above is what refuses a link at this name (root.Chmod resolves
-	// the name itself and, if the target turns into a link mid-call, acts on
-	// the link rather than following it — os/root_unix.go).
+	// Lstat above is what refuses a link at this name, and the chmod below is
+	// not a second guard against one — root.Chmod follows a link that stays
+	// inside the root (os/root_unix.go), so a name swapped for an in-state
+	// link between the two calls has the link's target tightened instead.
+	// What that can cost is bounded: the target is a directory inside the
+	// state directory, and the log is created with O_EXCL, so it never follows
+	// the swap itself.
 	if fi.Mode().Perm() != logDirMode {
 		_ = root.Chmod(name, logDirMode)
 	}
@@ -185,14 +189,15 @@ func checkLogDir(root *os.Root, name string) error {
 }
 
 // createLogFile creates the log and never an existing one. The name is
-// predictable, so what is already at it decides nothing: O_EXCL refuses a
-// file or a symlink at the name outright, and the root puts O_NOFOLLOW under
-// the open as well (os/root_unix.go) — on Windows the root is stricter and
-// refuses any link at all (the note in internal/cache/openfile_other.go) — so
-// nothing planted at the name is followed, and the mode is 0600 from the
-// first byte (F6a). One portable call, where a bare O_NOFOLLOW would need a
-// second platform pair; and because the name is resolved inside the root, the
-// create cannot land outside the state directory either.
+// predictable, so what is already at it decides nothing: O_EXCL refuses a file
+// or a symlink at the name outright, and the mode is 0600 from the first byte
+// (F6a). O_EXCL is the guard that matters, not the root's O_NOFOLLOW: the root
+// follows a link that stays inside it, and it is O_EXCL that turns that follow
+// into a refusal (os/root_unix.go). On Windows the root is stricter and refuses
+// any link at all (the note in internal/cache/openfile_other.go). One portable
+// call, where a bare O_NOFOLLOW would need a second platform pair; and because
+// the name is resolved inside the root, the create cannot land outside the
+// state directory either.
 func createLogFile(root *os.Root, dir, name string) (*os.File, error) {
 	return root.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, logFileMode)
 }

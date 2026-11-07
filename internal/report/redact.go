@@ -30,12 +30,16 @@ const Redacted = "[redacted]"
 // reason and one more: this package is the CLI's output layer and must not
 // carry the agent's dependencies.
 //
-// Two limits follow from matching a value inside a line, and both are the
-// caller's to know. A value that spans lines is never matched whole: a caller
-// holding one holds its lines too (initsecrets.hold does, for a PEM), and the
-// whole value is then still caught, line by line. And a value that is a
-// substring of Redacted — `TED`, `EDACT` — survives inside the marker, which
-// no fixed marker can avoid; a value of that shape is not one a slot holds.
+// Three limits follow from matching a value inside a line, and all three are
+// the caller's to know. A value that spans lines is never matched whole: a
+// caller holding one holds its lines too (initsecrets.hold does, for a PEM),
+// and the whole value is then still caught, line by line. A value that is a
+// substring of Redacted — `TED`, `EDACT` — survives inside the marker. And a
+// value that contains the marker — `a[redacted]` — can be put back together by
+// a shorter value's replacement on the same line, as `aXb` becomes
+// `a[redacted]b` when `X` is held. The last two both follow from the marker
+// being written out verbatim, which no fixed marker can avoid, and neither is
+// a shape a slot holds.
 type Redactor struct {
 	out     io.Writer
 	secrets func() []string
