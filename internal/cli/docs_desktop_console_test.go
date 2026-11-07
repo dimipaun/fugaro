@@ -1716,9 +1716,9 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     request read to twenty-seven, console 0.119.0's totals read to
 //     twenty-eight, console 0.119.0's models read to twenty-nine, the
 //     settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and
-//     the graph plan's CG9a to thirty-two; the managed screens' plan's CM4 --
-//     `managed.status` and `policy.show`, whose rule 6 rows CM3 already wrote --
-//     is the next, on thirty-four.
+//     the graph plan's CG9a to thirty-two, and the managed screens' plan's CM4
+//     -- `managed.status` and `policy.show`, whose rule 6 rows CM3 had already
+//     written -- to the thirty-four rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -1733,7 +1733,7 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //
 // The other direction -- a design row the console does not spawn yet -- is
 // deliberately **not** asserted: a fence may be ahead of the surface (that is
-// where rule 6's two managed rows stand until CM4), which is the safe direction
+// where rule 6's two managed rows stood between CM3 and CM4), which is the safe direction
 // for a permission, and the console's own test holds its copy that way.
 //
 // Mutations that prove it: add an entry to `CONSOLE_OPERATIONS` and leave rule 5's
