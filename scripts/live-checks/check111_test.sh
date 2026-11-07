@@ -256,6 +256,16 @@ if [ "$quota" = "$FAKE111_S" ]; then
 fi
 
 if [ "$quota" = "$FAKE111_P" ]; then
+  # FAKE111_HANG: a wizard that asks and then never reads the answer — a run
+  # that blocks, which is what modes 1(a) and 2(a) exist to rule out. It prints
+  # the offer first, so the capture is not empty and the check's runner has to
+  # turn this into a FAIL of the mode on its own timeout, not hang with it.
+  if [ -n "${FAKE111_HANG:-}" ]; then
+    echo "CONFIRM: ENABLE the Cloud Billing API (cloudbilling.googleapis.com) in GCP project $proj, which will incur charges on your account."
+    printf 'Type yes to enable it, or press Enter to link an account by hand instead: '
+    sleep 600
+    exit 0
+  fi
   if [ "$yes" = yes ]; then
     # The picker never runs without a terminal that can answer it, --yes or not.
     echo "$link"
@@ -321,7 +331,7 @@ run111() {
     FAKE111_Q="$Q" FAKE111_S="$S" FAKE111_P="$P" \
     DISPLAY_NAME_NAME="$DISPLAY_NAME" \
     CLOUDSDK_CONFIG="$dir/cloudsdk" \
-    CHECK111_RUN_SECONDS=20 \
+    CHECK111_RUN_SECONDS="${CHECK111_TEST_RUN_SECONDS:-10}" \
     PATH="$dir/bin:$PATH" \
     ${RUN111_ENV[@]+"${RUN111_ENV[@]}"} \
     bash ${RUN111_XTRACE:+-x} "$script" \
@@ -478,6 +488,46 @@ test_mode_2s_premise_missing_is_not_run() {
   expect_scratch_gone "$dir" "mode 2's premise"
 }
 
+# A run that blocks waiting for an answer it can never get is a FAIL of that
+# mode, not a hang: every run is capped (CHECK111_RUN_SECONDS), the runner kills
+# the run at the cap, and the modes around it and the Restore carry on.
+test_a_blocking_run_is_a_fail() {
+  setup_case blocked
+  sandbox_args
+  RUN111_ENV=(FAKE111_HANG=1)
+  CHECK111_TEST_RUN_SECONDS=5 run111
+  expect_status "$status" 1 "blocking run"
+  expect_contains "$out" "FACT run-1a: FAIL — " "blocking run: the mode that blocked is not a pass"
+  expect_contains "$out" "was killed" "blocking run: and the row says the cap is what ended it"
+  expect_contains "$out" "FACT run-1a-yes: FAIL — " "blocking run: the rerun under --yes hit the same cap"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "blocking run: the verdict"
+  expect_contains "$out" "FACT restore: PASS — " "blocking run: the Restore still ran"
+  expect_changed "enable $P" "blocking run: the API mode 1(a) disabled is enabled again"
+  expect_scratch_gone "$dir" "blocking run"
+}
+
+# The three throwaways have opposite premises — Q is the quota project mode
+# 1(b) disables the API on, S is the one mode 2 needs enabled — so naming one of
+# them twice would make a mode's premise another's opposite. Refused by name,
+# before a tool is called.
+test_projects_that_collide_are_refused() {
+  local what
+  for what in off-is-project on-is-project on-is-off off-is-belong; do
+    setup_case "collide-$what"
+    case "$what" in
+    off-is-project) RUN111_ARGS=(--api-off-project "$P" --api-on-project "$S") ;;
+    on-is-project) RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$P") ;;
+    on-is-off) RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$Q") ;;
+    off-is-belong) RUN111_ARGS=(--api-off-project belong --api-on-project "$S") ;;
+    esac
+    run111
+    expect_status "$status" 2 "collide $what"
+    [ -s "$dir/calls" ] && fail "collide $what: a tool was called before the guard: $(tr '\n' ';' <"$dir/calls")"
+    expect_absent "$out" "CHECK 111 RESULT: PASS" "collide $what: no verdict"
+    expect_scratch_gone "$dir" "collide $what"
+  done
+}
+
 # A dry run runs nothing at all: no gcloud call, no wizard, no verdict — a
 # verdict is about the runs that happened, and a dry run's block would read as
 # one. What it does is print the plan and its own local readings.
@@ -602,6 +652,8 @@ t test_a_failed_assertion_still_restores
 t test_a_leak_is_a_fail
 t test_an_unrun_mode_is_not_a_pass
 t test_mode_2s_premise_missing_is_not_run
+t test_a_blocking_run_is_a_fail
+t test_projects_that_collide_are_refused
 t test_dry_run_runs_nothing
 t test_belong_is_refused
 t test_the_agent_marker_is_refused
