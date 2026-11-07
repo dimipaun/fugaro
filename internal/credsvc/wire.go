@@ -62,6 +62,28 @@ const (
 	HeaderRunJob = "X-Fugaro-Run-Job"
 )
 
+// BitbucketProxyPrefix is the path prefix under which this service serves one
+// run's Bitbucket traffic (B1.5): everything a run sends to bitbucket.org or to
+// api.bitbucket.org, git and REST alike, arrives here with the prefix in front
+// of the path the client built.
+//
+// It is one prefix and not two, because the classification (internal/gitproxy's
+// Classify) tells the two forms apart from the path's own shape — git's
+// "/{workspace}/{repo}.git/…" against the REST API's "/repositories/…" — and a
+// second prefix would be a second spelling of the same route to keep in step.
+//
+// It is deliberately NOT the whole of "/v1/bitbucket/": BitbucketReadPath, the
+// read mint a person calls, is its own route with its own caller class and is
+// answered ahead of this one, so the prefix carries the extra segment that
+// keeps the two apart rather than relying on the read mint's path failing to
+// classify. A prefix that is a prefix of another route's exact path is a route
+// whose meaning depends on the order two conditions happen to be written in.
+//
+// internal/gateway's loopback forwarder (B1.6) is what puts this prefix on, and
+// the run's own clients never see it: its copy of the string is held to this
+// one by TestGitForwardMirrorsCredsvc.
+const BitbucketProxyPrefix = "/v1/bitbucket/proxy/"
+
 // The response headers.
 const (
 	// HeaderTier is the credential tier that answered: TierA, TierB or
