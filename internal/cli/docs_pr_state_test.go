@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/failure"
 )
 
 // TestDocsDesignDocPinsTheHostOfThePRStateLookup is the review finding on the
@@ -106,19 +108,6 @@ func docLine(doc, want string) string {
 // own would move a number the design argues should not move.
 const fcDoc = "docs/design/failure-classes.md"
 
-// fcClasses is the vocabulary the design proposes, in the order its table
-// lists it. It is written out here, rather than read out of the document it
-// checks, because a list read from the thing under test agrees with any edit to
-// it -- including the edit that adds a class the report, the schema and the
-// runner would then have to agree with.
-var fcClasses = []string{
-	"review_not_converged", "review_unread", "tests_failed", "unverified_final_commit",
-	"no_commits", "halted_budget", "halted_governance", "halted_credential",
-	"halted_kill_switch", "cancelled", "provider_auth_refused", "transport_failed",
-	"stage_error_unexplained", "stage_no_result", "config_invalid", "git_provider_error",
-	"branch_moved", "infra_error", "unclassified",
-}
-
 // fcClassRowRE is one row of the design's vocabulary table: a class name in
 // backticks in the first cell. A snake_case name is the only shape that matches
 // -- the table's other cells hold prose, and the other tables in the document
@@ -153,25 +142,43 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	}
 
 	// The closed vocabulary: every class is a row of the table, the table holds
-	// exactly the classes, and a name in the table is one of the classes.
-	rows := map[string]bool{}
+	// exactly the classes, in the order the design lists them, and a name in the
+	// table is one of the classes.
+	//
+	// The classes are read from internal/failure rather than written out here: it
+	// is the one slice the schema's enum and the report's table are read from, so
+	// the document is held to the code that implements it -- and a class added to
+	// one of the two alone is a design table, a schema enum and a report that
+	// disagree about a vocabulary they all claim is closed.
+	classes := failure.Classes()
+	if len(classes) == 0 {
+		t.Fatalf("internal/failure's Classes() is empty: the design's vocabulary table would be checked against nothing")
+	}
+	var rows []string
 	for _, line := range strings.Split(doc, "\n") {
 		if m := fcClassRowRE.FindStringSubmatch(line); m != nil {
-			rows[m[1]] = true
+			rows = append(rows, m[1])
 		}
 	}
-	if len(rows) != len(fcClasses) {
-		t.Errorf("%s's vocabulary table holds %d class rows, want %d: the vocabulary is closed, so a row added or lost beside it is a change to the runner, the schema and the report at once", fcDoc, len(rows), len(fcClasses))
+	if len(rows) != len(classes) {
+		t.Errorf("%s's vocabulary table holds %d class rows, want %d: the vocabulary is closed, so a row added or lost beside it is a change to the runner, the schema and the report at once", fcDoc, len(rows), len(classes))
 	}
-	for _, class := range fcClasses {
-		if !rows[class] {
-			t.Errorf("%s's vocabulary table has no row for `%s`: the class is one the runner would have to write and the report would have to print", fcDoc, class)
+	for _, class := range classes {
+		if !slices.ContainsFunc(rows, func(row string) bool { return row == string(class) }) {
+			t.Errorf("%s's vocabulary table has no row for `%s`: the class is one internal/failure's Classes() carries, so the runner would write it and the report would print it", fcDoc, class)
 		}
 	}
-	for name := range rows {
-		if !slices.Contains(fcClasses, name) {
+	for _, name := range rows {
+		if !slices.ContainsFunc(classes, func(c failure.Class) bool { return string(c) == name }) {
 			t.Errorf("%s's vocabulary table holds `%s`, which is not one of the vocabulary's classes: a class the schema's enum does not carry is a value the record cannot hold", fcDoc, name)
 		}
+	}
+	want := make([]string, len(classes))
+	for i, c := range classes {
+		want[i] = string(c)
+	}
+	if !slices.Equal(rows, want) {
+		t.Errorf("%s's vocabulary table lists %v, internal/failure's Classes() lists %v: the order is the document's own -- the report prints the classes in it -- so a class inserted in one list alone is two renderings of one vocabulary", fcDoc, rows, want)
 	}
 
 	// The claims the implementation tasks rest on, each one a thing a reader
@@ -182,6 +189,11 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 		// The field, and the sentence that it is additive.
 		"`failure_class`",
 		"stays `const 1`",
+		// The vocabulary's own claim: nineteen values, and closed in Go. The
+		// table above is held to internal/failure's Classes(), so the sentence is
+		// what a reader of the document is promised and the check is what makes
+		// it true of the tree.
+		"**Nineteen values, and the set is closed in Go, in the schema and in the digest**",
 		// The one writer, named by the signature the task writes.
 		"func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string)",
 		"is the only",
