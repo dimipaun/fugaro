@@ -150,7 +150,7 @@ need_tools() {
   # that is the guard the whole check rests on.
   need git "the repository this check reads is the checkout's own origin, not a name typed in"
   need curl "the three anonymous GETs to api.github.com are the check's machine-readable half"
-  need python3 "the JSON answers are parsed by one python3 program, which never echoes back what it was given"
+  need python3 "the JSON answers are parsed by one python3 program, which prints the fields the block carries rather than the document: the object's path, its license block and its message"
 }
 
 # ------------------------------------------------------------- scratch + trap

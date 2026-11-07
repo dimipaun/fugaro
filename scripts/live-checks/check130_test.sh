@@ -21,6 +21,9 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check130.sh
+# The real `rm`, for the fake that has to take its time and still remove the
+# directory: a fake that stopped short of removing it would test the fake.
+REAL_RM=$(type -P rm)
 work=$(cd "$(mktemp -d)" && pwd -P)
 cleanup_all() {
   if [ -n "${CHECK130_TEST_KEEP:-}" ]; then
@@ -227,12 +230,20 @@ setup_case() { # NAME [ORIGIN] [MODULE] [LICENSING]
 RUN130_MODE=""
 RUN130_DIR=""
 RUN130_PATH=""
+# run130_exec PATH [ARGS...] — the check itself, in the case's environment. The
+# environment is written once here because the signal cases run it in the
+# background instead: a second copy of the PATH order is a second thing to get
+# out of step. Replaces the shell, so the caller's exit status is the check's —
+# which the background cases have to read.
+run130_exec() { # PATH [ARGS...]
+  cd "${RUN130_DIR:-$dir/checkout}" || exit 1
+  exec env TMPDIR="$dir/tmp" FAKE130_DIR="$dir/state" \
+    FAKE130_MODE="${RUN130_MODE:-ok}" HOME="$dir/home" \
+    PATH="${1:+$1:}$dir/bin:$PATH" bash "$script" "${@:2}"
+}
 run130() {
   status=0
-  (cd "${RUN130_DIR:-$dir/checkout}" &&
-    exec env TMPDIR="$dir/tmp" FAKE130_DIR="$dir/state" \
-      FAKE130_MODE="${RUN130_MODE:-ok}" HOME="$dir/home" \
-      PATH="${RUN130_PATH:+$RUN130_PATH:}$dir/bin:$PATH" bash "$script" "$@") >"$dir/out" 2>"$dir/err" || status=$?
+  (run130_exec "$RUN130_PATH" "$@") >"$dir/out" 2>"$dir/err" || status=$?
   RUN130_MODE=""
   RUN130_DIR=""
   RUN130_PATH=""
@@ -252,6 +263,39 @@ write_failing_rm() { # dir
 #!/usr/bin/env bash
 printf 'rm %s\n' "$*" >>"$FAKE130_DIR/rm.calls"
 exit 1
+RM_EOF
+  chmod +x "$1/norm/rm"
+}
+
+# write_sleeping_curl dir — a `curl` that answers nothing for five minutes, first
+# on PATH. Both signal cases need the run to be in a request when the signal
+# lands: a shell waiting for a child runs the trap for a signal it caught only
+# once that child is done, so there is nothing to interrupt between requests. The
+# fake says which request it is in with a marker, so the test signals on what it
+# waited for rather than on a sleep long enough to hope.
+write_sleeping_curl() { # dir
+  mkdir -p "$1/slow"
+  cat >"$1/slow/curl" <<'SLOW_EOF'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"$FAKE130_DIR/calls"
+printf 'in flight\n' >>"$FAKE130_DIR/sleeping"
+sleep 300
+SLOW_EOF
+  chmod +x "$1/slow/curl"
+}
+
+# write_slowing_rm dir — a `rm` that removes the directory, but takes five
+# seconds over it and refuses to die of SIGINT. The second Ctrl-C has to land on
+# the shell while this is running, and a fake that died of it would take the
+# cleanup down with it: then the block would be missing whatever the guard did.
+write_slowing_rm() { # dir
+  mkdir -p "$1/norm"
+  cat >"$1/norm/rm" <<RM_EOF
+#!/usr/bin/env bash
+printf 'rm %s\n' "\$*" >>"\$FAKE130_DIR/rm.calls"
+trap '' INT
+sleep 5
+exec "$REAL_RM" "\$@"
 RM_EOF
   chmod +x "$1/norm/rm"
 }
@@ -295,6 +339,68 @@ expect_scratch_gone() { # what
   [ -d "$scratch" ] && fail "$1: the scratch directory $scratch survived the run"
   [ -z "$(find "$dir/tmp" -mindepth 1 2>/dev/null)" ] || fail "$1: files were left in TMPDIR: $(find "$dir/tmp" -mindepth 1)"
   return 0
+}
+
+# ------------------------------------------------------------------ the signals
+# A Ctrl-C at a terminal is a signal to the whole foreground process group — the
+# script AND the request it is waiting for — and a shell runs the trap for a
+# signal it caught while it waits for a child only once that child is done. So
+# the signal cases need job control (their own process group, and without it bash
+# makes a background job ignore SIGINT) and a `curl` that sits in its request
+# until it is signalled, not one that answers before anybody can press anything.
+pid=""
+
+wait_for_marker() { # file bound-tenths
+  local i=0
+  while [ "$i" -lt "$2" ]; do
+    if [ -s "$1" ]; then return 0; fi
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# start130_in_flight PATH — starts the check in the background and waits until its
+# first request is in flight. Returns 1 (killing the run) if it never gets there:
+# a signal sent before that would land between requests and prove nothing.
+start130_in_flight() { # PATH
+  set -m
+  (run130_exec "$1") >"$dir/out" 2>"$dir/err" &
+  pid=$!
+  if wait_for_marker "$dir/state/sleeping" 600; then return 0; fi
+  kill -KILL -"$pid" 2>/dev/null || true
+  set +m
+  wait "$pid" 2>/dev/null || true
+  return 1
+}
+
+# await130 — waits for the run to end and reads what it left. Sets $st and $out,
+# and fails the case (rather than hanging it) if the run outlasts the bound.
+await130() { # bound-tenths
+  local i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "${1:-600}" ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL -"$pid" 2>/dev/null || true
+    set +m
+    wait "$pid" 2>/dev/null || true
+    fail "signal: the run was still going $((${1:-600} / 10))s after the signal it was sent"
+    return 1
+  fi
+  st=0
+  wait "$pid" || st=$?
+  set +m
+  out=$(cat "$dir/out")
+  return 0
+}
+
+# interrupt130 — one Ctrl-C, then wait: the plain interrupt path.
+interrupt130() {
+  kill -INT -"$pid" 2>/dev/null || true
+  await130
 }
 
 # ------------------------------------------------------------------- the tests
@@ -521,6 +627,60 @@ test_a_restore_that_failed_is_a_fail() {
   rm -rf "$scratch"
 }
 
+test_an_interrupt_removes_the_scratch_directory() {
+  setup_case interrupt
+  write_sleeping_curl "$dir"
+  if ! start130_in_flight "$dir/slow"; then
+    fail "interrupt: the run never reached its first request, so no signal ever reached it"
+    return 0
+  fi
+  interrupt130 || return 0
+  expect_status "$st" 130 "interrupt"
+  expect_contains "$(cat "$dir/err")" "check130.sh: interrupted" "interrupt: what the owner is told"
+  expect_block_keys "interrupt"
+  expect_contains "$out" "FACT aborted: FAIL" "interrupt: the run says it was cut short"
+  expect_contains "$out" "FACT restore: PASS — " "interrupt: the exit trap ran the teardown anyway"
+  expect_contains "$out" "MANUAL:" "interrupt: the block is the whole block, manual line and all"
+  expect_contains "$out" "CHECK 130 RESULT: FAIL" "interrupt: an interrupted run is not a pass"
+  expect_no_cloud_tool "interrupt"
+  expect_scratch_gone "interrupt"
+}
+
+test_a_second_interrupt_during_the_cleanup_is_refused() {
+  setup_case second-interrupt
+  write_sleeping_curl "$dir"
+  write_slowing_rm "$dir"
+  if ! start130_in_flight "$dir/slow:$dir/norm"; then
+    fail "second interrupt: the run never reached its first request, so no signal ever reached it"
+    return 0
+  fi
+  kill -INT -"$pid" 2>/dev/null || true
+  if ! wait_for_marker "$dir/state/rm.calls" 600; then
+    kill -KILL -"$pid" 2>/dev/null || true
+    set +m
+    wait "$pid" 2>/dev/null || true
+    fail "second interrupt: the cleanup's rm never started, so the second signal had nowhere to land"
+    return 0
+  fi
+  # The teardown is running and the run has already been told to leave. The
+  # second Ctrl-C must not take the block down with the cleanup: it is the one
+  # ending where the owner would be left with a half-removed scratch directory
+  # and no block saying what happened.
+  kill -INT -"$pid" 2>/dev/null || true
+  await130 || return 0
+  expect_status "$st" 130 "second interrupt"
+  expect_contains "$(cat "$dir/err")" "cleanup is running, do not press Ctrl-C again" "second interrupt: the refusal"
+  # Exactly one interrupt was acted on: the second one hit the guard, not the
+  # handler that leaves.
+  local n
+  n=$(grep -c 'check130.sh: interrupted$' "$dir/err" || true)
+  [ "$n" = 1 ] || fail "second interrupt: the handler that leaves ran $n time(s); the second signal was not refused"
+  expect_block_keys "second interrupt"
+  expect_contains "$out" "FACT restore: PASS — " "second interrupt: the teardown finished"
+  expect_contains "$out" "CHECK 130 RESULT: FAIL" "second interrupt: an interrupted run is not a pass"
+  expect_scratch_gone "second interrupt"
+}
+
 test_xtrace_is_refused() {
   setup_case xtrace
   status=0
@@ -573,6 +733,8 @@ t test_every_guard_stops
 t test_the_block_shape_is_fixed_on_a_stopped_run
 t test_teardown_runs_on_a_failed_assertion
 t test_a_restore_that_failed_is_a_fail
+t test_an_interrupt_removes_the_scratch_directory
+t test_a_second_interrupt_during_the_cleanup_is_refused
 t test_xtrace_is_refused
 t test_usage
 

@@ -54,6 +54,10 @@ func TestDocsCheck130IsOneScriptTheOwnerRuns(t *testing.T) {
 		"**Paste back**",
 		"**Restore.**",
 		"never `belong`",
+		// Step 3 follows every link the guard's grep printed; the four it
+		// names are the ones it read closely, not the list. A reader sent to a
+		// list that is not the file's is the drift this pin is for.
+		"four of them rather than all of them",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s: the Check 130 section lacks %q", liveChecksDoc, want)
@@ -61,7 +65,10 @@ func TestDocsCheck130IsOneScriptTheOwnerRuns(t *testing.T) {
 	}
 
 	row := registerRow(t, doc, check130Row)
-	for _, want := range []string{check130RowRun, check130Test, check130RowState, "never `belong`"} {
+	// The row names four links as examples, the same four the section names:
+	// the list the owner follows is the guard's grep of the file, and a row
+	// that reads as if it were the list sends a reader to four of twelve.
+	for _, want := range []string{check130RowRun, check130Test, check130RowState, "never `belong`", "not a list remembered here"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("%s: the | 130 | row lacks %q", liveChecksDoc, want)
 		}
@@ -88,6 +95,9 @@ func TestDocsCheck130ScriptKeepsItsPromises(t *testing.T) {
 		"BLOCK_KEYS=(setup repository belong licensing-md links licence-api restore)",
 		"CHECK 130 RESULT: %s",
 		"trap finish EXIT",
+		// The exit trap is reached for a Ctrl-C too: the teardown the section
+		// promises is the trap the signal handler leaves through.
+		"trap on_signal INT TERM HUP",
 		"remove_scratch",
 		// --dry-run and the one manual line.
 		"--dry-run",
