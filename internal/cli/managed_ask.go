@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -76,6 +78,49 @@ func askDecide(out io.Writer, f askFlags, managed bool, c initflow.Conditions) e
 	}
 	fmt.Fprintln(out, line)
 	return nil
+}
+
+// askConfirm is the one confirmation a command may still ask, and the flag is
+// the whole of it: without --ask nothing is read and nothing is printed, and
+// the step proceeds — that is the policy's own answer to a step that used to
+// ask, and the budgets, the gate and the refusals that stay are what bound it.
+// The caller therefore calls this on every path and does not look the flag up
+// itself, so no path can quietly keep its own prompt.
+//
+// Where the flag IS passed and nobody can answer it — a coding agent's session,
+// --json, --non-interactive, or no terminal on the input — it refuses in
+// initflow.AskRefusal's own sentence, which is the same one the run gives for
+// the same session: a confirmation nobody can answer is a refusal and never a
+// silent proceed, and it is reached without touching stdin, which is what keeps
+// a prompt nobody can answer from becoming a wait nobody can end.
+//
+// A "no" is an answer and not an error: the caller gets false and owns the
+// sentence that follows it. The question is printed as it is given, so it ends
+// in its own "?" and carries no "[y/N]" of the caller's.
+func askConfirm(cmd *cobra.Command, question string) (bool, error) {
+	f := askFlags{ask: boolFlag(cmd, "ask"), yes: boolFlag(cmd, "yes")}
+	if err := askConflict(f); err != nil {
+		return false, err
+	}
+	if !f.ask {
+		return true, nil
+	}
+	c := askConditions(cmd, boolFlag(cmd, "json"), boolFlag(cmd, "non-interactive"))
+	if c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
+		return false, userErr("%s", initflow.AskRefusal(c))
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "%s [y/N]: ", question)
+	line, err := readConfirmLine(cmd.InOrStdin())
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, userErr("reading the confirmation: %v", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		noteIDETerminalCmd(cmd, out)
+		return true, nil
+	}
+	return false, nil
 }
 
 // askConditions is the session a command's --ask is decided under, for a
