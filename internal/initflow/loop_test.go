@@ -1384,6 +1384,50 @@ func TestBillingPauseLetsLocalStagesFinish(t *testing.T) {
 	}
 }
 
+// TestPlanViewPausedForBillingHoldsOnlyWhatNeedsBilling: the billing pause is
+// converge's `paused`, not its stops — the stages that need no billing run on
+// (NeedsBilling excludes the plugin and the checkout) — so the plan view may
+// not say they wait for the paused project, and --plan-only has to plan them.
+// What does wait for it is the stages that need billing, the same wait the run
+// reports as waiting-for-billing. The reading moved unnoticed once (#1836's
+// review): preview set its waiting stage for BillingPending as well, and no
+// test said either way.
+func TestPlanViewPausedForBillingHoldsOnlyWhatNeedsBilling(t *testing.T) {
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Project, Plugin, Repository)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).status = Status{State: BillingPending, Detail: "created; billing pending",
+		Left: &Left{Stage: Project, Kind: LeftCommand, Text: "link a billing account"}}
+	stages[2].(*fake).planSummary = "3 to write"
+	stages[3].(*fake).planSummary = "1 to onboard"
+	opts := yesOpts()
+	opts.PlanOnly, opts.Out = true, &out
+	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	lineOf := func(stage string) string {
+		for _, l := range outputLines(got) {
+			if slices.Contains(strings.Fields(l), stage) {
+				return l
+			}
+		}
+		return ""
+	}
+	if l := lineOf(Plugin); l == "" || strings.Contains(l, Project) {
+		t.Errorf("the plan view has the plugin waiting for the billing-pending %s, which converge runs it past: %q\n%s", Project, l, got)
+	}
+	if !strings.Contains(got, "3 to write") {
+		t.Errorf("--plan-only did not plan the stage that needs no billing:\n%s", got)
+	}
+	if l := lineOf(Repository); !strings.Contains(l, Project) || strings.Contains(l, "1 to onboard") {
+		t.Errorf("the stage that needs billing is %q, want it waiting for the billing-pending %s and not planned:\n%s", l, Project, got)
+	}
+}
+
 // convergeStages is a run with one stage already done, one to apply, one the
 // user still owes and one that waits for it: the four states a default view
 // has to tell apart, in the canonical order the loop runs them in.

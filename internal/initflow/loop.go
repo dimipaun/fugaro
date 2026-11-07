@@ -295,10 +295,14 @@ func (l *loop) left(stage string, lf Left) Left {
 
 // preview checks every stage (read-only) and, in a plan-only run, plans the
 // first one with something to do. A stage that waits for one with something
-// to do is shown as will-do with the stage it waits for. It prints the view
-// first in an applying run, and the whole result in a plan-only one.
+// to do is shown as will-do with the stage it waits for, and the wait is
+// converge's own: a stop holds everything after it that does not run past it,
+// while a project paused for billing holds only what needs billing
+// (NeedsBilling). It prints the view first in an applying run, and the whole
+// result in a plan-only one.
 func (l *loop) preview(ctx context.Context, stages []Stage) error {
 	var waiting string // the first stage with something to do or someone to wait for
+	var paused string  // the stage that paused for billing: what needs billing waits for it
 	var stops []stop   // the stops the stages after them wait for, and those they run past
 	for _, s := range stages {
 		name := s.Name()
@@ -324,16 +328,24 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 				lf = *st.Left
 			}
 			l.res.Left = append(l.res.Left, l.left(name, lf))
+			if st.State == BillingPending {
+				// Not a stop, and not what the stages after it wait for:
+				// converge pauses there and lets the stages billing does not
+				// gate run on (NeedsBilling), so the wait is said below, at
+				// the stages that have it.
+				paused = name
+				break
+			}
 			if waiting == "" {
 				waiting = name
 			}
-			if st.State == NeedsYou {
-				stops = append(stops, stop{name: name, yours: true})
-			}
+			stops = append(stops, stop{name: name, yours: true})
 		default:
 			r.State = Todo
 			if b := blocker(name, stops); b != nil {
 				r.After = b.name
+			} else if paused != "" && NeedsBilling(name) {
+				r.After = paused
 			} else {
 				if waiting != "" && RunsPastStop(name, waiting) {
 					// The stage the view was waiting for is a stop this one
