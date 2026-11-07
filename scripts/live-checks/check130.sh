@@ -81,7 +81,10 @@ set -Eeuo pipefail
 # file this script knows nothing about cannot be reopened, and guard_xtrace
 # refuses a shell that arrived tracing (the flag sits in SHELLOPTS/BASHOPTS
 # then, and every child would start tracing on its own). Check 90, Check 145 and
-# Check 146 spell the three parts out; this is the same guard.
+# Check 146 spell the three parts out; this is the same guard. The credential a
+# token-based clone leaves in the origin's userinfo is the same kind of secret
+# and gets the same treatment, without a guard: guard_checkout strips it before
+# the origin is matched, recorded or printed anywhere.
 XTRACE_AT_START=no
 # Each source on its own: BASHOPTS carries names like extquote, and a single
 # pattern over the three concatenated would match that 'x' and refuse every run.
@@ -264,6 +267,14 @@ guard_checkout() {
     || stop "Check 130 stopped: this is not a git checkout (git rev-parse --show-toplevel failed), and the repository to read is that checkout's own origin. Run it from the Fugaro checkout: cd <checkout> && bash scripts/live-checks/check130.sh"
   ORIGIN=$(git -C "$ROOT" remote get-url origin 2>/dev/null) \
     || stop "Check 130 stopped: this checkout has no origin remote, so which repository the detectors are read about is unknown. Run it from a checkout whose origin is the repository to read"
+  # A checkout made by a token-based clone or by CI carries the credential in
+  # the origin's userinfo (https://x-access-token:<token>@github.com/owner/repo.git),
+  # and this origin is printed twice: into the trace, and into the `repository`
+  # row of the block you paste into the register. The token is not this check's
+  # to print, for the same reason the trace is refused. The userinfo goes before
+  # the host is read, so what is matched, recorded and printed is the same
+  # string: the repository, and nothing that opens it.
+  ORIGIN=$(printf '%s' "$ORIGIN" | sed -E 's#//[^@/]*@#//#')
   case "$ORIGIN" in
   *github.com[:/]*/*) : ;;
   *) stop "Check 130 stopped: this checkout's origin ('${ORIGIN}') names no github.com repository, so which repository to read is unknown" ;;
@@ -287,7 +298,7 @@ guard_belong() {
   low=$(printf '%s' "$owner/$name" | tr 'A-Z' 'a-z')
   case "/${low}/" in
   */belong/* | */edgeweb/* | */edgeserver/*)
-    fact belong FAIL "this checkout's origin names github.com/${REPO}, which is the owner's own installation's (`belong`, EdgeWeb or EdgeServer): Check 130 reads a public repository and no step of it may touch them"
+    fact belong FAIL "this checkout's origin names github.com/${REPO}, which is the owner's own installation's ('belong', EdgeWeb or EdgeServer): Check 130 reads a public repository and no step of it may touch them"
     stop "Check 130 never runs against 'belong', EdgeWeb or EdgeServer. Run it in the checkout of the repository whose detectors you mean to read: cd <checkout> && bash scripts/live-checks/check130.sh"
     ;;
   esac

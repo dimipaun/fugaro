@@ -10313,8 +10313,11 @@ a few more anonymous reads.
 assertions and the teardown itself, and it asks you for nothing: it reads the repository out of this
 checkout's origin and cross-checks it against `go.mod` (no repository is typed in and no variable can
 name another one), refuses a checkout whose origin names `belong`, EdgeWeb or EdgeServer, refuses to
-run under a trace (`bash -x`), makes its own scratch directory (0700, outside every git work tree,
-removed by its exit trap **even after a failed assertion** — the `restore` row says whether it went),
+run under a trace (`bash -x`), prints that origin with the credential a token-based clone or a CI
+checkout leaves in its userinfo stripped (the `repository` row is a row you paste into this register,
+which is the same reason the trace is refused), makes its own scratch directory (0700, outside every
+git work tree, removed by its exit trap **even after a failed assertion** — the `restore` row says
+whether it went),
 takes the three anonymous `GET`s to `api.github.com` that the blocks below take, asserts the check's
 own criteria on the licence object, and prints ONE block on stdout headed `CHECK 130 RESULT` whose
 last line is `CHECK 130 RESULT: PASS|FAIL`. The block's keys are the script's own `BLOCK_KEYS`, in

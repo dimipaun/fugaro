@@ -58,6 +58,10 @@ func TestDocsCheck130IsOneScriptTheOwnerRuns(t *testing.T) {
 		// names are the ones it read closely, not the list. A reader sent to a
 		// list that is not the file's is the drift this pin is for.
 		"four of them rather than all of them",
+		// The origin is printed into the block the owner pastes into the
+		// register, so the credential a token-based clone leaves in it is
+		// stripped first.
+		"leaves in its userinfo stripped",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s: the Check 130 section lacks %q", liveChecksDoc, want)
@@ -85,6 +89,9 @@ func TestDocsCheck130ScriptKeepsItsPromises(t *testing.T) {
 		// origin, cross-checked against go.mod, and no way to name another one.
 		`git -C "$ROOT" remote get-url origin`,
 		`[ "$MOD" = "github.com/${REPO}" ]`,
+		// ...and the origin is stripped of the credential before it is matched,
+		// recorded or printed, which the section promises in the same breath.
+		`s#//[^@/]*@#//#`,
 		// The refusal the standing rule requires.
 		"*/belong/* | */edgeweb/* | */edgeserver/*",
 		// The three anonymous GETs, on api.github.com and nowhere else.

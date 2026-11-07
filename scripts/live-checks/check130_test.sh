@@ -164,7 +164,17 @@ echo 'fake fugaro: check130 must not reach an installation' >&2
 exit 64
 FUGARO_EOF
 
-  chmod +x "$1/bin/curl" "$1/bin/gcloud" "$1/bin/fugaro"
+  # `belong` is the refusal's own word, and the one command this check must
+  # never run: a binary with that name records it if anything ever does. The
+  # refusal's fact string once carried it in backticks, which bash runs.
+  cat >"$1/bin/belong" <<'BELONG_EOF'
+#!/usr/bin/env bash
+printf 'belong %s\n' "$*" >>"$FAKE130_DIR/belong.calls"
+echo 'fake belong: check130 must never run a command named after the refusal' >&2
+exit 64
+BELONG_EOF
+
+  chmod +x "$1/bin/curl" "$1/bin/gcloud" "$1/bin/fugaro" "$1/bin/belong"
 }
 
 # ------------------------------------------------------------------ the fixture
@@ -217,6 +227,7 @@ setup_case() { # NAME [ORIGIN] [MODULE] [LICENSING]
   : >"$dir/state/calls"
   : >"$dir/state/gcloud.calls"
   : >"$dir/state/fugaro.calls"
+  : >"$dir/state/belong.calls"
   write_checkout "$dir" "${2:-$ORIGIN}" "${3:-$MODULE}" "${4:-default}"
 }
 
@@ -444,6 +455,13 @@ test_belong_is_refused() {
   expect_contains "$out" "FACT belong: FAIL — " "belong by name: the row"
   expect_contains "$out" "acme/belong" "belong by name: the repository it refused"
   expect_contains "$out" "EdgeWeb or EdgeServer" "belong by name: what else is refused"
+  # The refusal is the reason the run ended, in the row's own words: the word
+  # `belong` is quoted in the message, and a message that runs it instead is a
+  # crash wearing the refusal's clothes — the ERR trap adds an "internal error"
+  # row ahead of it and the row loses the word.
+  expect_contains "$out" "the owner's own installation's ('belong', EdgeWeb or EdgeServer)" "belong by name: the row keeps the word it refuses"
+  expect_absent "$out" "internal error" "belong by name: no crash row ahead of the refusal"
+  expect_absent "$(cat "$dir/err")" "command not found" "belong by name: nothing was run for the word it refuses"
   expect_contains "$out" "CHECK 130 RESULT: FAIL" "belong by name: the verdict"
   expect_fetched_nothing "belong by name"
   expect_no_cloud_tool "belong by name"
@@ -454,8 +472,32 @@ test_belong_is_refused() {
   expect_status "$status" 2 "belong by installation"
   expect_contains "$out" "FACT belong: FAIL — " "belong by installation: the row, whatever case the origin is spelled in"
   expect_contains "$out" "EdgeWeb/EdgeServer" "belong by installation: the repository it refused"
+  expect_absent "$out" "internal error" "belong by installation: no crash row ahead of the refusal"
   expect_fetched_nothing "belong by installation"
   expect_scratch_gone "belong by installation"
+
+  # The fake `belong` on PATH was never run, in either case: the refusal's own
+  # word is a message, not a command.
+  [ ! -s "$dir/state/belong.calls" ] \
+    || fail "belong: a command named 'belong' was run: $(tr '\n' ';' <"$dir/state/belong.calls")"
+}
+
+test_a_credential_in_the_origin_is_not_printed() {
+  # A token-based clone and a CI checkout leave the credential in the origin's
+  # userinfo, and every guard passes with it there. The origin is printed into
+  # the trace and into the `repository` row of the block the owner is told to
+  # paste into the register, so it is printed without it.
+  setup_case origin-credential "https://x-access-token:placeholder@github.com/${REPO}.git"
+  run130
+  expect_status "$status" 0 "origin with a credential"
+  expect_contains "$out" "FACT repository: PASS — github.com/${REPO}" "origin with a credential: the repository is still read out of it"
+  expect_contains "$out" "(https://github.com/${REPO}.git)" "origin with a credential: the origin, with the userinfo stripped"
+  expect_absent "$out" "x-access-token" "origin with a credential: the user in the block"
+  expect_absent "$out" "placeholder" "origin with a credential: the credential in the block"
+  expect_absent "$(cat "$dir/err")" "x-access-token" "origin with a credential: and in the trace"
+  expect_absent "$(cat "$dir/err")" "placeholder" "origin with a credential: and in the trace"
+  expect_fetched 3 "origin with a credential"
+  expect_no_cloud_tool "origin with a credential"
 }
 
 test_dry_run_runs_nothing() {
@@ -726,6 +768,7 @@ t() {
 
 t test_happy_path
 t test_belong_is_refused
+t test_a_credential_in_the_origin_is_not_printed
 t test_dry_run_runs_nothing
 t test_a_detector_that_read_the_statement_is_a_fail
 t test_a_licence_endpoint_that_answers_404_is_a_fail
