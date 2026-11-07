@@ -570,6 +570,30 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('coordinator.intents', args)
   }
 
+  /** managedStatus reads `managed status --json`: one project's two marks, the
+   * read's own reason when they disagree, and the newest audit record's bounded
+   * subset (the managed screens' plan's CM4, D1472 to D1477). It takes no
+   * argument at all -- the whole argv is the spawn row's, `--json` plus the two
+   * project flags main-process state settles -- and like the declarations read
+   * above its child asks nothing of the host: the marks and the audit trail are
+   * the caller's own database node, read through the same store and the same
+   * ADC, so this read succeeds with `FUGARO_CREDENTIALS_SERVICE_URL` set. **The
+   * subset is the command's** -- `argv` is not in it (D1476) -- so nothing this
+   * process does can widen or narrow what a screen is shown. */
+  managedStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('managed.status', args)
+  }
+
+  /** policyShow reads `project policy show --json`: the published policy node a
+   * project's runs read, and nothing else (the same plan's CM4, D1480 and
+   * D1481). It takes no argument at all, for managedStatus's reason, and it is
+   * the project's own database node against `project show --json`, which would
+   * also carry the installation's caps (F18). The read writes neither the node
+   * nor the state file, and it involves no host credential. */
+  policyShow(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('policy.show', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('run.diagnose', args)
   }
@@ -1235,8 +1259,10 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * **previous answer of this installation listed it**
      * (`graphScopes` above): the read teaches the surface which scopes exist,
      * and nothing else is ever spawned. `all` is the one value admitted without
-     * being listed, because it is the selector rather than a source and it is the
-     * read a screen opens on. The refusal is `NO_GRAPH_SCOPE`, thrown **before**
+     * being listed, because it is the selector rather than a source -- it is what
+     * a caller that names no scope is answered with, and what the Graph asks for
+     * when the plan scope refuses for want of a checkout, never what a screen
+     * opens on. The refusal is `NO_GRAPH_SCOPE`, thrown **before**
      * `resolve` -- no binary is probed and no child runs. `graph.read` is
      * answered whatever the installation's checkout is: the read needs none.
      *
@@ -1301,6 +1327,19 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * replaces the records in place as declarations arrive, so holding a floor
      * between two calls would hide the newest one for no gain. */
     coordinatorIntents: (args) => read('coordinator.intents', (source) => source.coordinatorIntents(args)),
+    /** managedStatus has no precondition and no cadence, for
+     * coordinatorIntents's reason: the marks and the audit record are the
+     * caller's own database node, so there is no directory on this machine to
+     * refuse for, and the newest record is the newest record -- holding a floor
+     * between two calls would hide it for no gain. Its document is closed and
+     * its bound is the command's, so there is nothing here to widen. */
+    managedStatus: (args) => read('managed.status', (source) => source.managedStatus(args)),
+    /** policyShow has no precondition and no cadence either: the read is the
+     * project's own database node, aimed with `--project`/`--config` the
+     * resolver settles, so there is no directory to refuse for -- and the
+     * published node is replaced in place when a policy is published, so a floor
+     * between two calls would draw a stale one. */
+    policyShow: (args) => read('policy.show', (source) => source.policyShow(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),

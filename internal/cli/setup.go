@@ -372,7 +372,7 @@ var setupQuestions = []wizardQuestion{
 	},
 	{
 		what:    "the region the installation's jobs and the scheduler run in",
-		label:   "Region",
+		label:   "Region (the installation's jobs and the scheduler)",
 		flag:    "--region",
 		missing: "--region <region>",
 	},

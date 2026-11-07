@@ -372,9 +372,12 @@ type Spec struct {
 	// Claude Code warns and falls back to its default for the flag and
 	// drops the environment variable and the settings key in silence — a
 	// focus over its bound or carrying a control, bidi or other invisible
-	// character, and `none: true` beside another key. The decode above is
-	// strict about it too: DisallowUnknownFields reaches every nested
-	// object, so an unknown key inside a level refuses the whole spec.
+	// character, and the level's own switch — `none: true`, or its model
+	// named none — beside another key. The decode above is strict about it
+	// too: DisallowUnknownFields covers every object around a level, and a
+	// level block checks its own keys (config.LevelSetting.UnmarshalJSON,
+	// which decodes the block itself), so an unknown key inside a level
+	// refuses the whole spec either way.
 	//
 	// A runner before the release that reads this field refuses the whole
 	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates

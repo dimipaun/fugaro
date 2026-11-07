@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 )
 
@@ -86,6 +87,33 @@ func newReviewSvcSpelled(t *testing.T, verifierEmail, tableEmail string, extra .
 			m(s, cfg)
 		}
 	})
+}
+
+// newAnthropicKeyReviewSvc is the review fixture whose pairing names the
+// sentinel instead of a Claude account: the installation publishes
+// config.AnthropicKeyAccount in the shared node's accounts block, offers it to
+// the fixture's repository, and the repository's own node admits it — so the
+// pairing resolves the caller exactly as it resolves an account's name, and the
+// credential that name stands for is the bundle's tier-B key.
+//
+// The verifier's own list is left as it is, and deliberately: the class and the
+// email are all verifyJob reads of it (auth.go), while the account name a review
+// call is served by is the pairing's table's (server.go's ReviewAccounts). So
+// this fixture changes the one spelling that decides what the call is served by
+// — which is the same split the two lists have in a deployment, where both are
+// derived from one axis (ReviewJobAccountsFor).
+func newAnthropicKeyReviewSvc(t *testing.T, extra ...func(*svc, *Config)) *svc {
+	t.Helper()
+	return newReviewSvcSpelled(t, testReviewSA, testReviewSA, append([]func(*svc, *Config){
+		func(s *svc, cfg *Config) {
+			cfg.ReviewAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: config.AnthropicKeyAccount}}
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocAccounts("auto",
+				`"default": {"allow_repos": ["`+testRepo+`"]},
+					"`+testAccount+`": {"allow_repos": ["`+testRepo+`"]},
+					"`+config.AnthropicKeyAccount+`": {"allow_repos": ["`+testRepo+`"]}`))
+			s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.AnthropicKeyAccount))
+		},
+	}, extra...)...)
 }
 
 // reviewMintSvc is the review fixture behind the mint's fake GitHub, with the
@@ -161,6 +189,72 @@ func TestReviewAccountIsAdmittedOnTheModelPathForItsOwnAccount(t *testing.T) {
 	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
 		t.Errorf("the admissions read were %v, want just the run identity's repository", got)
 	}
+}
+
+// TestReviewPairingMayNameTheProjectsAnthropicKey is AK4's red step: a review
+// caller whose pairing names the sentinel is served by the bundle's tier-B
+// entry, and the forwarded call carries the project's own key to Anthropic's
+// own address.
+//
+// Before the change the pairing's name resolved to a tier-A account and to
+// nothing else (reviewCandidates), so a pairing that named the sentinel had no
+// credential to offer at all: the caller was answered with the typed wait and
+// the upstream saw nothing — F13's state, and the state a review run whose
+// project holds no Claude account would be left in for good.
+//
+// The two accounts the bundle also holds are the strongest part of this: both
+// are tier A, both are admitted to the fixture's repository, and the fixture's
+// policy is `fallback: auto`, so a service that treated the sentinel as one
+// name among the accounts would answer with one of them instead of the key.
+func TestReviewPairingMayNameTheProjectsAnthropicKey(t *testing.T) {
+	s := newAnthropicKeyReviewSvc(t)
+	resp, body := s.callTokens(t, callBody("review-project-key"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the review caller was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != config.AnthropicSecret {
+		t.Errorf("%s = %q, want the project's own key %q", HeaderCredential, got, config.AnthropicSecret)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierB {
+		t.Errorf("%s = %q, want %q: the project's key is real money", HeaderTier, got, TierB)
+	}
+	if got := resp.Header.Get(HeaderSwitch); got != "" {
+		t.Errorf("%s = %q, want none: a review call is served by one credential or by none", HeaderSwitch, got)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	req := s.up.Seen()[0]
+	if got := req.Header.Get("x-api-key"); got != fakeCred(t, "paid") {
+		t.Error("the call did not carry the project's key")
+	}
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Error("the call carried an Authorization header a tier-B call must not have")
+	}
+	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
+		t.Errorf("the admissions read were %v, want just the run identity's repository", got)
+	}
+
+	// The key reaches Anthropic and nowhere else: the destination is read off
+	// the request the service built, before the fixture's host rewriter would
+	// have made every host look the same (forward_test's recordingTransport).
+	t.Run("the call is built for Anthropic's own endpoint", func(t *testing.T) {
+		rec := &recordingTransport{}
+		r := newAnthropicKeyReviewSvc(t, func(_ *svc, cfg *Config) {
+			cfg.Client = &http.Client{Transport: rec}
+		})
+		resp, _ := r.callTokens(t, callBody("review-project-key-destination"), r.reviewRunToken(), r.reviewJobToken(), r.job)
+		if resp.StatusCode == http.StatusOK {
+			t.Fatal("the answer is 200: no request may leave a recording transport")
+		}
+		urls := rec.seen()
+		if len(urls) != 1 {
+			t.Fatalf("the service built %d requests, want 1: %v", len(urls), urls)
+		}
+		if want := gateway.AnthropicBase(gateway.Upstream{}) + MessagesPath; urls[0] != want {
+			t.Errorf("the call was built for %q, want %q: the project's key goes to Anthropic's own endpoint or nowhere", urls[0], want)
+		}
+	})
 }
 
 // TestReviewAccountIsRefusedTheModelPathForAnotherAccount: the pairing is the

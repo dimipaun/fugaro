@@ -17,6 +17,7 @@ import (
 	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -813,6 +814,15 @@ type Record struct {
 	Stage         string            `json:"stage"`
 	Outcome       Outcome           `json:"outcome"`
 	Reason        string            `json:"reason,omitempty"`
+	// FailureClass is why the run did not end succeeded, in the closed
+	// vocabulary of internal/failure (docs/design/failure-classes.md §3). It
+	// is additive beside Reason, which keeps its text and its meaning: the
+	// class is what a report groups and counts, and the reason is what a
+	// person reads. Absent on a run that succeeded, on a mode: review run that
+	// reviewed and on an artifact run that delivered — there is no cause to
+	// name — and on records written before the field existed, which a reader
+	// classes from their reason instead.
+	FailureClass failure.Class `json:"failure_class,omitempty"`
 	// Gate is "clean" or "fixed" when the recipe's check step decided the
 	// run (gate.go); "" when the recipe has no check step, or it found a
 	// failure and the run went on to implement as usual.

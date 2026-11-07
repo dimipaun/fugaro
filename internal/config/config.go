@@ -104,6 +104,16 @@ type Config struct {
 	// itself. Like the fields above it is never part of the file or of
 	// SHA256.
 	RepoGitAuthorSet bool `yaml:"-" json:"-"`
+	// RepoLevelsNoneModelSet is whether the repository's own file names a
+	// review level's model with the literal none (NoneModel), which is the
+	// level's own switch written the other way. The question the fields above
+	// ask is asked again here for the same kind of reader: the resolved
+	// agent.levels block cannot answer it, because LevelSetting.validate folds
+	// the literal into Off and a level written that way resolves exactly as
+	// one that wrote `none: true`, while a runner older than noneModelSince
+	// reads the literal as a model ID. Like the fields above it is never part
+	// of the file or of SHA256.
+	RepoLevelsNoneModelSet bool `yaml:"-" json:"-"`
 }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor

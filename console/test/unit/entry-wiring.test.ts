@@ -94,6 +94,7 @@ import {
   SWITCHER_VERSION_CLASS,
   COORDINATOR_SUMMARY_SINCE,
   GRAPH_BUSY,
+  GRAPH_SCOPE_BUSY,
   RUNS_SINCE,
   SETTINGS_EDITOR_CLASS,
   SETTINGS_EDIT_OUTCOME_CLASS,
@@ -106,7 +107,7 @@ import {
   tabStop,
   tabTarget,
 } from '../../src/renderer/entry'
-import { decodeSnapshot } from '../../src/shared/schema'
+import { GRAPH_DOCUMENT_VERSION, decodeSnapshot } from '../../src/shared/schema'
 import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
@@ -116,9 +117,12 @@ import {
   NO_CHECKOUT_EMPTY_SENTENCE,
   NO_CHECKOUT_HEADLINE,
   NO_CHECKOUT_KIND,
+  NO_CHECKOUT_SCOPE_CLASS,
+  NO_CHECKOUT_SCOPE_LABEL,
   NO_CHECKOUT_USE_LABEL,
 } from '../../src/renderer/screens/nocheckout'
-import { CHECKOUT_SELECT_CLASS } from '../../src/renderer/checkout'
+import { CHECKOUT_SELECT_CLASS, checkoutLabel } from '../../src/renderer/checkout'
+import { GRAPH_SCOPE_ALL, GRAPH_SCOPE_PLAN } from '../../src/renderer/screens/graph'
 import {
   BUSY_ATTRIBUTE,
   BUSY_BUSY_ATTRIBUTE,
@@ -211,11 +215,18 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the fourteen reads `entry.ts` may reach for (`ReadBridge`'s
+/**
+ * READ_METHODS is the fifteen reads `entry.ts` may reach for (`ReadBridge`'s
  * own list less `summaryRuns`, which `queueBridge` answers with its own
  * recorder), by the name the preload exposes. Every one of them is on the
  * fake bridge below, and every one records its call -- so "this read was never
- * made" is a claim this suite can make about any of them. */
+ * made" is a claim this suite can make about any of them.
+ *
+ * `graphRead` is the graph plan's CG9a read, and it is the fifteenth: the
+ * Graph's second scope is read through it, and a case that drove the Graph with
+ * a bridge that could not answer it would be driving a console whose only
+ * remaining scope is the plan's.
+ */
 const READ_METHODS = [
   'subscribeLive',
   'showBudget',
@@ -231,13 +242,14 @@ const READ_METHODS = [
   'readRunLogs',
   'runLogLink',
   'planStatus',
+  'graphRead',
 ] as const
 
 /** A_REPLY is a bridge method's answer. */
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the fourteen reads (`READ_METHODS`), each answering what the case told it to
+ * and the fifteen reads (`READ_METHODS`), each answering what the case told it to
  * and appending its own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
@@ -338,9 +350,14 @@ function classed(root: FakeNode, className: string): readonly FakeNode[] {
 }
 
 /** flush lets the entry's own microtasks run: every read is answered through a
- * promise, and a drawing lands a turn after the call that asked for it. */
+ * promise, and a drawing lands a turn after the call that asked for it. The
+ * turns are counted rather than waited for, as `confirm.test.ts`'s own twelve
+ * are, so an assertion is about order and never about timing -- and there are
+ * twenty-four of them because the deepest chain here is the Graph's: the plan
+ * read refuses for an installation that records no checkout, the coordinator
+ * read follows it, and its drawing lands after that. */
 async function flush(): Promise<void> {
-  for (let i = 0; i < 8; i += 1) await Promise.resolve()
+  for (let i = 0; i < 24; i += 1) await Promise.resolve()
 }
 
 describe('the dashboard the entry mounts', () => {
@@ -7072,5 +7089,336 @@ describe('the Graph’s no-checkout state', () => {
     expect(operationOf(document)).toBe('plan.status')
     expect(holdsText(drawn, GRAPH_REFUSAL)).toBe(true)
     expect(classed(drawn, 'installation-issue-details')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Graph's scope (the graph plan's CG10)
+//
+// **The Graph is one tab with two scopes, and this is where the two reads behind
+// it are held.** The plan scope is `plan.status` (the checkout's own document),
+// the coordinator scope is `graph.read` (`fugaro graph --json`, contract §6.22),
+// and the scope that needs no checkout is the second (H9): an installation that
+// records none is read there rather than shown a card, and the card means only
+// that the **plan** scope needs one.
+//
+// Four of the five cases here are the owner's rule of 2026-10-31 for a control
+// that changes the drawing: the change is answered **in the frame it happened
+// in** (a mark up, the figures kept under it), the answer it gets is the answer
+// to the *latest* change (the section's sequence token), and a refusal names its
+// own read and leaves the operator a way out.
+// ---------------------------------------------------------------------------
+
+/** GRAPH_DOCUMENT is one `graph --json` document as the wire has it (§6.22):
+ * two sources -- the coordinator, up, and an orchestrator that is down with its
+ * reason -- one pull request, **no edges**, and the read's own warning. The
+ * console decodes it with the contract's own decoder, so a case here drives the
+ * document a real read answers with. Its one id is the shape the coordinator
+ * writes (`<repo>#<number>`), because the row it draws is the source's own id. */
+function graphDocument(): Record<string, unknown> {
+  return {
+    version: GRAPH_DOCUMENT_VERSION,
+    stream_id: '',
+    seq: 0,
+    generated_at: '2026-11-07T10:30:00Z',
+    sources: [
+      { source: 'coordinator', state: 'up', as_of: null, reason: '' },
+      { source: 'orchestrator:o1', state: 'down', as_of: '2026-11-07T09:00:00Z', reason: 'the stream was withdrawn' },
+    ],
+    nodes: [
+      {
+        key: 'coordinator:acme/widgets#42',
+        source: 'coordinator',
+        kind: 'pull_request',
+        id: 'acme/widgets#42',
+        title: 'Tidy the widget loader',
+        repo: 'acme/widgets',
+        state: 'open',
+        release: 'v1.4.0',
+        updated: '2026-11-06T18:00:00Z',
+      },
+    ],
+    edges: [],
+    warnings: ['the coordinator view holds no edges'],
+  }
+}
+
+/** graphReply is one `graph.read` answer: the envelope `CliBackedHandlers`
+ * builds, with the document inside it. */
+function graphReply(document: Record<string, unknown> = graphDocument()): Record<string, unknown> {
+  return {
+    ok: true,
+    data: {
+      document,
+      receivedAt: '2026-11-07T10:30:00Z',
+      sequence: 0,
+      day: '2026-11-07',
+      rolled: false,
+      notices: [],
+    },
+  }
+}
+
+/** heldScopeAnswers is a `graph.read` whose every answer the case releases when
+ * it likes, by the order it was asked in: the case that looks at a scope change
+ * needs the moment **before** the answer, and the one that looks at the sequence
+ * token needs two answers to land out of order. */
+function heldScopeAnswers(): {
+  readonly reply: () => Promise<unknown>
+  readonly asked: () => number
+  readonly release: (at: number) => void
+} {
+  const waiters: ((value: unknown) => void)[] = []
+  return {
+    reply: () =>
+      new Promise((resolve) => {
+        waiters.push(resolve)
+      }),
+    asked: () => waiters.length,
+    release: (at: number) => {
+      const waiter = waiters[at]
+      if (waiter === undefined) throw new Error(`no graph read number ${String(at)} is outstanding`)
+      waiter(graphReply())
+    },
+  }
+}
+
+/** scopeControl is the drawn scope control. */
+function scopeControl(document: FakeDocument): FakeNode {
+  const control = classed(panelOf(document), 'graph-scope-select')[0]
+  if (control === undefined) throw new Error('the Graph drew no scope control')
+  return control
+}
+
+/** scopeChosen is the scope the control is showing. */
+function scopeChosen(document: FakeDocument): string | null {
+  return scopeControl(document).attributes.get('data-scope') ?? null
+}
+
+/** chooseScope is the operator's own choice of a scope: the value the browser
+ * puts on the control, and the change it reports for it. */
+async function chooseScope(document: FakeDocument, scope: string): Promise<void> {
+  const control = scopeControl(document)
+  control.value = scope
+  control.change()
+  await flush()
+}
+
+/** GRAPH_SCOPE_REFUSAL is the sentence a `graph.read` is refused with by a CLI
+ * built without the graph command (T3, the core stub). It is written here rather
+ * than taken from a module: what the console does with a refusal is the same
+ * whatever the CLI's words are, and this file drives the sentence it is given. */
+const GRAPH_SCOPE_REFUSAL = 'this installation’s CLI has no graph command'
+
+describe('the Graph’s scope', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('no checkout opens the coordinator scope', async () => {
+    const { bridge, calls } = graphBridge({
+      planStatus: () => ({ ok: false, reason: NO_PLAN_CHECKOUT }),
+      graphRead: () => graphReply(),
+    })
+    const document = await openGraph(bridge)
+    // The plan scope is the read the console opens with, and its refusal for an
+    // installation that records no checkout is no longer a card: the Graph opens
+    // on the scope that needs none, which is the read H9 exists for.
+    expect(calls.filter((call) => call.name === 'graphRead')).toEqual([
+      { name: 'graphRead', args: { source: GRAPH_SCOPE_ALL } },
+    ])
+    expect(scopeChosen(document)).toBe(GRAPH_SCOPE_ALL)
+    expect(classed(panelOf(document), 'graph-scope-node').map((each) => each.attributes.get('data-key'))).toEqual([
+      'coordinator:acme/widgets#42',
+    ])
+    // Neither the card nor the plan is drawn under it: nothing was refused, and
+    // the scope that answers is the scope that is shown.
+    expect(classed(panelOf(document), 'console-unavailable')).toEqual([])
+    expect(classed(panelOf(document), 'graph-node')).toEqual([])
+  })
+
+  /** ONE_CHECKOUT is the one checkout an installation with a single repository
+   * lists: the card's `auto` state, and the directory that state sends. */
+  const ONE_CHECKOUT = { repository: 'github/owner/acme', path: '/home/operator/src/acme', more: 0 }
+
+  it('still chooses an installation’s one checkout by itself, over the fallback', async () => {
+    // **H9 does not take the plan scope's own way out away.** The fallback
+    // answers a card the operator could only be sent somewhere else from; an
+    // installation the CLI listed exactly one checkout for is one the console
+    // records and then reads the plan from, so **a coordinator read that works
+    // does not replace that card** -- which is what this case has and the four
+    // card cases above do not: a console that fell back here would open on the
+    // coordinator scope with the checkout still unchosen and the plan still
+    // unreadable.
+    const write = holding()
+    let recorded = false
+    let scopes = 0
+    vi.stubGlobal('Worker', FakeWorker)
+    const { bridge, rail } = railBridge([listRow('acme', { open: true, checkoutChoices: [ONE_CHECKOUT] })], {
+      setInstallationCheckout: () => {
+        recorded = true
+        return write.reply()
+      },
+    })
+    bridge['planStatus'] = () => (recorded ? planStatusReply() : { ok: false, reason: NO_PLAN_CHECKOUT })
+    bridge['graphRead'] = () => {
+      scopes += 1
+      return graphReply()
+    }
+    const document = await openGraph(bridge)
+    expect(scopes, 'the fallback opened the coordinator scope over the card’s own choice').toBe(0)
+    const card = panelOf(document).children[0] as FakeNode
+    expect(card.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    expect(holdsText(card, `${NO_CHECKOUT_AUTO_SENTENCE} ${checkoutLabel(ONE_CHECKOUT)}`)).toBe(true)
+    expect(rail.at(-1), 'the card did not choose the one checkout it was offered').toEqual({
+      name: 'setInstallationCheckout',
+      args: { project: 'acme', checkout: ONE_CHECKOUT.path },
+    })
+    // And the write is still not the answer: the plan read after it is, and it
+    // draws the picture the card was standing in for.
+    write.release({ ok: true, data: null })
+    await flush()
+    expect(
+      classed(panelOf(document), 'graph-canvas').length,
+      'the chosen checkout did not give way to the plan',
+    ).toBeGreaterThan(0)
+    expect(scopes, 'the coordinator scope was read after the plan answered').toBe(0)
+  })
+
+  it('the plan scope with no checkout still shows its card, and the way back to the coordinator', async () => {
+    const { bridge } = graphBridge({
+      planStatus: () => ({ ok: false, reason: NO_PLAN_CHECKOUT }),
+      graphRead: () => graphReply(),
+    })
+    const document = await openGraph(bridge)
+    // The operator asks for the plan scope of an installation that records no
+    // checkout: the card is what that scope is, and it is drawn for a choice
+    // somebody made rather than for the scope the Graph opens on.
+    await chooseScope(document, GRAPH_SCOPE_PLAN)
+    const card = classed(panelOf(document), 'console-unavailable')[0]
+    expect(card?.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    expect(holdsText(card as FakeNode, NO_CHECKOUT_HEADLINE)).toBe(true)
+    // **And the way back.** The card is the plan scope's state and holds no scope
+    // control, so without this door an operator whose installation has no
+    // checkout would be on a screen they cannot leave.
+    const back = classed(card as FakeNode, NO_CHECKOUT_SCOPE_CLASS)[0]
+    expect(back?.textContent).toBe(NO_CHECKOUT_SCOPE_LABEL)
+    back?.click()
+    await flush()
+    expect(scopeChosen(document)).toBe(GRAPH_SCOPE_ALL)
+    expect(classed(panelOf(document), 'graph-scope-node')).toHaveLength(1)
+    expect(classed(panelOf(document), 'console-unavailable')).toEqual([])
+  })
+
+  it('a scope change is answered in its own frame (busy mark, figures kept)', async () => {
+    const answers = heldScopeAnswers()
+    const { bridge } = graphBridge({ graphRead: () => answers.reply() })
+    const document = await openGraph(bridge)
+    const before = classed(panelOf(document), 'graph-node').length
+    expect(before).toBeGreaterThan(0)
+
+    await chooseScope(document, GRAPH_SCOPE_ALL)
+    // **The frame the control was used in**: the section is busy and says what it
+    // is reading, and the figures the last read drew are still on the panel under
+    // the mark -- a switch that blanked the Graph would take the picture away to
+    // say that another one is coming.
+    const section = classed(panelOf(document), 'graph')[0]
+    expect(section?.attributes.get(BUSY_BUSY_ATTRIBUTE)).toBe('true')
+    expect(classed(panelOf(document), BUSY_LABEL_CLASS).map((each) => each.textContent)).toEqual([GRAPH_SCOPE_BUSY])
+    expect(classed(panelOf(document), 'graph-node')).toHaveLength(before)
+
+    // And the answer replaces the figures with the scope's own, and takes the
+    // mark down with it.
+    answers.release(0)
+    await flush()
+    expect(classed(panelOf(document), 'graph-scope-node')).toHaveLength(1)
+    expect(classed(panelOf(document), 'graph-node')).toEqual([])
+    expect(classed(panelOf(document), BUSY_LABEL_CLASS)).toEqual([])
+    expect(scopeChosen(document)).toBe(GRAPH_SCOPE_ALL)
+  })
+
+  it('a late answer for a changed scope is dropped (sequence token)', async () => {
+    const answers = heldScopeAnswers()
+    const { bridge } = graphBridge({ graphRead: () => answers.reply() })
+    const document = await openGraph(bridge)
+    // The coordinator scope is asked for, and its answer is held.
+    await chooseScope(document, GRAPH_SCOPE_ALL)
+    expect(answers.asked()).toBe(1)
+    // The operator changes their mind while that read is out: the plan scope is
+    // asked for, and the read is held as one read to make when the outstanding
+    // one settles.
+    await chooseScope(document, GRAPH_SCOPE_PLAN)
+    // The answer for the scope nobody is looking at any more arrives ...
+    answers.release(0)
+    await flush()
+    // ... and draws nothing: a slower read must never replace a later one, and the
+    // panel shows the scope the operator asked for last.
+    expect(classed(panelOf(document), 'graph-scope-node')).toEqual([])
+    expect(classed(panelOf(document), 'graph-node').length).toBeGreaterThan(0)
+    expect(scopeChosen(document)).toBe(GRAPH_SCOPE_PLAN)
+  })
+
+  it('a CLI without graph shows the plan scope and a refusal sentence (T3)', async () => {
+    const { bridge } = graphBridge({
+      planStatus: () => planStatusReply(),
+      graphRead: () => ({ ok: false, reason: GRAPH_SCOPE_REFUSAL }),
+    })
+    const document = await openGraph(bridge)
+    await chooseScope(document, GRAPH_SCOPE_ALL)
+    // **T3: the core stub keeps the plan scope.** The read the CLI has no command
+    // for is refused, and the console goes back to the scope it can read and says
+    // which read refused -- in the drawing, under the control, rather than on a
+    // refusal screen that would take the way back away with it.
+    expect(scopeChosen(document)).toBe(GRAPH_SCOPE_PLAN)
+    expect(classed(panelOf(document), 'graph-scope-notice').map((each) => each.textContent)).toEqual([
+      GRAPH_SCOPE_REFUSAL,
+    ])
+    expect(operationOf(document), 'the refused scope is not a refusal screen').toBe(null)
+    expect(classed(panelOf(document), 'graph-node').length).toBeGreaterThan(0)
+    // Not vacuous: the plan scope is the scope the console read, and the sentence
+    // is about the read it could not make.
+    expect(holdsText(panelOf(document), GRAPH_SCOPE_REFUSAL)).toBe(true)
+  })
+
+  it('the card’s own door is a read, and a refusal of it is the refusal screen', async () => {
+    // An installation that records no checkout **and** a CLI with no `graph`
+    // command: the console's own fallback finds nothing to draw either, so the
+    // card is what is left -- and its door is the one control that reads the
+    // scope the installation can have.
+    const { bridge } = graphBridge({
+      planStatus: () => ({ ok: false, reason: NO_PLAN_CHECKOUT }),
+      graphRead: () => ({ ok: false, reason: GRAPH_SCOPE_REFUSAL }),
+    })
+    const document = await openGraph(bridge)
+    const card = classed(panelOf(document), 'console-unavailable')[0]
+    expect(card?.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    classed(card as FakeNode, NO_CHECKOUT_SCOPE_CLASS)[0]?.click()
+    await flush()
+    // **The door is the operator's own choice, and the answer to it is that
+    // read's.** A refusal here names the command and is a screen of its own: the
+    // card's sentence is the *plan* read's, and drawing the card back over the
+    // door's own refusal would be a control that answers with the screen it is
+    // on -- which is what the console's own fallback flag did when it outlived
+    // the fallback (`chooseScope` clears it).
+    expect(operationOf(document), 'the door’s refusal is a screen').toBe('graph.read')
+    expect(holdsText(panelOf(document), GRAPH_SCOPE_REFUSAL)).toBe(true)
+    // The card's own kind is gone with it: this frame is the refusal's, not the
+    // console's fallback drawn a second time.
+    expect(classed(panelOf(document), 'console-unavailable')[0]?.attributes.get('data-kind')).not.toBe(
+      NO_CHECKOUT_KIND,
+    )
+  })
+
+  it('a control value this build does not know is the plan scope, not an invented one', async () => {
+    const { bridge, calls } = graphBridge({ graphRead: () => graphReply() })
+    const document = await openGraph(bridge)
+    // The control's value is read back through `valueOf`, and a value this build
+    // has no scope for -- a menu item a newer CLI draws, a rewritten DOM -- is the
+    // plan scope: the two keys this console writes are the only scopes it reads,
+    // and a key it does not know is not a read it will make up.
+    await chooseScope(document, 'orchestrator:o1')
+    expect(calls.filter((call) => call.name === 'graphRead')).toEqual([])
+    expect(scopeChosen(document)).toBe(GRAPH_SCOPE_PLAN)
+    expect(classed(panelOf(document), 'graph-node').length).toBeGreaterThan(0)
   })
 })

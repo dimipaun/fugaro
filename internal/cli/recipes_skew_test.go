@@ -1368,3 +1368,285 @@ func TestPolicyTooNewFixNamesTheRelease(t *testing.T) {
 		}
 	}
 }
+
+// configSkewLevelsHead is configSkewHead with review level 2 written as level
+// (a key of its own block): the file the noneModelSince launches below check
+// out.
+func configSkewLevelsHead(level string) string {
+	return strings.Replace(configSkewHead, "agent: { auth: api-key }", "agent: { auth: api-key, levels: { l2: { "+level+" } } }", 1)
+}
+
+// TestRunRefusesTheNoneModelOnAnOlderBaseImage is noneModelSince's launch gate.
+// A level written `model: none` is the level's own switch written the other
+// way, and the releases that act on levels without knowing the spelling —
+// reviewLevelsSince through the release before this one — decode the block and
+// resolve the level on the model ID `none`: the level the file switched off is
+// run where no allowed_models ceiling refuses it, and dies at bootstrap where
+// one does, and neither is the skip the file asks for. The levels gate beside
+// this one cannot catch it: it asks whether the runner acts on levels at all,
+// and these releases do. The judge is the workflow's build record, as every
+// checkImageSince gate's is, and the boundary is the constant's own.
+func TestRunRefusesTheNoneModelOnAnOlderBaseImage(t *testing.T) {
+	below, above := shiftRelease(t, noneModelSince, -1), shiftRelease(t, noneModelSince, 1)
+	// The row below is at or above reviewLevelsSince on purpose: the releases
+	// in the gap are the ones that act on levels and read the literal as a
+	// model, so this gate is the only one that refuses them.
+	if imagePredates(below, reviewLevelsSince) {
+		t.Fatalf("this test's premise: %s must be at or above reviewLevelsSince (%s)", below, reviewLevelsSince)
+	}
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{below, true},
+		{noneModelSince, false},
+		{above, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			configSkewCheckout(t, f, configSkewLevelsHead("model: none")+configSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's agent.levels of acme/other",
+				"needs a job image whose runner knows " + noneModelKnows,
+				"fugaro " + noneModelSince + " or later",
+				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
+				"fugaro image refresh --repo acme/other --workflow svc",
+				"; or write it as none: true in fugaro.yaml",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions, want none", n)
+			}
+		})
+	}
+}
+
+// TestRunRefusesTheNoneModelOnACloneWorkflowsOlderBaseImage: a checkout: clone
+// workflow's job has no derived image and so no build record to judge, so the
+// gate judges base_images.base's own release (checkCloneImageSince) and names
+// the fix that image has — fugaro update --base base — rather than an image
+// refresh of a workflow that is never built.
+func TestRunRefusesTheNoneModelOnACloneWorkflowsOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, noneModelSince, -1)
+	f.appendConfig(t, "base_images: {base: "+older+"}\n")
+	configSkewCheckout(t, f, configSkewLevelsHead("model: none")+
+		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"fugaro.yaml's agent.levels of acme/other",
+		"needs a job image whose runner knows " + noneModelKnows,
+		"Run fugaro update --base base",
+		"; or write it as none: true in fugaro.yaml",
+		older,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRunRefusesTheLayersNoneModelOnAnOlderBaseImage: the other text that can
+// write the literal is the project layer's defaults.agent.levels, and the
+// subject says so — that block is the operator's to rewrite and publish again,
+// it reaches every repository of the project, and a repository's own file says
+// nothing about it.
+func TestRunRefusesTheLayersNoneModelOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1))
+	dir := layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	// Committed at the ref the launch resolves (the local config's base_branch
+	// for acme/other, main): the gate reads the ref's own file.
+	commitRef(t, dir, "main")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow,
+		"ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, noneModelSince, -1))
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.agent.levels (read for acme/other)",
+		"needs a job image whose runner knows " + noneModelKnows,
+		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		"write it as none: true in the project layer's defaults.agent.levels and publish it again",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "fugaro.yaml's agent.levels") {
+		t.Errorf("the refusal blames the repository's file, which names no level: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	// And the layer's own work is done: at the release the gate names, the
+	// same launch stands.
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+noneModelSince)
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abce", "A task"); err != nil {
+		t.Fatalf("at %s the launch must stand: %v", noneModelSince, err)
+	}
+}
+
+// TestRunDoesNotGateTheOtherSpelling: the gate is the literal's, so the switch
+// written the way every release since reviewLevelsSince reads it is never held
+// to noneModelSince — the shape the title gate has for a launch with no
+// --title, and the levels gate for a launch that asks for nothing.
+func TestRunDoesNotGateTheOtherSpelling(t *testing.T) {
+	f := newCloudFixture(t)
+	configSkewCheckout(t, f, configSkewLevelsHead("none: true")+configSkewWorkflow)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, noneModelSince, -1))
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+		t.Fatalf("a file that writes none: true must not be gated on noneModelSince: %v", err)
+	}
+}
+
+// TestNoneModelSinceHasAReleaseBullet: noneModelSince names 0.21.0, which is
+// not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does (TestReviewLevelsSinceHasAReleaseBullet). Nothing else ties the
+// number the gate accepts to the release whose runner folds the literal into
+// the level's switch, and a release that landed it elsewhere would otherwise
+// keep refusing images that can skip the level.
+func TestNoneModelSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `noneModelSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no noneModelSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+noneModelSince+"\"`") {
+		t.Errorf("docs/release.md's noneModelSince bullet does not carry the constant's release (%q)", noneModelSince)
+	}
+	for _, want := range []string{"model: none", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's noneModelSince bullet does not say %q", want)
+		}
+	}
+}
+
+// TestRecipesSkewRefusesTheNoneModelInTheTaskLayerOutsideACheckout: a launch
+// from outside the repository's checkout reads no fugaro.yaml
+// (TestRecipesSkewRefusesResolvedL3OutsideACheckout), and the task then carries
+// the project layer itself (spec.ProjectLayer, embedProjectLayer) — the same
+// configuration launchReviewLevelsAsk resolves over, which is why this gate
+// reads it too (launchLevelsConfig). A layer whose defaults.agent.levels names
+// a level's model none is text no file of the repository has to carry, and a
+// job image between reviewLevelsSince and noneModelSince resolves that level on
+// the model ID none: the level the layer switched off is run, or the run dies
+// at bootstrap under an allowed_models ceiling. Gating on the file alone skips
+// the launch in silence.
+//
+// Mutation (gate on launchFileConfig alone, as the gate was first wired): the
+// 0.20.0 launch below succeeds with the layer's level running.
+func TestRecipesSkewRefusesTheNoneModelInTheTaskLayerOutsideACheckout(t *testing.T) {
+	f := newCloudFixture(t)
+	publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	below := shiftRelease(t, noneModelSince, -1)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+below)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "Fix it.")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.agent.levels (read for acme/app)",
+		"needs a job image whose runner knows " + noneModelKnows,
+		"fugaro " + noneModelSince + " or later",
+		"; or write it as none: true in the project layer's defaults.agent.levels and publish it again",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	// The levels gate above it is not what refused this launch: at 0.20.0 the
+	// block's keys are read by the runner, which is the whole of that gate's
+	// question, so what is left is the spelling.
+	if strings.Contains(err.Error(), "the review levels (review_levels, agent.levels)") {
+		t.Errorf("the levels gate refused a launch whose image acts on levels: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	// And at the release the gate names the same launch stands, layer and all.
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+noneModelSince)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("%s: %v", noneModelSince, err)
+	}
+}
+
+// TestRecipesSkewRefusesTheNoneModelInALayerWithNoDefaultProfile: the
+// configuration a launch outside a checkout resolves is the task's own layer
+// over a synthetic anchor (launchLayerConfig), and that anchor carries no
+// workflow of its own: a layer that names no default_profile therefore does not
+// resolve over it, and the resolution's failure is not a reason to read nothing.
+// The layer is text the run reads — the file at the ref resolves it once the run
+// has one — so the gate that reads the text has to see it: without that, a level
+// the layer switched off with `model: none` runs on a pre-0.21.0 image in
+// silence, which is the failure this gate exists for.
+func TestRecipesSkewRefusesTheNoneModelInALayerWithNoDefaultProfile(t *testing.T) {
+	f := newCloudFixture(t)
+	layer := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1)
+	layer = strings.Replace(layer, "default_profile: svc\n", "", 1)
+	if strings.Contains(layer, "default_profile") {
+		t.Fatal("the layer still names a default_profile: the state this test needs is gone")
+	}
+	publishedLayer(t, f, layer)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	below := shiftRelease(t, noneModelSince, -1)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+below)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "Fix it.")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.agent.levels (read for acme/app)",
+		"needs a job image whose runner knows " + noneModelKnows,
+		"; or write it as none: true in the project layer's defaults.agent.levels and publish it again",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	// And at the release the gate names the same launch stands.
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+noneModelSince)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("%s: %v", noneModelSince, err)
+	}
+}
