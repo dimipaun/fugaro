@@ -9,6 +9,7 @@ require (
 	github.com/creack/pty v1.1.24 // tests only: the hidden-prompt test needs a pseudo-terminal
 	github.com/klauspost/compress v1.20.1
 	github.com/mattn/go-runewidth v0.0.16
+	github.com/muesli/termenv v0.16.0 // the reporter's steps, with the colour profile forced (D1355)
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
@@ -59,7 +60,6 @@ require (
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
