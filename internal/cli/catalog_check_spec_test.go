@@ -2,6 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -274,5 +277,53 @@ func TestCatalogCheckSpecVersionIsRefusedWhenItIsNotOne(t *testing.T) {
 	t.Setenv(catalogCheckSpecEnv, string(raw))
 	if _, err := readCatalogJobEnv(); err == nil || !strings.Contains(err.Error(), catalogCheckSpecEnv) {
 		t.Fatalf("err = %v, want a spec of version 0 refused, naming %s", err, catalogCheckSpecEnv)
+	}
+}
+
+// TestInstallOptionsReadsTheJobsPausedSettingFromTheLayer: the setting's whole
+// path, from the owner's layer file to the installation's own variable. The two
+// hops are tested apart — jobsPaused reads the file, internal/infra's own tests
+// take the options — so this is the line between them, and the one a change
+// could drop with neither of the others noticing.
+func TestInstallOptionsReadsTheJobsPausedSettingFromTheLayer(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	lc, err := localcfg.Parse([]byte(catalogProducerLocal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		what   string
+		layer  string // "" writes no layer file at all
+		paused bool
+	}{
+		{"no layer file", "", true},
+		{"a layer that says nothing about jobs", "version: 1\nproject: aurora\ngcp_project: proj-1234\n", true},
+		{"a layer that starts the check", "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n", false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			path := localLayerPath(t)
+			if tc.layer == "" {
+				if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(tc.layer), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			spec, err := installOptions(&initOptions{}, lc)
+			if err != nil {
+				t.Fatalf("installOptions: %v", err)
+			}
+			if spec.CatalogCheck == nil {
+				t.Fatal("the installation plans no catalog check, and this local config produces one")
+			}
+			if spec.CatalogCheck.Paused != tc.paused {
+				t.Errorf("the installation's catalog check carries paused %v, want %v: the layer is what decides it", spec.CatalogCheck.Paused, tc.paused)
+			}
+		})
 	}
 }
