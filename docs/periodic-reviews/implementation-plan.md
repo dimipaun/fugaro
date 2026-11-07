@@ -749,7 +749,7 @@ each one written where the task that meets it says so:
    generic path writes the allowlist of `internal/cli/settings_set.go` and nothing else, so the new
    layer key is **refused by `settings set`** as R13 ships it — which is the safe default, not a
    decision: saying yes adds `layer.jobs.reports.paused` (and its sibling) to the allowlist and moves
-   that list's own count pin (`docs/config-management/README.md:47`, "164 of the registry's 325
+   that list's own count pin (`docs/config-management/README.md:47`, "164 of the registry's 331
    rows"). **R13 ships the refused state**; the answer is one allowlist line and one count.
 7. **Whether the managed gate reads a Scheduler `paused` flip as a loosening (E4, and the review of
    round 4).** R13 makes enabling a job a setting `fugaro update` writes — and in a **managed** project

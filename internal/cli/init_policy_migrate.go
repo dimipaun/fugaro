@@ -179,11 +179,13 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	if !found {
 		// #1656: a project that has never published a node is not always a
 		// project with nothing to do. The local config can state something only
-		// the node can carry — an image_catalog, which no job's environment
-		// carries — and a stage that reported done here left the operator's
-		// catalog in a file no run reads, with `fugaro project policy publish`
-		// as the second command `fugaro update`'s one command must not need.
-		if !firstPublishCarriesCatalog(lc) {
+		// the node can carry — an image_catalog or the orchestrator's guardrails,
+		// neither of which any job's environment carries — and a stage that
+		// reported done here left the operator's catalog, or the guardrails they
+		// had just written, in a file no run reads, with
+		// `fugaro project policy publish` as the second command `fugaro update`'s
+		// one command must not need.
+		if !firstPublishCarriesANodeOnlyMember(lc) {
 			return nil, false, nil
 		}
 		return firstPolicyPublish(ctx, db, lc, etag, configPath)
@@ -283,20 +285,25 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	return m, true, nil
 }
 
-// firstPublishCarriesCatalog is whether the local config states an image
-// catalog the node would carry, which is the one member a first publish is made
-// for. ImageCatalogEffective is nil for a config that names none and for one
-// that writes an empty catalog, and an empty catalog publishes no member at all
-// (D1156), so neither is a reason to write a node where none was — the publish
-// would create a policy that admits nothing and carry no catalog with it.
+// firstPublishCarriesANodeOnlyMember is whether the local config states
+// something only the node can carry, which is what a first publish is made for:
+// an image catalog (D1156) and the orchestrator's guardrails (D1239) are read
+// out of the published policy and nowhere else — no job's environment carries
+// either — so a project that has never published a node has left what the
+// operator wrote in a file no run reads.
 //
-// The other members the local config states are not this stage's to publish
-// here: a budget ceiling, a base branch or a model list reaches every run
-// through the job's own environment and the shared config, so a project that has
-// never published a node is a project those are already read for. A catalog is
-// not among them, which is what makes it the whole of this case.
-func firstPublishCarriesCatalog(lc *localcfg.Config) bool {
-	return lc.ImageCatalogEffective(nil) != nil
+// The members that are not node-only are not this stage's to publish here: a
+// budget ceiling, a base branch or a model list reaches every run through the
+// job's own environment and the shared config, so a project that has never
+// published a node is a project those are already read for.
+//
+// A member written but stating no value is not one of them either:
+// ImageCatalogEffective is nil for a config that names no catalog and for one
+// that writes an empty catalog, which publishes no member at all (D1156), and
+// OrchestratorEffective is nil for a block that sets no key (SetsNothing). The
+// publish would create a policy that admits nothing and carry neither with it.
+func firstPublishCarriesANodeOnlyMember(lc *localcfg.Config) bool {
+	return lc.ImageCatalogEffective(nil) != nil || lc.OrchestratorEffective(nil) != nil
 }
 
 // firstPolicyPublish is the publish half of a project that has never published a
