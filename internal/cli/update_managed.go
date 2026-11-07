@@ -670,10 +670,16 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// gate's own, and it is given here rather than left to the caller's
 		// coding-agent refusal: this step's document WAS admitted by the rules
 		// above, so what refuses it is the class rule and nothing about the
-		// session. In the owner's own terminal the widening keeps exactly what
-		// it has without a gate — the typed confirmation this class asks for,
-		// which --yes does not stand in for — and the gate is nobody's answer
-		// there (the policy stage's own reading of the same rule).
+		// session. The marker is asked for beside the class, and it is what
+		// keeps this sentence inside the session the gate is about: it is the
+		// coding agent's alone. A person at a real terminal on a managed project
+		// is not asked for the typed name (the owner's ruling of 2026-11-06,
+		// workspacePublication.confirm), so the widening writes there on a note
+		// with the diff above it — what this admits is read in the added lines
+		// rather than in a sentence worded for a confirmation nobody is asked
+		// for — and every other not-admitted answer (a pipe, --json and
+		// --non-interactive carry no marker and no answer either) keeps the
+		// confirmation the caller would have asked.
 		if class == initflow.Typed && marker != "" {
 			refused := conv.Refuse()
 			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused}

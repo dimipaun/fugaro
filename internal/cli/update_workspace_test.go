@@ -777,6 +777,47 @@ func TestUpdateRefusesACodingAgentsSessionUnderTheGate(t *testing.T) {
 	}
 }
 
+// TestUpdateManagedTerminalPublishesAWideningOnANote is the owner's ruling of
+// 2026-11-06 read on this stage: at a managed project's own real terminal the
+// typed project name is not asked for, and it is not asked for the widening
+// either — the person is told what is written and it is written, exactly as the
+// policy stage reads the same ruling (policyMigrationConfirm, which asks a
+// person at a real terminal for neither a loosening nor a first publish).
+//
+// What makes the assertion about the prompt rather than about the code is the
+// empty stdin: a run that asked at all would get no answer, so the member
+// landing in the node is the test. The widening is a member the published node
+// does not carry, which is the class no plan gate admits (D1026) — the case a
+// managed project's gate reaches as NOT admitted, and the one the note is for.
+//
+// The controls are the sessions beside it: a coding agent's keeps the class
+// sentence and the refusal, and the same record on a project that is not
+// managed keeps the typed name (both in this file).
+func TestUpdateManagedTerminalPublishesAWideningOnANote(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTwoMembers)
+	p := h.project(t, "workspace-alpha")
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+	}, 0)
+
+	r := newWSUpdateRig(t, h)
+	r.s.e.r.gate = &initGate{managed: true}
+	fakeTerminal(t)
+	_, out, err := r.apply(t, false)
+	if err != nil {
+		t.Fatalf("a managed project's own terminal was refused a widening: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "note: ") {
+		t.Errorf("the person at the terminal was not told what this write does:\n%s", out)
+	}
+	if strings.Contains(out, "Type workspace-alpha to confirm") {
+		t.Errorf("a managed project's own terminal was asked the typed project name, which the ruling of 2026-11-06 keeps for data loss and secret values:\n%s", out)
+	}
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-d"}) {
+		t.Errorf("the node did not land the member the record admits: the members are %v, want member-b and member-d", got)
+	}
+}
+
 // TestUpdateTheCeilingIsTheDirectionTheWideningIs: the cap half of the
 // classifier, where getting the direction wrong is the defect that matters. A
 // node that states a ceiling and a record that states none leaves the group

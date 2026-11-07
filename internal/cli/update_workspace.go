@@ -725,7 +725,7 @@ func (s *workspaceStage) Apply(ctx context.Context, env initflow.Env) (initflow.
 	// reading of the same rule, for this command's second published document.
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
-		return p.confirm(cmd, env.Yes, s.e.r.w, admitted)
+		return p.confirm(cmd, env.Yes, s.e.r.w, admitted, gate, s.e.r.conditions())
 	}); err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -747,25 +747,44 @@ func (s *workspaceStage) Apply(ctx context.Context, env initflow.Env) (initflow.
 // when the write puts more in the group — the group's first record, which
 // chooses the whole of it, and any later write that admits something the node
 // does not carry — and the ordinary y/N (or --yes) otherwise. A managed
-// project's gate that admitted the node replaces both — the diff is printed
-// either way, and the class rule has already refused a widening there
-// (gateStep).
+// project's gate that admitted the node replaces both, and the diff is printed
+// either way; of the sessions the class rule leaves a question to, a coding
+// agent's was refused before this call (gateStep) and a person at a real
+// terminal is answered by the note below.
 //
 // The typed name is the policy stage's loosening rule (confirmTypedStrict, D846)
-// read on this node: what it reserves is a write that ADMITS something — a
+// read on this node: what it reserves is a write that puts MORE in the group — a
 // project that can now spend against the workspace's credentials, a repository
-// it now covers, a ceiling above the one the owner set, the ceiling itself when
-// the record states none, or the whole membership when there is no published
-// record yet — and --yes does not stand in for it, which is what the sentence
-// says to the operator whose script has just passed --yes and been refused.
-// What it does NOT reserve is a removal: a member the record no longer declares
-// shrinks the group, and the diff says so.
-func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer, admitted bool) error {
+// it now covers, a ceiling above the one the owner set, the ceiling the node
+// states DROPPED by the record (which leaves the group's spend unbounded), or
+// the whole membership when there is no published record yet — and --yes does
+// not stand in for it, which is what the sentence says to the operator whose
+// script has just passed --yes and been refused. What it does NOT reserve is a
+// removal — a member the record no longer declares shrinks the group, and the
+// diff says so — or a ceiling the record ADDS where the node states none, which
+// bounds the group rather than widening it (workspaceWidening).
+//
+// A person at a real terminal on a managed project is not asked for the typed
+// name: the owner's ruling of 2026-11-06 keeps the typed prompt for data loss
+// and secret values alone, and rewriting this node from the owner's own local
+// record is neither — the person is told what is written (the diff above, whose
+// added and removed lines both name what changes) and it is written. That is the
+// policy stage's own reading of the ruling (policyMigrationConfirm), for this
+// command's second published document. Every other session keeps what the
+// branches below ask — a pipe, --json and --non-interactive by the typed name's
+// own refusal, and a coding agent's was refused before this call (gateStep) —
+// and the gate's own admission is untouched: where the gate judged and admitted
+// the write, there was nothing left to ask.
+func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer, admitted, managed bool, c initflow.Conditions) error {
 	p.print(w)
 	if admitted {
 		return nil
 	}
 	what := p.what()
+	if managed && initflow.PersonAtTheTerminal(c) {
+		fmt.Fprintf(w, "note: %s\n", what)
+		return nil
+	}
 	if len(p.widens) == 0 {
 		return confirmRemoval(cmd, p.lc, yes, what)
 	}
