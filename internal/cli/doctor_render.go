@@ -876,6 +876,11 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// No short fix: the check's own names the workflow, and its workflow is the
 	// one thing a hand-run build needs.
 	{prefix: "image-config-", short: doctorShort{problem: "its job image was built from image settings it no longer resolves to."}},
+	// The catalog half of the same pair, and its own text is longer than the
+	// line: it carries the entry, the definition's sha256 and the record's.
+	// The fix stays the check's own either way — the entry's build, which
+	// names the entry the ID does not (the ID names the workflow).
+	{prefix: "image-catalog-", short: doctorShort{problem: "its project image catalog entry has no build, or one built from another definition than the runs bucket holds."}},
 	// The sweep's per-instance warnings, one for a member and one for a job
 	// account: doctor numbers their IDs (runs-bucket-iam-1, job-token-grant-2,
 	// token-signers-3) and their own sentence carries the whole triple, so each

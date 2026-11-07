@@ -224,11 +224,20 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 		}
 	}
 	for _, c := range after.Checks {
-		// Both halves of the image rule: the per-workflow settings comparison,
-		// and the catalog entry a workflow's image comes from (image-catalog-).
-		// `fugaro update` is the whole upgrade, so no image line of either kind
-		// may still be firing when it is done.
-		if (strings.HasPrefix(c.ID, "image-config-") || strings.HasPrefix(c.ID, "image-catalog-")) && !c.OK {
+		// The per-workflow settings comparison, which is the update's own
+		// work: its images stage rebuilds the workflow images the records
+		// still show on the previous release's base, so no image-config- line
+		// may be firing when it is done.
+		//
+		// image-catalog-<workflow> is deliberately not asserted here, and
+		// asserting it would be wrong rather than merely weak: `fugaro update`
+		// publishes the catalog and builds no entry of it, so an installation
+		// whose catalog holds an entry no build has built is still told to run
+		// `fugaro image build <entry>` afterwards — the check is outside
+		// doctorUpdatePrefixes for exactly that reason (catalogImageChecks).
+		// This fixture has no catalog at all, so the assertion could never
+		// fire anyway.
+		if strings.HasPrefix(c.ID, "image-config-") && !c.OK {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s", c.ID, c.Problem)
 		}
 	}

@@ -1909,7 +1909,8 @@ settings it no longer resolves to, and, for a workflow whose image is the
 project's catalog's own entry, an entry no build has built or one whose
 definition moved (fugaro image build <entry>). None of these fails when the
 bucket is unreachable: the layer line falls back to the offline cache and says
-so, and an image check doctor cannot read says nothing.
+so, and a bucket read that does not answer leaves its image line out instead
+of failing the command.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
 CI. --strict makes a stale, unpinned, foreign or unwired plugin fail the

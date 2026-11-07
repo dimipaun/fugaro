@@ -100,8 +100,13 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		// an entry only the published node holds.
 		cat, catErr := effectiveCatalog(ctx, env)
 		out = append(out, imageCatalogUnreadCheck(lc, rf.Cfg, catErr)...)
-		out = append(out, imageConfigChecks(ctx, env, rb, slug, rf.Cfg, rf.Res, cat)...)
-		out = append(out, catalogImageChecks(ctx, env, rb, slug, rf.Cfg, cat)...)
+		// A nil catalog is two states, and the checks below judge a pinned
+		// workflow differently in each: a project with no catalog at all runs
+		// the derived image for one, and a catalog that was not read leaves it
+		// to the catalog (workflowCatalogEntry).
+		catUnknown := cat == nil && catErr != nil
+		out = append(out, imageConfigChecks(ctx, env, rb, slug, rf.Cfg, rf.Res, cat, catUnknown)...)
+		out = append(out, catalogImageChecks(ctx, env, rb, slug, rf.Cfg, cat, catUnknown)...)
 	}
 	return out
 }
@@ -360,12 +365,15 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 //
 // cat is the catalog the job spec resolves (doctorLayerChecks), never the
 // local config's alone: a workflow the published node's catalog speaks for is
-// as much the catalog's as one this file's own catalog names.
-func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog) []doctorCheck {
+// as much the catalog's as one this file's own catalog names. catUnknown is
+// the other half of that argument (workflowCatalogEntry): a project with no
+// catalog at all is one whose pinned workflows are compared here, because
+// their jobs run the derived image — so the two nils are not one state.
+func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		w := cfg.Workflows[name]
-		if _, ok := workflowCatalogEntry(cat, slug, w, catalog.Backend(env.lc.Backend())); ok {
+		if _, ok := workflowCatalogEntry(cat, catUnknown, slug, w, catalog.Backend(env.lc.Backend())); ok {
 			continue
 		}
 		if w.Dockerfile != "" {
@@ -404,16 +412,16 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slu
 // command that does the work.
 //
 // Best effort, as the layer checks are: what cannot be read says nothing, and
-// cat — the catalog the job spec resolves, handed in — being nil is one of
-// those reads (imageCatalogUnreadCheck is its own line when it was the node
-// that did not answer). So is an entry's build record that is there and could
+// a catalog that was not read — cat nil with catUnknown, the state
+// imageCatalogUnreadCheck has a line of its own for — leaves every workflow's
+// entry unjudged here. So is an entry's build record that is there and could
 // not be read or parsed: only an absent one is the "no build has built it"
 // warning below (catalogEntryRecord). An entry that is a prebuilt image has
 // nothing to build.
-func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, cat *config.Catalog) []doctorCheck {
+func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, cat *config.Catalog, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		e, ok := workflowCatalogEntry(cat, slug, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
+		e, ok := workflowCatalogEntry(cat, catUnknown, slug, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
 		if !ok || e.Source.Kind == config.SourceImage {
 			continue
 		}
@@ -478,14 +486,24 @@ func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, sl
 //
 // cat is that catalog, nil when the project has none — or when it is a config
 // that states none of its own beside a published node that did not answer,
-// which imageCatalogUnreadCheck reports as its own line. A pin is the
+// which imageCatalogUnreadCheck reports as its own line. catUnknown says which
+// of those two nils it is: the second, the node that did not answer.
+//
+// The two nils are not one state for a pinned workflow. A pin is the
 // repository's own claim about its entry and not the algorithm (D1155), so a
-// pinned workflow is answered from its name alone: with no catalog at all
-// doctor can still say the catalog speaks for the workflow, which is what
-// keeps its comparison off an image the catalog build writes. The entry it
-// returns is then the name by itself (no source), and the caller judges what
-// it can of it.
-func workflowCatalogEntry(cat *config.Catalog, slug string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
+// pinned workflow is answered from its name alone — and when the catalog is
+// unknown, doctor can still say the catalog speaks for the workflow: the node
+// nobody read may hold the entry, and the comparison that leaves out is then
+// against an image the catalog build writes. A project with no catalog at all
+// is the other way round: internal/infra's catalogJobImage and run.go's
+// catalogDockerAsk both stop at cat == nil, so such a workflow's job runs the
+// derived image, which is the image the per-workflow comparison is about, and
+// the pin names an entry no catalog holds (a configuration mistake the job
+// spec's own rule and `fugaro validate` report). A pin the catalog does not
+// hold is therefore the catalog's only in the unknown case, and the entry
+// returned there is the name by itself (no source), for the caller to judge
+// what it can of.
+func workflowCatalogEntry(cat *config.Catalog, catUnknown bool, slug string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
 	var c config.Catalog
 	if cat != nil {
 		c = *cat
@@ -498,7 +516,7 @@ func workflowCatalogEntry(cat *config.Catalog, slug string, w config.Workflow, b
 		switch {
 		case ok:
 			return e, true
-		case cat == nil:
+		case cat == nil && catUnknown:
 			return config.Entry{Name: w.ImageName}, true
 		}
 		// A pin the catalog does not hold is a configuration mistake the job

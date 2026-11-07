@@ -625,6 +625,73 @@ func TestDoctorImageConfigComparesWorkflowsTheCatalogDoesNotCover(t *testing.T) 
 	}
 }
 
+// TestDoctorImageConfigComparesAPinWithNoCatalog: the two reasons a catalog is
+// nil are not one state. A project with no catalog at all is one where a
+// workflow that pins an entry runs the derived image — internal/infra's
+// catalogJobImage and run.go's catalogDockerAsk both stop at cat == nil — so
+// the per-workflow record is the image its jobs start on and is compared like
+// any other workflow's. catalog.Applies answers true for a pin however empty
+// the catalog is (a pin is the repository's own claim), so the catalog guard
+// alone took such a workflow for the catalog's and no line judged its image at
+// all. The other nil is a catalog that was not read: there the node that did
+// not answer may hold the entry, the pin is left to the catalog, and
+// imageCatalogUnreadCheck is the line that says so.
+//
+// Mutation (run, restore): let a nil catalog be the catalog speaking for a
+// pinned workflow whatever the read did (`case cat == nil:` in
+// workflowCatalogEntry), and the first subtest fails: no image-config-app.
+func TestDoctorImageConfigComparesAPinWithNoCatalog(t *testing.T) {
+	const yaml = minimalAnchored + "git: { provider: github }\nworkflows:\n  app: { image_name: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+	// rig is a checkout of acme/other pinning an entry, with a per-workflow
+	// record whose hash is not what app resolves to now: compared, it fires.
+	rig := func(t *testing.T, f *cloudFixture) (string, context.Context, *localcfg.Config, resolvedFile) {
+		t.Helper()
+		isolateCache(t)
+		publishedLayer(t, f, testProjectLayer)
+		dir := layerCheckout(t, f, yaml)
+		slug := mustSlug("github", "acme/other")
+		data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: "app", ImageConfigHash: strings.Repeat("0", 64)})
+		writeBucketFile(t, f, imagecheck.RecordKey(slug, "app"), string(data))
+		lc := fileEnv(t, f).lc
+		ctx := context.Background()
+		return dir, ctx, lc, resolvedLayerFixture(t, ctx, lc, dir)
+	}
+
+	t.Run("the project has no catalog", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dir, ctx, lc, rf := rig(t, f)
+		cs := doctorLayerChecks(ctx, lc, dir, rf)
+		if c := layerCheck(cs, "image-catalog"); c != nil {
+			t.Fatalf("the node answered and states no catalog: %+v", c)
+		}
+		if c := layerCheck(cs, "image-catalog-app"); c != nil {
+			t.Fatalf("a pin no catalog holds is not an entry to judge: %+v", c)
+		}
+		c := layerCheck(cs, "image-config-app")
+		if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "other image settings") {
+			t.Fatalf("a pinned workflow whose jobs run the derived image is still compared: %+v", c)
+		}
+	})
+
+	t.Run("the catalog could not be read", func(t *testing.T) {
+		f := newCloudFixture(t)
+		db := doctorPublishedCatalog(t, f)
+		dir, ctx, lc, rf := rig(t, f)
+		// The node no reader gets past: a marker that is not a generation
+		// (projectpolicy.Read's MarkerError), and this checkout's own config
+		// states no catalog, so what the job spec resolves is unknown.
+		db.Set(projectpolicy.PathRulesMarker(), "not-a-generation")
+		cs := doctorLayerChecks(ctx, lc, dir, rf)
+		if c := layerCheck(cs, "image-catalog"); c == nil || !c.unread {
+			t.Fatalf("an unread node must be doctor's unread state: %+v", c)
+		}
+		if c := layerCheck(cs, "image-config-app"); c != nil {
+			t.Fatalf("the unread node may hold the pinned entry, so the pin is left to the catalog: %+v", c)
+		}
+	})
+}
+
 // TestDoctorCatalogImageNamesTheBuildCommand: a workflow that runs a catalog
 // entry is judged on the entry instead, and the one command that fixes either
 // state is the entry's own build — never `fugaro update`, which builds no
