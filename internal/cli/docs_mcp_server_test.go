@@ -121,19 +121,26 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 
 	// The licence table says what it is, and what it is not: the artifact the
 	// owner reads to clear D921's set is the one a later edit could turn into a
-	// clearance nobody gave. Nothing else in the tree pins its two denials, and
-	// its closing line names the clearance as the owner's to give rather than
-	// the file's to claim, so the reading it exists for and the reading it must
-	// never carry are both stated here.
+	// clearance nobody gave. Nothing else in the tree pins its two denials, so
+	// the reading it exists for and the reading it must never carry are both
+	// stated here -- and the second is a refusal as well as a demand, because a
+	// line saying the clearance had been given is the shape that reads as the
+	// gate's answer without being the gate file.
 	table := flattenDoc(readDoc(t, mcpLicence))
 	for _, want := range []string{
 		"This file is a table, and it is not a gate.",
 		"No clearance is claimed anywhere in this folder, by this file or by any other.",
-		"the clearance is the owner's to give rather than this file's to claim",
+		"and that gate is unmet.",
 	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("%s does not state %q: the owner clears D921's dependency set by reading this table, so a table that claimed the clearance, or that stopped saying it is evidence rather than the gate, would be the merge condition's answer written by the artifact under it",
 				mcpLicence, want)
+		}
+	}
+	for _, refuse := range []string{"= the clearance", "the clearance is given", "the gate is met"} {
+		if strings.Contains(table, refuse) {
+			t.Errorf("%s carries %q: the table is evidence for reconciliation.md §6 check 1 and not the gate, and no line of it may read as the clearance having been given -- the gate file is the owner's to write and it is not written",
+				mcpLicence, refuse)
 		}
 	}
 

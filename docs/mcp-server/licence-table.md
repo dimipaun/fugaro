@@ -45,23 +45,29 @@ only tests reach). The three answers that appear below are:
   own `go.mod` requires it, and the requirer is named in the row. Its code is not compiled, linked
   or tested by anything in this repository.
 
-**`go.sum` gained more than 23 modules' worth of lines, and none of them is a module.** The
-remaining additions are `/go.mod`-only hash lines for modules already in `main`'s build list (188
-of them) plus the 11 new modules' own `/go.mod` lines: a `/go.mod` hash is the hash of a file read
-to resolve the graph, not of a module whose source is used, so no source is fetched for those and no
-licence of theirs is new. **Thirteen of the 23 rows have a new *source* hash in `go.sum`**: ten of
-the eleven bumps — every one but `golang.org/x/tools`, whose source nothing fetches because nothing
-compiles it — and three of the eleven new modules, `zitadel/oidc`, `zitadel/schema` and
-`muhlemmer/gu`, which are the three a build here does compile.
+**`go.sum` gained 27 lines, and 13 of them are a module's source.** The 13 source hashes are the
+rows a build here compiles or tests: **ten of the eleven bumps** — every one but
+`golang.org/x/tools`, whose source nothing fetches because nothing compiles it — plus the three new
+modules `zitadel/oidc`, `zitadel/schema` and `muhlemmer/gu`. **The other 14 are `/go.mod`-only
+lines**, which are the hash of a file read to resolve the graph and not of a module whose source is
+used: the ten bumps' new versions, the three new modules' own, and `github.com/creack/pty` v1.1.9 —
+a version below the v1.1.24 the build list already carried, whose `go.mod` is read and whose source
+is not. **A module can sit in the build list with no line in `go.sum` at all**, and eight of the new
+rows above do: they are required by `zitadel/oidc`'s `go.mod` and not by this repository's, and a
+pruned graph reads the `go.mod` of a module the main module's own `go.mod` names.
 
-**`go.sum` also loses 20 lines, and no module leaves the build list for it.** They are the two
+**`go.sum` also loses 22 lines, and no module leaves the build list for it.** They are the two
 hashes each of the nine bumps whose old version `main`'s `go.sum` listed — `doublestar/v4` v4.10.2,
 `go-jose/v4` v4.1.4, `go-logr/logr` v1.4.3, `testify` v1.11.1, the three `otel` modules v1.44.0,
 `x/sync` v0.23.0 and `x/text` v0.42.0 (`yaml/v3`'s and `x/tools`' old versions were in the build
-list and not in `go.sum`) — plus the *source* hashes of `github.com/davecgh/go-spew` and
+list and not in `go.sum`) — plus both hashes of `github.com/davecgh/go-spew` and
 `github.com/pmezard/go-difflib`, two modules `main` already carried at the version below and no Go
 file here imports: both are still in the build list, so nothing in this table is a module the branch
 takes away.
+
+**The numbers above are what `go mod tidy` leaves**, and that is the state `go.sum` ships in: the
+file is tidy on this branch (`go mod tidy -diff` prints nothing), so no line in it is kept for a
+module the graph no longer needs.
 
 ## The 23 rows
 
@@ -140,6 +146,3 @@ permissive in effect; both are noted under the table rather than left for the re
   not counsel's clearance, it does not read the copyright headers of individual source files, and it
   says nothing about the modules `main` already carried. **The gate it is evidence for is
   [reconciliation.md](reconciliation.md) §6, check 1, and that gate is unmet.**
-
-owner reads this table: all permissive = the clearance, and the clearance is the owner's to give
-rather than this file's to claim
