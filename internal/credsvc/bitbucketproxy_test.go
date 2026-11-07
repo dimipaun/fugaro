@@ -708,6 +708,25 @@ func TestBitbucketRoutePRWriteChecksSource(t *testing.T) {
 	if lines[1]["purpose"] != PurposeBitbucketAPI || lines[1]["credential"] != config.BitbucketSecret {
 		t.Errorf("the audit line = %v, want the Bitbucket API purpose and the bundle's credential", lines[1])
 	}
+
+	// A comment on a pull request the RUN'S OWN IDENTITY names (fpr) is
+	// allowed even when the pull request is not this run's own work (G12): the
+	// run that reviews pull request 9 may comment on it, and the claim — and
+	// not the caller's word for it — is what the rules read. It pins that the
+	// identity's pull requests reach CheckPRWrite at all.
+	up.mu.Lock()
+	up.seen = nil
+	up.mu.Unlock()
+	facts("someone-elses-branch")
+	resp, ans = s.proxyCallAs(t, http.MethodPost, proxyPath(proxyRESTPath("/pullrequests/9/comments")),
+		[]byte(`{"content":{"raw":"a review note"}}`),
+		s.runToken(proxyClaims(s.proxyBranch(), 9)...), s.jobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the comment answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	if seen := up.calls(); len(seen) != 2 || seen[1].path != "/2.0/repositories/"+testBitbucketRepo+"/pullrequests/9/comments" {
+		t.Errorf("the upstream saw %+v, want the facts read and then the comment", seen)
+	}
 }
 
 // TestBitbucketRouteBindsJobAccountRepo: the repository a proxied call is
