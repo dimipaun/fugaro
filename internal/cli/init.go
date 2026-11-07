@@ -581,6 +581,15 @@ type initRun struct {
 	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
 	refresh *refreshManaged
 
+	// credsRead and credsReady are the credentials service's bundle as this
+	// run read it (credentialsBundleReady, init_credentials.go): whether it
+	// holds a model credential, read once and recorded on every repository
+	// entry the run writes. Read once because it is one installation's
+	// bundle and one secret read; false for a read that failed is the
+	// fail-safe direction, and the warning it prints is why.
+	credsRead  bool
+	credsReady bool
+
 	// managed is true once this run read that the project it installs into
 	// is managed (managedProject): a guard refusal's text is then the managed
 	// one. Only true is remembered; false and an error are read again.
@@ -4428,12 +4437,23 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 			}
 		}
 	}
+	// CredentialsServiceReady is the credentials service's readiness as this
+	// run read it (credentialsBundleReady, init_credentials.go): whether the
+	// bundle holds a model credential, so this repository's runs may be
+	// served by the service instead of by a credential mounted on the job.
+	// It is the record the switch's readiness half is read from — the plan
+	// that drops the job's model mounts (infra's spec) and the launch that
+	// hands it the service's address (credentialsServiceLaunchEnv) are
+	// decided by it — and it is written on every run, true or false: a
+	// bundle that is later emptied switches the repository off again, which
+	// puts its mounts back, and that is the fail-safe direction.
 	next.Repos[key] = localcfg.Repo{
-		Provider:    spec.Provider,
-		BaseBranch:  spec.BaseBranch,
-		Workflows:   slices.Sorted(maps.Keys(cfg.Workflows)),
-		GitHubAppID: spec.GitHubAppID,
-		Vertex:      spec.UsesVertex(),
+		Provider:                spec.Provider,
+		BaseBranch:              spec.BaseBranch,
+		Workflows:               slices.Sorted(maps.Keys(cfg.Workflows)),
+		GitHubAppID:             spec.GitHubAppID,
+		Vertex:                  spec.UsesVertex(),
+		CredentialsServiceReady: r.credentialsBundleReady(ctx, lc),
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {
 		// The installation enables the API from the recorded repositories,

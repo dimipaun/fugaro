@@ -2,10 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
 )
 
@@ -71,3 +74,76 @@ const credentialsKind = "credentials"
 // credsServiceSince is the release that carries the credentials service, for
 // the gates that name what to upgrade to.
 const credsServiceSince = "0.10.0"
+
+// credentialsBundleReady is whether the installation's credentials service
+// holds at least one MODEL credential: the readiness half of the switch
+// (infra.CredentialsServiceServes, docs/credentials-service/default-on.md
+// §1.5), read once for the run and recorded per repository by
+// writeRepoConfig.
+//
+// It is the service's OWN loader and never a second reading of the secret: the
+// same store `fugaro creds set` writes through (openBundleStore), the same
+// newest-version read, and the same credsvc.ParseBundle the running service
+// parses with, so "the bundle holds a model credential" means here exactly
+// what it means to the process that has to hand one back. The document's own
+// entries answer it and not the container's existence: a container with no
+// version at all, one whose newest version is DISABLED, and one that parses
+// with no KindModel entry are three ways of holding nothing.
+//
+// Every failure answers false, and none of them fails the run. The bundle is a
+// secret this machine's identity may not be able to read, and a run that could
+// not read it is not a run that knows the service is ready: the repository
+// keeps its model credentials mounted, which is the fail-safe direction a
+// `fugaro update` with the operator's own identity corrects on the next run.
+// What each failure is says so as a warning, because the record it leaves
+// behind is the reason a repository is not switched on.
+//
+// Nothing here reads the BUDGET backend or the node: the switch's other half,
+// the repository's agent.auth, is read where the spec is built, from the
+// checkout's own fugaro.yaml (infra.CredentialsServiceServes).
+func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Config) bool {
+	if r.credsRead {
+		return r.credsReady
+	}
+	r.credsRead, r.credsReady = true, false
+	if lc == nil || lc.CredentialsService == nil {
+		// No service, nothing to serve a run with — and no read to spend:
+		// the block's absence is the answer (the installation could not
+		// deploy the service, or its owner removed it).
+		return false
+	}
+	unreadable := func(err error) bool {
+		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s): the repositories of this installation keep the model credentials they mount until one run can read it", oneLineCLI(err.Error())))
+		return false
+	}
+	store, err := openBundleStore(ctx, lc)
+	if err != nil {
+		return unreadable(err)
+	}
+	if err := store.check(ctx); err != nil {
+		return unreadable(err)
+	}
+	meta, err := store.newest(ctx)
+	if errors.Is(err, errNoBundleVersion) {
+		// An empty container is a state and not a failure: the service was
+		// deployed and nothing has been stored in it yet, which is exactly
+		// the installation a fresh deploy leaves behind.
+		return false
+	}
+	if err != nil {
+		return unreadable(err)
+	}
+	if meta.state == "DISABLED" {
+		return false
+	}
+	doc, err := store.access(ctx, meta.number)
+	if err != nil {
+		return unreadable(err)
+	}
+	b, err := credsvc.ParseBundle(doc.raw)
+	if err != nil {
+		return unreadable(err)
+	}
+	r.credsReady = len(b.Credentials()) > 0
+	return r.credsReady
+}
