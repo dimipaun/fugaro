@@ -469,6 +469,51 @@ func TestOAuthTokenValidate(t *testing.T) {
 	}
 }
 
+// TestOAuthTokenAdmitsTheProjectsAnthropicKey: a task's oauth_token admits the
+// account axis's one value that is not an account at all
+// (config.AnthropicKeyAccount, the project's own Anthropic API key), and it is
+// admitted as its own value rather than by loosening the shape rule: a review
+// launch names it as the run's own credential (D1417), so the spec a review is
+// stored as carries it, and the runner resolves the class's model path from
+// exactly this field (internal/runner's checkReviewClassModelPath). The schema
+// halves of the same rule are schemas/task.schema.json's oauth_token property
+// (its anyOf's second branch), and its own test pins the literal to this
+// constant.
+//
+// Mutation (run, restore): drop the case — every review launch's own spec is
+// refused here, after it was paid for, and the refusal names the run's
+// credential as a name that is "not a Claude account name".
+func TestOAuthTokenAdmitsTheProjectsAnthropicKey(t *testing.T) {
+	ok := Spec{Version: 1, RunID: "20261009-101010-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	// The admission can only be this case's: the sentinel is outside the shape
+	// rule every other name in this field is held to, which is the whole reason
+	// it is spelled the way it is.
+	if config.ClaudeAccountNameRE.MatchString(config.AnthropicKeyAccount) {
+		t.Fatalf("%s matches ClaudeAccountNameRE, so this test proves nothing about the sentinel's own case", config.AnthropicKeyAccount)
+	}
+	s := ok
+	s.OAuthToken = config.AnthropicKeyAccount
+	if err := s.Validate(); err != nil {
+		t.Errorf("oauth_token %s: %v", config.AnthropicKeyAccount, err)
+	}
+	// The value is the constant and not a prefix of one: a name carrying it as
+	// a stem is still held to the shape rule that refuses it.
+	for _, name := range []string{config.AnthropicKeyAccount + "-review", "x" + config.AnthropicKeyAccount} {
+		s := ok
+		s.OAuthToken = name
+		if err := s.Validate(); err == nil {
+			t.Errorf("oauth_token %q: accepted, want refused: the field admits the sentinel itself and no name built from it", name)
+		}
+	}
+	// And the value the constant is built from is unaffected: a legal Claude
+	// account name beside it still passes.
+	s = ok
+	s.OAuthToken = "acme-personal"
+	if err := s.Validate(); err != nil {
+		t.Errorf("acme-personal: %v", err)
+	}
+}
+
 // TestSpecRefusesReservedAccountName: oauth_token may not name the account
 // the credentials bundle reserves for the platform's own git credential
 // (config.ReservedClaudeAccountName), the same rule config.Validate applies
