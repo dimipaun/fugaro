@@ -873,15 +873,17 @@ var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.Sourc
 // has to be pointed at the entry, because a pin or the project's default would
 // keep choosing the one being refused.
 //
-// The refusal is a change of behavior and not the end of a broken shape: a baked
-// job whose entry is prebuilt runs today, because the job carries the
-// repository's remote and the runner clones it at launch where the image holds
-// no checkout (runner's openCheckout, gitops.OpenOrClone). What D1191 refuses is
-// the one source kind no build here writes: after the removal baked means the
-// image holds this repository's checkout, and a prebuilt entry cannot keep that
-// meaning. The cost lands on a deployed repository: fugaro setup and fugaro
-// update --repo build its job specs through this path, so one already deployed
-// on such an entry stops on this sentence and edits the workflow or the catalog.
+// The refusal is the design's premise (reconciliation §D1191), and not a claim
+// about one job: what such a job does is decided by the same writer that marks
+// its checkout kind, and this tree's writer gives the remote to clone and shared
+// only, so a baked job whose entry is prebuilt holds no checkout and no remote
+// and its first minute fails at bootstrap (gitops.OpenOrClone: "has no git
+// checkout and no remote to clone"). A tree that also writes the remote for a
+// prebuilt entry makes the same shape run by cloning at launch. Either way what
+// the refusal costs is not that job's: fugaro setup and fugaro update --repo
+// build the repository's job specs through this path, so a repository whose
+// workflows carry such a pin meets this sentence there and edits the workflow or
+// the catalog.
 func unbuiltOnBaked(workflow string, e config.Entry) error {
 	return userErr("workflow %s: the catalog entry %s has source kind %s, which Fugaro builds no image from, so its image holds no checkout of this repository — and a checkout: %s job runs an image that holds one; use checkout: %s, which cannot carry image_name: or needs:, or point the workflow at a catalog entry Fugaro builds (fugaro image add <name> --dockerfile <owner/name:path> --tags <tags>)",
 		workflow, e.Name, e.Source.Kind, config.CheckoutBaked, config.CheckoutClone)

@@ -143,8 +143,7 @@ const prebuiltRef = "us-east5-docker.pkg.dev/proj/fugaro-shared-images-0123/team
 // below do not build the state they read through Repo: readiness reads the mark
 // a spec's image carries when a prebuilt entry gave it one (CatalogPrebuilt),
 // and the deploy path now refuses a prebuilt entry on a baked workflow before
-// it gets that far (D1191), so prebuiltSpec states the mark on the spec itself
-// — the state a job deployed before that refusal reads as.
+// it gets that far (D1191), so prebuiltSpec states the mark on the spec itself.
 const prebuiltCatalogBlock = `
 image_catalog:
   entries:
