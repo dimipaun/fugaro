@@ -167,14 +167,21 @@ var levelSettingJSONKeys = func() map[string]bool {
 // fields are a property of a Decoder while decoding through a Node — the only
 // way to see the `none` key itself, written true or false — is always lenient,
 // so the check is repeated here, with the same message (JobProfile.UnmarshalYAML
-// does the same for a profiles entry).
+// does the same for a profiles entry). Both it and the `none` key are read from
+// the mapping the decoder itself decodes from: a block that merges an anchor
+// (`<<: *base`) ends up with the anchor's keys, so they are keys of the block
+// and are checked like the written ones.
 func (s *LevelSetting) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
 		return levelNotAMapping(node)
 	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if k := node.Content[i]; !levelSettingYAMLKeys[k.Value] {
-			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, levelSettingType)}}
+	keys, err := levelKeys(node)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if !levelSettingYAMLKeys[k.name] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.line, k.name, levelSettingType)}}
 		}
 	}
 	type plain LevelSetting // no methods: decodes the fields without recursing into this one
@@ -183,13 +190,61 @@ func (s *LevelSetting) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 	*s = LevelSetting(v)
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == "none" {
+	for _, k := range keys {
+		if k.name == "none" {
 			s.noneFalse = !s.Off
 			break
 		}
 	}
 	return nil
+}
+
+// levelKey is one key a level block ends up with and the line it is written
+// on.
+type levelKey struct {
+	name string
+	line int
+}
+
+// levelKeys are the keys a level block ends up with, the ones a merge key
+// brings in included. yaml.v3 expands `<<` into the mapping before it sets a
+// field, so a block that merges an anchor ends up with that anchor's keys, and
+// this reads the block the same way: `<<` is not a field of a level, and a key
+// an anchor brings in is one. The order is the one a refusal names them in —
+// the keys written in the block, then the merged ones by line — and a merged
+// key's line is the one it is written on in the anchor, which is the line
+// yaml.v3's own refusal named.
+func levelKeys(node *yaml.Node) ([]levelKey, error) {
+	var out []levelKey
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if k := node.Content[i]; !levelMergeKey(k) {
+			out = append(out, levelKey{k.Value, k.Line})
+		}
+	}
+	var merged map[string]yaml.Node
+	if err := node.Decode(&merged); err != nil {
+		return nil, err
+	}
+	var rest []levelKey
+	for name, n := range merged {
+		if !slices.ContainsFunc(out, func(k levelKey) bool { return k.name == name }) {
+			rest = append(rest, levelKey{name, n.Line})
+		}
+	}
+	slices.SortFunc(rest, func(a, b levelKey) int {
+		if a.line != b.line {
+			return a.line - b.line
+		}
+		return strings.Compare(a.name, b.name)
+	})
+	return append(out, rest...), nil
+}
+
+// levelMergeKey reports whether k is the YAML merge key, in the decoder's own
+// terms (isMerge, yaml.v3): `<<` tagged as the merge key, and not a quoted
+// "<<" that is a field name of its own, which no level has.
+func levelMergeKey(k *yaml.Node) bool {
+	return k.Kind == yaml.ScalarNode && k.Value == "<<" && (k.Tag == "" || k.Tag == "!" || k.Tag == "!!merge")
 }
 
 // levelNotAMapping is the refusal for a level written as something other than

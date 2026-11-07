@@ -296,3 +296,83 @@ func TestParseReviewLevelsYAMLIsStrict(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewLevelsMergeKey: a level block is a YAML mapping like any other, so
+// a document may merge an anchor into one (`<<: *review`), which yaml.v3
+// expands into the block's own keys before it sets a field. The block checks
+// its keys itself (UnmarshalYAML), and it has to read the mapping the way the
+// decoder does: taking `<<` for a key of its own would refuse a document that
+// was read before, and looking only at the keys written in the block would let
+// a key an anchor brings in through, where the decoder's strict mode refused
+// it. Both spellings are the same block either way, at every door that decodes
+// a level — the task's own `review_levels` is JSON, which has no merge key, and
+// a configuration layer's document is the one door that refuses merges
+// outright (layerShape).
+func TestReviewLevelsMergeKey(t *testing.T) {
+	const doc = `l1: &review
+  model: claude-opus-5-5
+  effort: xhigh
+l2:
+  <<: *review
+l3:
+  <<: *review
+  focus: the migration and its rollback
+`
+	got, err := ParseReviewLevelsYAML([]byte(doc))
+	if err != nil {
+		t.Fatalf("a level that merges an anchor was refused: %v", err)
+	}
+	base := LevelSetting{Model: "claude-opus-5-5", Effort: "xhigh"}
+	for _, tc := range []struct {
+		name string
+		got  *LevelSetting
+		want LevelSetting
+	}{
+		{"l1, the anchor itself", got.L1, base},
+		{"l2, which merges it and writes nothing", got.L2, base},
+		{"l3, which merges it and writes a key beside it", got.L3, LevelSetting{Model: "claude-opus-5-5", Effort: "xhigh", Focus: "the migration and its rollback"}},
+	} {
+		if tc.got == nil || *tc.got != tc.want {
+			t.Errorf("%s = %+v, want %+v", tc.name, tc.got, tc.want)
+		}
+	}
+
+	// The same block in a fugaro.yaml: agent.levels is the same type decoded by
+	// the same rules, so the launcher-side file accepts it as well.
+	if _, problems := Parse([]byte(minimalYAML + `agent:
+  levels:
+    l1: &review
+      model: claude-opus-5-5
+    l2:
+      <<: *review
+      effort: xhigh
+`)); len(problems) > 0 {
+		t.Errorf("a fugaro.yaml whose level merges an anchor is refused: %v", problems)
+	}
+
+	// A key an anchor brings in is a key of the level it is merged into, even
+	// when the anchor is a block of another kind: agent.models merged into a
+	// level says nothing about the level, and a check of only the keys written
+	// in the block would drop it — a setting that looks applied and is read by
+	// nobody. The file is read here without being expanded first (decodeRepo,
+	// the plain strict read AgentOf and a job's bootstrap use; Resolve's merged
+	// tree has the anchor expanded before a level is decoded), so this is where
+	// the merged keys are checked.
+	if _, ok := AgentOf([]byte(minimalYAML + `agent:
+  models: &models
+    reviewer: claude-opus-5-5
+  levels:
+    l1:
+      <<: *models
+`)); ok {
+		t.Errorf("AgentOf accepted a level that merges agent.models: the merged key was dropped rather than refused")
+	}
+
+	// And a `none: false` a merge brings in is written on the level all the
+	// same: it says the level runs, so it is refused beside `model: none`
+	// exactly as the written key is.
+	if _, err := ParseReviewLevelsYAML([]byte("l1: &review\n  none: false\nl2:\n  <<: *review\n  model: none\n")); err == nil ||
+		!strings.Contains(err.Error(), "model: none beside none: false") {
+		t.Errorf("model: none beside a merged none: false = %v, want a refusal naming both keys", err)
+	}
+}
