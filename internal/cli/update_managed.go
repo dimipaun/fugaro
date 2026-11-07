@@ -632,7 +632,9 @@ var policyAdmittedRules = []string{
 // the group, so a member this stage adds may only be the owner's own word and
 // never a mark's. Every other publish — the first one, a plain rewrite, a
 // migration, a removal — is the ordinary YesOrTyped step the gate may stand in
-// for.
+// for, which is what the workspaces design says of this write ("it runs under
+// the gate `update` already opens", §6; reconciliation F32 names it the cloud
+// write of the two that the gate ADMITS).
 func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
 	r := s.e.r
 	if !r.gateUnderway() {
@@ -677,14 +679,14 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 // workspaceAdmittedRules is what the record says admitted the workspace step:
 // the two questions the stage answered before its write, in the order it asked
 // them — the database is this installation's (D1017), and the node in play is
-// one this binary's own may write over (the version the migration walked to, or
-// the first publish's absent one). Neither the document's content nor a member
-// it names is here: the record's digest is what an owner checks the node
-// against, and a record that listed the group would be a second copy of the
-// thing the node exists to be.
+// one this binary's own may write over (a first publish, where there is no node
+// to replace, or a node at the version this binary writes and the migration
+// carries). Neither the document's content nor a member it names is here: the
+// record's digest is what an owner checks the node against, and a record that
+// listed the group would be a second copy of the thing the node exists to be.
 var workspaceAdmittedRules = []string{
 	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
-	fmt.Sprintf("the published node is one this binary's own may write over: it is at version %d, or at a version the migration carries to it in place", projectpolicy.WorkspaceVersion),
+	fmt.Sprintf("the published node is one this binary's own may write over: there is none, or it is at version %d (or at a version the migration carries to it in place)", projectpolicy.WorkspaceVersion),
 }
 
 // gateApplied records the step the gate admitted, AFTER the step's own write
