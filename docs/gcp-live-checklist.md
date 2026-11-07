@@ -11264,7 +11264,7 @@ failure, not a pass. **No agent runs any step of it.**
 
 **NOT RUN.** Written by task **IE4** of the image-`ENV` work (`docs/image-env/implementation-plan.md` §6; the reconciliation's **D1370–D1375** and **D1381**; issue **#1755**). The rule is **built** — IE1's stamp, IE2's passthrough and IE3's report all merged — and no run of it has met a real installation yet. It is **OWNER-RUN**: **no agent runs any step of it**, every step is yours, and **no step types, prints or pastes a credential**: the image this check publishes carries an example URL that resolves nowhere and a reserved name pointing at `/dev/null`, because the whole point of the feature is that an image is not a secret store.
 
-**What the check confirms.** One catalog entry on the sandbox, two trivial runs of one workflow — first on the job the entry's image reached, then on the same workflow's repository-built image — and four facts read back:
+**What the check confirms.** One catalog entry on the sandbox, two trivial runs of one workflow — the first on the job that entry chose, the second on that same workflow's repository-built image — and four facts read back:
 
 - a job whose image the project's `image_catalog` chose carries the **stamp** (`FUGARO_IMAGE_ENTRY`, the entry's own name, written by `internal/infra` on every workflow job and empty where no entry chose the image), and `fugaro doctor --all` reads it back per job: the entry's name, the names the job itself sets that a run **drops**, and **no value** (D1371, D1375);
 - in the first run the image's ordinary marker **reaches the agent** — read off a command the run's own `fugaro verify` ran — while the reserved name does not, and the image's **value appears nowhere in the transcript** (D1372, D1375);
