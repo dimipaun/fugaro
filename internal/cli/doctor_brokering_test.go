@@ -88,7 +88,12 @@ func newBrokeringUnoptedRig(t *testing.T) *brokeringRig {
 // newBrokeringCheckout is the part the three rigs share: a checkout of
 // workspace-a/repo-a whose local config names the Cloud Run services fake
 // beside the jobs one, so a service's policy can be read, and — when
-// withService — the credentials_service block the opt-in writes.
+// withService — the credentials_service block the opt-in writes, with the
+// bundle container the same apply creates (the container carries the managed
+// label and no version, which is where the first `creds set` starts from: a
+// rig with the block and no container would be a half-applied installation
+// Terraform never leaves, and the check would answer for that, not for the
+// state the test is about).
 func newBrokeringCheckout(t *testing.T, withService bool) *brokeringRig {
 	t.Helper()
 	r := &brokeringRig{doctorRig: newDoctorRig(t), svcs: gcpfake.NewRunServices(t)}
@@ -101,6 +106,7 @@ func newBrokeringCheckout(t *testing.T, withService bool) *brokeringRig {
 	r.cfg = cfg
 	if withService {
 		addLocalLines(t, r.doctorRig, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")
+		r.putEmptyBundle(t)
 	}
 	return r
 }
@@ -322,6 +328,10 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.svcs.AddService(infra.CredentialsServiceName)
 		r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		// The bundle holds a version, so the grant is the only question this
+		// rig leaves open: a bundle with nothing in it is a state of its own
+		// (TestDoctorReportsTheServiceStateInOneLine).
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 
 		o, err := r.doctor(t)
 		if err != nil {
@@ -330,6 +340,32 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		cs := checksByID(o, "credentials-service-deployed")
 		if len(cs) != 1 || !cs[0].OK {
 			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+	})
+
+	// The verifier half of the bundle read's rule: the local config of this rig
+	// writes no verifier_accounts at all, which does NOT admit nobody — an
+	// absent key leaves the module's own verifier account admitted, and a list
+	// written EMPTY is the one state that does not (the module's own three
+	// states, which localcfg.VerifierAccounts keeps verbatim). Reporting the
+	// absent key as the empty list would call every healthy installation a
+	// service that admits nobody.
+	t.Run("deployed with no verifier_accounts written", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+		if strings.Contains(cs[0].Problem, "admits nobody") {
+			t.Errorf("a config that writes no verifier_accounts leaves the installation's own account admitted, and the line says it admits nobody: %q", cs[0].Problem)
 		}
 	})
 
@@ -383,6 +419,7 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
 			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}},
 			gcpfake.Binding{Role: "projects/proj-1234/roles/deployer", Members: []string{"serviceAccount:someone-else@proj-1234.iam.gserviceaccount.com"}})
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 
 		o, err := r.doctor(t)
 		if err != nil {
@@ -440,7 +477,8 @@ type brokeringServiceState struct {
 // deployed service with a job account missing its invoker grant.
 func brokeringServiceStates() []brokeringServiceState {
 	// deployed is the service every state after the first two starts from:
-	// there, and admitting this installation's one job account.
+	// there, admitting this installation's one job account, with the bundle
+	// container its own apply creates (and no version in it).
 	deployed := func(t *testing.T) *brokeringRig {
 		t.Helper()
 		r := newBrokeringRig(t)
@@ -464,15 +502,13 @@ func brokeringServiceStates() []brokeringServiceState {
 			build:    newBrokeringRig,
 		},
 		{
+			// deployed is this state already: the container its apply creates
+			// is there with no version in it, so the service has no document
+			// to serve a run's credential out of and admits nobody.
 			name:     "the deployed service's bundle holds no version",
 			names:    []string{"creds set"},
 			severity: "info",
-			build: func(t *testing.T) *brokeringRig {
-				t.Helper()
-				r := deployed(t)
-				r.putEmptyBundle(t)
-				return r
-			},
+			build:    deployed,
 		},
 		{
 			name:     "the deployed service's verifier list admits nobody",
@@ -543,6 +579,62 @@ func TestDoctorReportsTheServiceStateInOneLine(t *testing.T) {
 				t.Errorf("--all does not carry the state's line:\n%s", all)
 			}
 		})
+	}
+}
+
+// TestDoctorCountsABundleItCouldNotRead: the deployed service is a read doctor
+// owes an answer about, and a read that failed is not an "ok" line — the check
+// says the fact could not be read, the default view counts it rather than
+// prints it, and nothing about it fails doctor. It is the one state of this
+// check that is neither the service's nor the installation's: it is doctor's
+// own, and it may not be answered with silence.
+func TestDoctorCountsABundleItCouldNotRead(t *testing.T) {
+	r := newBrokeringRig(t)
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+		gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+	// The Secret Manager API the bundle read goes through, pointed at a port
+	// nothing answers on: the state under test is the read failing, which is
+	// not the bundle being empty, and the line may not report one as the other.
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := strings.Replace(string(data), "secret_manager: "+r.sm.URL+"/", "secret_manager: http://127.0.0.1:1/", 1)
+	if cfg == string(data) {
+		t.Fatal("the rig's config does not name the Secret Manager fake")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	o, _ := r.doctor(t)
+	cs := checksByID(o, "credentials-service-deployed")
+	if len(cs) != 1 {
+		t.Fatalf("the state emitted %d credentials-service-deployed checks, want exactly one: %+v", len(cs), cs)
+	}
+	c := cs[0]
+	if c.OK || c.Severity != "info" {
+		t.Errorf("a read that failed is reported as %+v, want the info note of a read that failed", c)
+	}
+	if !strings.Contains(c.Problem, "could not be read") {
+		t.Errorf("the line does not say the read did not answer: %q", c.Problem)
+	}
+	if c.Class != doctorClassAudit {
+		t.Errorf("the state is %q, want %q: a failed read is never a measurement", c.Class, doctorClassAudit)
+	}
+	if checksFail(cs, true) {
+		t.Errorf("a read that failed fails --strict: %+v", c)
+	}
+	def := doctorDefaultOutput(t, cs)
+	if strings.Contains(def, "credentials-service-deployed") {
+		t.Errorf("the default view prints the unread line instead of counting it:\n%s", def)
+	}
+	if !strings.Contains(def, "1 more finding") {
+		t.Errorf("the state is not counted in the default view:\n%s", def)
+	}
+	if all := doctorAllOutput(t, cs); !strings.Contains(all, "could not be read") {
+		t.Errorf("--all does not carry the line:\n%s", all)
 	}
 }
 
