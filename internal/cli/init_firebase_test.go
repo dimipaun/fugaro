@@ -1095,6 +1095,72 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 	}
 }
 
+// TestIdentityPlatformAllowsTheWorkspacesOwnSignIn: the workspace's own project
+// is the one Firebase project whose public sign-in paths the owner enables —
+// spec.md §3 pins exactly which ones — so the refusal that holds every other
+// installation to custom tokens only does not hold it. The predicate is the
+// config's own owner half and nothing else, and this test is why it exists:
+// `fugaro update` converges the workspace's own project (workspace_create.go,
+// W3), so a refusal there would fail the one command the HARD RULE says brings
+// an installation to the new version.
+//
+// A member's project is the other side of the same predicate: it carries a
+// pin, not the owner's half, and its Firebase project is a member's own, where
+// nothing but a Fugaro token may sign in.
+func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		extra   string
+		refused bool
+	}{
+		{"a workspace's own project", wsOwnerTable + wsOwnerCap, false},
+		{"a workspace of its own with a cap and no member", wsOwnerCap, false},
+		{"a member's project", wsPin, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newFBRig(t)
+			b, err := os.ReadFile(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(r.cfg, append(b, c.extra...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.idt.SetIdentityPlatformConfig(map[string]any{
+				"signIn":                     map[string]any{"email": map[string]any{"enabled": true}},
+				"defaultSupportedIdpConfigs": []any{map[string]any{"name": "google.com", "enabled": true}},
+			})
+			cmd := NewRootCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetIn(strings.NewReader(""))
+			run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+			_, err = run.identityPlatform(context.Background(), lc, fpID)
+			if c.refused {
+				if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "public sign-up") {
+					t.Fatalf("a member's project carrying providers = %v, want the refusal", err)
+				}
+				if !strings.Contains(err.Error(), "google.com") || !strings.Contains(err.Error(), "email") {
+					t.Errorf("the refusal does not name the paths it found: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("the workspace's own providers were refused: %v", err)
+			}
+			// The step's own answer for an accepted configuration: it is read and
+			// left alone, and this run writes nothing over it.
+			if r.idt.InitializeAuthCalls() != 0 {
+				t.Errorf("the workspace's own Identity Platform was initialized: %d call(s)", r.idt.InitializeAuthCalls())
+			}
+		})
+	}
+}
+
 // dropEndpoint removes one endpoint key from the local config.
 func (r *fbRig) dropEndpoint(t *testing.T, key string) {
 	t.Helper()
