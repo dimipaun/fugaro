@@ -240,6 +240,13 @@ const (
 	LeftCommand LeftKind = "command" // one line to run
 	LeftPrompt  LeftKind = "prompt"  // a prompt fugaro shows in a terminal
 	LeftConsole LeftKind = "console" // something done in a web console
+	// LeftRefused is a step the managed gate refused (D1012): nothing was
+	// written, and nothing the reader types or runs writes it. It is a kind of
+	// its own rather than a command or a prompt because that is the whole of
+	// what the reader has to be told, and because the command a stage's own
+	// Left carries beside it would ask for exactly what the gate has just
+	// made impossible.
+	LeftRefused LeftKind = "refused"
 )
 
 // Left is one thing only the user can do: a single line of text, never a
@@ -451,25 +458,129 @@ type AgentError struct{ Marker string }
 
 func (e *AgentError) Error() string { return AgentRefusal(e.Marker) }
 
-// GatedError is a step the managed project's gate refused in a coding agent's
-// session (D1012, D1023): the loop reports it as the user's to do, in the
-// gate's own sentence rather than in the session's, because what refused the
-// step is the document the gate read and not the marker the session carries.
-// A session that read AgentRefusal here would be told to leave the run to
-// someone else; a session that reads this one is told what about the document
-// the gate would not admit, which is the account its reader acts on.
+// GatedError is a step the managed project's gate did not admit (D1012,
+// D1023): the loop reports it as the user's to do, in the gate's own sentence
+// rather than in the session's, because what refused the step is the document
+// the gate read and not the marker the session carries. A session that read
+// AgentRefusal here would be told to leave the run to someone else; a session
+// that reads this one is told what about the document the gate would not
+// admit, which is the account its reader acts on.
 //
 // Reason is the gate's sentence as the gate wrote it (managed.NotConverged and
 // the rules that fired, rendered by internal/managed), and Err is that refusal
 // as a value, so a caller can match on it (managed.ErrNotConverged) without
 // reading English.
+//
+// Refusal is what that answer leaves the reader, and it is set where the
+// refusal is built rather than read off Err here: only that caller knows
+// whether the gate judged a document at all. The zero value is the plan
+// refusal, which is the answer that must never hand the reader a confirmation
+// to type (CV1); Left turns the four into the left-for-you.
+//
+// Owner is the left-for-you of the one refusal whose remedy is a command the
+// reader already has (GateRefusedDelete): the flag that admits a refused
+// removal, the address the gate refused and the identity of the object it
+// takes away are the producer's to name — the door, the flag and the plan are
+// all its — so it is built whole there and carried here. Left hands it back
+// with the stage's name filled in.
 type GatedError struct {
-	Reason string
-	Err    error
+	Reason  string
+	Err     error
+	Refusal GateRefusal
+	Owner   Left
 }
 
 func (e *GatedError) Error() string { return e.Reason }
 func (e *GatedError) Unwrap() error { return e.Err }
+
+// GateRefusal is what the gate's answer about a step was, as far as the person
+// who reads the refusal is concerned.
+type GateRefusal uint8
+
+const (
+	// GateRefusedPlan is the gate reading the document and not admitting it:
+	// the cover or the cost list, with no command of the reader's own that
+	// admits what it refused. The step is nobody's from here — the plan is
+	// outside what Fugaro's own tables cover, so what fixes it is a release
+	// and not a confirmation — and the reader is told exactly that instead of
+	// being handed the stage's prompt to type the project's name, which is the
+	// deadlock CV1 is about (D1012: no typed confirmation reaches past a
+	// refusal).
+	GateRefusedPlan GateRefusal = iota
+	// GateRefusedClass is the document being admitted and the step's own
+	// confirmation class being one no plan gate covers (D1026: the policy
+	// publish that would loosen the published node, set an account-choice key
+	// or write the project's first node). The step IS the owner's, at their
+	// own terminal, so the stage's own Left — the one command they run
+	// themselves (spec §4.3) — is kept, and an agent's report to its owner
+	// stays actionable.
+	GateRefusedClass
+	// GateRefusedUnread is there being no verdict to act on: a document that
+	// could not be produced or read, a mark that could not be read a second
+	// time immediately before the write. Nothing is known about the plan,
+	// which is what the reader is told rather than that a cover refused a
+	// shape it never saw.
+	GateRefusedUnread
+	// GateRefusedDelete is the plan removing a resource the reader's own
+	// --allow-delete would admit (tf.Listable): a delete or a replace is their
+	// decision and not a session's, and the command that carries it already
+	// exists (spec §4.3's "For the owner" sentence, which promises that
+	// command and the identity the plan's before view carries). So this
+	// refusal is neither the plan's "file an issue" — nothing is missing from
+	// Fugaro's tables, the owner simply has not approved the removal — nor the
+	// stage's prompt, which asks for a typing the gate never reaches: what it
+	// leaves is Owner, the producer's own command line. The plan's own
+	// section for it is §4.1's delete rule 1.
+	GateRefusedDelete
+)
+
+// Left is the left-for-you of this refusal: the stage's own for the step that
+// is the owner's to run themselves, the producer's command for the removal
+// their own flag admits, and the refusal's own commandless text for every
+// other answer.
+func (e *GatedError) Left(stage Left) Left {
+	switch e.Refusal {
+	case GateRefusedClass:
+		return stage
+	case GateRefusedDelete:
+		owner := e.Owner
+		if owner.Kind == "" {
+			// A producer that classified the refusal without building the
+			// command it promises: the plan's own text, never the empty line
+			// an empty Left would print.
+			return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason)}
+		}
+		owner.Stage = stage.Stage
+		return owner
+	case GateRefusedUnread:
+		return Left{Kind: LeftRefused, Text: gateUnjudged(e.Reason)}
+	default:
+		return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason)}
+	}
+}
+
+// gateOutsideCover is the refusal of a plan the gate's own rules would not
+// admit. It says the four things this reader needs and names nothing they can
+// act on in this terminal: the step was refused and nothing was written, the
+// gate's sentence for why (quoted — it names the resource or the member the
+// cover would not admit, which is what an issue needs), that there is nothing
+// to type and no command that helps, and that the cause is a plan outside what
+// those rules cover, which is a person's issue to file and a Fugaro release to
+// fix.
+func gateOutsideCover(reason string) string {
+	return "the managed gate refused this step and nothing was written: " + reason +
+		". Nothing here is yours to type or to run, because no confirmation reaches past a refusal (D1012): what the gate would not admit is a plan its own tables do not cover, which is fixed in Fugaro and not in your project — a person files an issue with the sentence above, and the next release reads it"
+}
+
+// gateUnjudged is the refusal of a step the gate reached no verdict on, and it
+// is a different sentence on purpose: there is no plan to blame and no shape
+// missing from Fugaro's tables, so blaming the cover here would be the same
+// mistake as handing the reader a prompt, in the other direction. What is left
+// is the run's own failure, named as one.
+func gateUnjudged(reason string) string {
+	return "the managed gate did not judge this step and nothing was written: " + reason +
+		". Nothing here is yours to type or to run: the gate reached no verdict it could act on, so nothing was applied (D1012), and what the sentence above names is a failure of the run rather than of your plan"
+}
 
 // AgentProceeded is the other half of AgentRefusal: the sentence for the one
 // case in which a step in a coding agent's session runs all the same — D55's

@@ -105,12 +105,13 @@ var allowedTypes = map[string]bool{
 // account holds — actAs on EVERY repository's build account, a read of every
 // repository's build records and check state, the copied catalog definitions
 // project-wide — so as one of FugaroAccounts a plan could have added any
-// toAccounts row's role to it, and as its own kind every one of its grants
-// (and every other role) is refused and the step asks the owner. The rule that
-// accepts a build account's read of the copied definitions (catalogReadGrant)
-// would otherwise accept the project job's too: the expression is byte for
-// byte the same, and only the account differs
-// (TestCatalogCheckAccountIsItsOwnPrincipalKind).
+// toAccounts row's role to it, and as its own kind every one of its grants is
+// refused until a row names that exact (type, role, condition) on purpose. The
+// rules that accept a job account's grants would otherwise accept the project
+// job's too: a build account's read of the copied definitions carries the
+// expression byte for byte (catalogReadGrant), and the records grant carries
+// the shape of a per-repository prefix condition, so only the account differs
+// (TestCatalogCheckAccountIsItsOwnPrincipalKind, TestCatalogCheckRecordsGrant).
 type who uint8
 
 const (
@@ -202,7 +203,21 @@ var grantRules = map[string]map[string]who{
 		// its own kind, so the row says on purpose that the writer may read the
 		// run records its view is computed from — and nothing else of the
 		// bucket, which is what makes this the row's only coordinator bit.
-		"roles/storage.objectUser":   toPeople | toAccounts,
+		//
+		// objectUser's toCatalogCheck is the project's catalog check job
+		// holding ONE repository's build records and check state
+		// (modules/installation/catalogcheck.tf's catalog_check_records,
+		// D1148). The bit is here rather than among the account rows because
+		// that account is a kind of its own, and what makes this grant the
+		// modules' own is not the member but the CONDITION: builds/<slug>/
+		// catalog/ of one of this run's buckets, byte for byte
+		// gcp.CatalogRecordsCondition, under the title built from the same
+		// slug — bucketCondition's catalogRecordsGrant checks exactly that,
+		// and refuses the account under any other condition. Without that
+		// check the bit would let a plan hand this account every repository's
+		// records and check state (the account's own read is
+		// TestCatalogCheckRecordsGrant's subject).
+		"roles/storage.objectUser":   toPeople | toAccounts | toCatalogCheck,
 		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator,
 	},
 	"google_artifact_registry_repository_iam_member": {
@@ -376,8 +391,11 @@ const VerifierAccountID = "fugaro-verifier"
 // it is given to this constant, so a plan cannot hand the account a name this
 // package reads differently. It is NOT among FugaroAccounts, for the
 // credentials and coordinator accounts' reason: its grants are a project-wide
-// reach that no `fugaro update` confirmation announced, so every one of them
-// is refused here and the step asks its owner (toCatalogCheck).
+// reach that no `fugaro update` confirmation announced, so it is read as a
+// kind of its own (toCatalogCheck) and every role it is given is refused
+// unless a row carries that bit — which is the bucket rows' objectUser one
+// alone, and only through bucketCondition's catalogRecordsGrant, the check
+// that pins the grant to one repository's records condition (D1148).
 const CatalogCheckAccountID = "fugaro-catalog-check"
 
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
@@ -1332,12 +1350,14 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			kind = toVerifier
 		case c.isCatalogCheckMember(m):
 			// ... and the project's catalog check job (D1148): its own kind,
-			// which no row accepts, so every one of its grants — and every
-			// other role a plan might reach for — is refused and the update
-			// that carries them asks its owner. Read here, before the review
-			// screen's list, for the deployer's reason: a plan that listed its
-			// address would otherwise be able to grant it a launcher's or an
-			// operator's role.
+			// which one row accepts — objectUser on a bucket, and only under
+			// the records condition of one repository (catalogRecordsGrant) —
+			// so every other grant it is given, and every other role a plan
+			// might reach for, is refused and the update that carries them
+			// asks its owner. Read here, before the review screen's list, for
+			// the deployer's reason: a plan that listed its address would
+			// otherwise be able to grant it a launcher's or an operator's
+			// role.
 			kind = toCatalogCheck
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
@@ -1670,8 +1690,13 @@ var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/b
 // condition (gcp.ProjectBucketCondition, byte for byte, in the project
 // module, with the title of an account that module creates) or clauses of
 // gcp.BucketCondition's shape on runs/, cache/, locks/ or builds/ — never
-// tokens/ — each on one of this run's buckets. The modules never set a
-// description, and a condition known only after apply is not covered.
+// tokens/ — each on one of this run's buckets; and the catalog check job's
+// account carries exactly one repository's builds/<slug>/catalog/ clause
+// (gcp.CatalogRecordsCondition, the job's read-write reach into the records
+// and check state of the repository an entry belongs to, D1148), under that
+// condition's own title and that account alone (catalogRecordsGrant). The
+// modules never set a description, and a condition known only after apply is
+// not covered.
 //
 // What a tokens/<slug>/ clause is *not* checked against is the grant's own
 // repository. A job account's ID is derived and does not read back: a project
@@ -1765,6 +1790,18 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		}
 		if c.projectJobCondition(rc, createdSAIDs, heldSAIDs, title, expr) {
 			return ""
+		}
+		if c.catalogRecordsGrant(rc, createdSAIDs, title, expr) {
+			return ""
+		}
+		// The catalog check job's account is admitted by this branch's row for
+		// its one records grant and for nothing else, so its name under any
+		// other condition is refused HERE, before the clause loop below: that
+		// loop reads the condition alone, and every clause of a per-repository
+		// job's condition passes it, so a grant to this account under one
+		// would otherwise be covered as some repository's own.
+		if c.isCatalogCheckMember(str(ch.After["member"])) {
+			return "grants objectUser on the bucket to the project's catalog check job under a condition that is not one repository's builds/<slug>/catalog/ records condition of this run's bucket (gcp.CatalogRecordsCondition), which is the only objectUser the modules give it (D1148)"
 		}
 		for _, clause := range strings.Split(expr, " || ") {
 			m := accountClause.FindStringSubmatch(clause)
@@ -1873,6 +1910,55 @@ func (c Cover) catalogReadGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[s
 			continue
 		}
 		if expr == gcp.CatalogReadCondition(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// catalogRecordsGrant reports whether a bucket grant is the project's catalog
+// check job holding ONE repository's build records and check state
+// (gcp.CatalogRecordsCondition, D1148): objectUser, which the branch this is
+// called from has already established, on exactly builds/<slug>/catalog/ of one
+// of this run's buckets, under the condition title built from the same slug
+// (gcp.CatalogRecordsConditionTitle) — the one per-repository condition the
+// module takes from its input because it is a repository's.
+//
+// The slug comes from the TITLE and the expression is then compared with the
+// builder's own bytes for that slug, which is what makes the pair the module's:
+// the clause shape carries no slug of its own (it is a whole-prefix clause),
+// and a grant retitled for another repository, or carrying those bytes on a
+// bucket of another run, is refused rather than read as this one. The account
+// rule is jobAccountGrant's — the catalog check account, named outright on the
+// plan that ADDS a repository to an installation that already has the job, or
+// computed from the account the grant's own module creates on the plan that
+// first deploys it. What differs from jobAccountGrant is what the title
+// carries: a repository's slug there, an account ID in the tokens/ and
+// catalog-read grants, so a grant cannot be read as the other grant's by
+// retitling it.
+func (c Cover) catalogRecordsGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) bool {
+	slug, ok := strings.CutPrefix(title, gcp.CatalogRecordsConditionTitlePrefix)
+	if !ok || slug == "" {
+		return false
+	}
+	// The member: the catalog check account itself, named outright on the plan
+	// that adds a repository to an installation that already has the job, or
+	// computed from an account the grant's own module creates in this plan —
+	// which has to be this account, or the plan says nothing about whose grant
+	// this is. A named member needs no further rule than the account's own
+	// name: the ID and the project name it, and no other account of a run
+	// carries either.
+	if !c.isCatalogCheckMember(str(rc.Change.After["member"])) {
+		if !unknown(rc.Change, "member") || !createdSAIDs[modulePrefix(rc)+"|"+CatalogCheckAccountID] {
+			return false
+		}
+	}
+	bucket := str(rc.Change.After["bucket"])
+	for _, b := range c.Buckets {
+		if !gcp.ValidBucketName(b) || (bucket != "" && bucket != b) {
+			continue
+		}
+		if expr == gcp.CatalogRecordsCondition(b, slug) {
 			return true
 		}
 	}

@@ -341,3 +341,102 @@ func TestCatalogCheckCarriesTheManagedBound(t *testing.T) {
 		t.Fatal("a runs bucket outside [a-z0-9._-] was accepted: the condition built from it would be one no comparison expects")
 	}
 }
+
+// catalogCheckReposLC is the repository the catalog's entries build in beside
+// m4LocalConfig's own: GitHub, because the entry it is assigned is a
+// Dockerfile's, with the App ID a build of it mints its installation token
+// from.
+const catalogCheckReposLC = `  acme/edge: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456789" }
+`
+
+// catalogCheckCatalogLC is the project's image catalog: one entry in each of
+// the installation's repositories, and one with no repository of its own,
+// which the job assigns to the project's first.
+const catalogCheckCatalogLC = `image_catalog:
+  entries:
+    - name: tools
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/sandbox, path: .fugaro/tools.Dockerfile }
+    - name: runtime
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/edge, path: .fugaro/runtime.Dockerfile }
+    - name: scratch
+      tags: [node]
+      source: { kind: inline, inline: "FROM scratch\n" }
+`
+
+// catalogCheckAddedRepoLC and catalogCheckAddedEntryLC are what the second
+// fixture adds to the first's installation: one repository inside the repos
+// block and one catalog entry at the end of the entries, so the job's
+// assignment names one more repository and the module plans one more records
+// grant for it.
+const (
+	catalogCheckAddedRepoLC = `  acme/late: { provider: bitbucket, base_branch: main, workflows: [web] }
+`
+	catalogCheckAddedEntryLC = `    - name: late
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/late, path: .fugaro/late.Dockerfile }
+`
+)
+
+// catalogCheckInstallLC is the local config the catalog-check installation
+// fixtures are built from: m4LocalConfig with the repositories the catalog's
+// entries build in, an M5 base image, and the catalog itself. added is the
+// same installation one repository later.
+func catalogCheckInstallLC(added bool) string {
+	repos, entries := "", ""
+	if added {
+		repos, entries = catalogCheckAddedRepoLC, catalogCheckAddedEntryLC
+	}
+	return m4LocalConfig + catalogCheckReposLC + repos + m5Additions + catalogCheckCatalogLC + entries
+}
+
+// TestCatalogCheckTfvarsGolden: the two fixtures the catalog check's golden
+// plan is made from (D1148). The first is a project that publishes a catalog:
+// the installation plans the job, its account and one objectUser records grant
+// per repository whose entries the catalog builds, under the condition
+// gcp builds for that repository. The second is the same installation one
+// repository later — the plan `fugaro update` writes when a repository is
+// added to a project that already has the job, which is the plan the managed
+// gate has to admit (scripts/gen-golden-plans.sh's
+// installation-catalog-add-repo, whose prior state is the first's plan): the
+// account exists by then, so the new repository's grant carries its name
+// rather than a value computed at apply time.
+func TestCatalogCheckTfvarsGolden(t *testing.T) {
+	var first, second []string
+	for _, c := range []struct {
+		name  string
+		added bool
+		got   *[]string
+	}{
+		{"installation-catalog.tfvars.json", false, &first},
+		{"installation-catalog-added.tfvars.json", true, &second},
+	} {
+		spec, err := Installation(parseLC(t, catalogCheckInstallLC(c.added)), InstallOptions{})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if spec.CatalogCheck == nil || len(spec.CatalogCheck.Repositories) == 0 {
+			t.Fatalf("%s: the installation plans no catalog check, so the fixture is not the subject", c.name)
+		}
+		for _, r := range spec.CatalogCheck.Repositories {
+			*c.got = append(*c.got, r.Slug)
+		}
+		data, err := InstallationVars(spec)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		checkGolden(t, c.name, data)
+	}
+	// The second fixture is the first one repository later: without the pair
+	// the golden plan of the add-repo case would be a plan of a change nobody
+	// made.
+	if len(second) != len(first)+1 {
+		t.Fatalf("the added fixture names the repositories %v, want %v and one more", second, first)
+	}
+	for _, slug := range first {
+		if !slices.Contains(second, slug) {
+			t.Fatalf("the added fixture names the repositories %v, which no longer hold the first's %q: it is the first installation one repository later, and not another one", second, slug)
+		}
+	}
+}

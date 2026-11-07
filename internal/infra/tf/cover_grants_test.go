@@ -986,21 +986,38 @@ func catalogCheckCatalogRead(computed bool, title, expr string) *Plan {
 // pinned anyway, because that is the property a change to the tables could
 // quietly take away — the same bytes, granted to another account.
 //
-// Mutation (run, restore): give any row the toCatalogCheck bit and the row
-// loop below fails; drop the isCatalogCheckMember case from checkGrant and the
-// message case fails (the account reads as an address nobody listed); give the
-// catalog-read cases a member that is the build account's and they pass, which
-// is the whole point: the expression is the build accounts'.
+// Mutation (run, restore): give any OTHER row the toCatalogCheck bit and the
+// row loop below fails (the objectUser row is the one the modules write for
+// this account, and TestCatalogCheckRecordsGrant narrows it to the condition
+// that makes it theirs); drop the isCatalogCheckMember case from checkGrant and
+// the message case fails (the account reads as an address nobody listed); give
+// the catalog-read cases a member that is the build account's and they pass,
+// which is the whole point: the expression is the build accounts'.
 func TestCatalogCheckAccountIsItsOwnPrincipalKind(t *testing.T) {
 	if slices.Contains(FugaroAccounts, CatalogCheckAccountID) {
 		t.Errorf("the project's catalog check job is one of FugaroAccounts, so every toAccounts row accepts it")
 	}
+	// Exactly one row accepts this account, and it is the modules' own records
+	// grant: the objectUser row, whose condition bucketCondition then requires
+	// (TestCatalogCheckRecordsGrant), so the bit alone is not enough. The matrix
+	// below is what keeps that one exception from growing — a row that gained
+	// the bit for a role the modules do not grant this account fails here, and
+	// so does a second cell.
+	const recordsRow, recordsRole = "google_storage_bucket_iam_member", "roles/storage.objectUser"
+	rows := 0
 	for typ, row := range grantRules {
 		for key, w := range row {
-			if w&toCatalogCheck != 0 {
+			if w&toCatalogCheck == 0 {
+				continue
+			}
+			rows++
+			if typ != recordsRow || key != recordsRole {
 				t.Errorf("%s %s: the row accepts the catalog check job's account, whose grants are the five of D1148 and are refused here one by one", typ, key)
 			}
 		}
+	}
+	if rows != 1 {
+		t.Errorf("%d rows carry toCatalogCheck, want the one the modules write for this account: %s %s", rows, recordsRow, recordsRole)
 	}
 
 	roles := map[string][]string{}
@@ -1068,5 +1085,176 @@ func TestCatalogCheckAccountIsItsOwnPrincipalKind(t *testing.T) {
 		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
 			t.Errorf("roles/%s to the catalog check job, listed on the review screen, is covered", role)
 		}
+	}
+}
+
+// TestCatalogCheckRecordsGrant: the one row that accepts the project's catalog
+// check job (D1148) accepts ONE grant, and the CONDITION is what makes it the
+// modules' own. The ID and the project name the account; the reach is the
+// condition, which the module builds from its own input, one entry per
+// repository (catalogcheck.tf's catalog_check_records:
+// gcp.CatalogRecordsConditionTitle over gcp.CatalogRecordsCondition). That
+// check is what keeps the row to the module's own condition: without it the row
+// covers a records condition retitled for another repository, one naming
+// another run's bucket, and one widened past the catalog segment. The
+// per-repository job's prefix, the build account's read and the launchers'
+// condition are a different check's subject — the objectUser branch refuses
+// this account's name under any condition that is not the module's records
+// grant, before it reads a condition at all — and each of those shapes is a
+// case below too.
+//
+// Both spellings of the member are admitted, for their own reasons: the plan
+// that first deploys the job computes it from the account the same module
+// creates (nothing in that plan names the account, and a named member would be
+// an account no resource in it makes), and the plan that adds a repository to
+// an installation that already has the job names it, because the account is
+// already applied.
+//
+// Everything else is refused, one case each: no condition, another condition of
+// this codebase's own (a repository job's prefix, the build account's read of
+// the copied definitions, the launchers'), the records condition retitled for
+// another repository, on another bucket, widened past the catalog segment, with
+// a description, another kind of principal (a repository's job account, a build
+// account, a person on the review screen, a lookalike account in another
+// project, a computed member from an account this one is not), and another role
+// (objectAdmin under the records condition, objectAdmin with none — the shape
+// the modules DO grant objectAdmin in, to people — and objectViewer under the
+// records condition).
+//
+// Mutations (each run, then restored):
+//
+//   - Drop the expression comparison from catalogRecordsGrant, so any condition
+//     under the title's slug passes: the retitled, on-another-bucket and
+//     widened cases pass. The job-prefix, catalog-read and launcher cases stay
+//     refused, because their titles fail the prefix cut before the comparison
+//     is reached — what catches them is the objectUser branch's guard on this
+//     account's name. Dropping catalogRecordsGrant whole (the member alone)
+//     fails the same three cases and no others, and dropping that guard instead
+//     lets the job-prefix, catalog-read and launcher cases pass while every
+//     other case here still refuses.
+//   - Give roles/storage.objectAdmin the toCatalogCheck bit: both objectAdmin
+//     cases pass, on the role table's own check.
+//   - Give roles/storage.objectViewer the bit: the objectViewer case is refused
+//     anyway, under the tokens/ sentence rather than this one, so what catches
+//     that widening is the row-pin loop in
+//     TestCatalogCheckAccountIsItsOwnPrincipalKind — which fails under the two
+//     bit-granting mutations and not under the first.
+func TestCatalogCheckRecordsGrant(t *testing.T) {
+	const slug = "acme-web-0123456789abcdef"
+	records := gcp.CatalogRecordsCondition(cbBucket, slug)
+	// proj-1 first — the installation's own project, which isCatalogCheckMember
+	// reads — with proj-1234 beside it, so the other kinds of principal below
+	// are read as accounts of this run rather than as strangers.
+	c := Cover{Projects: []string{"proj-1", "proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+
+	for name, tc := range map[string]struct {
+		member  string // "" for the computed member a first plan writes
+		sa      string // the account ID the grant's module creates beside it, "" for none
+		role    string
+		noCond  bool // the grant carries no condition block at all
+		title   string
+		expr    string
+		desc    string
+		covered bool
+		want    string
+	}{
+		"the modules' grant, the job's account named outright": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, covered: true},
+		"the modules' grant, the member computed from the account the module creates": {
+			sa: CatalogCheckAccountID, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, covered: true},
+		"no condition at all": {
+			member: catalogCheckMember, role: "roles/storage.objectUser", noCond: true,
+			want: "no condition"},
+		"a repository job's prefix condition": {
+			member: catalogCheckMember, role: "roles/storage.objectUser", title: "fugaro-x",
+			expr: gcp.BucketCondition(cbBucket, gcp.JobBucketPrefixes, slug), want: "catalog check job"},
+		"the build account's read of the copied definitions": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.CatalogReadConditionTitle(CatalogCheckAccountID), expr: gcp.CatalogReadCondition(cbBucket),
+			want: "catalog check job"},
+		"the launchers' runs/ condition": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.LauncherBucketConditionTitle, expr: gcp.LauncherBucketCondition(cbBucket),
+			want: "catalog check job"},
+		"the records condition retitled for another repository": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle("some-other-repo-0123456789abcdef"), expr: records,
+			want: "catalog check job"},
+		"the records condition on another bucket": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: gcp.CatalogRecordsCondition("fugaro-runs-other", slug),
+			want: "catalog check job"},
+		"the records condition widened past the catalog segment": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug),
+			expr:  gcp.BucketCondition(cbBucket, []string{"builds"}, slug), want: "catalog check job"},
+		"the records condition with a description": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, desc: "x", want: "description"},
+		"another kind of principal: a repository's job account": {
+			member: cbJobSA, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, want: "condition"},
+		"another kind of principal: a build account": {
+			member: cbBuildSA, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, want: "condition"},
+		"another kind of principal: a person on the review screen": {
+			member: cbPerson, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, want: "to a person"},
+		"another kind of principal: a lookalike account in another project": {
+			member: "serviceAccount:" + CatalogCheckAccountID + "@fp-2.iam.gserviceaccount.com",
+			role:   "roles/storage.objectUser", title: gcp.CatalogRecordsConditionTitle(slug), expr: records,
+			want: "not on the review screen"},
+		"another kind of principal: an account the module creates for something else": {
+			sa: "fugaro-history", role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, want: "condition"},
+		"another role: objectAdmin under the records condition": {
+			member: catalogCheckMember, role: "roles/storage.objectAdmin",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, want: "the installation's modules do not grant it to"},
+		"another role: objectAdmin with no condition": {
+			member: catalogCheckMember, role: "roles/storage.objectAdmin", noCond: true,
+			want: "the installation's modules do not grant it to"},
+		"another role: objectViewer under the records condition": {
+			member: catalogCheckMember, role: "roles/storage.objectViewer",
+			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, want: "the installation's modules do not grant it to"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			after := map[string]any{"bucket": cbBucket, "member": tc.member, "role": tc.role}
+			unk := map[string]any{}
+			if tc.member == "" {
+				unk["member"] = true
+			}
+			conds := []any{}
+			if !tc.noCond {
+				conds = []any{map[string]any{"title": tc.title, "expression": tc.expr, "description": tc.desc}}
+				unk["condition"] = []any{map[string]any{}}
+			}
+			after["condition"] = conds
+			changes := []ResourceChange{{
+				Address: `module.installation.google_storage_bucket_iam_member.catalog_check_records["` + slug + `"]`,
+				Type:    "google_storage_bucket_iam_member",
+				Change:  Change{Actions: []string{"create"}, After: after, AfterUnknown: unk},
+			}}
+			if tc.sa != "" {
+				changes = append([]ResourceChange{{
+					Address: "module.installation.google_service_account.catalog_check", Type: "google_service_account",
+					Change: Change{Actions: []string{"create"}, After: map[string]any{"account_id": tc.sa}},
+				}}, changes...)
+			}
+			got := c.NotCovered(&Plan{ResourceChanges: changes}, nil)
+			if tc.covered {
+				if len(got) != 0 {
+					t.Errorf("NotCovered = %q, want the modules' own records grant", got)
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatal("NotCovered = nil, want a refusal: the records grant must be this exact condition for this account and no other shape")
+			}
+			if !strings.Contains(got[0], tc.want) {
+				t.Errorf("NotCovered = %q, want it to contain %q", got[0], tc.want)
+			}
+		})
 	}
 }
