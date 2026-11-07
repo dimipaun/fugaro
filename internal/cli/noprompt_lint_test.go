@@ -19,8 +19,14 @@ import (
 // SHAPE of a read rather than about a list of callers, and the walk covers
 // every declaration of the package — functions, methods, and the function
 // literals a package-level var is bound to (pair.go's pairTerminal is the shape
-// of that plumbing, so a read written inside one is the same read). A read of
-// stdin for a decision is one of
+// of that plumbing, so a read written inside one is the same read).
+//
+// What it matches are the SHAPES a stream is read with here, and a shape is not
+// a verdict: no syntax says whether a stream is stdin, since a reader that
+// arrived as a struct field or as a parameter — the wizard's r.in,
+// readConfirmLine's in — is read exactly like a reader over a response body. The
+// four lists below are the verdict, and a site's shape is the evidence a failure
+// prints. A read of stdin for a decision is one of
 //
 //   - bufio.NewReader / NewReaderSize / NewScanner / NewReadWriter — the line
 //     reader this package asks a person with, however it is built. It is
@@ -47,11 +53,14 @@ import (
 //     the first one that appears is a failure rather than a read this rule is
 //     blind to.
 //
-// What the rule cannot see is a read that arrives another way: a decoder, a
-// channel, a syscall on fd 0. A read written that way is a data read by the
-// policy's own definition — it fails on EOF and waits for nobody — and the
-// names in dataReadSites are where that was ruled on; the closed-stdin harness
-// (T2) is the half that catches at run time what no lint over calls can.
+// What the rule cannot see is a read that arrives another way: a decoder over
+// stdin (json.NewDecoder(cmd.InOrStdin()).Decode(&v) waits for a person as
+// surely as ReadString does, and the row that pins the silence says so), a
+// channel, a syscall on fd 0. That is a blind spot and not an exemption: no list
+// here says such a read is safe. The half that catches it is the closed-stdin
+// harness T2 owes — internal/cli/noprompt_harness_test.go, which is not in the
+// tree yet (only T2a's static gcloud scan has landed) — and until it lands a
+// prompt written as a decoder is a hole this lint knows it has.
 //
 // It reports where the reading happens, not who called the reader. The alias
 // the plan calls out (`in := cmd.InOrStdin(); bufio.NewReader(in)`) is a row of
@@ -62,7 +71,7 @@ import (
 // mentions a read is not a read, which is what keeps this an AST rule and not a
 // grep.
 //
-// Three lists hold the answer, and none of them is a promise:
+// Four lists hold the answer, and none of them is a promise:
 //
 //   - pendingSites: every decision read the package still makes, with the task
 //     of docs/no-prompt-policy/implementation-plan.md that removes it — the
@@ -95,6 +104,13 @@ import (
 //     credentials bundle). These are asserted NOT to be found, so a data read
 //     that grows a decision read fails here instead of passing as an exemption
 //     nobody re-reads.
+//   - notADecisionSites: the fourth answer, and the one whose absence made the
+//     lint's own failure message impossible to take — a read of one of the
+//     shapes above that is not a read of a person (a response body, a file, a
+//     buffer) and the reason it is not. Each is asserted to be FOUND, like a
+//     sanctioned site, so the entry and the read it explains live and die
+//     together. Shapes cannot tell these apart from stdin, which is why the
+//     answer has to be written down by a person; a prompt belongs in no list.
 
 // decisionRead is one place the package reads a decision from stdin: the file
 // and function it is in, which is the site the lists above name, and the shape
@@ -549,11 +565,15 @@ func TestLintWalksEveryDeclaration(t *testing.T) {
 }
 
 // TestLintLeavesPredicatesAndDataReadsAlone is the other half of "not a grep":
-// the shapes the policy does NOT touch. stdinIsTerminal(cmd.InOrStdin()) is a
-// predicate — it reads nothing — and it is the guard of almost every site in
-// the package; a data read (io.ReadAll, a decoder, a child process handed the
-// terminal) fails on EOF and waits for nobody; and a comment or a string that
-// names a read is text, which a grep could not tell from a call.
+// the calls the policy does NOT touch, and the text that looks like them.
+// stdinIsTerminal(cmd.InOrStdin()) is a predicate — it reads nothing — and it is
+// the guard of almost every site in the package; a store read, a read a data
+// path makes with io.ReadAll, and stdin handed to a child process are not a
+// person being asked; and a comment or a string that names a read is text, which
+// a grep could not tell from a call. The decoder row is different from the rest
+// and is named as what it is: a decoder over stdin CAN wait for a person, this
+// rule cannot see it, and the row pins the silence so that a later rule that
+// does see it says so here.
 func TestLintLeavesPredicatesAndDataReadsAlone(t *testing.T) {
 	rows := []struct {
 		name string
@@ -562,7 +582,7 @@ func TestLintLeavesPredicatesAndDataReadsAlone(t *testing.T) {
 		{"the terminal predicate", "func f(cmd *cobra.Command) { if stdinIsTerminal(cmd.InOrStdin()) { return } }"},
 		{"a local function of a matching name", "func NewReader(x any) {}\nfunc f() { NewReader(1) }"},
 		{"a data read", "func f(cmd *cobra.Command) { data, _ := io.ReadAll(cmd.InOrStdin()); _ = data }"},
-		{"a decoder over stdin", "func f(cmd *cobra.Command) { _ = json.NewDecoder(cmd.InOrStdin()) }"},
+		{"a decoder over stdin, which this rule cannot see", "func f(cmd *cobra.Command) { _ = json.NewDecoder(cmd.InOrStdin()) }"},
 		{"stdin handed to a child", "func f(cmd *cobra.Command) { child.SetIn(cmd.InOrStdin()) }"},
 		{"a file read", "func f(path string) { _, _ = os.ReadFile(path) }"},
 		{"a store read", "import \"context\"\nfunc f(ctx context.Context, b *bucket) { _, _, _ = b.Read(ctx, \"k\") }"},
@@ -583,9 +603,10 @@ func TestLintLeavesPredicatesAndDataReadsAlone(t *testing.T) {
 }
 
 // TestNoDecisionReadOutsideTheTwoHelpers is the lint over the package: every
-// decision read is one of the two sanctioned helpers or one of the sites the
-// policy still owes a removal for, and the three lists are exact — no site
-// unlisted, no entry stale, no exemption that no longer has a read under it.
+// read of one of the shapes is a sanctioned helper, a site the policy still
+// owes a removal for, or a read a person wrote down as not a decision — and the
+// four lists are exact in both directions, so no site is unlisted, no entry is
+// stale, and no exemption survives the read under it.
 func TestNoDecisionReadOutsideTheTwoHelpers(t *testing.T) {
 	found := map[string][]decisionRead{}
 	for _, r := range decisionReadsInPackage(t) {
@@ -603,8 +624,11 @@ func TestNoDecisionReadOutsideTheTwoHelpers(t *testing.T) {
 		if _, ok := sanctionedSites[key]; ok {
 			continue
 		}
+		if _, ok := notADecisionSites[key]; ok {
+			continue
+		}
 		if _, ok := pendingSites[key]; !ok {
-			t.Errorf("%s reads stdin for a decision (%s) and is neither a sanctioned helper nor a listed site; a new prompt is not allowed (docs/no-prompt-policy), and a data read belongs in dataReadSites with the reason it is one",
+			t.Errorf("%s reads a stream in a shape a person is asked with (%s) and no list accounts for it. If it asks a person, the policy removes it (docs/no-prompt-policy/T1): list it in pendingSites with the task that takes it out. If what it reads is not a person (a response body, a file, a buffer), a shape cannot say so and a person must: list it in notADecisionSites with the reason it is not one. A read that fails on EOF rather than waiting is neither and is already named in dataReadSites.",
 				key, forms(found[key]))
 		}
 	}
@@ -624,6 +648,12 @@ func TestNoDecisionReadOutsideTheTwoHelpers(t *testing.T) {
 		if _, ok := found[key]; ok {
 			t.Errorf("%s is listed as a data read (%s) and now reads stdin like a decision (%s); a data read fails on EOF and waits for nobody, and one that asks is the prompt the policy removes",
 				key, dataReadSites[key], forms(found[key]))
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(notADecisionSites)) {
+		if _, ok := found[key]; !ok {
+			t.Errorf("the lint records %s as a read that is not a decision (%s) and no read of a shape is there any more: delete the entry in the same change that removed the read",
+				key, notADecisionSites[key])
 		}
 	}
 }
@@ -650,6 +680,16 @@ var dataReadSites = map[string]string{
 	"exec.go:readTaskFile":     "fugaro exec's --task-file - reads the task itself",
 	"creds.go:readBundleValue": "fugaro creds set's data form reads the value a pipe delivers",
 }
+
+// notADecisionSites is a read of one of the shapes above that is not a read of
+// a person, and the reason it is not: a response body, a file, a buffer. The
+// shape cannot say which stream it is — a reader over a body and a reader over
+// stdin are built and read identically — so the answer is written here by a
+// person, and the entry is asserted to be FOUND, like a sanctioned site, so it
+// cannot outlive the read it explains. It is empty today: every shape the
+// package reads is either sanctioned or a confirmation the policy still owes a
+// removal for. A prompt does not belong here: it belongs nowhere.
+var notADecisionSites = map[string]string{}
 
 // pendingSites is every decision read the package still makes and the task of
 // docs/no-prompt-policy/implementation-plan.md that removes it. It is the
