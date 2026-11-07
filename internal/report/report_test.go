@@ -215,6 +215,58 @@ func TestStreamIsVerboseOnlyAndAlwaysSunk(t *testing.T) {
 	})
 }
 
+func TestAStepEndsOnce(t *testing.T) {
+	var out bytes.Buffer
+	r := New(Options{Out: &out, Getenv: noEnv, NoColor: true})
+	step := r.Step("Updating recipes")
+	step.Done("changed")
+	// A caller that reports the same step twice — a deferred failure after a
+	// success, a stage that both left something for the user and did not —
+	// must not print a second line or count a second time.
+	step.Done("changed again")
+	step.Failed(errors.New("too late"), nil)
+	o := r.Summary()
+	if o.Steps != 1 {
+		t.Errorf("the run counts %d steps, want 1: a step ends once", o.Steps)
+	}
+	if got := lines(out.String()); len(got) != 2 {
+		t.Errorf("a step ended twice printed %d lines, want the step and the summary:\n%q", len(got), out.String())
+	}
+	if strings.Contains(out.String(), "too late") || strings.Contains(out.String(), "changed again") {
+		t.Errorf("the second result reached the screen:\n%q", out.String())
+	}
+	if o.State != Done {
+		t.Errorf("a late failure moved the run to %v, want Done: only the first result counts", o.State)
+	}
+}
+
+func TestNoRunningLineUnderVerbose(t *testing.T) {
+	// --verbose streams the run's own output through the reporter, so the
+	// terminal belongs to the stream: a carriage-return line in front of it
+	// would be drawn through the middle of it.
+	was := spinInterval
+	spinInterval = time.Hour
+	t.Cleanup(func() { spinInterval = was })
+
+	var out bytes.Buffer
+	r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal, Verbose: true})
+	step := r.Step("Updating recipes")
+	if out.Len() != 0 {
+		t.Errorf("a step in flight drew %q on a --verbose terminal", out.String())
+	}
+	if _, err := r.Stream().Write([]byte("terraform: creating...\n")); err != nil {
+		t.Fatalf("a stream write failed: %v", err)
+	}
+	step.Done("")
+	got := out.String()
+	if strings.Contains(got, "\r") {
+		t.Errorf("a --verbose run drew a carriage return:\n%q", got)
+	}
+	if !strings.Contains(got, "terraform: creating...") {
+		t.Errorf("--verbose did not stream the run's own output:\n%q", got)
+	}
+}
+
 func TestSpinnerDrawsOnTheTerminalsOwnLine(t *testing.T) {
 	// The animation is driven by a ticker; a test that wants one frame sets
 	// the interval out of its own way.

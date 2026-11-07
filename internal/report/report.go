@@ -31,8 +31,8 @@ type Options struct {
 	Err io.Writer
 	// Getenv reads the environment for NO_COLOR and TERM.
 	Getenv func(string) string
-	// IsTerminal reports whether a writer is a terminal. The CLI passes the
-	// package variable its tests replace.
+	// IsTerminal reports whether a writer is a terminal. The flag plumbing
+	// (CL4) is what passes the package variable its tests replace.
 	IsTerminal func(io.Writer) bool
 	// Verbose is --verbose: the run's own output (Reporter.Stream) reaches
 	// the terminal as well as the log, which is today's behaviour.
@@ -51,9 +51,9 @@ type Options struct {
 	Sink Sink
 }
 
-// Sink is the log a command's full output goes to. The log sink's own task
-// returns one; Path is what the failure block prints, and is empty for a sink
-// that could not open (G5, T6).
+// Sink is the log a command's full output goes to. CL3's OpenLog is the task
+// that returns one; Path is what the failure block prints, and is empty for a
+// sink that could not open (G5, T6).
 type Sink interface {
 	io.Writer
 	// Path is the file the output is in, or "" when there is none.

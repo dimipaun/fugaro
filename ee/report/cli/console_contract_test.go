@@ -262,9 +262,12 @@ func TestConsoleContractNamesOnlyRealReportFlags(t *testing.T) {
 // TestConsoleContractCitesThisPackagesFilesAndSymbols: the paths and the
 // `report.X` names §4 and the design's row cite are the moved ones and they
 // resolve. It is the check the move made necessary: both documents cite their
-// command by path and by symbol, so a citation left pointing at internal/cli/
-// or internal/report/ is a reader sent to a file that no longer exists, and a
-// symbol renamed here is a citation that reads as checked and is not.
+// command by path and by symbol, so a citation left pointing at the command's
+// old file, internal/cli/report.go, is a reader sent to a file that no longer
+// exists, and a symbol renamed here is a citation that reads as checked and is
+// not. The old library's directory is not refused: internal/report is a core
+// package again, the CLI's step reporter (CL1 of the CLI output work), so a
+// citation of it is somebody else's file and not a stale one of ours.
 func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 	var decls []string
 	reportDecls(t, "../.", &decls)
@@ -291,9 +294,8 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 		for _, m := range reportCellRE.FindAllStringSubmatch(doc.text, -1) {
 			cite := m[1]
 			switch {
-			case strings.HasPrefix(cite, "internal/cli/report"),
-				strings.HasPrefix(cite, "internal/report/"):
-				t.Errorf("%s cites %q, which the move left behind: the report's library and command are under ee/ now", doc.path, cite)
+			case strings.HasPrefix(cite, "internal/cli/report.go"):
+				t.Errorf("%s cites %q, which the move left behind: the report command is under ee/report/cli now", doc.path, cite)
 			case strings.HasPrefix(cite, "ee/report/") && strings.HasSuffix(cite, ".go"):
 				cited++
 				if _, err := os.Stat(filepath.Join("../../..", cite)); err != nil {

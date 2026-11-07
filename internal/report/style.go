@@ -4,8 +4,9 @@ import "github.com/muesli/termenv"
 
 // NoColor is the CLI's one rule for turning colour off: --no-color, NO_COLOR
 // set to anything at all (the no-color.org rule is "present and not an empty
-// string"), and TERM=dumb. It is the rule fugaro watch has today, which now
-// takes it from here, so one binary has one answer.
+// string"), and TERM=dumb. It is fugaro watch's own rule today, copied here
+// rather than moved: CL2 is the task that makes watch take it from here, so
+// that one binary has one answer.
 //
 // CLICOLOR and CLICOLOR_FORCE are deliberately not read: they colour a pipe
 // when they force it, against the spec's "off when not a terminal" (T4(a)).
