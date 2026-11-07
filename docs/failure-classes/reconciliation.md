@@ -96,7 +96,7 @@ and only the first is in the design's words.
   `runview.Totals{}`, `Diagnosis`'s neighbours, the plan documents and more) and fails when a Go key is
   not named in that file. So a new key on the row is a failing test until the contract gains its row:
   this is the pin the design names, and it is real.
-- `console/src/source/redact.ts`'s `CONTRACT_KEYS` (`:1158`) is a **second** enumeration of the row's
+- `console/src/source/redact.ts`'s `CONTRACT_KEYS` (`:1159`) is a **second** enumeration of the row's
   key set: the keys whose values the console reads as an enumeration or a CLI-made identifier, which
   the person-pass never rewrites. A new key arrives, as the design says, as a new enumeration entry —
   but it arrives **only if the console task adds it**, and the design's §6.3 names a chip or a column
@@ -340,7 +340,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   the package that declares it; that package therefore cannot import `runstore`, which decides where
   `ClassOf` and the `HaltReason`→class translation can live (§3.2). The design leaves both placements
   open. → **D1453**, **D1454**, **D1455**.
-- **F22 — the console's redactor.** `console/src/source/redact.ts`'s `CONTRACT_KEYS` (`:1158`) is a
+- **F22 — the console's redactor.** `console/src/source/redact.ts`'s `CONTRACT_KEYS` (`:1159`) is a
   second enumeration of the row's keys, and the design's §6.3 names neither it nor the file. →
   **D1459**.
 - **F23 — `diagnose`'s shape.** D9 asks about a printed line; `Diagnosis` (`internal/cli/diagnose.go:60`)
@@ -409,7 +409,7 @@ be held to it) or **Open** (the design leaves it to the owner).
 | `fugaro diagnose --json` (`Diagnosis`) | one field, if D1460 answers yes | `console/docs/json-contract.md` §6.1 (`:748`) | additive |
 | the digest's committed report and its `summary` block | the Failures table, `failures` in the block, two rules | `docs/periodic-reviews/`'s rule list and D326's document (F24) | the block is read key by key; the two rules read only blocks that carry the key |
 | `console/docs/json-contract.md` | the rows above | — | the contract's own version constant is the console's; a row is additive |
-| the console's redactor | `failure_class` in `CONTRACT_KEYS` (`console/src/source/redact.ts:1158`) | — | console-internal (F22) |
+| the console's redactor | `failure_class` in `CONTRACT_KEYS` (`console/src/source/redact.ts:1159`) | — | console-internal (F22) |
 | the plugin's status reference | `failure_class` among `runs ls --json`'s per-run keys (`plugin/skills/working/reference/status.md:31`) | — | the skill is prose, held by CONTRIBUTING's rule (F13) |
 | `mobile/`, `shared/` | **nothing** — and `groups` must not reach the phone's document | — | — |
 
@@ -441,7 +441,7 @@ design's own numbering.
 | **D1456** | Is FC2 one task (11 files, `runner.go` plus eight sibling files) or two? | **One task, with `recordend.go`** (D1452). The change is mechanical and the guard test is what makes it safe; splitting it leaves one half of the tree writing a status directly, which is the state the guard fails on | Split into "the writer and the helpers" and "the deferred and bootstrap sites" | the first half cannot land green (the guard sees the second half's statements) unless the guard is weakened to a list, which is the pin the design rejects | |
 | **D1457** | Does `plugin/skills/working/reference/status.md` gain `failure_class` in the same PR as the row (F13)? | **Yes — FC9, in the same PR as the row.** CONTRIBUTING's rule is that a CLI change touching a documented command changes the skill in the same PR, the skill enumerates the keys verbatim, and the key is the answer to the question the skill's own "Needs attention" section tells a user to ask | leave the skill to a later PR | `runs ls --json` carries a key the skill never names, and a user asking "why did this fail?" is told to run `diagnose`, which is the state the design exists to leave | |
 | **D1458** | Is `lsDoc.Groups` `omitempty`, and does anything hold it out of the watch document (F14)? | **Yes, and a test.** The phone's reader refuses an unknown key in the degraded document (`mobile/src/feed/document.js:122`, `:358`) and `watchDegradedDoc` embeds `lsDoc` (`internal/cli/watch.go:518`), so an emitted `groups` breaks the app; `--group-by` is never a watch flag, so `omitempty` is enough, and a test that decodes the watch document's key set holds it | emit `groups: {}` always | the phone refuses the whole degraded document — the app renders degraded-as-nothing — for a block it does not read | |
-| **D1459** | Does the console task add `failure_class` to `CONTRACT_KEYS` in `console/src/source/redact.ts:1158` (F22)? | **Yes, and the console task names the file.** The set is the keys whose values the console reads as a CLI-made enumeration and never rewrites as a person; a class value not in it is a value the person pass may rewrite, i.e. a figure drawn wrong with no error | the chip or column alone | the redactor treats a class value as a possible person's name, and a recording's class can come back as a pseudonym | |
+| **D1459** | Does the console task add `failure_class` to `CONTRACT_KEYS` in `console/src/source/redact.ts:1159` (F22)? | **Yes, and the console task names the file.** The set is the keys whose values the console reads as a CLI-made enumeration and never rewrites as a person; a class value not in it is a value the person pass may rewrite, i.e. a figure drawn wrong with no error | the chip or column alone | the redactor treats a class value as a possible person's name, and a recording's class can come back as a pseudonym | |
 | **D1460** | Does `fugaro diagnose` print the class, and does `Diagnosis` carry it (F23)? | **Both, one field and one line** — the design's D9 recommends the line and the shape half is what makes it honest: diagnose's `--json` is a contract (`console/docs/json-contract.md:748`) and a text-only answer would leave the console able to print the class for `runs ls` and not for the one run a person is looking at | the printed line only | the two documents disagree about one run: the listing says `review_not_converged` and diagnose, the command that explains it, cannot | |
 | **D1461** | Does `internal/watch`'s own feed (`JSONRun`, `JSONFinished`) carry the class? | **No.** The feed is a different document with its own contract and its own reader, the class needs a decision about the watch screen (a column, a flag) first, and the design deliberately leaves `watch` out; a second consumer added silently is the opposite of what its §7 argues | add the key to `JSONFinished` | the phone and the console's live screen grow a key whose screen has not been designed, and the contract row is written before the reading of it | |
 | **D1462** | Does the plan add a `internal/cli/docs_failure_classes_test.go` pin of its own? | **No.** The docs-pin census counts `internal/cli/docs_*_test.go` files (**100** today) and the design promises not to move it (F28); the plan's pins go into the existing `docs_pr_state_test.go`, which is where the design's own pin lives, and this folder's documents are pinned by nothing, as the convention's other folders are | a pin file for this folder | the census moves, `internal/cli/docs_rigor_modes_test.go`'s pin reddens, and the design's own sentence about the count becomes false | |
@@ -522,8 +522,9 @@ register's rule, and not this folder's choice.
 
 ## 9. Open items
 
-These are the owner's, and none is decided here. **They are the design's own §9 items**, repeated
-because the plan's gates name them; this folder adds no Open item of its own and answers none.
+These are the owner's, and none is decided here. **They are the design's own §9 items**, repeated here so that a reader of
+the plan sees them in the same place as its gates; this folder adds no Open item of its own and
+answers none.
 
 1. **O1 — the label** (design §8 D5): whether a run that delivered a usable draft because its review
    did not converge should be reported as `failed` at all, or carry a status of its own; and if it
