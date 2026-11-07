@@ -3775,7 +3775,16 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// already spent its retry (transientRetries). That attempt records the
 	// failure exactly as this stage always did, quoting the agent's own words
 	// for it, so the reason a run ends on is unchanged.
-	case opts.RetryTransient && (err != nil || res.IsError) && r.transientStageError(res, err):
+	//
+	// It is asked only of an attempt nothing else ended (stageCtx.Err, the
+	// test the Recoverable case above makes): a stage its own clock stopped --
+	// the run's timeouts.stage, or the run's own deadline under it -- is the
+	// failure that clock is there to produce, whatever a stream did earlier in
+	// the attempt. Retrying it would spend a second model call and a fresh
+	// stage window on a run that is out of time, and would spend the run's one
+	// retry so that a later, genuine cut stream is not retried at all. A
+	// cancel reads the same way: the stage ends as the cancellation does.
+	case opts.RetryTransient && stageCtx.Err() == nil && (err != nil || res.IsError) && r.transientStageError(res, err):
 		return res, false, &transientError{errors.New("the model's stream was closed before the stage finished; the stage is run once more")}
 	case err != nil:
 		reason := r.stageReason(ctx, name, StageError(name, stageCtx, r.budget, err))

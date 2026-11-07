@@ -163,6 +163,48 @@ func TestOtherStageErrorsAreNotRetried(t *testing.T) {
 	}
 }
 
+// A stage the run's own timeouts.stage ended is not retried, even when a
+// streamed call was cut while it ran: the cut stream is a fact about the
+// attempt's connection, and the clock is a fact about the run. Retrying a
+// stage the clock stopped would spend a second model call and a fresh stage
+// window on a run that is out of time -- which is what the bound is there to
+// prevent -- and would spend the run's one retry, so that a later, genuine
+// cut stream is not retried at all.
+func TestStageTimeoutIsNotRetried(t *testing.T) {
+	cfg := gwConfig(t, "")
+	cut := strings.Replace(cfg, "timeouts: { total: 5m, stage: 2m,", "timeouts: { total: 5m, stage: 1s,", 1)
+	if cut == cfg {
+		t.Fatal("the fixture's workflow has no `stage: 2m` timeout to shorten to 1s")
+	}
+	g := newGW(t, cut, "observe", "", cutStream(3), cutStream(3))
+	// The attempt makes one streamed call that is cut, then blocks until its
+	// stage context ends: what the agent's own process does when the stage's
+	// bound fires.
+	timedOut := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if got := postStream(t, req, sonnet, 4000); got != http.StatusOK {
+			t.Errorf("the cut call answered %d, want 200", got)
+		}
+		<-ctx.Done()
+		return agent.Result{}, ctx.Err()
+	}
+	rec, err := g.run(t, timedOut, timedOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v, want the stage failed on its timeout", rec)
+	}
+	if rec.Retries != 0 {
+		t.Errorf("retries = %d, want 0: a stage the clock ended is not the retry's to take", rec.Retries)
+	}
+	if len(g.agent.calls) != 1 {
+		t.Errorf("the agent was called %d times, want once: the cut stream during a stage the clock ended is not retried", len(g.agent.calls))
+	}
+	if !strings.Contains(rec.Reason, "timed out after 1s") {
+		t.Errorf("reason = %q, want the stage's own timeout, which is what the run failed for", rec.Reason)
+	}
+}
+
 // The gateway's own count is the other half of the trigger: an attempt that
 // lost a streamed call and then failed without any words for it -- a killed
 // process, an error exit -- is the same failure, and gets the same retry.

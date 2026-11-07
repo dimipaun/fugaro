@@ -674,12 +674,24 @@ func lastTest(recs []verify.Record) (verify.Record, bool) {
 }
 
 // agentMessage is the result text of the last implement or fix transcript:
-// fix-<n> down to fix-1, n counted from rec.Stages, then implement-1.
+// fix-<n> down to fix-1, then implement-<m> down to implement-1, each count
+// taken from rec.Stages.
+//
+// The count is the shape the transcripts are named by: one file per attempt,
+// transcripts/<stage>-<n>.jsonl, n the stage's own attempt number
+// (internal/runner's stageN). A stage can run more than once -- a second
+// implement after a recovered failure, a retried implement (issue #1827) --
+// so reading implement-1 alone would report an attempt the run threw away as
+// the agent's last word. The count from rec.Stages is the same count, since
+// every attempt appends one stage timing of its own.
 func agentMessage(ctx context.Context, s *runstore.Store, rec *runstore.Record) string {
-	fixes := 0
+	fixes, implements := 0, 0
 	for _, st := range rec.Stages {
-		if st.Name == "fix" {
+		switch st.Name {
+		case "fix":
 			fixes++
+		case "implement":
+			implements++
 		}
 	}
 	for n := fixes; n >= 1; n-- {
@@ -687,8 +699,10 @@ func agentMessage(ctx context.Context, s *runstore.Store, rec *runstore.Record) 
 			return res.Text
 		}
 	}
-	if res, ok := transcriptResult(ctx, s, "implement-1"); ok {
-		return res.Text
+	for n := implements; n >= 1; n-- {
+		if res, ok := transcriptResult(ctx, s, "implement-"+strconv.Itoa(n)); ok {
+			return res.Text
+		}
 	}
 	return ""
 }

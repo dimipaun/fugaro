@@ -337,6 +337,51 @@ func TestDiagnoseRedactsAndClips(t *testing.T) {
 	}
 }
 
+// TestDiagnoseReadsTheLastImplementAttempt: transcripts are written per
+// attempt (transcripts/<stage>-<n>.jsonl, n the stage's own attempt number),
+// so a run whose implement stage ran twice -- a retried implement after a
+// cut stream (issue #1827), a recovered failure -- has two of them, and the
+// agent's last word is the attempt the run went on with. diagnose reads the
+// highest implement number rec.Stages holds, the way it already reads fix-<n>,
+// rather than implement-1 alone, which is the attempt the run threw away.
+func TestDiagnoseReadsTheLastImplementAttempt(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	const cut = "API Error: stream closed before completion"
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, Retries: 1,
+		Stages: []runstore.StageTiming{{Name: "implement"}, {Name: "implement"}, {Name: "review"}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutFile(ctx, "transcripts/implement-1.jsonl", []byte(`{"type":"result","subtype":"success","is_error":true,"result":"`+cut+`"}`+"\n"), "application/x-ndjson")
+	_ = s.PutFile(ctx, "transcripts/implement-2.jsonl", []byte(`{"type":"result","subtype":"success","result":"added the feature"}`+"\n"), "application/x-ndjson")
+	_ = s.PutFile(ctx, "transcripts/review-1.jsonl", []byte(`{"type":"result","subtype":"success","result":"looks right"}`+"\n"), "application/x-ndjson")
+
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.AgentMessage != "added the feature" {
+		t.Errorf("agent message = %q, want the second implement attempt's: the first is the attempt the retry threw away", d.AgentMessage)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human, "added the feature") || strings.Contains(human, cut) {
+		t.Errorf("diagnose printed the abandoned attempt's words, not the run's own:\n%s", human)
+	}
+}
+
 // A failed log read is the one GCP error diagnose tolerates: it warns on
 // stderr, exits 0 and still prints everything the bucket holds.
 func TestDiagnoseToleratesLogFailure(t *testing.T) {
