@@ -99,30 +99,66 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 }
 
 // doctorCredentialsServiceDeployed is doctor's "credentials-service-deployed"
-// check: the installation opted into a credentials service (the block is
-// there), the service exists, and every job account that may call it holds a
-// role that can invoke it.
+// check: what the installation's credentials service is, said in one line —
+// converged on or not, deployed or not, and, when it is deployed and every job
+// account may invoke it, whether it has anything to serve with.
 //
-// Both halves are read from the service's own IAM policy, which is where the
-// module writes the grant: one member, the job's own account, roles/run.invoker
-// on that one service. The project's policy is deliberately not read a second
-// time — doctor reads it once, for the reads that ask it a question no other
-// answer covers (TestDoctorSecretManagerChecksReadsTheProjectPolicyOnce) — so a
-// job account granted the role at project level instead reads as missing, which
-// is not what an installation writes and is said in the fix. A service that is
-// not there is answered by Cloud Run as NOT_FOUND, which is the only way to see
-// it: the fake this check is tested against serves no service get, and the real
-// API's get is the same question asked twice.
+// The ruling of 2026-11-05 (docs/credentials-service/default-on.md) is what
+// makes the states behind that one AHEAD of it doctor's business: the release
+// ends with the service deployed on every installation and a run switched to it
+// only when it can serve that run, so an installation that has not taken the
+// opt-in, one whose bundle holds no version (or only one that is switched off)
+// and one whose verifier list is empty are states a release leaves behind
+// rather than faults in an installation. On THIS release the opt-in is still
+// the flag DON1 removes, and that is what the first state has to say: nothing
+// there is broken and nothing is behind, an installation that never asked for
+// the service runs the way it did before the service existed. That state and
+// the emptied verify route are measurements: one line each, --all and --json
+// are where a reader who wants the service used finds which half is missing,
+// and neither is an item of the default view. The other four are warnings: the
+// block written and no service behind it, a job account the service does not
+// admit, and the two where the installation opted in and the service has
+// nothing to serve with (an empty bundle, a newest version Secret Manager will
+// not serve) all refuse something a run needs, so they print and --strict is
+// where they become a failure.
 //
-// It is a warning and not an ordinary failure: a run whose job cannot invoke
-// the service cannot fetch a model credential, but an installation mid-opt-in
-// (the block written, the apply that creates the service still to come) is a
-// legitimate state, and --strict is where that is a failure.
+// The opt-in state's fix is not an instruction to run something: the flag is
+// the credentials stage's own gate and taking it re-writes this installation's
+// repository roots, so the line says what the command is, what it asks for
+// (its own typed confirmation, which --yes does not cover) and the two
+// prerequisites the stage's own text names — the auth mode the repositories
+// have to run and the App key the bundle has to hold — rather than presenting a
+// run that can break workflows as the routine step a doctor line reads as. The
+// one other state whose fix names the flag is NOT_FOUND: there the opt-in is
+// already written and the flag re-applies the root, which is a repair and not a
+// decision. The empty verify route names the same command for its own reason:
+// the service's verifier list is written into it by that stage's apply, not by
+// a publish. DON1 removes the flag and rewrites every string here that names it.
+//
+// Both halves of the deployed service's state are read from the service's own
+// IAM policy, which is where the module writes the grant: one member, the
+// job's own account, roles/run.invoker on that one service. The project's
+// policy is deliberately not read a second time — doctor reads it once, for
+// the reads that ask it a question no other answer covers
+// (TestDoctorSecretManagerChecksReadsTheProjectPolicyOnce) — so a job account
+// granted the role at project level instead reads as missing, which is not
+// what an installation writes and is said in the fix. A service that is not
+// there is answered by Cloud Run as NOT_FOUND, which is the only way to see
+// it: the fake this check is tested against serves no service get, and the
+// real API's get is the same question asked twice.
+//
+// It is a warning and not an ordinary failure where it is a warning at all: a
+// run whose job cannot invoke the service cannot fetch a model credential, but
+// an installation mid-opt-in (the block written, the apply that creates the
+// service still to come) is a legitimate state, and --strict is where that is
+// a failure.
 func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) []doctorCheck {
-	if lc.CredentialsService == nil {
-		return nil
-	}
 	const id = "credentials-service-deployed"
+	if lc.CredentialsService == nil {
+		return []doctorCheck{{ID: id, OK: true, Severity: "info",
+			Problem: fmt.Sprintf("the installation has not opted into the credentials service (%s): this release deploys it only behind %s, and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind — taking the opt-in is what moves the credential out of the jobs, and it does that to every repository root re-applied after it, in every agent.auth mode (which is why a project that takes it runs its workflows with agent.auth: cascade), and a GitHub run of it refuses to mint until the bundle holds the App's key", infra.CredentialsServiceName, selfCommand()+" update --provision-credentials"),
+			Fix:     "the opt-in is " + selfCommand() + " update --provision-credentials, and its credentials stage asks for its own typed confirmation before it applies (a --yes run does not cover it): take it when agent.auth: cascade is what this installation runs, and put the App's key in the bundle it creates (" + selfCommand() + " creds set github-app-key) before its first GitHub run"}}
+	}
 	unreadable := func(what string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the installation has opted into the credentials service (%s), and %s could not be read: whether it is deployed and whether its callers may invoke it could not be checked", infra.CredentialsServiceName, what),
@@ -175,7 +211,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	}
 	switch {
 	case len(missing) == 0 && len(unread) == 0:
-		return []doctorCheck{{ID: id, OK: true}}
+		return doctorCredentialsServiceServing(ctx, lc, id)
 	case len(missing) == 0:
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the credentials service %s is deployed, and whether %s may invoke it could not be checked: a custom role on its or the project's policy could not be read", infra.CredentialsServiceName, strings.Join(unread, ", ")),
@@ -186,6 +222,140 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 			infra.CredentialsServiceName, runInvokeRoles[0], strings.Join(missing, ", "), strings.Join(missing, ", "),
 			noteIfAny("; not read: "+strings.Join(unread, ", "), len(unread) > 0)),
 		Fix: selfCommand() + " update --repo <each repository named above> (grants each of its job accounts " + runInvokeRoles[0] + " on the service)"}}
+}
+
+// doctorCredentialsServiceServing is the rest of
+// doctorCredentialsServiceDeployed's one line: the service is deployed and
+// every job account may invoke it, and this is what it has to serve with — the
+// bundle it reads a credential out of, and the verifier account the verify
+// route admits.
+//
+// Both are read and never guessed, and each is read the way the thing that
+// uses it reads it: the bundle through the container's own version metadata,
+// which is two answers in one read — whether a version is there at all, and
+// whether the newest of them is ENABLED, since a version that is not is one
+// Secret Manager will not serve and so one the loader cannot read either (the
+// value is never touched here, and never is: the document is the service's, and
+// doctor reads a value only behind --check-bitbucket-token) — and the verify
+// route through the list the service is deployed with —
+// localcfg's one keep rule for the key, this checkout's verifier_accounts when
+// it states one and the published policy node's otherwise, which is what the
+// credentials stage hands the module's own variable and therefore what the
+// service's verify route holds. Its three states are the module's: absent
+// means the installation's own verifier account, and a list written EMPTY is
+// the one state that admits nobody, which is why the empty list is what this
+// reports rather than a key nobody wrote. The line names the layer that states
+// the empty list, because that is the file an operator has to change.
+//
+// The node is read here and only here, and only when this checkout's config
+// says nothing: an installation with no budget backend answers "nothing
+// published" without a call, and every other state of the service returns
+// before this one.
+//
+// Two of the four are warnings and two are measurements, and the line between
+// them is whether a run can work around them. An installation that opted in and
+// whose bundle holds nothing to serve out of — no version at all, or a newest
+// version Secret Manager will not serve — has every model call of every run
+// refused: a measurement there would print "everything checked is ok" and exit
+// 0 under --strict for an installation whose runs all fail, which is the silent
+// pass in the one place it matters most. Both keep the warning the block's own
+// state has (a legitimate state — the opt-in is taken and the bundle is not
+// ready yet — that is a failure under --strict and never without it). The
+// installation that never opted in and the one whose verify route was emptied
+// are states rather than faults — the first runs the way it did before the
+// service existed, the second is a list someone wrote EMPTY on purpose — so
+// they are measurements, and the one line each of them produces is where a
+// reader who wants the service used learns which half is missing.
+func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, id string) []doctorCheck {
+	// A read that did not answer is not a state of the service: it is said, and
+	// it is said as the info note of a read that failed, which no view prints
+	// and every view counts — a document nothing could read is never part of a
+	// screen that says everything checked is ok.
+	unreadable := func(what, question, fix string) []doctorCheck {
+		return []doctorCheck{{ID: id, Severity: "info", unread: true,
+			Problem: fmt.Sprintf("the credentials service %s is deployed and every job account may invoke it, and %s could not be read: %s", infra.CredentialsServiceName, what, question),
+			Fix:     fix}}
+	}
+	store, err := openBundleStore(ctx, lc)
+	if err != nil {
+		return unreadable("the bundle ("+oneLineCLI(err.Error())+")",
+			"whether there is a document for it to serve a run's credential out of could not be checked",
+			"rerun doctor with the Secret Manager API available, or read the bundle's names yourself: "+selfCommand()+" creds ls")
+	}
+	meta, err := store.newest(ctx)
+	switch {
+	case errors.Is(err, errNoBundleVersion):
+		return []doctorCheck{{ID: id, Severity: "warning",
+			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (%s) holds no version, so the loader fails closed and every model call of a run against it is refused; %s is the writer", infra.CredentialsServiceName, pluginwire.Printable(store.id), selfCommand()+" creds set NAME"),
+			Fix:     selfCommand() + " creds set NAME (the only writer of the bundle: no update writes a credential)"}}
+	case err != nil:
+		return unreadable("the bundle's newest version ("+oneLineCLI(err.Error())+")",
+			"whether there is a document for it to serve a run's credential out of could not be checked",
+			"rerun doctor with the Secret Manager API available, or read the bundle's names yourself: "+selfCommand()+" creds ls")
+	}
+	// The version's own state is the rest of that read, and it is not the empty
+	// container: a version that is not ENABLED is there, its document is there,
+	// and Secret Manager refuses to serve either — the loader reads `latest`
+	// and is refused the same way, so the service has nothing to hand a run
+	// however full the bundle is. `creds ls` and `creds set` read this same
+	// metadata (newestIsDisabled, credsDisabledRefusal) and refuse it, which is
+	// why the fix is the enable first: a `creds set` would refuse too until the
+	// version is served again.
+	if meta.state != "ENABLED" {
+		fix := selfCommand() + " creds set NAME (writes a new version: no update writes a credential)"
+		if meta.state == "DISABLED" {
+			fix = fmt.Sprintf("gcloud secrets versions enable %s --secret=%s (the document is there; Secret Manager will not serve a disabled version), then %s creds set NAME writes a new one", pluginwire.Printable(meta.number), pluginwire.Printable(store.id), selfCommand())
+		}
+		return []doctorCheck{{ID: id, Severity: "warning",
+			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the newest version of the bundle it serves from (%s, version %s) is %s, so the loader's read of it is refused and every model call of a run against it fails", infra.CredentialsServiceName, pluginwire.Printable(store.id), pluginwire.Printable(meta.number), pluginwire.Printable(meta.state)),
+			Fix:     fix}}
+	}
+	verifiers, published, err := doctorDeployedVerifierAccounts(ctx, lc)
+	if err != nil {
+		return unreadable("the verifier list the service is deployed with ("+oneLineCLI(err.Error())+")",
+			"whether its verify route admits anyone could not be checked, and this checkout's config states no list of its own",
+			"rerun doctor with the Realtime Database available, or state the list in this checkout's config (verifier_accounts), which is what the service is deployed from whether the node can be read or not, and re-apply it: "+selfCommand()+" update --provision-credentials")
+	}
+	if verifiers != nil && len(verifiers) == 0 {
+		where, fix := "this checkout's config writes verifier_accounts: []", fmt.Sprintf("name the installation's own verifier account in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update --provision-credentials writes the service's list from this config), or take the key out of the config to keep the module's own account admitted", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand())
+		if published {
+			where = "the published policy's verifier_accounts is an empty list and this checkout's config states none"
+			fix = fmt.Sprintf("name the account the verify route should admit in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update --provision-credentials): a config that states a list is the one the service is deployed with, and %s project policy publish carries that same list into the node the other machines read", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand(), selfCommand())
+		}
+		return []doctorCheck{{ID: id, OK: true, Severity: "info",
+			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody on the verify route: every job account may invoke it and its bundle holds a version, and the verifier list it is deployed with is empty (%s), so nothing can ask whether a verdict's signature is this service's", infra.CredentialsServiceName, where),
+			Fix:     fix}}
+	}
+	return []doctorCheck{{ID: id, OK: true}}
+}
+
+// doctorDeployedVerifierAccounts is the verifier list the installation's
+// credentials service is deployed with, and whether it came from the published
+// policy node: localcfg's one keep rule for the key (VerifierAccountsEffective,
+// which the publisher and the credentials stage both apply), this checkout's
+// own verifier_accounts when it states one — a written empty list included,
+// which is how the route is turned off on purpose — and the node's otherwise.
+//
+// The node is what keeps the line true on a machine whose config says nothing:
+// such a machine's apply is deployed with the node's list, so reading the file
+// alone would answer for the wrong document — a plain ok for a service the
+// node had emptied, and "admits nobody" for one the node still admits. An
+// installation with no budget backend has no node to read
+// (projectPolicyRead's answer), and nothing published and a node that is not
+// there are both nil, which is the module's own verifier account: the healthy
+// state, and never the empty list.
+func doctorDeployedVerifierAccounts(ctx context.Context, lc *localcfg.Config) (accounts []string, published bool, err error) {
+	if lc.VerifierAccounts != nil {
+		return *lc.VerifierAccounts, false, nil
+	}
+	p, _, err := projectPolicyRead(ctx, lc)
+	if err != nil {
+		return nil, false, err
+	}
+	if p == nil {
+		return nil, false, nil
+	}
+	return p.VerifierAccounts, true, nil
 }
 
 // noteIfAny returns note when any is true, and "" otherwise: a parenthesised

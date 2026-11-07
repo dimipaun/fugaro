@@ -5379,6 +5379,12 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     pencil.click()
     await flush()
     expect(sent, 'a pencil press sent an edit').toEqual([])
+    // D1116: the press puts the focus on the pencil as the editor is drawn, so
+    // it does not drop the keyboard to `<body>`. That is the half of the rule
+    // the entry owns; the other half -- the keyboard back on the pencil when the
+    // confirmation window closes -- is not done, and `bindSettingsPencils` names
+    // that limit where the code is.
+    expect(document.activeElement, 'the press dropped the keyboard').toBe(pencil)
 
     const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
     expect(editor, 'the pencil drew no editor').toBeDefined()

@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/orchestrator-patch.schema.json",
+  "title": "Fugaro orchestrator patch",
+  "description": "One typed change to an orchestrator's state, the only way anything changes it (docs/stateless-orchestrator/spec.md G1). A session or an agent never writes the document: it sends a patch, and the program that applies it decides by the actor's class whether each op may land. This schema is the vocabulary and the shapes; the fence — which class may send what, and what the state it lands on has to be — is code (orchestrator.Apply), and a patch that passes here is still refused there. Like the state document it is closed: a field this release does not model is an error, not something to carry along, because the whole point of a typed op is that a caller cannot smuggle in a change nobody named. Go: internal/orchestrator/patch.go.",
+  "type": "object",
+  "required": ["base_rev", "ops"],
+  "additionalProperties": false,
+  "properties": {
+    "base_rev": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The state revision the patch was built from. A patch built from another one is refused rather than applied on top of a change its author did not see (orchestrator.ErrStaleRev), which is what a caller retries after re-reading."
+    },
+    "ops": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "description": "The changes, applied in order. One patch that carries an op the actor may not send changes nothing at all: Apply builds the result on a copy and returns no state when any op is refused.",
+      "items": { "$ref": "#/$defs/op" }
+    }
+  },
+  "$defs": {
+    "op": {
+      "description": "One op and the payload its kind takes, and nothing else: the op's kind decides which payload is read, and a payload for another kind is refused rather than ignored (orchestrator.ErrOpPayload).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["op", "work_item"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "work_item_upsert" },
+            "work_item": { "$ref": "#/$defs/work_item_op" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "approve"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "work_item_approve" },
+            "approve": { "$ref": "#/$defs/approve_op" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "archive"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "work_item_archive" },
+            "archive": { "$ref": "#/$defs/archive_op" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "decision"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "decision_add" },
+            "decision": { "$ref": "#/$defs/decision_op" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "resolve"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "decision_resolve" },
+            "resolve": { "$ref": "#/$defs/resolve_op" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "fact"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "fact_set" },
+            "fact": {
+              "$ref": "#/$defs/fact_op",
+              "properties": { "value": { "minLength": 1 } }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "fact"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "fact_delete" },
+            "fact": {
+              "$ref": "#/$defs/fact_op",
+              "properties": { "value": { "const": "" } }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["op", "goal"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "goal_set" },
+            "goal": { "$ref": "#/$defs/goal_op" }
+          }
+        }
+      ]
+    },
+    "work_item_op": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "The item this op is about. An item that is not there yet is created by this op, and one that is there is changed in the fields the op carries."
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$" },
+        "recipe": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+        "rigor_tier": { "enum": ["trivial", "small", "medium", "large"] },
+        "brief": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "depends_on": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+        },
+        "note": { "type": "string", "maxLength": 600 },
+        "phase": {
+          "enum": ["queued", "running", "review", "done", "failed", "blocked", "cancelled"],
+          "description": "The daemon's to write, like the fields below it: a patch from a session or a person that carries one of them is refused whole, so an approved item cannot be requeued by whoever is told to carry it out."
+        },
+        "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+        "spent_approval_at": { "type": "string", "format": "date-time" },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "intent": {
+          "$ref": "#/$defs/intent_op",
+          "description": "The declaration of the attempt this launch is for, or how a declared attempt ended. It is here rather than in an op of its own because every intent is written together with the phase, the run id and the attempt number it explains, and one write is what keeps those four consistent."
+        }
+      }
+    },
+    "intent_op": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]+$", "description": "The work item and the attempt." },
+        "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+        "spec_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "approval_at": { "type": "string", "format": "date-time" },
+        "outcome": {
+          "enum": ["succeeded", "failed", "refused", "cancelled", "abandoned"],
+          "description": "Sent alone, on a later patch, to record how an already declared attempt ended: a declaration carries no outcome, and an outcome alone re-declares nothing."
+        }
+      }
+    },
+    "approve_op": {
+      "type": "object",
+      "required": ["id", "spec_digest"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "spec_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "The digest of the spec the person read. Apply refuses it unless it is the item's digest right then, which is what binds the approval to what was approved. There is no approval field on an upsert: an approval comes from this op and from nothing else."
+        }
+      }
+    },
+    "archive_op": {
+      "type": "object",
+      "required": ["id", "outcome"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "outcome": { "type": "string", "minLength": 1, "maxLength": 80, "description": "How it ended, in a line." }
+      }
+    },
+    "decision_op": {
+      "type": "object",
+      "required": ["id", "question", "waiting_on"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "question": { "type": "string", "minLength": 1, "maxLength": 600 },
+        "waiting_on": {
+          "enum": ["person", "session", "daemon"],
+          "description": "The class that has to answer. A decision that waits on a person is closed by a person alone: no session, daemon or decision agent may close it."
+        }
+      }
+    },
+    "resolve_op": {
+      "type": "object",
+      "required": ["id", "answer"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "answer": { "type": "string", "minLength": 1, "maxLength": 600, "description": "What was decided. Who decided is the actor's class, not a field here, so a caller cannot claim to be someone else by writing it down." }
+      }
+    },
+    "fact_op": {
+      "type": "object",
+      "required": ["key", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "value": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "What the fact says: empty on a fact_delete, and non-empty on a fact_set, which is how the two branches above read it. A patch that means one and carries the other is refused rather than guessed at."
+        }
+      }
+    },
+    "goal_op": {
+      "type": "object",
+      "required": ["goal"],
+      "additionalProperties": false,
+      "properties": {
+        "goal": { "type": "string", "minLength": 1, "maxLength": 600, "description": "The standing instruction. Only a person may set it." }
+      }
+    }
+  }
+}
