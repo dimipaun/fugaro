@@ -55,8 +55,10 @@ deleting it:
    is the node every run of the project is admitted by: the stage names the
    member that loosens and asks for the project's name typed at a real terminal,
    and refuses a script or a coding agent's session with the command to run at a
-   terminal instead (`fugaro update`). On a **managed** project's own terminal
-   it is not asked either: a `Typed` step that loses no data and takes no secret
+   terminal instead (`fugaro update`). On a **managed** project's own terminal —
+   of a run that read the marks: one whose own arguments shape the installation
+   reads none, and keeps every confirmation it always gave — it is not asked
+   either: a `Typed` step that loses no data and takes no secret
    value is noted and written there (the owner's ruling of 2026-11-06), with
    `initflow.OwnerProceeded`'s sentence where the typed name would have been, so
    the note of what loosens is the whole of what that terminal reads. A coding

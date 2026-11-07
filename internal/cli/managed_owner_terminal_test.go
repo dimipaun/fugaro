@@ -128,6 +128,61 @@ func TestManagedOwnerTerminalUnmanagedStillAsks(t *testing.T) {
 	}
 }
 
+// TestManagedOwnerTerminalInstallationFlagKeepsTheTypedName is the boundary
+// every arm in this file is drawn at, and it is the one a reader of the ruling
+// gets wrong: the exception is decided under the gate's own READ, so a run
+// whose own arguments shape the installation has nothing to act on. Such a run
+// is refused the gate before any mark is read (shapesTheInstallation), gateRun
+// returns without one, r.gate stays nil and gateStandsIn() is false — so an
+// ordinary step of that run keeps the typed name it always had, on a managed
+// project exactly as on any other.
+//
+// The flags are what the live checks use: `fugaro update --firebase-project`
+// is the command whose database step check 82 tells the operator to type the
+// name for, and it is an installation flag, so the step is asked there and the
+// operator reading the check is told the truth. The rig asserts the reason and
+// not only the outcome — the gate is nil, so no arm anywhere could have
+// answered for this step — and the control is the same step on the same rig
+// without the flag, which is TestManagedOwnerTerminalOrdinaryStepTypesNothing.
+//
+// The mutation it catches is an owner arm drawn at the door rather than at the
+// read — `initflow.OwnerAtTerminal(r.conditions())` alone, or beside a
+// condition a shaped run satisfies: it would take a step of a run the gate
+// never judged, which is the one direction a shaped run's confirmations must
+// not move.
+func TestManagedOwnerTerminalInstallationFlagKeepsTheTypedName(t *testing.T) {
+	r := updateRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	noAgentSession(t)
+	e := rigEngine(t, r, &initOptions{door: updateDoor.name, firebase: "proj-1234"})
+	out := atTerminal(t, e, "")
+	e.gateRun(t.Context())
+	if e.r.gateable() {
+		t.Fatalf("the rig's run is gateable, so it is not the case this test is about:\n%s", out)
+	}
+	if e.r.gate != nil {
+		t.Fatalf("a run that shapes the installation read the managed marks:\n%s", out)
+	}
+	if e.r.gateStandsIn() {
+		t.Fatalf("the gate stands in for a run that never read it:\n%s", out)
+	}
+
+	ok, err := e.r.askOrdinary("writes the database as listed, and then the local config", "")
+	if err != nil {
+		t.Fatalf("the step was refused rather than asked: %v\n%s", err, out)
+	}
+	if ok {
+		t.Fatalf("a shaped run's step proceeded with nothing typed:\n%s", out)
+	}
+	if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project ") {
+		t.Errorf("the step was not asked for the project's name:\n%s", out)
+	}
+	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a run that read no mark printed the managed sentence:\n%s", out)
+	}
+}
+
 // TestManagedOwnerTerminalWithYesReadsNoFlag is the ruling's third item: the
 // banner on a plain managed update names no flag, because the run needed none.
 // The same step with --yes reads the managed sentence and not "confirmed by
