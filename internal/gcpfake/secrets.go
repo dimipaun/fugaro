@@ -20,9 +20,12 @@ import (
 // " AND "), delete, getIamPolicy, addVersion and versions list, disable,
 // delete and destroy, and the value read at `latest` or at a numbered version.
 // It has no access call unless a test allows it (AllowAccess): the CLI reads a
-// value back in exactly two places — the GitHub App pre-check's one read of
-// the App's key, and C1.25's read of the bundle document it is about to
-// rewrite — so any other client that tries fails the test.
+// value back only where the work cannot be done without it — the GitHub App
+// pre-check and a catalog build's copy of a repository-sourced entry, which
+// read the App's key or the project's bitbucket-token, and the credentials
+// service's bundle document, which `fugaro creds` and `fugaro doctor
+// --check-bitbucket-token` read — so any other client that tries fails the
+// test.
 //
 // Deleted and Destroyed record the two destructive calls, so a test can
 // assert that a run never made one: a retirement leaves a secret and its

@@ -91,11 +91,79 @@ type ProjectLayer struct {
 	// (D556).
 	AB *AB `yaml:"ab"`
 
+	// Jobs is the project's jobs: block (R13): the installation's two
+	// scheduled jobs and whether each is stopped. A top-level key on purpose,
+	// like Governance and AB and for the same reason: the defaults: overlay is
+	// replace-not-tighten (resolve.go), so a jobs: under defaults: could be
+	// replaced by a repository's own value. A repository's fugaro.yaml has no
+	// such key at all, and its decoding refuses unknown fields, so the two
+	// never meet: the only value in play is the operator's, and paused: false
+	// — the loosening direction — is theirs alone, which is what a schedule
+	// the project runs should be.
+	Jobs *Jobs `yaml:"jobs"`
+
 	// Raw is the exact text, SHA256 its hex sha256.
 	Raw    []byte `yaml:"-"`
 	SHA256 string `yaml:"-"`
 	// tree is the text as Resolve merges it (nodeTree).
 	tree map[string]any
+}
+
+// Jobs is the project layer's jobs: block (R13): the installation's two
+// scheduled jobs, and whether each is stopped. Every field is a pointer
+// because the default is paused: a layer that writes no jobs: block, no block
+// for one job or no paused: key means the schedule stays stopped, and the
+// zero value of a bool would say the opposite — the one direction this key
+// must never take by omission.
+type Jobs struct {
+	// Reports is the reports job: the project's one writer of reports/ in the
+	// runs bucket (R12's module, R11's code). Fugaro before 0.22.0 refuses
+	// the key (jobsSince in internal/cli, the constant its gates judge the
+	// job image against).
+	Reports *JobState `yaml:"reports"`
+	// CatalogCheck is the project's catalog check job, scheduled since 0.18.0
+	// (D1148). It is the job whose own operator note offered a `gcloud
+	// scheduler jobs resume` that did not stick: paused was a Terraform
+	// variable with no field in CatalogCheckSpec for a run to set it from,
+	// so the next fugaro update applied the module's true again.
+	CatalogCheck *JobState `yaml:"catalog_check"`
+}
+
+// JobState is one scheduled job's own settings.
+type JobState struct {
+	// Paused stops the job's Cloud Scheduler job. It defaults to true, so a
+	// project that publishes a catalog and one that runs the reports job
+	// deploy both schedules stopped, and turning one on is the operator's own
+	// edit of the layer file: `fugaro settings set` refuses both keys (the
+	// generic path writes its allowlist and nothing else), so the file is
+	// written by hand and `fugaro update` is what publishes it and applies it.
+	Paused *bool `yaml:"paused"`
+}
+
+// ReportsPaused is the reports job's own state: the value the layer wrote,
+// and true (paused) wherever it wrote none — no jobs: block, no reports:
+// block, no paused: key, and no layer at all. It is nil-safe in both hops, so
+// a caller holding no layer file reads the default.
+func (l *ProjectLayer) ReportsPaused() bool {
+	return jobPaused(l, func(j *Jobs) *JobState { return j.Reports })
+}
+
+// CatalogCheckPaused is the catalog check job's own state; see
+// ReportsPaused for the default and why silence means paused.
+func (l *ProjectLayer) CatalogCheckPaused() bool {
+	return jobPaused(l, func(j *Jobs) *JobState { return j.CatalogCheck })
+}
+
+// jobPaused reads one job's paused out of a layer that may be absent at any
+// of the three hops: the default is a fact of one place rather than of each
+// caller, because "the layer wrote nothing" and "the layer wrote false" are
+// one bool apart and only one of them stops the schedule.
+func jobPaused(l *ProjectLayer, job func(*Jobs) *JobState) bool {
+	if l == nil || l.Jobs == nil {
+		return true
+	}
+	st := job(l.Jobs)
+	return st == nil || st.Paused == nil || *st.Paused
 }
 
 // LayerDefaults are the project-wide values of the repository keys the
@@ -121,6 +189,21 @@ func (l *ProjectLayer) SetsRigor() bool {
 	return ok
 }
 
+// SetsLevelsNoneModel reports whether the layer's text names a review level's
+// model with the literal none (NoneModel), the level's own switch written the
+// other way. It reads the tree and not the parsed defaults.agent.levels, which
+// the decode and validate fold the literal out of, for the reason SetsRigor
+// reads its own: the question is what the text says, and the gate needs it
+// because a runner older than noneModelSince reads the literal as a model ID
+// rather than skipping the level.
+func (l *ProjectLayer) SetsLevelsNoneModel() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	return levelsNoneModel(d["agent"])
+}
+
 // SetsGovernance reports whether the layer's text writes governance:, at any
 // value: a runner before governanceSince decodes the layer with KnownFields,
 // so the key alone is what it refuses, and Governance's zero value cannot
@@ -131,6 +214,21 @@ func (l *ProjectLayer) SetsGovernance() bool {
 		return false
 	}
 	_, ok := l.tree["governance"]
+	return ok
+}
+
+// SetsJobs reports whether the layer's text writes jobs:, at any value: a
+// runner before jobsSince (internal/cli) decodes the layer with KnownFields, so
+// the key alone is what it refuses, and Jobs' zero value cannot tell an empty
+// block from none. It is what the gates judge the job images against. The key is
+// top-level, not under defaults: (TestProjectLayerJobsIsTopLevel), like
+// governance: and for the same reason: the block is a policy the project sets
+// for every one of its repositories rather than a default a branch may replace.
+func (l *ProjectLayer) SetsJobs() bool {
+	if l == nil {
+		return false
+	}
+	_, ok := l.tree["jobs"]
 	return ok
 }
 
@@ -264,7 +362,7 @@ func LayerSum(data []byte) string {
 	return hex.EncodeToString(s[:])
 }
 
-var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models", "governance", "ab"}
+var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models", "governance", "ab", "jobs"}
 
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
