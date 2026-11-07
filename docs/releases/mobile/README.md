@@ -69,9 +69,9 @@ GitHub release for it.
 **The first release ships under the app's business licence**, [`mobile/LICENSE.md`](../../../mobile/LICENSE.md)
 (the owner's ruling D311 of 2026-10-26, [`LICENSING.md`](../../../LICENSING.md)), and its notes say
 so. The text is counsel's, and the first release waits for counsel's sign-off: it and console
-`0.113.0` are the first of their streams under a business licence, and neither ships until counsel
-has signed off the three rulings the licence and its pricing rest on — the free evaluation seat
-(D432), a seat as anyone who launches jobs (D433) and the read-only state after the grace period
-(D436), which is S8.4's round. Both are **honour-based**: the release states what the licence
-requires and checks no key, and key enforcement arrives with the key service in a later release.
-How the licence sits beside each store's own end-user terms is an open item for counsel.
+`0.113.0` ship under a business licence only once counsel has signed off the three rulings the
+licence and its pricing rest on — the free evaluation seat (D432), a seat as anyone who launches
+jobs (D433) and the read-only state after the grace period (D436), which is S8.4's round. Both are
+**honour-based**: the release states what the licence requires and checks no key, and key
+enforcement arrives with the key service in a later release. How the licence sits beside each
+store's own end-user terms is an open item for counsel.
