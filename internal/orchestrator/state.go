@@ -644,6 +644,15 @@ const (
 //   - any intent the item's SpentApprovalAt names, which is the retry that
 //     was already charged, for the same reason.
 //
+// An intent with no outcome whose item is still in the list is never evicted
+// either, and for a different reason: it is a run that has not reported, and
+// it is what keeps that run's id, the phase its result lands in and the
+// attempt number it was made under — none of which anything else in the
+// document records. An item whose approval is gone — the daemon having
+// cancelled it under the run, a session having edited the spec mid-run — is
+// exactly the one none of the three rules above reaches, and it is not one
+// retention may leave without its run.
+//
 // A resolved decision younger than the same window is never evicted either,
 // and for the same reason: the decision-agent call counts are derived from
 // the decisions the document carries, so dropping one inside the window a cap
@@ -783,15 +792,28 @@ func retainIntents(s State, now time.Time) []Intent {
 	return kept
 }
 
-// protectedIntent reports whether an intent may not be evicted, by the three
-// rules Retain lists.
+// protectedIntent reports whether an intent may not be evicted, by the rules
+// Retain lists.
 func protectedIntent(s State, it Intent, now time.Time) bool {
 	if now.Sub(it.At) < RetentionWindow {
 		return true
 	}
 	w, ok := s.Item(IntentItem(it.ID))
 	if !ok {
+		// The item is gone, so nothing here is in flight: no result of it can
+		// land (an outcome is an upsert against the item) and nothing can be
+		// relaunched under it. An open intent of one is history like any other
+		// — kept, it would pin the intent cap forever with nothing able to
+		// drop it, which is a node that never comes back under its target.
 		return false
+	}
+	if it.Outcome == "" {
+		// The item is here and its run has not reported, whatever became of
+		// the approval on the way (the daemon may have cancelled the item
+		// under it, or a session edited the spec): this declaration is the run
+		// id, the phase its result lands in and the attempt number it was made
+		// under, and nothing else in the document says the run is there.
+		return true
 	}
 	if w.Approved != nil && w.Approved.At.Equal(it.ApprovalAt) {
 		return true

@@ -719,6 +719,53 @@ func TestRetentionKeepsTheItemARunIsStillGoingIn(t *testing.T) {
 	}
 }
 
+// TestRetentionKeepsAnOpenAttemptPastTheWindow is the in-flight rule again,
+// and the case none of the other retention rules reaches: the attempt has not
+// reported, the item's approval is gone — the daemon cancelled the item under
+// the run — and the intent is older than the window, so nothing else is
+// holding it. An intent is the record of a run: with it evicted, the result
+// has nowhere to land (an outcome is an upsert against a declared intent), the
+// item can be archived out from under the run that is still going, and the
+// attempt number can be handed out again — the three things declaring the
+// intent first exists to prevent.
+//
+// Mutation: drop the no-outcome rule from protectedIntent and wi-1:1 is
+// evicted, after which the archive below lands.
+func TestRetentionKeepsAnOpenAttemptPastTheWindow(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	s := cancelledUnderAnOpenAttempt(t, now)
+	historic := now.Add(-48 * time.Hour)
+	for i := range orchestrator.MaxIntents {
+		s.Intents = append(s.Intents, reportedIntentFor(t, "wi-long-gone", i+1, historic, historic))
+	}
+
+	kept := orchestrator.Retain(s, now.Add(48*time.Hour))
+	if !slices.Contains(intentIDs(kept), "wi-1:1") {
+		t.Fatalf("retention evicted an attempt that has not reported, past the window and with no approval left to hold it: %v", intentIDs(kept))
+	}
+	if _, ok := kept.Item("wi-1"); !ok {
+		t.Fatal("retention took the item away, and its run's outcome has nowhere to land without it")
+	}
+	if len(kept.Intents) >= len(s.Intents) {
+		t.Fatalf("retention kept all %d intents, so it never reached the room it needed", len(kept.Intents))
+	}
+
+	// What the eviction would have cost, read off the state retention
+	// produced: the item may not leave while the run is going, and the run's
+	// outcome still has a declared attempt to land on.
+	if _, err := applyAs(t, kept, orchestrator.Session, "session-a", now.Add(48*time.Hour),
+		orchestrator.Op{Op: orchestrator.OpWorkItemArchive, Archive: &orchestrator.ArchiveOp{ID: "wi-1", Outcome: "cancelled"}}); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("the item left the list with its run still going: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+	reported := mustApply(t, kept, orchestrator.Daemon, "orchestrator-a", now.Add(48*time.Hour),
+		intentOutcomeOp("wi-1:1", orchestrator.OutcomeFailed))
+	for _, it := range reported.Intents {
+		if it.ID == "wi-1:1" && it.Outcome != orchestrator.OutcomeFailed {
+			t.Fatalf("the run reported %q onto its attempt", it.Outcome)
+		}
+	}
+}
+
 // TestRetentionNeverDropsAnIntentInsideTheCapWindow is the first of the three
 // never-evict rules, and the reason the caps can be trusted: they are derived
 // from the committed intents, so an intent that is inside the window a cap
@@ -780,9 +827,11 @@ func TestRetentionKeepsTheIntentsOfAStandingApproval(t *testing.T) {
 		approvedItem(t, "wi-approved", now, standing),
 		spentItem(t, "wi-spent", now, spent),
 	}
+	// Reported, so the only thing keeping either of them is the rule under
+	// test here: an intent that has not reported is protected on its own.
 	s.Intents = []orchestrator.Intent{
-		intentFor(t, "wi-approved", 1, standing, now.Add(-72*time.Hour)),
-		intentFor(t, "wi-spent", 1, spent, now.Add(-96*time.Hour)),
+		reportedIntentFor(t, "wi-approved", 1, standing, now.Add(-72*time.Hour)),
+		reportedIntentFor(t, "wi-spent", 1, spent, now.Add(-96*time.Hour)),
 	}
 	protected := []string{s.Intents[0].ID, s.Intents[1].ID}
 	for i := range orchestrator.MaxIntents {
@@ -881,6 +930,17 @@ func intentFor(t *testing.T, item string, attempt int, approvalAt, at time.Time)
 	}
 }
 
+// reportedIntentFor is intentFor once the run has reported. What an intent
+// records is a run, so one that reported is history retention may age out,
+// while one that has not is a run in flight and is protected wherever its item
+// still is.
+func reportedIntentFor(t *testing.T, item string, attempt int, approvalAt, at time.Time) orchestrator.Intent {
+	t.Helper()
+	it := intentFor(t, item, attempt, approvalAt, at)
+	it.Outcome = orchestrator.OutcomeFailed
+	return it
+}
+
 // bloatedState is a node that has grown past the size target the way one does:
 // a couple of live items with long briefs, and a long tail of history a
 // session and the daemon have written.
@@ -940,7 +1000,7 @@ func bloatedState(t *testing.T, now time.Time) orchestrator.State {
 		s.Archived = append(s.Archived, orchestrator.Archived{ID: intentItemID(i), Outcome: "done", At: now.Add(-time.Duration(i) * time.Hour)})
 	}
 	for i := range 40 {
-		s.Intents = append(s.Intents, intentFor(t, intentItemID(i), 1, now.Add(-49*time.Hour), now.Add(-48*time.Hour)))
+		s.Intents = append(s.Intents, reportedIntentFor(t, intentItemID(i), 1, now.Add(-49*time.Hour), now.Add(-48*time.Hour)))
 	}
 	return s
 }
