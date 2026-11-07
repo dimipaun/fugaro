@@ -1,6 +1,10 @@
 # The stateless orchestrator
 
-**Status: plan only; nothing is implemented; no task approved. Every decision D1220-D1243 and every question the plan raised (Q1-Q4) is answered — Q2 twice — and the last tension the answers left open, T7, was ruled on 2026-11-05, so nothing is left for the owner to rule** (reconciliation section 6).
+**Status (2026-11-07): task O1 of the plan, the deterministic security-sensitive classifier, is written, and the owner approved it as part of the 0.22.0 scope
+— no other task is.** Its four files are on the branch `fugaro/20261107-023015-885d`, pull request #1822, **unmerged and not on `main`**; the rest of the
+[implementation plan](implementation-plan.md) is plan only.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved. Every decision D1220-D1243 and every question the plan raised (Q1-Q4) is answered — Q2 twice — and the last tension the answers left open, T7, was ruled on 2026-11-05, so nothing is left for the owner to rule** (reconciliation section 6).
 
 **Spec owner: the owner (Dimi Paun). Date: 2026-11-04.** Checked against `origin/main` at `5998d67c7`.
 

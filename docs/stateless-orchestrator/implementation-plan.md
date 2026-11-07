@@ -1,6 +1,12 @@
 # The stateless orchestrator: the implementation plan
 
-**Status: plan only; nothing is implemented; no task approved.** Written 2026-11-04 against `origin/main` at `5998d67c7`. **Rounds 1 and 2 of the independent
+**Status (2026-11-07): task O1, the deterministic security-sensitive classifier, is written, and the owner approved it as part of the 0.22.0 scope — no other
+task is.** Its four files — `internal/orchestrator/sensitivity/classify.go`, `classify_test.go`, `export_test.go` and `testdata/paths.txt` — are on the branch
+`fugaro/20261107-023015-885d`, pull request #1822, **unmerged and not on `main`**, with the interface, the allowlist, the eight tests, the red step and the commit
+message the O1 section below states. **Every other task, file and step below is plan only, and no other task is approved**: this line records what that branch
+holds and nothing more.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** Written 2026-11-04 against `origin/main` at `5998d67c7`. **Rounds 1 and 2 of the independent
 security review (verdict "fix first") are applied in this revision** (round 2: the launch claim is per run id and is the fence, an approval covered one attempt only (**superseded below by the owner's 2026-11-04 retry ruling**: one approval covers the first attempt and at most one automatic retry), the Routine allowlist, the lease versus the state compare-and-swap; the round-1 corrections follow): the corrections are in reconciliation section 3 (the rules do not bind a person's
 write; person-only is a mitigation; the launch claim is per run id, so it is the fence), in G2, G4, G5, G11, O0-O12 below, and in D1241-D1243.
 

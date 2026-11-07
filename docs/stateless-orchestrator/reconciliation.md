@@ -1,6 +1,11 @@
 # The stateless orchestrator: the spec against the code
 
-**Status: reconciliation answered by the owner — D1220-D1243 in full, not only the first draft's D1220-D1240: the round-1 questions D1241, D1242 and D1243 were answered on 2026-11-04, and the last tension the answers left open, T7 (the daemon-unit carve-out of the HARD RULE), was ruled on 2026-11-05, so nothing in this section is still put to the owner. Plan in [implementation-plan.md](implementation-plan.md). Nothing implemented, no task approved.**
+**Status (2026-11-07): the plan's task O1, the deterministic security-sensitive classifier, is written — `internal/orchestrator/sensitivity/` on the branch
+`fugaro/20261107-023015-885d`, pull request #1822, unmerged and not on `main` — and the owner approved it as part of the 0.22.0 scope; nothing else of the
+plan is built and no other task is approved.** F15's reviewer-routing rule is what O1 is code for; the findings below are the reading of the code as it was
+before that package existed, and they are kept as written.
+
+*The status as first written, kept:* **Status: reconciliation answered by the owner — D1220-D1243 in full, not only the first draft's D1220-D1240: the round-1 questions D1241, D1242 and D1243 were answered on 2026-11-04, and the last tension the answers left open, T7 (the daemon-unit carve-out of the HARD RULE), was ruled on 2026-11-05, so nothing in this section is still put to the owner. Plan in [implementation-plan.md](implementation-plan.md). Nothing implemented, no task approved.**
 Checked against `origin/main` at `5998d67c7` (`feat(config): the workflow_secrets block ... (W0) (#1710)`), merged into this branch,
 on **2026-11-04**. The open pull requests were read with `gh pr list` and `gh pr diff` the same day. Every path and symbol below was
 re-read at that commit; a citation by symbol is held where a line would move.
