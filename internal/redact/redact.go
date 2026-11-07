@@ -87,10 +87,17 @@ func Text(s string, exact []string) string {
 // email addresses and the absolute paths under a home directory that would
 // otherwise name the person filing it. Its caller runs the exact pass over
 // the same text with the credentials in hand (Text) and hands the result on.
+//
+// The masks run before the pattern pass, not after it. A mask deletes bytes,
+// and a byte deleted after the pass had run could be the one that made a
+// quoted value unterminated: the text would then change again on a second
+// application, which the report's caller does not expect. Masks first leaves
+// the pass the last word on the text, so Report is idempotent whatever a mask
+// removes.
 func Report(s string) string {
-	s = patternPass(s)
 	s = email.ReplaceAllString(s, redacted)
-	return homePath.ReplaceAllString(s, "$1"+redacted)
+	s = homePath.ReplaceAllString(s, "$1"+redacted)
+	return patternPass(s)
 }
 
 // patternPass is the credentials a value list cannot name, because Fugaro
@@ -101,10 +108,13 @@ func Report(s string) string {
 // changes nothing.
 func patternPass(s string) string {
 	// The block first, so a key goes whole rather than in the pieces a token
-	// shape happens to find in its body. The quoted header goes before the
-	// plain one, which would otherwise take the rest of its line.
+	// shape happens to find in its body. The escaped header goes before the
+	// other two, which would otherwise see the quotes of a value it already
+	// redacted; the quoted header goes before the plain one, which would
+	// otherwise take the rest of its line.
 	s = keyBlock.ReplaceAllString(s, redacted)
-	s = authHeaderQuoted.ReplaceAllString(s, `$1"`+redacted+`"`)
+	s = authHeaderEscaped.ReplaceAllString(s, `$1$2`+redacted+`$4`)
+	s = authHeaderQuoted.ReplaceAllString(s, `$1"`+redacted+`$4`)
 	s = authHeader.ReplaceAllString(s, `$1`+redacted)
 	s = authScheme.ReplaceAllString(s, "$1 "+redacted)
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
@@ -115,21 +125,44 @@ func patternPass(s string) string {
 }
 
 var (
+	// authHeaderEscaped is the same header one encoding further in: a JSON
+	// object carried inside a JSON string — a provider error body, a
+	// transcript field — escapes every quote of the inner object, so the
+	// header reads `\"x-api-key\":\"<value>\"`. It is a rule of its own rather
+	// than an optional backslash on the two below, because the escaping
+	// changes where a value ends: a doubled backslash is one escaped character
+	// and is stepped over whole, while a lone backslash before a quote ends
+	// the value. Only the value has to be escaped for the rule to fire, so a
+	// bare name with a quoted value (`x-api-key: \"...\"`) is caught as well.
+	// The closing quote is required, unlike the rule below: it is what tells
+	// the body how many backslashes are its own, and taking it away would let
+	// the body keep backslashes the closing needs, leaving the escapes around
+	// the marker unbalanced. So a value that is escaped a level deeper than
+	// this rule reads — one whose own text carries a quote — is cut short
+	// rather than matched whole, and one that is never closed is not matched
+	// at all.
+	authHeaderEscaped = regexp.MustCompile(`(?i)(\\*"?\b(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)\\*"?\s*:\s*)(\\+")((?:\\\\.|[^"\\\r\n])*)(\\+")`)
+
 	// authHeaderQuoted is a header whose value is a credential whatever it is,
 	// where that value is a quoted string: the whole value goes, scheme word
 	// (Bearer, Basic) included, and it ends at its own closing quote, so the
 	// fields after it in a structured log survive. Those fields are the
 	// diagnosis, and a rule that ran to the end of the line would eat them.
 	// A backslash escape is stepped over so a value containing `\"` ends at
-	// the right quote. The name may carry the quotes of a JSON key.
-	authHeaderQuoted = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)("(?:\\.|[^"\\\r\n])*")`)
+	// the right quote, and a value that is never closed ends at the line
+	// rather than escaping the rule. The name may carry the quotes of a JSON
+	// key.
+	authHeaderQuoted = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(")((?:\\.|[^"\\\r\n])*)("?)`)
 
 	// authHeader is the same header in plain text, where the value is
 	// whatever follows the colon on the line and there is no record around it
 	// to protect. Its value has to start with a character that is neither
 	// whitespace nor a quote: a quoted value is the form above, already
 	// redacted, and matching it here would take the rest of the line with it.
-	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)([^\s"\r\n][^\r\n]*)`)
+	// A leading backslash counts only when what follows it is not a quote,
+	// for the same reason: the escaped form above leaves `\"[REDACTED]\"`
+	// behind, and this rule must not eat the line from there.
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(?:[^\s"\\\r\n]|\\[^\s"\r\n])[^\r\n]*`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The

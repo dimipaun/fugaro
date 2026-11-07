@@ -2,6 +2,7 @@ package redact
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,24 @@ var patternCases = []struct {
 		name: "quoted header value in plain text",
 		in:   `Authorization: "Bearer ` + fake(strings.Repeat("A1b2C3d4", 3)) + `" and then some`,
 		leak: strings.Repeat("A1b2C3d4", 3),
+		keep: "and then some",
+	},
+	{
+		name: "quoted header value that is never closed",
+		in:   `Authorization: "Bearer ` + fake(strings.Repeat("A1b2C3d4", 3)),
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "header escaped inside a json string",
+		in: `{"content":"{\"x-api-key\":\"` + fake(strings.Repeat("Zx9", 8)) +
+			`\",\"message\":\"quota exceeded for project foo\",\"step\":\"terraform apply\"}"}`,
+		leak: strings.Repeat("Zx9", 8),
+		keep: `\"message\":\"quota exceeded for project foo\",\"step\":\"terraform apply\"`,
+	},
+	{
+		name: "escaped header value after an unescaped name",
+		in:   `x-api-key: \"` + fake(strings.Repeat("Zx9", 8)) + `\" and then some`,
+		leak: strings.Repeat("Zx9", 8),
 		keep: "and then some",
 	},
 	{
@@ -230,6 +249,57 @@ func TestRedactKeepsAStructuredRecordReadable(t *testing.T) {
 	}
 	if rec["authorization"] != "[REDACTED]" {
 		t.Errorf("authorization = %q, want the marker", rec["authorization"])
+	}
+}
+
+// TestRedactKeepsAnEscapedRecordReadable: the same record one encoding in, as
+// a transcript field or a provider error body carries it — a JSON object
+// inside a JSON string, where every quote of the inner object is escaped. The
+// pass has to reach the header through that escaping, and both records have to
+// still parse afterwards.
+func TestRedactKeepsAnEscapedRecordReadable(t *testing.T) {
+	token := fake(strings.Repeat("A1b2C3d4", 3))
+	inner := `{"severity":"ERROR","authorization":"Bearer ` + token +
+		`","message":"quota exceeded for project foo","step":"terraform apply"}`
+	got := Text(`{"type":"result","content":`+strconv.Quote(inner)+`}`, nil)
+	if strings.Contains(got, token) {
+		t.Fatalf("Text = %q: the token survived the escaping", got)
+	}
+	var outer struct{ Content string }
+	if err := json.Unmarshal([]byte(got), &outer); err != nil {
+		t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+	}
+	var rec map[string]string
+	if err := json.Unmarshal([]byte(outer.Content), &rec); err != nil {
+		t.Fatalf("the record inside it is %q, which no longer parses: %v", outer.Content, err)
+	}
+	for field, want := range map[string]string{
+		"severity": "ERROR",
+		"message":  "quota exceeded for project foo",
+		"step":     "terraform apply",
+	} {
+		if rec[field] != want {
+			t.Errorf("Text lost %s: %#v", field, rec)
+		}
+	}
+	if rec["authorization"] != "[REDACTED]" {
+		t.Errorf("authorization = %q, want the marker", rec["authorization"])
+	}
+}
+
+// TestReportIsIdempotentWhenAMaskBites: this is the shape that made the
+// report change under a second application — a home path inside a quoted
+// value that is never closed, where masking the path is what closes the value
+// and lets the pattern pass see a match it had run past. The masks run before
+// the pass, so Report is idempotent here whatever the mask removes.
+func TestReportIsIdempotentWhenAMaskBites(t *testing.T) {
+	in := `authorization: "` + fake("eyJsig=", `\"/root\"`)
+	once := Report(in)
+	if strings.Contains(once, fake("/root")) {
+		t.Errorf("Report(%q) = %q: the home path survived", in, once)
+	}
+	if twice := Report(once); twice != once {
+		t.Errorf("Report is not idempotent: once %q, twice %q", once, twice)
 	}
 }
 
