@@ -151,6 +151,20 @@ func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {
 // confirmation when it applies, else the step's own. notCovered, when set, is
 // why this step is not covered (shown), so it asks its own typed
 // confirmation.
+//
+// The owner's own terminal on a managed project types nothing here either, and
+// this is the owner's ruling of 2026-11-06: a step of the converge that loses
+// no data and takes no secret value is not asked for a confirmation a person
+// has to type. It is read after the covered branch, so a step the review
+// announced keeps the sentence that says so (GateOrdinary), and only where
+// notCovered is "": a plan the review did not announce is exactly the plan that
+// may delete, replace or remove an IAM grant, and the ruling's exception is
+// about steps that lose nothing — the cover that says which those are is the
+// same one the gate judges the step by (stepCover below). Such a step reads the
+// note below and asks for its own name, as it did before the ruling.
+//
+// The marker is refused above either way: a coding agent's session is not this
+// case (PersonAtTheTerminal reads the marker).
 func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
@@ -169,7 +183,13 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			}
 			return true, nil
 		}
-	} else if r.review != nil && r.review.state == reviewTaken {
+		if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
+			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+			fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+			return true, nil
+		}
+	}
+	if notCovered != "" && r.review != nil && r.review.state == reviewTaken {
 		fmt.Fprintf(r.w, "note: this step is not covered by the run confirmation: %s; it asks for its own\n", notCovered)
 	}
 	return r.ask(what)
