@@ -785,6 +785,13 @@ const DESIGN_ARGV: readonly string[] = [
   'doctor --json',
   'config list --json',
   'plan status --json',
+  // The dependency graph read (the graph plan's CG9a). This row's one argument
+  // is the scope, and this file's convention takes what an argument fills out --
+  // `--source <v>` is the word the schema's `source` key becomes
+  // (`src/main/spawn.ts`'s `graphSource` kind) -- so the row is the command and
+  // its one fixed flag. The design's own row states the whole argv,
+  // `graph --json [--source <v>]` and all.
+  'graph --json',
   'coordinator status --from-store --all --json',
   // The pull request read (coordinator v2 C3, D816): `--repo R` and `--pr N`
   // are the operation's two declared arguments, so this file's convention --

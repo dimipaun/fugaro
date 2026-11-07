@@ -654,7 +654,10 @@ describe('the spawn table and the argv it builds', () => {
       'orchestrator:O1',
       'orchestrator:o.1',
       'orchestrator:-o1',
-      `orchestrator:${'a'.repeat(41)}`,
+      // 41 characters, which the pattern's own ceiling refuses: at `local:`'s
+      // length the value is still shorter than the bound below, so what refuses
+      // it is the grammar and not the length.
+      `local:${'a'.repeat(41)}`,
       'orchestrator:o1 --watch',
       'all --source coordinator',
       '',
@@ -662,10 +665,23 @@ describe('the spawn table and the argv it builds', () => {
     for (const source of refused) {
       const decision = validateArguments('graph.read', { source })
       expect(decision.ok, JSON.stringify(source)).toBe(false)
-      // The refusal names the key the payload set, not the value it carried:
-      // the console's own sentences never echo a renderer's string back.
-      expect(decision.ok ? '' : decision.reason, JSON.stringify(source)).not.toContain(source === '' ? 'x' : source)
+      // The refusal is this module's own sentence: it names the key and the
+      // grammar, and it is the *same* sentence whatever arrived -- so nothing a
+      // renderer sent is echoed back into a string a screen draws, and no
+      // hostile value can be made to leave a trace of itself in a refusal
+      // (which is why the sentence carries the pattern's own `orchestrator:`).
+      expect(decision.ok ? '' : decision.reason, JSON.stringify(source)).toBe(
+        'source must be all, coordinator, or orchestrator:<id> / local:<id> with an id of 1 to 40 characters of a-z, 0-9 and -',
+      )
     }
+    // A value longer than the pattern could ever accept is refused by the
+    // bound (`MAX_GRAPH_SCOPE_LENGTH`, the longest value the pattern admits)
+    // rather than by the grammar, so a hostile payload cannot make the regular
+    // expression work; and the bound is not tighter than the pattern, which the
+    // boundary id below is here to say.
+    const overlong = validateArguments('graph.read', { source: `orchestrator:${'a'.repeat(41)}` })
+    expect(overlong.ok).toBe(false)
+    expect(overlong.ok ? '' : overlong.reason).toContain('longer than')
     // The four the pattern admits, and the boundary id: 40 characters is the
     // longest the CLI's own pattern takes.
     for (const source of ['all', 'coordinator', 'orchestrator:o1', 'local:o-1', `local:${'a'.repeat(40)}`]) {
@@ -682,23 +698,35 @@ describe('the spawn table and the argv it builds', () => {
     // credential, and the child is what carries it: this process hands it the
     // eleven keys and nothing else. The app's own environment -- an Anthropic
     // key, an ADC path, an ambient project selection -- is not merged in, which
-    // is the rule `CHILD_ENV_KEYS` exists for.
-    const plan = planFor(
-      'graph.read',
-      {},
-      safeContext({
-        appEnv: {
-          ANTHROPIC_API_KEY: 'not-a-real-key',
-          GOOGLE_APPLICATION_CREDENTIALS: '/tmp/not-a-real-adc.json',
-          AWS_SECRET_ACCESS_KEY: 'not-a-real-secret',
-          FUGARO_PROJECT: 'another-project',
-        },
-      }),
-    )
-    expect(Object.keys(plan.env).sort()).toEqual([...CHILD_ENV_KEYS].sort())
+    // is the rule `CHILD_ENV_KEYS` exists for. The app environment below is
+    // **saturated**: every key of the boundary is present in it (so a key the
+    // module dropped would be a key missing from the answer rather than a key
+    // nothing supplied) beside the four the console must never pass on.
+    const appEnv: Record<string, string> = {
+      ANTHROPIC_API_KEY: 'not-a-real-key',
+      GOOGLE_APPLICATION_CREDENTIALS: '/tmp/not-a-real-adc.json',
+      AWS_SECRET_ACCESS_KEY: 'not-a-real-secret',
+      GITHUB_TOKEN: 'not-a-real-token',
+      FUGARO_PROJECT: 'another-project',
+    }
+    for (const key of CHILD_ENV_KEYS) appEnv[key] = appEnv[key] ?? `/tmp/not-a-real/${key}`
+    const env = childEnvironment({
+      target: { project: PROJECT },
+      binaryPath: '/opt/homebrew/bin/fugaro',
+      appEnv,
+    })
+    expect(Object.keys(env).sort()).toEqual([...CHILD_ENV_KEYS].sort())
     // The one project fact the child gets is the chosen installation's, never
     // the app environment's.
-    expect(plan.env['FUGARO_PROJECT']).toBe(PROJECT)
+    expect(env['FUGARO_PROJECT']).toBe(PROJECT)
+    for (const forbidden of [
+      'ANTHROPIC_API_KEY',
+      'GOOGLE_APPLICATION_CREDENTIALS',
+      'AWS_SECRET_ACCESS_KEY',
+      'GITHUB_TOKEN',
+    ]) {
+      expect(env[forbidden], forbidden).toBeUndefined()
+    }
   })
 
 
