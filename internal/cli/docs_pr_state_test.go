@@ -102,10 +102,9 @@ func docLine(doc, want string) string {
 }
 
 // fcDoc is the failure-class design. Its pin lives in this file rather than in
-// a docs test file of its own because the design ships no code and no schema:
-// it is a document about a field that does not exist yet, and the tree's docs
-// pin census counts the internal/cli/docs_*_test.go files, so a folder of its
-// own would move a number the design argues should not move.
+// a docs test file of its own because the tree's docs pin census counts the
+// internal/cli/docs_*_test.go files, so a folder of its own would move a number
+// the design promises not to move (D1462).
 const fcDoc = "docs/design/failure-classes.md"
 
 // fcClassRowRE is one row of the design's vocabulary table: a class name in
@@ -115,7 +114,7 @@ const fcDoc = "docs/design/failure-classes.md"
 var fcClassRowRE = regexp.MustCompile("^\\| `([a-z][a-z_]+)` \\| ")
 
 // TestDocsFailureClassDesignPinsTheVocabulary: the design is a design, its
-// vocabulary is closed at nineteen values, and every claim a reader would act
+// vocabulary is closed, the count it states is the vocabulary's own, and every claim a reader would act
 // on -- one writer, the source of the table it is built on, the report, the
 // legacy reader, the unchanged version, the census it promises not to move --
 // is in it, in the words this test names.
@@ -180,6 +179,14 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	if !slices.Equal(rows, want) {
 		t.Errorf("%s's vocabulary table lists %v, internal/failure's Classes() lists %v: the order is the document's own -- the report prints the classes in it -- so a class inserted in one list alone is two renderings of one vocabulary", fcDoc, rows, want)
 	}
+	// The count the sentence states is read from the vocabulary, not pinned as a
+	// word of its own: a class added to Classes(), the schema's enum, the
+	// property table and this table leaves the word that counts them behind, and
+	// the sentence would claim a set that no longer exists.
+	counted := fmt.Sprintf("**%s values, and the set is closed in Go, in the schema and in the digest**", fcCountWord(len(classes)))
+	if !strings.Contains(flat, counted) {
+		t.Errorf("%s no longer says %q: the sentence is the design's own count of the vocabulary, and internal/failure's Classes() holds %d", fcDoc, counted, len(classes))
+	}
 
 	// The claims the implementation tasks rest on, each one a thing a reader
 	// would otherwise take from the prose and get wrong.
@@ -189,11 +196,6 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 		// The field, and the sentence that it is additive.
 		"`failure_class`",
 		"stays `const 1`",
-		// The vocabulary's own claim: nineteen values, and closed in Go. The
-		// table above is held to internal/failure's Classes(), so the sentence is
-		// what a reader of the document is promised and the check is what makes
-		// it true of the tree.
-		"**Nineteen values, and the set is closed in Go, in the schema and in the digest**",
 		// The one writer, named by the signature the task writes.
 		"func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string)",
 		"is the only",
@@ -232,6 +234,21 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	if !strings.Contains(flat, "internal/cli/docs_pr_state_test.go") || !strings.Contains(flat, "TestDocsRigorModesReconciliationCountsTheConfigManagementPin") {
 		t.Errorf("%s no longer names the file its own pin lives in and the test that holds the docs-pin census it must not move", fcDoc)
 	}
+}
+
+// fcCountWord is how the design's sentence spells a count: capitalised, because
+// the sentence opens with it. The vocabulary is small enough that a table of
+// words says it, and a count past the table falls back to digits -- a spelling
+// the sentence does not use, so a vocabulary that outgrew it fails loudly
+// rather than agreeing with itself.
+func fcCountWord(n int) string {
+	words := []string{"Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+		"Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen",
+		"Eighteen", "Nineteen", "Twenty"}
+	if n >= 0 && n < len(words) {
+		return words[n]
+	}
+	return strconv.Itoa(n)
 }
 
 // fcCensusRE is the backlog index's own census, which the design quotes and
