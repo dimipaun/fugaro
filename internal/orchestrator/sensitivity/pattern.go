@@ -167,7 +167,13 @@ func (p Pattern) Validate() string {
 // Every caller merges lists a layer validated at load, so a row that slipped
 // past that is a rule that silently never fires rather than a match nobody can
 // explain — the failure mode D1502 refuses at load, kept on the safe side here.
-
+//
+// The matching is doublestar's, so the cost of a row is doublestar's: linear in
+// the path for the stars and `**`, and not linear for `{a,b}` alternation, which
+// doublestar matches by re-entering its matcher once per alternative — a row of
+// `{a,aa}` groups inside MaxPatternMatch costs exponentially, and the loader is
+// where that is bounded, not the matcher (TestMatchCostGrowsWithBraceGroups,
+// and the note the pull request that carried this slice leaves for the owner).
 func Match(paths []string, list []Pattern) []Pattern {
 	var matched []Pattern
 	for _, row := range list {

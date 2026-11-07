@@ -279,20 +279,24 @@ func TestMatchReportsEachRowOnce(t *testing.T) {
 	}
 }
 
-// TestMatchIsCheapOnAPathologicalPattern holds the cost of a published pattern.
-// The matcher is the two-pointer star match config.MatchSegment documents: the
-// last `*` seen consumes as little as it can and is stretched one character at
-// a time only when the rest of the pattern fails, so the cost is at most
-// len(pattern)*len(path) — not exponential in the number of stars. A pattern is
-// text a project layer carries and a run reads from the base, so this is the
-// property that keeps a list somebody else wrote from making a run quadratic,
-// or worse.
+// TestMatchIsCheapOnAPathologicalPattern holds what a row of stars costs. The
+// matching is doublestar's, and doublestar keeps the star cheap: it holds the
+// last `*` or `**` it saw and stretches it one character at a time only when
+// the rest of the pattern fails, so a row of forty stars against forty
+// characters is not the 2^40 steps a matcher that rescans every star would take
+// — measured here, stars cost about ten nanoseconds each and a hundred of them
+// stay in the microseconds. A pattern is text a project layer carries and a run
+// reads from the base, so this is the property that keeps a list somebody else
+// wrote from making a run's matching expensive.
 //
 // The failure mode is a hang rather than a wrong answer, which is why the case
-// is sized so that a two-pointer matcher finishes in microseconds: forty stars
-// against forty characters is 2^40 steps for a matcher that scans every star,
-// and about 1,600 for this one. The deadline is generous on purpose — it is
-// there to catch a blow-up, not to measure a machine.
+// is sized so that this matcher finishes in microseconds. The deadline is
+// generous on purpose — it is there to catch a blow-up, not to measure a
+// machine.
+//
+// It is the family the row does *not* argue about. Alternation is the other
+// one, and it is not cheap: TestMatchCostGrowsWithBraceGroups measures it and
+// Match's doc names it.
 func TestMatchIsCheapOnAPathologicalPattern(t *testing.T) {
 	const stars = 40
 	pattern := sensitivity.Pattern{Name: "pathological", Match: strings.Repeat("a*", stars) + "b", Category: sensitivity.Guards}
@@ -306,6 +310,49 @@ func TestMatchIsCheapOnAPathologicalPattern(t *testing.T) {
 	}
 	if took > 5*time.Second {
 		t.Errorf("matching %d stars against %d characters took %s: the matcher backtracks over every star instead of holding the last one", stars, len(unmatched), took)
+	}
+}
+
+// TestMatchCostGrowsWithBraceGroups records the one shape of row whose cost the
+// matcher does not bound. doublestar matches `{a,b}` by re-entering its matcher
+// once per alternative with the alternative spliced in, so a row of `{a,aa}`
+// groups that fails costs about four times as much for every two groups added —
+// measured here at 224 µs for ten groups, 3.5 ms for fourteen and 199 ms for
+// twenty, which puts the 33 groups a 200-byte row (MaxPatternMatch) allows at
+// roughly half an hour, and Match runs the matcher once per row and path.
+//
+// It is asserted rather than fixed because the fix is not this slice's: Validate
+// accepts braces on purpose — the pattern rule is rigor.Area's, braces and all
+// (F21, D1502) — and refusing them here would make one list's vocabulary
+// narrower than the other's. Bounding it belongs to whatever decodes and caps a
+// layer's rows (SC7, SC8), and the case for the refusal is the owner's to take.
+// So the test pins the growth, in the direction that makes noise in the doc
+// visible: if doublestar ever stops re-entering per alternative, this fails and
+// the paragraph above and Match's doc become stale in the same commit.
+func TestMatchCostGrowsWithBraceGroups(t *testing.T) {
+	unmatched := strings.Repeat("a", 45) + "c"
+	// The groups are `{a,aa}`, six bytes each, so 33 of them plus a literal is
+	// 199 bytes — inside MaxPatternMatch, which is what makes the shape
+	// reachable through the load check rather than a thought experiment. The
+	// path is long enough that no alternative matches it, which is the shape
+	// doublestar pays the most for.
+	row := func(groups int) sensitivity.Pattern {
+		return sensitivity.Pattern{Name: "alternation", Match: strings.Repeat("{a,aa}", groups) + "b", Category: sensitivity.Guards}
+	}
+	if reason := row(33).Validate(); reason != "" {
+		t.Fatalf("a row of 33 alternation groups is refused at load (%s): the shape the cost below is about would then be unreachable, and this test would be arguing about nothing", reason)
+	}
+
+	measure := func(groups int) time.Duration {
+		start := time.Now()
+		if got := sensitivity.Match([]string{unmatched}, []sensitivity.Pattern{row(groups)}); len(got) != 0 {
+			t.Fatalf("the row of %d groups matched %q, which it does not name", groups, unmatched)
+		}
+		return time.Since(start)
+	}
+	small, large := measure(14), measure(18)
+	if large < 4*small {
+		t.Errorf("eighteen alternation groups cost %s against fourteen groups' %s: doublestar no longer pays per alternative, so Match's doc and this test's comment are stale — write down the new bound", large, small)
 	}
 }
 
