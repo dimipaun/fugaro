@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The credentials service's switch (docs/credentials-service/default-on.md,
@@ -179,9 +182,151 @@ func putSwitchBundle(t *testing.T, r *initRig, doc []byte) {
 	r.sm.AllowAccess()
 }
 
+// addSwitchRepo adds a second repository entry to the rig's local config: the
+// installation door refreshes EVERY entry the config holds, not only the one
+// the run converges, so a test needs more than the one the rig ships with.
+func addSwitchRepo(t *testing.T, r *imagesRig, name string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const anchor = "  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }"
+	if !strings.Contains(string(b), anchor) {
+		t.Fatalf("the rig's local config no longer holds %q:\n%s", anchor, b)
+	}
+	entry := anchor + "\n  " + name + ": { provider: bitbucket, base_branch: master, workflows: [web] }"
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), anchor, entry, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// repoCredentialsServiceFact is the credentials service as the repository
+// root's plan reads it: the installation object in the tfvars the run wrote
+// under the repository's own workdir. present is false when the key is not
+// there at all, which is what the switch held off writes
+// (RepoInstallation.CredentialsService's omitempty).
+func repoCredentialsServiceFact(t *testing.T, slug string) (map[string]any, bool) {
+	t.Helper()
+	wd, err := infra.RepoWorkdir(os.Getenv, initProject, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(wd, "gcp", "roots", "repo", infra.VarsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Installation map[string]json.RawMessage `json:"installation"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, present := doc.Installation["credentials_service"]
+	if !present {
+		return nil, false
+	}
+	var svc map[string]any
+	if err := json.Unmarshal(raw, &svc); err != nil {
+		t.Fatalf("installation.credentials_service = %s: %v", raw, err)
+	}
+	return svc, true
+}
+
+// TestTheInstallationDoorRecordsTheBundleOnEveryRepositoryItHolds is the
+// installation half of the record, driven end to end: the ordinary `fugaro
+// update`, no direct call to the writer.
+//
+// The bundle holds a model credential and the local config holds TWO
+// repositories, only one of which is any checkout's — the door refreshes both
+// (DON8: "reads the bundle once for the installation and writes the record on
+// every repository entry the local config holds"), and neither is written by
+// the repository stage, which a run outside a checkout skips entirely.
+//
+// The record has to be in the file BEFORE the repository stage re-loads it:
+// the stage that applies a repository root plans from the record, so a record
+// written afterwards leaves the plan of a held-off root — mounts kept, no
+// invoker grant on the service — beside a record that tells the next launch
+// the service is ready, which is the one state the switch exists to make
+// impossible.
+//
+// Mutation (verified, run and restored): drop the refresh from install()
+// (internal/cli/init.go) and this fails with neither entry recorded.
+func TestTheInstallationDoorRecordsTheBundleOnEveryRepositoryItHolds(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	addSwitchRepo(t, r, "acme/other")
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the local config does not parse: %v", err)
+	}
+	for _, name := range []string{"acme/sandbox", "acme/other"} {
+		if !lc.Repos[name].CredentialsServiceReady {
+			t.Errorf("the local config's record for %s is not set after an update that read a bundle holding a model credential: the installation door is the one that reads the bundle for the whole installation, and a repository it never records stays on its own model mounts for ever\n%s", name, readFileString(t, r.cfg))
+		}
+	}
+}
+
+// TestTheRepositoryDoorReadsTheBundleBeforeItPlansItsRoot is the repository
+// half, driven end to end from the checkout — the whole `fugaro update --repo`
+// command, not a call to writeRepoConfig.
+//
+// The state is the one the review found: the local config's entry carries no
+// record (the field is new, so every existing installation is in it) while the
+// bundle holds a model credential and the installation has the service. The
+// plan the run makes is read where the plan reads it, the repository root's
+// tfvars: the switch is ON, which is only true if the bundle was read and the
+// record refreshed before the spec was built. With the read after the plan
+// (where the persisted write sits) this run would plan a held-off root — the
+// job keeping its model mounts and its account granted no roles/run.invoker —
+// while writing the record that hands the next launch the service's address,
+// and a launch of that job would be refused by the private service for the
+// grant the plan never made.
+//
+// Mutation (verified, run and restored): move the refresh below `infra.Repo(in)`
+// in repoEngine (internal/cli/init.go) and this fails with the key absent.
+func TestTheRepositoryDoorReadsTheBundleBeforeItPlansItsRoot(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := credentialsRig(t)
+	// repoReady is the repository door's own fixture: an applied installation
+	// in the state bucket, and the base image the daily image check of the
+	// repository's workflow runs from.
+	r.repoReady(t)
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	credentialsOutputs(t, r)
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+
+	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "cascade", "aurora", "")))
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--plan-only")
+	if err != nil {
+		t.Fatalf("the run failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	svc, present := repoCredentialsServiceFact(t, slug)
+	if !present {
+		t.Fatalf("the repository root's tfvars carry no installation.credentials_service, though the installation has the service, the bundle holds a model credential and the repository's agent.auth is the cascade: the run planned a held-off root while the record it writes says the service is ready, so the next launch is handed an address whose invoker grant this plan never made")
+	}
+	if svc["name"] != infra.CredentialsServiceName {
+		t.Errorf("installation.credentials_service = %v, want the installation's own service %q: the URL is left behind because the repository root's variable carries no such attribute (repoCredentialsService)",
+			svc, infra.CredentialsServiceName)
+	}
+}
+
 // recordForRepo runs the repository stage's own write (initRun.writeRepoConfig,
 // init.go:3671) over the rig's installation and returns the config it left: the
-// ONE place the record is written, and therefore the place the bundle is read.
+// writer's own read of the bundle, which is what the tests below are about. The
+// ORDER — that the bundle is read and the record refreshed before the root's
+// spec is built — is pinned by the two end-to-end tests above, which drive the
+// doors themselves.
 func recordForRepo(t *testing.T, r *initRig) *localcfg.Config {
 	t.Helper()
 	e := rigEngine(t, r, &initOptions{yes: true})

@@ -2187,6 +2187,13 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	if err != nil || stop {
 		return err
 	}
+	// The credentials service's readiness, on EVERY repository entry the
+	// local config holds (refreshCredentialsServiceReady): the installation
+	// door is the one that reads the bundle for the whole installation, and
+	// this is where the record reaches the file — before the write below, so
+	// the repository stage that re-loads it in this same run plans against
+	// what the record says.
+	r.refreshCredentialsServiceReady(ctx, lc, outs)
 	// 8. The local config.
 	return r.writeConfig(ctx, lc, spec, outs, path, old, r.res.Applied)
 }
@@ -3560,6 +3567,16 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	for _, w := range infra.BaseImageWarnings(lc.BaseImages, outs) {
 		r.warn(w)
 	}
+	// The credentials service's readiness, before the spec is built: the
+	// record is condition 2 of the switch (infra.CredentialsServiceServes),
+	// and the spec below reads it out of the local config. Refreshing it
+	// afterwards would leave this run planning a held-off root — mounts kept,
+	// no invoker grant — while writing a record that tells the next launch
+	// the service is ready, which is the one state the switch exists to make
+	// impossible. The persisted write stays where it is, in writeRepoConfig
+	// after the apply; this is the in-memory half that the plan, the launch
+	// and that write all read.
+	r.refreshCredentialsServiceReady(ctx, lc, outs)
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}

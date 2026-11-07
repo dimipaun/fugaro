@@ -147,3 +147,58 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 	r.credsReady = len(b.Credentials()) > 0
 	return r.credsReady
 }
+
+// refreshCredentialsServiceReady records this run's bundle reading on every
+// repository entry the local config holds (docs/credentials-service/
+// default-on.md, DON8: "both doors refresh it, and either alone is enough").
+//
+// It runs on BOTH doors and before anything reads the record back:
+//
+//   - the installation door (install, init.go) refreshes it after the
+//     installation root has applied and before the local config is written,
+//     so the file the same run's repository stage re-loads already carries it;
+//   - the repository door (repoEngine, init.go) refreshes it before the
+//     repository root's spec is built, so the plan that root makes and the
+//     record the launch reads are the same answer. Without this the record
+//     lags the plan by one run — the plan of a held-off root keeps the job's
+//     model mounts and grants its account no roles/run.invoker, while the
+//     record written afterwards tells the next launch the service is ready,
+//     which is a job handed the service's address with no grant to knock
+//     with, and the service refuses it rather than falling back (D143).
+//
+// Every entry is written and not just the one being converged: the bundle is
+// one installation's, so the answer is the same for all of them, and a
+// repository whose root has not been applied yet keeps its mounts (the switch
+// only ever ADDS the service's address to a job that can still run without
+// it). The value is written false as well as true — see writeRepoConfig.
+//
+// outs is the installation's own record of the service, used when the local
+// config does not carry the block yet: on the run that deploys it the config
+// is written by the very step this precedes, and the outputs are the only
+// place the service's existence is known. Only the block's PRESENCE is read
+// here — the bundle's container is derived from the project and the
+// installation's name (openBundleStore) — so a URL the first apply could not
+// know yet is not a reason to answer false.
+func (r *initRun) refreshCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs) {
+	if lc == nil || len(lc.Repos) == 0 {
+		return
+	}
+	probe := lc
+	if probe.CredentialsService == nil {
+		// The block from the installation's outputs, which is where it is
+		// known on the run that deploys it. A nil one leaves the probe as it
+		// is: with no service anywhere the answer is false without a read,
+		// which is what credentialsBundleReady says of a config that has no
+		// block.
+		if block := credentialsServiceBlock(outs.CredentialsService); block != nil {
+			withBlock := *lc
+			withBlock.CredentialsService = block
+			probe = &withBlock
+		}
+	}
+	ready := r.credentialsBundleReady(ctx, probe)
+	for key, repo := range lc.Repos {
+		repo.CredentialsServiceReady = ready
+		lc.Repos[key] = repo
+	}
+}
