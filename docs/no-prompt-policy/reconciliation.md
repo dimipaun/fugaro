@@ -184,22 +184,20 @@ weaker record (T2).
 `settings_write.go`, `update_managed.go`, "a write that loosens a ceiling takes the Typed class (D846)"), and a
 direct `/config` write by a budget admin through Firebase IAM (`deploy/terraform/gcp/modules/firebase`'s
 `iam.tf`) all raise what runs may spend. D1542 covers the first; the others lose their only fence when the
-`Typed` class goes (T12) with no replacement. Consequence: plan T3 lists every raise form, and **D1552** (new,
-pending) asks what the policy-ceiling loosening becomes.
+`Typed` class goes (T12) with no replacement. Consequence: plan T3 lists every raise form, and **D1552** (answered 2026-11-07) asks what the policy-ceiling loosening becomes.
 
 **F17 — "Unmanaged refuses" and the HARD RULE.** `fugaro update` is the whole upgrade; under D1541 every
 unmanaged installation's `update` refuses until its owner runs the flag command, which today needs `--budget`
 and `--budget-currency` (`managed_flag.go`) — an operator step that the HARD RULE forbids unless `update`
 absorbs it. Also undefined: what `fugaro setup` does (always create managed? an existing unmanaged GCP project?),
 and whether flagging is still refused in an agent session (`managed_flag.go`). Under audit-only the flag is the
-**one-way door** whose guards would be removed. Consequence: **D1553** (new, pending), and plan T6 cannot be
-approved before it is answered.
+**one-way door** whose guards would be removed. Consequence: **D1553** (answered 2026-11-07).
 
 **F18 — The catalog check job loses its only build bound.** The nightly job (`internal/cli/image_check_catalog.go`,
 `MaxImageBuilds`; `deploy/terraform/gcp/modules/installation/catalogcheck.tf`) runs as an account with no
 project role and bounds itself by that count alone. T10 removes the count; the job then submits builds with no
 bound. Consequence: the job takes a lease too (same estimator, its own per-run cap) or T10 keeps a bound for it;
-the plan states the first and flags it (D1554, pending).
+the plan states the first and flags it (D1554, answered 2026-11-07).
 
 **F19 — A build lease has no ledger path today.** Leases are keyed `runs/<slug>/<run>` in the budget database and
 enforced by the Firebase rules (`internal/budget/rules`, the rules' emulator tests). A CLI that leases for a
@@ -219,7 +217,7 @@ written into the plan's review focus.
 ## 3. Decisions D1540–D1559
 
 D1540–D1559 are reserved for this work (highest in use on `main` and in open pull requests on
-2026-11-07 was D1539). D1548 onward are **pending**; none is decided by the plan.
+2026-11-07 was D1539). D1540–D1554 are all answered (2026-11-07).
 
 | # | Question | Recommendation and reason | Alternative and its cost | Owner's answer |
 | --- | --- | --- | --- | --- |
@@ -235,9 +233,9 @@ D1540–D1559 are reserved for this work (highest in use on `main` and in open p
 | **D1549** | Do the integrity refusals stay under audit-only? | They stay: saved plan changed after the gate, creation fact not managed, environment injection, the managed configuration rule (`managed_cover.go`), the pre-init block refusal, an address named on the command line, symlink/nesting bounds, impersonation. Only the content refusals become record-and-warn. | Audit-only for everything. | **2026-11-07: as recommended** (the owner named the first three; the rest are listed by the plan as the same class — **confirm**, T3). |
 | **D1550** | Where does the build cost rate come from? | A small table in the repo keyed by machine type, an upper bound; no billing call. | A live Cloud Billing lookup (a network read and an IAM grant on the launch path). | **2026-11-07: NOT the recommendation** — the rate is **queried from Cloud Billing at run time**: a new network call and a new IAM grant on the launch path; a missing or unknown price **refuses**, never defaults. Tension T5. |
 | **D1551** | After D1545, what does delete/replace of data-bearing types do? | It stays **refused** for the hard list: state bucket, runs bucket, Firestore, secrets, **and the Realtime Database that holds the budget ledger**; other deletes apply with the delete recorded and warned. | Everything applies. | **2026-11-07: as recommended** (the review adds the RTDB to the list; **confirm** the list). |
-| **D1552** | What becomes of the policy/settings ceiling loosening (`PerRunUSD`/`PerDayUSD`, the `Typed` class today) when the class goes? | The same fence as D1542: owner session only, refused with the command in an agent session; the direct `/config` write stays an IAM matter (`budget_admins`). | No fence (the cap is then a courtesy); a typed prompt (contradicts the spec). | *(pending)* |
-| **D1553** | What does "Fugaro supports managed projects only" do to `setup`, `update` on an existing unmanaged installation, and flagging in an agent session? | `setup` always creates managed; `update` on an unmanaged installation flags it itself when given its budget once (no second command); flagging is refused in an agent session. | `update` refuses until the owner runs `managed flag` (breaks the HARD RULE). | *(pending)* |
-| **D1554** | Does the catalog check job take a lease or keep a build bound? | A lease through the same estimator with its own per-run cap. | Keep a count for that job only (a second mechanism, "no special handling for builds"). | *(pending)* |
+| **D1552** | What becomes of the policy/settings ceiling loosening (`PerRunUSD`/`PerDayUSD`, the `Typed` class today) when the class goes? | The same fence as D1542: owner session only, refused with the command in an agent session; the direct `/config` write stays an IAM matter (`budget_admins`). | No fence (the cap is then a courtesy); a typed prompt (contradicts the spec). | **2026-11-07: as recommended** — the same owner-session-only fence as cap raising, so the Typed class can go without leaving a ceiling unfenced. |
+| **D1553** | What does "Fugaro supports managed projects only" do to `setup`, `update` on an existing unmanaged installation, and flagging in an agent session? | `setup` always creates managed; `update` on an unmanaged installation flags it itself when given its budget once (no second command); flagging is refused in an agent session. | `update` refuses until the owner runs `managed flag` (breaks the HARD RULE). | **2026-11-07: as recommended** — setup always creates managed; update flags an unmanaged installation itself given its budget once (no second command, HARD RULE); flagging is refused in an agent session. |
+| **D1554** | Does the catalog check job take a lease or keep a build bound? | A lease through the same estimator with its own per-run cap. | Keep a count for that job only (a second mechanism, "no special handling for builds"). | **2026-11-07: as recommended** — a lease through the same estimator with its own per-run cap, so the nightly job keeps a bound without a second mechanism. |
 
 ## 4. Decisions the owner did not have to make (stated, not asked)
 
@@ -279,7 +277,7 @@ failure mode on every build; **a missing or unknown price refuses** (never defau
 client-side only (F19). *Held back:* T8 cannot start until the grant's shape is reviewed (security-reviewer, in-run
 level 3).
 
-**Open items:** D1552, D1553, D1554 (pending); whether `doctor`'s observe warning (D1548) is a warning or an error;
+**Open items:** none among D1540–D1554 (all answered 2026-11-07); whether `doctor`'s observe warning (D1548) is a warning or an error;
 the meta repo's own design (out of this plan).
 
 ## 6. UNVERIFIED

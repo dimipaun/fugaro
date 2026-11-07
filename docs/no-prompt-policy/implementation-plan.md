@@ -2,9 +2,9 @@
 
 Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). **Status: plan only;
 nothing is implemented; no task is approved.** Answering a decision is not approving a task: each task below
-needs the owner's explicit go. D1552–D1554 are pending and a task that depends on one says so.
+needs the owner's explicit go. D1540–D1554 are all answered (2026-11-07).
 Owner answers (2026-11-07) that shaped the plan: D1540 values stay, never hang; D1541 unmanaged refuses and
-names the flag-by-argument command (the shape is D1553, pending); D1542 cap raise is owner-session only;
+names the flag-by-argument command (the shape is D1553: setup always managed; `update` flags an unmanaged installation itself given its budget once; flagging refused in an agent session); D1542 cap raise is owner-session only;
 D1543 builds lease an estimated cost, the count bound goes; **D1544 keep `--ask`** (not the recommendation),
 remove `--yes`/`--non-interactive`; **D1545 audit-only gate** (not the recommendation); D1546 no meta-repo
 prerequisite; D1547 harness plus lint; D1548 observe: builds proceed and record; D1549 the integrity refusals
@@ -100,14 +100,13 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
 - **Files:** `internal/cli/budget.go`, `internal/cli/budget_test.go`, `internal/cli/settings_write.go` and
   `internal/cli/update_managed.go` (the policy-ceiling loosening), their tests.
 - Remove `confirmTyped`/`confirmTypedStrict`. **List and fence every raise form:** `budget set` raising a cap,
-  `budget resume`, the `PerRunUSD`/`PerDayUSD` ceiling loosening (D1552, pending: this task's third part waits
-  for it) — each refuses in an agent session and prints the exact owner command; the direct `/config` write by a
+  `budget resume`, the `PerRunUSD`/`PerDayUSD` ceiling loosening (D1552: the same owner-session-only fence) — each refuses in an agent session and prints the exact owner command; the direct `/config` write by a
   budget admin stays an IAM matter and is listed in the PR body. `budget set` gains `--ask` (it registers none
   today).
 - **Tests:** `TestBudgetRaiseRefusesInAnAgentSession`, `TestBudgetResumeRefusesInAnAgentSession`,
   `TestCeilingLooseningRefusesInAnAgentSession`, `TestBudgetRaiseNeedsNoPromptAtATerminal`. **Command:**
   `GOFLAGS=-p=2 go test ./internal/cli -run 'TestBudget(Raise|Resume|Kill|Set)|TestCeiling' -count=1`
-- **Depends on:** T1; D1552. **Reviewer:** opus + mandatory independent review.
+- **Depends on:** T1. **Reviewer:** opus + mandatory independent review.
 - **Commit:** `budget: a raise asks nothing and an agent session cannot make one (T3)`.
 
 ### T4 — image build and refresh: no confirmation, the lease
@@ -133,10 +132,10 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
 - **Files:** `internal/cli/managed_flag.go`, `managed_unflag.go`, `project_cmd.go`, `project_enroll.go`,
   `restore.go`, `managed_require.go` (new), `root.go` (a command annotation), tests.
 - The flag command takes the GCP project ID as an argument; an unmanaged project's mutating command refuses
-  naming it; `setup`/`update` behaviour and flagging in an agent session are **D1553** (pending).
+  naming it; `setup`/`update` behaviour and flagging in an agent session are D1553.
 - **Tests:** `TestUnmanagedProjectRefusesAndNamesTheFlagCommand`, `TestFlagTakesTheProjectIDAsAnArgument`,
   `TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand` (HARD RULE).
-- **Depends on:** T1; D1553 answered. **Reviewer:** opus + mandatory independent review (the one-way door).
+- **Depends on:** T1; D1553. **Reviewer:** opus + mandatory independent review (the one-way door).
 - **Commit:** `managed: flag by argument; unmanaged projects refuse with the command (T6)`.
 
 ### T7 — init, setup, policy publish, review, retire, billing, pairing, secrets
@@ -196,10 +195,10 @@ confirmation and `cover.go` lacks the row. T4 starts after #1870 merges (or abso
   `deploy/terraform/gcp/modules/installation/catalogcheck.tf` (if the job's account needs the lease path),
   the schemas the marker/spec shape appears in, tests.
 - Marker version bump; `fugaro update` converges an installation at the previous version; **the catalog check
-  job takes a lease through T8's estimator with its own per-run cap** (D1554, pending), so removing the count
+  job takes a lease through T8's estimator with its own per-run cap** (D1554), so removing the count
   does not leave it unbounded. **Tests:** `TestPreviousMarkerVersionConvergesOnUpdate`,
   `TestCatalogCheckJobLeasesEachBuild`.
-- **Depends on:** T4, T8; D1554. **Release:** `### For operators`: "run `fugaro update`". **Reviewer:** opus + review.
+- **Depends on:** T4, T8. **Release:** `### For operators`: "run `fugaro update`". **Reviewer:** opus + review.
 - **Commit:** `managed: the image build count is gone; update migrates the marker (T10)`.
 
 ## Slice 2 — the flags, the class system, the words
