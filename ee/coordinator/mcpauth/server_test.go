@@ -446,3 +446,53 @@ func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
 		}
 	}
 }
+
+// TestTheFormBoundIsWhatStopsABodyPastIt is readForm's own bound, at one of the
+// endpoints it stands in front of.
+//
+// It is the only per-request memory bound these endpoints have. Both the token
+// endpoint and the registration endpoint are public and unauthenticated, and
+// the rate limit spec.md §8 relies on is not built (reconciliation.md §4a, the
+// two bounds no task carries), so what a caller may make this process hold is
+// decided here and nowhere else: without the MaxBytesReader, net/http's own
+// ParseForm cap — 10 MiB — is what a request body reaches, which is a hundred
+// and sixty times this bound.
+//
+// The body below is a well-formed form that is one byte past the bound, so the
+// refusal is about the size and not about the form: the control at the end is
+// the same form at exactly the bound, which is read and answered on its merits.
+// A test that only asserted the status would not hold the rule — with the
+// MaxBytesReader gone the request is read, and the endpoint answers 401 for a
+// missing client instead — so what is asserted is the refusal naming an
+// unreadable body.
+func TestTheFormBoundIsWhatStopsABodyPastIt(t *testing.T) {
+	ts := newTestServer(t)
+
+	// The form is padded to a body of exactly n bytes, so the two requests
+	// below differ in nothing but whether they are past the bound.
+	bodyOf := func(n int) url.Values {
+		form := url.Values{
+			"grant_type": {string(GrantAuthorizationCode)},
+			"padding":    {""},
+		}
+		form.Set("padding", strings.Repeat("a", n-len(form.Encode())))
+		return form
+	}
+	if got := len(bodyOf(maxFormBytes).Encode()); got != maxFormBytes {
+		t.Fatalf("the padded form encodes to %d bytes; want exactly %d: the two requests below have to differ in size and nothing else", got, maxFormBytes)
+	}
+
+	rec := ts.postForm(t, TokenPath, bodyOf(maxFormBytes+1))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("POST %s with a %d-byte body answered %d (%s); want 400: the endpoint reads a bounded body, and a caller that sends more is refused rather than read", TokenPath, maxFormBytes+1, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "not a form this endpoint can read") {
+		t.Errorf("the refusal for a %d-byte body is %s; want it naming the body it could not read: with the bound gone the same request is read and refused for a missing client, and a test that only checked the status would pass either way", maxFormBytes+1, strings.TrimSpace(body))
+	}
+
+	// The bound is inclusive, and what the same request gets at the bound is
+	// the endpoint's own answer to a token request with no client.
+	if rec := ts.postForm(t, TokenPath, bodyOf(maxFormBytes)); rec.Code != http.StatusUnauthorized {
+		t.Errorf("POST %s with a body of exactly %d bytes answered %d (%s); want the endpoint's own 401 for a request that names no client: the bound is inclusive, so the refusal above is about the size and not about forms", TokenPath, maxFormBytes, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}

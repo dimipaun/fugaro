@@ -207,6 +207,44 @@ func TestRegistrationRefusesAURIWithUserinfo(t *testing.T) {
 	}
 }
 
+// TestRegistrationRefusesALoopbackURIWithAFragment is RFC 6749 §3.1.2's rule at
+// the one door where a fragment could still be admitted: every URI below is a
+// loopback address, which isLoopbackRedirect takes on sight, so the fragment is
+// the only thing wrong with it.
+//
+// The fragment row the non-loopback test carries cannot hold this rule. That
+// URI's host is off the allowlist, so the exact-match refusal below answers the
+// same way whether the fragment arm is there or not, and deleting the arm
+// changes nothing a test can see. Here the address is one D928 always allows,
+// so the fragment arm is the only rule that can refuse it — and the controls at
+// the end are the same three addresses without a fragment, which do register.
+func TestRegistrationRefusesALoopbackURIWithAFragment(t *testing.T) {
+	ts := newTestServer(t)
+
+	for _, uri := range []string{
+		"http://127.0.0.1:8976/callback#fragment",
+		"http://localhost:8976/callback#fragment",
+		"http://[::1]:8976/callback#fragment",
+	} {
+		rec := ts.postJSON(t, RegisterPath, registrationRequest{RedirectURIs: []string{uri}})
+		if rec.Code == http.StatusCreated {
+			t.Errorf("POST %s registered %q: a redirection URI must not carry a fragment (RFC 6749 §3.1.2), and this one is a loopback address otherwise, so the fragment is the only thing this refusal can be about", RegisterPath, uri)
+		}
+	}
+	for _, uri := range []string{
+		"http://127.0.0.1:8976/callback",
+		"http://localhost:8976/callback",
+		"http://[::1]:8976/callback",
+	} {
+		if rec := ts.postJSON(t, RegisterPath, registrationRequest{RedirectURIs: []string{uri}}); rec.Code != http.StatusCreated {
+			t.Errorf("POST %s refused %q (%d): the same address without the fragment is a loopback URI D928 always allows, so the three refusals above are about the fragment and not about the address", RegisterPath, uri, rec.Code)
+		}
+	}
+	if got := ts.store.objects(t); len(got) != 3 {
+		t.Errorf("the store holds %d objects; want the three control registrations and nothing from the refused three", len(got))
+	}
+}
+
 // TestRegistrationBoundsWhatItAccepts is the endpoint's three bounds that are
 // not about the shape of a URI: a registration that names no redirect URI, one
 // that names more than the endpoint keeps, and a name that is not printable.

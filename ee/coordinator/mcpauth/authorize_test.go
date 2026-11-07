@@ -682,6 +682,59 @@ func TestConsentIsCSRFBound(t *testing.T) {
 	}
 }
 
+// TestTheFlowBindsTheIdentityTheProjectsListsCarry is the `user:<address>`
+// entry the sign-in step writes into every record the flow makes, which is the
+// value D933's launcher and operator lists are written in and M7 matches them
+// against.
+//
+// It is the one thing in the flow that no other test can see. The token below
+// is signed for an address spelled in mixed case, so the entry has to be the
+// folded one: a verifySignIn that returned the bare address, or the address as
+// the issuer spelled it, passes every other test in this package. And the entry
+// is read back out of the store through the minted tokens rather than asserted
+// against a literal a test wrote — what is checked here is what the flow
+// produced.
+func TestTheFlowBindsTheIdentityTheProjectsListsCarry(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+
+	claims := idTokenClaims(testProject)
+	claims["email"] = "Person-1@Example.COM"
+	tok := signJWT(t, testKey(), testKid, "RS256", claims)
+
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.consent(t, url.Values{
+		"request_id": {binding},
+		"number":     {number},
+		"id_token":   {tok},
+		"decision":   {"allow"},
+	}))
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the exchange answered %d (%s); want a token pair", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	want := "user:" + testEmail
+	for _, tc := range []struct{ what, value string }{
+		{"access token", tokens.AccessToken},
+		{"refresh token", tokens.RefreshToken},
+	} {
+		record, err := ts.store.LookupByHash(context.Background(), TokenHash(tc.value))
+		if err != nil {
+			t.Fatalf("reading the %s's record: %v", tc.what, err)
+		}
+		if got := record.Token.Identity; got != want {
+			t.Errorf("the %s's record carries Identity %q; want %q: the entry is `user:` and the address the verifier folded to ASCII lower case, because that is the spelling the project's own launcher and operator lists hold (D933)", tc.what, got, want)
+		}
+	}
+}
+
 // TestTheApprovalRefusesAnUnverifiedSignIn: the sign-in step is what the whole
 // approval rests on, and neither of the two ways it can fail issues a code.
 //
