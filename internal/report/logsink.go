@@ -92,7 +92,7 @@ func OpenLog(cmdName string, getenv func(string) string, goos string, now func()
 	// After the open, so a failure to prune never costs the run its log, and
 	// before anything is written, so a pruned file is never one this run is
 	// still writing to.
-	pruneLogs(dir, cmdName, at)
+	pruneLogs(dir, cmdName, name, at)
 	return &logSink{f: f, path: filepath.Join(dir, name), red: NewRedactor(f, secrets)}, nil
 }
 
@@ -164,12 +164,19 @@ func createLogFile(dir, name string) (*os.File, error) {
 // directory it cannot read or a file it cannot remove leaves the run's own
 // log in place and changes no exit code (G5, G6).
 //
+// keep is the log just created for this run, which is never a candidate: it
+// is in the directory being read, and the clock may have moved backwards
+// since the logs it is compared against were written, which would make it the
+// oldest name here — the first thing the 50-file rule deletes, leaving Path()
+// naming a file that is gone. It counts as the newest instead, so the rule
+// still leaves 50 logs of this command behind.
+//
 // What it may remove is exactly the files named `<this command>-<14 digits
 // UTC>-<pid>.log` that are regular files: not another command's logs (a
 // prefix match would delete `image-refresh-*` for `image`), not a symlink,
 // not a directory, and nothing outside the directory — every name it removes
 // is one ReadDir handed back from it.
-func pruneLogs(dir, cmdName string, now time.Time) {
+func pruneLogs(dir, cmdName, keep string, now time.Time) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -191,6 +198,9 @@ func pruneLogs(dir, cmdName string, now time.Time) {
 		mine = append(mine, agedLog{name: e.Name(), at: at})
 	}
 	sort.Slice(mine, func(i, j int) bool {
+		if mine[i].name == keep || mine[j].name == keep {
+			return mine[i].name == keep
+		}
 		if !mine[i].at.Equal(mine[j].at) {
 			return mine[i].at.After(mine[j].at)
 		}

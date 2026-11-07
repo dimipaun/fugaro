@@ -262,6 +262,47 @@ func TestRetention50FilesPerCommand(t *testing.T) {
 	}
 }
 
+func TestRetentionNeverPrunesTheRunsOwnLog(t *testing.T) {
+	// G5: the sink's Path is what the failure block prints, so the log the run
+	// is writing is the one file retention may never remove. A clock that
+	// moved backwards makes this run's stamp the oldest in the directory, and
+	// without the run's own name being held back the 50-file rule deletes it
+	// the moment it is created.
+	state, env := logStateDir(t)
+	dir := logDirOf(state)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 60; i++ {
+		seedLog(t, dir, "update", logNow.Add(time.Duration(i)*time.Minute), 100+i)
+	}
+
+	sink, err := OpenLog("update", env, "linux", logFixedNow, nil)
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	if _, err := sink.Write([]byte("this run's own output\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sink.Path()); err != nil {
+		t.Fatalf("the run's own log is not where Path says it is: %v", err)
+	}
+	body := logBody(t, sink)
+	if !strings.Contains(body, "this run's own output") {
+		t.Errorf("the run's own log does not hold the run's output:\n%q", body)
+	}
+	// The own log counts as the newest, so the rule still leaves 50 behind.
+	update := 0
+	for _, name := range logNames(t, dir) {
+		if strings.HasPrefix(name, "update-") {
+			update++
+		}
+	}
+	if update != logKeepPerCommand {
+		t.Errorf("%d `update` logs survive, want %d", update, logKeepPerCommand)
+	}
+}
+
 func TestRetentionIgnoresSymlinksAndForeignFiles(t *testing.T) {
 	// G6: a pruning error is swallowed and it never removes a file of another
 	// command, a symlink, or a file the sink did not create.
@@ -402,6 +443,31 @@ func TestRedactsASecretSplitAcrossWrites(t *testing.T) {
 	}
 	if !strings.HasPrefix(body, "key: [REDACTED]\n") {
 		t.Errorf("the line is not the redacted one:\n%q", body)
+	}
+}
+
+func TestRedactsTheLineTheRunEndedIn(t *testing.T) {
+	// F6: the last line of a run has no newline of its own, and it is the line
+	// a failure most often ends in. Close is what writes it, so it is also the
+	// one place a regression would put the raw buffer — and therefore a secret
+	// — into a log that lives 14 days.
+	_, env := logStateDir(t)
+	sink, err := OpenLog("update", env, "linux", logFixedNow, func() []string { return []string{"s3cret-token-value"} })
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	if _, err := sink.Write([]byte("token: s3cret-token-value")); err != nil {
+		t.Fatal(err)
+	}
+	body := logBody(t, sink)
+	if strings.Contains(body, "s3cret-token-value") {
+		t.Errorf("the value the run ended on reached the log:\n%q", body)
+	}
+	if !strings.Contains(body, "[REDACTED]") {
+		t.Errorf("the last line was not redacted, it was dropped:\n%q", body)
+	}
+	if !strings.Contains(body, "token: ") {
+		t.Errorf("the rest of the last line was lost:\n%q", body)
 	}
 }
 
@@ -664,7 +730,7 @@ func TestPruningNeverCostsTheRunItsLog(t *testing.T) {
 	}
 	// The other half of best effort: a directory that cannot be walked at all
 	// is not a failure of the run that asked for it.
-	pruneLogs(filepath.Join(state, "gone"), "update", logNow)
+	pruneLogs(filepath.Join(state, "gone"), "update", "update-20261107034132-1.log", logNow)
 }
 
 func TestLogSinkReportsItsPathAndEndsOnce(t *testing.T) {
