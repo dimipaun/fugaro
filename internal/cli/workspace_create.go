@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -77,12 +78,30 @@ func workspaceAccount(project string) string {
 }
 
 // declared is whether this installation is a workspace's own: the config
-// carries the owner's half of the membership. It is workspaceRecordOf, the same
-// predicate W2's publish stage is built on, and an error is the config's own
-// (a member list that is not a project name, a cap that is not money) and is
-// returned rather than read as "no workspace".
+// carries the owner's half of the membership, which is workspaceRecordOf's own
+// predicate (W2's publish stage is built on the same one).
+//
+// A config that declares a workspace and lists NO member is this project's
+// workspace too, and the stage converges it: the record admits nobody and W2
+// publishes nothing (workspaceNoMemberReason — a state the owner's own
+// `fugaro workspace cap set` and `member rm` reach), but the project is still
+// the one the workspace is named after and its own service account is what
+// `fugaro update` builds here. Reading that state as "no workspace" would leave
+// the account missing until a member was added, and reading it as an ERROR
+// would stop the whole run — a Check that answers an error blocks every stage
+// after it, which is the HARD RULE (update_workspace.go's own note beside
+// workspaceNoMemberReason).
+//
+// Everything else workspaceRecordOf refuses IS an error and is returned: a
+// member table that is not a project name, a cap that is not money, a record
+// that does not validate — the config's own problems, which the run must stop
+// on rather than converge a root from a half-read config.
 func (s *workspaceProjectStage) declared() (bool, error) {
 	rec, err := workspaceRecordOf(s.e.lc)
+	var notOurs *workspacePublishNotOurs
+	if errors.As(err, &notOurs) {
+		return true, nil
+	}
 	if err != nil {
 		return false, err
 	}
