@@ -1,7 +1,8 @@
 # The hosted MCP server: implementation plan
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; the rest is not started; this folder approves no task.** The design is
+merged on `main`; M5 is built in this pull request; the rest is not started; this folder approves no
+task.** The design is
 [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
@@ -18,14 +19,17 @@ answer, M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidate
 carried: **nothing waits on it any more, and no task names a store it is not written to.** **This plan
 approves no task, and two things gate the whole plan:** the
 independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
-**unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7).
+**unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7). **The owner
+confirmed the library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0, read from the
+module cache the dependency was fetched into — **which closes the library half of that second gate;
+the transitive dependencies' clearance and the M5 gate file are the halves it still holds.**
 
 ## 1. What the owner answered on 2026-11-04, and what each answer moves
 
 | D | The question | Answered 2026-11-04, and written to | If the owner later answers the other way |
 | --- | --- | --- | --- |
 | D920 | Public endpoint, or P8's IAM invoker | **Public**, bearer token is the gate — **the recommendation** | **M5, M6, M8, M9, M10 are void, and M4 and M7 shrink.** An IAM-invoked endpoint has no metadata documents, no registration and no token endpoint; what survives is M1–M3 and a tool registry reached by a Google identity. The plan is then a different, much smaller plan. |
-| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
+| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled**. **The owner confirmed the library's own licence on 2026-11-06 — Apache 2.0 — so M5 takes the dependency; the transitive set and the gate file of §6's first check are the owner's still** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
 | D922 | Where the token records live | **The separate `mcpauth` subtree, `.read: false` and `.write: false`, written by the coordinator's own account only** — the recommendation (**restated the same day**: the first answer made it readable by any signed-in person) | **M3 changes** by taking `coordinator/`'s `.read: "USER"` for the new node, and its red step inverts from the denial to the admission. |
 | D923 | How the person signs in | **The installation's own custom-token flow, with a PAIRED DEVICE approving and the coordinator never minting a token** — the recommendation, mechanism named; the ID token is consumed at `/oauth/authorize` only, and only exact `user:` list entries are read | **M6 changes** (the verifier moves to the authorize endpoint), **M7 gains the `user:`-only rule**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
 | D924 | How the spend limit is enforced | **A variable of its own, tighter-of-two, counted across the whole token family** — the recommendation | **M9 loses its core change** and gains the launcher-side arithmetic instead, and **M2 gains the family counter** that makes rotation a lifetime mechanism rather than a budget one. |
@@ -101,7 +105,10 @@ it:
   and refresh grants, keeps its signing material in Secret Manager or uses opaque tokens, and serves
   both metadata paths from one table. **The licence is still UNCONFIRMED** — nothing in that review
   could settle it — so **the owner or counsel confirms it, and counsel's clearance of the transitive
-  dependencies** is part of that, with **the M5 gate file the owner is to create**.
+  dependencies** is part of that, with **the M5 gate file the owner is to create**. **The owner
+  confirmed the library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 — **which is
+  what M5's dependency is taken against; the transitive set and the gate file are the part of that
+  sentence still standing.**
 - **D922 — H3.** Keyed hashes and MACs, no database admin on the public service, and the records
   outside the main database (**D935**, the store of §8). M2, M3 and M4 carry it.
 - **D923 — H1 and M-a.** **H1 is the one amendment that is not the recommendation**: a device token
@@ -264,7 +271,10 @@ privileges this design asks for (M9's launch grant, and M4's single binding on t
 `mcpauth` records moved to). **D921's unconfirmed licence** is the second
 ([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
-D921 back to its alternatives before any code exists rather than after.
+D921 back to its alternatives before any code exists rather than after. **The owner confirmed the
+library's own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 — **so M5 takes the dependency
+against that confirmation, and the transitive dependencies' clearance and the gate file are what the
+second gate still holds.**
 
 **That review has run, on 2026-11-04, and the gate from here on is per task**: its findings and the
 owner's answers to them are [reconciliation.md](reconciliation.md) §4a, every document in this folder
@@ -275,7 +285,9 @@ the deferred slice**), and the two new privileges the design asks for. **D921's 
 of the second gate that no review could settle: it is **UNCONFIRMED**, so what stands is **the owner
 or counsel confirming it — counsel's clearance of the transitive dependencies included — before any
 build**, with **the M5 gate file the owner is to create** ([reconciliation.md](reconciliation.md) §6,
-check 1).
+check 1). **The owner confirmed the library's own licence on 2026-11-06 — `zitadel/oidc` is Apache
+2.0, read from the module cache — which is the half of this gate M5 is built against; the transitive
+set and the file are the halves it still holds.**
 **A third gate stood in front of M2 and M4, and it has been answered rather than left standing.**
 D935 moved the records out of the project's database and left **which** separate store to the owner
 (§8), so M2's backend file and M4's Terraform were both written against an answer nobody had given
@@ -695,7 +707,10 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   and **not** the grant. Its tests carry the rows for each of those.
 - **What the review settles about the library, and what it does not.** The review found the library's
   defaults are the opposite of this design's rules in five named ways, and that half is settled by
-  the constraints above; **the licence is not, and stays UNCONFIRMED** (the paragraph in §3 above).
+  the constraints above; **the licence is not, and stays UNCONFIRMED** — until **the owner confirmed
+  the library's own on 2026-11-06: `zitadel/oidc` is Apache 2.0, which is what this task's `go.mod`
+  entry is taken against, with the transitive dependencies' clearance and the gate file still the
+  owner's** (the paragraph in §3 above, [reconciliation.md](reconciliation.md) §6 check 1).
 
 ### M6 — Firebase at the authorize endpoint
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates M-a and H1,

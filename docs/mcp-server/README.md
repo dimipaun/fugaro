@@ -1,7 +1,8 @@
 # The hosted MCP server
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; the rest is not started; this folder approves no task.** The owner's spec of
+merged on `main`; M5 is built in this pull request; the rest is not started; this folder approves no
+task.** The owner's spec of
 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code here;
 [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the
@@ -59,7 +60,10 @@ and PKCE and the project's own Firebase as the identity provider, so that MCP cl
 manage tasks without the CLI. The owner approved a design PR on 2026-10-31 and **answered the fifteen
 decisions on 2026-11-04** — D920's public endpoint, D923's paired-device sign-in and its `user:`-only
 lists, D930's rotating tokens, D931's single launch path, D934's off-by-default front door, D921's
-library **with its licence still UNCONFIRMED**, and D922's separate **`mcpauth`** subtree, closed to
+library **with its licence still UNCONFIRMED** — **confirmed by the owner on 2026-11-06, which is
+when `zitadel/oidc`'s own licence file was read and found to be Apache 2.0; the transitive
+dependencies and the gate file of §6's first check are still the owner's** — and D922's separate
+**`mcpauth`** subtree, closed to
 every client. **And answered one more on 2026-11-05 (D935)**, on the independent review of PR
 #1715's M3: those records do not live in the project's shared Realtime Database at all, but in a
 store whose IAM names only the front door's own account `mcp_server` — the bucket of the plan's §8,
@@ -186,7 +190,9 @@ README, in its own diff, is where the block above D1189 is written.
   library's own — so **the owner or counsel confirms it, the transitive dependencies included**, and
   **the gate file is the owner's to create**
   ([reconciliation.md](reconciliation.md) §6, the first owner check). A licence that turns out to be
-  unusable still sends that decision back to its alternatives.
+  unusable still sends that decision back to its alternatives. **The owner confirmed the library's
+  own licence on 2026-11-06** — `zitadel/oidc` is Apache 2.0 — **so M5 may take the dependency, and
+  the transitive dependencies' clearance and the gate file are what that check still holds.**
 - **Not the last word on the MCP specification.** §0's open item — re-verify the current revision —
   is still an owner check ([reconciliation.md](reconciliation.md) §6): **this container cannot reach
   the public specification**, which is the limitation `docs/coordinator/reconciliation.md`:794

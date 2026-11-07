@@ -1,7 +1,8 @@
 # The hosted MCP server: reconciliation and decisions
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; the rest is not started; this folder approves no task.**
+merged on `main`; M5 is built in this pull request; the rest is not started; this folder approves no
+task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -176,10 +177,25 @@ load-bearing:
 **D921's licence, unconfirmed when the answers were given,** added the first owner check in §6 and a
 build gate in the plan, and §4a records what still stands behind that check: **the owner or counsel
 confirms the licence — the transitive dependencies included — and the gate file that closes it is the
-owner's to create**. The
+owner's to create**.
+
+**The owner confirmed the library's licence on 2026-11-06, and the rest of that check still stands.**
+`zitadel/oidc` is **Apache 2.0** — read from the module cache the dependency was fetched into, which
+is the library's own licence file rather than the claim §4's question table recorded — so **the
+library half of §6's first check is closed and M5 may take the dependency**, which is what M5's
+`go.mod` entry does. **What the confirmation does not close is the other half of the same check**:
+**counsel's clearance of the transitive dependencies** the library brings — `zitadel/schema`,
+`muhlemmer/gu`, `kr/text`, `go-jose/v4`, the `otel` modules, `doublestar/v4`, and the `x/text` and
+`x/sync` bumps `go mod tidy` made beside it — and **the M5 gate file the owner is to create**, which
+is a file a person writes and which no answer given in this container writes for him. **M5 is built
+in this pull request** against the confirmed library, with those two still open; the first is a
+question for the owner and the second is a file only he can write.
+
+The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file now
 carries — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; the rest is not started; this folder approves no task.**
+merged on `main`; M5 is built in this pull request; the rest is not started; this folder approves no
+task.**
 
 ### The answer of 2026-11-05
 
@@ -304,10 +320,13 @@ M4 and M7 carry the rules; §8 states the risk.
 
 ### D921 — amended (finding M-c)
 
-**The licence is still UNCONFIRMED.** The library's Apache 2.0 claim is the library's own and nothing
-in this container can check it, so **the owner or counsel confirms it — the transitive dependencies
-included — before any build**, and **the M5 gate file is the owner's to create**: the build gate is a
-file a person writes rather than something this folder can assert is settled. The review settles the
+**The licence was UNCONFIRMED when this amendment was written, and the owner confirmed the library's
+own on 2026-11-06** (§4a, the paragraph on it). The library's Apache 2.0 claim is the library's own
+and nothing in this container can check it, so **the owner or counsel confirms it — the transitive
+dependencies included — before any build**, and **the M5 gate file is the owner's to create**: the
+build gate is a file a person writes rather than something this folder can assert is settled. **What
+2026-11-06 settled is the library** — `zitadel/oidc` is Apache 2.0 — **and what it left is the
+transitive set and the file.** The review settles the
 library's *behaviour* against this design, which is the paragraph below, and not its licence.
 
 The review also found that **the library's defaults are the opposite of this design's rules**, and
@@ -532,12 +551,13 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   (#1715), M6 (#1714) and M4's first half (#1716) are merged on `main`** — M4's half being the
   account, the front door service and its public invoker binding
   (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **because the
-  owner approved them one at a time, which is what "may continue" turned into.** **What is not built
-  is the rest of the plan**: M4's store half (`mcpauth_store.tf`, the bucket and its one grant), M5
-  and M7–M10; **M3's node is in with its parity test while the comment D935 asks for above it is not
-  written**; and **what merged as M6 is the draft M-a predates** — no approve-step POST and no
-  `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, is not
-  started.
+  owner approved them one at a time, which is what "may continue" turned into.** **M5 is built in
+  the pull request that carries this paragraph** — the two metadata documents, the four endpoints and
+  the approve step of M-a — and **the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
+  and its one grant) and M7–M10; **M3's node is in with its parity test while the comment D935 asks
+  for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
+  POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, is
+  in the branch this paragraph is read in and not on `main`.
 
 ## 4b. The decision the amendment added
 
@@ -632,7 +652,12 @@ code task starts:
    so **the owner or counsel confirms the licence, the transitive dependencies included**. **This is
    a gate, not a note:** M5 does not start until the licence is settled and a person has written the
    gate file, and a licence that turns out to be unusable sends D921 back to its alternatives rather
-   than to a workaround.
+   than to a workaround. **The owner confirmed the library's licence on 2026-11-06** — `zitadel/oidc`
+   is Apache 2.0, read from the module cache the dependency was fetched into — **which settles the
+   library half of this check and leaves the other two things it names**: **counsel's clearance of
+   the transitive dependencies** the library brings, and **the M5 gate file the owner is to create**.
+   **M5's implementation is in the pull request that records this**, written against the confirmed
+   library, and those two are the owner's still.
 2. **The endpoint really is reachable from the public internet** once D920's answer says so: a
    request from outside the project reaches the handler and gets the 401, rather than being refused
    by the platform. spec.md §8 says what follows if it is not.

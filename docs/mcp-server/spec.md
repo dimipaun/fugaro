@@ -1,7 +1,8 @@
 # The hosted MCP server: the spec
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; the rest is not started; this folder approves no task.** The owner's spec of
+merged on `main`; M5 is built in this pull request; the rest is not started; this folder approves no
+task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -166,7 +167,10 @@ on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONF
 What stands is the check itself, which is why it is a gate rather than a closed item: **the owner or
 counsel confirms the licence, counsel's clearance of the transitive dependencies included, and the
 M5 gate file is the owner's to create** — M5 does not start until a person has written it
-([reconciliation.md](reconciliation.md) §6, check 1).
+([reconciliation.md](reconciliation.md) §6, check 1). **The owner confirmed the library's own licence
+on 2026-11-06** — `zitadel/oidc` is Apache 2.0, read from the module cache the dependency was
+fetched into — **so M5 takes the dependency against that confirmation, and the transitive
+dependencies' clearance and the gate file are what the check still holds.**
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -251,7 +255,9 @@ hundred hand-written lines. **The library's licence is still UNCONFIRMED** — t
 library's *behaviour* against this design and not its licence; **the owner or counsel confirms it,
 counsel's clearance of the transitive dependencies included**, and **the M5 gate file is the owner's
 to create**, so the gate stands until a person has written it
-([reconciliation.md](reconciliation.md) §6, check 1). M5 does not start until it is settled, and a
+([reconciliation.md](reconciliation.md) §6, check 1). **The owner confirmed the library's own licence
+on 2026-11-06 — `zitadel/oidc` is Apache 2.0 — which is the half of that gate M5 takes the dependency
+against; the transitive set and the file are the halves still open.** M5 does not start until it is settled, and a
 licence that turns out to be unusable sends D921 back to its alternatives rather than to a
 workaround. The alternatives and their costs stay in the reconciliation; the short version is that
 ory/fosite brings the same missing piece and a heavier plugin API for a flow this small, and a
@@ -978,8 +984,9 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   the text ([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
 - **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
-  (§3, D921, answered 2026-11-04 with its licence still **UNCONFIRMED** — the owner or counsel
-  confirms it, **counsel's clearance of the transitive dependencies included**, and **the gate file
+  (§3, D921, answered 2026-11-04 with its licence still **UNCONFIRMED** and confirmed by the owner on
+  2026-11-06 as **Apache 2.0** — so the owner or counsel confirms the transitive set,
+  **counsel's clearance of the transitive dependencies included**, and **the gate file
   is the owner's to create**); the standalone-server option is not taken; and
   re-verification against the live MCP specification and the project's Identity Platform features is
   an owner check before implementation ([reconciliation.md](reconciliation.md) §6). **The
