@@ -2613,10 +2613,10 @@ out has no provider to find unless the working directory *is* that repository's
 checkout, so in a console child it is refused with the sentence that names the
 entry to set — a refusal of the whole read, with no document, which the console
 answers as it answers any other (T3, keep the plan scope and show the sentence),
-and never a `down` or `unreadable` state. Every config `fugaro init` writes
-names every repository's provider, so this is the hand-edited entry and not the
-ordinary one. **The plan scope keeps its checkout and its card**; the new scopes
-are what the dropdown adds beside it (D1356).
+and never a `down` or `unreadable` state. Onboarding writes every repository's
+provider, so this is the hand-edited entry and not the ordinary one. **The plan
+scope keeps its checkout and its card**; the new scopes are what the dropdown
+adds beside it (D1356).
 
 **`--source` selects the scope, and the set is closed.** `all` is the default and
 is the union of the scopes that exist — today the coordinator alone —

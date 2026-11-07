@@ -522,7 +522,7 @@ func TestGraphJSONIsOneVersionedDocument(t *testing.T) {
 // Its subtest is the one fact the read does take from the project config: the
 // provider each repository's slug is keyed by. A config that leaves it out has
 // no provider to find here, so the read refuses it by name rather than guessing
-// one, and "needs no checkout" is a promise about the config `fugaro init`
+// one, and "needs no checkout" is a promise about the config onboarding writes
 // writes (every repository's provider in it) and not about this one.
 func TestGraphNeedsNoCheckout(t *testing.T) {
 	f := newGraphFixture(t)

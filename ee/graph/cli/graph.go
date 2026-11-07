@@ -49,10 +49,11 @@ import (
 //     fallback, and it is not this command's: the provider a repository's slug
 //     is keyed by comes from the project's own config, and the checkout is
 //     consulted only when that entry leaves it out (repoSlug). So a project
-//     whose config names its providers — what `fugaro init` writes — is graphed
-//     with no checkout at all, and a repository the config leaves out is
-//     refused, naming that entry, rather than graphed from a guess. The plan
-//     scope keeps its checkout and its card; this command has neither (D1356).
+//     whose config names its providers — every repository the CLI's own
+//     onboarding records carries one — is graphed with no checkout at all, and
+//     a repository the config leaves out is refused, naming that entry, rather
+//     than graphed from a guess. The plan scope keeps its checkout and its
+//     card; this command has neither (D1356).
 //   - It prints one document. A refused read is an error with no document at
 //     all, and a scope that is down is a state inside the document (H3), so a
 //     reader tells the two apart by exactly that.
