@@ -941,3 +941,106 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 		})
 	}
 }
+
+// TestProjectLayerJobsPausedDefaultsTrue: the two schedules the layer's jobs:
+// block carries default to paused, so an installation whose owner writes
+// nothing about them — and one whose project publishes no layer at all —
+// deploys both jobs stopped. The direction is the whole point: paused: false
+// is what makes a schedule run, and a default of false would start the reports
+// job and the catalog check on every project that upgraded without asking.
+func TestProjectLayerJobsPausedDefaultsTrue(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	for _, tc := range []struct{ name, text string }{
+		{"no jobs: block", head},
+		{"no jobs: key", head + "jobs: {}\n"},
+		{"a job with no paused:", head + "jobs:\n  reports: {}\n"},
+		{"a job written as null", head + "jobs:\n  catalog_check:\n"},
+		{"paused: true written out", head + "jobs:\n  reports: { paused: true }\n  catalog_check: { paused: true }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := mustLayer(t, tc.text)
+			if !l.ReportsPaused() || !l.CatalogCheckPaused() {
+				t.Errorf("reports paused = %v, catalog check paused = %v, want both true", l.ReportsPaused(), l.CatalogCheckPaused())
+			}
+		})
+	}
+	// A caller holding no layer is the same answer as one holding a layer that
+	// wrote nothing: the default belongs to the read, not to the file, so a
+	// resolve with no project layer cannot start a schedule either.
+	var none *ProjectLayer
+	if !none.ReportsPaused() || !none.CatalogCheckPaused() {
+		t.Error("a nil layer is not paused: the value nobody wrote must be the safe one")
+	}
+	if !(&ProjectLayer{}).CatalogCheckPaused() {
+		t.Error("a zero ProjectLayer is not paused")
+	}
+	// The one direction that starts a schedule, read from the same block: it
+	// is here rather than in a test of its own because the default above is
+	// exactly what it must not swallow.
+	l := mustLayer(t, head+"jobs:\n  reports: { paused: false }\n  catalog_check: { paused: true }\n")
+	if l.ReportsPaused() || !l.CatalogCheckPaused() {
+		t.Errorf("reports paused = %v, catalog check paused = %v, want false and true", l.ReportsPaused(), l.CatalogCheckPaused())
+	}
+}
+
+// TestProjectLayerRefusesAJobsKeyItDoesNotKnow: the block is the layer's own
+// and decoded strictly, like every other one, so a jobs: key a later release
+// defines is refused today rather than read as the absence of a schedule. The
+// defaults: case is the placement rule: the block is top-level, where a
+// repository's file can never replace the operator's value.
+func TestProjectLayerRefusesAJobsKeyItDoesNotKnow(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	for _, tc := range []struct{ name, text, want string }{
+		{"an unknown job", head + "jobs:\n  digests: { paused: false }\n", "field digests not found"},
+		{"an unknown job key", head + "jobs:\n  reports: { pause: false }\n", "field pause not found"},
+		{"the block under defaults", head + "defaults:\n  jobs:\n    reports: { paused: false }\n", "defaults.jobs: is not a fugaro.yaml key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := ParseProjectLayer([]byte(tc.text), testAnchor)
+			var msgs []string
+			for _, p := range ps {
+				msgs = append(msgs, p.String())
+			}
+			if got := strings.Join(msgs, "; "); !strings.Contains(got, tc.want) {
+				t.Fatalf("problems %q, want one containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestProjectLayerJobsIsTopLevel: the block is a top-level key of the layer
+// file, like governance: and claude_models, and not a member of defaults:. The
+// defaults overlay is replace-not-tighten, so a block under it would be a value
+// a repository's own file could replace with a looser one — and the one value
+// here that must never come from a repository's file is paused: false. A layer
+// that writes the key under defaults: is refused as an unknown key there, which
+// is what makes the placement a rule and not a convention, and SetsJobs reads
+// the tree at the root, so it is what the skew gates judge.
+func TestProjectLayerJobsIsTopLevel(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	l := mustLayer(t, head+"jobs:\n  catalog_check:\n    paused: false\n  reports: null\n")
+	if l.Jobs == nil || l.Jobs.CatalogCheck == nil || l.Jobs.CatalogCheck.Paused == nil || *l.Jobs.CatalogCheck.Paused {
+		t.Fatalf("layer jobs = %+v", l.Jobs)
+	}
+	if !l.SetsJobs() {
+		t.Error("SetsJobs = false for a layer whose text writes jobs:")
+	}
+	if _, ps := ParseProjectLayer([]byte(head+"defaults:\n  jobs:\n    catalog_check: { paused: false }\n"), testAnchor); len(ps) == 0 {
+		t.Error("defaults.jobs was accepted: the block is a top-level key of the layer file")
+	}
+	// The key decides, whatever it holds: `jobs:` with nothing under it and an
+	// empty block are lines an older runner's KnownFields decoder refuses
+	// exactly like a populated one, so SetsJobs has to say so for both — a gate
+	// reading Jobs alone would let them through.
+	for _, text := range []string{"jobs:\n", "jobs: {}\n"} {
+		if l := mustLayer(t, head+text); !l.SetsJobs() {
+			t.Errorf("SetsJobs = false for %q, and that key is what an older runner refuses", strings.TrimSpace(text))
+		}
+	}
+	if l := mustLayer(t, head+"jobs: { catalog_check: { paused: false } }\n"); l.SetsJobs() != true {
+		t.Error("SetsJobs = false for a layer that writes jobs:")
+	}
+	if (*ProjectLayer)(nil).SetsJobs() {
+		t.Error("SetsJobs = true for no layer at all")
+	}
+}

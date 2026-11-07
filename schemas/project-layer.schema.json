@@ -166,9 +166,26 @@
           }
         }
       }
+    },
+    "jobs": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "The project's two scheduled jobs and whether each is stopped (R13). A top-level key of the layer file, like governance and ab and unlike defaults: a repository's fugaro.yaml has no jobs: key at all and refuses an unknown one, so the two never meet and the only value in play is the operator's — which is what makes paused: false, the direction that starts a schedule, theirs alone. Every key defaults to paused: a layer that writes no jobs: block deploys both schedules stopped, and fugaro update is what applies the value on every run. Fugaro before 0.22.0 refuses the key, in every repository of the project.",
+      "properties": {
+        "reports": { "$ref": "#/$defs/jobState", "description": "The reports job: the project's one writer of reports/ into the runs bucket. Fugaro before 0.22.0 refuses it, in every repository of the project." },
+        "catalog_check": { "$ref": "#/$defs/jobState", "description": "The project's catalog check job, scheduled since 0.18.0 (D1148)." }
+      }
     }
   },
   "$defs": {
+    "jobState": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "One scheduled job's own state (config.JobState). A null block, or a key written as null, sets nothing and takes the default.",
+      "properties": {
+        "paused": { "type": ["boolean", "null"], "description": "Stops the job's Cloud Scheduler job. true (paused) is the default: a project that writes no jobs: block, no block for this job or no paused: key deploys the schedule stopped. It is the one key that turns a schedule on, and fugaro update applies it on every run — which is why a `gcloud scheduler jobs resume` does not stick (R13)." }
+      }
+    },
     "level": {
       "type": "object",
       "additionalProperties": false,
