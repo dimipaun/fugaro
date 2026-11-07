@@ -626,33 +626,54 @@ func TestDoctorImageConfigComparesWorkflowsTheCatalogDoesNotCover(t *testing.T) 
 }
 
 // TestDoctorImageConfigComparesAPinWithNoCatalog: the two reasons a catalog is
-// nil are not one state. A project with no catalog at all is one where a
-// workflow that pins an entry runs the derived image — internal/infra's
+// nil are not one state. A project whose catalog is known to be empty is one
+// where every workflow runs the derived image — internal/infra's
 // catalogJobImage and run.go's catalogDockerAsk both stop at cat == nil — so
 // the per-workflow record is the image its jobs start on and is compared like
 // any other workflow's. catalog.Applies answers true for a pin however empty
 // the catalog is (a pin is the repository's own claim), so the catalog guard
 // alone took such a workflow for the catalog's and no line judged its image at
-// all. The other nil is a catalog that was not read: there the node that did
-// not answer may hold the entry, the pin is left to the catalog, and
-// imageCatalogUnreadCheck is the line that says so.
+// all. The other nil is a catalog nobody read: there the node that did not
+// answer may hold the entry a pin names, one whose tags cover a workflow's
+// needs:, or the default a workflow that names nothing runs, so no workflow is
+// judged and imageCatalogUnreadCheck is the line that says so. A catalog
+// written empty in this machine's own config is the
+// first state and not the second, however the node answered: the file's
+// catalog wins (localcfg's keep rule, D1140), and ImageCatalogEffective
+// answers nil for it on purpose.
 //
-// Mutation (run, restore): let a nil catalog be the catalog speaking for a
-// pinned workflow whatever the read did (`case cat == nil:` in
-// workflowCatalogEntry), and the first subtest fails: no image-config-app.
+// Mutations (run, restore): `case cat == nil:` in workflowCatalogEntry, and
+// the first and last subtests fail (no image-config-app); `return
+// config.Entry{}, false` for the needs: path with catUnknown, and the third
+// fails (the unread node's catalog may cover the tag); dropping the
+// `catUnknown && catalog.MayApply(w)` arm, and the fourth fails (the unread
+// node may mark the default a workflow that names nothing runs);
+// `catUnknown := cat == nil && catErr != nil`, and the last fails (a
+// written-empty local catalog is read as an unknown).
 func TestDoctorImageConfigComparesAPinWithNoCatalog(t *testing.T) {
-	const yaml = minimalAnchored + "git: { provider: github }\nworkflows:\n  app: { image_name: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	const pinned = minimalAnchored + "git: { provider: github }\nworkflows:\n  app: { image_name: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	const tagged = minimalAnchored + "git: { provider: github }\nworkflows:\n  app: { needs: [node], commands: { build: sh build.sh, test: sh test.sh } }\n"
+	const namesNothing = minimalAnchored + "git: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
-	// rig is a checkout of acme/other pinning an entry, with a per-workflow
-	// record whose hash is not what app resolves to now: compared, it fires.
-	rig := func(t *testing.T, f *cloudFixture) (string, context.Context, *localcfg.Config, resolvedFile) {
+	// rig is a checkout of acme/other with a per-workflow record whose hash is
+	// not what app resolves to now: compared, it fires. brokenNode is whether
+	// the published policy node is one no reader gets past (a marker that is
+	// not a generation, projectpolicy.Read's MarkerError).
+	rig := func(t *testing.T, f *cloudFixture, repoYAML string, brokenNode bool) (string, context.Context, *localcfg.Config, resolvedFile) {
 		t.Helper()
 		isolateCache(t)
 		publishedLayer(t, f, testProjectLayer)
-		dir := layerCheckout(t, f, yaml)
+		var db *gcpfake.RTDB
+		if brokenNode {
+			db = doctorPublishedCatalog(t, f)
+		}
+		dir := layerCheckout(t, f, repoYAML)
 		slug := mustSlug("github", "acme/other")
 		data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: "app", ImageConfigHash: strings.Repeat("0", 64)})
 		writeBucketFile(t, f, imagecheck.RecordKey(slug, "app"), string(data))
+		if db != nil {
+			db.Set(projectpolicy.PathRulesMarker(), "not-a-generation")
+		}
 		lc := fileEnv(t, f).lc
 		ctx := context.Background()
 		return dir, ctx, lc, resolvedLayerFixture(t, ctx, lc, dir)
@@ -660,7 +681,7 @@ func TestDoctorImageConfigComparesAPinWithNoCatalog(t *testing.T) {
 
 	t.Run("the project has no catalog", func(t *testing.T) {
 		f := newCloudFixture(t)
-		dir, ctx, lc, rf := rig(t, f)
+		dir, ctx, lc, rf := rig(t, f, pinned, false)
 		cs := doctorLayerChecks(ctx, lc, dir, rf)
 		if c := layerCheck(cs, "image-catalog"); c != nil {
 			t.Fatalf("the node answered and states no catalog: %+v", c)
@@ -676,18 +697,64 @@ func TestDoctorImageConfigComparesAPinWithNoCatalog(t *testing.T) {
 
 	t.Run("the catalog could not be read", func(t *testing.T) {
 		f := newCloudFixture(t)
-		db := doctorPublishedCatalog(t, f)
-		dir, ctx, lc, rf := rig(t, f)
-		// The node no reader gets past: a marker that is not a generation
-		// (projectpolicy.Read's MarkerError), and this checkout's own config
-		// states no catalog, so what the job spec resolves is unknown.
-		db.Set(projectpolicy.PathRulesMarker(), "not-a-generation")
+		dir, ctx, lc, rf := rig(t, f, pinned, true)
 		cs := doctorLayerChecks(ctx, lc, dir, rf)
 		if c := layerCheck(cs, "image-catalog"); c == nil || !c.unread {
 			t.Fatalf("an unread node must be doctor's unread state: %+v", c)
 		}
 		if c := layerCheck(cs, "image-config-app"); c != nil {
 			t.Fatalf("the unread node may hold the pinned entry, so the pin is left to the catalog: %+v", c)
+		}
+		if c := layerCheck(cs, "image-catalog-app"); c != nil {
+			t.Fatalf("the unread node's catalog may hold the entry, so no entry is judged: %+v", c)
+		}
+	})
+
+	t.Run("a needs: the unread node's catalog may cover", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dir, ctx, lc, rf := rig(t, f, tagged, true)
+		cs := doctorLayerChecks(ctx, lc, dir, rf)
+		if c := layerCheck(cs, "image-catalog"); c == nil || !c.unread {
+			t.Fatalf("an unread node must be doctor's unread state: %+v", c)
+		}
+		if c := layerCheck(cs, "image-config-app"); c != nil {
+			t.Fatalf("the unread node's catalog may cover the tag, so the workflow is left to it: %+v", c)
+		}
+	})
+
+	// A workflow that names nothing runs the project's default, and whether the
+	// node nobody read marks one is the single clause of catalog.Applies that
+	// reads the catalog — so the unread state asks MayApply instead, which is
+	// that predicate without the clause, and the workflow is left to the
+	// catalog. Judged here it would be compared against the derived image,
+	// which its jobs run only if the node marks no default at all.
+	// Mutation (run, restore): drop the `catUnknown && catalog.MayApply(w)`
+	// arm, and this subtest fails with image-config-app.
+	t.Run("a workflow that names nothing, and an unread node", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dir, ctx, lc, rf := rig(t, f, namesNothing, true)
+		cs := doctorLayerChecks(ctx, lc, dir, rf)
+		if c := layerCheck(cs, "image-catalog"); c == nil || !c.unread {
+			t.Fatalf("an unread node must be doctor's unread state: %+v", c)
+		}
+		if c := layerCheck(cs, "image-config-app"); c != nil {
+			t.Fatalf("the unread node may mark the default this workflow runs, so it is left to the catalog: %+v", c)
+		}
+	})
+
+	t.Run("a catalog written empty in this file is an absence", func(t *testing.T) {
+		f := newCloudFixture(t)
+		// This machine's own file says the catalog is empty, which is how a
+		// published one is taken away on purpose (localcfg's keep rule).
+		f.appendConfig(t, "image_catalog: {}\n")
+		dir, ctx, lc, rf := rig(t, f, pinned, true)
+		cs := doctorLayerChecks(ctx, lc, dir, rf)
+		if c := layerCheck(cs, "image-catalog"); c != nil {
+			t.Fatalf("a config that states a catalog of its own is not the unread state: %+v", c)
+		}
+		c := layerCheck(cs, "image-config-app")
+		if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "other image settings") {
+			t.Fatalf("the file's empty catalog is what the job spec resolves, so the derived image is compared: %+v", c)
 		}
 	})
 }
