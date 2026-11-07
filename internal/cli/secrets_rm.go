@@ -157,10 +157,12 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 			pluginwire.Printable(name), secretsBlockProject, strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
 	}
 	// The run's own account (CL7a): one line per step, and the log beside it
-	// (D1352). It is opened here and not at the top, because every refusal
-	// above writes nothing and keeps neither.
-	run := stepRunFor(cmd, "secrets-rm", cmd.OutOrStdout())
-	defer run.close()
+	// (D1352). It is opened at the removal and not before it: everything
+	// between here and the step below — the container lookup, the document
+	// this file reads back, the entry that is not there — refuses over a state
+	// this command did not change, so a refused invocation keeps neither a
+	// step nor a log. A log each refusal filed would be one of the 50 this
+	// command's name keeps (pruneLogs), evicting the newest real one.
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
@@ -211,7 +213,11 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	// The step covers both halves — the config entry and the container — since
 	// the command is one removal made of two: it is opened before the diff and
 	// abandoned by every path that leaves the removal unmade, which is a dry
-	// run and a declined confirmation alike (G3).
+	// run and a declined confirmation alike (G3). It is where the run begins:
+	// the refusals above it are answered from what is already there and from
+	// this file, and the removal below is the first thing that changes either.
+	run := stepRunFor(cmd, "secrets-rm", cmd.OutOrStdout())
+	defer run.close()
 	st := run.rep.Step("Removing " + block + "." + pluginwire.Printable(name))
 	defer st.Abandon()
 

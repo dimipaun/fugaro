@@ -590,15 +590,6 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate && (!reviewSigning || previous) {
 		return credsGenerateNameRefusal()
 	}
-	// The run's own account (CL7a): one line per step and the log beside it
-	// (D1352). The refusals from here to the write are abandoned — a container
-	// with no version, a document the loader refuses, a value that was not read
-	// — because none of them wrote anything and a refused write is not a step
-	// that happened (G3). The four returns at and after the write are not: a
-	// version of this credential may exist, so they end the step with a cross
-	// (credsStepFailed).
-	run := stepRunFor(cmd, "creds-set", cmd.OutOrStdout())
-	defer run.close()
 	_, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -610,8 +601,6 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if err := store.check(ctx); err != nil {
 		return remoteErr(err, nil)
 	}
-	st := run.rep.Step("Writing " + safetext.Field(store.id))
-	defer st.Abandon()
 	// What the document holds now, and what this write replaces. A container
 	// with no version is the first write's starting point; a document the
 	// loader refuses is refused here, before anything of ours is written, so
@@ -629,6 +618,22 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 			return credsDocRefusal(store.id, err)
 		}
 	}
+	// The run's own account (CL7a): one line per step and the log beside it
+	// (D1352). It opens at the write and not at the command's door: every
+	// refusal above — the project's own selection, the container's check, a
+	// document the service could not have read — is answered from what is
+	// already there and writes nothing, so a refused invocation keeps neither
+	// a step nor a log; a log each one filed would be one of the 50 this
+	// command's name keeps (pruneLogs), evicting the newest real one. The two
+	// refusals left are the value's own reading and the document's, and they
+	// abandon the step rather than failing it: nothing was written, and a
+	// refused write is not a step that happened (G3). The four returns at and
+	// after the write are not — a version of this credential may exist, so
+	// they end the step with a cross (credsStepFailed).
+	run := stepRunFor(cmd, "creds-set", cmd.OutOrStdout())
+	defer run.close()
+	st := run.rep.Step("Writing " + safetext.Field(store.id))
+	defer st.Abandon()
 	var value []byte
 	if generate {
 		value, err = generateReviewSigningValue()

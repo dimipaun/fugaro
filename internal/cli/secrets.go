@@ -578,10 +578,14 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	}
 	// The value path's own account (CL7a): one line per step, and --json's
 	// stdout stays the store's own document (G2) because the reporter puts its
-	// human lines on stderr under that flag. The refusals above write neither a
-	// step nor a log (D1352).
-	run := stepRunFor(cmd, "secrets-set", cmd.OutOrStdout())
-	defer run.close()
+	// human lines on stderr under that flag. The run opens where the run's work
+	// does — at the store, step or two halves below — and not at the command's
+	// door: the refusals above and between, the scope decision and the
+	// eligibility checks included, are answered from local config and from the
+	// flags and write nothing, so a refused invocation keeps neither a step nor
+	// a log (D1352). Refused invocations are the common typo case, and a log
+	// each one filed would be one of the 50 this command's name keeps
+	// (pruneLogs), evicting the newest real one an operator is pointed at.
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
@@ -623,6 +627,18 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		repo = r
 	}
 	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name, repo)) {
+		// The refusal D2's default can meet is decided here, before the run
+		// opens and before secretsStoreStep: projectWideAccepted reads local
+		// config, and the store below is never reached when it says no, so a
+		// store that did not happen is not a step (G3). Decided inside the
+		// step it printed a cross on `Storing <name>` with the path of the
+		// empty log this command's door had already filed, for a store it
+		// never called.
+		if !projectWideAccepted(env.lc, name) {
+			return projectWideRefusal(env.lc, name)
+		}
+		run := stepRunFor(cmd, "secrets-set", cmd.OutOrStdout())
+		defer run.close()
 		_, err := secretsStoreStep(run, name, func() (string, string, error) { return secretsSetProjectWide(run, cmd, env, o, name) })
 		return err
 	}
@@ -713,6 +729,12 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 			"note: %s is available project-wide to %s as well; this repository's own copy overrides the project copy from now on, and disabling the copy's last enabled version is the only way back\n",
 			pluginwire.Printable(name), pluginwire.Printable(r.repo))
 	}
+	// Everything above this line answered the question of whether this
+	// invocation may write at all, from local config and from the flags; the
+	// store below is the first thing here that does, so the run — and the log
+	// it files under this command's name — begins with it.
+	run := stepRunFor(cmd, "secrets-set", cmd.OutOrStdout())
+	defer run.close()
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: r.label, gcp.LabelSecret: name}
 	_, err = secretsStoreStep(run, name, func() (string, string, error) {
 		return storeSecret(run, cmd, env, o, gcp.SecretID(r.slug, name), labels, name)

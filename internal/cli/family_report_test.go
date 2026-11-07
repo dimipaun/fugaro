@@ -250,6 +250,59 @@ func TestCredsSetWritesALog(t *testing.T) {
 	familyLog(t, "creds-set")
 }
 
+// TestARefusedFamilyCommandKeepsNoLogAndNoStep: these three commands decide
+// whether the invocation may write at all before they open a run, and every
+// refusal on the way there writes nothing — so a refused invocation keeps
+// neither a step nor a log (D1352). It is not tidiness: a log each refusal
+// filed would be one of the 50 this command's name keeps (pruneLogs), and
+// refused invocations are the common typo case, so enough of them evict the
+// newest real log an operator is pointed at. The --project-wide case is the one
+// that printed a step as well, because the refusal was decided inside the step:
+// a cross on `Storing <name>` over the path of the empty log this command's
+// door had already filed, for a store that never ran.
+//
+// Mutation (run, restore): open each run at the command's door — the shape all
+// three had — and every case files a log again, and the first one prints its
+// step line.
+func TestARefusedFamilyCommandKeepsNoLogAndNoStep(t *testing.T) {
+	cases := []struct {
+		name    string
+		refused func(t *testing.T) (string, string, error)
+	}{
+		{"a project-wide store the local config does not accept", func(t *testing.T) (string, string, error) {
+			secretsFixture(t)
+			projectSecretFixture(t, "project_secrets:\n  "+config.AnthropicSecret+": { allow_data_to: [] }\n")
+			appCheckout(t)
+			return executeStdin(t, tokenValue, "secrets", "set", config.AnthropicSecret, "--project-wide")
+		}},
+		{"a removal of a name neither half holds", func(t *testing.T) (string, string, error) {
+			secretsRmFugaro(t)
+			secretsFixture(t)
+			projectSecretFixture(t, "project_secrets: {}\n")
+			return execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+		}},
+		{"a write over a bundle the service will not serve", func(t *testing.T) (string, string, error) {
+			f := credsFixtureFor(t)
+			f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "hidden")+"\n"))
+			f.DisableVersions(f.id)
+			return executeStdin(t, credsValue(t, "ours")+"\n", "creds", "set", config.ClaudeOAuthToken)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateState(t)
+			out, errOut, err := tc.refused(t)
+			if err == nil {
+				t.Fatalf("the command ran, want the refusal this case is about:\n%s%s", out, errOut)
+			}
+			if names := stepNames(out + errOut); len(names) != 0 {
+				t.Errorf("a refused invocation printed %d step line(s), want none: %v\n%s%s", len(names), names, out, errOut)
+			}
+			assertNoLog(t)
+		})
+	}
+}
+
 // TestCredsSetFailureIsACrossAndALog: a write that may have landed is not
 // abandoned. The run reached a result for its step — a version of the
 // credential exists — so the account carries the cross, the error the command
