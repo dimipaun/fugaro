@@ -418,6 +418,14 @@ type Agent struct {
 	Review       string  `yaml:"review"`
 	// Models picks a model per stage role; a role left out uses Model.
 	Models ModelRoles `yaml:"models"`
+	// Crafts picks each craft's model and access, the credential or pool its
+	// calls go out on (docs/model-crafts/spec.md §3). It is additive: the keys
+	// above keep their meaning until `fugaro update` migrates an installation
+	// to this one and removes them (reconciliation MC4). A craft left out
+	// inherits the craft it follows (Crafts.Inherited), and a craft whose
+	// access it does not name takes the project's, which no repository file
+	// can see.
+	Crafts Crafts `yaml:"crafts"`
 	// MaxOutputTokens limits one call's output per role; 0 is no limit.
 	MaxOutputTokens RoleTokens `yaml:"max_output_tokens"`
 	// MaxRunTokens limits a whole run's tokens; 0 is none. It can only
