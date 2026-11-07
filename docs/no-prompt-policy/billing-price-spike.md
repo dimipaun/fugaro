@@ -20,7 +20,7 @@ grant is needed"*).
 | --- | --- |
 | Which API | `cloudbilling.googleapis.com`, the **Cloud Billing Catalog API**: `services.list` then `services.skus.list` (GA, `v1`), whose `Sku.pricingInfo` carries the public list-price timeline. The newer **Google Cloud Pricing API** (`v2beta/services`, `v2beta/skus`, `v1beta/skus/<id>/price`) is **Preview** and does the same for public data. |
 | Which role | **None.** Google documents *"You don't need any specific IAM permissions to make this API call"* for the public services and SKUs. |
-| Which grant to write in `iam.tf` | **None.** Not a new `grantRules` row either. The only installation change is enabling the API (§3) — and that holds for **both** credential kinds, because the rule for the quota project depends on which one is calling (§1.2). |
+| Which grant to write in `iam.tf` | **None.** Not a new `grantRules` row either. The only installation change is enabling the API (§3) — and that holds for **both** credential kinds, because the rule for the quota project depends on which one is calling, and because the lookup runs only where the budget backend is on, which is where the person's `serviceusage.services.use` already comes from (§1.2). |
 | Which credential | The launching identity's own credentials are enough in principle; the documented examples use an **API key**. Which of the two the endpoint actually accepts for an OAuth caller is **UNVERIFIED** (§1.4) and is the one call the owner should make before T8 starts. |
 | Contract prices | **Not reachable from a project**, by design: they need `billing.billingAccountSkus.list` / `billing.billingAccountPrice.get` on the **Cloud Billing account** (`roles/billing.viewer`/`roles/billing.admin`, whose lowest grant level is the billing account). A project module cannot grant it. The cap needs an upper bound, and the **list price is one** — so this is a limit we do not need to cross. |
 | The recommendation | The lookup, as D1550 says, with three amendments and a per-process cache (§6). One fact must be verified first (§1.4); if it fails, the fallback is the pinned dated table, which is the smallest design that still caps builds in dollars. |
@@ -90,9 +90,21 @@ This matters here, in three ways:
     may name **any** project of theirs (`google.golang.org/api@v0.299.0` `internal/creds.go:285-303`:
     precedence is the client option, then `GOOGLE_CLOUD_QUOTA_PROJECT`, then the credentials file) — a
     project `fugaro update` does not own and where the operator would have to enable the API by hand.
-    **This path needs no grant:** the person already holds `roles/serviceusage.serviceUsageConsumer` on
-    the installation project (`deploy/terraform/gcp/modules/firebase/iam.tf:109-115`, `usage_consumer`
-    over `setunion(local.people, local.admins)`).
+    **This path needs no new grant *where the budget backend is on*** — the person holds
+    `roles/serviceusage.serviceUsageConsumer` on the installation project there
+    (`deploy/terraform/gcp/modules/firebase/iam.tf:109-115`, `usage_consumer` over
+    `setunion(local.people, local.admins)`). **And where it is off, the lookup must not run at all.** The
+    grant comes from the Firebase module, which only `--firebase-project` applies — *"It is the flag that
+    asks for the backend — a run without it builds none"* (`internal/cli/init.go:403`), and the stage
+    skips itself without it (`internal/cli/init_stages.go:672-678`, *"no --firebase-project given"*) —
+    while builds happen on such an installation too. So on a backend-less project a lookup naming the
+    installation project would be **refused** for want of `serviceusage.services.use`. The way out is not
+    a grant: the lookup exists to feed a **dollar reservation**, and the reservation is the backend's
+    ledger, so without the backend there is nothing to reserve and nothing to look up. That is the repo's
+    own pattern for a ledger feature on a project with no backend — return before the call
+    (`internal/cli/accounts.go:253-260`, whose remedy sentence is `fugaro update --firebase-project <p>`;
+    `internal/cli/api.go:159` refuses the same way for the spend history). §3 records what the alternative
+    would cost if the owner ever wants a price without the backend, and §6 makes the gate a T8 test.
   - **Service-account credentials — the catalog check job, and the history job — pass no quota project
     at all.** Then the client sends **no** `X-Goog-User-Project` header, and the request is billed to
     the account's own project: the installation project, where this section enables the API. Nothing
@@ -104,9 +116,9 @@ This matters here, in three ways:
     `toCatalogCheck` is the principal kind that **no row accepts** (`internal/infra/tf/cover.go:1329-1338`),
     so a grant to that account is not an ordinary covered change at all; it reaches the owner as a
     question from `fugaro update`, which the HARD RULE says an upgrade must not need.
-- On the installation project, the user path's enablement needs nothing new: the one permission set
-  that lets a credential use a project as its quota project is already granted there to the
-  installation's **people and admins**
+- On the installation project, the user path's enablement needs nothing new **there**, because the one
+  permission set that lets a credential use a project as its quota project is already granted to the
+  installation's **people and admins** by the module the backend turns on
   (`deploy/terraform/gcp/modules/firebase/iam.tf:109-115`; the `grantRules` row that covers the grant
   is `roles/serviceusage.serviceUsageConsumer: toPeople | toAccounts` at
   `internal/infra/tf/cover.go:185`). The only other holder anywhere is the **history account**
@@ -116,7 +128,8 @@ This matters here, in three ways:
   the header is not free even for a caller naming its own project. **The spike does not lean on it
   either way**, and does not claim to know why that one account holds the role; §3 says what T8's live
   run settles. What is certain is the rule's asymmetry: the header goes out only when a client names a
-  project, so a client that names none cannot need the permission.
+  project, so a client that names none cannot need the permission — and on an installation whose backend
+  is off, the client names none because the lookup does not run (the bullet above).
 
 So the enablement, if the lookup ships, is one line in `apis.tf`'s `local.apis` — a
 `google_project_service`, a type `allowedTypes` already covers (`internal/infra/tf/cover.go:22`), and
@@ -182,17 +195,25 @@ GA `v1` reference lists OAuth scopes without an IAM section. This is exactly one
 any Google account, before T8 is started:
 
 ```sh
-curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  -H "X-Goog-User-Project: <the installation project>" \
-  "https://cloudbilling.googleapis.com/v1/services?pageSize=5"
+curl -sS --config <(printf 'header = "Authorization: Bearer %s"\nheader = "X-Goog-User-Project: %s"\nurl = "https://cloudbilling.googleapis.com/v1/services?pageSize=5"\n' \
+  "$(gcloud auth print-access-token)" "<the installation project>")
 ```
+
+The token stays out of argv — `curl --config` reads the headers from a process substitution and
+`printf` is a shell builtin, so no process's command line carries it. That is this repo's own recipe for
+a bearer token (`docs/git-providers.md:82-85`), the practice the plan quoted three bullets above asks
+for, and what `docs/gcp-live-checklist.md:7415` states for its own token ("`ps` shows a process's argv
+to every user of the machine for as long as the process lives"): a token passed as `-H "Authorization:
+Bearer $(…)"` is readable by any local user for its lifetime, and these are full-identity tokens.
 
 *If it answers with services, the token route is real and no key exists anywhere in the design. If it
 answers 403, the lookup needs an API key — and §3 and §6 change accordingly.* The unauthenticated 403
 above decides neither way: Google's frontend refuses the caller before any IAM is consulted, so only
 the same call **with** a token separates "public data, no permission" from "the token needs a role".
 Note the second header: without it a user token is billed to Google's own quota project, which is the
-case `ErrNoQuotaProject` describes and not the one the code will be in (§1.2).
+case `ErrNoQuotaProject` describes and not the one the code will be in (§1.2) — and **with** it the
+caller needs `serviceusage.services.use` on the project it names, which is the subject of §1.2's third
+bullet. If the owner's installation has no budget backend, expect that refusal here and read §1.2.
 
 ### 1.5 The Cloud Build machine-minute SKU — **UNVERIFIED**
 
@@ -211,13 +232,16 @@ them without a credential. What is known:
   carries a service account, a machine type, a logging mode and a timeout and nothing else
   (`internal/backend/gcp/build.go:227-233`) — so it submits to the **default pool**, and the
   default-pool table is the right one.
-- The probe that settles it (either form of identity from §1.4):
+- The probe that settles it (either form of identity from §1.4), with the token in a `curl --config`
+  process substitution for the reason given there:
 
 ```sh
-curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  "https://cloudbilling.googleapis.com/v1/services?pageSize=1000"      # find the Cloud Build serviceId
-curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  "https://cloudbilling.googleapis.com/v1/services/<serviceId>/skus?pageSize=5000"  # SKUs, regions, pricingInfo
+# the Cloud Build serviceId
+curl -sS --config <(printf 'header = "Authorization: Bearer %s"\nheader = "X-Goog-User-Project: %s"\nurl = "https://cloudbilling.googleapis.com/v1/services?pageSize=1000"\n' \
+  "$(gcloud auth print-access-token)" "<the installation project>")
+# its SKUs: ids, displayNames, serviceRegions, pricingInfo
+curl -sS --config <(printf 'header = "Authorization: Bearer %s"\nheader = "X-Goog-User-Project: %s"\nurl = "https://cloudbilling.googleapis.com/v1/services/<serviceId>/skus?pageSize=5000"\n' \
+  "$(gcloud auth print-access-token)" "<the installation project>")
 ```
 
 ## 2. Which identity launches builds, and what each would need
@@ -231,9 +255,9 @@ that is not `fugaro-b-<repo>@<project>.iam.gserviceaccount.com`.
 
 | Path | Submit identity (the credential the API call carries) | Build runs as | Submitting today | What a billing read would add |
 | --- | --- | --- | --- | --- |
-| A person's CLI at a terminal | Their **ADC** — `authorized_user`, i.e. the person (`internal/cli/init_project.go:490` `credentialNote` names it; `GOOGLE_APPLICATION_CREDENTIALS` can override it with a service-account key). `gcloud auth application-default login` is the documented way to get it. | The repository's build account | `cloudbuild.builds.create` through the custom role `roles/fugaroBuildSubmitter` (`deploy/terraform/gcp/modules/installation/iam.tf:35`, granted to `var.operators` at `:77` `operator_build_submitter`) | Nothing to grant. `cloudbilling.googleapis.com` **enabled on the installation project** — which the lookup's client must name as its quota project (`internal/backend/gcp/gcp.go:67-82` is the pattern; `internal/billing/accounts.go:249-271` is the counter-example that must not be copied, §1.2) — and `serviceusage.services.use` there, already held (`roles/serviceusage.serviceUsageConsumer`, `firebase/iam.tf:109-115`). |
+| A person's CLI at a terminal | Their **ADC** — `authorized_user`, i.e. the person (`internal/cli/init_project.go:490` `credentialNote` names it; `GOOGLE_APPLICATION_CREDENTIALS` can override it with a service-account key). `gcloud auth application-default login` is the documented way to get it. | The repository's build account | `cloudbuild.builds.create` through the custom role `roles/fugaroBuildSubmitter` (`deploy/terraform/gcp/modules/installation/iam.tf:35`, granted to `var.operators` at `:77` `operator_build_submitter`) | Nothing to grant, **on an installation whose budget backend is on**: `cloudbilling.googleapis.com` enabled on the installation project, which the lookup's client names as its quota project (`internal/backend/gcp/gcp.go:67-82` is the pattern; `internal/billing/accounts.go:249-271` is the counter-example that must not be copied, §1.2), and `serviceusage.services.use` there — held because the Firebase module grants it to people and admins (`firebase/iam.tf:109-115`). That module is applied only with `--firebase-project` (`internal/cli/init.go:403`, `init_stages.go:672-678`), so on a **backend-less** installation the person holds neither the ledger nor the permission, and the lookup must not run there at all: there is no dollar cap to feed (§1.2, §3). |
 | An agent's session, on the person's credentials | **The same identity.** Nothing in the credential path reads `internal/agentenv`'s markers: an agent runs the same binary with the same ADC, so it submits as the person and reads prices as the person. | The repository's build account | the same `roles/fugaroBuildSubmitter` | The same, and no more. A price is public, read-only data: an agent that can build can already spend the money, and reading the rate it is charged at is not a privilege change (F20's trust probes are unchanged). |
-| The catalog check job (`fugaro-catalog-check`) | Its **own service account** (`installation/catalogcheck.tf:43`), on the job `fugaro image check --job --catalog` (`:99`, `:125`) | Each repository's build account, per repository | `projects/<p>/roles/fugaroBuildSubmitter`, granted by `installation/catalogcheck.tf:33-41` `catalog_check_build_submitter`, plus `roles/iam.serviceAccountUser` on each repo's build account (`modules/repo/catalogcheck.tf:24`) | The API enabled on the project, and — for the **key** route — the key delivered to the job. That is a new secret on the launch path and *a new `grantRules` row* (§3). For the **token** route, **nothing, and the lookup's client must pass no quota project here**: with service-account credentials that means no `X-Goog-User-Project` header is sent at all, so the account's own project — the installation project, where §1.2 enables the API — is the one billed, and `serviceusage.services.use` never enters the picture (§1.2). Note what **not** to cite here: `firebase/iam.tf:100-108` reads the other way — that client sends the same header and the module concludes it needs `serviceusage.services.use` — and its parenthetical about a service account's *own* project is not a claim this doc can rest on. What the doc rests on is narrower and verifiable: the job's client passes **no** quota project, so no header is sent, so the project-consumer check that permission guards is not reached (`§1.2`). And there is no second project to point at in the first place: `checkFirebaseProject` (`internal/cli/init.go:1386-1395`) **refuses** a Firebase project other than the installation's own GCP project, so a differing pair is not the explanation for the history account's grant. |
+| The catalog check job (`fugaro-catalog-check`) | Its **own service account** (`installation/catalogcheck.tf:43`), on the job `fugaro image check --job --catalog` (`:99`, `:125`) | Each repository's build account, per repository | `projects/<p>/roles/fugaroBuildSubmitter`, granted by `installation/catalogcheck.tf:33-41` `catalog_check_build_submitter`, plus `roles/iam.serviceAccountUser` on each repo's build account (`modules/repo/catalogcheck.tf:24`) | The API enabled on the project, and — for the **key** route — the key delivered to the job. That is a new secret on the launch path and *a new `grantRules` row* (§3). For the **token** route, **nothing, and the lookup's client must pass no quota project here**: with service-account credentials that means no `X-Goog-User-Project` header is sent at all, so the account's own project — the installation project, where §1.2 enables the API — is the one billed, and `serviceusage.services.use` never enters the picture (§1.2). Note what **not** to cite here: `firebase/iam.tf:100-108` reads the other way — that client sends the same header and the module concludes it needs `serviceusage.services.use` — and its parenthetical about a service account's *own* project is not a claim this doc can rest on. What the doc rests on is narrower and verifiable: the job's client passes **no** quota project, so no header is sent, so the project-consumer check that permission guards is not reached (`§1.2`). And there is no second project to point at in the first place: `checkFirebaseProject` (`internal/cli/init.go:1386-1395`) **refuses** a Firebase project other than the installation's own GCP project, so a differing pair is not the explanation for the history account's grant. And, like every lookup, the job reads a price only where the budget backend is on — the job itself is gated on `catalog_check`, which is a different switch (§1.2). |
 
 Two notes a reader should not have to rediscover:
 
@@ -256,6 +280,7 @@ Two notes a reader should not have to rediscover:
 | Enable `cloudbilling.googleapis.com` | `deploy/terraform/gcp/modules/installation/apis.tf`, in `local.apis` — on the **installation project**, which the lookup's client must name as its quota project **for user credentials** (§1.2) | **Yes**, if the lookup ships. A `google_project_service`, already in `allowedTypes` (`internal/infra/tf/cover.go:22`), so no cover change. It is not enabled today. Without the quota project on the user path, this row is not enough and the enablement lands on the operator's own project instead — an operator step (HARD RULE). |
 | Any `google_project_iam_member` granting a billing role | `installation/iam.tf` | **No.** A project grant of `roles/billing.viewer` would not carry the permissions anyway (§1.3). Do not write it. |
 | `roles/serviceusage.serviceUsageConsumer` for the catalog check account | `installation/catalogcheck.tf`, and a new `toCatalogCheck` row in `cover.go`'s `grantRules` | **No, and it would not be an ordinary row** (see below). The job's lookup client passes no quota project, so the job never needs the permission; only the **user** path does, and the person already holds it. |
+| `roles/serviceusage.serviceUsageConsumer` for the operators, so the user path also works **without** a budget backend | `deploy/terraform/gcp/modules/installation/iam.tf` (`var.operators`, as `operator_build_submitter` is granted at `:77-85`) | **No** — the lookup does not run without the backend (§1.2). This row is recorded because it is the one real alternative: it would be **covered by an existing `grantRules` row** (`toPeople`, `internal/infra/tf/cover.go:185`, so no new row and no secret), it grants a permission the same person already has on every installation whose backend is on, and it would let a backend-less installation read a price it has no ledger to spend against. If the owner wants that, it is one `google_project_iam_member` and T5's *"a new grant in a security-sensitive module"* becomes live. |
 | A new `grantRules` row | `internal/infra/tf/cover.go:139` | **No** for the token route. |
 | A new `grantRules` row for a **secret**, if an API key is chosen | `cover.go`'s `google_secret_manager_secret_iam_member` row | **Yes, and it is a widening.** The catalog check account is its own principal kind (`toCatalogCheck`, `cover.go:123`, matched by `isCatalogCheckMember` at `:732`) and **no row accepts it** (`:103-113`: every grant to it is refused by the plan review today). An API key handed to the job therefore means a new row admitting `toCatalogCheck`. Prefer the token route to avoid it. |
 
@@ -297,6 +322,7 @@ the estimator must do so it stays survivable.
 | API disabled on the project | 403 with `google.rpc.ErrorInfo`, `reason: SERVICE_DISABLED`, `metadata.service = cloudbilling.googleapis.com` | **Refuse**, and name the API and the project with the `gcloud services enable … --project <p>` line | `internal/infra/apis.go:82-99` `serviceDisabled`; `internal/infra/firebase.go:517-536` `disabledConsumer` (already used for this very API) |
 | No quota project on the ADC | 403 naming a Google-owned quota project, `reason: SERVICE_DISABLED` | **Refuse.** Reachable on the **user** path only, and only if the client did not name one: the person's ADC carries no quota project, Google bills the call to a project of its own, and the error therefore names that project rather than the installation's. This is exactly the failure §1.2's option exists to prevent, and the shape `ErrNoQuotaProject` reports. With service-account credentials no header is sent at all, so the mode cannot arise | `internal/billing/accounts.go:168-174` `ErrNoQuotaProject`; `internal/infra/firebase.go:499-503` |
 | Permission denied | 403 without `SERVICE_DISABLED` | **Refuse** | `internal/billing/accounts.go:150-159` `ErrNoPermission` |
+| The named quota project is one the caller may not use | 403 `PERMISSION_DENIED` naming the project and `serviceusage.services.use` (Google's system-parameters check; not `SERVICE_DISABLED`) | **Refuse**, and say which project was named. On the user path this is the backend-less shape §1.2 describes: the lookup does not run there, so it is a bug in the gate, not a condition to repair with a grant | the same `ErrNoPermission` shape; §3's alternative row is the only way to make it a real state |
 | Quota / rate limit | 429 `RESOURCE_EXHAUSTED` | Retry with a small bound, then **refuse**. A build is one lookup per command (§6), so this should be rare | the same shape `internal/billing` uses for its paged read |
 | Offline, DNS, TLS | transport error | **Refuse.** Note it is *not* a new offline scenario: submitting the build itself needs the network. What is new is that a transient failure of a **second** API now blocks a paid action that would otherwise have proceeded — which is the argument for the cache in §6 | — |
 | Unknown SKU, unmapped machine type, unexpected `usageUnit` | the catalog answers, but nothing matches | **Refuse** (the owner's rule: *"a missing or unknown price refuses, never defaults"*). This is also the hostile-config defence | — |
@@ -399,14 +425,19 @@ price refuses — with three amendments.**
    the lazy fallback is **not** allowed either: `GOOGLE_CLOUD_QUOTA_PROJECT` in the environment can
    supply one for a service account, so the lookup must not let it (`internal/creds.go:285-303`), and
    the catalog check job's environment must not carry the variable (`catalog_check.env` is written by
-   `internal/infra`). T8 pins all three with one test beside the lookup: the option slice carries
+   `internal/infra`). **And the lookup runs only where the budget backend is on** (§1.2): its user-path
+   grant is the Firebase module's (`firebase/iam.tf:109-115`), which only `--firebase-project` applies,
+   while the reservation it feeds is that backend's ledger — so a backend-less installation gets no
+   lookup rather than a grant. T8 pins all four with tests beside the lookup: the option slice carries
    `option.WithQuotaProject(<installation project>)` for user ADC and **not** for service-account
-   credentials, and the env var does not change either answer. No `iam.tf` edit, no `grantRules` row, no
-   secret, no API key — provided §1.4's probe says the token route works.
+   credentials; the env var changes neither answer; and the lookup is never constructed without a
+   backend (the repo's own early return, `internal/cli/accounts.go:253-260`). No `iam.tf` edit, no
+   `grantRules` row, no secret, no API key — provided §1.4's probe says the token route works.
 
 **The exact grant, stated once:** *none*. Federated out: nothing in `installation/iam.tf`, nothing in
 `cover.go`'s `grantRules`, one line in `apis.tf` — plus, on the user path, a quota project the
-installation already lets that person use (`§1.2`). That pair, and nothing else, is what keeps the
+installation already lets that person use (`§1.2`), which is why the lookup may not run where that
+grant is absent (a backend-less installation). That pair, and nothing else, is what keeps the
 enablement inside `fugaro update`.
 
 **The cache rule, stated once:** one lookup per command, held in memory, reused for every build that
@@ -473,6 +504,8 @@ The repository, by path and symbol:
 | `google.golang.org/api@v0.299.0` `transport/http/dial.go:189,240-242`; `internal/creds.go:29,285-303` | The header rule the split rests on: `X-Goog-User-Project` is set whenever a quota project resolved non-empty, whatever the credential kind; with no client option the only fallbacks are `GOOGLE_CLOUD_QUOTA_PROJECT` and a `quota_project_id` in the credentials file |
 | `internal/cli/image_check_catalog.go:50,540` | The catalog check job's client, built with `gcp.Options{GCPProject: …}` — the same account, already sending the same header |
 | `deploy/terraform/gcp/modules/firebase/iam.tf:100-121` | `usage_consumer` (people and admins) and `history_usage` (the history account): who holds `serviceUsageConsumer`, and why the Firestore client needs it — an account naming a project that is **not** its own |
+| `internal/cli/init.go:403`; `internal/cli/init_stages.go:672-678`; `internal/cli/accounts.go:253-260`; `internal/cli/api.go:159` | `--firebase-project` is what turns the backend on (*"a run without it builds none"*) and its stage skips without it; and the repo's own shape for a ledger feature on a project with no backend — return before the call, with the `fugaro update --firebase-project` remedy |
+| `docs/git-providers.md:82-85`; `docs/gcp-live-checklist.md:7415` | The repo's rule for a bearer token: `curl --config` from a process substitution, because `ps` shows argv to every local user for the process's lifetime |
 | `internal/cli/init_project.go:437,490` | `adcInfo`/`credentialNote`: `authorized_user` is the person |
 | `internal/billing/accounts.go:41-68,150-174,249-271` | The repo's existing Cloud Billing client: ADC only, `billingAccounts.list`, the permission/quota-project/API-disabled errors — and `newService`, which names **no** quota project, so the lookup must not copy it (§1.2) |
 | `internal/infra/apis.go:20-31,82-99`; `internal/infra/firebase.go:498-536` | Disabled-API detection, and that `cloudbilling.googleapis.com` is not enabled by the installation |
