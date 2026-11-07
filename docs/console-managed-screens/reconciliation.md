@@ -45,8 +45,8 @@ and a new IPC operation, and a write is not on the table** (F5, F6).
   (`console/src/renderer/screens/projects.ts:166`) is the seven-panel model — `caps`, `kill`,
   `repositories`, `accounts`, `secrets`, `policy`, `enrollment` — and its own comment says what the
   other two panels are: the models panel is the eighth and a second read's, the settings panel the
-  ninth and a third read's. The three reads are the tab's own: `showBudget` (`entry.ts:5050`),
-  `listModels` (`entry.ts:5087`) and `readSettings` (`entry.ts:5115`).
+  ninth and a third read's. The three reads are the tab's own: `showBudget` (`entry.ts:5051`),
+  `listModels` (`entry.ts:5088`) and `readSettings` (`entry.ts:5116`).
 - **Every panel names its source, and where there is no source the panel says so.**
   `PROJECTS_SOURCE_LINES` (`projects.ts:108`) is that table: `budget show --json`,
   `accounts ls --json`, `secrets ls --json`, `models ls --json`, `settings --json`.
@@ -166,7 +166,7 @@ one as the other (D1483).
 | # | Finding | Class | Where it lands in the tree |
 | --- | --- | --- | --- |
 | **F1** | The console draws five tabs, and none of them is a managed screen | **Exists** | `VIEWS` (`console/src/renderer/entry.ts:2461`): Live, Graph, Spend, Project, Coordinator |
-| **F2** | The Project tab is the project's own screen: nine panels from three reads | **Exists** | `PROJECT_PANEL_KEYS` (`console/src/renderer/screens/projects.ts:166`) is the seven-panel model, the first read's; the models panel and the settings panel are a second and a third read's (`showBudget`, `listModels`, `readSettings`, `entry.ts:5050`, `:5087`, `:5115`) |
+| **F2** | The Project tab is the project's own screen: nine panels from three reads | **Exists** | `PROJECT_PANEL_KEYS` (`console/src/renderer/screens/projects.ts:166`) is the seven-panel model, the first read's; the models panel and the settings panel are a second and a third read's (`showBudget`, `listModels`, `readSettings`, `entry.ts:5051`, `:5088`, `:5116`) |
 | **F3** | Its sources are five command lines, and every panel must trace to one | **Exists** | `PROJECTS_SOURCE_LINES` (`projects.ts:108`); the design's review criterion for the screen is that every field traces to a rule 6 row |
 | **F4** | The policy panel has no operation, so the console cannot read the policy node at all | **Gap** | `POLICY_SOURCE_LINE` (`projects.ts:122`) names the command and no `CONSOLE_OPERATIONS` row carries it; the panel's `operation` is null and it says what it cannot read. The fallback it would otherwise take is `PROJECTS_SOURCE_LINES[operation] ?? \`fugaro ${operation}\`` (`projects.ts:567`, `:587`), which for an operation named `policy.show` spells `fugaro policy.show` — an argv no CLI answers, which is why CM10 settles the row rather than letting the fallback draw one |
 | **F5** | The console's surface is a closed list and its spawn allow-list is exact argv | **Rule** | `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`), `argvFor` (`console/src/main/spawn.ts:1334`), rule 6's table (`docs/design/desktop-console.md` §5.1) |
