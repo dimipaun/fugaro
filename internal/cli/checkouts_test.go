@@ -324,6 +324,13 @@ func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
 		// The graph screen's read (GV1.6): a cloud read of this checkout's
 		// own repository, so it resolves the checkout like runs ls does.
 		{"plan", "status", "--json"},
+		// The managed screens' two reads (the managed screens' plan's CM3),
+		// spawned as §5.1 rule 6's own rows: the marks with their trail, and
+		// the published policy node. Neither writes anything, and both resolve
+		// this checkout on the way to the installation they are aimed at --
+		// which is the write this test exists to catch.
+		{"managed", "status", "--json"},
+		{"project", "policy", "show", "--json"},
 	} {
 		out, _, err := execute(t, args...)
 		if err != nil {

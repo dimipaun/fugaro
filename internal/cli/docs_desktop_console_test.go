@@ -1296,7 +1296,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-three argvs and nothing else -- the console's one spawn table
+// the twenty-five argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1387,6 +1387,20 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// then the write's -- with the value last, after the terminator, and
 		// the `unset` form the same words with no value at all.
 		"settings set KEY --layer <L> [--dry-run --json] [--yes] --project <name> [--config <path>] -- <VALUE>",
+		// The managed state and its audit trail (the managed screens' plan's
+		// CM3, the `managed.status` operation, D1472 to D1477): the two marks'
+		// own answer and the bounded subset of the newest audit record, never
+		// `argv` (D1476). Read-only, and the two words of its argv are the
+		// project flags §3.4 rule 3 gives every cloud command, so the row
+		// spells the whole argv back with no argument an operation's schema
+		// fills.
+		"managed status --json --project <name> [--config <path>]",
+		// The published policy node (the same plan's CM3, the `policy.show`
+		// operation, D1480 and D1481): `{project, policy}` and nothing else,
+		// and never `project show --json`, whose caps belong to the Spend
+		// screen and the `caps` panel. The same two project flags and no
+		// argument of its own.
+		"project policy show --json --project <name> [--config <path>]",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1525,7 +1539,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-two commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-four commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1537,10 +1551,12 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// read `models ls --json` (console 0.119.0, the owner's ruling of
 	// 2026-11-02), the settings read `settings --json` (the settings-edit
 	// plan's C1), the settings write `settings set KEY ...` (the same plan's
-	// C3, and the row that is not a read at all) and the launch `fugaro run`
-	// (V2.5.1a).
-	if len(allowed) != 22 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 22 (logs has two argvs)", path, argvs, len(allowed))
+	// C3, and the row that is not a read at all), the two managed reads
+	// `managed status --json` and `project policy show --json` (the managed
+	// screens' CM3: the marks with their trail, and the policy node) and the
+	// launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 24 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 24 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -9647,8 +9663,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is thirty-two operations**") {
-		t.Errorf("%s no longer says the surface is thirty-two operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one and the graph plan's CG9a to thirty-two), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is thirty-four operations**") {
+		t.Errorf("%s no longer says the surface is thirty-four operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, the graph plan's CG9a to thirty-two, and the managed screens' CM3 to thirty-three and thirty-four: the policy node's read and the managed state's), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string
