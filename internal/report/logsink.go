@@ -56,7 +56,9 @@ var euid = os.Geteuid
 // directory is `<localcfg.UserDir state>/fugaro/logs` (D1351): `$XDG_STATE_HOME`
 // where it is set, else `~/.local/state` on macOS and Linux, else
 // `%LOCALAPPDATA%` on Windows — the one directory rule the CLI has, which the
-// spec's `~/.fugaro` would have been a fourth beside (F5).
+// spec's `~/.fugaro` would have been a fourth beside (F5). The whole path is
+// resolved inside a root opened at the state directory, so no link along it,
+// and nothing swapped in behind one, can put this run's log somewhere else.
 //
 // Every failure — no state directory, a directory the process does not own, a
 // name already taken, a read-only home — is returned as an error and, with
@@ -80,20 +82,25 @@ func OpenLog(cmdName string, getenv func(string) string, goos string, now func()
 		return noLog{}, fmt.Errorf("report: no state directory to keep %s's log in: %w", cmdName, err)
 	}
 	at := now().UTC()
-	dir, err := logDir(base)
+	root, err := logRoot(base)
+	if err != nil {
+		return noLog{}, fmt.Errorf("report: no log for %s: %w", cmdName, err)
+	}
+	defer root.Close()
+	dir, err := logDir(root)
 	if err != nil {
 		return noLog{}, fmt.Errorf("report: no log for %s: %w", cmdName, err)
 	}
 	name := logName(cmdName, at, os.Getpid())
-	f, err := createLogFile(dir, name)
+	f, err := createLogFile(root, dir, name)
 	if err != nil {
 		return noLog{}, fmt.Errorf("report: no log for %s: %w", cmdName, err)
 	}
 	// After the open, so a failure to prune never costs the run its log, and
 	// before anything is written, so a pruned file is never one this run is
 	// still writing to.
-	pruneLogs(dir, cmdName, name, at)
-	return &logSink{f: f, path: filepath.Join(dir, name), red: NewRedactor(f, secrets)}, nil
+	pruneLogs(root, dir, cmdName, name, at)
+	return &logSink{f: f, path: filepath.Join(base, dir, name), red: NewRedactor(f, secrets)}, nil
 }
 
 // logName is a log's file name: `<command>-<14 digits UTC>-<pid>.log`. The
@@ -102,30 +109,42 @@ func logName(cmdName string, at time.Time, pid int) string {
 	return cmdName + "-" + at.Format(logStampLayout) + "-" + strconv.Itoa(pid) + logSuffix
 }
 
-// logDir returns the directory the logs live in, creating it 0700 or
-// tightening an existing one — and refusing both where the path to it is not
-// one this process may write a log into.
+// logRoot is the state directory, created if it is not there, as a root:
+// every name this package resolves is resolved inside it, so no link —
+// wherever it sits along `<state>/fugaro/logs`, and whatever it is swapped
+// for between two of these calls — can take the log outside the state
+// directory (os.Root refuses a name with a component that leaves its root,
+// and does not follow the last one at all). The state directory itself is not
+// checked for a link or tightened: it is the one directory rule (D1351), read
+// from the caller's own environment, it is shared with whatever else keeps
+// state there, and where it points is the user's choice.
+func logRoot(base string) (*os.Root, error) {
+	if err := os.MkdirAll(base, logDirMode); err != nil {
+		return nil, err
+	}
+	return os.OpenRoot(base)
+}
+
+// logDir returns the log directory's name inside root — `fugaro/logs` —
+// creating it 0700 or tightening an existing one, and refusing both where the
+// path to it is not one this process may write a log into.
 //
-// Every component this package adds below the state directory is checked, not
-// only the last: Lstat'ing `<state>/fugaro/logs` resolves a symlink at
-// `<state>/fugaro` on the way, so a link there would decide where this run's
-// log of its own secrets lands — the very thing the check exists to refuse
-// (F6a). The state directory itself is not checked for a link: it is the one
-// directory rule (D1351), read from the caller's own environment, and where
-// it points is the user's choice; a link of theirs onto another user's
-// directory is still caught, by the ownership check on what it lands on.
-func logDir(base string) (string, error) {
-	dir := base
+// Every component is checked, not only the last: Lstat'ing `fugaro/logs`
+// resolves a symlink at `fugaro` on the way, so a link there would decide
+// where this run's log of its own secrets lands — the very thing the check
+// exists to refuse (F6a).
+func logDir(root *os.Root) (string, error) {
+	dir := ""
 	for _, part := range []string{"fugaro", "logs"} {
 		dir = filepath.Join(dir, part)
-		if err := checkLogDir(dir); err != nil {
+		if err := checkLogDir(root, dir); err != nil {
 			return "", err
 		}
 	}
 	return dir, nil
 }
 
-// checkLogDir is one component of that path: created if it is not there,
+// checkLogDir is one component of that name: created if it is not there,
 // refused if what is there is not a directory this process may use.
 //
 // The path is attacker-influenced (an agent's session often points
@@ -133,16 +152,16 @@ func logDir(base string) (string, error) {
 // predictable, so the directory is Lstat'ed first: a symlink is refused
 // rather than followed, and so is a directory owned by another user, who
 // would otherwise decide where this run's log of its own secrets lands (F6a).
-func checkLogDir(dir string) error {
-	fi, err := os.Lstat(dir)
+func checkLogDir(root *os.Root, name string) error {
+	fi, err := root.Lstat(name)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		if err := os.MkdirAll(dir, logDirMode); err != nil {
+		if err := root.Mkdir(name, logDirMode); err != nil {
 			return err
 		}
-		// MkdirAll applies the umask, so the mode is set once more rather
-		// than assumed.
-		if err := os.Chmod(dir, logDirMode); err != nil {
+		// Mkdir applies the umask, so the mode is set once more rather than
+		// assumed.
+		if err := root.Chmod(name, logDirMode); err != nil {
 			return err
 		}
 		return nil
@@ -150,35 +169,32 @@ func checkLogDir(dir string) error {
 		return err
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("%s is not a directory", dir)
+		return fmt.Errorf("%s is not a directory", name)
 	}
 	if !dirOwnedByUser(fi) {
-		return fmt.Errorf("%s is not this user's directory", dir)
+		return fmt.Errorf("%s is not this user's directory", name)
 	}
-	// An existing directory is tightened only here, past both checks: chmod
-	// follows a symlink, which is the thing the Lstat above exists to refuse.
+	// An existing directory is tightened only here, past both checks: the
+	// Lstat above is what refuses a link at this name (root.Chmod resolves
+	// the name itself and, if the target turns into a link mid-call, acts on
+	// the link rather than following it — os/root_unix.go).
 	if fi.Mode().Perm() != logDirMode {
-		_ = os.Chmod(dir, logDirMode)
+		_ = root.Chmod(name, logDirMode)
 	}
 	return nil
 }
 
 // createLogFile creates the log and never an existing one. The name is
 // predictable, so what is already at it decides nothing: O_EXCL refuses a
-// file or a symlink at the name outright, and the os.Root the create happens
-// inside is what puts O_NOFOLLOW under the open on Unix (os/root_unix.go) —
-// on Windows os.Root is stricter and refuses any link at all (the note in
-// internal/cache/openfile_other.go) — so nothing planted at the name is
-// followed, and the mode is 0600 from the first byte (F6a). os.Root is also
-// what makes this one portable call where a bare O_NOFOLLOW would need a
-// second platform pair.
-func createLogFile(dir, name string) (*os.File, error) {
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	return root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, logFileMode)
+// file or a symlink at the name outright, and the root puts O_NOFOLLOW under
+// the open as well (os/root_unix.go) — on Windows the root is stricter and
+// refuses any link at all (the note in internal/cache/openfile_other.go) — so
+// nothing planted at the name is followed, and the mode is 0600 from the
+// first byte (F6a). One portable call, where a bare O_NOFOLLOW would need a
+// second platform pair; and because the name is resolved inside the root, the
+// create cannot land outside the state directory either.
+func createLogFile(root *os.Root, dir, name string) (*os.File, error) {
+	return root.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, logFileMode)
 }
 
 // pruneLogs deletes this command's logs that the retention rule has outlived:
@@ -197,9 +213,19 @@ func createLogFile(dir, name string) (*os.File, error) {
 // UTC>-<pid>.log` that are regular files: not another command's logs (a
 // prefix match would delete `image-refresh-*` for `image`), not a symlink,
 // not a directory, and nothing outside the directory — every name it removes
-// is one ReadDir handed back from it.
-func pruneLogs(dir, cmdName, keep string, now time.Time) {
-	entries, err := os.ReadDir(dir)
+// is one ReadDir handed back from it, resolved inside the same root the log
+// was created in.
+func pruneLogs(root *os.Root, dir, cmdName, keep string, now time.Time) {
+	// The directory is opened through the root rather than read as an fs.FS:
+	// fs.FS names are slash-separated and a backslash in one is invalid, so
+	// root.FS() would refuse the name filepath.Join builds on Windows and
+	// retention would never run there.
+	d, err := root.Open(dir)
+	if err != nil {
+		return
+	}
+	entries, err := d.ReadDir(-1)
+	d.Close()
 	if err != nil {
 		return
 	}
@@ -213,7 +239,7 @@ func pruneLogs(dir, cmdName, keep string, now time.Time) {
 		if !ok {
 			continue
 		}
-		fi, err := os.Lstat(filepath.Join(dir, e.Name()))
+		fi, err := root.Lstat(filepath.Join(dir, e.Name()))
 		if err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
@@ -232,7 +258,7 @@ func pruneLogs(dir, cmdName, keep string, now time.Time) {
 		if i < logKeepPerCommand && now.Sub(l.at) <= logRetention {
 			continue
 		}
-		_ = os.Remove(filepath.Join(dir, l.name))
+		_ = root.Remove(filepath.Join(dir, l.name))
 	}
 }
 

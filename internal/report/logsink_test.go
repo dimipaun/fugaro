@@ -474,6 +474,30 @@ func TestRedactsTheLongerValueFirst(t *testing.T) {
 	}
 }
 
+func TestRedactsTheLinesOfAMultiLineValue(t *testing.T) {
+	// F6: the sink matches a value inside a line, so a PEM-shaped value is
+	// caught by the lines the caller holds beside it — initsecrets.hold holds
+	// both, and this is the contract between the two: the whole value never
+	// matches, and each line does.
+	_, env := logStateDir(t)
+	pem := "-----BEGIN KEY-----\nMIIabc\n-----END KEY-----"
+	secrets := []string{pem, "MIIabc"}
+	sink, err := OpenLog("update", env, "linux", logFixedNow, func() []string { return secrets })
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	if _, err := sink.Write([]byte(pem + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	body := logBody(t, sink)
+	if strings.Contains(body, "MIIabc") {
+		t.Errorf("a line of a held value reached the log:\n%q", body)
+	}
+	if !strings.Contains(body, "-----BEGIN KEY-----\n[REDACTED]\n-----END KEY-----") {
+		t.Errorf("the value's lines are not the redacted ones:\n%q", body)
+	}
+}
+
 func TestRedactsTheLineTheRunEndedIn(t *testing.T) {
 	// F6: the last line of a run has no newline of its own, and it is the line
 	// a failure most often ends in. Close is what writes it, so it is also the
@@ -786,7 +810,12 @@ func TestPruningNeverCostsTheRunItsLog(t *testing.T) {
 	}
 	// The other half of best effort: a directory that cannot be walked at all
 	// is not a failure of the run that asked for it.
-	pruneLogs(filepath.Join(state, "gone"), "update", "update-20261107034132-1.log", logNow)
+	root, err := os.OpenRoot(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	pruneLogs(root, "gone", "update", "update-20261107034132-1.log", logNow)
 }
 
 func TestLogSinkReportsItsPathAndEndsOnce(t *testing.T) {
