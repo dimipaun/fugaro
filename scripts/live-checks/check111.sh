@@ -298,6 +298,10 @@ DISABLED_P=no
 DISABLED_Q=no
 QUOTA_POINTED=""
 ADC_QUOTA_ORIGINAL=""
+# no: nothing of mode 2's login has been written to your ADC file yet. yes: the
+# write has BEGUN or finished, so the live file is the second login, or part of
+# it, and the Restore has to put your own copy back. out: the write happened and
+# your own copy is back, compared byte for byte.
 SECOND_ADC_IS=no
 ADC_OWN_BACKUP=""
 SECOND_ADC_BACKUP=""
@@ -581,16 +585,22 @@ guard_second_account() {
 # too. Nothing here reads either file.
 adc_swap_in() {
   [ -n "$SECOND_ADC" ] || return 0
-  [ "$SECOND_ADC_IS" = no ] || return 0
+  [ "$SECOND_ADC_IS" != yes ] || return 0
   local live
   live=$(adc_file)
   ADC_OWN_BACKUP="$SCRATCH/adc-own.bak"
   SECOND_ADC_BACKUP="$SCRATCH/adc-second.bak"
   cp -p "$live" "$ADC_OWN_BACKUP" || stop "this check could not keep a copy of your ADC file ($live) before mode 2's swap, and without it the swap could not be undone. Nothing was run"
   cp -p "$SECOND_ADC" "$SECOND_ADC_BACKUP" || stop "this check could not keep a copy of $SECOND_ADC before mode 2's swap. Nothing was run"
-  cp -p "$SECOND_ADC" "$live" || stop "this check could not put the second account's login in place for mode 2 ($SECOND_ADC -> $live). Nothing was run"
-  cmp -s "$live" "$SECOND_ADC" || stop "the second account's login did not land in $live, so mode 2 would run as the wrong caller. Nothing was run"
+  # In place BEFORE the write, never after it: the write has already begun to
+  # change the live file when this flag would otherwise be set, and a copy that
+  # stops half way — a full disk, an I/O error, a Ctrl-C in the lines between the
+  # two — leaves it neither yours nor whole. This is the flag the Restore reads,
+  # so set late it left the Restore's "your own login, byte for byte" branch
+  # armed over a file that was not, and said nothing about how to get it back.
   SECOND_ADC_IS=yes
+  cp -p "$SECOND_ADC" "$live" || stop "this check could not put the second account's login in place for mode 2 ($SECOND_ADC -> $live), and $live may be part of one or of your own file. Mode 2 was not run; the Restore is putting your own copy ($ADC_OWN_BACKUP) back over it, and says so with the command to run if it cannot"
+  cmp -s "$live" "$SECOND_ADC" || stop "the second account's login did not land whole in $live, so mode 2 would run as the wrong caller. Mode 2 was not run; the Restore is putting your own copy ($ADC_OWN_BACKUP) back over it, and says so with the command to run if it cannot"
   say "mode 2's runs use the login in $SECOND_ADC; your own ADC file is copied back byte for byte as soon as each of them is done, and by the Restore whatever ends this run"
 }
 
@@ -601,7 +611,7 @@ adc_swap_out() {
   { cp -p "$ADC_OWN_BACKUP" "$live" && cmp -s "$live" "$ADC_OWN_BACKUP"; } 2>/dev/null || ok=no
   cp -p "$SECOND_ADC_BACKUP" "$SECOND_ADC" 2>/dev/null || ok=no
   [ "$ok" = yes ] || return 1
-  SECOND_ADC_IS=no
+  SECOND_ADC_IS=out
   say "your own ADC file is back in place, byte for byte — mode 2 was the only part of this run that used $SECOND_ADC"
   return 0
 }
@@ -1054,18 +1064,25 @@ assert_api() {
 # display names, and any numbered list. Mode 2(a) is exempt and has to be: D6's
 # picker shows each account's display name and id, so the fallback's own answer
 # carries the ids, and a FAIL there would be a FAIL on the mode working as
-# designed.
+# designed. A mode whose capture is missing or empty is not a pass either, on the
+# same terms as assert_no_picker: reading nothing finds no leak, and this row is
+# one of the ones the register is filled in from — mode_exit has already FAILed
+# the mode for the same missing capture, and both rows have to say it, or a
+# criterion is recorded as verified by a file nothing opened.
 assert_leak() {
   local m=$1 may=${2:-}
   if [ "$may" = may-list ]; then
     fact "leak-$m" INFO "exempt, by design: this is the ONE run in the check where the gcloud fallback answers with a list — ids and display names included — and mode 2(a)'s own rows record which source answered and how many rows it listed"
     return 0
   fi
-  local files=() f found="" n numbered=0
+  local files=() f found="" n numbered=0 files_read=0
   case "$m" in
   4) files=("$SCRATCH/mode-4.json" "$SCRATCH/mode-4.err") ;;
   *) files=("$SCRATCH/mode-$m.log") ;;
   esac
+  for f in "${files[@]}"; do
+    if [ -s "$f" ]; then files_read=$((files_read + 1)); fi
+  done
   n=""
   for f in "${files[@]}"; do
     [ -s "$f" ] || continue
@@ -1093,6 +1110,8 @@ assert_leak() {
     fact "leak-$m" FAIL "a leak: $found — no display name of yours, no account id and no account list may appear in any mode but 2(a)"
   elif [ "${numbered:-0}" -gt 0 ]; then
     fact "leak-$m" FAIL "the capture carries $numbered numbered line(s) matching a list. A count above 0 is a numbered line and not necessarily an account list — the picker's own list reads '<n>. <display name>' or '<n>) …' — so look at the matching lines in ${files[*]} and say so in this FACT with the lines pasted"
+  elif [ "$files_read" -eq 0 ]; then
+    fact "leak-$m" FAIL "nothing was read: ${files[*]} is missing or empty, and a criterion nothing was read for is not a pass"
   else
     fact "leak-$m" PASS "no account resource id, no id of yours, no display name of yours and no numbered list in ${files[*]} (the words 'billing accounts' are not a leak: the guided line's hint names 'gcloud billing accounts list' on purpose)"
   fi
@@ -1534,12 +1553,12 @@ restore_run() {
       notes="$notes; $(adc_file) is your own login again, byte for byte, which is what mode 2 found there"
     else
       ok=no
-      notes="$notes; your ADC is STILL the login in $SECOND_ADC and your own file could not be put back — run: gcloud auth application-default login, choosing YOUR OWN account, and keep $SECOND_ADC for the next run"
+      notes="$notes; your ADC file is STILL the login in $SECOND_ADC, or part of it, and your own copy could not be put back over it — run: gcloud auth application-default login, choosing YOUR OWN account, and keep $SECOND_ADC for the next run"
     fi
-  elif [ -n "$ADC_OWN_BACKUP" ]; then
-    notes="$notes; $(adc_file) is your own login, byte for byte (mode 2's second login, $SECOND_ADC, was in place for mode 2's runs alone and put back out when they were done)"
+  elif [ "$SECOND_ADC_IS" = out ]; then
+    notes="$notes; $(adc_file) is your own login, byte for byte (mode 2's second login, $SECOND_ADC, was in place for mode 2's runs alone and put back out, and compared against the copy kept of it, when they were done)"
   elif [ -n "$SECOND_ADC" ]; then
-    notes="$notes; mode 2's second login was never swapped in, so your ADC file is untouched"
+    notes="$notes; mode 2's second login was never written to $(adc_file) — the swap stops before the copy that would write it — so your ADC file is untouched"
   fi
   if [ -n "$QUOTA_POINTED" ]; then
     if quota_set "$ADC_QUOTA_ORIGINAL"; then

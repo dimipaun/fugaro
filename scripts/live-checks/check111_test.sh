@@ -205,6 +205,13 @@ setup) ;;
   ;;
 esac
 
+# FAKE111_SILENT: a wizard that answers NOTHING at all — the child that died
+# before its first line, which is the run whose capture is empty (or missing).
+# version is answered above, so the check's own preflight is ordinary and only
+# the seven runs go quiet. A mode with no capture has not run, and the row the
+# owner copies into the register may not read that as a pass either.
+if [ -n "${FAKE111_SILENT:-}" ]; then exit 0; fi
+
 proj=""
 yes=no
 json=no
@@ -366,7 +373,29 @@ echo "$link"
 exit 0
 FUGARO_EOF
 
-  chmod +x "$1/bin/gcloud" "$1/bin/fugaro"
+  # A fake `cp` for the one failure a file copy can have that leaves a state no
+  # later line can see: it stops HALF WAY. FAKE111_SHORT_COPY names a
+  # destination; the first copy to it — or, with FAKE111_SHORT_COPY_EVERY, every
+  # copy to it — writes the source's first bytes and fails, which is what a full
+  # disk or an I/O error leaves behind: the destination is neither the file that
+  # was there nor the one being copied. Everything else is the real cp. Mode 2's
+  # swap IS two copies of a login, so this is the only way a case can put a run
+  # inside the window between "your own file is safe in the scratch directory"
+  # and "the second login is in place", which is where the Restore's own words
+  # have to hold.
+  real_cp=$(command -v cp)
+  cat >"$1/bin/cp" <<CP_EOF
+#!/usr/bin/env bash
+dst="\${3:-}"
+if [ -n "\${FAKE111_SHORT_COPY:-}" ] && [ "\$dst" = "\$FAKE111_SHORT_COPY" ] &&
+  { [ -n "\${FAKE111_SHORT_COPY_EVERY:-}" ] || [ ! -e "\$FAKE111_DIR/short-copy-done" ]; }; then
+  : >"\$FAKE111_DIR/short-copy-done"
+  head -c 24 "\${2:-}" >"\$dst" 2>/dev/null || true
+  exit 1
+fi
+exec $real_cp "\$@"
+CP_EOF
+  chmod +x "$1/bin/gcloud" "$1/bin/fugaro" "$1/bin/cp"
 }
 
 # --------------------------------------------------------------- the fixtures
@@ -640,6 +669,49 @@ test_the_second_login_is_put_back_when_a_mode_stops() {
   expect_scratch_gone "$dir" "the swap after a stop"
 }
 
+# The copy that puts the second account's login over your own ADC file is the one
+# step of the swap that has already begun to change that file when it fails. A
+# copy that stops HALF WAY — a full disk, an I/O error, a Ctrl-C landing on the
+# two lines around it — leaves it as neither login, or as part of one, and the
+# flag that arms the Restore used to be set only once the copy had returned: the
+# Restore then reported "your own login, byte for byte" over a file that was the
+# half-written second login. This case copies the live ADC half way and fails.
+test_a_copy_that_stops_half_way_does_not_report_your_own_login_back() {
+  setup_case shortcopy
+  sandbox_args
+  RUN111_ARGS+=(--modes 2a)
+  RUN111_ENV=(FAKE111_SHORT_COPY="$dir/cloudsdk/application_default_credentials.json")
+  run111
+  expect_status "$status" 2 "the half-way copy"
+  expect_contains "$(cat "$dir/err")" "could not put the second account's login in place" "the half-way copy: the stop names the step that failed"
+  expect_contains "$out" "FACT restore: PASS — " "the half-way copy: the Restore put your own file back, so its row is a PASS"
+  expect_contains "$out" "is your own login again, byte for byte" "the half-way copy: and in the words that are true of it"
+  expect_absent "$out" "was in place for mode 2's runs alone" "the half-way copy: it may not claim the swap ran and was put out"
+  cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
+    || fail "the half-way copy: your own ADC file is not byte for byte yours again: $(head -c 120 "$dir/cloudsdk/application_default_credentials.json")"
+  expect_scratch_gone "$dir" "the half-way copy"
+}
+
+# And the half-way copy that cannot be undone either — every copy over the live
+# file fails — is the one state the owner has to be told about in the Restore's
+# own words: which login the file holds now, and the single command that puts
+# them back on their own account. A run that stopped there and said "your own
+# login, byte for byte" left them with no way to find out.
+test_a_half_way_copy_that_cannot_be_put_back_names_the_way_out() {
+  setup_case shortcopyback
+  sandbox_args
+  RUN111_ARGS+=(--modes 2a)
+  RUN111_ENV=(FAKE111_SHORT_COPY="$dir/cloudsdk/application_default_credentials.json" FAKE111_SHORT_COPY_EVERY=1)
+  run111
+  expect_status "$status" 2 "the half-way copy that cannot be put back"
+  expect_contains "$out" "FACT restore: FAIL — " "the half-way copy that cannot be put back: the Restore's own row is a FAIL"
+  expect_contains "$out" "your ADC file is STILL the login in $dir/second-adc.json" "the half-way copy that cannot be put back: the row says which file the ADC holds now"
+  expect_contains "$out" "gcloud auth application-default login" "the half-way copy that cannot be put back: and the command that gets you back to your own account"
+  expect_contains "$out" "choosing YOUR OWN account" "the half-way copy that cannot be put back: with the account to choose"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "the half-way copy that cannot be put back: the verdict"
+  expect_scratch_gone "$dir" "the half-way copy that cannot be put back"
+}
+
 # The live ADC already IS the login --second-adc names: this machine is still
 # logged in as the second account, so the modes that are not mode 2 would run
 # under it. Refused before anything is called.
@@ -802,6 +874,27 @@ test_a_picker_under_json_is_a_fail() {
   expect_contains "$out" "FACT picker-5: PASS — " "picker under --json: and so is an agent's session"
   expect_contains "$out" "CHECK 111 RESULT: FAIL" "picker under --json: the verdict"
   expect_scratch_gone "$dir" "picker under --json"
+}
+
+# A capture nothing was written to is not a reading, and criterion 3's row is one
+# of the rows the owner copies into the register: a wizard that answered nothing
+# at all (a child killed before its first line) leaves an empty transcript, and
+# "no account list in it" was a PASS about a file nothing opened — while the
+# sibling row for the very same capture said "nothing was read". The mode itself
+# is FAILed on that capture by mode_exit; this row has to say the same thing.
+test_a_capture_nothing_was_written_to_is_not_a_pass() {
+  setup_case silentwizard
+  sandbox_args
+  RUN111_ENV=(FAKE111_SILENT=1)
+  run111
+  expect_status "$status" 1 "the wizard that answered nothing"
+  expect_contains "$out" "FACT run-3: FAIL — no capture: " "the wizard that answered nothing: the mode itself is not a pass on an empty transcript"
+  expect_contains "$out" "FACT leak-3: FAIL — nothing was read: " "the wizard that answered nothing: criterion 3's own row"
+  expect_contains "$out" "mode-3.log is missing or empty, and a criterion nothing was read for is not a pass" "the wizard that answered nothing: and it names the file nothing came to"
+  expect_contains "$out" "FACT leak-4: FAIL — nothing was read: " "the wizard that answered nothing: and mode 4's, whose capture is two files"
+  expect_contains "$out" "FACT picker-3: FAIL — nothing was read: " "the wizard that answered nothing: the picker's row says the same thing for the same capture"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "the wizard that answered nothing: the verdict"
+  expect_scratch_gone "$dir" "the wizard that answered nothing"
 }
 
 # Modes 3 and 4 are the runs with NO terminal, and that is the one thing that
@@ -1181,6 +1274,7 @@ t test_a_failed_assertion_still_restores
 t test_a_leak_is_a_fail
 t test_a_picker_where_none_may_run_is_a_fail
 t test_a_picker_under_json_is_a_fail
+t test_a_capture_nothing_was_written_to_is_not_a_pass
 t test_modes_3_and_4_take_the_ide_marker_out_of_their_own_children
 t test_q_enabled_by_the_run_is_a_fail
 t test_s_disabled_by_the_run_is_a_fail
@@ -1194,6 +1288,8 @@ t test_mode_2s_premise_missing_is_not_run
 t test_only_mode_2_runs_under_the_second_login
 t test_the_second_login_goes_out_before_the_modes_after_mode_2
 t test_the_second_login_is_put_back_when_a_mode_stops
+t test_a_copy_that_stops_half_way_does_not_report_your_own_login_back
+t test_a_half_way_copy_that_cannot_be_put_back_names_the_way_out
 t test_a_machine_left_on_the_second_login_is_refused
 t test_a_second_account_for_every_mode_is_refused
 t test_second_adc_guards
