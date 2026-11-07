@@ -160,6 +160,15 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
   },
+  'managed.ts': {
+    text: {
+      within: 'term',
+      reason:
+        'the parameter of the `term` helper itself; every call site passes one of this file\'s own term constants (`MANAGED_MARK_TERM`, `MANAGED_REASON_TERM`, ... `MANAGED_DIGEST_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    'model.because':
+      'the section\'s one reason sentence: the CLI\'s own refusal, **through `sanitizeRefusal`** in `drawnRefusal` (the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the remedy is the whole value of a refusal), or one of this file\'s own sentences naming the command (`absent`), or `REFUSAL_UNREADABLE` when the CLI\'s sentence cannot be drawn at all -- the same three-way door `projects.ts`\'s `panel.because` and `degraded.ts` keep',
+  },
   // The drawers outside `src/renderer/screens`: `src/shared/notice.ts` writes
   // the notice card's text slots, and `src/shared/version.ts` composes the
   // version-skew notice's text and hands it to that card (Task 3.2). Both live
@@ -518,6 +527,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         'a `ProjectsTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderProjects` draws the whole screen by calling it (console 0.117.0)',
     },
+  },
+  'managed.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    'model.state':
+      '`ManagedState`, a closed union the model assigns (`read`, `unavailable`) and this file\'s own: there is no third, because the command answers with a document or it does not, and a document of a shape this build cannot read is a read that did not answer',
   },
   'degraded.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -1159,13 +1173,14 @@ const SHARED_DRAWER = '../../shared/notice.ts'
 const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the ten screens', () => {
+  it('reads the eleven screens', () => {
     expect([...SCREEN_FILES]).toEqual([
       'coordinator.ts',
       'degraded.ts',
       'graph.ts',
       'launch.ts',
       'live.ts',
+      'managed.ts',
       'nocheckout.ts',
       'projects.ts',
       'reading.ts',
@@ -1504,6 +1519,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/graph.ts',
       'screens/launch.ts',
       'screens/live.ts',
+      'screens/managed.ts',
       'screens/nocheckout.ts',
       'screens/projects.ts',
       'screens/reading.ts',
