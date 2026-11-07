@@ -352,6 +352,36 @@ func TestCredentialsServiceReviewJobAccountsReachTheAuthenticator(t *testing.T) 
 	}
 }
 
+// TestCredentialsServiceReviewJobAccountsAreOneTableWhateverTheDocumentsOrder:
+// the document is a deployment's own text, so its order is not a fact about the
+// installation and the same rows written twice are one account -- the table
+// this command builds is therefore the policy read's table, one row per account
+// in the table's own order (credsvc.ReviewJobAccountsFor, which is why the two
+// derivations share one function). Rows that name one account under two Claude
+// accounts are the one thing left alone here: that is a deployment disagreeing
+// with itself, and credsvc.NewAuthenticator is where it is refused.
+//
+// Mutation (verified, run and restored): dropping the de-duplication, or the
+// ordering, from credentialsServiceReviewJobAccounts -- FAIL.
+func TestCredentialsServiceReviewJobAccountsAreOneTableWhateverTheDocumentsOrder(t *testing.T) {
+	got, err := credentialsServiceReviewJobAccounts(`[
+		{"profile":"standard","provider":"github","account":"team-a"},
+		{"profile":"standard","provider":"github","account":""},
+		{"profile":"standard","provider":"github","account":"team-a"}]`, "proj-1234")
+	if err != nil {
+		t.Fatalf("credentialsServiceReviewJobAccounts: %v", err)
+	}
+	// The two rows the headline test pins by value, written in the other order
+	// and with one of them twice.
+	want := []credsvc.ReviewJobAccount{
+		{Email: "fugaro-p-standard-git-04644ca9@proj-1234.iam.gserviceaccount.com", Account: config.DefaultClaudeAccount},
+		{Email: "fugaro-p-standard-git-b5f51775@proj-1234.iam.gserviceaccount.com", Account: "team-a"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("credentialsServiceReviewJobAccounts = %+v, want the table the policy read makes, %+v", got, want)
+	}
+}
+
 // TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
 // whole of this task is that the service can be configured at all, so a
 // complete environment must build a credsvc.Config that NewServer accepts --
