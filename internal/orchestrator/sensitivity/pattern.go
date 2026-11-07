@@ -161,10 +161,13 @@ func (p Pattern) Validate() string {
 // with a byte outside ASCII — is therefore skipped rather than matched by its
 // bytes: `docs/./x` and a floor file spelled with a case variant its filesystem
 // folds are refused by the same cleanRelative the classifier asks, so a
-// spelling that means more than one path is placed by no rule at all. A row whose glob doublestar cannot read matches nothing for the
-// same reason — every caller merges lists a layer validated at load, and a row
-// that slipped past that is a rule that silently never fires rather than a
-// match nobody can explain.
+// spelling that means more than one path is placed by no rule at all.
+//
+// A row whose glob doublestar cannot read matches nothing for the same reason.
+// Every caller merges lists a layer validated at load, so a row that slipped
+// past that is a rule that silently never fires rather than a match nobody can
+// explain — the failure mode D1502 refuses at load, kept on the safe side here.
+
 func Match(paths []string, list []Pattern) []Pattern {
 	var matched []Pattern
 	for _, row := range list {
