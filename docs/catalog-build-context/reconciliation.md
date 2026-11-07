@@ -272,6 +272,9 @@ is in **what those bytes are used for** — from "one operator-read Dockerfile" 
 tree that decides what runs" — and in **who can change them** between the operator's review and the
 build: anyone with write access to the entry's branch.
 
+
+**4.9 The image-env design (docs/image-env, IE1 merged in #1806).** The catalog entry's name is stamped into the job's environment at deploy, on every workflow job (empty when the catalog chose no image), and IE2 passes a catalog image's `ENV` through to the run. A catalog `dockerfile` entry may point into a project code repository, so with a `context:` the repository tree decides what the built image's `ENV` holds, and so what IE2 hands the run: the passthrough's trust statement (docs/image-env, reconciliation §4) must say that a context-built catalog image's variables are as repository-authored as the Dockerfile's. The stamp itself is not affected (it is the entry's name, written by the deploy, never read from the image), and the denylist (`config.ReservedEnv` plus the IE2 prefixes) applies to a context-built image exactly as to any other catalog image.
+
 ---
 
 ## 5. Findings
@@ -282,18 +285,18 @@ constraint the code enforces and a design must keep; **Open** is a question only
 
 ### Wrong
 
-- **F1. The issue's security sentence is wrong about the per-repository build.** `images/derived/cloudbuild.yaml`'s
+- **F1. The issue's security sentence is partly wrong about the per-repository build.** (The `source` step of `images/derived/cloudbuild.yaml` does make a shallow `git clone` outside the Docker build, in a step apart from the `credential` step, so the claim is half true; what is wrong is that no step in the Dockerfile sees the credential.) `images/derived/cloudbuild.yaml`'s
   build step passes `--secret "id=git-credentials,src=/creds/git-credentials"` into `docker build`, and
   `images/derived/Dockerfile.tmpl` clones inside it. Claim 13 of §1 ("the checkout uses the credential
-  outside the Docker build, as the per-repository build already does") describes a build this
-  repository does not have. The conclusion the issue draws from it — that a context feature cannot
+  outside the Docker build, as the per-repository build already does") describes only half of the build this
+  repository has: the credential also reaches the Docker build and its Dockerfile clones again inside it. The conclusion the issue draws from it — that a context feature cannot
   put the credential in front of the Dockerfile — is not established by the code as it stands.
 - **F2. The issue's "exact commit the Dockerfile was read at" has no referent today.**
   `internal/catalog/fetch.go`'s `fetchDockerfile` reads at a ref (`r.Contents(ctx, s.Path, s.Branch)`),
   and `internal/cli/image_build_catalog.go` records the operator's `rev-parse HEAD`. There is no
   commit at which "the Dockerfile was read", so a design has to create one rather than read one.
-- **F3. "Reuses that path rather than adding a new one" understates the change.** The cloning
-  machinery the issue points at lives inside the Docker build (F1). A checkout outside the Docker
+- **F3. "Reuses that path rather than adding a new one" understates the change.** The full
+  cloning the issue points at lives inside the Docker build (F1; a shallow clone outside it exists). A checkout outside the Docker
   build is a new step in `internal/backend/gcp/catalog.go`'s `catalogBuildSteps`; the parts that
   *are* reusable are `CatalogBuildSpec`'s `RepoURL`/`GitSecretID`/`BaseBranch` and the `credential`
   step `images/derived/cloudbuild.yaml` already has.

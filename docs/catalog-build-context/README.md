@@ -24,7 +24,7 @@ checked out at the exact commit the Dockerfile was read at, as the build context
 `context:` keeps today's build.
 
 **What this folder found, in one paragraph.** Twelve of the issue's fifteen claims are accurate about
-today's code and the ask is well founded. Three are wrong, and the two that matter are the same error
+today's code and the ask is well founded. Three are wrong or partly wrong, and the two that matter are the same error
 seen twice: the issue believes the per-repository build clones the repository **outside** the Docker
 build and that a context checkout therefore "reuses that path rather than adding a new one", and it
 does not — `images/derived/cloudbuild.yaml` passes `--secret id=git-credentials` **into** `docker
