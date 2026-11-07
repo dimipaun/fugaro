@@ -460,6 +460,17 @@ describe('the stub’s settings arms', () => {
     expect(built.rows.map((row) => row.pencil)).toEqual([true, true, false])
     expect(built.rows.map((row) => row.targetLayer)).toEqual(['repo', 'local', 'local'])
     expect(built.rows[2]?.owner).toBe('fugaro secrets')
+    // Two members the schema leaves free strings, and the fixture's spelling of
+    // each is the read's own: `state` is drawn in the document's words, so the
+    // row the cached project layer decided says the cache's age and not `ok`
+    // (`staleState`, `internal/cli/settings_read.go`), and a block key's value is
+    // what the read renders for a mapping -- compact JSON, pairing uid to
+    // keychain item name (`renderValue`, and the name is the local config's own
+    // alphabet, so the invented item name has no space in it). `value` is a free
+    // string in the schema too, which is why both are pinned here rather than
+    // there.
+    expect(built.rows.map((row) => row.state)).toEqual(['stale 3h', 'ok', 'ok'])
+    expect(built.rows[2]?.value).toBe('{"m~AAECAwQFBgcICQoLDA0ODw":"fugaro-mailbox-example-project"}')
     expect(built.rows.map((row) => row.key)).not.toContain('budget.firebase_api_key')
     // The read is one of the answers `reads.log` records, so a spec that waits on
     // it rather than on a sleep has something to wait for.

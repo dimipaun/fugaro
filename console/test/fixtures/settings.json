@@ -26,10 +26,11 @@
       "value": "2",
       "wins": "project",
       "default": { "unset": "unset = the run's rigor mode decides (rigor.DefaultRounds)" },
-      "state": "ok",
+      "state": "stale 3h",
       "writable": true,
       "owner": "",
-      "target_layer": "repo"
+      "target_layer": "repo",
+      "levels": [{ "layer": "project", "value": "2", "outcome": "wins" }]
     },
     {
       "key": "claude_account_auto",
@@ -40,18 +41,26 @@
       "state": "ok",
       "writable": true,
       "owner": "",
-      "target_layer": "local"
+      "target_layer": "local",
+      "levels": [{ "layer": "local", "value": "false", "outcome": "wins" }]
     },
     {
       "key": "mailbox.keychain_item",
       "scope": "project",
-      "value": "Fugaro Mailbox",
+      "value": "{\"m~AAECAwQFBgcICQoLDA0ODw\":\"fugaro-mailbox-example-project\"}",
       "wins": "local",
       "default": { "unset": "unset = the keychain item the subscription design names" },
       "state": "ok",
       "writable": false,
       "owner": "fugaro secrets",
-      "target_layer": "local"
+      "target_layer": "local",
+      "levels": [
+        {
+          "layer": "local",
+          "value": "{\"m~AAECAwQFBgcICQoLDA0ODw\":\"fugaro-mailbox-example-project\"}",
+          "outcome": "wins"
+        }
+      ]
     },
     {
       "key": "budget.firebase_api_key",

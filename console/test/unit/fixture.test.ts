@@ -580,13 +580,17 @@ describe('the committed synthetic fixture', () => {
       // and the console's own rows have a document to run over -- the four rows
       // are the four cases the section turns on (a narrowing pencil, a widening
       // pencil, a key another writer owns, and a sensitive one that is never
-      // drawn). **Invented means its values, not its vocabulary**: every member
-      // a screen draws is spelled the way the CLI spells it, held to
-      // `schemas/settings.schema.json` and to the registry's own defaults by
-      // `TestSettingsConsoleFixture` (`schemas/schemas_test.go`), so the e2e
-      // that draws this document draws an answer the CLI could have given -- a
-      // fixture with words no read prints would prove the window draws an
-      // impossible document. It is JSON and not `.ndjson`, so the sweep above
+      // drawn). **Invented means its values, not its spelling**: every member a
+      // screen draws is spelled the way the CLI spells it, held to
+      // `schemas/settings.schema.json`, to the registry's own defaults, and to
+      // the rules one member keeps about another (a resolved row's `levels`, the
+      // layer its `state` is the age of) by `TestSettingsConsoleFixture`
+      // (`schemas/schemas_test.go`), so the e2e that draws this document draws
+      // an answer the CLI could have given -- a fixture with words no read
+      // prints, or a value no read renders, would prove the window draws an
+      // impossible document. The members that schema leaves free strings -- a
+      // block key's compact-JSON `value` among them -- are pinned beside it in
+      // `test/unit/cli-stub.test.ts`. It is JSON and not `.ndjson`, so the sweep above
       // never reads it, and the e2e stub answers that read with it
       // (`test/fixtures/bin/fugaro`), which is where `test/unit/cli-stub.test.ts`
       // holds it to the console's decoder. Its `.license` sibling is listed
