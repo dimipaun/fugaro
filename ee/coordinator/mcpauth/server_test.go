@@ -427,10 +427,14 @@ func TestNoAnswerOfThisServerIsCacheable(t *testing.T) {
 // owes: it ships with neither of the two bounds spec.md §8 relies on — no
 // per-source rate limit, and no expiry or sweep behind the registration the
 // endpoint writes — so the exposure is latent only while nothing a binary
-// builds reaches this package. A task that wires the front door deliberately
-// deletes this test and carries those bounds with it; until then, a non-test
-// file that names this package fails here rather than turning the exposure
-// reachable in a release nobody re-read the paragraph for.
+// builds reaches this package. The owner's ruling of 2026-11-07 added the
+// second half of what a task that wires the front door owes: M5 is built
+// dormant, and the paired-device approval M-a asks for is M5b, a task of its
+// own and a hard prerequisite (implementation-plan.md §3). A task that wires
+// the front door deliberately deletes this test and carries those bounds and
+// M5b with it; until then, a non-test file that names this package fails here
+// rather than turning the exposure reachable in a release nobody re-read the
+// paragraph for.
 func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
 	const pkg = "github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
 	root := filepath.Join("..", "..", "..")
@@ -447,7 +451,7 @@ func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
 				return err
 			}
 			if strings.Contains(string(data), pkg) {
-				t.Errorf("%s links the MCP front door, which mounts an open registration endpoint with neither a rate limit nor a sweep; a task that wires it carries those bounds and deletes this guard", path)
+				t.Errorf("%s links the MCP front door, which mounts an open registration endpoint with neither a rate limit nor a sweep and approves a sign-in on the page that asked for it; a task that wires it carries those two bounds and M5b, the paired-device approval, and deletes this guard", path)
 			}
 			return nil
 		})

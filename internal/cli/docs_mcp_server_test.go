@@ -81,8 +81,12 @@ const (
 	// asks for, which M5's approve step does not build: the page renders its
 	// number and posts it back from the browser that answered it, which binds
 	// the page to the flow and not a device to a person, so a status line
-	// saying M5 were built whole would be the claim the review found.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is pending the owner; the rest is not started; this folder approves no task."
+	// saying M5 were built whole would be the claim the review found. That
+	// exception is M5b -- the owner's ruling of 2026-11-07 made the
+	// paired-device approval a task of its own and a hard prerequisite before
+	// any binary links the front door -- so the line names it and the test
+	// below holds the plan to it.
+	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is not started; this folder approves no task."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -122,6 +126,13 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 		// and the two tasks whose drafts predate the answers they now build.
 		"M9 leaves the first slice",
 		"Cancelled on 2026-11-04 and to be rerun from this amended plan",
+		// And the owner's ruling of 2026-11-07: the paired device M-a asks for
+		// is M5b, a task of its own, and it is a gate -- M5 merges dormant and
+		// the guard is relaxed by building M5b rather than by deleting its
+		// message. A plan that dropped either half would leave the front door
+		// looking wireable once M5 was in.
+		"M5b is a hard prerequisite before anything wires the front door",
+		"M5b must land before it may be relaxed",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s does not state %q: the plan gates every task on the security review and on the licence, it names which tasks are marked mandatory, and it states which tasks the amendment deferred and which it cancelled -- a later edit that dropped any of those would leave a task looking startable",

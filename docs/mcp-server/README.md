@@ -1,8 +1,9 @@
 # The hosted MCP server
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
-owner; the rest is not started; this folder approves no task.** The owner's spec of
+merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
+not started; this folder approves no task.** The owner's spec of
 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code here;
 [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the
@@ -35,7 +36,7 @@ instead of fixing it. The findings and what each changed, in one line each:
 | **H1** | A device token is a custom token, and **any launcher can mint one** and approve a sign-in as an operator's device — so the approval proves nothing against a launcher | **ACCEPT AND DOCUMENT, not the recommendation**: the residual risk stands with its consequences (operator scope, forged audit attribution, a rotating refresh family that outlives the ID token's hour), and the change that would close it is named and **not built** | spec.md §3 step 5, §8, §11; D923's amendment |
 | **H2** | `spawn_task` needs **three** privileges, not one — `signJwt`, write on the runs bucket, and `run.jobs.runWithOverrides`, which can override container args and so run any command beside the job's credentials | **DEFER `spawn_task` out of the first slice.** The first slice is the authorization server plus the **read tools**; what a later design item must answer is written down | **D936**; spec.md §5, §8; the plan's order, scope and release slot |
 | **H3** | **IAM bypasses the database rules**: launchers and operators can read the token records, admins can write them, and the public service would hold `firebasedatabase.admin` over the whole database | **Keyed hashes and MACs** where the records live now, **no database admin on the public service**, and the records **out of the main database** — **D935** states where they live and who may reach them | **D935** (the answer of 2026-11-05, F32); D922's amendment; spec.md §6, §8 |
-| **M-a** | The "loopback is the attacker's machine" argument **fails when approval happens on a phone** — cross-device phishing | QR proximity or number matching; the phone shows the client (**marked unverified**) and the redirect host; **a single-use POST**, an ID token never in a GET URL, nothing pushed unstarted | D923's amendment; spec.md §3, §8; M5, M6 |
+| **M-a** | The "loopback is the attacker's machine" argument **fails when approval happens on a phone** — cross-device phishing | QR proximity or number matching; the phone shows the client (**marked unverified**) and the redirect host; **a single-use POST**, an ID token never in a GET URL, nothing pushed unstarted — **and the device half is M5b, a task of its own and a gate (the owner's ruling of 2026-11-07)** | D923's amendment; spec.md §3, §8; M5, M5b, M6 |
 | **M-b** | The family spend limit was not enforced across **concurrent** runs | Reserve `min(job cap, remaining)` **atomically against the family counter** at spawn, settle at finalize; for `client_credentials` the family is the client | D924's amendment; spec.md §6, §8; M2, M9 (deferred) |
 | **M-c** | The library's defaults contradict the design (PKCE optional, empty challenge = `plain`, unknown scopes dropped, extra grants, a `SigningKey` with no home, non-RFC-8414 discovery) | Refuse a missing or non-`S256` challenge and an unknown scope **before the library**; only the code and refresh grants; opaque tokens or the key in Secret Manager; **the M5 gate file is the owner's to create** | D921's amendment; spec.md §1, §3, §6; M5 |
 | **M-d** | Refresh rotation is a **check-then-write race** | Condition the rotation on the **generation of the same read**, with a small grace window — **the conditioning is built and the grace window is not**, so the loser of a race is refused `invalid_grant` rather than answered with the winner's pair | D930's amendment; spec.md §6; M2 |
@@ -52,7 +53,7 @@ found the same defect (`ee/coordinator/mcpauth/limits.go:298`). **The tree has g
 **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first half (#1716) are merged** — M4's
 half being its account, the front door service and its public invoker binding
 (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **and what is left
-is M4's store half, M5 and M7–M10** ([reconciliation.md](reconciliation.md) §4a, "What has happened
+is M4's store half, M5, M5b and M7–M10** ([reconciliation.md](reconciliation.md) §4a, "What has happened
 since").
 
 **Asked by.** The owner, on 2026-10-24: a hosted MCP server inside the coordinator, with OAuth 2.1
@@ -64,7 +65,9 @@ library **with its licence still UNCONFIRMED** — **and §6's first check is un
 no gate file is in the tree, counsel has not been asked about the transitive set, and nothing here
 records the confirmation the check asks for, so the pull request that builds M5 does not merge until
 they are there or the owner writes the relaxation of the check himself; a licence that turns out to
-be unusable sends D921 back to its alternatives rather than shipping the dependency** — and D922's separate
+be unusable sends D921 back to its alternatives rather than shipping the dependency** — the owner
+ruled on 2026-11-07 that he will clear the set by reading [licence-table.md](licence-table.md), which
+is evidence for that check and not the gate — and D922's separate
 **`mcpauth`** subtree, closed to
 every client. **And answered one more on 2026-11-05 (D935)**, on the independent review of PR
 #1715's M3: those records do not live in the project's shared Realtime Database at all, but in a
@@ -111,13 +114,14 @@ line at the latest commit, and its §7 records the eight things `main` had overt
 
 ## What it is
 
-One document set, four files:
+One document set, five files:
 
 | File | What it holds |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, copied **verbatim**, as §0 — and then the design written to the owner's answers of 2026-11-04 and to the amendments that followed the security review: the front door and its transport (§2), the authorization server and its flow (§3), Firebase as the identity provider (§4), the tools (§5, with **`spawn_task` deferred** out of the first slice), tokens, rigor windows and spend limits (§6), unattended agents (§7), **the threat model (§8)**, the coordinator's prohibitions (§9), **the two other works this design is wired to (§10)**, and what the design leaves open (§11) |
 | [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F32), each with a path and a line; then the **fifteen decisions, D920–D934** (§4) with the owner's answers of 2026-11-04 under them **and the answer of 2026-11-05, D935** (the records leave the project's database); **§4a**, the independent security review of 2026-11-04 and the owner's answers to it, written as a dated amendment note beside each decision it names; **§4b**, the one finding that is a decision of its own, **D936**; the number block and how it was read (§5), the owner checks that no hermetic test can stand in for (§6), and what `main` had overtaken (§7) |
-| [implementation-plan.md](implementation-plan.md) | What the owner was asked and answered (§1), the order and what forces it (§2), ten tasks **M1–M10** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block, **M9 deferred** out of the first slice and **M4 and M6 cancelled and to be rerun** — the **shared-files table** (§4), **the release slot** (§5), the test rules (§6), what the plan does not own (§7) and **the store the records move to (§8, D935)**, with the three candidates compared and **the answer of 2026-11-05** that picked the bucket |
+| [implementation-plan.md](implementation-plan.md) | What the owner was asked and answered (§1), the order and what forces it (§2), eleven tasks **M1–M10 and M5b** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block, **M9 deferred** out of the first slice, **M4 and M6 cancelled and to be rerun** and **M5b the paired-device approval the owner ruled a gate on 2026-11-07** — the **shared-files table** (§4), **the release slot** (§5), the test rules (§6), what the plan does not own (§7) and **the store the records move to (§8, D935)**, with the three candidates compared and **the answer of 2026-11-05** that picked the bucket |
+| [licence-table.md](licence-table.md) | The dependency licence table **the owner reads to clear the `zitadel/oidc` set** (his ruling of 2026-11-07): every module this branch adds or bumps against `main`, its licence as the module's own file in the module cache reads it, whether it is linked into the fugaro binary or reached only by a dependency's tests, and a column for anything not clearly permissive — **evidence for §6 check 1, which stays unmet: the table is not the gate and claims no clearance** |
 | `README.md` | This file: the status, the reading of the number block, and what a reader should not take from here |
 
 **Three works this folder is wired to.** The **stateless-orchestrator spec** (open as **#1682**, not

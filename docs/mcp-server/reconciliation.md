@@ -1,8 +1,9 @@
 # The hosted MCP server: reconciliation and decisions
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
-owner; the rest is not started; this folder approves no task.**
+merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
+not started; this folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -425,11 +426,13 @@ a page rendering a flow of its own displays its own number and collects the numb
 together from whoever fills that form — which is the approval this check is meant to tell apart from
 the real one. **A check on the page is therefore not M-a's device-side approval**, and the half that
 would be — the number shown on, or entered into, the paired device, so the approval is bound there —
-**is not built and is in no task**: it is new behaviour and an owner's decision, and it is raised as
-a finding rather than added by a task that did not ask for it. The token has the same kind of limit
-beside it: nothing spends an ID token, so one that leaks approves flows until it expires — and the
-**refresh family each of those approvals mints has no expiry of its own** (spec.md §8), so the
-exposure the ID token's hour bounds is one approval and not what that approval leaves behind.
+**is not built**: it was raised as a finding rather than added by a task that did not ask for it, and
+**the owner answered it on 2026-11-07 — it is M5b, a task of its own and a hard prerequisite before
+anything wires the front door** (§4a, "The owner's ruling of 2026-11-07"). The token has the same kind
+of limit beside it: nothing spends an ID token, so one that leaks approves flows until it expires —
+and the **refresh family each of those approvals mints has no expiry of its own** (spec.md §8), so the
+exposure the ID token's hour bounds is one approval and not what that approval leaves behind. **Both
+of those limits are M5b's to close**, as its second and fourth requirements.
 
 ### D924 — amended (finding M-b)
 
@@ -573,8 +576,8 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **because the
   owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
   the two metadata documents, the four endpoints and
-  the approve step, **except the paired device M-a asks for**, which is in no task and is raised for
-  the owner — and **the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
+  the approve step, **except the paired device M-a asks for**, which is **M5b** and is a task of its
+  own since the owner's ruling of 2026-11-07 — and **the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
   and its one grant) and M7–M10; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
@@ -604,8 +607,39 @@ registration that never stops being a client. The red step such a task would car
 `TestRegistrationIsRateLimitedPerSource` and `TestARegisteredClientIsExpiredAndSwept`. **What keeps
 the exposure latent rather than reachable is a guard M5 does carry, and it is a test rather than a
 behaviour**: `TestNoBinaryLinksTheFrontDoorYet` fails if any file a binary builds names this package,
-so the task that wires the front door is the task that carries the two bounds and deletes the guard,
-and no release mounts an open registration endpoint because a wiring arrived unnoticed.
+so the task that wires the front door is the task that carries the two bounds, carries **M5b** (the
+owner's ruling of 2026-11-07) and deletes the guard, and no release mounts an open registration
+endpoint because a wiring arrived unnoticed.
+
+### The owner's ruling of 2026-11-07: M5b, and the licence table
+
+**Two findings the review of this branch left with the owner were answered on 2026-11-07, and
+neither is a code change.**
+
+**1. The paired device is a task of its own, and it is a gate: M5b.** Finding **M-a**'s first
+requirement — the approval bound to **a paired device**, by **QR proximity or number matching** — was
+raised rather than answered by M5, because the page renders its own number and takes it back from the
+same form (§4a, D923's M-a amendment). **The owner ruled that the pull request that builds M5 merges
+dormant**: the consent page's token paste stays exactly as it is there, and **M5b is a hard
+prerequisite before anything wires the front door**. So **`TestNoBinaryLinksTheFrontDoorYet` is
+relaxed by building M5b and not by deleting its message**, which now names the task — and M5b is
+written as a task in [implementation-plan.md](implementation-plan.md) §3 with its four requirements:
+the approval happens on the paired device, the ID token is spent, the approval is bound to the flow,
+and a refresh family ages. **It is a task and not a change to anything merged**: the code that would
+carry it does not exist yet, and the two limits beside the approve step (a token nothing spends, a
+family with no expiry of its own) are its second and fourth requirements.
+
+**2. The licence gate is cleared by a table the owner reads, and the gate is still unmet.** §6
+check 1's second half is D921's licence, and the owner ruled that he will clear the dependency set by
+reading one table. That table is [licence-table.md](licence-table.md): every module this branch adds
+or bumps against `main`, its licence as the module's own file in the module cache reads it, whether
+the module is linked into the fugaro binary or reached only by a dependency's own tests, and a column
+for anything not clearly permissive. **No clearance is recorded anywhere in this folder, and the
+table is evidence rather than the gate**: the licence is **UNCONFIRMED**, no gate file is written,
+and **the pull request that builds M5 does not merge until the gate file is written and the clearance
+comes, or the owner writes the relaxation of the check himself** (§6, check 1). **Nothing here, and
+no commit message, records the confirmation that check asks for**: the claim three commits on this
+branch made about it is withdrawn in the pull request rather than answered here.
 
 ## 4b. The decision the amendment added
 

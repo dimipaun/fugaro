@@ -1,8 +1,9 @@
 # The hosted MCP server: the spec
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
-owner; the rest is not started; this folder approves no task.** The owner's spec of
+merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
+not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -171,7 +172,11 @@ an artifact here ([reconciliation.md](reconciliation.md) §6, check 1). **So the
 builds M5 does not merge until the owner writes the gate file and counsel clears the transitive set,
 or the owner writes the relaxation of the check himself** — and a licence that is not cleared sends
 D921 back to its own alternatives, with the library out of `go.mod` and M5 rebuilt without it, rather
-than a dependency shipped ahead of its own gate.
+than a dependency shipped ahead of its own gate. **The owner ruled on 2026-11-07 that he will clear
+the set by reading one table, and it is [licence-table.md](licence-table.md)**: every module this
+branch adds or bumps, its licence as the module's own file reads it, whether it is linked into the
+fugaro binary, and a column for anything not clearly permissive. **The table is evidence and not the
+gate, and it claims no clearance.**
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -380,7 +385,9 @@ of them the endpoints, all of them what happens at them):
    binding between that page and the approval and **not the device-side approval this bullet asks
    for**: the paired device never sees the number, and a page rendering a flow of its own knows its
    own number ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment). The half that would
-   bind the approval on the device is unbuilt and is in no task.
+   bind the approval on the device is unbuilt, and **the owner answered it on 2026-11-07: it is M5b,
+   a task of its own and a hard prerequisite before anything wires the front door**
+   ([implementation-plan.md](implementation-plan.md) §3).
 6. The coordinator issues the authorization code, and the exchange at `POST /oauth/token` mints a
    short-lived access token and a refresh token, scoped to the MCP resource URL, carrying the
    identity, the client, the scopes and the limits of §6.
@@ -801,8 +808,11 @@ outlives it**. **What would bound it is M-a's device half, and that half is not 
 renders the flow's number and takes it back from the same browser that
 answered, which binds the page to the flow and nothing to a paired device, so a page that rendered a
 flow of its own hands over the number and the token together and this server cannot tell that
-approval from the one M-a asks for. **Raised for the owner rather than answered here**
-([reconciliation.md](reconciliation.md) §4a).
+approval from the one M-a asks for. **The owner answered it on 2026-11-07: the device half is M5b, a
+task of its own and a hard prerequisite before anything wires the front door**, and its other two
+requirements close the two limits this paragraph states — **the ID token is spent**, and **a refresh
+family ages** ([implementation-plan.md](implementation-plan.md) §3;
+[reconciliation.md](reconciliation.md) §4a).
 
 **The coordinator mints no Firebase token of its own** either: it holds no
 signer role, so a compromised coordinator cannot answer "this person signed in" for somebody who
@@ -1069,7 +1079,9 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   no task carries"). **What is owed is the owner's assignment** — them inside M10's entry, or a task
   of their own — and **until it comes the bound is the wiring task's**: the task that mounts this
   package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`, so the
-  growth §8 accepts is accepted only while nothing mounts the routes.
+  growth §8 accepts is accepted only while nothing mounts the routes. **The wiring task owes M5b
+  beside them** (the owner's ruling of 2026-11-07): the guard is relaxed by building the
+  paired-device approval, not by deleting its message.
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.

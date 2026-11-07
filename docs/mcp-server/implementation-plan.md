@@ -1,8 +1,9 @@
 # The hosted MCP server: implementation plan
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
-owner; the rest is not started; this folder approves no task.** The design is
+merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
+not started; this folder approves no task.** The design is
 [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
@@ -121,8 +122,10 @@ it:
   approve by a **single-use POST**, and never put an ID token in a GET URL. **The first of those is
   not in the tree, and the requirement stands rather than moving with the build**: M5's approve step
   renders the number on the page and posts it back from that same form, which binds the page and not
-  a paired device, so the device-side half is raised as a finding for the owner instead of being
-  answered by rewriting M-a ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment).
+  a paired device, so the device-side half was raised as a finding for the owner rather than answered
+  by rewriting M-a ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment). **The owner
+  answered it on 2026-11-07: it is M5b, a task of its own below, and it is a hard prerequisite before
+  any binary links the front door.**
 - **D924 — M-b.** The family spend limit is enforced across concurrent runs by reserving
   `min(job cap, remaining)` **atomically against the family counter** at spawn and settling at
   finalize; for `client_credentials` the family is the client. The store half is M2's, the call site
@@ -156,8 +159,8 @@ this amended plan, because M4's draft predates the D934 and M-e answers and M6's
 **Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first
 half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
 public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
-`:527`) — **M5 is built apart from the paired device M-a asks for, which is raised for the owner, and
-M4's store half and M7–M10 are not started**. **What each built task
+`:527`) — **M5 is built apart from the paired device M-a asks for, which is M5b below and is not
+built, and M4's store half and M7–M10 are not started**. **What each built task
 still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
@@ -189,14 +192,17 @@ free-form `--run-id`); and `mode = max(requested, the token's minimum)` always.
 
 ## 2. The edges, the levels and the critical path
 
-**Twelve task-to-task edges**, and nothing else forces the shape: "A ← B" reads "A waits for B", and
+**Fourteen task-to-task edges**, and nothing else forces the shape: "A ← B" reads "A waits for B", and
 the gates that are not tasks — the SECURITY review, D928, D921's licence and
 check 0's unbuilt fence — are named beside the task each one holds. **§8's store answer was one of
 them and is not any more**: the owner gave it on 2026-11-05, so M2 and M4 wait on nothing but the
 tasks and the review below.
 
 **M1** ← nothing. **M2** ← M1. **M3** ← nothing: it is a rules file and
-its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence confirmed. **M6** ← M4, M5 (it wires a
+its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence confirmed. **M5b** ← M4, M5, and the verifier M6 carries (it spends the
+ID token the approve step verifies and binds the approval to the flow that token names; **the owner
+ruled on 2026-11-07 that it is a task of its own and a hard prerequisite before any binary links the
+front door**). **M6** ← M4, M5 (it wires a
 verifier into the server M5 mounts). **M7** ← M2, M5. **M8** ← M7. **M9** ← M4, M7, and the
 launch-override fence of [reconciliation.md](reconciliation.md) §6 (check 0), which is NOT BUILT.
 **M10** ← M5, M7.
@@ -222,14 +228,15 @@ registry end up four levels apart.
 | **L0** | M1, M3, M4 | nothing. M4's one remaining gate (the review) stands in front of the level rather than in it |
 | **L1** | M2 | `token.go` is M1's file, and D935's answer decides `store_bucket.go` |
 | **L2** | M5 | M2's store, M4's service, and D921's licence |
-| **L3** | M7 | `server.go` and `service.go` are M5's |
+| **L3** | M7, M5b | M7: `server.go` and `service.go` are M5's; M5b: `authorize.go` is M5's, and the approval it binds is the one M5's approve step takes today |
 | **L4** | M6, M8 | M6: `server.go`, which M5 and M7 both write; M8: `tools.go`, M7's |
 | **L5** | M9 | `tools.go` is M8's, `limits.go` is M1's, and `spend.go` needs a release window of its own (§5) |
 | **L6** | M10 | `tools.go` is M9's |
 
 **Critical path:** the review → **M4 → M5 → M7 → M8 → M9 → M10**, six levels to the
 last task, with **M1 → M2 → M5** joining it at M5. **Off it:** M3 entirely (it can land at any point,
-and it is the one task that shares no file with any other), and M6, which takes the last of
+and it is the one task that shares no file with any other), **M5b** — it gates the wiring rather than
+any task of this plan, so nothing from M6 on waits on it — and M6, which takes the last of
 `server.go`'s three slots so that M7 does not have to.
 
 **Sequential by necessity**, and not by preference: **M7 → M8 → M9 → M10** are four writers of one
@@ -722,8 +729,9 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   redirect host, and requiring **QR proximity or number matching**; and **pre-registration is refused
   inside a coding agent's session** with **`client_credentials` off** — this task builds the refusal
   and **not** the grant. Its tests carry the rows for each of those. **The fourth requirement is not
-  in the tree**: the approve step binds the page and not the device, and that is raised as a finding
-  for the owner ([reconciliation.md](reconciliation.md) §4a) rather than rewritten into this row.
+  in the tree**: the approve step binds the page and not the device, and the owner answered that on
+  2026-11-07 — it is **M5b** below, a hard prerequisite before any binary links the front door
+  ([reconciliation.md](reconciliation.md) §4a) — rather than rewritten into this row.
 - **What the review settles about the library, and what it does not.** The review found the library's
   defaults are the opposite of this design's rules in five named ways, and that half is settled by
   the constraints above; **the licence is not, and stays UNCONFIRMED** (the paragraph in §3 above).
@@ -734,6 +742,69 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   request does not merge while that check is unmet**, and a clearance that does not come sends D921
   back to its alternatives: the library out of `go.mod` and this task rebuilt without it
   ([reconciliation.md](reconciliation.md) §6 check 1).
+
+### M5b — Paired-device approval: the number on the device, the token spent, and a family that ages
+
+**The owner's ruling of 2026-11-07 makes this a task of its own, and it is a gate rather than a
+follow-up.** Finding **M-a**'s first requirement — the approval is bound to **a paired device**, by
+**QR proximity or number matching** — was raised for the owner rather than answered by M5
+([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment), and the owner ruled that **the
+pull request that builds M5 merges dormant**: the consent page's token paste
+(`ee/coordinator/mcpauth/authorize.go`) stays exactly as it is there, and **M5b is a hard
+prerequisite before anything wires the front door**.
+**`TestNoBinaryLinksTheFrontDoorYet` is the tripwire, and M5b must land before it may be relaxed**;
+the test's own message names this task for that reason, so the guard is relaxed by building M5b and
+not by deleting a sentence.
+
+**Four things, and no fifth.** Each is a requirement M-a or the review of this branch raised and the
+tree does not carry:
+
+1. **The approval happens on the paired device, not on the page.** The device shows the flow's number
+   or takes it (a QR the page renders carries the same number), so a person approves a request they
+   can see came from the screen in front of them. **A number the page renders and the same page posts
+   back is not this** — the page knows its own number — which is why the page's check is what M5
+   builds and this task is what it does not.
+2. **The ID token is spent.** The approve step records the token as used, in M2's store and as a
+   keyed hash of it (D922), before the code is minted, so a replay of the same token is refused
+   instead of approving a second flow: today nothing spends it, so a leaked token approves another
+   flow on every replay until it expires (spec.md §8).
+3. **The approval is bound to the flow.** The number names **one** authorization request, and the
+   code is minted only for that request, so an approval cannot be moved to another client, another
+   redirect URI or another `state`.
+4. **A refresh family ages.** A family gets a lifetime and an idle bound of its own — the two figures
+   are the owner's to set, and until he does, this task's tests carry the shape — so the exposure a
+   leaked ID token leaves behind ends rather than outliving the token's hour by an unbounded amount
+   (spec.md §6, §8).
+
+- **Files (6):** `ee/coordinator/mcpauth/authorize.go`, `authorize_test.go`,
+  `ee/coordinator/mcpauth/approval.go`, `approval_test.go`, `ee/coordinator/mcpauth/store.go`,
+  `store_test.go`.
+- **Interface:** the approve step keeps its single-use POST and its ID token in the body, and the
+  **paired device's act is a request of its own** — the endpoint's name is this task's to fix when it
+  is built, and D928's allowlist rule and the consent page's CSRF binding apply to it exactly as they
+  do to the approve step. The store gains the spent-token record and the family's two bounds; both go
+  through M2's `Store` interface and neither opens a client of its own (D935).
+- **Red step:** `TestAnApprovalFromThePageAloneIsRefused` — a POST carrying the number the page
+  rendered and the ID token, with no act from the paired device, is refused, and the code is not
+  minted. It fails because the page's own number is what the approve step accepts today.
+- **Tests:** `TestAnApprovalFromThePageAloneIsRefused`, `TestTheNumberNamesOneRequest` (an approval
+  for one request mints no code for another), `TestAnIDTokenApprovesOneFlow` (the second use of a
+  spent token is refused), `TestAFamilyExpires`, and `TestTheDeviceActIsNotAQueryString` (the
+  device's act is a POST, and no token travels in a URL).
+- **SEC:** **yes** — this is the step that decides who a person is, and it is where a mistake is
+  silent. **It is not one of the five whose marker says mandatory**, because that marker is a
+  property of the review that has already run: the independent SECURITY review of 2026-11-04 read §8
+  and M3, M4, M5, M7 and M9, and M5b did not exist then. **Its diff therefore carries its own
+  independent SECURITY reading when it is built**, on the same terms.
+- **Depends on:** M4, M5, and the verifier M6 carries — the ID token this task spends is the one that
+  verifier checks. **It gates the wiring rather than a task**: no task of this plan waits on M5b, and
+  **the task that wires the front door into a binary waits on it and on the two bounds spec.md §8
+  relies on** ([reconciliation.md](reconciliation.md) §4a, the two bounds no task carries).
+- **What this task does not change.** It adds no bound to the open registration endpoint and no
+  sweep of its own (those travel with the wiring task), it does not touch D921's licence gate, and
+  **it does not build H1's device-held signing key**: that residual risk is accepted and documented
+  (spec.md §3, §8) and M5b binds the approval to the device's session rather than to a key the device
+  holds.
 
 ### M6 — Firebase at the authorize endpoint
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates M-a and H1,
@@ -952,7 +1023,7 @@ leaves the first slice is M9's own work and the half of M10's that names a spawn
 | --- | --- | --- |
 | `ee/coordinator/mcpauth/limits.go` | M1 (L0), M9 (L5) | M1 defines `Limits` and `Narrow`; M9 reads them at submit |
 | `ee/coordinator/mcpauth/token.go` | M1 (L0), M2 (L1) | M1 defines the token's shape; M2 mints it |
-| `ee/coordinator/mcpauth/store.go` | M2 (L1), M5 (L2), M10 (L6) | M2 defines the store; M5 writes through it; M10 revokes through it |
+| `ee/coordinator/mcpauth/store.go` | M2 (L1), M5 (L2), M5b (L3), M10 (L6) | M2 defines the store; M5 writes through it; M5b adds the spent-ID-token record and the family's own lifetime; M10 revokes through it |
 | `ee/coordinator/mcpauth/server.go` | M5 (L2), M7 (L3), M6 (L4) | M5 mounts the five endpoints; M7 adds the resource handler; M6 adds the authorize endpoint's verifier, off the critical path and therefore in the last of the three slots |
 | `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
 | `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |
@@ -961,7 +1032,7 @@ leaves the first slice is M9's own work and the half of M10's that names a spawn
 | `internal/runner/spend.go` | M9 (L5) alone, but **shared with every other runner task in its release** | one variable and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
 | `SECURITY.md` | M4 (L0), M9 (L5), M10 (L6) | a public endpoint, the store and the single grant that keeps it private, a launch grant, and what the audit does not record — **the repository's standing rule is that a security-relevant change updates it in the same PR** |
 
-| `ee/coordinator/mcpauth/authorize.go` | M5 (L2), M6 (L4) | M5 defines the authorize and approve steps; M6 verifies the ID token the approve step carries |
+| `ee/coordinator/mcpauth/authorize.go` | M5 (L2), M5b (L3), M6 (L4) | M5 defines the authorize and approve steps; M5b takes the approval onto the paired device and spends the ID token there; M6 verifies the ID token the approve step carries |
 
 **Files deliberately not in this table**, because one writer is not a shared file and a row for one
 would read as a conflict: `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` and
@@ -985,7 +1056,7 @@ Why the implementation is **0.21.0 or later**, and not the next minor:
    exist yet. A release cannot carry an MCP endpoint on a service the same release is still
    designing.
 2. **The work is big and security-heavy, and the owner's own instruction of 2026-11-04 is that it
-   takes a slot of its own for that reason.** Ten tasks, **nine of them SEC-marked and five of those
+   takes a slot of its own for that reason.** Eleven tasks, **ten of them SEC-marked and five of those
    mandatory**, a public endpoint, a new service account, **a new store with one IAM binding on it**
    (M4, D935) and **one new privilege** (M9's launch grant), behind an independent review whose first
    finding (F32) has already moved where the token records live. A window that is not already carrying
