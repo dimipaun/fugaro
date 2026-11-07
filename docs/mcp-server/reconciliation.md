@@ -1,6 +1,7 @@
 # The hosted MCP server: reconciliation and decisions
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved.**
+**Status: design answered by the owner 2026-11-04; no task approved; M5's implementation has landed
+ahead of the §8 security review, which is still to be read; every other task is plan only.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -162,8 +163,11 @@ load-bearing:
 
 **D921's unconfirmed licence** added the first owner check in §6 and a build gate in the plan. The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file now
-carries — **design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.**
+carries — **design answered by the owner 2026-11-04; no task approved; M5's implementation has landed
+ahead of the §8 security review, which is still to be read; every other task is plan only.** That
+line's last move is this work's: M5's implementation landed on 2026-11-07 while the review was still
+unread, and a folder whose status line still said "nothing implemented" would have been describing a
+repository that no longer exists.
 
 ### The answer of 2026-11-05
 
@@ -305,6 +309,10 @@ code task starts:
    answered it on 2026-11-05 (**D935**); the rest of §8 is still to be read, and that review is M4's
    only remaining gate — **the third gate that stood in front of M2 and M4, the store question itself,
    was answered the same day rather than left standing** (§8 of the plan holds the answer: the bucket).
+   **M5's implementation is the one task that did not wait for it** (2026-11-07): its five files are
+   in the tree and the review is still to be read, which this folder records as a fact rather than
+   endorses as a state, and which the status line above carries so that neither file reads as though
+   no code existed.
 8. **The store's IAM is what D935 says it is, and only a live project can show it.** No hermetic test
    stands in for this one: the plan's own test reads the plan, and the plan is not the project's
    policy. With the owner's own credentials, once M4 has been applied by `fugaro update`: **read and

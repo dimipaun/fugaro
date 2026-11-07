@@ -65,11 +65,15 @@ const (
 	mcpPlan       = "docs/mcp-server/implementation-plan.md"
 
 	// mcpStatus is the line every file in this folder carries, word for word.
-	// It is the folder's whole claim about itself -- the design is answered,
-	// the plan is all there is, nothing is implemented and no task is approved
-	// -- and a file that dropped it would read as a design somebody may build
-	// from, which is the one thing this folder is not.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved."
+	// It is the folder's whole claim about itself -- the design is answered, no
+	// task is approved, M5's implementation has landed ahead of the security
+	// review and every other task is plan only -- and a file that dropped it
+	// would read as a design somebody may build from, which is the one thing
+	// this folder is not. The M5 clause is the folder's record of a fact the
+	// code already shows: five files of M5 are in the tree (2026-11-07) and the
+	// §8 review has not been read, so a status line still saying "nothing
+	// implemented" would contradict the repository it is pinned against.
+	mcpStatus = "Status: design answered by the owner 2026-11-04; no task approved; M5's implementation has landed ahead of the §8 security review, which is still to be read; every other task is plan only."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }

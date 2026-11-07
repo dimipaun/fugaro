@@ -1,7 +1,8 @@
 # The hosted MCP server: implementation plan
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The design is [spec.md](spec.md), the findings and the fifteen decisions are
+**Status: design answered by the owner 2026-11-04; no task approved; M5's implementation has landed
+ahead of the §8 security review, which is still to be read; every other task is plan only.**
+The design is [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
 plan is written to those answers: the "Answered" column below is what the tasks build, and the last
@@ -151,7 +152,9 @@ standing**: it was UNCONFIRMED when D921 was decided and it gated **M5** specifi
 the task that takes the dependency and a licence that turned out to be unusable would have sent D921
 back to its alternatives before any code existed rather than after. **The owner confirmed it on
 2026-11-06 as Apache 2.0** ([reconciliation.md](reconciliation.md) §6, the first owner check, now
-answered), so that gate is cleared and M5's last gate is the review.
+answered), so that gate is cleared and M5's last gate is the review — **which M5's implementation did
+not wait for (2026-11-07): its five files are in the tree, the review is still to be read, and this
+plan records that rather than leaving a reader to find the code and the gate disagreeing.**
 
 **A third gate stood in front of M2 and M4, and it has been answered rather than left standing.**
 D935 moved the records out of the project's database and left **which** separate store to the owner
@@ -529,7 +532,8 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
 - **Depends on:** M2, M4, D921, D928 — and on D921's licence, which **the owner confirmed on
   2026-11-06 as Apache 2.0** ([reconciliation.md](reconciliation.md) §6, check 1, now answered), so
   the dependency may be added and this task may run. This was the one task the licence gated
-  directly, and its gate is the review.
+  directly, and its gate is the review — **still unread when the implementation landed (2026-11-07)**,
+  which is the fact §3 of this plan records rather than a state it endorses.
 
 ### M6 — Firebase at the authorize endpoint
 
@@ -591,6 +595,16 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   paragraph rather than as a finding one task closes. **UNVERIFIED here**: which identities of a
   given installation can actually sign as one of its service accounts is a fact about that project's
   IAM policy, and no hermetic test can stand in for the reading `tokensigners.go` performs live.
+- **Note — the two bounds spec §8 puts on open registration are this task's (2026-11-07).**
+  [spec.md](spec.md) §3 says a registration is **rate-limited per source** and **audited**, and §8
+  bounds the residual risk an open endpoint accepts by that limit and by registration records being
+  **expirable**. **Neither bound belonged to a task**: M5's registration endpoint writes one record
+  per unauthenticated call, no task's Files list carries a limiter or a lifecycle, and the `Client`
+  record M2 defines carries the timestamp a lifecycle would read and nothing that acts on it — so
+  what §8 calls a bounded risk was unowned rather than deferred. **This task carries both**, because
+  it is the task that makes `/oauth/register` reachable from a real binary: the exposure is latent
+  until then, and the limiter and the expiry land with it. **What the limit is, is a product
+  decision** — the owner has not made one, and this plan does not invent it.
 - **SEC:** **yes, mandatory.**
 - **Depends on:** M2, M5, D933.
 

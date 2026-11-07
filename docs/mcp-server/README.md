@@ -1,7 +1,8 @@
 # The hosted MCP server
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The owner's spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is
+**Status: design answered by the owner 2026-11-04; no task approved; M5's implementation has landed
+ahead of the §8 security review, which is still to be read; every other task is plan only.**
+The owner's spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is
 reconciled against the code here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the
 alternative — and **all fifteen were answered on 2026-11-04**, **every one of them the
@@ -46,7 +47,9 @@ device allowlist, which is what D923's answer signs a person in with).
   mandatory** — and **the coordinator runs it**, not this folder's authors, exactly as it runs every
   other security-sensitive review in this repository. **The review is a precondition of this pull
   request merging**, and no task in [implementation-plan.md](implementation-plan.md) starts before it
-  has been read and its findings answered. Its scope is §8, every **SEC**-marked task of §3 — the
+  has been read and its findings answered — **with one exception this folder records rather than
+  hides: M5's implementation landed on 2026-11-07 ahead of the review**, which is still to be read
+  ([implementation-plan.md](implementation-plan.md) §3, and the status line above). Its scope is §8, every **SEC**-marked task of §3 — the
   five whose marker says **mandatory** are M3, M4, M5, M7 and M9, and M2, M6, M8 and M10 carry the
   marker without that word — and the two new privileges this design asks for (M9's launch grant, and
   M4's single binding on the store D935 moves the records into). **That review has already found
@@ -119,10 +122,12 @@ README, in its own diff, is where the block above D1189 is written.
 
 - **Not an approval of any task.** Every decision was answered on 2026-11-04, and **an answer is not
   an approval**: no task in [implementation-plan.md](implementation-plan.md) is approved, and the
-  owner approves them one at a time.
+  owner approves them one at a time. **M5's implementation has landed without one** (2026-11-07), and
+  the status line above is where this folder says so rather than reading as though no code exists.
 - **Not a plan to start.** M4 creates a public endpoint and M9 adds a launch grant; **neither starts
   before the independent SECURITY review of [spec.md](spec.md) §8 has been read and its findings
-  answered**, and **the coordinator runs that review**.
+  answered**, and **the coordinator runs that review**. **M5 is the one task that has not waited for
+  it**: its implementation landed on 2026-11-07 and the review is still to be read.
 - **Not a design anyone may build against yet.** The library's licence — the one thing this folder
   could not check for itself — **is settled: Apache 2.0, confirmed by the owner on 2026-11-06**
   ([reconciliation.md](reconciliation.md) §6, the first owner check), so the tasks may build on
