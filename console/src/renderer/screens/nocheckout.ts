@@ -61,12 +61,37 @@ export interface ScreenFactory {
  * failure of the read, so it draws the frame's geometry and none of its tone. */
 export const NO_CHECKOUT_KIND = 'no-checkout'
 
-/** NO_CHECKOUT_HEADLINE is the card. It is two sentences because the state is
- * two facts: what the Graph reads (a checkout, not a database, not a run list)
- * and what this installation has (none chosen). A single "no checkout" would
- * leave the operator to work out which of the console's five views it breaks. */
+/**
+ * NO_CHECKOUT_HEADLINE is the card. It is two sentences because the state is two
+ * facts: what the read needs (a checkout, not a database, not a run list) and
+ * what this installation has (none chosen). A single "no checkout" would leave
+ * the operator to work out which of the console's five views it breaks.
+ *
+ * **It names the plan scope** (the graph plan's CG10, H9): the Graph has two
+ * scopes, the coordinator's needs no checkout at all, and the card is drawn
+ * instead of the drawing -- so a headline that said "the Graph" would be a claim
+ * about a tab whose other scope is working, read by an operator who can see the
+ * console has just read one. The way back to that scope is the card's own button
+ * (`NO_CHECKOUT_SCOPE_LABEL`).
+ */
 export const NO_CHECKOUT_HEADLINE =
-  'The Graph reads your plans from a repository checkout. This installation has none chosen.'
+  'The plan scope of the Graph reads your plans from a repository checkout. This installation has none chosen.'
+
+/** NO_CHECKOUT_SCOPE_LABEL is the card's own door back to the coordinator scope,
+ * and NO_CHECKOUT_SCOPE_CLASS is the hook the entry wires it by.
+ *
+ * **The card holds no scope control**, because it is drawn *instead of* the
+ * Graph: the control went with the drawing, and the plan scope is a choice
+ * somebody made (or the scope the console can read). Without this door an
+ * operator whose installation records no checkout would be on a screen they
+ * cannot leave, which is the one thing the owner's rule of 2026-10-31 forbids.
+ *
+ * The word is the control's own entry for that scope ("All (coordinator)",
+ * `GRAPH_SCOPE_ALL_LABEL`) with the verb in front of it, and it is stated here
+ * rather than imported: no screen reaches into another screen's vocabulary, and
+ * `no-checkout.test.ts` holds the two sentences to the same scope. */
+export const NO_CHECKOUT_SCOPE_LABEL = 'Show All (coordinator)'
+export const NO_CHECKOUT_SCOPE_CLASS = 'graph-scope-back'
 
 /** NO_CHECKOUT_CHOICE_LABEL is the card's word for the chooser, in the words the
  * installation issue view already uses for the same door (`ISSUE_CHECKOUT_LEAD`,
@@ -234,6 +259,11 @@ function cell(parent: ScreenElement, factory: ScreenFactory, tag: string, ...cla
 export interface DrawnNoCheckout {
   readonly root: ScreenElement
   readonly action: NoCheckoutAction
+  /** coordinator is the card's door back to the coordinator scope, which every
+   * state of the card carries: it is a door out of the scope and not an action
+   * of the card, so it is not part of `action` -- the four states of the action
+   * are what to do about the *checkout*, and this one is what to do instead. */
+  readonly coordinator: ScreenElement
 }
 
 /**
@@ -250,6 +280,11 @@ export interface DrawnNoCheckout {
  *   - exactly one, and `auto`: the console chooses it by itself and says so
  *     once, rather than drawing a menu with a single entry;
  *   - otherwise: the menu, and the button that sends what it has selected.
+ *
+ * **The card is the plan scope's state and carries its own way back.** It is
+ * drawn instead of the Graph, so the Graph's scope control is not on the panel:
+ * `coordinator` is the button that takes an operator who chose this scope back
+ * to the one that needs no checkout at all (CG10).
  *
  * The CLI's sentence is drawn behind the disclosure and **not** instead of the
  * card: this file is a state the console can name, so it names it, and it keeps
@@ -308,6 +343,17 @@ export function renderNoCheckout(
     action = { kind: 'choose', select, button }
   }
 
+  // The way out, drawn by every state of the card and **above the disclosure**:
+  // the CLI's own account of the state is the last thing the card says, and the
+  // door belongs with the card's own words rather than under a reader's
+  // explanation of somebody else's. The class is spelled here rather than read
+  // from `NO_CHECKOUT_SCOPE_CLASS` -- the same string the tests match the door
+  // by -- because the theme's selector scan reads the element a rule may style
+  // from the call site's own literals.
+  const coordinator = cell(body, factory, 'button', 'graph-scope-back')
+  coordinator.setAttribute('type', 'button')
+  literal(coordinator, NO_CHECKOUT_SCOPE_LABEL)
+
   const details = cell(body, factory, 'details', NO_CHECKOUT_DETAILS_CLASS)
   literal(cell(details, factory, 'summary', NO_CHECKOUT_SUMMARY_CLASS), NO_CHECKOUT_DETAILS_LABEL)
   const drawn = sanitizeRefusal(sentence, 'the CLI refusal sentence')
@@ -315,5 +361,5 @@ export function renderNoCheckout(
     cell(details, factory, 'p', NO_CHECKOUT_SENTENCE_CLASS),
     drawn.ok ? drawn.text : REFUSAL_UNREADABLE,
   )
-  return { root, action }
+  return { root, action, coordinator }
 }

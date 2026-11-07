@@ -62,15 +62,21 @@ import { UNAVAILABLE_MARK, formatReading } from '../../shared/availability'
 import { BUSY_SLOT_CLASS } from '../section'
 import { sanitizeText } from '../../shared/sanitize'
 import type { Sanitized } from '../../shared/sanitize'
-import type { PlanNodeView, PlanStatusView, RunView } from '../../shared/schema'
+import type { GraphView, PlanNodeView, PlanStatusView, RunView } from '../../shared/schema'
 import type { ElementLike } from '../app'
 import { LayoutClient } from '../graph/layout-client'
 import type { LayoutGraph, LayoutRequest, Positions, RouteSection, WorkerLike } from '../graph/layout-client'
 import { WORKER_URL } from '../graph/layout-client'
 import { GraphLayout, edgeKey, nodeKey } from '../graph/layout'
-import { STATE_WORDS, buildGraphModel } from '../graph/model'
+import { STATE_WORDS, buildGraphModel, buildScopeModel } from '../graph/model'
 import type { GraphColumn, GraphModel, GraphNode, GraphPlan, GraphRelease, GraphTab, StateWord } from '../graph/model'
+import type { ScopeModel, ScopeNode, ScopeRelease, ScopeSource } from '../graph/model'
 import { disabledWrite } from '../writes'
+
+/** GRAPH_SCOPE_NO_RELEASE is the model's own name for the group a node that
+ * names no release is drawn in, re-exported here because the drawing's
+ * vocabulary is this module's (`graph.test.ts` reads it from the screen). */
+export { GRAPH_SCOPE_NO_RELEASE } from '../graph/model'
 
 // ---------------------------------------------------------------------------
 // The factory
@@ -226,6 +232,68 @@ export const GRAPH_LIST_LABEL = 'the dependency graph, drawn as a list'
  * toolbar holds are nameless buttons and a set of streams, and a set of buttons
  * a reader hears one by one needs the one name they share. */
 export const GRAPH_FILTER_LABEL = 'streams'
+
+/**
+ * GRAPH_SCOPE_ALL and GRAPH_SCOPE_PLAN are the two scopes this build's control
+ * offers: the coordinator's own view of the installation (`fugaro graph --json`,
+ * the contract's §6.22 document, which needs no checkout at all) and the plan of
+ * the **checkout** this console is on (`plan status --json`, §6.12).
+ *
+ * They are the console's own keys and never a document's word: a scope is which
+ * read a screen holds, and the CLI's own source vocabulary (`all`, `coordinator`,
+ * `local:<id>`, `orchestrator:<id>`) belongs to the wire. The values are closed
+ * here because the orchestrator scopes of the plan's later tasks are a *set of
+ * sources inside* the coordinator's document, and a control whose values were
+ * document strings would let a document choose which read the console makes.
+ */
+export const GRAPH_SCOPE_ALL = 'all'
+export const GRAPH_SCOPE_PLAN = 'plan'
+
+/** GRAPH_SCOPES is the control's entries, in the order the spec gives them: All
+ * first (the coordinator is the overall source of truth and the scope that always
+ * works), then the checkout's own plan. The orchestrator scopes the plan's later
+ * tasks add are appended after these two, which is why the order is a list and
+ * not two constants in a drawing. */
+export const GRAPH_SCOPES: readonly GraphScope[] = Object.freeze([GRAPH_SCOPE_ALL, GRAPH_SCOPE_PLAN])
+
+/** GRAPH_SCOPE_ALL_LABEL and GRAPH_SCOPE_PLAN_LABEL are what the control calls
+ * them: the first names which view it is (the coordinator's, so a reader who has
+ * only ever seen the checkout's plan is not surprised by the whole installation),
+ * and the second names the requirement its own read has. */
+export const GRAPH_SCOPE_ALL_LABEL = 'All (coordinator)'
+export const GRAPH_SCOPE_PLAN_LABEL = 'Plans of this checkout'
+
+/** GRAPH_SCOPE_LABEL is the control's accessible name: a `<select>` beside three
+ * buttons and a stream filter needs to say what it chooses. */
+export const GRAPH_SCOPE_LABEL = 'scope'
+
+/** GRAPH_SCOPE_EMPTY is what a coordinator scope with no node at all says. It is
+ * a sentence of its own rather than the plan's `GRAPH_NO_PLANS`: a scope whose
+ * sources are all down is not a checkout with no plan, and the sources' own rows
+ * above this sentence are what tells the two apart. */
+export const GRAPH_SCOPE_EMPTY = 'this scope answered with no node'
+
+/** GRAPH_SOURCES_LABEL names the source list's group, for GRAPH_FILTER_LABEL's
+ * reason: the rows are one fact -- which sources answered, and how -- and a
+ * reader who hears them one by one needs the name they share. */
+export const GRAPH_SOURCES_LABEL = 'sources'
+
+/** GRAPH_SCOPE_CONTROL_CLASS is the scope control's class, and it is the hook the
+ * entry finds the one control to wire by: the control is drawn in **both**
+ * drawings, so the class is the whole of how the two know it is the same one. */
+export const GRAPH_SCOPE_CONTROL_CLASS = 'graph-scope-select'
+
+/** GraphScope is which read a drawing is of. */
+export type GraphScope = typeof GRAPH_SCOPE_ALL | typeof GRAPH_SCOPE_PLAN
+
+/** scopeOf reads a control's value back as a scope. A value this build does not
+ * know -- a document's word, an orchestrator scope from a console that knew one
+ * -- is the plan scope, which is the one read that needs nothing of the
+ * coordinator: a control that could hand the screen a scope it cannot read would
+ * be a control that empties the panel. */
+export function scopeOf(value: string): GraphScope {
+  return value === GRAPH_SCOPE_ALL ? GRAPH_SCOPE_ALL : GRAPH_SCOPE_PLAN
+}
 
 /** GRAPH_OPEN_RUN_LABEL is the inspector's own door to the run the selected task
  * is on -- the same door a card's second press opens, spelled out. */
@@ -436,26 +504,49 @@ export interface GraphState {
   readonly selected: string | null
   readonly expanded: readonly string[]
   readonly zoom: number
+  /** `scope` is which read is drawn (CG10). It is the screen's own state like
+   * the other five, and a drawing is a function of it: the coordinator scope has
+   * no positions, no canvas and no legend, and the plan scope has no source
+   * rows. */
+  readonly scope: GraphScope
 }
 
 /** GRAPH_INITIAL_STATE is the screen as it opens: every stream at once (the
- * canvas), nothing selected, no chip open, and the whole picture in the frame. */
+ * canvas), nothing selected, no chip open, the whole picture in the frame, and
+ * the **plan** scope -- the checkout this console is on is the read it can make
+ * without a coordinator, and `loadScope` is what puts a coordinator read up. */
 export const GRAPH_INITIAL_STATE: GraphState = Object.freeze({
   tab: null,
   view: 'graph',
   selected: null,
   expanded: Object.freeze([]),
   zoom: 1,
+  scope: GRAPH_SCOPE_PLAN,
 })
 
 /** GraphPicture is one drawing's inputs: the model, the positions the engine
- * answered with (or `null` while it has not), the state, and the console's run
- * list -- which is what a node's door is resolved against. */
+ * answered with (or `null` while it has not), the state, the console's run list
+ * -- which is what a node's door is resolved against -- and the sentence a
+ * refused scope is answered with, which is a fact about the **read** and so is
+ * drawn in the drawing rather than on a screen of its own (T3). */
 export interface GraphPicture {
   readonly model: GraphModel
   readonly positions: Positions | null
   readonly state: GraphState
   readonly runs: readonly string[]
+  readonly notice: string | null
+}
+
+/** ScopePicture is the coordinator drawing's inputs: the scope's own model, the
+ * same state, and the same notice. It carries positions' counterpart by carrying
+ * **no positions at all**: this scope has no edges to place (F17), so there is
+ * nothing for the engine to answer and nothing that can fail -- which is also why
+ * it carries no run list, since a coordinator node names no run of this console's
+ * own and a door would open nothing. */
+export interface ScopePicture {
+  readonly model: ScopeModel
+  readonly state: GraphState
+  readonly notice: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,6 +1128,7 @@ function header(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
   // reader who tabs into it meets the filter and then the controls, and the
   // stylesheet lays the four out as one line.
   const toolbar = cell(element, factory, 'div', 'graph-toolbar')
+  toolbar.append(scopeControl(factory, picture.state))
   toolbar.append(filter(factory, picture))
   const actions = cell(toolbar, factory, 'div', 'graph-actions')
   const view = cell(actions, factory, 'button', 'graph-view')
@@ -1057,6 +1149,7 @@ function header(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
     literal(fit, GRAPH_FIT_LABEL)
   }
 
+  appendNotice(element, factory, picture.notice)
   if (picture.model.notShown > 0) {
     // One text run and not two slots: the sentence is the console's own, and the
     // count in it is a number this console counted. A console sentence with a
@@ -1067,6 +1160,54 @@ function header(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
   return element
 }
 
+/**
+ * scopeControl is the Graph's scope dropdown: one option per scope, the one in
+ * hand selected, and the control's own `data-scope` saying which that is.
+ *
+ * **It is a `<select>` and not the stream filter's segmented control.** What it
+ * holds is a set that grows with the installation -- the plan's later tasks add
+ * the local and central orchestrators the coordinator's document lists -- where
+ * the streams are the checkout's own handful: a button per scope would be a
+ * segmented control whose width is the installation's shape.
+ *
+ * **The control is drawn in both drawings**, because the scope is the screen's
+ * own state and not one drawing's: a reader who switches scope and switches back
+ * finds the control where they left it, in the same place, rather than a second
+ * control of the other drawing's own.
+ */
+function scopeControl(factory: ScreenFactory, state: GraphState): ScreenElement {
+  // The class is spelled here rather than read from `GRAPH_SCOPE_CONTROL_CLASS`,
+  // which is the same string the entry wires the control by: the theme's
+  // selector scan reads the element a rule may style from the call site's own
+  // literals, and a class reached through a constant is a pair it cannot see.
+  const control = make(factory, 'select', 'graph-scope-select')
+  control.setAttribute('aria-label', GRAPH_SCOPE_LABEL)
+  control.setAttribute('data-scope', state.scope)
+  for (const scope of GRAPH_SCOPES) {
+    const option = cell(control, factory, 'option', 'graph-scope-option')
+    option.setAttribute('value', scope)
+    // The chosen entry is `selected` in the markup as well as the value the
+    // browser will read: a drawing is the state it was made with, and a control
+    // whose selection the browser inferred from first-in-the-list would draw the
+    // wrong scope on a form the console had not touched.
+    if (scope === state.scope) option.setAttribute('selected', 'selected')
+    literal(option, scopeLabel(scope))
+  }
+  return control
+}
+
+/** scopeLabel is what the control calls one scope. */
+function scopeLabel(scope: GraphScope): string {
+  return scope === GRAPH_SCOPE_ALL ? GRAPH_SCOPE_ALL_LABEL : GRAPH_SCOPE_PLAN_LABEL
+}
+
+/** appendNotice draws the sentence a **chosen** scope was refused with, under the
+ * control that chose it (T3). It is appended only when there is one: a cell that
+ * was always there would be a strip every drawing wears. */
+function appendNotice(parent: ScreenElement, factory: ScreenFactory, notice: string | null): void {
+  if (notice === null) return
+  drawn(parent, factory, 'p', sanitizeText(notice, 'sentence', 'graph.read'), 'graph-scope-notice')
+}
 /**
  * filter draws one segment per stream, then All (the addendum's own order: the
  * document's streams, then everything at once).
@@ -1878,6 +2019,178 @@ export function renderGraph(factory: GraphFactory, picture: GraphPicture, theme:
 }
 
 // ---------------------------------------------------------------------------
+// The coordinator scope's drawing (CG10)
+// ---------------------------------------------------------------------------
+
+/**
+ * renderScopeGraph draws the **coordinator** scope: the sources with their own
+ * states, then the nodes grouped by release, then the read's warnings.
+ *
+ * **It asks the engine for nothing and draws no canvas.** The coordinator's view
+ * holds no edges (F17), so there is no picture to place: the reading *is* the
+ * drawing, and a worker asked for coordinates nobody draws would be a process
+ * started for nothing -- and a second failure mode (`GraphScreen.build`'s list
+ * fallback) for a drawing that cannot fail.
+ *
+ * It is the plan drawing's sibling and not its variant: the two share the
+ * section, the tooltip of the pull request number, the busy slot and the scope
+ * control, and nothing else. A plan's cards, bands, boxes and edges are facts
+ * about one checkout's document, and the coordinator's document has none of
+ * them.
+ */
+export function renderScopeGraph(factory: ScreenFactory, picture: ScopePicture, theme: GraphTheme): ScreenElement {
+  const root = make(factory, 'section', 'graph')
+  root.setAttribute('data-theme', theme)
+  // The section's busy slot, first child of every drawing of this screen, for
+  // `renderGraph`'s reason: the scope control starts a read of its own.
+  cell(root, factory, 'div', BUSY_SLOT_CLASS)
+  root.append(scopeHeader(factory, picture))
+  const sources = scopeSources(factory, picture.model)
+  if (sources !== null) root.append(sources)
+  if (picture.model.releases.length === 0) {
+    // A scope with no node at all is its own sentence and never an empty frame:
+    // a coordinator whose every source is down answers with no node, and the
+    // source rows above this sentence are what tell that apart from an
+    // installation that is simply quiet.
+    literal(cell(root, factory, 'p', 'graph-empty'), GRAPH_SCOPE_EMPTY)
+  }
+  for (const release of picture.model.releases) root.append(scopeRelease(factory, release))
+  for (const warning of picture.model.warnings) drawn(root, factory, 'p', warning, 'graph-warning')
+  if (picture.model.notShown > 0) {
+    literal(cell(root, factory, 'p', 'graph-not-shown'), notShownNote(picture.model.notShown))
+  }
+  return root
+}
+
+/**
+ * scopeHeader draws the coordinator drawing's heading, its one control and the
+ * notice.
+ *
+ * **There is no stream filter here**, and that is a fact about the document
+ * rather than a simplification: the streams are `plan status`'s own vocabulary
+ * and the coordinator's view names none of them, so a filter would be a control
+ * that cannot change the drawing. The view and fit controls are the canvas's --
+ * the list is the other drawing of a *picture*, and there is no picture here.
+ */
+function scopeHeader(factory: ScreenFactory, picture: ScopePicture): ScreenElement {
+  const element = make(factory, 'header', 'graph-header')
+  literal(cell(element, factory, 'h1', 'graph-title'), GRAPH_TITLE)
+  const toolbar = cell(element, factory, 'div', 'graph-toolbar')
+  toolbar.append(scopeControl(factory, picture.state))
+  appendNotice(element, factory, picture.notice)
+  return element
+}
+
+/** scopeSources draws one row per source the read answered with, or `null` when
+ * the document listed none. The group carries the one name the rows share, for
+ * `GRAPH_FILTER_LABEL`'s reason: a reader who hears four rows one by one needs
+ * to know what they are rows of. */
+function scopeSources(factory: ScreenFactory, model: ScopeModel): ScreenElement | null {
+  if (model.sources.length === 0) return null
+  const element = make(factory, 'div', 'graph-sources')
+  element.setAttribute('role', 'group')
+  element.setAttribute('aria-label', GRAPH_SOURCES_LABEL)
+  for (const source of model.sources) element.append(scopeSource(factory, source))
+  return element
+}
+
+/**
+ * scopeSource is one source's row: its name, the **word** for the state it
+ * reported, and the reason it gave.
+ *
+ * **The state is a word and not a tone** (design §3.5, H10, and the whole point
+ * of H3's `sources` array): a source that is down is a state a reader must be
+ * able to read off a greyscale screenshot, and the reason beside it is what says
+ * *why*. A reason that is empty is drawn as nothing at all rather than as an
+ * empty cell -- the CLI writes `""` for a source that gave none, and a blank
+ * cell is a reader wondering whether the drawing failed.
+ *
+ * `data-source` and `data-state` carry the sanitizer's own answer and an empty
+ * string where it refused: they are hooks a rule keys on, and a hook is not a
+ * second spelling of a document's word.
+ */
+function scopeSource(factory: ScreenFactory, source: ScopeSource): ScreenElement {
+  const row = make(factory, 'div', 'graph-source')
+  row.setAttribute('data-source', source.source.ok ? source.source.text : '')
+  row.setAttribute('data-state', source.state.ok ? source.state.text : '')
+  drawn(row, factory, 'span', source.source, 'graph-source-name')
+  stateWord(row, factory, source.state, 'graph-word')
+  if (source.reason.ok && source.reason.text !== '') {
+    drawn(row, factory, 'span', source.reason, 'graph-source-reason')
+  }
+  return row
+}
+
+/** scopeRelease is one release's group: its heading -- the version, or the
+ * console's own words for a node that names none -- and the nodes in it. */
+function scopeRelease(factory: ScreenFactory, release: ScopeRelease): ScreenElement {
+  const section = make(factory, 'section', 'graph-scope-release')
+  section.setAttribute('data-release', release.release)
+  drawn(section, factory, 'h2', release.heading, 'graph-scope-heading')
+  const list = cell(section, factory, 'ul', 'graph-scope-nodes')
+  for (const node of release.nodes) list.append(scopeNode(factory, node))
+  return section
+}
+
+/**
+ * scopeNode is one thing the coordinator's view holds: its title, the kind of
+ * thing it is, the repository it is in, its state as a word and -- for a pull
+ * request -- the source's own id for it, which is its number.
+ *
+ * **That cell is text and carries no destination**, exactly as a plan card's
+ * number does: no document this console reads names the provider a URL would be
+ * built from (design §5.1 rule 2, gap 7), so the cell's tooltip is the console's
+ * own sentence saying so. Nothing here reads a `href` or builds one. It is drawn
+ * as the source wrote it -- the coordinator spells a pull request's id
+ * `acme/widgets#42` -- because the document carries no number field and an id is
+ * identity rather than prose (D1356), so this screen neither cuts one down nor
+ * reformats one.
+ *
+ * **A coordinator node opens no run**, which is why there is no door on this row
+ * and no `data-run-id`: the console's run list is one *installation's* own, and a
+ * coordinator node may come from an orchestrator this console has never read.
+ * The row is a reading and not a gesture.
+ */
+function scopeNode(factory: ScreenFactory, node: ScopeNode): ScreenElement {
+  const row = make(factory, 'li', 'graph-scope-node')
+  row.setAttribute('role', 'listitem')
+  row.setAttribute('data-key', node.key)
+  row.setAttribute('data-source', node.source.ok ? node.source.text : '')
+  row.setAttribute('data-state', node.state.ok ? node.state.text : '')
+  drawn(row, factory, 'span', node.title, 'graph-scope-title')
+  drawn(row, factory, 'span', node.kind, 'graph-scope-kind')
+  if (node.repo.ok && node.repo.text !== '') drawn(row, factory, 'span', node.repo, 'graph-scope-repo')
+  if (node.pullRequest !== null) {
+    const number = drawn(row, factory, 'span', node.pullRequest, 'graph-scope-pr')
+    number.setAttribute('title', GRAPH_PR_NO_LINK_REASON)
+  }
+  stateWord(row, factory, node.state, 'graph-word')
+  return row
+}
+
+/**
+ * stateWord is a **document's** word for a state, drawn as the text it is and
+ * marked with the word it draws.
+ *
+ * It is `markWord` with the other door into a text slot. `markWord` spells a word
+ * of this module's own vocabulary; a document's word is a `Sanitized` value like
+ * every other field, and this file's door for one is `drawInto`. A word the
+ * sanitizer refused is deliberately **not** marked: there is no word for a rule
+ * to colour, and a `data-word` holding the console's `n/a` would be a state the
+ * stylesheet painted as if the source had said it.
+ */
+function stateWord(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  state: Sanitized,
+  ...classes: string[]
+): ScreenElement {
+  const element = drawn(parent, factory, 'span', state, ...classes)
+  if (state.ok) element.setAttribute('data-word', state.text)
+  return element
+}
+
+// ---------------------------------------------------------------------------
 // The screen
 // ---------------------------------------------------------------------------
 
@@ -1911,10 +2224,22 @@ export interface GraphScreenDeps {
 export class GraphScreen {
   private state: GraphState = GRAPH_INITIAL_STATE
   private document: PlanStatusView | null = null
+  /** scope is the coordinator scope's own document, or `null` while no
+   * coordinator read has been drawn. **The two documents are held apart** rather
+   * than in one field: a redraw is a function of the scope in hand, and the
+   * drawing must be answerable from whichever of the two reads answered last --
+   * switching back to a scope this console already read never means a blank
+   * panel, and never draws one scope's document as the other's. */
+  private scope: ScopeModel | null = null
   private runs: readonly string[] = []
   private feed: readonly RunView[] = []
   private model: GraphModel | null = null
   private positions: Positions | null = null
+  /** notice is the sentence a **chosen** scope was refused with (T3), drawn
+   * inside the drawing under the control that chose it: a read's own refusal
+   * belongs where its scope was chosen, not on a screen that would take the
+   * control away with it. */
+  private notice: string | null = null
   private asked = 0
   private disposed = false
   /** drawnStages is what the last frame said about **this graph's** stages, as
@@ -1937,14 +2262,45 @@ export class GraphScreen {
     return this.model
   }
 
-  /** load takes a plan document and the console's run list and answers the next
-   * drawing -- or `null` when a later ask has already superseded this one. */
-  async load(document: PlanStatusView, runs: readonly string[]): Promise<ScreenElement | null> {
+  /** load takes a plan document, the console's run list and the sentence a
+   * refused scope is answered with, and answers the next drawing -- or `null`
+   * when a later ask has already superseded this one.
+   *
+   * It puts the screen on the **plan** scope, which is what a plan document is:
+   * `loadScope` is the coordinator's door, and the two are separate methods
+   * because each carries the document its own read answered with. The notice
+   * defaults to `null` -- a read that was not refused says nothing -- and it is
+   * per drawing rather than per screen, so the drawing that follows a refusal
+   * without one does not wear the refusal's sentence. */
+  async load(document: PlanStatusView, runs: readonly string[], notice: string | null = null): Promise<ScreenElement | null> {
+    this.state = { ...this.state, scope: GRAPH_SCOPE_PLAN }
     this.document = document
     this.runs = runs
     this.feed = []
     this.drawnStages = ''
+    this.notice = notice
     return this.build()
+  }
+
+  /**
+   * loadScope takes one `fugaro graph --json` view and answers the coordinator
+   * drawing.
+   *
+   * **Nothing is laid out and nothing can fail**: the scope has no edges, so
+   * there are no positions to ask for, no worker message and no list fallback.
+   * The document is turned into the model and the model is drawn, which is why
+   * this method has no ticket: there is no await between the ask and the answer
+   * for a later ask to slip into.
+   *
+   * The plan document the screen already held is **kept**: switching back is a
+   * redraw of it (the entry's own scope change), and dropping it here would make
+   * the way back cost a read.
+   */
+  loadScope(view: GraphView, notice: string | null = null): ScreenElement | null {
+    this.state = { ...this.state, scope: GRAPH_SCOPE_ALL }
+    this.scope = buildScopeModel(view)
+    this.notice = notice
+    return this.redraw()
   }
 
   /**
@@ -1998,9 +2354,27 @@ export class GraphScreen {
    * A **tab** is deliberately not one of them and is not accepted here. Choosing
    * a tab changes which plans the model holds, and with it the graph the engine
    * laid out, so it goes through `narrow` below -- which asks, because it must.
+   *
+   * A **scope** is not one of them either, and for a stronger reason: a scope is
+   * a different *read* and not a different drawing of the same one. Only the
+   * entry knows which read a scope means, so `load` and `loadScope` are the two
+   * doors that hand this screen a document, and neither is reachable from here.
    */
-  change(part: Omit<Partial<GraphState>, 'tab'>): ScreenElement | null {
+  change(part: Omit<Partial<GraphState>, 'tab' | 'scope'>): ScreenElement | null {
     this.state = { ...this.state, ...part, zoom: clampZoom(part.zoom ?? this.state.zoom) }
+    return this.redraw()
+  }
+
+  /** noticed is the entry's own sentence about the scope in hand -- a scope read
+   * that was refused (T3) -- drawn into the drawing it was made from.
+   *
+   * **Neither document changes and the scope does not move**: the sentence is
+   * about a read that did not answer, and the figures on the panel are from the
+   * read that did. It answers `null` when there is nothing drawn to put a
+   * sentence under, which is how the entry tells "keep this and say so" from "a
+   * refusal screen is the only thing left". */
+  noticed(sentence: string | null): ScreenElement | null {
+    this.notice = sentence
     return this.redraw()
   }
 
@@ -2013,12 +2387,23 @@ export class GraphScreen {
     return this.build()
   }
 
-  /** redraw is the picture the last read and the current state make. */
+  /** redraw is the drawing the last read of the scope in hand and the current
+   * state make. The scope decides which of the two renderers draws it -- and
+   * which document it is drawn from -- so a state change (a selection, an open
+   * chip, a zoom) reaches whichever drawing is up. */
   redraw(): ScreenElement | null {
+    if (this.state.scope === GRAPH_SCOPE_ALL) {
+      if (this.scope === null) return null
+      return renderScopeGraph(
+        this.deps.factory,
+        { model: this.scope, state: this.state, notice: this.notice },
+        this.deps.theme,
+      )
+    }
     if (this.model === null) return null
     return renderGraph(
       this.deps.factory,
-      { model: this.model, positions: this.positions, state: this.state, runs: this.runs },
+      { model: this.model, positions: this.positions, state: this.state, runs: this.runs, notice: this.notice },
       this.deps.theme,
     )
   }
@@ -2028,6 +2413,13 @@ export class GraphScreen {
    * positions built from it, **keeping the state**: the tab, the drawing, the
    * selection, the open chips and the zoom are the operator's and a re-read
    * draws the same view of a fresh document.
+   *
+   * **Both scopes go, and the notice with them.** A refusal is a screen with
+   * nothing on it, and a coordinator document kept behind the plan scope's card
+   * would be a drawing the next visit could make from a read the console has
+   * already decided not to trust; the notice is the refused read's own sentence,
+   * and a sentence kept past the refusal it describes would be drawn over the
+   * next drawing as if that read had been refused too.
    *
    * The entry calls this on every refusal. A refusal is a screen with nothing on
    * it, and the *previous* plan is still in this screen's hands: a live frame --
@@ -2039,10 +2431,12 @@ export class GraphScreen {
    */
   forget(): void {
     this.document = null
+    this.scope = null
     this.model = null
     this.positions = null
     this.feed = []
     this.drawnStages = ''
+    this.notice = null
   }
 
   /** dispose drops the cache and the worker with it. The graph belongs to one

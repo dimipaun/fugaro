@@ -33,7 +33,14 @@ import { sanitizeText } from '../../shared/sanitize'
 import type { Sanitized, TextClass } from '../../shared/sanitize'
 import type { Reading } from '../../shared/availability'
 import { wireTextClass } from '../../shared/schema'
-import type { PlanNodeView, PlanReleaseView, PlanState, PlanStatusView, PlanView } from '../../shared/schema'
+import type {
+  GraphView,
+  PlanNodeView,
+  PlanReleaseView,
+  PlanState,
+  PlanStatusView,
+  PlanView,
+} from '../../shared/schema'
 
 /**
  * GRAPH_MAX_PLANS, GRAPH_MAX_NODES_PER_PLAN and GRAPH_MAX_NODES bound one
@@ -617,4 +624,146 @@ function chipGroups(
  * way for two reads to draw one graph. */
 function compare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
+}
+
+// ---------------------------------------------------------------------------
+// The coordinator scope (the graph plan's CG10; the contract's §6.22 document)
+// ---------------------------------------------------------------------------
+
+/**
+ * GRAPH_MAX_SCOPE_NODES bounds the coordinator drawing, for the reason the plan's
+ * three bounds exist: the coordinator's view is an installation's whole history,
+ * not one checkout's plan, so it is the picture that is bounded and never the
+ * document -- everything past the bound is dropped in document order (two reads
+ * of one document draw the same picture) and counted in `notShown`, which the
+ * screen prints.
+ */
+export const GRAPH_MAX_SCOPE_NODES = 2000
+
+/** GRAPH_SCOPE_NO_RELEASE names the group a node that names no release is drawn
+ * in. It is the console's own word and not a version: a heading drawn as the
+ * empty string would be a release nobody can read, and the coordinator's own
+ * pull requests and runs carry no release at all. */
+export const GRAPH_SCOPE_NO_RELEASE = 'no release'
+
+/** ScopeSource is one source of a coordinator read, as the drawing needs it: the
+ * source's own name, the state it reported, and the reason it gave for it. H3 is
+ * the whole reason these are drawn -- a scope that is down is a state of its own
+ * and not an empty scope, and a reader who is not told which of the two they are
+ * looking at will read a down source as "nothing is happening". */
+export interface ScopeSource {
+  readonly source: Sanitized
+  readonly state: Sanitized
+  readonly reason: Sanitized
+}
+
+/** ScopeNode is one thing a coordinator read drew. `key` is the document's own
+ * source-qualified key and is a *key*: this drawing joins on it and never spells
+ * it, and nothing here takes it apart -- a local source's name carries a colon of
+ * its own (`local:o1`), so splitting on one would invent two sources out of one.
+ * Everything else is a `Sanitized` value with the class its wire key declares.
+ *
+ * `pullRequest` is the node's id **only** for a pull request, drawn as the text
+ * it is and with no destination: this document has no number field of its own —
+ * the id *is* the pull request's number "as that source writes it" (§6.22), which
+ * for the coordinator is `acme/widgets#42` — and it is drawn as the source
+ * spelled it rather than cut down to the digits, because an id is identity and
+ * not prose (D1356), and another source's spelling is not this console's to
+ * take apart. No document this console reads names the provider a URL would have
+ * to be built from, so there is none to build (design §5.1 rule 2, gap 7). */
+export interface ScopeNode {
+  readonly key: string
+  readonly source: Sanitized
+  readonly kind: Sanitized
+  readonly title: Sanitized
+  readonly repo: Sanitized
+  readonly state: Sanitized
+  readonly release: string
+  readonly pullRequest: Sanitized | null
+}
+
+/** ScopeRelease is one release's group of nodes: the version as the document
+ * wrote it (the key the groups are ordered and identified by) and the heading the
+ * drawing spells -- `GRAPH_SCOPE_NO_RELEASE` where the document named none. */
+export interface ScopeRelease {
+  readonly release: string
+  readonly heading: Sanitized
+  readonly nodes: readonly ScopeNode[]
+}
+
+/** ScopeModel is a coordinator read as plain data: the sources and their states,
+ * the nodes grouped by release, and the read's own warnings. */
+export interface ScopeModel {
+  readonly sources: readonly ScopeSource[]
+  readonly releases: readonly ScopeRelease[]
+  readonly warnings: readonly Sanitized[]
+  readonly notShown: number
+}
+
+/** scopeText is one field of a coordinator document through the sanitizer, with
+ * the class its own wire key declares. Nothing else in this module may spell a
+ * document string. */
+function scopeText(value: string, key: string, field: string): Sanitized {
+  return sanitizeText(value, classOf(key), field)
+}
+
+/**
+ * buildScopeModel turns one `fugaro graph --json` view into the drawing's data.
+ *
+ * **The nodes are grouped by release, in document order, and the group a node
+ * that names no release falls into is the last one.** The document lists nodes in
+ * the order its sources answered, and a map keyed by the version keeps exactly
+ * that order for the groups while holding each node beside its own release: a
+ * sort by version would be the console's guess at a version scheme it does not
+ * have, and the coordinator's nodes carry versions from several repositories.
+ *
+ * **The edges are deliberately not read.** The coordinator's stored view holds
+ * none today (F17), and a picture needs an engine to place it: this scope is
+ * drawn as the reading it is, grouped and listed, and it asks the layout worker
+ * nothing.
+ */
+export function buildScopeModel(view: GraphView): ScopeModel {
+  const sources = view.sources.map((source, at) => ({
+    source: scopeText(source.source, 'source', `sources[${String(at)}].source`),
+    state: scopeText(source.state, 'state', `sources[${String(at)}].state`),
+    reason: scopeText(source.reason, 'reason', `sources[${String(at)}].reason`),
+  }))
+
+  const groups = new Map<string, ScopeNode[]>()
+  let notShown = 0
+  for (const [at, node] of view.nodes.entries()) {
+    if (at >= GRAPH_MAX_SCOPE_NODES) {
+      notShown += 1
+      continue
+    }
+    const where = `nodes[${String(at)}]`
+    const drawn: ScopeNode = {
+      key: node.key,
+      source: scopeText(node.source, 'source', `${where}.source`),
+      kind: scopeText(node.kind, 'kind', `${where}.kind`),
+      title: scopeText(node.title, 'title', `${where}.title`),
+      repo: scopeText(node.repo, 'repo', `${where}.repo`),
+      state: scopeText(node.state, 'state', `${where}.state`),
+      release: node.release,
+      // Only a pull request has one: a run's id is a run id and a task's is a
+      // task id, and neither is a number a reader opens.
+      pullRequest: node.kind === 'pull_request' ? scopeText(node.id, 'id', `${where}.id`) : null,
+    }
+    const held = groups.get(node.release)
+    if (held === undefined) groups.set(node.release, [drawn])
+    else held.push(drawn)
+  }
+
+  const releases = [...groups].map(([release, nodes]) => ({
+    release,
+    heading: release === '' ? own(GRAPH_SCOPE_NO_RELEASE) : scopeText(release, 'release', 'nodes[].release'),
+    nodes,
+  }))
+
+  return {
+    sources,
+    releases,
+    warnings: view.warnings.map((warning, at) => scopeText(warning, 'warnings', `warnings[${String(at)}]`)),
+    notShown,
+  }
 }

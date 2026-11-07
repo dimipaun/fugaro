@@ -891,7 +891,7 @@ button.projects-settings-pencil {
   padding: var(--space-3xs) var(--space-sm);
   font: inherit;
   color: var(--text-3);
-  background: var(--surface-sunken);
+  background: var(--surface-alt);
   border: var(--rule-width) solid var(--control-border);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -2233,6 +2233,158 @@ p.graph-empty {
     background: Highlight;
     color: HighlightText;
     forced-color-adjust: none;
+  }
+}
+
+/* ---- The Graph's scope control (the graph plan's CG10) ---------------------
+ *
+ * The Graph is one tab drawn in two scopes, and this block is the chrome of the
+ * control that chooses which: the coordinator's own view of the installation, or
+ * the plan of the checkout this console is on. It is a menu and not the stream
+ * filter's segmented control because the set it holds grows with the
+ * installation -- the orchestrator scopes are a set the coordinator's document
+ * lists -- where the streams are the checkout's own handful.
+ *
+ * **The scopes' own reading is drawn below the control**: one row per source
+ * carrying the source's state as a **word** (design section 3.5 and the plan's
+ * H10: a source that is down is a fact a reader must be able to read without the
+ * tone), the nodes grouped by release, and the read's own warnings. The rules for
+ * the toolbar the control sits in stay in `flight-deck.css` with the rest of the
+ * redesign's chrome; what is here is the control and the reading it chooses,
+ * which the redesign has not restyled yet -- the same split this file's graph
+ * section already keeps for the chips and the list.
+ */
+select.graph-scope-select {
+  max-width: 100%;
+  min-height: var(--row-height);
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* The sentence a **chosen** scope was refused with (T3): the read's own state
+ * and not a refusal screen, so it is drawn under the control that chose it and
+ * the figures the console did read stay on the panel. Its tone is the warning's;
+ * the sentence itself is the first channel, and it names the read. */
+p.graph-scope-notice {
+  margin: var(--space-2xs) 0 0;
+  color: var(--warn);
+  font-size: var(--font-size-xs);
+}
+
+div.graph-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+div.graph-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs);
+  padding: var(--space-3xs) var(--space-2xs);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+span.graph-source-name {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+span.graph-source-reason {
+  color: var(--text-muted);
+}
+
+section.graph-scope-release {
+  margin-bottom: var(--space-md);
+}
+
+h2.graph-scope-heading {
+  margin: 0 0 var(--space-2xs);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-medium);
+}
+
+ul.graph-scope-nodes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li.graph-scope-node {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border-bottom: var(--rule-width) solid var(--border);
+  font-size: var(--font-size-xs);
+}
+
+span.graph-scope-title {
+  color: var(--text);
+}
+
+span.graph-scope-kind,
+span.graph-scope-repo {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* The number is text and offers no destination (design section 5.1 rule 2 and
+ * its gap 7): the monospace says it is a number, and nothing here is a control. */
+span.graph-scope-pr {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+p.graph-warning {
+  margin: var(--space-3xs) 0 0;
+  color: var(--warn);
+  font-size: var(--font-size-xs);
+}
+
+/* The no-checkout card's own door back to the coordinator scope. The card is
+ * drawn *instead of* the Graph, so the scope control is not on the panel: this
+ * is the button that takes an operator who chose the plan scope back to the one
+ * that needs no checkout. */
+button.graph-scope-back {
+  display: block;
+  margin-top: var(--space-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  background: transparent;
+  border: var(--rule-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+button.graph-scope-back:hover {
+  color: var(--accent-ink);
+}
+
+/* The appended block's own forced-colors arm, in a media block of its own so the
+ * graph block above stays what it is: only the tone is written, because a
+ * boundary's colour is forced by the system and its style and width are not
+ * (design section 4.4's rule 1, and `installation-checkout-select`'s own arm). */
+@media (forced-colors: active) {
+  select.graph-scope-select,
+  button.graph-scope-back {
+    border-color: CanvasText;
   }
 }
 
