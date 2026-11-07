@@ -292,6 +292,24 @@ func TestAccessNodeOverCapRefused(t *testing.T) {
 	if _, err := Encode(append(atCap, grant(bob, RoleViewer, Scope{Kind: ScopeProject}))); err == nil {
 		t.Errorf("Encode accepted %d grants; at most %d are allowed", MaxGrants+1, MaxGrants)
 	}
+
+	// The count cap does not bound the bytes on its own: MaxGrants grants of a
+	// scope at projectpolicy.MaxPatternLen are ~80 KiB, and Encode must refuse
+	// that document for its size rather than write it. A write that skipped this
+	// check would store a node Decode refuses, so the read of the node it just
+	// wrote would fail — the node no installation could read (the review finding
+	// on this change). The document is exactly at the count cap, so the count
+	// check cannot be what refuses it and the error must name the byte cap.
+	fat := make([]Grant, MaxGrants)
+	for i := range fat {
+		fat[i] = grant(alice, RoleViewer, scope(t, longScope(projectpolicy.MaxPatternLen)))
+	}
+	raw, err := Encode(fat)
+	if err == nil {
+		t.Errorf("Encode wrote a %d-byte node of %d grants at the count cap; at most %d bytes are allowed, and Decode refuses the node it wrote", len(raw), MaxGrants, MaxNodeBytes)
+	} else if !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("Encode refused %d grants at the count cap with %v, want the byte cap: the count cap is %d", MaxGrants, err, MaxGrants)
+	}
 }
 
 // manyGrants is a node document holding n identical grants, as bytes, so a cap

@@ -7,12 +7,42 @@ package rules
 // read the whole roster.
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
+
+// governingPaths returns every generated location that governs one node: the
+// literal ancestors, the node itself, and every location that reaches it through
+// a wildcard segment. The last are the ones a literal walk cannot see and that
+// matter most here: `config/admin/$key` is a sibling of the node and the parent
+// of everything beside it at once, so one `.read` there re-opens the family the
+// config/admin rule closes while every literal path stays clean.
+//
+// It walks rulesTree itself rather than using generatedPaths, because that
+// helper resolves `$slug` to the slug a run's token carries — what its other
+// callers want — and that resolution would leave a `$slug` wildcard sibling
+// invisible to this walk.
+func governingPaths(t *testing.T, node string) map[string]map[string]any {
+	t.Helper()
+	segs := strings.Split(node, "/")
+	out := map[string]map[string]any{}
+	walk(rulesTree(t), nil, func(path []string, attrs map[string]any) {
+		if len(path) == 0 || len(path) > len(segs) {
+			return
+		}
+		for i, s := range path {
+			if s != segs[i] && !strings.HasPrefix(s, "$") {
+				return
+			}
+		}
+		out[strings.Join(path, "/")] = attrs
+	})
+	return out
+}
 
 // TestNoRunTokenReadsTheAccessNode: the role and scope pairs live at
 // config/admin/access, under the config/admin node whose `.read` and `.write`
@@ -34,7 +64,8 @@ import (
 // the entry conditional on the existing config/admin rule not already denying
 // the node, and that rule — `.read: false, .write: false`, cascading to every
 // child — already does. This test is what decides that, and what fails if a
-// later edit moves the node or opens the subtree.
+// later edit moves the node or opens the subtree, whether along the node's
+// literal path or through a wildcard segment that reaches it.
 func TestNoRunTokenReadsTheAccessNode(t *testing.T) {
 	if access.PathNode != "config/admin/access" {
 		t.Fatalf("access.PathNode = %q, want config/admin/access: the node's placement is the security property (F28)", access.PathNode)
@@ -67,21 +98,22 @@ func TestNoRunTokenReadsTheAccessNode(t *testing.T) {
 		}
 	}
 
-	// And nothing along the node's own path grants a client read or write: a
-	// later edit that added an explicit child grant would re-open the family the
-	// ancestor closes, and the walk is over the ancestors and the node itself.
-	// Every value that is not the boolean false counts, because the two shapes a
-	// grant is written in are an expression (a string) and the boolean true; a
-	// walk that looked only for strings would pass a `{ ".read": true }` added
-	// here (the review finding on this change).
-	for i := 1; i <= len(segs); i++ {
-		p := strings.Join(segs[:i], "/")
-		a, ok := paths[p]
-		if !ok {
-			continue
-		}
+	// And nothing that governs the node grants a client read or write: an
+	// ancestor or the node itself, where a later edit that added an explicit
+	// child grant would re-open the family the ancestor closes, and every
+	// location that reaches the node through a wildcard segment. Every value
+	// that is not the boolean false counts, because the two shapes a grant is
+	// written in are an expression (a string) and the boolean true; a walk that
+	// looked only for strings would pass a `{ ".read": true }` added here.
+	gov := governingPaths(t, access.PathNode)
+	govPaths := make([]string, 0, len(gov))
+	for p := range gov {
+		govPaths = append(govPaths, p)
+	}
+	slices.Sort(govPaths)
+	for _, p := range govPaths {
 		for _, attr := range []string{".read", ".write"} {
-			if v, has := a[attr]; has && v != false {
+			if v, has := gov[p][attr]; has && v != false {
 				t.Errorf("/%s %s = %v: no client token may read or write the grants node", p, attr, v)
 			}
 		}
