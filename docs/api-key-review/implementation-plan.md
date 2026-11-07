@@ -20,7 +20,7 @@ and a slice the owner does not want is simply not started.
 | Level | Tasks | What it is | Why these can run together |
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
-| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it and the variant is launchable with no Claude account (**F11**, **F17**) | AK4 is `internal/credsvc` and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share no file |
+| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This is code for a launch E7 still refuses** (**F10**, **U6**) | AK4 is `internal/credsvc` and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share no file |
 | **L3** | **AK6**, **AK7** | the OpenRouter half: the bundle holds a provider key (**F15**, **F16**, **F24**), and the review run's model path reaches a provider's endpoint | AK6 is `internal/credsvc` and `schemas/`; AK7 is `internal/runner` and `internal/gateway` |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
@@ -73,11 +73,12 @@ levels has to say so here first.
 | `internal/gateway/gateway.go` | L3 | AK7, if the upstream kind moves |
 | `docs/gcp-live-checklist.md` | L4 | AK8 |
 
-Four files are booked twice, each across two levels: `internal/credsvc/cascade.go` (AK4's candidate
-list, AK6's tier map), `internal/runner/routing.go` (AK5's admission, AK7's upstream),
-`internal/runner/routing_internal_test.go` (the same two tasks' tests) and
-`internal/gateway/gateway.go` (AK7 only, listed here so a later task knows it is taken). A task that
-needs a file another **level** holds adds itself to this table in the same commit.
+Three files are booked twice, each across two levels: `internal/credsvc/cascade.go` (AK4's candidate
+list, AK6's tier map), `internal/runner/routing.go` (AK5's admission, AK7's upstream) and
+`internal/runner/routing_internal_test.go` (the same two tasks' tests). A fourth is listed once and
+conditionally — `internal/gateway/gateway.go`, AK7 only, and only if the upstream kind moves — put
+here so a later task knows it is taken. A task that needs a file another **level** holds adds itself
+to this table in the same commit.
 
 ## 3. The tasks
 
@@ -439,10 +440,17 @@ log:
 
 **B. The cloud Anthropic-key path (AK4–AK5).** A sandbox installation that publishes the pairing's
 sentinel and has the credentials service on, with a repository whose own `agent.auth` is `api-key`.
-Run `fugaro run --review-run` and read: the review job was launched for the variant the sentinel
-names; its model calls were served by the project's Anthropic key; the job's own environment held no
-credential of the repository's; and a repository whose `agent.auth` is `api-key` **without** the
-pairing naming the key is still refused, with the sentence AK5 rewrote.
+The launch is **`fugaro review --pr N`**, or equivalently `fugaro run --pr N --recipe review-only` —
+the review-only job, and the fallback the launcher's own refusal names. It is **not**
+`fugaro run --review-run`: that flag carries an existing review's findings into a **fix round's**
+brief (`internal/cli/run.go`) and needs `--pr` besides, which is a different thing entirely.
+**This step cannot be run before E7** (**F10**):
+`reviewJobAdmitted` is `false`, so the launch is refused outright until the service admits the review
+caller, and the check is written to be run *after* that, not instead of it. Read off: the review job
+was launched for the variant the sentinel names; its model calls were served by the project's
+Anthropic key; the job's own environment held no credential of the repository's; and a repository
+whose `agent.auth` is `api-key` **without** the pairing naming the key is still refused, with the
+sentence AK5 rewrote.
 
 **C. The OpenRouter path (AK6–AK7).** Only if the owner takes it: the same as B with a provider
 route claiming the Claude ID as one explicit `anthropic/<id>` (**F22**), reading off that the key
@@ -465,3 +473,10 @@ any installation whose budget mode is `off` — the review class refuses a run w
    another reader consumes, and CLAUDE.md allows an additive field there but not a changed meaning.
 6. **The security review owed before AK4–AK7 land**, not after: each is SEC, and the review is
    mandatory rather than advisory.
+7. **AK4–AK7 are gated on E7, and it is not this plan's to meet** (**F10**, **U6**;
+   `docs/cloud-senior-review` §1): `internal/cli/review.go`'s `reviewJobAdmitted` is `false`, so every
+   `fugaro review --pr N` is refused until the credentials service admits the review job's own
+   caller — **C3.9**'s code, unscheduled — and the constant is flipped by **CSR11** only after the
+   owner's live checks. Those tasks make the cloud path *served by a key*; they do not make it
+   *launchable*, and a plan that implied otherwise would be selling a path nobody can run. Nothing
+   here takes E7, and no release of this design is worth anything to a user until it is met.

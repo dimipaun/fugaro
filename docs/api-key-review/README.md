@@ -19,10 +19,15 @@ designed and built, never measured): an `api-key` run whose coder is on a provid
 `review`/`adversarial` stages are handed a Claude OAuth account and go **straight to Anthropic**,
 bypassing the gateway — so their dollars are **notional** (`runstore.StageTiming.ModelNotionalUSD`,
 `Credential: "oauth"`) and nothing caps them but `agent.max_budget_usd` and the stage timeout. The
-**cloud** one is the review-only job (`fugaro run --review-run`, `internal/credsvc/review.go`): its
-model calls are served by the credentials service's **review class** from the installation's Claude
-OAuth account, and the class **refuses** a repository whose own `agent.auth` is an API key
-(`internal/runner/routing.go` `checkReviewClassModelPath`). The owner wants the same review served
+**cloud** one is the review-only job (`fugaro review --pr N`, or `fugaro run --pr N --recipe
+review-only`; `internal/credsvc/review.go`): its model calls are served by the credentials service's
+**review class** from the installation's Claude OAuth account, and the class **refuses** a repository
+whose own `agent.auth` is an API key (`internal/runner/routing.go` `checkReviewClassModelPath`). It
+is **built and not admitted**: `internal/cli/review.go`'s `reviewJobAdmitted` is `false`, so
+`checkReviewJobAdmitted` refuses every launch until the service admits the review caller —
+`docs/cloud-senior-review` §1's **E7**, then **CSR11**'s flip after the owner's live checks
+(`docs/releases/v0.20.2.md`'s known limits: "the cloud review is built and not admitted"). The owner
+wants the same review served
 by an **Anthropic API key**, with the dollars real and capped, no subscription needed, and the key
 able to be a secret of its own.
 
@@ -44,12 +49,15 @@ cost** (**F12**, **F13**): the service already holds the Anthropic key at **tier
 for a tier-B entry and sends it to Anthropic with `gateway.UpstreamHeaders` — so the **Anthropic-key**
 half needs no base URL, no auth shape and no new upstream, only a pairing that may name the project's
 own key instead of a Claude account. The **OpenRouter** half is the provider-key apparatus §6.7
-describes, and it is a different slice.
+describes, and it is a different slice. **Both cloud slices are cheaper than §6.7 prices the whole
+of it, and neither of them is what stands between the owner and a review: the launch is refused
+outright by `reviewJobAdmitted` until E7** (**F10**, **U6**) — so this design prices the cloud code
+and says plainly that no installation can reach it yet.
 
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's ask of **2026-11-07**, verbatim, with a header naming the owner by role and the status line. Where this file and the others disagree about what the ask *says*, this file wins |
-| [reconciliation.md](reconciliation.md) | Every clause of the ask against the code on `main`, read by path and symbol: the findings **F1–F24** (Wrong / Exists / Gap / Rule / Open), what the **in-job** path does today end to end (§2), what the **cloud** path does today end to end (§3), the two readings of "the api-key review" (§4), **the security analysis as an attacker would see it** (§5), an **UNVERIFIED** section (§6), the decisions **D1410–D1429** each with a recommendation, an alternative and an **empty owner's-answer cell** (§7), the number block and how it was read (§8), and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
+| [reconciliation.md](reconciliation.md) | Every clause of the ask against the code on `main`, read by path and symbol: the findings **F1–F24** (Wrong / Exists / Gap / Rule / Open), what the **in-job** path does today end to end (§1), what the **cloud** path does today end to end (§2), the two readings of "the api-key review" (§4), **the security analysis as an attacker would see it** (§5), an **UNVERIFIED** section (§6), the decisions **D1410–D1429** each with a recommendation, an alternative and an **empty owner's-answer cell** (§7), the number block and how it was read (§8), and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK8**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot left to the owner (§4), the owner-run live check **Check 330** (§5) and the gates a task may not start without (§6) |
 | `README.md` | This file: the status, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
@@ -109,7 +117,9 @@ These are the owner's, and none is decided here. The full text, with the reason 
    tree has **two** independent reviews: the in-job stage and the cloud review run. **No task in
    [implementation-plan.md](implementation-plan.md) may start before this is answered**, because the
    answer decides which half the plan is about — and the in-job half needs a name and a test, while
-   the cloud half needs the credentials service changed.
+   the cloud half needs the credentials service changed **and is refused outright today**: every
+   review launch is gated by `reviewJobAdmitted`, which is `false` until E7 (**F10**, **U6**). An
+   owner who wants something runnable soonest should read the in-job half first for that reason alone.
 2. **D1421 — the release.** The owner cut the api-key review from 0.20.0 on 2026-11-06. This design
    reopens nothing: whether the Anthropic-key half ships in 0.20.0, in the release after it, or not
    at all is the owner's.
