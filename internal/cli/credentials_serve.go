@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // `fugaro credentials serve` is the credentials service's own entry point
@@ -60,7 +62,13 @@ import (
 // audience its callers' ID tokens are minted for -- the service resource's own
 // uri) and FUGARO_JOB_ACCOUNTS (the installation's per-repository jobs as
 // {"provider","repo","workflow"} triples, from which the job service accounts
-// are derived). The names are held by a second thing:
+// are derived). Four more names are read beside those seven, each OPTIONAL
+// because the module renders it only where it applies: FUGARO_VERIFIER_ACCOUNTS
+// (C3.9g2), FUGARO_PERSON_ACCOUNTS and FUGARO_COORDINATOR_ACCOUNT (the read
+// mint's two classes, BB4 and BB5) and FUGARO_REVIEW_JOB_ACCOUNTS (the
+// review-only project jobs, C3.9a's class: {"profile","provider","account"}
+// triples the service derives each review job's account from, the same document
+// kind FUGARO_JOB_ACCOUNTS is). The names are held by a second thing:
 // internal/infra/tf's credentialsServiceEnv is the allow-list init's cover
 // applies to the service's container, so a name outside it is refused at plan
 // time, and the two lists move together -- an environment variable is not a
@@ -162,16 +170,55 @@ const (
 	// table of emails would be a second derivation that can drift from the
 	// accounts the deployer created.
 	envJobAccounts = "FUGARO_JOB_ACCOUNTS"
+	// envReviewJobAccounts is the installation's review-only project jobs --
+	// the variant a `fugaro review` runs on (CSR7) -- as
+	// {"profile","provider","account"} objects, one per job whose service
+	// account may call the service as a review caller (C3.9a's class,
+	// internal/credsvc's ClassReview). It is a document of the kind
+	// FUGARO_JOB_ACCOUNTS is -- rows the service derives each account from --
+	// over the variant's own axis: the accounts are DERIVED from the triples
+	// (credsvc.ReviewJobAccountFor), because the variant's service account is
+	// derived from the profile, the provider and the account by the same
+	// function the deployer used, and a table of emails here would be a second
+	// derivation that can drift from the accounts the deployer created
+	// (internal/infra/projectjobs.go's reviewVariant derives them with the same
+	// two functions).
+	//
+	// The three fields are the ones the variant's names are built from and not
+	// a repository: a review job names no repository (a profile serves every
+	// repository its policy admits), and the pairing resolves the repository
+	// from the run identity's slug through the same table the per-repository
+	// jobs are bound by (RepositoryTableFor, read below out of
+	// FUGARO_JOB_ACCOUNTS). "account" is the axis's own spelling, in which the
+	// empty string is the default account -- the mapping
+	// credsvc.ReviewJobAccountFor applies, which is config.ReviewVariantAccount's
+	// for the names the deployer spells.
+	//
+	// It is read as an OPTIONAL value, and the reason is the failure it would
+	// otherwise cost: this name arrives with the deployment of the variant's
+	// jobs, so an installation whose module does not render it yet -- every
+	// module of a release before the entry lands -- must start the same service
+	// it always did, with an empty review set, rather than refuse to bind a
+	// port. An empty set is the class's own fail-closed statement and not a
+	// gap: verifyJob answers no review class at all, every caller of it is
+	// refused, and the launcher's own gate refuses the launch before a job is
+	// started (its constant is `false` until the owner's live check). That is
+	// the same shape and the same reason FUGARO_VERIFIER_ACCOUNTS,
+	// FUGARO_PERSON_ACCOUNTS and FUGARO_COORDINATOR_ACCOUNT have, and it is why
+	// this name is read outside credentialsServiceEnvNames: a name inside that
+	// list is one a service REFUSES TO START without, which is the direction
+	// that halts every run of an installation whose module has not moved yet
+	// (D143). A value that is present and is not the document below is a
+	// deployment that is wrong, and is refused here rather than read as empty.
+	envReviewJobAccounts = "FUGARO_REVIEW_JOB_ACCOUNTS"
 	// envVerifierAccounts is the identities that may ask the verify route
 	// whether a verdict's signature is this service's: a JSON array of bare
 	// addresses (the coordinator's account, and the owner's for a manual
-	// check). It is the ONE name this process reads as optional, and the only
-	// one outside credentialsServiceEnvNames: that list is what the service
-	// REQUIRES, and the module renders this entry only on an installation
-	// that named a verifier, so a name inside it would turn "an installation
-	// that never opted in" into "a service that refuses to start". Absent or
-	// empty is the empty list the verify route already refuses every caller
-	// with (C3.9g2, D1068).
+	// check). It is read as an OPTIONAL value, outside credentialsServiceEnvNames
+	// -- whose names are the seven this process REFUSES to start without --
+	// because credentials.tf renders the entry only on an installation that
+	// named a verifier (C3.9g2, D1068). Absent or empty is the empty list the
+	// verify route already refuses every caller with.
 	envVerifierAccounts = "FUGARO_VERIFIER_ACCOUNTS"
 	// envPersonAccounts is the identities that may ask the read mint for a
 	// read-scoped Bitbucket token: a JSON array of bare addresses, which is
@@ -196,16 +243,22 @@ const (
 	envCoordinatorAccount = "FUGARO_COORDINATOR_ACCOUNT"
 )
 
-// credentialsServiceEnvNames is the whole of this command's environment: the
-// seven names credentials.tf sets on the service's container, and the same set
-// as internal/infra/tf's credentialsServiceEnv allow-list, which is the
-// module's side of the same rule (init's cover refuses a container that sets a
-// name outside it). The two are held together by a test rather than by a
-// comment: TestCredentialsServiceEnvIsTheDeploymentsOwn reads credentials.tf's
-// own env blocks and requires this list to be exactly what the module sets, so
-// a name added on one side and not the other fails rather than drifts -- the
-// direction that matters is the one where the module sets a name this command
-// does not read, which is a fact an operator would believe was in effect.
+// credentialsServiceEnvNames is the whole of this command's REQUIRED
+// environment: the seven names credentials.tf sets on the service's container,
+// the ones whose absence is a service that cannot say which installation it is
+// serving. The class-specific entries it reads beside them are OPTIONAL and
+// live outside this list, because the module renders each of those only where
+// it applies (envReviewJobAccounts, envVerifierAccounts, envPersonAccounts and
+// envCoordinatorAccount). internal/infra/tf's credentialsServiceEnv is init's
+// cover's allow-list, which is these seven plus those four: a name outside it is
+// a container the cover refuses, which is what makes the module's list a
+// boundary rather than a convention. The lists are held together by tests
+// rather than by this comment: TestCredentialsServiceEnvIsTheDeploymentsOwn
+// reads credentials.tf's own env blocks and requires every name this command
+// reads to be one the module sets, so a name added on one side and not the
+// other fails rather than drifts -- the direction that matters is the one where
+// the module sets a name this command does not read, which is a fact an
+// operator would believe was in effect.
 var credentialsServiceEnvNames = []string{
 	envProject, envGCPProject, envRegion,
 	envRTDBURL, envFirebaseFP,
@@ -281,28 +334,29 @@ var credentialsTest *credentialsWiring
 // process's log handler. Nothing is guessed and nothing is defaulted: a
 // missing or malformed name is a refusal that names it.
 //
-// The sets left empty on purpose are the two project-job ones. The shared
-// project jobs' accounts (AuthConfig.SharedJobAccounts) are empty because
-// under Global Constraint 6 this service admits runs in per-repository jobs
-// only until the phase-3 shared-job rules land, and an empty set is that
-// statement rather than a fact the deployment has to make. The day those rules
-// land it is a read of the policy this service already reads
-// (credsvc.SharedJobAccountsFor), not a variable.
+// The set left empty on purpose is the shared project jobs' one
+// (AuthConfig.SharedJobAccounts): under Global Constraint 6 this service admits
+// runs in per-repository jobs only until the phase-3 shared-job rules land, and
+// an empty set is that statement rather than a fact the deployment has to make.
+// The day those rules land it is a read of the policy this service already
+// reads (credsvc.SharedJobAccountsFor), not a variable.
 //
 // The review-only variant's accounts (AuthConfig.ReviewJobAccounts and
-// Config.ReviewAccounts, which are the same list) are empty for a reason that
-// is the deployment's rather than this command's: the accounts are
-// credsvc.ReviewJobAccountsFor over the published policy, and this command
-// reads no policy at all — it builds its configuration from the seven
-// variables above and never touches the database, which is the property that
-// keeps the service's start-up independent of the installation's state (and
-// the reason a policy read here would make the configuration fail for a
-// reason no operator could see in it). An empty set is the fail-closed
-// statement it is for the shared set: this installation admits no review job,
-// and every caller of that class is refused. It is also the state of every
-// installation until the variant's jobs exist at all — CSR7 is the task that
-// deploys them — and the wiring that fills the set belongs with it, where the
-// accounts it names are accounts a deployment has created.
+// Config.ReviewAccounts, which are the same list) come from the deployment
+// instead: FUGARO_REVIEW_JOB_ACCOUNTS, the class's own variable beside the
+// seven, whose rows are the (profile, provider, account) triples the variant's
+// jobs were deployed over, and credsvc.ReviewJobAccountFor derives the one
+// service account each of them runs as — the same derivation the policy read
+// would make
+// (credsvc.ReviewJobAccountsFor), which is why this command still reads no
+// policy: it builds its configuration from its own environment and never
+// touches the database, the property that keeps the service's start-up
+// independent of the installation's state (D143, and the reason a policy read
+// here would make the configuration fail for a reason no operator could see in
+// it). An empty set — the value absent, or an empty document — is the
+// fail-closed statement it is for the shared set: this installation admits no
+// review job, and every caller of that class is refused, which is the state of
+// every installation whose module does not render the entry yet.
 //
 // A REFUSAL NAMES A VARIABLE, NEVER A VALUE.
 //
@@ -325,8 +379,8 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	// variable is not a value the module can set: Terraform writes each of
 	// these from an input the installation has, so an empty one is a
 	// deployment that is wrong rather than a deployment with a default. The
-	// verifier list below is the one name the service reads as optional and
-	// the rest are not.
+	// names read outside this loop are the class-specific ones the module
+	// renders only where they apply, and the rest are not.
 	env := map[string]string{}
 	for _, k := range credentialsServiceEnvNames {
 		if env[k] = getenv(k); env[k] == "" {
@@ -356,6 +410,18 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	// on, and one that never opted in gets a route that admits no coordinator
 	// rather than a service that will not bind a port (F24).
 	coordinator, err := credentialsServiceCoordinator(getenv(envCoordinatorAccount))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
+	// The review-only class (C3.9a), read the same way and for the same reason:
+	// the entry arrives with the deployment of the variant's jobs, so an
+	// installation whose module does not render it starts with an empty set and
+	// refuses every caller of the class rather than refusing to bind a port
+	// (`envReviewJobAccounts` states the direction and why it matters). The
+	// derived accounts are the rows the deployer created, and nothing here is
+	// invented: a row whose provider is not a provider kind is refused rather
+	// than derived into an account nobody deployed.
+	reviewAccounts, err := credentialsServiceReviewJobAccounts(getenv(envReviewJobAccounts), env[envGCPProject])
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
@@ -429,9 +495,15 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// account, which is the identity the scheduled sweep calls with. Empty
 		// is the state an installation that runs no coordinator starts in.
 		CoordinatorAccount: coordinator,
-		Keys:               credsvc.NewGoogleKeys(),
-		JobKeys:            credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
-		Outcomes:           credsvc.RTDBOutcomes{DB: db},
+		// The review-only class (C3.9a): the jobs `fugaro review` runs on, by
+		// the service account each one was deployed as, with the Claude account
+		// its calls are served by. Empty is the state an installation whose
+		// module renders no review-job document starts in, and a caller of the
+		// class is then no class at all rather than a class with no route.
+		ReviewJobAccounts: reviewAccounts,
+		Keys:              credsvc.NewGoogleKeys(),
+		JobKeys:           credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		Outcomes:          credsvc.RTDBOutcomes{DB: db},
 	})
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
@@ -455,6 +527,13 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// NewServer (NewProbeAuditor arms it with this service's loader).
 		AuditLog:    log.Handler(),
 		JobAccounts: accounts,
+		// The review class's own table (C3.9a): the same rows
+		// AuthConfig.ReviewJobAccounts holds, because the pairing needs the
+		// account NAME — the one the published admissions speak — where the
+		// verifier needs the class. NewServer refuses a configuration whose
+		// review table is non-empty and whose repository table is empty, which
+		// is the one pair the two are read as (server.go).
+		ReviewAccounts: reviewAccounts,
 		// The repository table, which is the pairing's second step for a
 		// review caller (C3.9a) and is read from this variable's own input
 		// above rather than from the published policy: the table must be the
@@ -660,6 +739,75 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 		maps.Copy(repos, table)
 	}
 	return out, repos, nil
+}
+
+// credentialsServiceReviewJobAccounts turns FUGARO_REVIEW_JOB_ACCOUNTS into the
+// review-only class's table (C3.9a): one row per review job this installation
+// deployed, keyed by the service account the caller is verified as and carrying
+// the Claude account that call is served by.
+//
+// The document is a JSON array of {"profile": ..., "provider": ...,
+// "account": ...} objects — the variant's own axis, which is the axis
+// CSR7 deploys one review job over (config.ProjectJobAccounts over a profile's
+// job profile), and NOT FUGARO_JOB_ACCOUNTS' triple: a review job is not bound
+// to a repository (its account names none, spec §2.1), so the row names no
+// repository and no workflow, and the repository a call is about is the run
+// identity's own slug, resolved through the table FUGARO_JOB_ACCOUNTS builds.
+// The account may be absent, which is the axis's spelling of the default
+// account, and each row's service account is derived from the three fields by
+// credsvc.ReviewJobAccountFor — the same derivation the policy read makes, so
+// there is one spelling of these names and not two.
+//
+// The two rules the class-specific entries are read by hold here
+// (`envReviewJobAccounts` states them): an absent or empty value is the EMPTY
+// set, which is the fail-closed statement that this installation admits no
+// review job — every caller of the class is then refused, which is the state of
+// an installation whose module does not render the entry yet — while a value
+// that is present and is not this document is refused here, because it is a
+// deployment that is wrong and would otherwise be read as a service that admits
+// nobody.
+//
+// An empty array is the empty set and not a refusal: the module renders the
+// entry from the review jobs it deploys, and an installation with none is one
+// whose service must still start and refuse the class. That is the other
+// direction from FUGARO_JOB_ACCOUNTS, whose empty table is refused by name
+// because an empty one there is a service that binds no run at all.
+//
+// A REFUSAL NAMES A VARIABLE AND AN ENTRY, NEVER A VALUE.
+func credentialsServiceReviewJobAccounts(raw, gcpProject string) ([]credsvc.ReviewJobAccount, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var rows []struct {
+		Profile  string `json:"profile"`
+		Provider string `json:"provider"`
+		Account  string `json:"account"`
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rows); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's review job accounts: it must be a JSON array of {\"profile\": ..., \"provider\": ..., \"account\": ...} objects, one per review-only job this installation deployed. Nothing was started and no credential was issued", envReviewJobAccounts)
+	}
+	out := make([]credsvc.ReviewJobAccount, 0, len(rows))
+	for i, r := range rows {
+		if r.Profile == "" || r.Provider == "" {
+			// The index and the field names, not the entry: a row is a value
+			// of this environment, and the refusal has to be actionable
+			// without it.
+			return nil, fmt.Errorf("%s: entry %d has no profile or no provider (both are required: the review job's service account is derived from the profile, the provider and the account, and a row without them names an account nobody deployed)", envReviewJobAccounts, i)
+		}
+		if !task.ValidProvider(r.Provider) {
+			return nil, fmt.Errorf("%s: entry %d names a provider that is not a provider kind (lower case, starting with a letter), so the review job's service account cannot be derived from it and would be one this installation cannot have deployed", envReviewJobAccounts, i)
+		}
+		out = append(out, credsvc.ReviewJobAccountFor(r.Profile, r.Provider, r.Account, gcpProject))
+	}
+	// The same order and the same de-duplication the policy read makes
+	// (credsvc.ReviewJobAccountsFor): two rows that name one account are one
+	// row, and rows that name one account under two Claude accounts are left
+	// for credsvc.NewAuthenticator to refuse, which is the deployment that
+	// disagrees with itself rather than a document this function can repair.
+	slices.SortFunc(out, func(a, b credsvc.ReviewJobAccount) int { return cmp.Compare(a.Email, b.Email) })
+	return slices.Compact(out), nil
 }
 
 // The host's own bounds. A proxied model call is long-lived -- it streams a
