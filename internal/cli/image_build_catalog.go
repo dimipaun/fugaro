@@ -291,11 +291,16 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// The provider's credential comes from where it actually is -- the local
 	// config, the repository's github-app-key secret and the project's
 	// bitbucket-token secret -- rather than from the process environment,
-	// which holds none of it (catalogProviderEnv). That read, like the copies
-	// below, waits for the confirmation: a declined build reads no
-	// secret. The terminal fact is the command's own stdin, where the
-	// confirmation above was typed, so the helper's coding-agent refusal asks
-	// the question this command already answered.
+	// which holds none of it (catalogProviderEnv). It is read here, after the
+	// confirmation above and before the copies below: a build a person
+	// declined, or one no session can confirm at all, leaves the bucket and
+	// the secrets untouched. The gate's per-entry admission below is the one
+	// judgement that comes later than this read, so a managed project's entry
+	// the gate then refuses has had its credential read already: the copy
+	// that verdict is about is what needs one. The terminal fact is the
+	// command's own stdin, where the confirmation above was typed, so the
+	// helper's coding-agent refusal asks the question this command already
+	// answered.
 	providerEnv, providerHint, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	if err != nil {
 		return err

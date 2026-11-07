@@ -363,7 +363,15 @@ func buildRules(lc *localcfg.Config, cat *config.Catalog, e config.Entry, p buil
 	if p.Started < bound.Count() {
 		rules = append(rules, fmt.Sprintf("the build is within the bound the project's marker records (%d per invocation, %d already submitted)", bound.Count(), p.Started))
 	} else {
-		refused = append(refused, fmt.Sprintf("the build is past the bound the project's marker records (%d per invocation, and %d builds have already been submitted by this one), so nothing further is built here: while this project is managed, the owner's own terminal is asked no per-build question either — the gate answers it — so the same bound holds there, and the two ways past it are a larger max_image_builds recorded for the project (D1013) and running the build in a project that is not managed",
+		// The refused sentence names the one way past the bound a person can
+		// actually take. The bound is per invocation and one is what every
+		// marker this program writes records, so "a larger max_image_builds in
+		// the project's marker" is not a command anyone can run, and "a
+		// project that is not managed" is not a build that reaches this line
+		// at all (openBuildManaged leaves it to the typed name). A refusal
+		// that sent the owner after either would be a dead end in the one
+		// place a build has just been stopped.
+		refused = append(refused, fmt.Sprintf("the build is past the bound the project's marker records (max_image_builds is %d per invocation, and %d builds have already been submitted by this one), so this invocation stops here and the rest of the catalog is left unbuilt: while this project is managed, the owner's own terminal is asked no per-build question either — the gate answers it — so the same bound holds there, and the way past it is one entry per invocation (`fugaro image build <entry>`), each of which is judged against the bound afresh",
 			bound.Count(), p.Started))
 	}
 	// The repository rule is the command's own guard restated, and it is

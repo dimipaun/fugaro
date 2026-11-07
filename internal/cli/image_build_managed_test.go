@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	storage "google.golang.org/api/storage/v1"
@@ -69,8 +70,13 @@ import (
 type buildWorld struct {
 	gcs *gcpfake.GCS
 	crm *crm.Service
-	db  *gcpfake.RTDB
-	s   *storage.Service
+	// crmFake is the project's label as the owner changes it: the marks are
+	// re-read immediately before every write (D1024), so a test that revokes
+	// one has to be able to take the label away between two reads -- and the
+	// service crm is a client of the fake, not the fake itself.
+	crmFake *gcpfake.CRM
+	db      *gcpfake.RTDB
+	s       *storage.Service
 }
 
 // managedBuildMarker is the creation fact of a managed installation that
@@ -113,7 +119,7 @@ func managedBuildWorld(t *testing.T, f *cloudFixture, marker []byte) *buildWorld
 		"storage: "+gcs.URL+"/storage/v1/, resource_manager: "+c.URL+"/, iam: "+iam.URL+
 			"/, artifact_registry: "+ar.URL+"/, cloud_scheduler: "+sch.URL+"/, no_auth: true }")
 	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
-	return &buildWorld{gcs: gcs, crm: managedCRM(t, c), db: db, s: managedStorage(t, gcs)}
+	return &buildWorld{gcs: gcs, crm: managedCRM(t, c), crmFake: c, db: db, s: managedStorage(t, gcs)}
 }
 
 // unmanagedBuildWorld is the ordinary installation: the runs bucket and the
@@ -133,7 +139,7 @@ func unmanagedBuildWorld(t *testing.T, f *cloudFixture) *buildWorld {
 		"storage: "+gcs.URL+"/storage/v1/, resource_manager: "+c.URL+"/, iam: "+iam.URL+
 			"/, artifact_registry: "+ar.URL+"/, cloud_scheduler: "+sch.URL+"/, no_auth: true }")
 	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
-	return &buildWorld{gcs: gcs, crm: managedCRM(t, c), db: db, s: managedStorage(t, gcs)}
+	return &buildWorld{gcs: gcs, crm: managedCRM(t, c), crmFake: c, db: db, s: managedStorage(t, gcs)}
 }
 
 // rewriteConfig replaces old with new in the fixture's config, and fails when
@@ -412,6 +418,20 @@ func TestImageBuildManagedStopsAtTheRecordedBound(t *testing.T) {
 	if !strings.Contains(err.Error(), "past the bound the project's marker records") || !strings.Contains(err.Error(), "max_image_builds") {
 		t.Errorf("the refusal does not name the bound that stopped it:\n%v", err)
 	}
+	// And it names the way past it that exists: the bound is per INVOCATION,
+	// so naming the entry is what builds the next one. The two ways the
+	// sentence used to offer are not commands this program has -- nothing
+	// writes a marker with another bound, and a project that is not managed
+	// never reaches this line -- so a refusal that offered either would be a
+	// dead end.
+	if !strings.Contains(err.Error(), "one entry per invocation") {
+		t.Errorf("the refusal does not tell the person how to build the rest:\n%v", err)
+	}
+	for _, dead := range []string{"not managed", "a larger max_image_builds"} {
+		if strings.Contains(err.Error(), dead) {
+			t.Errorf("the refusal offers %q, which is no path a command can take:\n%v", dead, err)
+		}
+	}
 	if buildPosts(fb) != 1 {
 		t.Fatalf("submitted %d builds against a bound of one, want the first alone\n%s%s", buildPosts(fb), out, errOut)
 	}
@@ -428,6 +448,92 @@ func TestImageBuildManagedStopsAtTheRecordedBound(t *testing.T) {
 	}
 	if verdicts[managedmode.AuditAdmitted] != 1 || verdicts[managedmode.AuditRefused] != 1 {
 		t.Errorf("the day's verdicts are %v, want one admission and one refusal", verdicts)
+	}
+}
+
+// The gate re-reads the marks immediately before the write it is about to make
+// (D1024), and this is what that second read is FOR: a project whose owner
+// unflags it between the door's own read and the build's admission is not a
+// managed project any more, so the gate has no verdict to give and the typed
+// question comes back exactly where it was.
+//
+// The window is made reachable rather than assumed. The one read between the
+// bound and the gate's second look at the marks is the project's kill switch,
+// so the fake holds that request in flight (HoldNext) while the owner takes the
+// label away and then lets it go: the gate's admission is decided on marks that
+// changed inside the window, which is the case the second read exists for and
+// the case no other world in this file builds — they all leave the marks as the
+// door found them.
+//
+// The mutation this catches is the fallback answering "admitted" (returning nil
+// at the fallback): a project revoked in that window would then have its build
+// submitted with no confirmation at all, which is the one thing the second read
+// prevents — and no other test here would notice, because every other managed
+// world leaves the marks in place from the first read to the last.
+//
+// Nothing is recorded either way: the gate writes no record for a session it
+// does not stand in for, and an admission's record is written after the
+// submission (recorded), which the typed fallback has not made.
+func TestImageBuildManagedRevokedMidCommandAsksForTheTypedName(t *testing.T) {
+	_, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+	w := managedBuildWorld(t, f, managedBuildMarker(1))
+	noAgentSession(t)
+	lc := fixtureConfig(t)
+	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha", 1, 0)
+
+	for _, tc := range []struct {
+		name  string
+		stdin string
+		want  string
+	}{
+		{name: "the project's name typed", stdin: initProjectName + "\n"},
+		{name: "nothing typed", stdin: "\n", want: "not confirmed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The world the door read, one gate per subtest, so the revocation
+			// each case makes is the only one between the two reads.
+			labelled(w.crmFake, initProject)
+			m := catalogBuildGate(t, w, lc)
+			stamped, release := w.db.HoldNext(budget.PathKillGlobal)
+
+			cmd := gateCmd()
+			out := &strings.Builder{}
+			cmd.SetOut(out)
+			cmd.SetErr(out)
+			stdin := &readSpy{Reader: strings.NewReader(tc.stdin)}
+			cmd.SetIn(stdin)
+			done := make(chan error, 1)
+			go func() {
+				done <- m.admitEntry(t.Context(), cmd, initflow.Conditions{Terminal: true},
+					directRulesCatalog("alpha"), config.Entry{Name: "alpha", Source: config.Source{Kind: config.SourceInline}},
+					mustSlug("bitbucket", "acme/app"), plan)
+			}()
+			select {
+			case <-stamped:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the admission never read the project's kill switch, so the door was never reached")
+			}
+			w.crmFake.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: "no"})
+			release()
+			err := <-done
+
+			if !strings.Contains(out.String(), "Type "+initProjectName+" to submit the build: ") {
+				t.Errorf("a project whose marks were taken away mid-command was not asked for the project's name:\n%s", out)
+			}
+			if !stdin.read {
+				t.Error("the prompt was printed and nothing read the person's answer")
+			}
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("the project's own name was typed and the build was still refused: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("a name that is not the project's left err %v, want the refusal %q", err, tc.want)
+			}
+			if got := w.audits(t); len(got) != 0 {
+				t.Errorf("a session the gate does not stand in for left %d records (%+v)", len(got), got)
+			}
+		})
 	}
 }
 
