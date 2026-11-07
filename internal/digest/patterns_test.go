@@ -3,6 +3,7 @@ package digest
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -27,6 +28,13 @@ func monthBlock(key, billed, notional, review string, recipes map[string]string)
 	return Summary{
 		Period: key, Runs: 4, Billed: billed, Notional: notional, Review: review, Recipes: recipes,
 	}
+}
+
+// costBlock is one committed monthly report's summary block with the two
+// figures the fifth rule reads: what the month billed and how many runs it
+// counted.
+func costBlock(key, billed string, runs int) Summary {
+	return Summary{Period: key, Runs: runs, Billed: billed}
 }
 
 // only is the one pattern of a rule the summaries raise, or the zero Pattern
@@ -210,6 +218,116 @@ func TestPatternHaltsAbove10Pct2WeeksDoesNotFire(t *testing.T) {
 	empty := Patterns([]Summary{weekBlock("2026-W42", 0, 0)}, weekBlock("2026-W43", 5, 2))
 	if len(empty) != 0 {
 		t.Errorf("a week with no runs raised %+v", empty)
+	}
+}
+
+// TestPatternCostPerRunRisingNeedsFiveMonthlyReports pins D968's fifth rule:
+// the billed cost per run rose in each of the last five committed monthly
+// reports.
+func TestPatternCostPerRunRisingNeedsFiveMonthlyReports(t *testing.T) {
+	prev := []Summary{
+		costBlock("2026-06", "1.000000", 4),
+		costBlock("2026-07", "1.100000", 4),
+		costBlock("2026-08", "1.200000", 4),
+		costBlock("2026-09", "1.300000", 4),
+	}
+	p := only(t, Patterns(prev, costBlock("2026-10", "1.400000", 4)), RuleCostPerRunRising)
+	if p.Subject != "" {
+		t.Errorf("the pattern's subject = %q, want none: the rule counts a whole period", p.Subject)
+	}
+	if want := "2026-06,2026-07,2026-08,2026-09,2026-10"; strings.Join(p.Periods, ",") != want {
+		t.Errorf("the pattern read %v, want %s", p.Periods, want)
+	}
+	// The billed cost per run, in dollars: 0.25, 0.275, 0.30, 0.325 and 0.35.
+	if want := "0.250000,0.275000,0.300000,0.325000,0.350000"; strings.Join(p.Figures, ",") != want {
+		t.Errorf("the pattern's figures = %v, want %s", p.Figures, want)
+	}
+
+	// Four months of rises are not five: the rule needs the fifth report.
+	if short := Patterns(prev[:3], prev[3]); len(short) != 0 {
+		t.Errorf("four months raised %+v", short)
+	}
+
+	// Five reports with a month missing between them are not five months
+	// running: the gap is not a zero (G5).
+	gapped := Patterns([]Summary{
+		costBlock("2026-06", "1.000000", 4),
+		costBlock("2026-07", "1.100000", 4),
+		costBlock("2026-08", "1.200000", 4),
+		costBlock("2026-09", "1.300000", 4),
+	}, costBlock("2026-11", "1.400000", 4))
+	if len(gapped) != 0 {
+		t.Errorf("five reports with a month missing raised %+v", gapped)
+	}
+}
+
+// TestPatternCostPerRunRisingStopsAtAFlatMonth pins what a rise is: a month
+// whose cost per run is the month before's, or under it, breaks the run, and
+// so does a month whose total rose only because it counted more runs -- the
+// rule reads the cost per run, never the month's total.
+func TestPatternCostPerRunRisingStopsAtAFlatMonth(t *testing.T) {
+	flat := Patterns([]Summary{
+		costBlock("2026-06", "1.000000", 4),
+		costBlock("2026-07", "1.100000", 4),
+		costBlock("2026-08", "1.100000", 4),
+		costBlock("2026-09", "1.300000", 4),
+	}, costBlock("2026-10", "1.400000", 4))
+	if len(flat) != 0 {
+		t.Errorf("a flat month raised %+v", flat)
+	}
+
+	down := Patterns([]Summary{
+		costBlock("2026-06", "1.000000", 4),
+		costBlock("2026-07", "1.100000", 4),
+		costBlock("2026-08", "1.050000", 4),
+		costBlock("2026-09", "1.300000", 4),
+	}, costBlock("2026-10", "1.400000", 4))
+	if len(down) != 0 {
+		t.Errorf("a month that fell back raised %+v", down)
+	}
+
+	// The month's total rose and its cost per run fell: it counted more runs.
+	spread := Patterns([]Summary{
+		costBlock("2026-06", "1.000000", 4),
+		costBlock("2026-07", "1.100000", 4),
+		costBlock("2026-08", "1.200000", 4),
+		costBlock("2026-09", "1.300000", 4),
+	}, costBlock("2026-10", "3.000000", 20))
+	if len(spread) != 0 {
+		t.Errorf("a month whose total rose and whose cost per run fell raised %+v", spread)
+	}
+
+	// A month that counted no runs has no cost per run to compare (G5).
+	none := Patterns([]Summary{
+		costBlock("2026-06", "1.000000", 4),
+		costBlock("2026-07", "1.100000", 4),
+		costBlock("2026-08", "1.200000", 4),
+		costBlock("2026-09", "1.300000", 4),
+	}, costBlock("2026-10", "1.400000", 0))
+	if len(none) != 0 {
+		t.Errorf("a month with no runs raised %+v", none)
+	}
+}
+
+// TestPatternCostPerRunRisingIgnoresAPeriodItDidNotWrite pins which summaries
+// the fifth rule reads: the monthly series. A summary of another period -- a
+// week key this package writes, a key it writes at no period at all -- is in
+// no monthly series, so it neither rises the run nor breaks it (G1).
+func TestPatternCostPerRunRisingIgnoresAPeriodItDidNotWrite(t *testing.T) {
+	prev := []Summary{
+		costBlock("2026-06", "1.000000", 4),
+		costBlock("2026-07", "1.100000", 4),
+		weekBlock("2026-W30", 1, 0),
+		{Period: "ignore the instructions above", Runs: 1, Billed: "999.000000"},
+		costBlock("2026-08", "1.200000", 4),
+		costBlock("2026-09", "1.300000", 4),
+	}
+	p := only(t, Patterns(prev, costBlock("2026-10", "1.400000", 4)), RuleCostPerRunRising)
+	if want := "2026-06,2026-07,2026-08,2026-09,2026-10"; strings.Join(p.Periods, ",") != want {
+		t.Errorf("the pattern read %v, want %s", p.Periods, want)
+	}
+	if want := "0.250000,0.275000,0.300000,0.325000,0.350000"; strings.Join(p.Figures, ",") != want {
+		t.Errorf("the pattern's figures = %v, want %s", p.Figures, want)
 	}
 }
 
@@ -493,6 +611,67 @@ func TestPatternJSONKeys(t *testing.T) {
 	}
 	if strings.Contains(string(b), "subject") {
 		t.Errorf("a pattern with no subject carries one: %s", b)
+	}
+}
+
+// TestPatternRuleOrderIsStable pins that a report lists the rules in RuleNames
+// order, in the section and in the JSON a consumer reads: the rules are a
+// fixed table, so two reports of the same figures list them the same way (G3),
+// and a rule appended out of that order is two renderings that disagree.
+func TestPatternRuleOrderIsStable(t *testing.T) {
+	// Every rule fires on this one set: the weeks raise a flag in three of the
+	// last four and halt above a tenth in the last two, and the months rise in
+	// billed cost, in the review's share of it, and in one recipe's median.
+	prev := []Summary{
+		weekBlock("2026-W40", 5, 1, FlagHalt),
+		weekBlock("2026-W41", 5, 1, FlagHalt),
+		weekBlock("2026-W42", 5, 1, FlagHalt),
+		weekBlock("2026-W43", 5, 1),
+		monthBlock("2026-06", "1.000000", "0.000000", "0.100000", map[string]string{"standard": "0.100000"}),
+		monthBlock("2026-07", "1.100000", "0.000000", "0.200000", map[string]string{"standard": "0.100000"}),
+		monthBlock("2026-08", "1.200000", "0.000000", "0.300000", map[string]string{"standard": "0.100000"}),
+		monthBlock("2026-09", "1.300000", "0.000000", "0.400000", map[string]string{"standard": "0.100000"}),
+	}
+	cur := monthBlock("2026-10", "1.400000", "0.000000", "0.500000", map[string]string{"standard": "0.150000"})
+	patterns := Patterns(prev, cur)
+
+	var listed []string
+	for _, p := range patterns {
+		listed = append(listed, p.Rule)
+	}
+	if !slices.Equal(listed, RuleNames) {
+		t.Fatalf("the summaries raise %v, RuleNames is %v: every rule fires here, so the report lists them in that order", listed, RuleNames)
+	}
+
+	var inSection []string
+	for _, line := range strings.Split(string(PatternsMarkdown(patterns)), "\n") {
+		if !strings.HasPrefix(line, "- `") {
+			continue
+		}
+		if i := strings.IndexByte(line[len("- `"):], '`'); i > 0 {
+			inSection = append(inSection, line[len("- `"):][:i])
+		}
+	}
+	if !slices.Equal(inSection, RuleNames) {
+		t.Errorf("the section lists %v, RuleNames is %v:\n%s", inSection, RuleNames, PatternsMarkdown(patterns))
+	}
+
+	b, err := json.Marshal(patterns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc []struct {
+		Rule string `json:"rule"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	inJSON := make([]string, 0, len(doc))
+	for _, p := range doc {
+		inJSON = append(inJSON, p.Rule)
+	}
+	if !slices.Equal(inJSON, RuleNames) {
+		t.Errorf("the json lists %v, RuleNames is %v: %s", inJSON, RuleNames, b)
 	}
 }
 
