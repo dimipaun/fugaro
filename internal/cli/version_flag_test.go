@@ -1,6 +1,6 @@
 package cli
 
-// The root `-v, --version` flag: the conventional spelling of the `version`
+// The root `--version` flag: the conventional spelling of the `version`
 // subcommand. The owner typed `fugaro -v` and `fugaro --version` and got
 // "unknown shorthand flag: 'v'" / "unknown flag: --version".
 //
@@ -12,7 +12,9 @@ package cli
 // exist yet when it does, so the argv boundary reduces a leading
 // `-v`/`--version` to `--version` alone (NormalizeVersionArgs; cmd/fugaro/main.go
 // and these helpers call it) -- which is what keeps `fugaro --version run run`
-// from running `run`. The tests below pin each half of that, and the
+// from running `run`. The shorthand `-v` is the persistent --verbose's now
+// (D1353), so the leading rewrite is the whole of what keeps `fugaro -v` the
+// version. The tests below pin each half of that, and the
 // byte-for-byte sameness with `fugaro version` that makes the two spellings
 // one fact.
 
