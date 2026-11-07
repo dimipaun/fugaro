@@ -406,15 +406,19 @@ func TestDocsLicensingOneWording(t *testing.T) {
 //
 // Mutations (verified, run and restored): cut "raw bytes before any JSON is
 // parsed" out of the note -- TestDocsLicenceKeyDesign fails, naming that
-// claim; rewrite the test-mode sentence so it keeps "staging key id",
+// claim; delete the rule that no claim is read out of an unverified payload,
+// and the rule that the hand-off variable is never written to a file, a log or
+// an error message -- it fails on each, which neither sentence did before they
+// were pinned; rewrite the test-mode sentence so it keeps "staging key id",
 // "refused" and "production" while flipping the rule (a staging key is
-// accepted, a test key can license a customer) -- TestDocsLicenceKeyDesign
-// fails on the two sentences that carry the rule; change the state table's
-// `expired` condition to "after it" -- it fails on that row; and delete the
-// note's row from the licensing README's file table, leaving the note named in
-// the amendment paragraph above it -- TestDocsLicenceKeyNoteIsInTheLicensing-
-// Readme fails, naming the table, which is the half no S2.1 test but these
-// reaches.
+// accepted, a test key can license a customer) -- it fails on the two
+// sentences that carry the rule; put back the withdrawn claim that the tier
+// maximum bounds a leaked signing key in place of what the bound does bound --
+// it fails on that claim's replacement; change the state table's `expired`
+// condition to "after it" -- it fails on that row; and delete the note's row
+// from the licensing README's file table, leaving the note named in the
+// amendment paragraph above it -- TestDocsLicenceKeyNoteIsInTheLicensingReadme
+// fails, naming the table, which is the half no S2.1 test but these reaches.
 
 const licenceKeyNotePath = "docs/licensing/licence-key.md"
 
@@ -443,6 +447,7 @@ var licenceKeyDesignGroups = []struct {
 			"| `issued` |",
 			"| `expires` |",
 			"not to a person or a machine",
+			"no claim is read out of a payload whose signature did not verify",
 		},
 	},
 	{
@@ -491,10 +496,11 @@ var licenceKeyDesignGroups = []struct {
 	},
 	{
 		subject: "limits",
-		why:     "these are the accepted limits, and the tier maximum is the one that bounds a leaked signing key rather than merely warning about it",
+		why:     "these are the accepted limits, and the tier maximum is stated with what it bounds and what it does not, so a verifier author does not build the length check as a defence against a leaked signing key that it is not",
 		phrases: []string{
 			"maximum lifetime",
-			"leaked signing key cannot mint keys",
+			"not the same as bounding a leaked signing key",
+			"`issued` is the minter's to choose",
 			"one year for every tier today",
 			"without a change to the key format",
 			"never in the verifier alone",
@@ -524,6 +530,7 @@ var licenceKeyDesignGroups = []struct {
 			"expo-secure-store.js",
 			"secret manager",
 			"mounted into the job and never typed by a person",
+			"never written to a file, a log or an error message",
 		},
 	},
 	{

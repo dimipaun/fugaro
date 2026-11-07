@@ -110,14 +110,21 @@ These are stated as limits rather than defended against; the Terms are the enfor
 code.
 
 - **A maximum lifetime per tier.** The verifier refuses a key whose `expires - issued` is longer
-  than its tier allows, so **a leaked signing key cannot mint keys old releases accept for ever**:
-  the most it can mint is a key that dies within the tier's maximum. **The maxima are this note's
-  number and not the Terms'**: one year for every tier today, taken from the longest term the ruled
-  issuance already gives a key — section 10.2(b)'s open-source key is "valid for one year", and the
-  Team and Enterprise subscriptions renew by the year — with section 10.3's three-month commercial
-  evaluation key (D440) well under it. They are stated per tier so a tier can be granted a longer
-  term without a change to the key format, and S2.3's `TestKeyBeyondTheTierLifetimeIsRefused` is what
-  enforces the bound: a tier's maximum moves here, in a decision, and never in the verifier alone.
+  than its tier allows, which is the ruled condition: no key is given a term longer than its tier's,
+  and a tier's term is stated here so a tier can be granted a longer one without a change to the key
+  format. **The maxima are this note's number and not the Terms'**: one year for every tier today,
+  taken from the longest term the ruled issuance already gives a key — section 10.2(b)'s open-source
+  key is "valid for one year", and the Team and Enterprise subscriptions renew by the year — with
+  section 10.3's three-month commercial evaluation key (D440) well under it. S2.3's
+  `TestKeyBeyondTheTierLifetimeIsRefused` is what enforces the bound: a tier's maximum moves here, in
+  a decision, and never in the verifier alone. **It bounds one key's length from that key's own
+  `issued`, which is not the same as bounding a leaked signing key**: `issued` is the minter's to
+  choose, so a key minted with an `issued` far in the future passes the length check and then reads
+  `valid` under the state table for as long as its minter wants. Narrowing it would take a rule this
+  note does not have — a refusal of an `issued` after the check's own `now` — and that rule would
+  still compare against the machine clock the limit below says is the user's: a holder moves their
+  clock to meet a key's `issued`, which is the same move as the clock set back, in the other
+  direction. So the hole is listed rather than closed.
 - **No revocation.** Nothing asks a server whether a key is still good, so a key works until it
   expires; that is the price of a check that never phones home.
 - **Refund leakage, accepted (T25).** A refunded buyer keeps a working key until it expires.
