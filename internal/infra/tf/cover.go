@@ -2281,6 +2281,52 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 	return ""
 }
 
+// The two environment variables a runs bucket reaches a job as, each in the
+// form its writer gives it: FUGARO_BUCKET, which infra's BucketEnv names and
+// platformEnvFor writes for the check jobs (repo and catalog) and the workflow
+// jobs alike, and FUGARO_RUNS_BUCKET, which the installation's history and
+// coordinator sweeps read the runs' result.json objects through. This package
+// cannot import either writer (infra and cli both import it), so the names are
+// literals here as FUGARO_CHECK_SPEC's is, and cover_test.go pins each to its
+// writer's own declaration.
+const (
+	bucketEnv     = "FUGARO_BUCKET"
+	runsBucketEnv = "FUGARO_RUNS_BUCKET"
+)
+
+// bucketValue is what the variable env carries for one of this run's buckets:
+// the whole object URL for FUGARO_BUCKET's writer, and the bare name for
+// FUGARO_RUNS_BUCKET's, which history.tf and coordinator.tf pass
+// var.runs_bucket in.
+func bucketValue(env, bucket string) string {
+	if env == runsBucketEnv {
+		return bucket
+	}
+	return "gs://" + bucket
+}
+
+// bucketEnvOK reports whether v is one of this run's buckets in the form env
+// carries it: the literal bucketValue(env, bucket). A value that is not known is
+// refused by the caller, as checkSpecs refuses the check specs' unknown values.
+func (c Cover) bucketEnvOK(env, v string) bool {
+	for _, b := range c.Buckets {
+		if v == bucketValue(env, b) {
+			return true
+		}
+	}
+	return false
+}
+
+// bucketValues is this run's buckets in that same form, joined, for a refusal
+// that says what it wanted.
+func (c Cover) bucketValues(env string) string {
+	out := make([]string, 0, len(c.Buckets))
+	for _, b := range c.Buckets {
+		out = append(out, bucketValue(env, b))
+	}
+	return strings.Join(out, ", ")
+}
+
 // checkSpec is the part of the check job's FUGARO_CHECK_SPEC that points at
 // registries; it decodes as fugaro image check --job does (infra.CheckJobSpec
 // with the same tags: encoding/json's case-insensitive keys and last
@@ -2489,6 +2535,27 @@ func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creds crede
 // registry and each base image it builds FROM must be in this run's registry,
 // so a job that the covered plan creates can never build from or push to
 // anything else. An environment that is not fully known is not covered.
+//
+// It holds the job's FUGARO_BUCKET there too, and on EVERY job rather than on
+// the check jobs alone: infra's platformEnvFor writes the one runs bucket for
+// the check jobs and the workflow jobs alike, so a rule that fired on the
+// check job's copy would leave the same variable unchecked on the workflow
+// job's, which a hand-edited plan turns into a run whose records land in
+// another bucket — the same hole one job over, and under init's one
+// confirmation. The value must be the module's own literal, gs://<one of this
+// run's buckets>: a computed one is refused as the specs' unknown values are,
+// and so is an entry that takes its value from a secret, which carries the
+// variable's name and a value the module never set.
+//
+// FUGARO_RUNS_BUCKET is held with it, in the bare form its writers give it.
+// The installation's history and coordinator sweeps are covered jobs (their
+// commands are in knownCommands) and carry this run's runs bucket under that
+// name: the history job rolls each run's result.json into the Firestore
+// history and the coordinator reconciles the registry from the same objects,
+// so a plan that pointed either at another bucket would feed forged records
+// into both — and, like the workflow job's copy, under the one confirmation
+// that covered the plan. The rule is the same one, on the form the variable's
+// own writer uses.
 func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string) string {
 	if unknownAt(unk, envPath...) {
 		return "an environment that is not known"
@@ -2501,6 +2568,28 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 			return "an environment variable whose name is not known"
 		}
 		name := str(e["name"])
+		if name == bucketEnv || name == runsBucketEnv {
+			// A value that comes from a source (a secret_key_ref) is not the
+			// module's literal even when the entry carries one too: the
+			// credentials service's case refuses the same shape on its
+			// container for the same reason, a value the module never set, and
+			// a plan that kept this run's bucket here and added a source would
+			// point the job's records wherever the secret says while this check
+			// read the literal. The source block is read as the literal is: one
+			// the plan leaves to apply is a value this run cannot show either,
+			// and after carries an empty list for it, so it is the unknown path
+			// and not the non-empty one that refuses it.
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "a " + name + " whose value comes from a secret rather than the module"
+			}
+			if unknownAt(unk, append(slices.Clone(ep), "value")...) || unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
+				return "a " + name + " that is not known"
+			}
+			if v := str(e["value"]); !c.bucketEnvOK(name, v) {
+				return fmt.Sprintf("a %s of %q, which is not this run's runs bucket (%s)", name, v, c.bucketValues(name))
+			}
+			continue
+		}
 		if name != "FUGARO_CHECK_SPEC" && name != "FUGARO_CATALOG_CHECK_SPEC" {
 			continue
 		}
