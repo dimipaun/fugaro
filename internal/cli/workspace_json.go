@@ -119,8 +119,9 @@ func (r *workspaceRow) document(m *workspaceMachine) workspaceDocRow {
 	if r.owner.WorkspaceCap != nil {
 		row.Cap = &workspaceDocCap{MonthlyUSD: r.owner.WorkspaceCap.Monthly}
 	}
-	for _, p := range slices.Sorted(maps.Keys(*r.owner.WorkspaceMembers)) {
-		mm := (*r.owner.WorkspaceMembers)[p]
+	table := workspaceTable(r.owner)
+	for _, p := range slices.Sorted(maps.Keys(table)) {
+		mm := table[p]
 		row.Members = append(row.Members, workspaceDocMember{
 			Project:            p,
 			JobServiceAccounts: nonNil(mm.JobServiceAccounts),

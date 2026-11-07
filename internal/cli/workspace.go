@@ -874,7 +874,10 @@ func runWorkspaceShow(cmd *cobra.Command, name string, o *workspaceShowOptions) 
 		return writeJSON(cmd.OutOrStdout(), workspaceDoc{
 			Version:    workspaceLsDocVersion,
 			Workspaces: []workspaceDocRow{docRow},
-			Warnings:   m.warnings,
+			// nonNil, so a machine with nothing to warn about prints [] and not
+			// null: the schema requires an array, and one spelling is one case
+			// for a consumer to handle.
+			Warnings: nonNil(m.warnings),
 		})
 	}
 	out, errw := cmd.OutOrStdout(), cmd.ErrOrStderr()
@@ -890,11 +893,12 @@ func runWorkspaceShow(cmd *cobra.Command, name string, o *workspaceShowOptions) 
 		fmt.Fprintf(out, "this machine holds the workspace's own project config, so the record it publishes is built from here (%s)\n", cap)
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "MEMBERS (declared by the workspace's own config here)")
-		if len(*row.owner.WorkspaceMembers) == 0 {
+		table := workspaceTable(row.owner)
+		if len(table) == 0 {
 			fmt.Fprintln(out, "  none: the table here declares no member yet, and a member is in the workspace only when this table lists it")
 		}
-		for _, p := range slices.Sorted(maps.Keys(*row.owner.WorkspaceMembers)) {
-			mm := (*row.owner.WorkspaceMembers)[p]
+		for _, p := range slices.Sorted(maps.Keys(table)) {
+			mm := table[p]
 			fmt.Fprintf(out, "  %s\n", oneLine(p))
 			fmt.Fprintf(out, "    job service accounts: %s\n", oneLine(listOrNone(mm.JobServiceAccounts)))
 			fmt.Fprintf(out, "    firebase project: %s\tfp: %s\n", oneLine(mm.FirebaseProject), oneLine(mm.FP))
@@ -1003,6 +1007,17 @@ func workspaceReadMachine() (*workspaceMachine, error) {
 	return m, nil
 }
 
+// workspaceTable is a config's member table, empty when it declares a cap and
+// no member: a config is the workspace's own when its table OR its cap is
+// written, and a config that holds only a cap holds a table of no members —
+// which is a state `workspace show` reports, not one it panics on.
+func workspaceTable(lc *localcfg.Config) map[string]localcfg.WorkspaceMember {
+	if lc == nil || lc.WorkspaceMembers == nil {
+		return nil
+	}
+	return *lc.WorkspaceMembers
+}
+
 // row is the row of one workspace, made on first mention.
 func (m *workspaceMachine) row(name string) *workspaceRow {
 	if r, ok := m.byName[name]; ok {
@@ -1043,7 +1058,7 @@ func (r *workspaceRow) problems(m *workspaceMachine) []string {
 	if r.owner == nil {
 		return out
 	}
-	table := *r.owner.WorkspaceMembers
+	table := workspaceTable(r.owner)
 	named := map[string]bool{}
 	for _, mem := range r.memberships {
 		named[mem.project] = true
