@@ -6,10 +6,13 @@ each with an empty owner's-answer cell), and the two slices this plan orders are
 (**D1519**) rather than a schedule. This document adds no code, no schema, no config, no fixture and no
 workflow: it names the files the tasks will touch and edits none of them.
 
-**What "parallel by construction" means here.** Every task names **at most six files**, and **no level
-has two writers of one file** — that is the invariant §1's levels exist to hold, and §2's table is the
-proof. A task that shares a file with another task is in a different level, and the table says which
-level each writer is at.
+**What "parallel by construction" means here.** Every task names **at most six files**, not counting the
+`testdata/` fixtures its refusals need — the tree's own convention is **one fixture file per refusal
+case** (`testdata/config/invalid/` holds one small YAML per case, `agent-compression-headroom.yaml`,
+`budget-mode.yaml` and the rest), so a task that refuses two things names two of them and SC7 is the one
+task whose path list therefore reaches seven. **No level has two writers of one file** — that is the
+invariant §1's levels exist to hold, and §2's table is the proof. A task that shares a file with another
+task is in a different level, and the table says which level each writer is at.
 
 **The dependency the whole plan hangs on is unanswered.** Every task that reads the list in force
 depends on **D1500/D1502/D1505** (the shape, the dialect, the floor); a reader who changes the shape
@@ -88,7 +91,10 @@ D1518 makes depend on all of the above. It is the last task because it is the on
 what to do with everything the other ten built.
 
 **Not in this plan.** The console screen (**D1514**) is deferred by the ask and by the console's own
-rule (F24); no task here names a `console/` file. The orchestrator's consumer (D1511) is registered as a
+rule (F24). **No task here builds a screen, and none touches a file under `console/src/`**: the folder's
+one `console/` path is SC3's `console/docs/json-contract.md`, which is a **document** — the new §6.x in
+its "other documents" family — and it is written because the console reads that contract, not because
+this plan gives the console anything to do. The orchestrator's consumer (D1511) is registered as a
 dependency of SC1's exported surface and is built by the orchestrator's own plan, not this one.
 
 ## 2. Shared files
@@ -110,6 +116,9 @@ keys (slice 3). A reader who ships slice 1 and stops has a working command, a wo
 working escalation, all over the engine's own list.
 
 **Files a task shares with work outside this plan**, so a conflict there is a semantic one:
+`console/docs/json-contract.md` (SC3's new §6.x, in §6's "other documents" family — the console's own
+source cites that contract by section, `console/src/main/ipc.ts` among others, so a renumbered section
+is a stale comment in the app),
 `internal/cli/doctor.go` and `internal/cli/doctor_render.go` (SC4's one registration line and one ID
 prefix, beside eight other check-providing files and the two class tables the whole `doctor` view is
 classified by), `internal/cli/run.go` (SC10's flag, beside every other launch flag, whose list
@@ -250,7 +259,9 @@ the security-pattern floor, the matcher and the union merge`.
 
 ### SC5. The CLI reference, and the release note (F13, F18). **size S**
 
-- **Files:** `website/content/cli-reference.md` (regenerated with `go run ./internal/clidoc`),
+- **Files:** `website/content/cli-reference.md` (regenerated with **`go run ./ee/clidoc`**, the generator
+  the file's own header and `docs_website_cliref_test.go` name — `internal/clidoc` no longer writes this
+  page at all, F18),
   `docs/releases/vX.Y.Z.md` (the release that ships slice 1), `website/data/release-summaries.yaml`
   (the one line that release's README requires, no backticks).
 - **Interface:** the reference's `security paths` section, generated and not hand-written; the note's
@@ -267,18 +278,28 @@ the security-pattern floor, the matcher and the union merge`.
 
 ### SC6. The runner escalates a matching diff to level 3, and the record says why (F5, F7, F9, D1507, D1508, D1509). **SEC — size L**
 
-- **Files:** `internal/runner/security.go` (new — classify the changed paths, re-resolve the levels,
-  rebuild the plan), `internal/runner/security_test.go` (new), `internal/runner/runner.go` (the call,
-  in the window after `implement`), `internal/runner/plan.go` (a re-resolution beside
-  `(*run).resolveLevels`), `internal/runstore/security.go` (new — the record's member and its
-  constructor), `internal/runstore/runstore.go` (the field on `Record`).
-- **Interface:** after `implement` — the moment `afterStage(ctx, "implement")` already fires
-  (`roundRigor`, F9) — the runner classifies `recordChangedFiles`' paths (`runstore.ChangedFiles`, F5)
-  against the list in force; on **any** match it sets **level 3 on** for this run, re-resolves the
-  levels through `config.ResolveLevels` and **rebuilds the plan** so the `adversarial` step is in it.
+- **Files:** `internal/runner/security.go` (new — read the changed paths, classify them, re-resolve the
+  levels, rebuild the plan), `internal/runner/security_test.go` (new), `internal/runner/runner.go` (the
+  two calls — the post-`implement` window and the post-`fix` seam beside `roundRigor`),
+  `internal/runner/plan.go` (a re-resolution beside `(*run).resolveLevels`),
+  `internal/runstore/security.go` (new — the record's member and its constructor),
+  `internal/runstore/runstore.go` (the field on `Record`).
+- **Interface:** the escalation reads the diff the way `roundRigor` already does —
+  **`(*Repo).ChangedFiles(ctx, r.workBase())`** (`internal/gitops/changedfiles.go`, the read in
+  `internal/runner/rigor.go`) — and **not** through `runstore.Record.ChangedFiles`. That field is written
+  by `(*run).recordChangedFiles`, whose every call site is inside `finalize` and `shadowFinalize`, so at
+  the post-`implement` moment it is still nil: an escalation built on it would classify an empty list and
+  **never fire** (F5). The first seam is the post-`implement` window D1507 names
+  (`afterStage(ctx, "implement")`); the second is the post-`fix` seam `(*run).fix` already re-reads the
+  diff at — `afterStage(ctx, "fix")` and then `roundRigor` — which is the precedent for **the read**, not
+  for the moment (F9): a fix round can add a path the implement round did not touch, and the mode's own
+  re-resolution is what makes that a moment the run already pays for.
+  On **any** match the runner sets **level 3 on** for this run, re-resolves the levels through
+  `config.ResolveLevels` and **rebuilds the plan** so the `adversarial` step is in it.
   **Level 3 only, and the rigor mode does not move** (D1508). **In slice 2 the list in force is the
   floor alone** — SC9 re-points it at the one resolution, and the record member it names does not change
-  shape when it does. The record gains an additive member naming the escalation, the matched pattern's
+  shape when it does. **It never fails the run**: a read that cannot be made is a warning and the levels
+  stay where they are, which is `roundRigor`'s own rule for the mode (F9). The record gains an additive member naming the escalation, the matched pattern's
   `name` and `category`, and the moment — no existing field changes meaning, so no version bumps
   (D1509). A run whose `--review-levels` block already carries level 3 records **no** escalation, because
   none happened.
@@ -290,11 +311,19 @@ the security-pattern floor, the matcher and the union merge`.
   `TestRunWithLevelThreeAlreadyAskedRecordsNoEscalation`,
   `TestRunEscalationSurvivesAUnitThatChangedNothing` (a matching diff then an empty one),
   `TestRunEscalationIsIdempotentAcrossRoundRigor`,
+  `TestRunEscalationReadsTheDiffBeforeTheRecordHasIt` (the escalation fires at the post-`implement` seam
+  **while `Record.ChangedFiles` is still nil** — the test that fails on an escalation built from the
+  record rather than from the repository, and the reason this task's interface names the read),
+  `TestRunEscalationWarnsAndKeepsTheLevelsWhenTheReadFails`,
+  `TestRunEscalationFiresOnAPathOnlyALaterFixAdded`,
   `TestRunRecordGainsTheFieldAdditively` (the round-trip keeps every existing member). Command:
   `GOFLAGS=-p=2 go test ./internal/runner -run 'Security|Escalat' -count=1` (the runner needs
   `-timeout 40m` for the whole package, not for this filter).
-- **Mutation (run, restore):** escalate on the diff but do not rebuild the plan;
-  `TestRunEscalatesToLevelThreeOnAMatchingDiff` fails, because the step is not in the plan.
+- **Mutation (run, restore):** two, and the second is the one this interface exists to prevent. (a)
+  escalate on the diff but do not rebuild the plan: `TestRunEscalatesToLevelThreeOnAMatchingDiff` fails,
+  because the step is not in the plan. (b) classify `r.rec.ChangedFiles` instead of
+  `r.repo.ChangedFiles(ctx, r.workBase())`: `TestRunEscalationReadsTheDiffBeforeTheRecordHasIt` fails,
+  because the record is still empty at that moment — the escalation silently never fires.
 - **Why SEC:** it changes what a run spends and what its review is, off a control read from the base.
 - **Reviewer tier:** security. **Owner-run:** **yes** — the escalation is only true on a real run, and
   Check 370 is where the owner sees it (D1519's reason for shipping slice 1 first).
@@ -302,10 +331,12 @@ the security-pattern floor, the matcher and the union merge`.
 
 ### SC7. The repository key, `security` (F3, D1501, D1502, D1506). **SEC — size M**
 
-- **Files:** `internal/config/config.go` (the field), `internal/config/scope.go` (its `ScopeRow`),
+- **Files:** five — `internal/config/config.go` (the field), `internal/config/scope.go` (its `ScopeRow`),
   `internal/config/scope_test.go` (the golden `want` table), `schemas/fugaro.schema.json` (the property
-  and its `$defs`), `testdata/config/valid/security.yaml` (new) and `testdata/config/invalid/security.yaml`
-  (new), `docs/project-layer.md` (the row in §5's scope table).
+  and its `$defs`), `docs/project-layer.md` (the row in §5's scope table) — **plus the fixture pair** the
+  header's bound does not count, one file per case as the tree writes them:
+  `testdata/config/valid/security.yaml` (new) and `testdata/config/invalid/security.yaml` (new). This is
+  the one task here whose path list reaches seven, which is why the bound is stated as it is.
 - **Interface:** `security:` on `config.Config`, the **same** shape the layer will carry (D1500): a list
   of `{name, match, category}`, decoded strictly, each row validated by SC1's `Pattern` rules — **so a
   pattern the matcher cannot read is a configuration error at load, not a rule that silently never
@@ -470,7 +501,9 @@ written section is settled at its merge) is what makes 370 this work's to claim 
 ## 7. What is deliberately not in this plan
 
 - **The console screen** (D1514). Deferred by the ask and by the console's own rule (F24); no task here
-  names a `console/` file, `consoleReadPaths`, `spawn.ts` or `ipc.ts`.
+  names `consoleReadPaths`, `spawn.ts`, `ipc.ts` or any other file under `console/src/`. The one
+  `console/` path in this plan is SC3's `console/docs/json-contract.md`, a document the console's own
+  code cites (§6.12, §6.22 and others in `console/src/main/ipc.ts`), not a screen.
 - **The orchestrator's consumer** (D1511). SC1 exports the surface O1's `O4` consumer would read; the
   orchestrator's own plan builds it, and this plan does not wait for it.
 - **`settings set` for the list** (D1515). The list is edited in the layer file and the repository's
