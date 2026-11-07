@@ -3466,16 +3466,6 @@ func prebuiltCatalogEntries() []config.Entry {
 	}
 }
 
-// defaultlessCatalogEntries are catalogEntries with no entry marked default:
-// what leaves a workflow that names nothing without a catalog image at all.
-func defaultlessCatalogEntries() []config.Entry {
-	entries := catalogEntries()
-	for i := range entries {
-		entries[i].Default = false
-	}
-	return entries
-}
-
 // TestSpecCatalogOnlyRepoNeedsNoBaseImage: the daily check rebuilds the
 // repository's own derived image, and a workflow a catalog entry gives its
 // image to never runs one — a built entry's image is the catalog's own
@@ -3499,25 +3489,25 @@ func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
 }
 
 // TestSpecCheckCoversTheWorkflowsWithoutACatalogImage: the exclusion is per
-// workflow, not per repository. A workflow the catalog gives no image to — one
-// that names no entry and needs no tag, in a catalog that marks no default —
-// is not the catalog's (catalog.Applies), so the repository keeps its daily
-// check and the check covers that workflow alone.
+// workflow, not per repository. A workflow that keeps its own image
+// definition is not the catalog's (catalog.Applies), so the repository keeps
+// its daily check and the check covers that workflow alone.
+//
+// Every entry here is one Fugaro builds, so that the one workflow the check
+// covers is not the catalog's for the reason this test is about: a prebuilt
+// entry on a baked workflow is refused before any of this is computed (D1191).
 func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
-	in := catalogInputs(t, &config.Catalog{Entries: defaultlessCatalogEntries()})
-	// bare names nothing, so without a default it is not the catalog's either:
-	// the fixture keeps the one workflow the check covers, so that the answer
-	// can be a list of one.
-	delete(in.Cfg.Workflows, "bare")
+	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
 	w := in.Cfg.Workflows["api"]
 	w.Needs = nil
+	w.Image = config.Image{Tools: config.MiseTools{"node": "24"}}
 	in.Cfg.Workflows["api"] = w
 	rs, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rs.Check == nil || !slices.Equal(rs.Check.Workflows, []string{"api"}) {
-		t.Fatalf("the daily check covers %v, want only the workflow the catalog gives no image to", rs.Check)
+		t.Fatalf("the daily check covers %v, want only the workflow that builds an image of its own", rs.Check)
 	}
 }
 
