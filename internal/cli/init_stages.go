@@ -377,6 +377,12 @@ type engineStage struct {
 	skip func() string
 	run  func(ctx context.Context) error
 	left initflow.Left
+	// leftFor, when set, is the stage's left-for-you as a function of the run's
+	// own arm instead of one fixed line: the installation-2 stage has two, and
+	// the command they name differs (--firebase-project's history job, the
+	// catalog check job a plain update deploys), so one of them would send the
+	// user to a command that does not do what the prompt says.
+	leftFor func() initflow.Left
 	// isolate makes the stage judge "No changes" and its plan line by what
 	// it did itself, not by what the stages before it left in the run's
 	// result (the second installation apply, after the Firebase root's).
@@ -393,7 +399,12 @@ type engineStage struct {
 func (s *engineStage) Name() string                 { return s.name }
 func (s *engineStage) SelfConfirming()              {}
 func (s *engineStage) Verify(context.Context) error { return nil }
-func (s *engineStage) Left() initflow.Left          { return s.left }
+func (s *engineStage) Left() initflow.Left {
+	if s.leftFor != nil {
+		return s.leftFor()
+	}
+	return s.left
+}
 
 func (s *engineStage) Check(context.Context) (initflow.Status, error) {
 	if why := s.skip(); why != "" {
@@ -714,7 +725,12 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			return e.r.installCatalogCheck(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
-		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
+		leftFor: func() initflow.Left {
+			if e.r.o.firebase != "" {
+				return promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord())
+			}
+			return promptLeft(initflow.Installation2, "type the project's name to apply the catalog check job", e.r.o.doorName())
+		},
 	}
 }
 
