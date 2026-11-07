@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -67,12 +68,20 @@ func (r *Redactor) emit(line []byte) error {
 	return err
 }
 
-// redact replaces every value the run holds at this moment.
+// redact replaces every value the run holds at this moment, the longest value
+// first: one value is often inside another — an account id inside the
+// connection string that holds it — and replacing the shorter first would
+// leave the tail of the longer one in the log, where nothing would ever look
+// for it again. The values are copied rather than sorted in place, because
+// what secrets returns is the caller's own slice, still live for the stages
+// that fill it.
 func (r *Redactor) redact(line string) string {
 	if r.secrets == nil {
 		return line
 	}
-	for _, v := range r.secrets() {
+	vals := slices.Clone(r.secrets())
+	slices.SortStableFunc(vals, func(a, b string) int { return len(b) - len(a) })
+	for _, v := range vals {
 		// An empty value is a substring of every string, and replacing one
 		// would put the marker between every character of every line. It is
 		// also the normal state of a converge slot no stage has reached yet.

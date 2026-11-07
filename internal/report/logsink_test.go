@@ -446,6 +446,34 @@ func TestRedactsASecretSplitAcrossWrites(t *testing.T) {
 	}
 }
 
+func TestRedactsTheLongerValueFirst(t *testing.T) {
+	// F6: one value is often inside another — an account id inside the
+	// connection string that holds it — and replacing the shorter one first
+	// would redact its own part and leave the tail of the longer one in the
+	// log, where the value it still is would never be looked for again.
+	_, env := logStateDir(t)
+	secrets := []string{"abc", "XXabcYYsecretlong"}
+	sink, err := OpenLog("update", env, "linux", logFixedNow, func() []string { return secrets })
+	if err != nil {
+		t.Fatalf("OpenLog: %v", err)
+	}
+	if _, err := sink.Write([]byte("v=XXabcYYsecretlong\n")); err != nil {
+		t.Fatal(err)
+	}
+	body := logBody(t, sink)
+	if strings.Contains(body, "secretlong") || strings.Contains(body, "abc") {
+		t.Errorf("the shorter value's redaction left the rest of the longer one in the log:\n%q", body)
+	}
+	if !strings.HasPrefix(body, "v=[REDACTED]\n") {
+		t.Errorf("the line is not the redacted one:\n%q", body)
+	}
+	// The order is the caller's: the slice is the converge's live slots, and
+	// sorting it would be a change to state this package does not own.
+	if secrets[0] != "abc" || secrets[1] != "XXabcYYsecretlong" {
+		t.Errorf("the redactor reordered the caller's values: %q", secrets)
+	}
+}
+
 func TestRedactsTheLineTheRunEndedIn(t *testing.T) {
 	// F6: the last line of a run has no newline of its own, and it is the line
 	// a failure most often ends in. Close is what writes it, so it is also the
