@@ -686,15 +686,20 @@ func markSwitchRepoReady(t *testing.T, r *initRig, name string) {
 // git credential and no model one, and the fake is NOT allowed to serve its
 // payload (r.sm.Seed without AllowAccess): a run that reads the document fails
 // the test twice over, once by opening the version list and once at the access
-// call. The entry carries the record a person's own run wrote — the bundle DID
-// hold a model credential then — so the pre-fix answer was a false written over
-// a true record, a repository switched off, and its root planned held off, on
-// the word of a session that never read the bundle.
+// call, which the fake reports. The entry carries the record a person's own run
+// wrote — the bundle DID hold a model credential then — so the pre-fix run
+// answered false from a document it had just read, planned the repository's
+// root held off, and would have written that false over the person's record.
+//
+// The plan is what this door's --plan-only run leaves to read: it stops before
+// the local config is written, so the record ITSELF is asked of the writer in
+// TestTheRecordIsKeptUnderAnAgentOrRunMarker, which drives the two calls this
+// door makes without the apply in between.
 //
 // Mutation (verified, run and restored): drop the two marker checks from
-// credentialsBundleReady (internal/cli/init_credentials.go) and this fails with
-// the record cleared, the key absent from the root's tfvars and the bundle's
-// version list served.
+// credentialsBundleReady (internal/cli/init_credentials.go) and every marker
+// here fails, on the bundle's version list and on the key absent from the
+// root's tfvars.
 func TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess(t *testing.T) {
 	slug, err := task.Slug("bitbucket", "acme/sandbox")
 	if err != nil {
@@ -726,15 +731,54 @@ func TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess(t *testing.T) {
 			if got := r.sm.VersionsListedFor(bundle); got != listed {
 				t.Errorf("the run listed the bundle's %d version(s) where it listed %d before, and that list is the first call a store over the container makes: nothing under this marker may open the bundle's store at all, whatever it would find there\nstdout:\n%s", got, listed, out)
 			}
-			lc, err := localcfg.Load(r.cfg)
-			if err != nil {
-				t.Fatalf("the local config does not parse: %v", err)
-			}
-			if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
-				t.Errorf("the record a person's own run wrote was overwritten by a session that read no bundle: the switch is a value only a reading may move, in either direction — a false written here switches a repository off on the word of a process that may not look at the credential it is judging, and the person's next run has nothing to correct it from\n%s", readFileString(t, r.cfg))
-			}
 			if _, present := repoCredentialsServiceFact(t, slug); !present {
 				t.Errorf("the repository root was planned held off, though the entry's record says the service is ready and this run read no bundle that could have said otherwise: the plan has to be the one the record already answers, or this run's apply takes the repository's model mounts away and grants it nothing in their place\nstdout:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestTheRecordIsKeptUnderARunsProcessMarker is the other half of that door's
+// fence, at the writer: what the entry carries before the run it still carries
+// after it, whatever the bundle would have answered.
+//
+// The run above cannot show this by itself — --plan-only stops before the local
+// config is written — so this one drives the door's own two calls, the record's
+// refresh and the config write, over the same rig and the same bundle
+// (recordForRepo, which is the pair every record test here reads). The record
+// starts true, the bundle holds no model credential, and under a run marker the
+// false the bundle would answer is not a reading and is not written: the switch
+// is a value a READING may move, in either direction, and a process that may
+// not open the document has no reading to move it with.
+//
+// The markers are the run ones, because an agent's session never reaches this
+// write at all: the repository stage refuses to apply in one (initflow's
+// AgentError, "a coding agent's session is present…) before the config is
+// written, so what it may not move is the plan, which is what the test above
+// pins.
+//
+// Mutation (verified, run and restored): drop the two marker checks from
+// credentialsBundleReady and every marker here fails, the record cleared to
+// false for a bundle this run had no business reading.
+func TestTheRecordIsKeptUnderARunsProcessMarker(t *testing.T) {
+	for _, marker := range managedFlagRunMarkers {
+		t.Run(marker, func(t *testing.T) {
+			r := switchRig(t)
+			markSwitchRepoReady(t, r, "acme/sandbox")
+			bundle := credsvc.BundleSecretID(initProjectName)
+			r.sm.Seed(bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue},
+				[]byte(config.BitbucketSecret+": "+credsValue(t, "git")+"\n"))
+			t.Setenv(marker, "1")
+
+			lc := recordForRepo(t, r)
+			if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
+				t.Errorf("the record a person's own run wrote was cleared by a run that read no bundle: the bundle holds no model credential, and that is an answer only a reading may give — written here, it switches the repository off on the word of a process that may not look at the credential it is judging, and the person's next run has nothing to correct it from\n%s", readFileString(t, r.cfg))
+			}
+			if got := r.sm.Accessed(); len(got) != 0 {
+				t.Errorf("the run read %v, and the bundle's document is the one secret a coding agent's session and a run's process may not read (credsOwnerOnly, internal/cli/creds.go): the bundle holds every model credential the service issues", got)
+			}
+			if got := r.sm.VersionsListedFor(bundle); got != 0 {
+				t.Errorf("the run listed the bundle's versions %d time(s), and that list is the first call a store over the container makes: nothing under this marker may open it, whatever it would find there", got)
 			}
 		})
 	}

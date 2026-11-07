@@ -43,7 +43,7 @@ that finds every place it is written and every test that pins it.
 | **Why, in the owner's words** | the reason for opt-in was **cost**, and a Cloud Run service that **scales to zero costs nothing idle**; so **remove the opt-in complexity** |
 | **Reverses** | the "ships dormant / optional" rulings and the `--provision-credentials` opt-in as the *only* way the service is deployed |
 | **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it, because the drop it triggers is auth-blind (§1.4) |
-| **Amended after review** | 2026-11-07 — the readiness record is a **per-repository fact written by the door that applies that repository's root**, and it is written as the value that root's **plan was built with**: a record vouches for a grant, only a root's own apply makes one, and the same rule runs the other way (§3 DON8) |
+| **Amended after review** | 2026-11-07 — the readiness record is a **per-repository fact written by the door that applies that repository's root**, and it is written as the value that root's **plan was built with**: a record vouches for a grant, only a root's own apply makes one, and the same rule runs the other way (§3 DON8) — and **neither door writes one in a coding agent's session or in a run's own process**, where the bundle is not read at all |
 | **The Open item, answered** | **2026-11-05: DEPLOY NOW, SWITCH LATER.** The service deploys everywhere; the switch happens **per repository** and only where the service can serve that repository's runs — its auth mode must be one the service serves **and** the bundle must hold what that mode needs. §1.5 states what the switch flips; §3 DON8 is the task |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
 
@@ -973,7 +973,14 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   entry to read — so its first run deploys the held-off root and records `false`, and the run after it,
   in the same checkout, is the one that switches it on. A bundle that is later emptied switches the
   repository back off on the next `update`, which re-adds the mounts, which is the fail-safe direction
-  and not a failure.
+  and not a failure. **Both doors leave the record alone in a coding agent's session and in a run's own
+  process** (the header's 2026-11-07 row): the bundle holds every model
+  credential the service issues, and the two commands that read it, `fugaro creds ls` and `fugaro creds
+  set`, refuse both before their first call (`credsOwnerOnly`, `internal/cli/creds.go`), so
+  `credentialsBundleReady` answers "nothing was read" there and neither door writes — every entry keeps
+  the record the person's own last run left on it, and the repository door's plan is the one that record
+  already answers. An agent's run therefore moves no switch; the person's own next `fugaro update` is
+  what converges it, which is still the one command CLAUDE.md's HARD RULE promises.
 - **What the switch flips, and the one thing it does not touch.** §1.5's three flips are this task's
   output, and **flip 1 needs no Terraform change at all** — which is the finding that makes this task
   small. `deploy/terraform/gcp/modules/workflow/sa.tf:148-151` gates the mount drop on
