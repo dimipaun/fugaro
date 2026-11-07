@@ -228,6 +228,17 @@ func TestPKCEIsRequiredAndPlainIsRefused(t *testing.T) {
 		t.Errorf("an authorization request with a plain challenge was refused with %q; want %q: a plain challenge is the verifier itself and this server accepts S256 alone", got, oidc.InvalidRequest)
 	}
 
+	// The method omitted rather than named. RFC 7636 §4.3 makes an absent
+	// method mean `plain`, so this is the request above with the default left
+	// in, and the server has to refuse it for the same reason rather than
+	// reading the default: a client that said nothing has said plain, and a
+	// challenge that is the verifier protects nothing.
+	q = authorizeQuery(clientID, testClientRedirect)
+	q.Del("code_challenge_method")
+	if got := oauthErrorOf(t, ts.authorizeRequest(t, q), host); got != string(oidc.InvalidRequest) {
+		t.Errorf("an authorization request that names no code_challenge_method was refused with %q; want %q: an absent method defaults to plain (RFC 7636 §4.3), and this server tells the client to say S256 rather than reading the default", got, oidc.InvalidRequest)
+	}
+
 	// And the exchange is where the challenge is actually checked: a code
 	// issued for one verifier is not redeemable with another.
 	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
@@ -513,6 +524,94 @@ func TestAnUnknownScopeIsRefusedNotDropped(t *testing.T) {
 	for key := range objects {
 		if !strings.HasPrefix(key, clientPrefix) && !strings.HasPrefix(key, requestPrefix) {
 			t.Errorf("a refused scope left %s behind: the refusals happen before the request, the code or any token is written", key)
+		}
+	}
+}
+
+// TestTheInstallationsLimitsNarrowTheTokenTheFlowMints is the one place the
+// installation's own policy enters the flow: the code carries what the person
+// consented to, and the token it is exchanged for carries that narrowed against
+// the project's own limits.
+//
+// The configuration below grants one of the two scopes D927 mints while the
+// flow asks for both, which is the only shape where the narrowing can be seen:
+// with both granted the intersection is the request, and a server that minted
+// the code's scopes unchanged would answer the same token. Both halves of the
+// answer are read — the `scope` a client reads, and the limits the record
+// holds, which are what the resource server enforces on every call.
+func TestTheInstallationsLimitsNarrowTheTokenTheFlowMints(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: []string{ScopeTasksRead}}
+	ts := newTestServerWith(t, cfg)
+
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	q := authorizeQuery(clientID, testClientRedirect)
+	q.Set("scope", ScopeTasksRead+" "+ScopeTasksWrite)
+	binding, number := ts.startFlow(t, q)
+	code := codeOf(t, ts.approve(t, binding, number))
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the exchange answered %d (%s); want a token pair: the installation grants one of the two scopes the consent carried, so the request is answerable", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if tokens.Scope != ScopeTasksRead {
+		t.Errorf("the token came back with scope %q; want %q: the token is the consent narrowed against the installation's own limits, not the consent read back", tokens.Scope, ScopeTasksRead)
+	}
+	record, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the access token's record: %v", err)
+	}
+	if got := strings.Join(record.Token.Limits.Scopes, " "); got != ScopeTasksRead {
+		t.Errorf("the access token's record carries the scopes %q; want %q: the record is what the resource server enforces on every call, and a record wider than the installation's own limits is the policy not reaching the token at all", got, ScopeTasksRead)
+	}
+}
+
+// TestAScopeTheInstallationDoesNotGrantIsRefusedNotWidened is the other half of
+// the same rule: a code carrying only a scope the installation does not grant is
+// not exchanged for a token at all.
+//
+// The two doors check different things, which is why this one is reachable: the
+// authorize endpoint measures the requested scope against D927's vocabulary,
+// and that vocabulary is the same for every installation. Whether this
+// installation grants it is its own policy, and the exchange is where that is
+// read. The failure this rules out is the quiet one — a token minted with the
+// scope the consent asked for because the consent asked for it — which would
+// leave a client holding a permission the installation does not give with
+// nothing afterwards saying so.
+func TestAScopeTheInstallationDoesNotGrantIsRefusedNotWidened(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: []string{ScopeTasksRead}}
+	ts := newTestServerWith(t, cfg)
+
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	q := authorizeQuery(clientID, testClientRedirect)
+	q.Set("scope", ScopeTasksWrite)
+	binding, number := ts.startFlow(t, q)
+	code := codeOf(t, ts.approve(t, binding, number))
+
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code == http.StatusOK {
+		t.Fatalf("the exchange minted %+v for a code carrying %q, which this installation does not grant", tokens, ScopeTasksWrite)
+	}
+	if got := refusalOf(t, rec).Error; got != string(oidc.InvalidGrant) {
+		t.Errorf("the exchange refused a scope this installation does not grant with %q; want %q", got, oidc.InvalidGrant)
+	}
+	// Nothing was minted and no family was opened: the store holds the client
+	// and the spent code, and a token record would be the widening itself.
+	for key := range ts.store.objects(t) {
+		if strings.HasPrefix(key, tokenPrefix) || strings.HasPrefix(key, familyPrefix) {
+			t.Errorf("%s exists after an exchange this installation refused: a refused authorization mints no token and opens no family", key)
 		}
 	}
 }
@@ -1242,6 +1341,74 @@ func TestRevokeRefusesTheWrongClientSecret(t *testing.T) {
 		"client_id":     {clientID},
 	}); rec.Code != http.StatusOK {
 		t.Errorf("the refresh token stopped rotating after a refused revocation (%d): a revocation that did not authenticate deletes no family", rec.Code)
+	}
+}
+
+// TestRevokeRefusesATokenAnotherClientHolds is the second half of "a caller may
+// revoke what it holds, and nothing else" (token.go): the secret check above
+// refuses a caller that cannot authenticate, and this refuses one that
+// authenticates perfectly well with its own credentials and names somebody
+// else's token.
+//
+// The token endpoint answers 200 to every revocation (RFC 7009), so nothing in
+// the response tells the two apart and the property has to be read where it
+// lives: the family is still there afterwards, which is checked by rotating the
+// very token the refused call named. The control at the end is the same call by
+// the client that does hold the token — without it, a server that revoked
+// nothing at all would pass the first half.
+func TestRevokeRefusesATokenAnotherClientHolds(t *testing.T) {
+	ts := newTestServer(t)
+	holderID, holderSecret := ts.register(t, "an editor", testClientRedirect)
+	otherID, otherSecret := ts.register(t, "a second client", testOtherRedirect)
+
+	binding, number := ts.startFlow(t, authorizeQuery(holderID, testClientRedirect))
+	code := codeOf(t, ts.approve(t, binding, number))
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {holderID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the code exchange answered %d (%s); want a token pair", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	rec = ts.postForm(t, RevokePath, url.Values{
+		"token":         {tokens.RefreshToken},
+		"client_id":     {otherID},
+		"client_secret": {otherSecret},
+	})
+	if rec.Code != http.StatusOK {
+		t.Errorf("a second client authenticating with its own credentials answered %d (%s); want 200: RFC 7009 answers every revocation the same way, so the refusal has to be that the token is not revoked", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	rec, rotated := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {holderID},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the holder's refresh token stopped rotating after another client named it (%d: %s); want the pair: a caller may revoke what it holds, and nothing else", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	// The control: the client that does hold the token revokes it, and the same
+	// rotation is refused afterwards.
+	rec = ts.postForm(t, RevokePath, url.Values{
+		"token":         {rotated.RefreshToken},
+		"client_id":     {holderID},
+		"client_secret": {holderSecret},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the holder's own revocation answered %d (%s); want 200", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	rec, _ = ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {rotated.RefreshToken},
+		"client_id":     {holderID},
+	})
+	if rec.Code != http.StatusBadRequest || refusalOf(t, rec).Error != string(oidc.InvalidGrant) {
+		t.Errorf("the revoked token rotated anyway with %d (%s); want 400 %s: the holder's own revocation has to be the one that ends the family, or the first half above proves nothing", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidGrant)
 	}
 }
 
