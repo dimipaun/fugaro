@@ -343,9 +343,12 @@ func assertLogMode(t *testing.T, cmdName string) {
 // TestARefusedCommandKeepsNoLog: a command that refuses before its run begins
 // files no log — not even an empty one. The log is the run's own output and a
 // refusal has none, so the reporter opens where the run's work does: after the
-// launch's own task is built, after the batch's pre-checks, and after the
-// reaper's pass resolved — never at the command's door, where every refused
-// invocation would file a file (D1352).
+// launch's own task is built, after the batch's pre-checks, after a cancel's
+// ref resolved, and after the reaper's pass resolved — never at the command's
+// door, where every refused invocation would file a file (D1352). The cancel
+// case is why it is not merely tidy: a refusal's file is one of the 50 the
+// command's own name keeps (CL3's pruneLogs), so enough refused cancels would
+// evict the newest real one an operator is pointed at.
 func TestARefusedCommandKeepsNoLog(t *testing.T) {
 	cases := []struct {
 		name string
@@ -359,6 +362,11 @@ func TestARefusedCommandKeepsNoLog(t *testing.T) {
 		{"a batch its own pre-checks refuse", func(t *testing.T) error {
 			newCloudFixture(t)
 			_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--recipe", "review-only", "fix the flaky test")
+			return err
+		}},
+		{"a cancel whose ref is refused", func(t *testing.T) error {
+			newCloudFixture(t)
+			_, _, err := execute(t, "cancel", "not-a-run-id")
 			return err
 		}},
 		{"a pass the selected project refuses", func(t *testing.T) error {

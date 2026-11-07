@@ -93,13 +93,8 @@ func newCancelCmd() *cobra.Command {
 				return err
 			}
 			defer env.Close()
-			rep, sink := reporterFor(cmd, "cancel", nil)
-			if sink != nil {
-				defer func() { _ = sink.Close() }()
-			}
-			err = cancelRun(cmd.Context(), env, &o, args[0], loggedOut(cmd.OutOrStdout(), sink), cmd.ErrOrStderr(), rep)
-			rep.Summary()
-			return err
+			openRep := func() (*report.Reporter, report.Sink) { return reporterFor(cmd, "cancel", nil) }
+			return cancelRun(cmd.Context(), env, &o, args[0], cmd.OutOrStdout(), cmd.ErrOrStderr(), openRep)
 		},
 	}
 	f := cmd.Flags()
@@ -117,18 +112,30 @@ func newCancelCmd() *cobra.Command {
 	return cmd
 }
 
-// cancelRun is cancel's flow (design §4.5) against env. rep is the command's
-// reporter, and nil for the callers that drive this flow directly (the tests
-// of the flow itself), which print as they did before it had one.
-func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string, out, errOut io.Writer, rep *report.Reporter) (err error) {
+// cancelRun is cancel's flow (design §4.5) against env. newRep is how the
+// command's reporter is opened, and nil for the callers that drive this flow
+// directly (the tests of the flow itself), which print as they did before it
+// had one.
+func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string, out, errOut io.Writer, newRep reporterOpener) (err error) {
+	var (
+		step *report.Step
+		rep  *report.Reporter
+		sink report.Sink
+	)
 	// The cancel is one step, and it is not ended here: emit ends it with the
 	// result, just before the result's own message, so the verdict is read
 	// above the sentence it is about. Every other way out of this flow is a
-	// failure, and the deferred call below is what reports it.
-	var step *report.Step
+	// failure, and the deferred call below is what reports it. The log is
+	// closed under the summary, so the closing line is in it.
 	defer func() {
-		if step != nil && err != nil {
-			step.Failed(err, nil)
+		if step != nil {
+			if err != nil {
+				step.Failed(err, nil)
+			}
+			rep.Summary()
+		}
+		if sink != nil {
+			_ = sink.Close()
 		}
 	}()
 	// Not locateLaunched: a never-launched run is a case cancel handles.
@@ -137,11 +144,18 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		return err
 	}
 	ref := slug + "/" + id
-	if rep != nil {
+	if newRep != nil {
+		// The reporter opens where the cancel's own work does, once the run is
+		// located: a ref this command does not resolve is refused before there
+		// is anything to cancel, and a refused cancel keeps no log, files no
+		// name of its own toward the 50 a command keeps (D1352, D1354).
+		rep, sink = newRep()
+		// The cancel's own output is kept beside the screen, and the line in
+		// flight goes down for the rest of the run: what follows is the
+		// progress line a person waits on, and the wait itself is the grace
+		// period — minutes, with the runner finalizing behind it (G1).
+		out = loggedOut(out, sink)
 		step = rep.Step("cancel " + ref)
-		// The line in flight goes down for the rest of the run: what follows
-		// is the progress line a person waits on, and the wait itself is the
-		// grace period — minutes, with the runner finalizing behind it (G1).
 		rep.Pause()
 	}
 	emit := func(r cancelResult) error {

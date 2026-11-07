@@ -68,6 +68,14 @@ func reporterFor(cmd *cobra.Command, name string, secrets func() []string) (*rep
 	return report.New(o), sink
 }
 
+// reporterOpener is a reporterFor a command hands to its flow instead of
+// calling it itself: the flow opens the reporter where its own work starts, so
+// a refusal made before that point — one this CLI answers without reaching the
+// APIs — keeps no log, not even an empty file (D1352, D1354). A nil one is a
+// caller driving the flow with no reporter at all, the flow's own tests, and
+// it prints exactly what it printed before there was one.
+type reporterOpener func() (*report.Reporter, report.Sink)
+
 // loggedOut is where a command's own output goes: the writer it printed to
 // before the reporter, and the run's log beside it, so the log holds what the
 // person read (D1352). A run that could not open one — a read-only home,
