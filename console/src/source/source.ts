@@ -320,15 +320,18 @@ export interface FugaroSource {
    * `coordinatorShow`'s host read refuses. */
   managedStatus(args: ValidatedArguments): Promise<Snapshot>
   /** policyShow is the published policy node a project's runs read, and nothing
-   * else (`project policy show --json`, the same plan's CM4, D1480 and D1481;
-   * contract §6.22). It has **no argument at all** -- no positional word and no
+   * else (`project policy show --json`, the same plan's CM4, D1480 and D1481).
+   * It has **no argument at all** -- no positional word and no
    * `--gcp-project`/`--region`, since the two project flags are main-process
    * state (rule 3). It is this command rather than `project show --json` because
    * the latter also carries the **installation's** caps, which belong to the
    * Spend screen (F18, D1481); what this document carries is the project's own
    * `budget` block, which is the project's policy and not a spend figure. The
    * read is the project's own database node and writes neither it nor the state
-   * file. */
+   * file. Its document has no section of the contract -- the neighbouring reads'
+   * are `managed status`'s (§6.21, this plan's CM2) and the graph's (§6.22, the
+   * graph plan's CG9a) -- so a screen that draws this node takes its fields from
+   * the command's own `{project, policy}` shape and from nothing else. */
   policyShow(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
