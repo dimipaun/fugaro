@@ -81,6 +81,11 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		"max_parallel":       func() string { return strconv.Itoa(local.MaxParallel) },
 		"build.machine_type": func() string { return local.Build.MachineType },
 		"local.version":      func() string { return strconv.Itoa(local.Version) },
+		// The two schedules (R13): a layer that states nothing reads as
+		// paused, which is the default the rows claim and the direction that
+		// never starts a job by omission.
+		"layer.jobs.reports.paused":       func() string { return strconv.FormatBool((&config.ProjectLayer{}).ReportsPaused()) },
+		"layer.jobs.catalog_check.paused": func() string { return strconv.FormatBool((&config.ProjectLayer{}).CatalogCheckPaused()) },
 	}
 	for _, r := range Rows() {
 		if r.Default.Value == "" {

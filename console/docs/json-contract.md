@@ -2619,9 +2619,11 @@ with no room in it for records, while a screen wants one closed document about
 one project — which is what the coordinator's stored read (§6.13) already is
 for the coordinator. **The console's own rule 6 row for it —
 `managed status --json --project <name> [--config <path>]` — is that plan's
-CM3**, so the console does not spawn it yet; the shape is written down here now
-because CM3's row and CM5's screen are what it is read against, and a shape that
-is not written down is a shape that drifts.
+CM3, and the row is on the table**: the design's §5.1 table carries it, the
+CLI's `consoleReadPaths` carries the command, and the console spawns it as
+`managed.status` (CM4). The shape is written down here because that row and the
+screen built on it (CM5) are what it is read against, and a shape that is not
+written down is a shape that drifts.
 
 **Why the CLI's own facts and never its prose** (D1472). The managed state is
 available today elsewhere only as doctor's `managed-audit` check, whose answer
@@ -2709,20 +2711,19 @@ console's row. The command takes no argument, writes no cloud object and keeps
 no cache of its own, and needs no checkout to answer — so it runs anywhere, a
 coding agent's session included.
 
-**It is not in the console's read set yet, and the difference is one local
-file.** The command resolves the selected project the way every cloud command
-does: `selectProject` resolves the working directory as a checkout on the way to
-the installation, and that resolution remembers the checkout it ran in
-(`recordCheckout`, `internal/cli/project.go`) unless the command's own path
-stands on the read-only list that stops it (`consoleReadPaths`,
-`internal/cli/project.go`, §6.8). `managed status` is **not** on that list: CM3
-is the task that adds its rule 6 row, and that task adds the design §5.1 row
-with it, because a `consoleReadPaths` entry whose argv the design's own table
-does not allow fails the test that reads that table back out of the design. So
-until CM3 lands, a console that spawned it would write
-`$XDG_CONFIG_HOME/fugaro/state/checkouts.json` in an enrolled checkout exactly
-as a person's own run does: local state, the file §6.8's `checkouts` reads, and
-never a cloud object.
+**It is in the console's read set, and that is one local file.** The command
+resolves the selected project the way every cloud command does: `selectProject`
+resolves the working directory as a checkout on the way to the installation, and
+that resolution remembers the checkout it ran in (`recordCheckout`,
+`internal/cli/project.go`) unless the command's own path stands on the read-only
+list that stops it (`consoleReadPaths`, `internal/cli/project.go`, §6.8).
+`managed status` **is** on that list: CM3 added it in the same change as the
+design's §5.1 rule 6 row for it, because a `consoleReadPaths` entry whose argv
+the design's own table does not allow fails the test that reads that table back
+out of the design. So a console that spawns it — and `managed.status` does
+(CM4) — writes no `$XDG_CONFIG_HOME/fugaro/state/checkouts.json` in an enrolled
+checkout: the state file §6.8's `checkouts` reads keeps the directory a person
+opened, and no cloud object is written either.
 
 ### 6.22 `fugaro graph --json` — the dependency graph, and its stream
 

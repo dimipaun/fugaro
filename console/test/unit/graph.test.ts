@@ -39,10 +39,11 @@ import { describe, expect, it } from 'vitest'
 
 import { measured } from '../../src/shared/availability'
 import { PLAN_STATUS_MIN_INTERVAL_MS } from '../../src/source/cli'
-import type { PlanStatusView, RunView } from '../../src/shared/schema'
+import { GRAPH_DOCUMENT_VERSION, decodeGraphDocument } from '../../src/shared/schema'
+import type { GraphView, PlanStatusView, RunView } from '../../src/shared/schema'
 import { GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
 import type { WorkerLike } from '../../src/renderer/graph/layout-client'
-import { GRAPH_MAX_TITLE_CODE_POINTS, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
+import { GRAPH_MAX_TITLE_CODE_POINTS, GRAPH_SCOPE_NO_RELEASE, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
@@ -70,6 +71,13 @@ import {
   GRAPH_REFRESH_MS,
   GRAPH_RELEASE_HEAD,
   GRAPH_RUN_AMBIGUOUS,
+  GRAPH_SCOPE_ALL,
+  GRAPH_SCOPE_ALL_LABEL,
+  GRAPH_SCOPE_CONTROL_CLASS,
+  GRAPH_SCOPE_EMPTY,
+  GRAPH_SCOPE_LABEL,
+  GRAPH_SCOPE_PLAN,
+  GRAPH_SCOPE_PLAN_LABEL,
   GRAPH_ZOOM_MAX,
   GRAPH_ZOOM_MIN,
   GraphLayoutClient,
@@ -443,7 +451,7 @@ function wordSet(node: FakeNode): ReadonlySet<string> {
  * cases that are about the drawing rather than about the read. */
 function rendered(model: ReturnType<typeof buildGraphModel>, state: GraphState = GRAPH_INITIAL_STATE, theme: GraphTheme = 'light'): FakeNode {
   const document = new FakeDocument()
-  return mounted(renderGraph(new Surface(document), { model, positions: null, state, runs: RUNS }, theme))
+  return mounted(renderGraph(new Surface(document), { model, positions: null, state, runs: RUNS, notice: null }, theme))
 }
 
 /** modelOf is the model over a document, as the screen's own read builds it. */
@@ -1455,7 +1463,18 @@ describe('the graph screen and its navigation', () => {
     expect(tabKey('')).toBe('stream:')
     // A key this build does not know is All rather than an invented stream.
     expect(tabOf('nonsense')).toBeNull()
-    expect(GRAPH_INITIAL_STATE).toEqual({ tab: null, view: 'graph', selected: null, expanded: [], zoom: 1 })
+    // The scope is part of the state a tab is opened in for the same reason the
+    // tab is: the plan scope reads this checkout's plans, so it is what the
+    // screen opens on (H9), and a state that left it out would open on a scope
+    // `scopeOf` invents.
+    expect(GRAPH_INITIAL_STATE).toEqual({
+      tab: null,
+      view: 'graph',
+      selected: null,
+      expanded: [],
+      zoom: 1,
+      scope: GRAPH_SCOPE_PLAN,
+    })
   })
 
   it('answers an identical frame with nothing, and a changed one with a drawing', async () => {
@@ -1706,5 +1725,310 @@ describe('the graph screen and its legend', () => {
     // Every swatch is a drawing and never a sentence: the word beside it is the
     // sentence, and a reader who hears the panel hears each word once.
     expect(swatches.every((each) => each.getAttribute('aria-hidden') === 'true')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The scope control, and the coordinator scope (the graph plan's CG10)
+//
+// **The Graph is one tab with two scopes.** The plan scope is the checkout's own
+// document (§6.12), which is what this file has drawn until now; the coordinator
+// scope is `fugaro graph --json`'s versioned document (§6.22), which needs no
+// checkout, holds the sources' own states, and has **no edges** (F17) -- so it
+// is drawn grouped by release and never asks the layout worker for anything.
+// The control in the toolbar is which of the two is on the panel, and it is
+// drawn in both drawings: a scope is the screen's state, not one drawing's.
+//
+// The scope control is a `<select>` and not the segmented control the streams
+// use, because what it holds is a set that grows with the installation -- the
+// local and central orchestrators the document lists -- where a stream's names
+// are the checkout's own handful.
+// ---------------------------------------------------------------------------
+
+/** SCOPE_REFUSAL is the sentence a scope read refused for a console that moved
+ * on: the entry draws it in the drawing (T3). It is written here rather than
+ * taken from a source module -- the screen is handed a sentence and never reads
+ * one, and this file drives the sentence the console would have been given. */
+const SCOPE_REFUSAL = 'this installation’s CLI has no graph command'
+
+/** SCOPE_RAW is one `graph --json` document as the wire has it: two sources --
+ * the coordinator, up, and an orchestrator that is down with its reason -- three
+ * nodes (a pull request and the run joined to it, both of release `v1.4.0`, and a
+ * task of the second source that names no release), **no edges**, and the read's
+ * own warning.
+ *
+ * The coordinator's ids are the ones that source writes (`source_coordinator.go`):
+ * `<repo>#<number>` for a pull request and `<repo>#<run id>` for a run, so the
+ * key of each of those two nodes carries the repository as well -- which is what
+ * a reader that split a key on a colon rather than taking the `source` and `id`
+ * beside it would get wrong. **The repository in the id is also what makes the
+ * pull-request cell's own case what it is**: the id goes through its wire key's
+ * class, and that class placeholders a repository path, so the cell is drawn
+ * `[redacted]#42` rather than the id whole. */
+const SCOPE_RAW: Readonly<Record<string, unknown>> = {
+  version: GRAPH_DOCUMENT_VERSION,
+  stream_id: '',
+  seq: 0,
+  generated_at: '2026-11-07T10:30:00Z',
+  sources: [
+    { source: 'coordinator', state: 'up', as_of: '2026-11-07T10:00:00Z', reason: '' },
+    { source: 'orchestrator:o1', state: 'down', as_of: null, reason: 'the stream was withdrawn' },
+  ],
+  nodes: [
+    {
+      key: 'coordinator:acme/widgets#42',
+      source: 'coordinator',
+      kind: 'pull_request',
+      id: 'acme/widgets#42',
+      title: 'Tidy the widget loader',
+      repo: 'acme/widgets',
+      state: 'open',
+      release: 'v1.4.0',
+      updated: '2026-11-06T18:00:00Z',
+    },
+    {
+      key: 'coordinator:acme/widgets#20261106-090000-ab12',
+      source: 'coordinator',
+      kind: 'run',
+      id: 'acme/widgets#20261106-090000-ab12',
+      title: 'the loader rewrite',
+      repo: 'acme/widgets',
+      state: 'succeeded',
+      release: 'v1.4.0',
+      updated: null,
+    },
+    {
+      key: 'orchestrator:o1:t-042',
+      source: 'orchestrator:o1',
+      kind: 'task',
+      id: 't-042',
+      title: 'wire the loader',
+      repo: '',
+      state: 'waiting',
+      release: '',
+      updated: null,
+    },
+  ],
+  edges: [],
+  warnings: ['the coordinator view holds no edges'],
+}
+
+/** SCOPE_DOCUMENT is that document through the real decoder: the screen is a
+ * function of the decoded view, as it is for the plan. */
+const SCOPE_DOCUMENT: GraphView = scopeDecoded()
+
+function scopeDecoded(): GraphView {
+  const result = decodeGraphDocument(SCOPE_RAW, 'graph.read')
+  if (!result.ok) throw new Error(result.skew.because)
+  return result.value
+}
+
+/** drawingOf is a screen's current drawing, mounted so its elements can be
+ * walked. */
+function drawingOf(screen: GraphScreen): FakeNode {
+  const element = screen.redraw()
+  if (element === null) throw new Error('the screen drew nothing')
+  return mounted(element)
+}
+
+/** controlIn is the scope control of a drawing. */
+function controlIn(root: FakeNode): FakeNode {
+  const control = classedIn(root, 'graph-scope-select')[0]
+  if (control === undefined) throw new Error('the drawing carries no scope control')
+  return control
+}
+
+/** optionsOf is a `<select>`'s options, in document order. */
+function optionsOf(control: FakeNode): readonly FakeNode[] {
+  return everyNode(control).filter((each) => each.tagName === 'OPTION')
+}
+
+/** stateRow is one drawn node of a coordinator drawing, by its key. */
+function stateRow(root: FakeNode, key: string): FakeNode {
+  const row = classedIn(root, 'graph-scope-node').find((each) => each.getAttribute('data-key') === key)
+  if (row === undefined) throw new Error(`the coordinator scope drew no node for ${key}`)
+  return row
+}
+
+describe('the graph screen and its scope', () => {
+  it('draws the scope control in both drawings, listing All (coordinator) then Plans of this checkout', async () => {
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const planDrawn = drawingOf(screen)
+    const plan = controlIn(planDrawn)
+    expect(plan.getAttribute('data-scope')).toBe(GRAPH_SCOPE_PLAN)
+    expect(optionsOf(plan).map((each) => [each.getAttribute('value'), each.textContent])).toEqual([
+      [GRAPH_SCOPE_ALL, GRAPH_SCOPE_ALL_LABEL],
+      [GRAPH_SCOPE_PLAN, GRAPH_SCOPE_PLAN_LABEL],
+    ])
+
+    // The same control, with the same two entries and the other one marked: the
+    // scope belongs to the screen, so a reader who switches and switches back
+    // finds the control where they left it rather than a second control of the
+    // other drawing's own.
+    await screen.loadScope(SCOPE_DOCUMENT)
+    const scopeDrawn = drawingOf(screen)
+    expect(controlIn(scopeDrawn).getAttribute('data-scope')).toBe(GRAPH_SCOPE_ALL)
+    expect(optionsOf(controlIn(scopeDrawn)).map((each) => each.getAttribute('value'))).toEqual([
+      GRAPH_SCOPE_ALL,
+      GRAPH_SCOPE_PLAN,
+    ])
+    // A `select` and not the filter's buttons: the set this one holds grows with
+    // the installation, and the filter's segmented control would draw a scope per
+    // button on one line.
+    expect(controlIn(scopeDrawn).tagName).toBe('SELECT')
+    expect(controlIn(scopeDrawn).getAttribute('aria-label')).toBe(GRAPH_SCOPE_LABEL)
+    expect(classedIn(scopeDrawn, 'graph-tab')).toHaveLength(0)
+    // The class the entry wires the control by is the class the screen draws.
+    // The drawing spells the literal rather than reading the constant, because
+    // the theme's selector scan finds a styled element in the call site's own
+    // text (`theme-selectors.test.ts`), so the two are held together here.
+    expect(controlIn(scopeDrawn).getAttribute('class')).toBe(GRAPH_SCOPE_CONTROL_CLASS)
+  })
+
+  it('draws the coordinator scope as nodes grouped by release, and asks the engine for nothing', async () => {
+    const { screen, worker } = screenWith()
+    await screen.loadScope(SCOPE_DOCUMENT)
+    const drawn = drawingOf(screen)
+    // **No layout at all.** The coordinator's view holds no edges (F17), so there
+    // is no picture to place: the drawing is the reading, and a worker asked for
+    // coordinates nobody uses is a process started for nothing.
+    expect(worker.placements).toBe(0)
+    expect(classedIn(drawn, 'graph-canvas')).toHaveLength(0)
+    expect(classedIn(drawn, 'graph-legend')).toHaveLength(0)
+
+    // Every source the read answered with is a row of its own, carrying the
+    // source's own state **as a word** and the reason it is in that state.
+    const sources = classedIn(drawn, 'graph-source')
+    expect(sources.map((each) => each.getAttribute('data-source'))).toEqual(['coordinator', 'orchestrator:o1'])
+    expect(sources.map((each) => each.getAttribute('data-state'))).toEqual(['up', 'down'])
+    expect(sources.map((each) => classedIn(each, 'graph-word')[0]?.textContent)).toEqual(['up', 'down'])
+    expect(classedIn(sources[1] ?? drawn, 'graph-source-reason')[0]?.textContent).toBe('the stream was withdrawn')
+    expect(classedIn(sources[0] ?? drawn, 'graph-source-reason')).toHaveLength(0)
+
+    // The nodes are grouped by release, in document order, and the release a node
+    // names nothing of is its own group -- which is not a version and is named as
+    // what it is rather than drawn as an empty heading.
+    const groups = classedIn(drawn, 'graph-scope-release')
+    expect(groups.map((each) => each.getAttribute('data-release'))).toEqual(['v1.4.0', ''])
+    expect(groups.map((each) => classedIn(each, 'graph-scope-heading')[0]?.textContent)).toEqual([
+      'v1.4.0',
+      GRAPH_SCOPE_NO_RELEASE,
+    ])
+    expect(classedIn(drawn, 'graph-scope-node').map((each) => each.getAttribute('data-key'))).toEqual([
+      'coordinator:acme/widgets#42',
+      'coordinator:acme/widgets#20261106-090000-ab12',
+      'orchestrator:o1:t-042',
+    ])
+
+    // A node's own facts: the state the source wrote, the repository it is in, and
+    // a pull request drawn as **text** with the console's reason and no URL -- the
+    // same rule the plan's cards keep (design §5.1 rule 2).
+    //
+    // The cell is the source's own id rather than the digits alone: this document
+    // has no number field (§6.22), the id is the number "as that source writes
+    // it", and an id is identity, so the screen neither cuts it down nor
+    // reformats it.
+    //
+    // **And what it was given is the sanitizer's answer, which is the class's and
+    // not the screen's.** The field goes through `scopeText` with the class the
+    // wire key `id` declares -- `label`, a free-text class -- and that class
+    // placeholders the `<owner>/<name>` a coordinator id begins with: the console
+    // reads it as a repository named in prose, which is the false positive
+    // `REPO_TOKEN_RE`'s own comment owns out loud. The digits the cell exists for
+    // are kept, so the row for `acme/widgets#42` draws `[redacted]#42`. A cell that
+    // read `acme/widgets#42` whole would be the console drawing a repository path
+    // out of a free-text field, which is what the rule is there to stop -- and the
+    // repository itself is drawn whole in its own cell beside this one, from the
+    // `repo` key and its `repository` class, which is where a reader reads it.
+    const pull = stateRow(drawn, 'coordinator:acme/widgets#42')
+    expect(classedIn(pull, 'graph-scope-title')[0]?.textContent).toBe('Tidy the widget loader')
+    expect(classedIn(pull, 'graph-scope-repo')[0]?.textContent).toBe('acme/widgets')
+    expect(classedIn(pull, 'graph-word')[0]?.textContent).toBe('open')
+    const number = classedIn(pull, 'graph-scope-pr')[0]
+    expect(number?.textContent).toBe('[redacted]#42')
+    expect(number?.getAttribute('title')).toBe(GRAPH_PR_NO_LINK_REASON)
+    // **The run's node draws no door**: a coordinator node names no run of the
+    // console's list, and a tooltip promising one would be a door that opens
+    // nothing.
+    const run = stateRow(drawn, 'coordinator:acme/widgets#20261106-090000-ab12')
+    expect(run.getAttribute('data-run-id')).toBeNull()
+    expect(classedIn(run, 'graph-scope-pr')).toHaveLength(0)
+    // The read's own warning is drawn as the sentence it is, once.
+    expect(classedIn(drawn, 'graph-warning').map((each) => each.textContent)).toEqual([
+      'the coordinator view holds no edges',
+    ])
+    // And the source-qualified key of a source whose own name carries a colon is
+    // the key the document wrote: nothing here takes a key apart.
+    expect(stateRow(drawn, 'orchestrator:o1:t-042').getAttribute('data-source')).toBe('orchestrator:o1')
+  })
+
+  it('draws a scope with no node as its own sentence, and never as an empty canvas', async () => {
+    const { screen } = screenWith()
+    const empty = decodeGraphDocument({ ...SCOPE_RAW, sources: [], nodes: [], warnings: [] }, 'graph.read')
+    if (!empty.ok) throw new Error(empty.skew.because)
+    await screen.loadScope(empty.value)
+    const drawn = drawingOf(screen)
+    expect(classedIn(drawn, 'graph-empty').map((each) => each.textContent)).toEqual([GRAPH_SCOPE_EMPTY])
+    expect(classedIn(drawn, 'graph-scope-release')).toHaveLength(0)
+    // The control is still drawn: an empty scope is a scope, and the way out of it
+    // is the control that chose it.
+    expect(controlIn(drawn).getAttribute('data-scope')).toBe(GRAPH_SCOPE_ALL)
+  })
+
+  it('no node carries a colour-only state', async () => {
+    // The design's rule, and H10: a state is drawn as a **word** with its colour
+    // second, so a reader who sees no colour -- or a greyscale screenshot -- reads
+    // the same graph. Every drawn node of both scopes is held to it: each one
+    // carries at least one word cell, and the cell spells the word it carries.
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const planDrawn = drawingOf(screen)
+    // **The plan's other drawing of the same nodes is asked for by name**: a
+    // `graph-row` is an `li` only the list view draws, so a case that read the
+    // two drawings the screen happens to be on would find no row at all and hold
+    // the rule to nothing.
+    const list = screen.change({ view: 'list' })
+    if (list === null) throw new Error('the list view drew nothing')
+    const listDrawn = mounted(list)
+    await screen.loadScope(SCOPE_DOCUMENT)
+    const scopeDrawn = drawingOf(screen)
+    const kinds = ['graph-node', 'graph-row', 'graph-scope-node'] as const
+    for (const kind of kinds) {
+      const drawnNodes = [
+        ...classedIn(planDrawn, kind),
+        ...classedIn(listDrawn, kind),
+        ...classedIn(scopeDrawn, kind),
+      ]
+      expect(drawnNodes.length, kind).toBeGreaterThan(0)
+      for (const node of drawnNodes) {
+        const spelled = drawnWords(node).filter(([word, text]) => word !== '' && text === word)
+        expect(spelled.length, `${kind} ${String(node.getAttribute('data-key'))}`).toBeGreaterThan(0)
+      }
+    }
+    // Not vacuous: the coordinator's own words are ones no plan node carries, so
+    // the two drawings are not the same picture twice.
+    expect(wordSet(scopeDrawn)).toContain('succeeded')
+    expect(wordSet(planDrawn)).not.toContain('succeeded')
+  })
+
+  it('draws the sentence a refused scope is answered with, under the control it was chosen in', async () => {
+    // T3: a CLI without the graph read is refused for a scope, and the console
+    // keeps the plan scope **and** says why the scope is not there. The sentence
+    // goes in the drawing rather than on a refusal screen, which would take the
+    // control away with it: a reader who cannot choose another scope is a reader
+    // who cannot get out.
+    const { screen } = screenWith()
+    await screen.load(DOCUMENT, RUNS, SCOPE_REFUSAL)
+    const drawn = drawingOf(screen)
+    expect(classedIn(drawn, 'graph-scope-notice').map((each) => each.textContent)).toEqual([SCOPE_REFUSAL])
+    expect(controlIn(drawn).getAttribute('data-scope')).toBe(GRAPH_SCOPE_PLAN)
+    // The figures are drawn under it: the sentence is about the scope and not
+    // about the plan, which the read answered with.
+    expect(keys(drawn).length).toBeGreaterThan(0)
+    // And a drawing with no notice carries no cell of it -- the sentence is a
+    // state of the read and not a strip the drawing always wears.
+    await screen.load(DOCUMENT, RUNS)
+    expect(classedIn(drawingOf(screen), 'graph-scope-notice')).toHaveLength(0)
   })
 })

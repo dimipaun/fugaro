@@ -269,3 +269,42 @@ func TestProjectSecretProxyOnlyOnBitbucketToken(t *testing.T) {
 		t.Error("an entry that writes no proxy is proxied")
 	}
 }
+
+// TestProjectSecretReaches: the eligibility half of the deployer's rule
+// (infra.ProjectSecretCandidate's first two legs), read by the one other
+// caller that needs the same answer — projectpolicy's DeriveAccounts, which
+// decides which repositories the project's own Anthropic API key may serve on
+// the review path. It must be the deployer's answer and not a second rule:
+// that path mounts nothing (the review-only variant holds no credential, O1),
+// so the deployer's gate is never consulted for it, and a list derived here
+// that no mount would have given is a reach the operator never granted.
+//
+// The three cases are the deployer's exactly: an entry decides (a wildcard
+// entry admits what it matches), a written entry that lists nothing admits
+// nothing, and a name D2 swept into project scope with NO entry is one every
+// repository may read.
+func TestProjectSecretReaches(t *testing.T) {
+	listed := map[string]ProjectSecret{AnthropicSecret: {AllowDataTo: []string{"acme/app", "acme/*"}}}
+	for _, tc := range []struct {
+		secrets map[string]ProjectSecret
+		repo    string
+		want    bool
+	}{
+		{listed, "acme/app", true},
+		{listed, "acme/other", true},
+		{listed, "other/app", false},
+		{map[string]ProjectSecret{AnthropicSecret: {}}, "acme/app", false},
+		{nil, "acme/app", true},
+	} {
+		if got := ProjectSecretReaches(tc.secrets, AnthropicSecret, tc.repo); got != tc.want {
+			t.Errorf("ProjectSecretReaches(%v, %q, %q) = %v, want %v", tc.secrets, AnthropicSecret, tc.repo, got, tc.want)
+		}
+	}
+	// A name with no entry that is NOT swept into project scope reaches
+	// nothing: the sweep is what makes "no entry" mean every repository, and
+	// without it the two answers part company (the deployer's rule reads the
+	// same two legs in the same order).
+	if ProjectSecretReaches(nil, ClaudeAccountSecret(DefaultClaudeAccount), "acme/app") {
+		t.Error("the bare claude-oauth-token, which D2 does not sweep in, is reachable with no entry")
+	}
+}
