@@ -568,6 +568,28 @@ func TestBitbucketRouteForwardsFetchPack(t *testing.T) {
 	}
 }
 
+// TestBitbucketRouteUpstreamTimeout: the route's own upstream bound, which is
+// the one number the plan names for it (60 minutes, against the model path's
+// 30) and the reason behind the route copying the host's client: Check 190's
+// 33 MiB push is a call that legitimately takes far longer than a model call
+// does, and a push cut at the model path's bound is a push the run cannot
+// make. The bound is asserted to be this route's own — the shared client is
+// not mutated, which is also what keeps a long push from racing every other
+// route's calls.
+func TestBitbucketRouteUpstreamTimeout(t *testing.T) {
+	s, _, _ := proxySvc(t)
+	c := s.server.bitbucketClient()
+	if c.Timeout != gitUpstreamTimeout {
+		t.Errorf("the route's upstream timeout = %v, want the route's own %v", c.Timeout, gitUpstreamTimeout)
+	}
+	if gitUpstreamTimeout <= 30*time.Minute {
+		t.Errorf("the route's upstream timeout = %v, and it must be longer than the model path's 30 minutes: a push is not a model call", gitUpstreamTimeout)
+	}
+	if c == s.server.cfg.Client {
+		t.Errorf("the route used the host's own client, want a copy carrying this route's bound")
+	}
+}
+
 // TestBitbucketRouteStreamsLargePack: a push that IS the run's is forwarded
 // whole — the update request that was read in front of it and then every byte
 // of the pack that follows — because this route holds no pack in memory
