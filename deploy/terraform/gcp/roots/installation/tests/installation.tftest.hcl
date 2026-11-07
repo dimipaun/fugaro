@@ -2689,6 +2689,11 @@ run "credentials_service_on" {
   # account the variant's calls are served by, and nothing else — the emails
   # are that derivation's output and would be a second spelling that can
   # drift from the accounts the deployer creates.
+  #
+  # Mutation (run, restore): carrying job_accounts under the review name — the
+  # copy-paste the two tables invite — fails this assertion and the run's exact
+  # map together, so a deployment cannot ship the coding table as its
+  # admissions and refuse every review launch.
   assert {
     condition = jsondecode([
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value
@@ -2806,6 +2811,11 @@ run "credentials_service_first_apply_has_no_audience_yet" {
   # rather than one that refuses to bind a port (the exact count above already
   # fails on an extra entry; this is the named half of the same fact, and the
   # run above is the set's own).
+  #
+  # Mutation (run, restore): rendering the entry in every state — the
+  # unconditional block this one is not — fails the count above (ten names,
+  # not nine), so the fail-closed state cannot be replaced by an empty list
+  # that reads as "the installation said so".
   assert {
     condition     = length([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e if e.name == "FUGARO_REVIEW_JOB_ACCOUNTS"]) == 0
     error_message = "an installation whose block names no review job account renders no review entry: the set arrives with the variants the deployment creates (the review class), and the empty set is what the service's own fail-closed sentence is about"
