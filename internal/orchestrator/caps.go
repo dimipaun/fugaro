@@ -27,7 +27,11 @@ type Caps struct {
 	SpawnPerMinute int
 	SpawnPerHour   int
 	SpawnPerDay    int
-	KillSwitch     bool
+	// KillSwitch is the budget kill switch. Whoever makes a plan reads it and
+	// hands the answer in here, because a plan is pure and asks no cloud: the
+	// tick reads it over budget (`Kills.On`, which is IO) and a switch it could
+	// not read is on.
+	KillSwitch bool
 }
 
 // Counts is what the committed intents say has been spent: the runs still in
@@ -54,10 +58,10 @@ func CountsOf(s State, now time.Time) Counts {
 		if it.Outcome == "" {
 			c.Running++
 		}
-		// A stamp in the future is counted like one from just now. The stamps
-		// come from the server's clock, so reading an odd one as spent is the
-		// safe direction for a cap, and the alternative is a cap a clock skew
-		// could lift.
+		// A stamp in the future counts in every window, because its age is
+		// negative and so below each of them. The stamps come from the server's
+		// clock and not this process's, so that is the safe direction: the one
+		// reading that would matter is an odd stamp freeing a cap.
 		age := now.Sub(it.At.UTC())
 		if age < windowMinute {
 			c.Minute++
