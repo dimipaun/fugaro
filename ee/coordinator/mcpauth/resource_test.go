@@ -586,7 +586,7 @@ func wantChallenge(t *testing.T, rec *httptest.ResponseRecorder, wantError, want
 		carried := strings.Contains(challenge, param.name+"=")
 		if param.value == "" {
 			if carried {
-				t.Errorf("the challenge %q carries a %s parameter: this refusal has none to name, and RFC 6750 §3.1 withholds the error information from a request that carried no credential at all — the challenge is what a client acts on, and an error code there describes a refusal it did not get", challenge, param.name)
+				t.Errorf("the challenge %q carries an %s parameter: this refusal has none to name, and RFC 6750 §3.1 withholds the error information from a request that carried no credential at all — the challenge is what a client acts on, and an error code there describes a refusal it did not get", challenge, param.name)
 			}
 			continue
 		}
