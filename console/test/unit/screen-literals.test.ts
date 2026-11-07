@@ -694,6 +694,12 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'compatibility.mode': { within: 'renderVersionSkew', reason: '`CliCompatibilityMode`, the closed union of the three things the console can do about a skew' },
     'compatibility.skew': { within: 'renderVersionSkew', reason: '`CliSkewName`, the closed list of the six ways a version line can be placed' },
   },
+  // The policy notes (CM7), whose attribute writes are the same `make` class
+  // list as every other screen plus four `data-*` hooks, each written as a
+  // string literal in the branch that picks it.
+  'policynotes.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+  },
   'spend.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     'entry.dimension': '`SPEND_DIMENSIONS`, the console\'s table',
@@ -765,6 +771,17 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         '`LAUNCH_IDS.form`, the id this file gives the form: the button\'s `aria-controls` and the form\'s own `id` are the one string, so the control and the thing it opens are related in the DOM rather than merely adjacent',
     },
+  },
+  // The policy notes (managed screens CM7) draw two documents -- the published
+  // policy node and `doctor`'s six policy checks -- and their strings reach the
+  // window through `putText`/`putReading` on the two doors every screen uses:
+  // `textCell` for a document's string, `valueCell` for a member whose absence
+  // is a reading with no number. What is left is the class list of the `make`
+  // helper, and every word this file writes through `literal` is written at the
+  // call site -- each member's title and each block's state word is a string
+  // literal in the branch that picks it, never a parameter.
+  'policynotes.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
   },
 })
 
@@ -1159,7 +1176,7 @@ const SHARED_DRAWER = '../../shared/notice.ts'
 const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the ten screens', () => {
+  it('reads the eleven screens', () => {
     expect([...SCREEN_FILES]).toEqual([
       'coordinator.ts',
       'degraded.ts',
@@ -1167,6 +1184,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       'launch.ts',
       'live.ts',
       'nocheckout.ts',
+      'policynotes.ts',
       'projects.ts',
       'reading.ts',
       'run.ts',
@@ -1505,6 +1523,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/launch.ts',
       'screens/live.ts',
       'screens/nocheckout.ts',
+      'screens/policynotes.ts',
       'screens/projects.ts',
       'screens/reading.ts',
       'screens/run.ts',

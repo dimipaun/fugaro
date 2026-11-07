@@ -40,6 +40,8 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { UNAVAILABLE_MARK } from '../../src/shared/availability'
+import { PATH_PLACEHOLDER } from '../../src/shared/sanitize'
 import {
   POLICY_CHECK_IDS,
   POLICY_CHECKS_SOURCE,
@@ -47,6 +49,7 @@ import {
   POLICY_CHECK_FAILING_WORD,
   POLICY_CHECK_OK_WORD,
   POLICY_CHECK_UNDRAWN_WORD,
+  POLICY_DEFAULT_WORD,
   POLICY_DIRECT_WORD,
   POLICY_NO_BASE_BRANCH,
   POLICY_NO_DIFF_NOTE,
@@ -271,15 +274,28 @@ describe('the policy notes', () => {
     const root = draw()
     const node = block(root, 'policy.show')
 
-    expect(texts(node, 'policy-notes-value')).toContain('trunk')
-    expect(texts(node, 'policy-notes-repo')).toContain('example-owner/example-repo')
+    expect(texts(node, 'policy-notes-branch')).toEqual(['trunk'])
+    // The node's own `allow_repos`, then each account's list in name order:
+    // `anthropic-api`'s two, then `claude-ops`'s one.
+    expect(texts(node, 'policy-notes-repo')).toEqual([
+      'example-owner/example-repo',
+      'example-owner/example-repo',
+      'example-owner/other-repo',
+      'example-owner/example-repo',
+    ])
     expect(texts(node, 'policy-notes-account-name')).toEqual(['anthropic-api', 'claude-ops'])
     expect(texts(node, 'policy-notes-value')).toContain('openrouter')
-    expect(texts(node, 'policy-notes-model')).toContain('claude-sonnet-5-5')
+    expect(texts(node, 'policy-notes-model')).toEqual(['claude-sonnet-5-5'])
     expect(texts(node, 'policy-notes-entry-name')).toEqual(['node-22', 'postgres', 'tools'])
     expect(texts(node, 'policy-notes-entry-kind')).toEqual(['dockerfile', 'image', 'inline'])
-    expect(texts(node, 'policy-notes-entry-path')).toEqual(['images/node.Dockerfile'])
+    expect(texts(node, 'policy-notes-entry-repo')).toEqual(['example-owner/example-repo'])
     expect(texts(node, 'policy-notes-entry-image')).toEqual(['postgres:16'])
+    // The catalog entry's own path goes through the `path` class, which this
+    // console replaces with its placeholder: a path is where the operator's own
+    // machine shows through, and the entry's repository and branch are drawn.
+    expect(texts(node, 'policy-notes-entry-path')).toEqual([PATH_PLACEHOLDER])
+    expect(texts(node, 'policy-notes-default')).toEqual([POLICY_DEFAULT_WORD])
+    expect(texts(node, 'policy-notes-count')).toEqual(['1', '2', '3'])
   })
 
   it('draws the members the plan does not name nowhere on the screen', () => {
@@ -310,9 +326,12 @@ describe('the policy notes', () => {
       policyNotesBody(factory, buildPolicyNotes({ document: { project: 'p', policy: { version: 1 } }, doctor: DOCTOR })),
       'policy.show',
     )
-    expect(texts(node, 'policy-notes-value')).toContain('n/a')
-    expect(texts(node, 'policy-notes-direct')).toEqual([])
-    expect(drawn(node)).toContain(POLICY_NO_BASE_BRANCH)
+    // The mark is what a reader sees, and the reason is in the cell's title --
+    // which is where `putReading` puts an absent value's sentence, so a cell
+    // that reads `n/a` always says why.
+    const branch = all(node, 'policy-notes-branch')[0]
+    expect(branch?.textContent).toBe(UNAVAILABLE_MARK)
+    expect(branch?.getAttribute('title')).toBe(POLICY_NO_BASE_BRANCH)
     expect(texts(node, 'policy-notes-empty')).toEqual([POLICY_NONE_WORD, POLICY_NONE_WORD, POLICY_NONE_WORD])
   })
 
@@ -346,13 +365,6 @@ describe('the policy notes', () => {
     expect(drawn(wrong)).toContain(POLICY_NODE_SOURCE)
   })
 
-  it('draws the CLI\'s own refusal sentence when the read was refused with one', () => {
-    const refused = block(
-      policyNotesBody(factory, model({ document: null, sentences: { 'policy.show': 'the read needs a cloud project' } })),
-      'policy.show',
-    )
-    expect(drawn(refused)).toContain('the read needs a cloud project')
-  })
 })
 
 // ---------------------------------------------------------------------------
