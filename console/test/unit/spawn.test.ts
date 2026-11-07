@@ -1018,18 +1018,10 @@ describe('the spawn table and the argv it builds', () => {
       // that keeps a payload from smuggling a flag in -- and the words these
       // commands own but no row declares (`--config`, and the group's other
       // subcommands) are refused like any other.
-      const undeclared: readonly Record<string, unknown>[] = [
-        { project: 'other' },
-        { config: '/tmp/other.yaml' },
-        { generation: '3' },
-        { all: true },
-        { json: true },
-        { token: 'x' },
-      ]
-      for (const payload of undeclared) {
+      for (const key of ['project', 'config', 'generation', 'all', 'json', 'token']) {
         expect(
-          () => argvFor(operation, payload, safeContext()),
-          `${operation} accepted ${Object.keys(payload)[0] ?? ''}`,
+          () => argvFor(operation, { [key]: 'x' }, safeContext()),
+          `${operation} accepted ${key}`,
         ).toThrow(/does not declare/)
       }
       // The argv's whole flag list is the row's one word plus the console's own
