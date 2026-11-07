@@ -182,7 +182,10 @@ later round of the same review found it: `docs/release-streams.yaml` is the rele
 CI guard on a bump), the plan graph artifacts — `docs/**/*.graph.json`, the class and not the one file, because a graph is drawn beside its plan at any depth and
 `internal/cli/plan_status.go` walks the tree for the suffix — are what a tool reads rather than what a reader reads, and
 `docs/website/redesign/capture-screenshots.mjs` and `docs/website/redesign/sample-logo-hue.py` are scripts committed to be re-runnable. They are exceptions now, on
-the plan's own line that a file in a routine tree which is not reading matter is Sensitive. The rest of `website/**` stays routine as the plan states it. **Still the owner's to
+the plan's own line that a file in a routine tree which is not reading matter is Sensitive. **A later round found the folding half of the same boundary**: the exception match
+folds case with `strings.ToLower`, which folds the ASCII range and leaves the case variants Unicode case folding maps to it (`ſ` to `s`) alone, so a guard path spelled that
+way answered Routine while a case-insensitive filesystem resolves it into the guard — and one name in two normal forms is one file on HFS+ as well. A path carrying a byte
+outside ASCII is now Sensitive rather than folded, which is a narrowing like the rest. The rest of `website/**` stays routine as the plan states it. **Still the owner's to
 rule:** whether the site's *code* — its layouts, its client scripts and its build config — is Sensitive too, which would take the whole tree off the allowlist. The
 CSP is not part of that question: the deployed policy is the repository root's `firebase.json`, outside `website/**` and Sensitive already.
 

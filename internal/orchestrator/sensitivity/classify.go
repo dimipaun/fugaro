@@ -20,6 +20,7 @@ package sensitivity
 import (
 	"path"
 	"strings"
+	"unicode/utf8"
 )
 
 // Class is what a change is: the key O4's model setting is looked up by and the
@@ -178,6 +179,11 @@ func withinTree(p, prefix string) bool {
 // routine rules are still asked in the bytes they were written in, so `DOCS/x`
 // stays Sensitive. Folding the case of one side only moves paths toward
 // Sensitive, which is the direction this table exists for.
+//
+// strings.ToLower folds the ASCII range and is not case folding: the case
+// variants it does not reach are not this match's to guess at, and cleanRelative
+// refuses their bytes before any table is asked, so a spelling folding to one of
+// these lines outside ASCII is Sensitive and not Routine.
 func (e rule) covers(p string) bool {
 	p, prefix, suffix := strings.ToLower(p), strings.ToLower(e.prefix), strings.ToLower(e.suffix)
 	if suffix != "" {
@@ -200,9 +206,26 @@ func (e rule) covers(p string) bool {
 // Comparing the path with its own cleaned form rather than matching its bytes
 // is what keeps a normalising filesystem or a second `..` from collapsing
 // something into a routine tree between this answer and the checkout.
+//
+// A byte at or above 0x80 is refused on the same ground, and it is the one
+// spelling path.Clean cannot see: the exceptions below fold case with
+// strings.ToLower, which folds the ASCII range and leaves U+017F LATIN SMALL
+// LETTER LONG S alone, while Unicode case folding — what a case-insensitive
+// filesystem compares by — maps it to `s`, so `docs/pending-workflowſ/evil.yml`
+// is the CI tree on the machine that checks it out and an ordinary docs path to
+// this table. One name's composed and decomposed spellings are the same problem
+// on the other axis: two byte strings that are one file on HFS+. Both buy a
+// cheaper review of a guard file, so a path carrying such a byte is refused
+// rather than folded, which is the direction that costs at most a review nobody
+// needed.
 func cleanRelative(p string) bool {
 	if p == "" || strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\\\x00") {
 		return false
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] >= utf8.RuneSelf {
+			return false
+		}
 	}
 	return path.Clean(p) == p
 }

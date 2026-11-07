@@ -195,6 +195,23 @@ func TestUnlistedPathIsSensitive(t *testing.T) {
 		`C:\docs\README.md`,
 		"DOCS/README.md",
 		"docs/README.md\x00.txt",
+		// A path with a byte outside ASCII, which is the other way one string
+		// names two files: `ſ` is U+017F, a case variant of `s` that Go's
+		// strings.ToLower leaves alone and Unicode case folding does not, so the
+		// first three are the guard files above spelled with it — the CI tree, the
+		// release catalogue and the published security policy as a case-insensitive
+		// filesystem resolves them. The last two are one name in two normal forms,
+		// which HFS+ writes as one file and compares as one string.
+		"docs/pending-workflow\u017f/evil.yml",
+		"docs/release-stream\u017f.yaml",
+		"website/content/\u017fecurity.md",
+		"docs/\u00fcber.md",
+		"docs/u\u0308ber.md",
+		// The first byte at or above 0x80, and a lone continuation byte, which
+		// is not text at all: a path a checkout can carry is bytes, and the
+		// refusal is on the byte.
+		"docs/\u0080.md",
+		"docs/\x80evil.yml",
 	}
 	for _, p := range unlisted {
 		if got := sensitivity.Classify([]string{p}); got != sensitivity.Sensitive {
