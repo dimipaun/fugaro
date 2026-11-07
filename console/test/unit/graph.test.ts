@@ -1863,7 +1863,7 @@ describe('the graph screen and its scope', () => {
     // scope belongs to the screen, so a reader who switches and switches back
     // finds the control where they left it rather than a second control of the
     // other drawing's own.
-    await screen.loadScope(SCOPE_DOCUMENT, RUNS)
+    await screen.loadScope(SCOPE_DOCUMENT)
     const scopeDrawn = drawingOf(screen)
     expect(controlIn(scopeDrawn).getAttribute('data-scope')).toBe(GRAPH_SCOPE_ALL)
     expect(optionsOf(controlIn(scopeDrawn)).map((each) => each.getAttribute('value'))).toEqual([
@@ -1885,7 +1885,7 @@ describe('the graph screen and its scope', () => {
 
   it('draws the coordinator scope as nodes grouped by release, and asks the engine for nothing', async () => {
     const { screen, worker } = screenWith()
-    await screen.loadScope(SCOPE_DOCUMENT, RUNS)
+    await screen.loadScope(SCOPE_DOCUMENT)
     const drawn = drawingOf(screen)
     // **No layout at all.** The coordinator's view holds no edges (F17), so there
     // is no picture to place: the drawing is the reading, and a worker asked for
@@ -1951,7 +1951,7 @@ describe('the graph screen and its scope', () => {
     const { screen } = screenWith()
     const empty = decodeGraphDocument({ ...SCOPE_RAW, sources: [], nodes: [], warnings: [] }, 'graph.read')
     if (!empty.ok) throw new Error(empty.skew.because)
-    await screen.loadScope(empty.value, RUNS)
+    await screen.loadScope(empty.value)
     const drawn = drawingOf(screen)
     expect(classedIn(drawn, 'graph-empty').map((each) => each.textContent)).toEqual([GRAPH_SCOPE_EMPTY])
     expect(classedIn(drawn, 'graph-scope-release')).toHaveLength(0)
@@ -1968,7 +1968,7 @@ describe('the graph screen and its scope', () => {
     const { screen } = screenWith()
     await screen.load(DOCUMENT, RUNS)
     const planDrawn = drawingOf(screen)
-    await screen.loadScope(SCOPE_DOCUMENT, RUNS)
+    await screen.loadScope(SCOPE_DOCUMENT)
     const scopeDrawn = drawingOf(screen)
     const kinds = ['graph-node', 'graph-row', 'graph-scope-node'] as const
     for (const kind of kinds) {

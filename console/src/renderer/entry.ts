@@ -3815,9 +3815,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * one's answer; `chosen` is what tells the console the fallback of H9 is no
    * longer its business -- from here on, the scope a reader asks for is the
    * scope they get, refusals included.
+   *
+   * **The fallback's own flag goes with the choice.** `fellBack` means "this
+   * console opened on the coordinator scope by itself, so a coordinator read that
+   * refuses is the plan scope's card"; once a reader has chosen, the read is
+   * theirs and a refusal is the answer to it. Left set, the card's own door back
+   * to the coordinator -- the one control an installation with no checkout has --
+   * would take the sentence out of the refusal and draw the same card again: a
+   * door that answers with the screen it is on.
    */
   const chooseScope = (scope: GraphScope): void => {
     graph.chosen = true
+    graph.fellBack = false
     graph.scope = scope
     graph.notice = null
     const token = graphRead.start()
@@ -4265,7 +4274,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      */
     const chooseTab = (tab: GraphTab): void => {
       const token = graphRead.start()
-      markGraph(token)
+      markGraph(token, GRAPH_BUSY)
       void screen.narrow(tab).then((element) => {
         if (!graphRead.settle(token)) return
         redraw(element, SELECTED_TAB)

@@ -249,7 +249,7 @@ const READ_METHODS = [
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the fourteen reads (`READ_METHODS`), each answering what the case told it to
+ * and the fifteen reads (`READ_METHODS`), each answering what the case told it to
  * and appending its own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
@@ -7330,5 +7330,47 @@ describe('the Graph’s scope', () => {
     // Not vacuous: the plan scope is the scope the console read, and the sentence
     // is about the read it could not make.
     expect(holdsText(panelOf(document), GRAPH_SCOPE_REFUSAL)).toBe(true)
+  })
+
+  it('the card’s own door is a read, and a refusal of it is the refusal screen', async () => {
+    // An installation that records no checkout **and** a CLI with no `graph`
+    // command: the console's own fallback finds nothing to draw either, so the
+    // card is what is left -- and its door is the one control that reads the
+    // scope the installation can have.
+    const { bridge } = graphBridge({
+      planStatus: () => ({ ok: false, reason: NO_PLAN_CHECKOUT }),
+      graphRead: () => ({ ok: false, reason: GRAPH_SCOPE_REFUSAL }),
+    })
+    const document = await openGraph(bridge)
+    const card = classed(panelOf(document), 'console-unavailable')[0]
+    expect(card?.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    classed(card as FakeNode, NO_CHECKOUT_SCOPE_CLASS)[0]?.click()
+    await flush()
+    // **The door is the operator's own choice, and the answer to it is that
+    // read's.** A refusal here names the command and is a screen of its own: the
+    // card's sentence is the *plan* read's, and drawing the card back over the
+    // door's own refusal would be a control that answers with the screen it is
+    // on -- which is what the console's own fallback flag did when it outlived
+    // the fallback (`chooseScope` clears it).
+    expect(operationOf(document), 'the door’s refusal is a screen').toBe('graph.read')
+    expect(holdsText(panelOf(document), GRAPH_SCOPE_REFUSAL)).toBe(true)
+    // The card's own kind is gone with it: this frame is the refusal's, not the
+    // console's fallback drawn a second time.
+    expect(classed(panelOf(document), 'console-unavailable')[0]?.attributes.get('data-kind')).not.toBe(
+      NO_CHECKOUT_KIND,
+    )
+  })
+
+  it('a control value this build does not know is the plan scope, not an invented one', async () => {
+    const { bridge, calls } = graphBridge({ graphRead: () => graphReply() })
+    const document = await openGraph(bridge)
+    // The control's value is read back through `valueOf`, and a value this build
+    // has no scope for -- a menu item a newer CLI draws, a rewritten DOM -- is the
+    // plan scope: the two keys this console writes are the only scopes it reads,
+    // and a key it does not know is not a read it will make up.
+    await chooseScope(document, 'orchestrator:o1')
+    expect(calls.filter((call) => call.name === 'graphRead')).toEqual([])
+    expect(scopeChosen(document)).toBe(GRAPH_SCOPE_PLAN)
+    expect(classed(panelOf(document), 'graph-node').length).toBeGreaterThan(0)
   })
 })
