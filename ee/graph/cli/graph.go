@@ -14,6 +14,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +63,7 @@ import (
 type graphOptions struct {
 	source string
 	asJSON bool
+	watch  bool
 	cloud  fcli.CloudFlags
 }
 
@@ -98,6 +100,16 @@ func NewGraphCmd() *cobra.Command {
 			"when it was assembled, one entry per scope in sources, the nodes, the edges\n" +
 			"(the coordinator's view has none) and the warnings. Without it, a short\n" +
 			"table: each scope's state, then its nodes grouped by release.\n\n" +
+			"--watch --json prints a whole document per change instead of one and\n" +
+			"exits, one compact object per line: the first snapshot at once, then one\n" +
+			"document for every change of the scopes it covers, at most one a second,\n" +
+			"and a document every 30 seconds while nothing changes. Every document\n" +
+			"carries the stream's own id and a sequence that rises within it, so a\n" +
+			"reader reads a new id as a whole new snapshot rather than comparing its\n" +
+			"sequence with the one before. It subscribes to each scope once, and a\n" +
+			"scope it cannot reach is a state in the document rather than an exit.\n" +
+			"--watch needs --json, which is the only shape a reader of the stream can\n" +
+			"consume.\n\n" +
 			"Exit codes: 1 for a refused scope or a project with no database, 2 for a\n" +
 			"failure of the database or the runs bucket.",
 		Args: cobra.NoArgs,
@@ -106,6 +118,7 @@ func NewGraphCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.source, "source", string(graph.ScopeAll), "the scope to read: all, coordinator, orchestrator:<id> or local:<id>")
 	f.BoolVar(&o.asJSON, "json", false, "print the graph document as JSON")
+	f.BoolVar(&o.watch, "watch", false, "print a whole document per change, one compact object per line (needs --json)")
 	fcli.AddCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -137,61 +150,27 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	}
 	defer env.Close()
 
-	// `all` is the union of the scopes that exist, and today that is the
-	// coordinator's alone: the stored view, read exactly as `coordinator status
-	// --from-store --all` reads it — the same store, the same credential and the
-	// same runs-half fallback for a repository with nothing stored, which is
-	// what makes a project whose coordinator is off draw its runs rather than
-	// nothing.
-	window, err := fcli.ParseSince(fcli.LsDefaultSince())
-	if err != nil {
-		return fcli.UserErr("%v", err)
+	// The stream is the other output of the same read, and the one that needs
+	// --json: a reader of a stream is a program, and a table interleaved between
+	// documents is not a shape it can consume.
+	if o.watch {
+		if !o.asJSON {
+			return fcli.UserErr("graph: --watch needs --json: the stream prints one document per change, one object per line")
+		}
+		return runGraphWatch(ctx, cmd.OutOrStdout(), env)
 	}
+
 	// The read's warnings are buffered rather than written as they are made:
 	// with --json they are the document's own `warnings` (a reader of the
 	// document has no stderr to look at), and without it they go to stderr
 	// below. Either way they are carried once.
 	var warned bytes.Buffer
-	project, err := coordcli.StoredProject(ctx, env, graphRepos(env), fcli.LsSince(window), &warned)
 	now := time.Now()
-	var doc graph.Document
-	switch {
-	case err == nil:
-		// The stored view carries no time of its own (the sweep's own design),
-		// so the caller has none to give: AsOf is the zero time, the document's
-		// `as_of` is null, and the scope claims no age. The one age fact the
-		// read does carry is the sweep's stale marker, and the source reads it
-		// itself.
-		src := graph.CoordinatorSource{View: project, Now: now}
-		nodes, state, err := src.Nodes()
-		if err != nil {
-			// The database answered with a record whose identity this build
-			// cannot carry: sanitising it would rewrite the key, and a rewritten
-			// key is one two things can share (D1356, Sanitise). That is the
-			// same class as a node that does not decode — an answer this build
-			// cannot read — and §6.22 gives it the same state rather than the
-			// refusal the console would draw as "this CLI has no graph".
-			doc = graphUnreadable(now, err, &warned)
-			break
-		}
-		doc = graph.Document{
-			Version:     graph.DocumentVersion,
-			GeneratedAt: now,
-			Sources:     []graph.SourceState{state},
-			Nodes:       nodes,
-			Edges:       []graph.Edge{},
-			Warnings:    graphWarningLines(&warned),
-		}
-	case errors.Is(err, coordinator.ErrUnreadable):
-		// The database answered, and what the coordinator's subtree holds is a
-		// document this build cannot read — a newer sweep's field, a value of
-		// another shape. §6.22's `unreadable` is a state of the scope and never
-		// a refusal of the whole read, because a refusal is exactly what the
-		// console reads as "this CLI has no graph" (T3), and it would say that
-		// about a project whose database it can read and whose coordinator has
-		// simply written something this build does not know.
-		doc = graphUnreadable(now, err, &warned)
-	default:
+	// A one-shot read has no time of its own to give for the stored view (the
+	// sweep's own design), so its `as_of` is null and the scope claims no age:
+	// the zero time is the caller saying it has none (contract §6.22).
+	doc, err := readGraph(ctx, env, now, time.Time{}, &warned)
+	if err != nil {
 		return err
 	}
 	// The document is the boundary: every text field of it is made fit to print
@@ -207,6 +186,67 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	// read warns on. With --json they are in the document instead.
 	_, _ = cmd.ErrOrStderr().Write(warned.Bytes())
 	return writeGraphText(cmd.OutOrStdout(), doc)
+}
+
+// readGraph is the read both outputs make: the coordinator's stored view as a
+// document, read through the caller's own credential and holding no key of the
+// host's, and the refusal that ends a read this build cannot make.
+//
+// `all` is the union of the scopes that exist, and today that is the
+// coordinator's alone: the stored view, read exactly as `coordinator status
+// --from-store --all` reads it — the same store, the same credential and the
+// same runs-half fallback for a repository with nothing stored, which is what
+// makes a project whose coordinator is off draw its runs rather than nothing.
+//
+// It is one function because two callers must not read it two ways: `graph
+// --json`, which prints it once, and `graph --watch --json`, which prints it
+// per change (CG7). A stream whose document differed from the one-shot read's
+// for the same data would be a graph that changes shape when a screen switches
+// from one to the other.
+//
+// asOf is when the caller's read of the views was made, and it is the caller's
+// to decide because it is not a fact the stored view carries (CG2): the one-shot
+// read has none to give — the zero time, and §6.22's `as_of` is null for it —
+// while the stream knows its own read's time and fills it.
+func readGraph(ctx context.Context, env *fcli.Cloud, now, asOf time.Time, warned *bytes.Buffer) (graph.Document, error) {
+	window, err := fcli.ParseSince(fcli.LsDefaultSince())
+	if err != nil {
+		return graph.Document{}, fcli.UserErr("%v", err)
+	}
+	project, err := coordcli.StoredProject(ctx, env, graphRepos(env), fcli.LsSince(window), warned)
+	switch {
+	case err == nil:
+		src := graph.CoordinatorSource{View: project, AsOf: asOf, Now: now}
+		nodes, state, err := src.Nodes()
+		if err != nil {
+			// The database answered with a record whose identity this build
+			// cannot carry: sanitising it would rewrite the key, and a rewritten
+			// key is one two things can share (D1356, Sanitise). That is the
+			// same class as a node that does not decode — an answer this build
+			// cannot read — and §6.22 gives it the same state rather than the
+			// refusal the console would draw as "this CLI has no graph".
+			return graphUnreadable(now, err, warned), nil
+		}
+		return graph.Document{
+			Version:     graph.DocumentVersion,
+			GeneratedAt: now,
+			Sources:     []graph.SourceState{state},
+			Nodes:       nodes,
+			Edges:       []graph.Edge{},
+			Warnings:    graphWarningLines(warned),
+		}, nil
+	case errors.Is(err, coordinator.ErrUnreadable):
+		// The database answered, and what the coordinator's subtree holds is a
+		// document this build cannot read — a newer sweep's field, a value of
+		// another shape. §6.22's `unreadable` is a state of the scope and never
+		// a refusal of the whole read, because a refusal is exactly what the
+		// console reads as "this CLI has no graph" (T3), and it would say that
+		// about a project whose database it can read and whose coordinator has
+		// simply written something this build does not know.
+		return graphUnreadable(now, err, warned), nil
+	default:
+		return graph.Document{}, err
+	}
 }
 
 // graphUnreadable is the document of a scope that answered with something this
