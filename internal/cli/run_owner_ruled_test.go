@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // seedWaitingRoot stores the first run rootID, which opened PR 7, pushed, and
@@ -183,6 +185,40 @@ func TestRunOwnerRuledIsRefusedOnAReviewRecipe(t *testing.T) {
 	seedWaitingRoot(t, f)
 	wantRefused(t, f, "--owner-ruled answers the findings a run on a pull request left, and --recipe review-only reviews a pull request instead of fixing one",
 		"run", "--repo", "acme/app", "--pr", "7", "--recipe", "review-only", "--owner-ruled", "keep the flow")
+}
+
+// TestRunOwnerRuledRefusesAValueNoRulingCanBe: the flag's value is the ruling
+// itself, and a ruling no brief may carry is refused in the launcher's own
+// words rather than by the run at bootstrap, after the launch was paid for —
+// the rules are the runner's (task.ValidateOwnerRuled, which task.Spec.Validate
+// applies to the same field), so what this accepts is never what the run
+// refuses. A value that is blank once trimmed, and one over
+// task.MaxOwnerRuledBytes, are each exit 1 with a message naming the flag, and
+// neither starts anything: the refusals sit before the cloud call, so a launch
+// that would otherwise be accepted (the previous run is waiting, and --pr 7 is
+// a follow-up of it) leaves no execution behind.
+func TestRunOwnerRuledRefusesAValueNoRulingCanBe(t *testing.T) {
+	f := newCloudFixture(t)
+	seedWaitingRoot(t, f)
+	cases := []struct{ name, id, value, want string }{
+		{"blank", "20261007-150000-abcd", "   ",
+			"--owner-ruled is empty: pass the owner's ruling, a file holding it, or - for stdin"},
+		{"over the bound", "20261007-150000-abce", strings.Repeat("x", task.MaxOwnerRuledBytes+1),
+			fmt.Sprintf("--owner-ruled is %d bytes; a ruling must be at most %d",
+				task.MaxOwnerRuledBytes+1, task.MaxOwnerRuledBytes)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", c.id,
+				"--owner-ruled", c.value, "go on")
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want exit 1 naming %q", err, c.want)
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Fatalf("executions = %d, want none: a refusal starts nothing", n)
+			}
+		})
+	}
 }
 
 // TestRunPRFollowUpAfterARulingIsNotRefused: the next follow-up of that pull
