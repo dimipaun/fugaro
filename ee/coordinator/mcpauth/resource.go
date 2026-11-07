@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -156,25 +157,25 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (authorized, bool) {
 	value, ok := bearerToken(r)
 	if !ok {
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "the MCP endpoint needs one bearer token in an Authorization header: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in")
+		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "", "the MCP endpoint needs one bearer token in an Authorization header: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in")
 		return authorized{}, false
 	}
 	rec, err := s.store.LookupByHash(r.Context(), TokenHash(value))
 	if err != nil {
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "the bearer token is not one this endpoint can use: it was not issued here, or the family it belongs to was revoked; the resource metadata document named in the WWW-Authenticate header says how to get one")
+		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "", "the bearer token is not one this endpoint can use: it was not issued here, or the family it belongs to was revoked; the resource metadata document named in the WWW-Authenticate header says how to get one")
 		return authorized{}, false
 	}
 	if err := usable(rec, s.now()); err != nil {
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", err.Error()+": the resource metadata document named in the WWW-Authenticate header says how to get another one")
+		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", rec.Token.Identity, err.Error()+": the resource metadata document named in the WWW-Authenticate header says how to get another one")
 		return authorized{}, false
 	}
 	role, err := s.resolveIdentity(r.Context(), rec.Token.Identity)
 	if err != nil {
 		if errors.Is(err, ErrIdentityOffTheLists) {
-			s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", "", "this identity holds no role at this installation: the front door serves the people on its launcher and operator lists, and fugaro user is the command that changes them")
+			s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", "", rec.Token.Identity, "this identity holds no role at this installation: the front door serves the people on its launcher and operator lists, and fugaro user is the command that changes them")
 			return authorized{}, false
 		}
-		s.refuseBearer(w, http.StatusInternalServerError, "server_error", "", "the front door could not read this installation's member lists, so it admits nobody: this is a fault of the installation and not of this token")
+		s.refuseBearer(w, http.StatusInternalServerError, "server_error", "", rec.Token.Identity, "the front door could not read this installation's member lists, so it admits nobody: this is a fault of the installation and not of this token")
 		return authorized{}, false
 	}
 	return authorized{
@@ -301,7 +302,7 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorize
 		return
 	}
 	if !slices.Contains(auth.scopes, scope) {
-		s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", scope, fmt.Sprintf("the tool %q maps to the scope %q, which this token does not hold", params.Name, scope))
+		s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", scope, auth.identity, fmt.Sprintf("the tool %q maps to the scope %q, which this token does not hold", params.Name, scope))
 		return
 	}
 	if !argumentsAreAnObject(params.Arguments) {
@@ -462,9 +463,32 @@ func (s *Server) rpcError(w http.ResponseWriter, status int, id json.RawMessage,
 // header M5 ships and M7 keeps, because the header is what the flow starts
 // from and not something a token check adds.
 //
+// **The refusal is one line on the server's logger and is never written to any
+// store** (D920, finding M-e: "an unauthenticated refusal is logged and never
+// written to the database"). Both halves are the reason this door can be public:
+// a stranger with a loop grows nothing here, and the operator of the installation
+// can still see the loop. The line carries the outcome, the reason and — when
+// there is one, which is whenever the token resolved to a record — the identity
+// the token acts for, and it carries no value: this function is not handed the
+// token at all, and nothing it is handed is a credential (spec.md §9's "not in a
+// log line").
+//
 // The five authenticated paths of the OAuth flow are untouched by this
 // function: it is the refusal of the MCP endpoint alone.
-func (s *Server) refuseBearer(w http.ResponseWriter, status int, errType, scope, description string) {
+func (s *Server) refuseBearer(w http.ResponseWriter, status int, errType, scope, identity, description string) {
+	logger := s.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	line := []any{"error", errType, "status", status, "reason", description}
+	if scope != "" {
+		line = append(line, "scope", scope)
+	}
+	if identity != "" {
+		line = append(line, "identity", identity)
+	}
+	logger.Warn("the MCP endpoint refused a request", line...)
+
 	challenge := []string{`Bearer error="` + errType + `"`}
 	if scope != "" {
 		challenge = append(challenge, `scope="`+scope+`"`)

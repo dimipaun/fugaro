@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -99,7 +100,9 @@ type Config struct {
 // M7 adds two things it serves with rather than from: the tools a client may
 // call (tools), which it answers tools/list and tools/call from, and the
 // installation's member lists (roster), which are what decides who a token
-// acts for at a door that is on the public internet (D933).
+// acts for at a door that is on the public internet (D933). Its logger is where
+// a refusal at that door is recorded (finding M-e) and is never a store: the
+// refusal is a log line and a body, and nothing else.
 type Server struct {
 	cfg      Config
 	store    Store
@@ -107,6 +110,7 @@ type Server struct {
 	tools    *Registry
 	roster   Roster
 	now      func() time.Time
+	logger   *slog.Logger
 }
 
 // ServerOption configures a Server.
@@ -134,6 +138,15 @@ func WithRoster(roster Roster) ServerOption {
 	return func(s *Server) { s.roster = roster }
 }
 
+// WithLogger sets the logger the refusals of the MCP endpoint are written to
+// (finding M-e: an unauthenticated refusal is logged and never written to the
+// database). The default is slog.Default(), which is where the coordinator's own
+// process logs already go, so an installation that configures nothing still
+// records a stranger's loop; a test passes a logger over its own buffer.
+func WithLogger(logger *slog.Logger) ServerOption {
+	return func(s *Server) { s.logger = logger }
+}
+
 // NewServer returns the authorization server for one project.
 //
 // Every argument is refused when it is missing rather than at the first call: a
@@ -152,7 +165,7 @@ func NewServer(cfg Config, store Store, verifier *Verifier, opts ...ServerOption
 	if err := issuerURL(cfg.Issuer); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(), now: time.Now}
+	s := &Server{cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(), now: time.Now, logger: slog.Default()}
 	for _, o := range opts {
 		o(s)
 	}

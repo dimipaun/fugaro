@@ -4,10 +4,12 @@
 package mcpauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -756,6 +758,66 @@ func TestAnUnauthenticatedRefusalIsNotWrittenToTheDatabase(t *testing.T) {
 				t.Errorf("the refusal left %d objects in the bucket where %d were: an unauthenticated caller must not be able to grow this installation", got, objects)
 			}
 		})
+	}
+}
+
+// TestARefusalIsLoggedAndCarriesNoToken is the other half of M-e ("an
+// unauthenticated refusal is logged and never written to the database"): the
+// database half is above, and this is the log. A public door has to leave the
+// operator of the installation something to see, and what it must never leave
+// is a value — the line is written from the refusal and not from the request,
+// so the token a caller presented and the pair a flow minted appear in no field
+// of it (spec.md §9's "not in a log line").
+func TestARefusalIsLoggedAndCarriesNoToken(t *testing.T) {
+	for _, name := range config.ModelSecretEnvs {
+		t.Setenv(name, testCredentialPlaceholder)
+	}
+
+	var log bytes.Buffer
+	// Nobody is on the lists, which is what makes the flow's own token
+	// refusable: the flow mints it — the lists decide who may call a tool and
+	// not who may sign in — and the door turns it away by identity.
+	ts := newResourceServer(t,
+		WithRoster(rosterOf(Members{})),
+		WithLogger(slog.New(slog.NewTextHandler(&log, nil))))
+	_, tokens := ts.runFlow(t, testClientRedirect)
+
+	refusals := []struct {
+		what   string
+		header string
+		status int
+	}{
+		{"a request with no credential", "", http.StatusUnauthorized},
+		{"a value this installation never minted", "Bearer " + testSeededToken, http.StatusUnauthorized},
+		{"a token minted for somebody off the lists", "Bearer " + tokens.AccessToken, http.StatusForbidden},
+	}
+	for _, tc := range refusals {
+		if rec := ts.rpcHeader(t, tc.header, toolsListBody); rec.Code != tc.status {
+			t.Fatalf("%s was answered %d (%s); want %d", tc.what, rec.Code, strings.TrimSpace(rec.Body.String()), tc.status)
+		}
+	}
+
+	var lines []string
+	for _, line := range strings.Split(log.String(), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != len(refusals) {
+		t.Fatalf("the door wrote %d log lines for %d refusals:\n%s", len(lines), len(refusals), log.String())
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, "level=WARN") || !strings.Contains(line, "the MCP endpoint refused a request") {
+			t.Errorf("a refusal was logged as %q; want a WARN line saying the MCP endpoint refused a request", line)
+		}
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, "identity="+testIdentity) {
+		t.Errorf("the refusal of a token acting for %s does not name it: %q", testIdentity, last)
+	}
+	for _, value := range []string{tokens.AccessToken, tokens.RefreshToken, testSeededToken, testCredentialPlaceholder} {
+		if value != "" && strings.Contains(log.String(), value) {
+			t.Errorf("a refusal's log line carries %q: a refusal is logged as the outcome it is, never as the value that was presented", value)
+		}
 	}
 }
 
