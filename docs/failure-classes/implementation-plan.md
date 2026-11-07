@@ -65,13 +65,15 @@ FC5 → FC6; FC5 → FC7; FC6 → FC8; FC6 → FC9; FC7 → FC8.
 
 Two tasks in one level share no file (§2), so a level's tasks are parallel by construction: **FC4 and
 FC5 are one level**, **FC6 and FC7 are one level**, and **FC8 and FC9 are one level**. That is what
-the seven levels buy: a build with three runs available takes L0+L1 (one run, forced), L2 (FC3), and
-then L3's two, L4's two and L5's two, in five rounds rather than eight.
+the six levels buy: a build with three runs available takes **six rounds** — L0, L1 and L2 forced one
+after the other (FC1, FC2, FC3), then L3's two, L4's two and L5's two — rather than the nine a serial
+order of the same tasks takes.
 
 **Three tasks write `internal/runner/runner.go`** (FC2, FC3, FC4), and §§2's rule is the reason they
 are three levels apart rather than three runs at once; a build that lands two of them together
 rebases once, in the order of their levels. Two tasks write `internal/cli/runs_test.go` (FC5, FC6) and
-two write `console/docs/json-contract.md` (FC5, FC6) and the same rebase applies.
+**three** write `console/docs/json-contract.md` (FC5 in L3, FC6 in L4, and FC8 in L5 if **D1460**'s
+answer is yes — §2's row), and the same rebase applies.
 
 ### 1.2 The long pole
 
