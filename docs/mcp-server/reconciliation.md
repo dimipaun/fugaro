@@ -1,8 +1,8 @@
 # The hosted MCP server: reconciliation and decisions
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built; the rest is not started; this folder approves no
-task.**
+merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
+owner; the rest is not started; this folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -196,7 +196,8 @@ library out of `go.mod` and M5 rebuilt without it.
 The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file
 now carries — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are
-built and merged on `main`; M5 is built; the rest is not started; this folder approves no task.**
+built and merged on `main`; M5 is built except the paired device M-a asks for, which is
+pending the owner; the rest is not started; this folder approves no task.**
 
 ### The answer of 2026-11-05
 
@@ -427,7 +428,9 @@ the real one. **A check on the page is therefore not M-a's device-side approval*
 would be — the number shown on, or entered into, the paired device, so the approval is bound there —
 **is not built and is in no task**: it is new behaviour and an owner's decision, and it is raised as
 a finding rather than added by a task that did not ask for it. The token has the same kind of limit
-beside it: nothing spends an ID token, so one that leaks approves flows until it expires.
+beside it: nothing spends an ID token, so one that leaks approves flows until it expires — and the
+**refresh family each of those approvals mints has no expiry of its own** (spec.md §8), so the
+exposure the ID token's hour bounds is one approval and not what that approval leaves behind.
 
 ### D924 — amended (finding M-b)
 
@@ -567,7 +570,8 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **because the
   owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
   the two metadata documents, the four endpoints and
-  the approve step of M-a — and **the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
+  the approve step, **except the paired device M-a asks for**, which is in no task and is raised for
+  the owner — and **the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
   and its one grant) and M7–M10; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was

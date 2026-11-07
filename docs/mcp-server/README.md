@@ -1,8 +1,8 @@
 # The hosted MCP server
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built; the rest is not started; this folder approves no
-task.** The owner's spec of
+merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
+owner; the rest is not started; this folder approves no task.** The owner's spec of
 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code here;
 [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the

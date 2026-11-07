@@ -77,8 +77,12 @@ const (
 	// the folder's one load-bearing false claim. M5's clause is "M5 is built"
 	// and not "M5 is built in this pull request": the line outlives the pull
 	// request, and a phrase that named one would be false on `main` the day it
-	// merged.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built; the rest is not started; this folder approves no task."
+	// merged. The clause carries its own exception -- the paired device M-a
+	// asks for, which M5's approve step does not build: the page renders its
+	// number and posts it back from the browser that answered it, which binds
+	// the page to the flow and not a device to a person, so a status line
+	// saying M5 were built whole would be the claim the review found.
+	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is pending the owner; the rest is not started; this folder approves no task."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }

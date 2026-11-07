@@ -1,8 +1,8 @@
 # The hosted MCP server: the spec
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built; the rest is not started; this folder approves no
-task.** The owner's spec of
+merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
+owner; the rest is not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -770,7 +770,22 @@ issuer and audience match the project, and only for an identity the project's ow
 never a bearer for the MCP endpoint and it is never a grant at the token endpoint, which is the whole
 reason the coordinator mints its own tokens, and it is why the design will not accept a Firebase
 token as an access token
-"just for convenience". **The coordinator mints no Firebase token of its own** either: it holds no
+"just for convenience".
+
+**What the token's own expiry does not bound is what it buys.** The approval it answers mints a
+refresh family, and a family carries no lifetime of its own: `AccessTokenTTL` is the one expiry this
+package has (`ee/coordinator/mcpauth/mint.go:47`), and a refresh token's own is the zero time
+(`ee/coordinator/mcpauth/store.go:220`). Nothing spends the ID token either — the approve step
+verifies it and records nothing that would refuse it a second time — so **a leaked token approves
+another flow on every replay until it expires, and every approval leaves a family behind that
+outlives it**. **What would bound it is M-a's device half, and that half is not built**: the page
+renders the flow's number and takes it back from the same browser that
+answered, which binds the page to the flow and nothing to a paired device, so a page that rendered a
+flow of its own hands over the number and the token together and this server cannot tell that
+approval from the one M-a asks for. **Raised for the owner rather than answered here**
+([reconciliation.md](reconciliation.md) §4a).
+
+**The coordinator mints no Firebase token of its own** either: it holds no
 signer role, so a compromised coordinator cannot answer "this person signed in" for somebody who
 did not — that is the paired device's act (§3), and the coordinator only verifies what the device's
 session produced.
