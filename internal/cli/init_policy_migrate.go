@@ -428,7 +428,10 @@ func policyMigrationRefusal(err error) error {
 // of what changes (looseningChange, or the re-seed's three-way state) and
 // OwnerProceeded's sentence. The refusals that are not confirmations stay: a
 // coding agent's session is refused below whatever this is, and a run in flight
-// is refused whatever admitted the write.
+// is refused whatever admitted the write. The marker is read here as well as by
+// the caller and clears owner, so the parameter can only ever be too narrow: a
+// session that is a coding agent's keeps every refusal even if a caller said
+// otherwise.
 func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed, owner bool) error {
 	// The in-flight refusal is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
@@ -438,12 +441,23 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	// write this refusal exists to stop — and would ask the operator to confirm
 	// the re-seed of a run that a plain --yes cannot then finish.
 	//
-	// The marker is read once, here, and used twice: a coding agent's session is
-	// not widened by the managed case, so the note is the owner's own session's
-	// alone — a marker keeps the refusal below exactly as it was — and the first
-	// publish's empty-allow-list confirmation asks for the same marker further
-	// down.
+	// The marker is read once, here, and everything below that asks about a
+	// coding agent's session asks it of this one reading: a marker is not widened
+	// by the managed case, so the note is the owner's own session's alone — a
+	// marker keeps the refusal below exactly as it was — and the first publish's
+	// empty-allow-list confirmation asks for the same marker further down.
 	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
+	// The marker is asked again beside the caller's owner, and this is the one
+	// place the two facts could disagree: owner is a parameter (a caller that
+	// could assert it could assert it for a session that is not the owner's),
+	// while the marker is read here, from the environment of the process that
+	// holds the command. A session that is a coding agent's therefore never
+	// reaches the owner's arms below, whatever it passed — the same defence in
+	// depth askOrdinary and askBuild keep, and the direction the mistake has to
+	// fall in.
+	if marker != "" {
+		owner = false
+	}
 	if err := m.refuseRunsInFlight(ctx, yes, managed && marker == "", w); err != nil {
 		return err
 	}

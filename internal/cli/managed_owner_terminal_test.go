@@ -360,6 +360,154 @@ func TestManagedOwnerTerminalEmptyAllowListNotes(t *testing.T) {
 	}
 }
 
+// TestManagedOwnerTerminalLayerRefusesAnAgentSession is the layer stage's own
+// half of the case above, driven at the same call: a coding agent's session
+// writes nothing there and reads no sentence of the owner's, and the
+// confirmation it meets is the typed one it has always met. The loop refuses an
+// agent's session before a stage of this door applies at all (initflow's
+// agentStage), so what this holds is the arm itself — the marker read inside
+// OwnerAtTerminal is the whole of what keeps a session out of a write the gate
+// stands in for.
+func TestManagedOwnerTerminalLayerRefusesAnAgentSession(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	t.Setenv(agentMarkers[0], "1")
+	e := rigEngine(t, r.initRig, &initOptions{door: updateDoor.name})
+	out := atTerminal(t, e, "")
+	e.r.cmd.SetOut(out)
+
+	if _, err := newLayerStage(e).Apply(t.Context(), initflow.Env{Interactive: true}); err == nil {
+		t.Fatalf("a coding agent's session on a managed project seeded the layer with nothing typed:\n%s", out)
+	}
+	if _, rerr := os.Stat(localLayerPath(t)); !errors.Is(rerr, os.ErrNotExist) {
+		t.Errorf("the local layer file was seeded in a coding agent's session: %v", rerr)
+	}
+	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a coding agent's session read the owner's own sentence:\n%s", out)
+	}
+}
+
+// TestManagedOwnerTerminalPolicyLooseningRefusesAnAgentSession is the same case
+// at the policy stage's own door: a coding agent's session on a managed project
+// never publishes a loosening. The refusal is the class rule's own sentence
+// (D1026), reached in gateStep before the tail — the class of a loosening is
+// Typed, and the marker is what keeps a session out of it — and the node does
+// not move.
+func TestManagedOwnerTerminalPolicyLooseningRefusesAnAgentSession(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNodeAt(3))
+	h := newMigrationRig(t, f, &initOptions{}).managedGate()
+	t.Setenv(agentMarkers[0], "1")
+
+	out, err := h.apply(t, false)
+	if err == nil {
+		t.Fatalf("a coding agent's session on a managed project loosened the ceiling:\n%s", out)
+	}
+	if got := ceilingOn(t, f.db); got != 3 {
+		t.Errorf("the published ceiling is %v, want the node's own 3: the session wrote it", got)
+	}
+	if strings.Contains(out, initflow.OwnerProceeded()) {
+		t.Errorf("a coding agent's session read the owner's own sentence:\n%s", out)
+	}
+}
+
+// TestManagedOwnerTerminalPolicyTailRefusesAMarkerBesideOwner: the tail of the
+// policy write takes owner from its caller, and the marker is read again inside
+// it — so the one caller that passed owner for a session that is a coding
+// agent's cannot reach the owner's arms. This is the seam the parameter leaves,
+// and the assertion is that the marker closes it: with owner true and a marker
+// in the environment the loosening is refused exactly as it is without either,
+// and nothing is written.
+func TestManagedOwnerTerminalPolicyTailRefusesAMarkerBesideOwner(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNodeAt(3))
+	h := newMigrationRig(t, f, &initOptions{}).managedGate()
+	fakeTerminal(t)
+	t.Setenv(agentMarkers[0], "1")
+	m, _, err := h.s.plan(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.loosening()) == 0 {
+		t.Fatalf("the rig's node does not loosen anything: the case is not the one this test is about")
+	}
+
+	err = policyMigrationConfirm(t.Context(), h.cmd, m, false, h.out, false, true, true)
+	if err == nil {
+		t.Fatalf("a coding agent's session was handed the owner's arm by its caller:\n%s", h.out)
+	}
+	if got := ceilingOn(t, f.db); got != 3 {
+		t.Errorf("the published ceiling is %v, want the node's own 3: the tail wrote it", got)
+	}
+	if strings.Contains(h.out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a coding agent's session read the owner's own sentence:\n%s", h.out)
+	}
+}
+
+// TestManagedOwnerTerminalPolicyReseedNotesAndWrites is D854's re-seed, the
+// other confirmation the policy tail replaces: the published node moved past
+// the generation this machine's file was written from, so the file is re-seeded
+// from the node — the file it replaces kept beside it, so nothing is lost —
+// after the three-way state is printed. On a managed project's own terminal
+// that state is the whole of what the person reads, and nothing is typed; the
+// control is the same state under a marker, which keeps the typed name.
+func TestManagedOwnerTerminalPolicyReseedNotesAndWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent bool
+	}{
+		{"managed", false},
+		{"managed, an agent's session", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+			f.db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
+				"budget": map[string]any{"mode": "enforce", "per_run_usd": 9},
+			}))
+			h := newMigrationRig(t, f, &initOptions{}).managedGate()
+			// The re-seed splices members into this machine's file, and the
+			// fixture's flow-style budget block is the one edit that cannot
+			// reach: the block mapping is the shape the re-seed is for.
+			blockBudgetConfig(t, f)
+			fakeTerminal(t)
+			noAgentSession(t)
+			if tc.agent {
+				t.Setenv(agentMarkers[0], "1")
+			}
+			h.cmd.SetIn(strings.NewReader(""))
+
+			out, err := h.apply(t, false)
+			if tc.agent {
+				if err == nil {
+					t.Fatalf("a coding agent's session re-seeded the local file:\n%s", out)
+				}
+				if strings.Contains(out, initflow.OwnerProceeded()) {
+					t.Errorf("a coding agent's session read the owner's own sentence:\n%s", out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a managed project's own terminal could not re-seed the file: %v\n%s", err, out)
+			}
+			lc, lerr := localcfg.Load(f.path)
+			if lerr != nil {
+				t.Fatal(lerr)
+			}
+			if lc.Budget == nil || lc.Budget.PerRunUSD != 9 {
+				t.Errorf("the file was not re-seeded from the published node: %+v\n%s", lc.Budget, out)
+			}
+			if !strings.Contains(out, initflow.OwnerProceeded()) {
+				t.Errorf("the re-seed does not say why nothing is typed:\n%s", out)
+			}
+			if strings.Contains(out, "Type "+initProjectName) {
+				t.Errorf("a managed project's own terminal was asked for the project's name:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestManagedOwnerTerminalDataLossStillAsks is the exception the ruling is
 // written around, and it is asserted through the call the --forget rollback
 // makes: deleting the log isolation and removing the installation from
