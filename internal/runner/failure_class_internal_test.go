@@ -1,12 +1,16 @@
 package runner
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // statusSite is one statement that writes a record's Status field, as the
@@ -39,6 +43,31 @@ const recordEndFile = "recordend.go"
 // recordend.go's own writeEnd like every other, which is why no statement
 // outside that file names the field.
 func TestRecordEndIsTheOnlyWriterOfATerminalStatus(t *testing.T) {
+	// The reader first, on a file that is not in the tree: a guard that missed
+	// a shape would pass on any tree, and the shape it must not miss is the
+	// copy through a local record that storeUnposted makes.
+	t.Run("the reader sees every shape", func(t *testing.T) {
+		const src = `package runner
+
+func f(rec *runstore.Record, st runstore.Status) {
+	c := *rec
+	c.Status = st
+	rec.Status, rec.Outcome = st, runstore.OutcomeNone
+	_ = runstore.Record{Status: runstore.StatusFailed}
+	_ = runstore.Record{Status: runstore.StatusRunning}
+}
+`
+		file, err := parser.ParseFile(token.NewFileSet(), "shape.go", src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Three: the copy, the record itself and the literal. The running
+		// literal is the record's construction and not an ending.
+		if got := len(statusSitesIn(file)); got != 3 {
+			t.Errorf("the guard read %d of the 3 statements in a file that assigns a local record's status, assigns the record's own and writes a terminal status in a literal: a guard that does not see them passes on a tree that does", got)
+		}
+	})
+
 	paths, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +97,67 @@ func TestRecordEndIsTheOnlyWriterOfATerminalStatus(t *testing.T) {
 	}
 	if len(outside) > 0 {
 		t.Errorf("%d statements write a record's Status outside %s: the count is the census, and one writer is the whole rule", len(outside), recordEndFile)
+	}
+}
+
+// TestNoClassIsWrittenWhereTheRunDidNotFail: a run that ended succeeded
+// carries no failure_class, whatever class its last writer was handed. The
+// three shapes below are the three successes the record has a name for — a
+// ready pull request, a review run that reviewed, an artifact run that
+// delivered — and the plan's D1464 is the answer they share: there is no
+// failure to name, and a class on any of them would be a classification of a
+// success, which is the value the report's share of classified runs stops
+// meaning anything with.
+//
+// Mutation (fill the class on a succeeded status in recordEnd): every shape
+// below reddens, which is why the rule sits in the writer rather than at the
+// three sites.
+func TestNoClassIsWrittenWhereTheRunDidNotFail(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		outcome runstore.Outcome
+	}{
+		{"a ready pull request", runstore.OutcomeReady},
+		{"a mode: review run that reviewed", runstore.OutcomeReviewed},
+		{"an artifact run that delivered", runstore.OutcomeArtifacts},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &run{rec: &runstore.Record{}}
+			r.recordEnd(runstore.StatusSucceeded, tt.outcome, failure.TestsFailed, "a reason the run did not fail for")
+			if r.rec.FailureClass != "" {
+				t.Errorf("a succeeded run carries the class %q: a class on a run with no failure names a cause it does not have, and the report counts it as one", r.rec.FailureClass)
+			}
+			// The field is absent rather than empty: a reader of an old record
+			// and a writer of a new one agree by there being nothing to read.
+			data, err := json.Marshal(r.rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "failure_class") {
+				t.Errorf("a succeeded run's record.json carries failure_class: %s", data)
+			}
+		})
+	}
+}
+
+// TestHaltedRunCarriesItsHaltsClass: a run that failed and was then halted
+// ends halted with the halt's class, not the failure's. The last call wins and
+// the four fields are written together, so the class always describes the
+// status the record carries — which is the whole of the rule recordEnd's
+// comment states, and the reason the class is not hung on the run's first
+// failure reason (r.failure(), which the pull request's section reads and the
+// record no longer holds).
+func TestHaltedRunCarriesItsHaltsClass(t *testing.T) {
+	r := &run{rec: &runstore.Record{}}
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, failure.TestsFailed, "tests failing on the final commit")
+	halt := &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run"}
+	r.rec.Halt = halt
+	r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), "the per-run dollar cap was reached")
+	if r.rec.Status != runstore.StatusHalted {
+		t.Errorf("the record's status is %q, want halted: the halt's call is the last one", r.rec.Status)
+	}
+	if r.rec.FailureClass != failure.HaltedBudget {
+		t.Errorf("the record's class is %q, want %q: the class describes the status the record carries, and a class left over from the failure before the halt describes a sentence the record no longer holds", r.rec.FailureClass, failure.HaltedBudget)
 	}
 }
 
