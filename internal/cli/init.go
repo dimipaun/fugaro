@@ -3457,6 +3457,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The project layer's jobs: block is the same kind of break on jobsSince,
+	// in the layer alone: no repository's file can carry the key.
+	if err := r.gateJobs(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// git.author is the same kind of break on gitAuthorSince, in the
 	// repository's own file alone: the key is InRepo, so no layer can carry
 	// it.
@@ -3906,6 +3911,26 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateJobs is fugaro update --repo's gate for jobsSince: refuseJobsSkew, with
+// gateRigor's escapes and for its reason. The key is the project layer's alone
+// — a repository's fugaro.yaml has no jobs: key and refuses an unknown one — so
+// the repository half the other gates carry is absent: what is judged is the
+// layer this repository's configuration resolves over, and the refusal names it.
+//
+// The layer is the one this repository's configuration resolves over — the copy
+// the run will read — and the refusal names it, so the operator is sent to the
+// file and not to their checkout.
+func (r *initRun) gateJobs(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseJobsSkew(repo, cfg.Layer.SetsJobs(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateGitAuthor is fugaro update --repo's gate for gitAuthorSince:

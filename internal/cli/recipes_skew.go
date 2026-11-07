@@ -1786,6 +1786,114 @@ func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Sp
 	return checkCloneImageSince(env.lc, spec, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn)
 }
 
+// jobsSince is the first fugaro release whose config reader knows the project
+// layer's jobs: block (R13: the installation's two scheduled jobs and whether
+// each is stopped). The key is the layer's alone — a repository's fugaro.yaml
+// has no jobs: key and refuses an unknown one — and the layer is decoded with
+// KnownFields, so a layer that carries it makes every repository of the project
+// whose job image is older than this release fail at bootstrap on a key its
+// runner does not know, before the agent starts and after the launch was paid
+// for. Like governanceSince the judge is the image that runs the run: the
+// installation's base image for a checkout: clone workflow, the base a
+// workflow's build record was built FROM for a derived one. fugaro update
+// --repo gates it before any cloud effect (gateJobs, beside gateGovernance),
+// a launch gates it the way checkGovernanceImage does (checkJobsImage,
+// checkCloneJobsImage) from a checkout of the repository, where the layer the
+// run will read can be read here at all, and fugaro validate warns
+// (jobsImageWarnings).
+//
+// It names 0.22.0, the release the key ships in ("Sloth",
+// docs/periodic-reviews/implementation-plan.md §P7), which is not tagged yet:
+// the release that tags it holds this number to the tag it cuts, as it does for
+// sharedSince's 0.14.0 and reviewJobSince's 0.19.0. docs/release.md ("Before
+// you tag") has the checklist verify it.
+const jobsSince = "0.22.0"
+
+// jobsLayerSet reports whether the project layer the configuration resolves
+// over writes jobs:, at any value: SetsJobs' question, and its reason — an
+// empty block (`jobs:`) is a line an older runner's decoder refuses just as a
+// populated one is, and Jobs' zero value cannot tell the two apart. The
+// configuration is read through launchFileConfig, so the layer both ways a
+// launch can reach it counts: the checkout's own resolution, and — outside a
+// checkout — the layer the task carries (launchLayerConfig).
+func jobsLayerSet(cfg *config.Config) bool {
+	return cfg != nil && cfg.Layer.SetsJobs()
+}
+
+// jobsSubject names, for the gates' messages, the block and the way out its
+// author has: the layer is the operator's file, and the repositories the block
+// breaks each have the same fix — removing it and publishing the layer again.
+func jobsSubject(repo string) (subject, alt string) {
+	return "the project layer's jobs: block (read for " + repo + ")",
+		"remove the jobs: block from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
+}
+
+// jobsKnows names, for the image gates' messages, the key the job image's
+// runner has to know: the refusal reads "needs a job image whose runner knows
+// <this>", and the block is one key of the layer file whatever it holds.
+const jobsKnows = "the project layer's jobs: block"
+
+// jobsImageWarnings warns, once, that the project layer a configuration
+// resolves over writes jobs:, which needs every job image on jobsSince. It is
+// validate's half of checkJobsImage and a warning rather than a Problem for
+// rigorImageWarnings' reason: the layer is valid, and what has to move is the
+// installation (the base image, or a workflow's derived one), which is why both
+// ways to move an image are named.
+func jobsImageWarnings(c *config.Config) []config.Problem {
+	if !jobsLayerSet(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "jobs", Message: "the project layer's jobs: block needs fugaro " + jobsSince + " or later in the job image that runs it, and in the CLI of everyone who reads this layer: an older runner decodes the layer strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseJobsSkew refuses fugaro update --repo, before any cloud effect, when
+// the project layer the checkout resolves writes jobs: and the installation's
+// base image predates jobsSince — a runner built from it decodes the layer with
+// KnownFields and refuses it at bootstrap. The states of ref are read as
+// refuseRigorSkew reads them: no base image passes, one that is not a release
+// only warns.
+func refuseJobsSkew(repo string, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromLayer {
+		return nil
+	}
+	subject, alt := jobsSubject(repo)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, jobsSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the layer strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, jobsSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkJobsImage and checkCloneJobsImage are the launch's own jobsSince gate,
+// for a workflow whose job image is a derived one and for a checkout: clone
+// workflow respectively: the pair every other per-workflow image gate has
+// (checkImageSince/checkCloneImageSince), with checkGovernanceImage's judge and
+// its one source — the project layer, which is the only file that can write the
+// key. A launch whose configuration writes no jobs: is never gated.
+func checkJobsImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !jobsLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := jobsSubject(spec.Repo)
+	return checkImageSince(ctx, env, slug, spec, kind, jobsSince, subject, jobsKnows, "; or "+alt, warn)
+}
+
+// checkCloneJobsImage is checkJobsImage for a checkout: clone workflow: see
+// checkCloneImageSince.
+func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	if !jobsLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := jobsSubject(spec.Repo)
+	return checkCloneImageSince(env.lc, spec, jobsSince, subject, jobsKnows, "; or "+alt, warn)
+}
+
 // warnCoreJobImage warns when the build record of slug's workflow reports a
 // core build and this launch asks for something such a build ignores: the
 // governance: block the configuration writes (fromRepo/fromLayer), or the

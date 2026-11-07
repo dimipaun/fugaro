@@ -117,8 +117,9 @@ type ProjectLayer struct {
 // must never take by omission.
 type Jobs struct {
 	// Reports is the reports job: the project's one writer of reports/ in the
-	// runs bucket (R12's module, R11's code). Fugaro before 0.20.0 refuses
-	// the key.
+	// runs bucket (R12's module, R11's code). Fugaro before 0.22.0 refuses
+	// the key (jobsSince in internal/cli, the constant its gates judge the
+	// job image against).
 	Reports *JobState `yaml:"reports"`
 	// CatalogCheck is the project's catalog check job, scheduled since 0.18.0
 	// (D1148). It is the job whose own operator note offered a `gcloud
@@ -198,6 +199,21 @@ func (l *ProjectLayer) SetsGovernance() bool {
 		return false
 	}
 	_, ok := l.tree["governance"]
+	return ok
+}
+
+// SetsJobs reports whether the layer's text writes jobs:, at any value: a
+// runner before jobsSince (internal/cli) decodes the layer with KnownFields, so
+// the key alone is what it refuses, and Jobs' zero value cannot tell an empty
+// block from none. It is what the gates judge the job images against. The key is
+// top-level, not under defaults: (TestProjectLayerJobsIsTopLevel), like
+// governance: and for the same reason: the block is a policy the project sets
+// for every one of its repositories rather than a default a branch may replace.
+func (l *ProjectLayer) SetsJobs() bool {
+	if l == nil {
+		return false
+	}
+	_, ok := l.tree["jobs"]
 	return ok
 }
 
