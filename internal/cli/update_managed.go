@@ -451,7 +451,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
-		return true, r.gateRefused(err, doc)
+		return true, r.gateRefused(err, doc, verdict)
 	}
 	// D55's one rule, asked with this run's conditions — a coding agent's
 	// session or the owner's own terminal, which is the whole of who may
@@ -637,14 +637,16 @@ func (r *initRun) gateApplied(ctx context.Context) error {
 const gateUnreadable = "the managed gate did not admit this step: the document it was to judge could not be produced, and a document nobody could read is never applied here (D1012)"
 
 // gateRefused is the GatedError of a step this gate did not admit, from the
-// error M6's admit answered with and the plan's own bytes.
+// error M6's admit answered with, the plan's own bytes and the verdict they
+// were judged by.
 //
 // It is one function rather than a struct literal at the call site because the
 // shape of the refusal is a decision about this command's own document, and it
-// takes both of them: the plan is what says whether the owner's flag admits a
-// removal here (gateDeleteLeft), and the error is what says whether the gate
-// judged anything at all (gateRefusalOf). The two stages whose document is not
-// a plan can only ever be the second, so they ask gateRefusalOf themselves.
+// takes all three: the plan and the verdict are what say whether the owner's
+// flag admits a removal here (gateDeleteLeft — which rule refused, and whether
+// the flag clears what they refused), and the error is what says whether the
+// gate judged anything at all (gateRefusalOf). The two stages whose document is
+// not a plan can only ever be the last, so they ask gateRefusalOf themselves.
 //
 // The plan's answer is asked only of a plan the gate REFUSED (gateRefusalOf's
 // plan answer, i.e. managed.ErrNotConverged): a step the gate reached no verdict
@@ -654,12 +656,12 @@ const gateUnreadable = "the managed gate did not admit this step: the document i
 // turns out to carry. A mark read that failed takes the same document down a
 // different road than a rule that refused it, and the two roads' answers must
 // not be handed one another's command.
-func (r *initRun) gateRefused(err error, doc []byte) *initflow.GatedError {
+func (r *initRun) gateRefused(err error, doc []byte, verdict managedmode.Verdict) *initflow.GatedError {
 	refusal := gateRefusalOf(err)
 	if refusal != initflow.GateRefusedPlan {
 		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
 	}
-	if owner, ok := r.gateDeleteLeft(err.Error(), doc); ok {
+	if owner, ok := r.gateDeleteLeft(err.Error(), doc, verdict); ok {
 		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: initflow.GateRefusedDelete, Owner: owner}
 	}
 	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
@@ -698,6 +700,15 @@ func gateRefusalOf(err error) initflow.GateRefusal {
 // a removal they can approve is being sent to work that does not close the loop
 // the refusal opened.
 //
+// Two questions come before it, and both are about the command being one that
+// can help rather than about the sentence: the verdict says whether the delete
+// rule is the only thing that refused the plan (RefusedOnlyForRemovals — the
+// flag turns the whole gate off, not one rule of it), and the plan's own bytes
+// say whether the step the flag produces will apply it (the guard it will run,
+// and the project-job rule that runs beside it). Each of them, answered the
+// other way, is a command the owner would run and watch refuse — or worse, one
+// that applies a change the cover refused with no rule left to read it.
+//
 // What it asks the plan, and not the gate's sentence: tf.Listable is exactly
 // the set --allow-delete admits — a removal (a delete, or a replace, whose
 // actions carry one) of an action the guard knows, at an address the plan does
@@ -725,15 +736,42 @@ func gateRefusalOf(err error) initflow.GateRefusal {
 // RemoveIdentityText gives is then the whole of what the owner has to go on,
 // which is why it is printed rather than dropped. What no flag reaches is what
 // tf.Listable already leaves out (the paragraph above), and nothing else.
-func (r *initRun) gateDeleteLeft(reason string, doc []byte) (initflow.Left, bool) {
+func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.Verdict) (initflow.Left, bool) {
 	var plan tf.Plan
 	if err := json.Unmarshal(doc, &plan); err != nil {
 		// A document this binary cannot read is not one whose removals can be
 		// named: the refusal keeps the shape the error gave it.
 		return initflow.Left{}, false
 	}
+	// What the flag would clear here: the removals --allow-delete admits, which
+	// is the set the questions below are both asked about.
 	admits := tf.Listable(&plan, nil)
 	if len(admits) == 0 {
+		return initflow.Left{}, false
+	}
+	// And only a plan the delete rule is the whole of: the flag this shape hands
+	// the owner shapes the installation, so the gate stands down for the run
+	// that passes it and nothing reads the plan again. A plan the cover or the
+	// cost list refused something else in — an outsider's grant, a GPU — is
+	// nobody's in the same way it was before this shape existed, and offering
+	// the flag for it would be offering a command that applies exactly what
+	// those rules refused. A removal's own refusal is not that, from either gate
+	// (RefusedOnlyForRemovals's doc says why the question is asked of the
+	// addresses).
+	if !verdict.RefusedOnlyForRemovals(admits) {
+		return initflow.Left{}, false
+	}
+	// And only where the flag clears the whole plan: what the run that passes
+	// it will ask is the step's own guard (initRun.guard), so the command
+	// offered has to be one that guard admits. Anything it still refuses — a
+	// removal the flag does not reach (tf.Guard's own rules), a project job the
+	// retirement rule holds whatever the list says (infra.RefuseProjectJobDeletes)
+	// — is a run the owner would make and watch refuse, which is the same
+	// mistake as an issue about work that does close the loop.
+	if err := infra.RefuseProjectJobDeletes(&plan); err != nil {
+		return initflow.Left{}, false
+	}
+	if err := tf.Guard(&plan, admits); err != nil {
 		return initflow.Left{}, false
 	}
 	identities := make(map[string]string, len(admits))

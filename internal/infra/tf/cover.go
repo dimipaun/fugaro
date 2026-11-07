@@ -1671,6 +1671,19 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // tokens/<slug>/ of a bucket, nothing before it and nothing after it.
 var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/` + gcp.TokenBucketPrefix + `/([a-z0-9][a-z0-9_-]*)/"\)$`)
 
+// conditionSlug is the shape of the repository slug a condition names — the
+// third group of accountClause and tokenClause above, which is what the modules
+// key a per-repository grant by (var.catalog_check.repositories' r.slug is a
+// task.Slug). Two of those clauses read the slug out of a whole clause and
+// cannot see a slug the plan spelled differently, but a caller that BUILDS an
+// expression from a slug the plan wrote (catalogRecordsGrant, over
+// gcp.CatalogRecordsCondition) has to check it first: the slug lands in a CEL
+// string literal, so one carrying a quote and the rest of the condition builds
+// whatever expression its own title asks for — and the plan writes the title
+// and the expression both, so the comparison below would pass on a grant this
+// account's row exists to refuse.
+var conditionSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
 // bucketCondition says why a bucket grant's condition is not the modules'
 // (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
 // objectViewer carries none, except an account's, which may carry exactly
@@ -1938,7 +1951,7 @@ func (c Cover) catalogReadGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[s
 // retitling it.
 func (c Cover) catalogRecordsGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) bool {
 	slug, ok := strings.CutPrefix(title, gcp.CatalogRecordsConditionTitlePrefix)
-	if !ok || slug == "" {
+	if !ok || !conditionSlug.MatchString(slug) {
 		return false
 	}
 	// The member: the catalog check account itself, named outright on the plan

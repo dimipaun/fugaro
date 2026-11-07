@@ -195,24 +195,34 @@ func TestUpdateManagedStageRefusesARemoval(t *testing.T) {
 	}
 }
 
+// uploadsBucket is the ordinary managed bucket the tests about a removal the
+// owner's own flag admits remove: an ordinary bucket and not one of the three
+// the cover's delete rule refuses by name. That matters to what the tests can
+// claim — the by-name rule is the GATE's, and a run that passes --allow-delete
+// shapes the installation, so the gate stands down for it and the step keeps
+// its own guard, which compares the address and nothing else (tf.Guard) — so a
+// fixture under that rule would witness nothing about either.
+const uploadsBucket = "module.installation.google_storage_bucket.uploads"
+
+// uploadsBucketRemoval is the plan that removes it, with the before view the
+// module writes — which is what identifies the object (tf.RemoveIdentityText).
+func uploadsBucketRemoval() planChange {
+	return planChange{"address": uploadsBucket, "type": "google_storage_bucket",
+		"change": map[string]any{"actions": []string{"delete"}, "after": nil,
+			"before": map[string]any{"id": "fugaro-uploads-" + initProject, "name": "fugaro-uploads-" + initProject,
+				"project": initProject, "time_created": "2026-01-02T03:04:05.678Z"}}}
+}
+
 // The identity half of the same sentence: a removal whose before view DOES
 // identify the object prints that identity (spec §4.3: "where the refusal is a
 // delete the owner did not approve, it prints the identity the plan's before
 // view carries ... byte for byte"), which is what tells the owner which object
 // they are approving.
 //
-// The fixture is an ordinary managed bucket and not one of the three the
-// cover's delete rule refuses by name: this test is about what the owner's
-// flag reaches, and the by-name rule is the GATE's — a run that passes
-// --allow-delete shapes the installation, so the gate stands down for it and
-// the step keeps its own guard, which compares the address and nothing else
-// (tf.Guard). Nothing here claims anything about that rule in either direction.
+// The fixture is the ordinary managed bucket above and not one of the three
+// the cover's delete rule refuses by name, for the reason said there.
 func TestUpdateManagedRemovalLeavesTheIdentityThePlanCarries(t *testing.T) {
-	const bucket = "module.installation.google_storage_bucket.uploads"
-	ch := planChange{"address": bucket, "type": "google_storage_bucket",
-		"change": map[string]any{"actions": []string{"delete"}, "after": nil,
-			"before": map[string]any{"id": "fugaro-uploads-" + initProject, "name": "fugaro-uploads-" + initProject,
-				"project": initProject, "time_created": "2026-01-02T03:04:05.678Z"}}}
+	ch := uploadsBucketRemoval()
 	if !identifies(t, ch) {
 		t.Fatalf("the fixture's before view identifies nothing (%q): this test would then be about a sentence that says so", identityOf(t, ch))
 	}
@@ -231,7 +241,7 @@ func TestUpdateManagedRemovalLeavesTheIdentityThePlanCarries(t *testing.T) {
 	if left == "" {
 		t.Fatalf("the refused removal left the owner no command:\n%s", got)
 	}
-	if want := "fugaro update --allow-delete " + bucket; !strings.Contains(left, want) {
+	if want := "fugaro update --allow-delete " + uploadsBucket; !strings.Contains(left, want) {
 		t.Errorf("the left-for-you does not carry the owner's command (%q):\n%s", want, left)
 	}
 	if want := identityOf(t, ch); !strings.Contains(left, want) {
@@ -247,11 +257,8 @@ func TestUpdateManagedRemovalLeavesTheIdentityThePlanCarries(t *testing.T) {
 // same rule that keeps the stage's prompt off a refused step, and the reason
 // gateDeleteLeft asks the plan's own addresses rather than the error's words.
 func TestUpdateManagedRemovalNoFlagAdmitsLeavesNoCommand(t *testing.T) {
-	const (
-		bucket = "module.installation.google_storage_bucket.uploads"
-		moved  = "module.installation.google_storage_bucket.old_uploads"
-	)
-	ch := planChange{"address": bucket, "type": "google_storage_bucket",
+	const moved = "module.installation.google_storage_bucket.old_uploads"
+	ch := planChange{"address": uploadsBucket, "type": "google_storage_bucket",
 		"previous_address": moved,
 		"change": map[string]any{"actions": []string{"delete"}, "after": nil,
 			"before": map[string]any{"id": "fugaro-uploads-" + initProject, "name": "fugaro-uploads-" + initProject,
@@ -282,24 +289,99 @@ func TestUpdateManagedRemovalNoFlagAdmitsLeavesNoCommand(t *testing.T) {
 	}
 }
 
+// The other boundary, and the one a plan carrying two kinds of refusal reaches:
+// the command gateDeleteLeft offers is the delete rule's own way past the delete
+// rule, and --allow-delete shapes the installation, so the run that passes it
+// stands the WHOLE gate down (initRun.gateUnderway) and nothing reads the plan
+// again. That is right while the delete rule is the only thing that refused, and
+// it is how a plan the cover or the cost list refused as well would be applied
+// with no rule left to read it — an outsider's grant, a GPU the cost list
+// blocks — with the owner told the removal was theirs alone.
+//
+// The two plans are that one shape from two sides: a bucket this installation
+// removes (the guard's refusal, which --allow-delete does reach) beside a change
+// no list reaches at all. The left-for-you has to be the plan refusal's, with no
+// command, and nothing may be applied. The mutation this is for is a
+// gateDeleteLeft that asks what the plan's addresses are and never which rule
+// refused: both arms hand the owner a command that applies the other refusal.
+func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// other is the change no delete list reaches, and names is the fact the
+		// refusal has to be about: a mixed plan that was refused, or applied, for
+		// any other reason would leave these assertions green.
+		other planChange
+		names string
+	}{
+		{"a grant the cover refuses beside the removal",
+			grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create"), "user:a@example.com"},
+		{"a job the cost list blocks beside the removal", gpuJobPlan(), "nvidia-l4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := updateManagedRig(t)
+			updating(t, r)
+			r.setPlan(t, uploadsBucketRemoval(), tc.other)
+
+			got, err := updateRun(t, r, "update", "--yes")
+			if err == nil {
+				t.Fatalf("the run applied a plan a managed project refuses:\n%s", got)
+			}
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
+			}
+			if !strings.Contains(got, tc.names) {
+				t.Errorf("the refusal does not name %s, so it is not this arm's refusal:\n%s", tc.names, got)
+			}
+			if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+				t.Errorf("a plan the delete rule did not refuse alone left the owner the removal's command (%q): --allow-delete stands the whole gate down, so a run that passed it would apply %s with no rule left to read it:\n%s", left, tc.names, got)
+			}
+			refused := leftFor(got, initflow.Installation, initflow.LeftRefused)
+			if refused == "" {
+				t.Fatalf("the refused step left nothing at all:\n%s", got)
+			}
+			if !strings.Contains(refused, "a person files an issue") {
+				t.Errorf("the refusal is not the plan's own:\n%s", refused)
+			}
+			if strings.Contains(got, "--allow-delete") {
+				t.Errorf("the run offers --allow-delete for a plan another rule refused as well:\n%s", got)
+			}
+		})
+	}
+}
+
 // And the sentinel half of the same decision, which the end-to-end tests cannot
 // reach: a document the gate never judged is a failure of the RUN, so even a
 // plan full of deletes must not be answered with the owner's command when the
 // error says the gate reached no verdict. gateRefused is where the two
-// questions meet, and this is the pin on their order.
+// questions meet, and this is the pin on their order. The verdict is the
+// end-to-end tests' own in all three arms — the guard's refusal alone, which
+// the command is offered for, and the same removal beside a refusal no list
+// reaches, which it is not.
 func TestGateRefusedAsksTheDeleteQuestionOnlyOfARefusal(t *testing.T) {
 	doc := []byte(`{"resource_changes":[{"address":"module.installation.google_storage_bucket.uploads",` +
 		`"type":"google_storage_bucket","change":{"actions":["delete"],"before":{"id":"b","name":"b","project":"p"}}}]}`)
+	// "guard" and "cover" are internal/managed's own words for the two halves of
+	// the gate (its guardGate and coverGate); the constants are that package's,
+	// which is why the strings are literals here, as they are in the record the
+	// owner reads.
+	removal := managedmode.Refusal{Gate: "guard", Address: "module.installation.google_storage_bucket.uploads", Why: "delete"}
 	for _, tc := range []struct {
-		name string
-		err  error
-		want initflow.GateRefusal
+		name    string
+		err     error
+		verdict managedmode.Verdict
+		want    initflow.GateRefusal
 	}{
-		{"a plan the gate refused", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged), initflow.GateRefusedDelete},
-		{"a mark that could not be read again", errors.New("the creation fact of p could not be read a second time, immediately before the write"), initflow.GateRefusedUnread},
+		{"a plan the delete rule alone refused", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal}}, initflow.GateRefusedDelete},
+		{"a plan the cover refused beside the removal", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal, {Gate: "cover", Address: "module.installation.google_storage_bucket_iam_member.runs_outsider[\"user:a@example.com\"]", Why: "a member the review did not list"}}}, initflow.GateRefusedPlan},
+		{"a plan the cost list refused beside the removal", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal, {Gate: "cost", Why: "nvidia-l4"}}}, initflow.GateRefusedPlan},
+		{"a mark that could not be read again", errors.New("the creation fact of p could not be read a second time, immediately before the write"),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal}}, initflow.GateRefusedUnread},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := (&initRun{o: &initOptions{door: updateDoor.name}}).gateRefused(tc.err, doc)
+			got := (&initRun{o: &initOptions{door: updateDoor.name}}).gateRefused(tc.err, doc, tc.verdict)
 			if got.Refusal != tc.want {
 				t.Errorf("gateRefused(%v).Refusal = %v, want %v", tc.err, got.Refusal, tc.want)
 			}
@@ -651,6 +733,27 @@ func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
 	}
 }
 
+// gpuJobPlan is what the cost list refuses and the cover reads nothing of: a
+// job the cover admits — one container, an image of this run's own registry, no
+// command, which is the workflow jobs' own shape — with a GPU, which is the
+// cost list's (managedCostGPU).
+func gpuJobPlan() planChange {
+	return planChange{
+		"address": "module.installation.google_cloud_run_v2_job.runner",
+		"type":    "google_cloud_run_v2_job",
+		// mode is not decoration: managedCostBills is asked only of a managed
+		// change (tf.ManagedCosts skips every other mode), so a change without
+		// it is a plan the cost list reads as nothing to check and admits.
+		"mode": "managed",
+		"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{}, "after": map[string]any{
+			"template": []any{map[string]any{"template": []any{map[string]any{
+				"containers":    []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-runner:0.2.0"}},
+				"node_selector": []any{map[string]any{"accelerator": "nvidia-l4"}},
+			}}}},
+		}},
+	}
+}
+
 // The gate's refusals are refusals in the owner's own terminal too, and the two
 // a person's run can reach are the two halves of what it judges: a plan the
 // cover refuses (a grant to somebody the review did not list) and a plan the
@@ -667,24 +770,7 @@ func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
 // is outside the cover, so the ordinary path would ask its own typed name on
 // the way down and stop there anyway.
 func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
-	const job = "module.installation.google_cloud_run_v2_job.runner"
-	// A job the cover admits — one container, an image of this run's own
-	// registry, no command, which is the workflow jobs' own shape — and a GPU,
-	// which is the cost list's (managedCostGPU) and nothing the cover reads.
-	costPlan := planChange{
-		"address": job,
-		"type":    "google_cloud_run_v2_job",
-		// mode is not decoration: managedCostBills is asked only of a managed
-		// change (tf.ManagedCosts skips every other mode), so a change without
-		// it is a plan the cost list reads as nothing to check and admits.
-		"mode": "managed",
-		"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{}, "after": map[string]any{
-			"template": []any{map[string]any{"template": []any{map[string]any{
-				"containers":    []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-runner:0.2.0"}},
-				"node_selector": []any{map[string]any{"accelerator": "nvidia-l4"}},
-			}}}},
-		}},
-	}
+	costPlan := gpuJobPlan()
 	outsiderGrant := grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")
 
 	for _, tc := range []struct {

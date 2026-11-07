@@ -1134,6 +1134,10 @@ func TestCatalogCheckAccountIsItsOwnPrincipalKind(t *testing.T) {
 //     other case here still refuses.
 //   - Give roles/storage.objectAdmin the toCatalogCheck bit: both objectAdmin
 //     cases pass, on the role table's own check.
+//   - Drop the slug check from catalogRecordsGrant, so any title after the
+//     prefix counts as a slug: the two injected-title cases pass, because the
+//     expression is built from that same title, and every other case here stays
+//     refused.
 //   - Give roles/storage.objectViewer the bit: the objectViewer case is refused
 //     anyway, under the tokens/ sentence rather than this one, so what catches
 //     that widening is the row-pin loop in
@@ -1190,6 +1194,24 @@ func TestCatalogCheckRecordsGrant(t *testing.T) {
 			member: catalogCheckMember, role: "roles/storage.objectUser",
 			title: gcp.CatalogRecordsConditionTitle(slug),
 			expr:  gcp.BucketCondition(cbBucket, []string{"builds"}, slug), want: "catalog check job"},
+		// The title and the expression are BOTH the plan's words, and the
+		// module builds the expression from the slug the title carries, so a
+		// slug that is not a slug builds whatever condition the plan asks for
+		// and the comparison below admits it. These two are that attack: the
+		// first closes the clause's string literal and opens a condition that
+		// matches nearly the whole bucket (every repository's builds/, runs/
+		// and tokens/ with it), which is what this account's row exists to
+		// refuse; the second walks a path out of the catalogue's own prefix.
+		"a title whose slug closes the condition's string literal": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(`") || !resource.name.endsWith("`),
+			expr:  gcp.CatalogRecordsCondition(cbBucket, `") || !resource.name.endsWith("`),
+			want:  "catalog check job"},
+		"a title whose slug walks out of the catalog segment": {
+			member: catalogCheckMember, role: "roles/storage.objectUser",
+			title: gcp.CatalogRecordsConditionTitle(`x/../../tokens/y`),
+			expr:  gcp.CatalogRecordsCondition(cbBucket, `x/../../tokens/y`),
+			want:  "catalog check job"},
 		"the records condition with a description": {
 			member: catalogCheckMember, role: "roles/storage.objectUser",
 			title: gcp.CatalogRecordsConditionTitle(slug), expr: records, desc: "x", want: "description"},

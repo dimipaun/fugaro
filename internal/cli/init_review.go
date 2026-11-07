@@ -137,14 +137,34 @@ func (r *initRun) declinedRun() error {
 // own typed confirmation. imports are the import blocks the root's discovery
 // wrote: an import that is not one of them is not covered.
 func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {
+	return coverSentence(r.coverReasons(p, imports))
+}
+
+// coverReasons is why a plan is not covered by the run's one confirmation, in
+// the cover's own items — one per change, "<address> (<why>)" (tf.Cover's own
+// shape) — and the empty list when it is.
+//
+// It is the same answer notCovered gives, unwrapped, and the two are asked
+// apart on purpose: what a prompt shows is one line about the plan, while the
+// gate's refusal is per address (managed.Refusal, and the record's rules are
+// those refusals), so a gate handed the sentence carried "the plan is outside
+// what the review announced" as if it were the address of the change that
+// refused — and a reader asking a verdict which changes were refused could not
+// tell a removal from anything else the cover refused.
+func (r *initRun) coverReasons(p *tf.Plan, imports []tf.ImportKey) []string {
 	if r.review == nil || r.review.cover == nil {
+		return nil
+	}
+	return r.review.cover().NotCovered(p, imports)
+}
+
+// coverSentence is the cover's items as the line a prompt shows them in, ""
+// when there are none.
+func coverSentence(items []string) string {
+	if len(items) == 0 {
 		return ""
 	}
-	b := r.review.cover().NotCovered(p, imports)
-	if len(b) == 0 {
-		return ""
-	}
-	return "the plan is outside what the review announced (" + strings.Join(b, "; ") + ")"
+	return "the plan is outside what the review announced (" + strings.Join(items, "; ") + ")"
 }
 
 // askOrdinary is ask for an ordinary step: covered by the run's one
@@ -571,17 +591,31 @@ func (r *initRun) firebaseReason() string {
 // notCoveredFirebase is notCovered for a plan of the Firebase root, which is
 // also not covered when the Firebase project is not verified as Fugaro's.
 func (r *initRun) notCoveredFirebase(p *tf.Plan, imports []tf.ImportKey) string {
+	return coverSentence(r.coverReasonsFirebase(p, imports))
+}
+
+// coverReasonsFirebase is coverReasons for that root, and the reason is one
+// item rather than a cover item per change: an unverified Firebase project
+// refuses the whole plan, which is the step's own fact and not something the
+// cover said about any address.
+func (r *initRun) coverReasonsFirebase(p *tf.Plan, imports []tf.ImportKey) []string {
 	if why := r.firebaseReason(); why != "" {
-		return why
+		return []string{why}
 	}
-	return r.notCovered(p, imports)
+	return r.coverReasons(p, imports)
 }
 
 // stepCover is the cover of one step in the shape internal/managed reads
-// (managed.Cover), built from the very function the step's confirmation asks
-// (initRun.notCovered, initRun.notCoveredFirebase): what the gate judged and
-// what a person would have been shown about the same plan are then one answer
-// rather than two that happen to agree.
+// (managed.Cover), built from the very cover the step's confirmation asks
+// (initRun.coverReasons, initRun.coverReasonsFirebase): what the gate judged
+// and what a person would have been shown about the same plan are then one
+// answer rather than two that happen to agree.
+//
+// The reasons themselves and not the sentence they are shown in: the gate's
+// refusal is per address (managed.Refusal, one rule per change, and the record
+// holds those), while notCovered's line is one sentence about the plan for a
+// prompt — and a gate handed that sentence has one refusal whose address is the
+// sentence's own opening rather than the address of the change that refused.
 //
 // It lives here because reading the run's review is this file's own rule, held
 // by TestRunConfirmationCallSites: the review is the confirmation's, and the
@@ -593,24 +627,21 @@ func (r *initRun) notCoveredFirebase(p *tf.Plan, imports []tf.ImportKey) string 
 // mistake here could turn into "nothing refused it", and the gate's answer for
 // it is the refusal.
 type stepCover struct {
-	notCovered func(*tf.Plan, []tf.ImportKey) string
+	notCovered func(*tf.Plan, []tf.ImportKey) []string
 }
 
 func (c stepCover) NotCovered(p *tf.Plan, imports []tf.ImportKey) []string {
 	if c.notCovered == nil {
 		return []string{"this step's cover was not available to the gate, and a plan no cover judged is not admitted"}
 	}
-	if why := c.notCovered(p, imports); why != "" {
-		return []string{why}
-	}
-	return nil
+	return c.notCovered(p, imports)
 }
 
 // coverOf is the cover of one step of this run, or one that refuses: a run
-// whose review was never built has no cover for any root, and notCovered
-// answers "" in that case because it has no plan to ask about — an answer the
-// gate must not read as "nothing to refuse".
-func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) string) stepCover {
+// whose review was never built has no cover for any root, and the reasons are
+// empty in that case because there is no plan to ask about — an answer the gate
+// must not read as "nothing to refuse".
+func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) []string) stepCover {
 	if r.review == nil || r.review.cover == nil {
 		return stepCover{}
 	}

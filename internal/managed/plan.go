@@ -136,6 +136,46 @@ type Verdict struct {
 	Listable []string
 }
 
+// RefusedOnlyForRemovals is whether every refusal in this verdict is about one
+// of the addresses in admits — the removals a caller's own delete approval
+// would clear there (tf.Listable) — so the plan's refusals are the removals
+// themselves and nothing else.
+//
+// It is what a caller asks before telling its reader that their own
+// --allow-delete admits what the gate refused (internal/cli's gateDeleteLeft):
+// that flag shapes the installation, so the gate stands down for the run that
+// passes it and nothing judges the plan again. Offering it for a plan a refusal
+// outside admits stands in would therefore be offering a command that applies
+// the very change that rule refused, with no rule left to read it — the flag a
+// person runs is the delete rule's own way past the delete rule, and not a way
+// past any other.
+//
+// Asked of the addresses and not of which gate wrote the line, because BOTH
+// halves of the gate refuse a removal and they refuse it as one fact: the guard
+// because the owner's list does not hold it, the cover because "actions delete"
+// is outside what a run announces. A caller that asked for the guard's lines
+// alone would therefore never offer the command for a plan whose only refusal
+// is a removal — every one of them carries the cover's line beside it — and the
+// flag clears both, since the run that passes it asks neither.
+//
+// A refusal with no address is not one of them: a gate that refused the plan
+// rather than a change of it refused something no list entry is about.
+//
+// It says nothing about whether the flag clears the removals it did refuse: an
+// address is on admits when tf.Listable put it there, and a caller that fills
+// admits from anything else has to ask what the flag reaches itself.
+func (v Verdict) RefusedOnlyForRemovals(admits []string) bool {
+	if len(v.Refusals) == 0 {
+		return false
+	}
+	for _, r := range v.Refusals {
+		if r.Address == "" || !slices.Contains(admits, r.Address) {
+			return false
+		}
+	}
+	return true
+}
+
 // Changes counts a plan's managed resource changes by kind: a replace is one
 // change (delete and create of one address), and an import is counted beside
 // whatever else the change does.
