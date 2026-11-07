@@ -61,10 +61,26 @@
  * which are not free text but are still text from the wire and so still come
  * through here. `host` is a machine name, which the recorder redacts and the
  * console therefore shows as a marker rather than a name.
+ *
+ * `repoPattern` and `imageRef` were added by the managed-project screens' CM7
+ * (the policy notes, review of 2026-11-07). The plan requires that section to
+ * draw a published policy's `allow_repos` and its image catalog, and neither
+ * value is a shape the set had a class for: an allow-list entry is
+ * `provider/owner/name` or a per-segment pattern (`repository` draws
+ * `owner/name`, one slash, and refuses both), and a catalog entry's `image` is
+ * a container image reference. `label`, the class for an identifier a policy
+ * wrote, is not the answer for either: it runs the free-text rules, whose path
+ * and host rules draw `github/acme/app` as `github<path>` and
+ * `ghcr.io/acme/app:1.2` as `<host><path>:1.2` -- a redaction the document does
+ * not contain, for a value the CLI validated when it was written. So the two
+ * are validating classes of the same kind as `repository`, each holding the
+ * grammar the CLI enforces at its own writer, cited in its comment.
  */
 export type TextClass =
   | 'sentence'
   | 'repository'
+  | 'repoPattern'
+  | 'imageRef'
   | 'slug'
   | 'branch'
   | 'project'
@@ -84,6 +100,8 @@ export type TextClass =
 export const TEXT_CLASSES: readonly TextClass[] = Object.freeze([
   'sentence',
   'repository',
+  'repoPattern',
+  'imageRef',
   'slug',
   'branch',
   'project',
@@ -180,6 +198,16 @@ export const MAX_URL_LENGTH = 2048
 /** MAX_REPOSITORY_LENGTH bounds an `owner/name`, as the IPC layer bounds the
  * repository argument it accepts. */
 export const MAX_REPOSITORY_LENGTH = 200
+
+/** MAX_REPO_PATTERN_LENGTH bounds a `repoPattern`. It is `repository`'s own
+ * bound, for the same reason and with room for the provider segment: a longer
+ * value is a document in a cell rather than a repository anybody wrote. */
+export const MAX_REPO_PATTERN_LENGTH = 200
+
+/** MAX_IMAGE_REF_LENGTH bounds an `imageRef`, and it is the CLI's own bound
+ * (`maxCatalogImageRefLen`, `internal/config/catalog.go`): a reference the CLI
+ * refused to write is not one a console should draw. */
+export const MAX_IMAGE_REF_LENGTH = 255
 
 /** ELLIPSIS marks a clipped sentence. It is three periods rather than U+2026 so
  * that the cut is visible on a terminal and a screenshot alike, and so that a
@@ -2056,6 +2084,33 @@ export function nameableText(text: string): boolean {
  * the pattern, so `a/../../etc` is a refusal and not a repository. */
 const REPOSITORY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 
+/** REPO_PATTERN_RE is one entry of a published project policy's `allow_repos`:
+ * the literal `*` (every repository), or a **provider-qualified** three-segment
+ * pattern. The grammar is the CLI's own -- `internal/projectpolicy`'s
+ * `MatchRepo` over `internal/config`'s `repoPatternSegmentRE` and
+ * `MatchSegment` -- and it is wider than `REPOSITORY_RE` in the two ways the
+ * policy is: a segment may carry a `*` wildcard (which never crosses a `/`, so
+ * `github/acme/*` admits `github/acme/app` and not `github/acme/a/b`), and the
+ * canonical repository a policy writes (`provider/owner/name`, `Canonical`) has
+ * three segments rather than two.
+ *
+ * `..` is refused by the class rather than by the pattern, as it is for
+ * `repository`: `CanonicalRepo` refuses both a `.` and a `..` segment, so a
+ * value carrying one is not a spelling any reader of the policy accepts. */
+const REPO_PATTERN_RE =
+  /^(?:\*|[A-Za-z0-9._*-]+\/[A-Za-z0-9._*-]+\/[A-Za-z0-9._*-]+)$/
+
+/** IMAGE_REF_RE is a container image reference, and it is `internal/config`'s
+ * `catalogImageRE` (`ValidateCatalog`, the rule the local configuration and the
+ * published policy node are both held to): an optional registry host with an
+ * optional port, a repository path of lower-case components, an optional tag and
+ * an optional sha256 digest. It is an allow-list rather than a scan for the same
+ * reason the CLI's is: the reference is written into a job spec, and a value
+ * carrying a newline, an escape sequence or a bidi override is one no registry
+ * serves and no person reads back as the image it names. */
+const IMAGE_REF_RE =
+  /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$/
+
 /** SLUG_RE is a bucket key or a task slug: lower case, digits, hyphens. */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,126}$/
 
@@ -2584,6 +2639,29 @@ export function sanitizeText(
     return REPOSITORY_RE.test(text)
       ? ok(text, flags)
       : refuse(`${field} is not a valid repository`)
+  }
+
+  if (textClass === 'repoPattern') {
+    // A marker is kept as it is, as every validating class keeps one: the
+    // recorder's `<slug>` and the pseudonym grammars are values a *reader*
+    // recognises, and refusing one would turn a redacted policy entry into a
+    // cell that says the document is broken.
+    if (isMarkerText(text)) return ok(text, flags)
+    if (text.includes('..')) return refuse(`${field} is not a valid repository pattern`)
+    if (text.length > MAX_REPO_PATTERN_LENGTH) {
+      return refuse(`${field} is not a valid repository pattern`)
+    }
+    return REPO_PATTERN_RE.test(text)
+      ? ok(text, flags)
+      : refuse(`${field} is not a valid repository pattern`)
+  }
+
+  if (textClass === 'imageRef') {
+    if (isMarkerText(text)) return ok(text, flags)
+    if (text.length > MAX_IMAGE_REF_LENGTH) {
+      return refuse(`${field} is not a valid container image reference`)
+    }
+    return IMAGE_REF_RE.test(text) ? ok(text, flags) : refuse(`${field} is not a valid container image reference`)
   }
 
   if (textClass === 'slug') {

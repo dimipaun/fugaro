@@ -69,7 +69,9 @@ import {
   HOST_PLACEHOLDER,
   LITERAL_PLACEHOLDER,
   MARKERS as SHARED_MARKERS,
+  MAX_IMAGE_REF_LENGTH,
   MAX_LABEL_LENGTH,
+  MAX_REPO_PATTERN_LENGTH,
   MAX_REPOSITORY_LENGTH,
   MAX_TEXT_INPUT_LENGTH,
   MAX_TEXT_LENGTH,
@@ -692,10 +694,12 @@ describe('the class rules', () => {
       [
         'branch',
         'host',
+        'imageRef',
         'label',
         'path',
         'person',
         'project',
+        'repoPattern',
         'repository',
         'runId',
         'sentence',
@@ -713,6 +717,66 @@ describe('the class rules', () => {
     }
     expect(refused('x'.repeat(MAX_REPOSITORY_LENGTH + 1) + '/y', 'repository')).toContain(
       'not a valid repository',
+    )
+  })
+
+  it('keeps a policy allow-list pattern, and refuses anything that is not one', () => {
+    // The four shapes a published policy's `allow_repos` carries
+    // (`projectpolicy.MatchRepo`): the canonical repository the CLI writes,
+    // the literal `*`, and the two wildcard forms the matcher documents. The
+    // `repository` class refuses every one of them -- it is `owner/name`, one
+    // slash -- which is why this class exists (CM7's review of 2026-11-07).
+    expect(text('fixture-provider/fixture-owner/fixture-repo', 'repoPattern')).toBe(
+      'fixture-provider/fixture-owner/fixture-repo',
+    )
+    expect(text('*', 'repoPattern')).toBe('*')
+    expect(text('github/acme/*', 'repoPattern')).toBe('github/acme/*')
+    expect(text('*/acme/*', 'repoPattern')).toBe('*/acme/*')
+    for (const bad of [
+      // `repository`'s own shape is not one: a policy entry is
+      // provider-qualified, and a bare `owner/name` in one is a value
+      // `Canonical` never wrote.
+      'fixture-owner/fixture-repo',
+      'a/b/c/d',
+      'a/../../etc',
+      'github/acme/',
+      'a b/c/d',
+      '',
+    ]) {
+      expect(refused(bad, 'repoPattern', 'policy.allow_repos[0]'), bad).toContain(
+        'policy.allow_repos[0]',
+      )
+    }
+    expect(refused('x'.repeat(MAX_REPO_PATTERN_LENGTH + 1), 'repoPattern')).toContain(
+      'not a valid repository pattern',
+    )
+  })
+
+  it('keeps a container image reference, and refuses anything that is not one', () => {
+    // The shapes `catalogImageRE` accepts (`ValidateCatalog`): a bare name and
+    // tag, a registry host, a host with a port, a path of several components,
+    // and a digest.
+    for (const good of [
+      'node',
+      'postgres:16',
+      'ghcr.io/acme/agent:1.2',
+      'registry.example.invalid:5000/acme/agent@sha256:' + 'a'.repeat(64),
+    ]) {
+      expect(text(good, 'imageRef'), good).toBe(good)
+    }
+    for (const bad of [
+      'ghcr.io/acme/my image:1',
+      ['ghcr.io/acme/agent:1', 'a'].join('\n'),
+      'GHCR.IO/acme/agent',
+      'ghcr.io/acme/agent:1.2@sha256:' + 'a'.repeat(63),
+      '',
+    ]) {
+      expect(refused(bad, 'imageRef', 'policy.image_catalog.entries[0].source.image'), bad).toContain(
+        'policy.image_catalog.entries[0].source.image',
+      )
+    }
+    expect(refused('x'.repeat(MAX_IMAGE_REF_LENGTH + 1), 'imageRef')).toContain(
+      'not a valid container image reference',
     )
   })
 
