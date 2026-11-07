@@ -25,6 +25,12 @@ var (
 	ErrIntentDeclared  = errors.New("orchestrator: the intent is already declared")
 )
 
+// MaxOps bounds one patch. A patch is a caller's list of changes, so its
+// length is the caller's to choose, and this is where it stops being: the
+// schema publishes the same number, and a patch of a hundred thousand ops is
+// not a change anybody read.
+const MaxOps = 64
+
 // Patch is one typed change to a state. It carries the revision it was built
 // from, so a patch built against a state somebody else has since changed is
 // refused rather than landing on top of it, and the ops in order.

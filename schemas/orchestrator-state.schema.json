@@ -94,6 +94,10 @@
         "attempts"
       ],
       "additionalProperties": false,
+      "not": {
+        "required": ["approved", "spent_approval_at"],
+        "description": "A standing approval and a spent-approval marker at once: the marker names the approval a retry spent, and the write that spends it clears the approval in the same one, so the two are never both there. Go: ValidateState refuses the pair."
+      },
       "properties": {
         "id": {
           "type": "string",

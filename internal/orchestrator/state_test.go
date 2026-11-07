@@ -119,6 +119,26 @@ func TestOversizeOrMalformedStateIsRefusedClientSide(t *testing.T) {
 			// would have the count an approval is spent against count it twice.
 			listAt(t, m, "intents")[0].(map[string]any)["id"] = "wi-1:1x"
 		}, orchestrator.ErrInvalid},
+		{"two decisions with one id", func(t *testing.T, m map[string]any) {
+			// A decision is found by id, and finding is resolving, reading
+			// and counting: a second one under the same id is a question
+			// nobody can close and a call counted twice.
+			ds := listAt(t, m, "decisions")
+			m["decisions"] = append(ds, ds[0])
+		}, orchestrator.ErrInvalid},
+		{"two intents with one id", func(t *testing.T, m map[string]any) {
+			// An intent's id is the item and the attempt, unique for the
+			// item's whole life: two of them would double-count the
+			// allowance and leave one attempt's outcome nowhere to land.
+			its := listAt(t, m, "intents")
+			m["intents"] = append(its, its[0])
+		}, orchestrator.ErrInvalid},
+		{"an item with a standing approval and a spent one", func(t *testing.T, m map[string]any) {
+			// The marker names the approval a retry spent, and spending it
+			// clears the approval in the same write, so both at once is a
+			// document that says the item has an allowance and has none.
+			workItemAt(t, m, 0)["spent_approval_at"] = "2026-11-07T08:00:00Z"
+		}, orchestrator.ErrInvalid},
 		{"a document over the size target with every field inside its cap", func(_ *testing.T, m map[string]any) {
 			// Nothing here breaks a cap of its own: sixty-four facts of the
 			// longest value a fact may carry are a document of twenty-odd
@@ -141,6 +161,45 @@ func TestOversizeOrMalformedStateIsRefusedClientSide(t *testing.T) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestStrictDecodeReadsOneValueAndNoMore is the other half of the strict
+// decode: `DisallowUnknownFields` refuses a field a release does not model
+// *inside* the value it parsed, and a decoder stops at the end of the first
+// value — so `{...}{...}`, or a token after the document, is read as the
+// document the validator checked while the rest of the bytes, which are what
+// the node really carries and what the next reader sees, go unexamined.
+//
+// Mutation: drop the end-of-input check from decodeStrict and every case
+// below decodes.
+func TestStrictDecodeReadsOneValueAndNoMore(t *testing.T) {
+	state := readFixture(t)
+	patch := []byte(`{"base_rev":7,"ops":[{"op":"goal_set","goal":{"goal":"x"}}]}`)
+	after := func(raw []byte, more string) []byte {
+		return append(append([]byte{}, raw...), more...)
+	}
+	for _, tc := range []struct {
+		name   string
+		raw    []byte
+		decode func([]byte) error
+	}{
+		{"a state and a second document after it", after(state, string(state)), decodeStateErr},
+		{"a state and a token after it", after(state, " 1"), decodeStateErr},
+		{"a patch and a second document after it", after(patch, string(patch)), decodePatchErr},
+		{"a patch and a token after it", after(patch, "\ntrue"), decodePatchErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.decode(tc.raw); !errors.Is(err, orchestrator.ErrInvalid) {
+				t.Fatalf("err = %v, want %v", err, orchestrator.ErrInvalid)
+			}
+		})
+	}
+
+	// Whitespace after the value is not a second value, so a document with a
+	// trailing newline — which is what a file, or an editor, leaves — is read.
+	if _, err := orchestrator.DecodeState(append(append([]byte{}, state...), '\n')); err != nil {
+		t.Fatalf("a state with a trailing newline did not decode: %v", err)
 	}
 }
 
@@ -378,6 +437,17 @@ func TestSchemasMatchTheStructs(t *testing.T) {
 			if tc.file == "orchestrator-state.schema.json" {
 				checkFreshStateMatchesTheSchema(t, sch)
 			}
+			if tc.file == "orchestrator-patch.schema.json" {
+				// The op cap is published in the schema and enforced in
+				// ValidatePatch: a patch this release refuses is one its own
+				// schema reads, and the two drifting apart is how a caller
+				// that validates first is told to send something that is then
+				// refused.
+				ops := doc["properties"].(map[string]any)["ops"].(map[string]any)
+				if got := ops["maxItems"]; got != float64(orchestrator.MaxOps) {
+					t.Fatalf("the schema bounds a patch at %v ops, and this release at %d", got, orchestrator.MaxOps)
+				}
+			}
 			defs := doc["$defs"].(map[string]any)
 			if len(defs) != len(tc.defs)+len(tc.extra) {
 				t.Fatalf("the schema has %d definitions, and this release names %d structs and %v among its shapes", len(defs), len(tc.defs), tc.extra)
@@ -430,6 +500,20 @@ func checkFreshStateMatchesTheSchema(t *testing.T, sch *jsonschema.Schema) {
 	}
 	if err := sch.Validate(doc); err != nil {
 		t.Fatalf("a fresh state is not a document the schema accepts: %v", err)
+	}
+
+	// And the direction the other way, for the one invariant the schema states
+	// as well as the validator: a consumer that checks the schema before it
+	// reads is not told an item with a standing approval and a spent one — a
+	// document this release never writes — is fine.
+	carried := document(t, readFixture(t))
+	workItemAt(t, carried, 0)["spent_approval_at"] = "2026-11-07T08:00:00Z"
+	paired, err := jsonschema.UnmarshalJSON(bytes.NewReader(remarshal(t, carried)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(paired); err == nil {
+		t.Fatal("the schema accepts an item that carries a standing approval and a spent one at once")
 	}
 }
 
@@ -848,6 +932,10 @@ func stateBytes(t *testing.T, s orchestrator.State) int {
 
 // readFixture is the state document under testdata, which is the one the
 // reader, the migration and the schemas are all checked against.
+func decodeStateErr(raw []byte) error { _, err := orchestrator.DecodeState(raw); return err }
+
+func decodePatchErr(raw []byte) error { _, err := orchestrator.DecodePatch(raw); return err }
+
 func readFixture(t *testing.T) []byte {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/state-a.json")

@@ -71,6 +71,7 @@ func TestUnknownOpIsRefused(t *testing.T) {
 		{"no payload at all", `{"base_rev":7,"ops":[{"op":"fact_set"}]}`, orchestrator.ErrOpPayload},
 		{"a patch that changes nothing", `{"base_rev":7,"ops":[]}`, orchestrator.ErrInvalid},
 		{"a field the op does not carry", `{"base_rev":7,"ops":[{"op":"fact_set","fact":{"key":"k","value":"v"},"digest":"sha256:x"}]}`, orchestrator.ErrInvalid},
+		{"more ops than one patch carries", patchOf(t, orchestrator.MaxOps+1), orchestrator.ErrTooLarge},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := orchestrator.DecodePatch([]byte(tc.raw))
@@ -779,6 +780,17 @@ func intentOutcomeOp(id string, outcome orchestrator.Outcome) orchestrator.Op {
 		ID:     orchestrator.IntentItem(id),
 		Intent: &orchestrator.IntentOp{ID: id, Outcome: &outcome},
 	}}
+}
+
+// patchOf is a patch of n ops that are each shaped, so what a test with it is
+// about is the count rather than what the ops say.
+func patchOf(t *testing.T, n int) string {
+	t.Helper()
+	ops := make([]string, n)
+	for i := range ops {
+		ops[i] = `{"op":"fact_set","fact":{"key":"k","value":"v"}}`
+	}
+	return `{"base_rev":7,"ops":[` + strings.Join(ops, ",") + `]}`
 }
 
 func withBrief(w orchestrator.WorkItem, brief string) orchestrator.WorkItem {

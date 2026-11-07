@@ -3,7 +3,9 @@ package orchestrator
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strings"
@@ -83,6 +85,14 @@ func decodeStrict[T any](raw []byte) (T, error) {
 	if err := dec.Decode(&v); err != nil {
 		return v, fmt.Errorf("%w: the document carries something this release does not model: %v", ErrInvalid, err)
 	}
+	// One value and nothing after it. A decoder stops at the end of the first
+	// value, so `{...}{...}` and `{...} junk` both decode to the document
+	// checked above and leave the rest — bytes the node really carries, and
+	// bytes a reader of the raw value sees — unexamined. The validator is the
+	// whole shape check (D1241), so it reads the whole value.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return v, fmt.Errorf("%w: the document is not one JSON value, there is more after it", ErrInvalid)
+	}
 	return v, nil
 }
 
@@ -128,10 +138,19 @@ func ValidateState(s State) error {
 	if len(s.Decisions) > MaxDecisions {
 		return fmt.Errorf("%w: %d decisions, at most %d", ErrTooLarge, len(s.Decisions), MaxDecisions)
 	}
+	seenDecision := make(map[string]bool, len(s.Decisions))
 	for _, d := range s.Decisions {
 		if err := validateDecision(d); err != nil {
 			return err
 		}
+		// A decision is looked up by id: resolving, reading and counting a
+		// question all find the first entry that carries it, so a second one
+		// with the same id is a question nobody can close and a call counted
+		// twice.
+		if seenDecision[d.ID] {
+			return fmt.Errorf("%w: two decisions share the id %q", ErrInvalid, safetext.OneLine(d.ID))
+		}
+		seenDecision[d.ID] = true
 	}
 	if len(s.Facts) > MaxFacts {
 		return fmt.Errorf("%w: %d facts, at most %d", ErrTooLarge, len(s.Facts), MaxFacts)
@@ -168,10 +187,20 @@ func ValidateState(s State) error {
 	if len(s.Intents) > MaxIntents {
 		return fmt.Errorf("%w: %d intents, at most %d", ErrTooLarge, len(s.Intents), MaxIntents)
 	}
+	seenIntent := make(map[string]bool, len(s.Intents))
 	for _, it := range s.Intents {
 		if err := validateIntent(it); err != nil {
 			return err
 		}
+		// An intent's id is the item and the attempt, and it is unique for the
+		// item's whole life: the count an approval is spent against, the next
+		// attempt number and the outcome a run reports all find an intent by
+		// it, so two with one id would double-count the allowance and leave
+		// the second attempt's outcome nowhere to land.
+		if seenIntent[it.ID] {
+			return fmt.Errorf("%w: two intents share the id %q", ErrInvalid, safetext.OneLine(it.ID))
+		}
+		seenIntent[it.ID] = true
 	}
 	if s.Counters.DecisionsHour < 0 || s.Counters.DecisionsDay < 0 || s.Counters.DecisionsHour > s.Counters.DecisionsDay {
 		return fmt.Errorf("%w: the counters say %d calls this hour and %d today", ErrInvalid, s.Counters.DecisionsHour, s.Counters.DecisionsDay)
@@ -241,6 +270,14 @@ func validateItem(s State, w WorkItem) error {
 		if a.Attempts != ApprovalAttempts {
 			return fmt.Errorf("%w: the approval of %q covers %d attempts, and one covers %d", ErrInvalid, w.ID, a.Attempts, ApprovalAttempts)
 		}
+	}
+	if w.Approved != nil && w.SpentApprovalAt != nil {
+		// The marker names the approval a retry spent, and the write that
+		// spends it clears the approval in the same one, so the two are never
+		// true at once. Both at once is a document that says an item has an
+		// allowance and has none, and the summary reads the approval and
+		// reports the item as launchable.
+		return fmt.Errorf("%w: %q carries a standing approval and a spent one at once", ErrInvalid, w.ID)
 	}
 	if len(w.DependsOn) > MaxDependsOn {
 		return fmt.Errorf("%w: %q depends on %d items, at most %d", ErrTooLarge, w.ID, len(w.DependsOn), MaxDependsOn)
@@ -330,6 +367,9 @@ func ValidatePatch(p Patch) error {
 	}
 	if len(p.Ops) == 0 {
 		return fmt.Errorf("%w: the patch carries no op, so it would change nothing", ErrInvalid)
+	}
+	if len(p.Ops) > MaxOps {
+		return fmt.Errorf("%w: the patch carries %d ops, at most %d", ErrTooLarge, len(p.Ops), MaxOps)
 	}
 	for i, op := range p.Ops {
 		if err := validateOp(op); err != nil {
