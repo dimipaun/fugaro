@@ -34,12 +34,18 @@ import (
 // publishes a layer ends the one command with no file at the path D830 names,
 // and the owner's next step is a file they have never seen.
 
-// layerSeedWhat, layerPublishWhat and layerReseedWhat are the three things this
-// stage asks before it writes, in the words the operator reads.
+// layerSeedWhat, layerPublishWhat and layerReseedWhat are this stage's own
+// three writes in the words the operator reads, before each one is made; the
+// repository-image migration's two are layerMigrateWhat
+// (init_layer_migration.go) and layerFileMigrateWhat.
 const (
 	layerSeedWhat    = "this writes your local layer file from the published project layer: it is the file you edit, and the file fugaro update publishes"
 	layerPublishWhat = "this rewrites the published project layer from your local layer file: every repository of the project resolves against it, and so does every run of them"
 	layerReseedWhat  = "this re-seeds your local layer file from the published project layer: the file you have now is kept beside it"
+	// layerFileMigrateWhat is the migration's other half on its own: the
+	// published object already lost the removed keys and this machine's file
+	// still holds them, so the file is the only write.
+	layerFileMigrateWhat = "this rewrites your local layer file without the keys the repository-image removal refuses: the published project layer already holds none of them, is left as it is, and the file you have now is kept beside it"
 )
 
 // layerStage is the stage itself.
@@ -178,8 +184,8 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 			// the whole of what is wrong with the file and nothing is published
 			// from it.
 			if r := removedKeysOut(p.local, lc); r != nil {
-				if len(r.Problems) > 0 {
-					return nil, userErr("%s: %s", path, pluginwire.Printable(removedKeysFolded(r)))
+				if r.unwritable() {
+					return nil, userErr("%s: %s", path, removedKeysFolded(r))
 				}
 				p.local, p.localRemoval = r.Data, r
 				l, ps = r.Layer, nil
@@ -212,7 +218,17 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 			// gone. The object is only written from a document this Fugaro
 			// reads; when the removal leaves anything else wrong with it, the
 			// state it is in is not this stage's to guess at.
-			if r := removedKeysOut(data, lc); r != nil && len(r.Problems) == 0 {
+			//
+			// A removal there is none of is not that same "leave it": the
+			// object still holds the keys, so every repository of the project
+			// keeps resolving against a document no reader accepts, and a run
+			// that carried on would report the layer converged and seed this
+			// machine's file from those very bytes. The run says what it cannot
+			// do instead, the way it does for the local file.
+			if r := removedKeysOut(data, lc); r != nil {
+				if r.unwritable() {
+					return nil, userErr("%s: %s", config.LayerKey, removedKeysFolded(r))
+				}
 				p.published, p.objectRemoval, p.objectLayer = r.Data, r, r.Layer
 			}
 		}
@@ -227,10 +243,14 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 	case !p.pubExists:
 		p.publish = true
 	case bytes.Equal(p.local, p.published):
-		if p.objectRemoval != nil {
+		if p.objectRemoval != nil || p.localRemoval != nil {
 			// The removal is the whole of the difference between the two sides:
 			// the object is rewritten in place, and the file with it when it
-			// holds the same keys.
+			// holds the same keys. A file that is the only side still holding
+			// them — the object was published by a run that already took them
+			// out, or by another machine's — is that same removal with nothing
+			// left for the object, and it is not a state to record a generation
+			// and return from: the file keeps the keys every reader refuses.
 			p.migrate = true
 			break
 		}
@@ -300,13 +320,24 @@ func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 	case p.stale != nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published project layer is not the generation this machine's layer file was written from (%s): this run re-seeds the file%s, after your confirmation", p.stale.text(), p.removalClause())}, nil
 	case p.migrate:
-		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published project layer holds %s: this run rewrites it in place without them, after your confirmation", p.objectRemoval.text())}, nil
+		return initflow.Status{State: initflow.Todo, Detail: p.migrateDetail()}, nil
 	case p.publish:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local layer file %s is unpublished: this run publishes it%s, after your confirmation", p.path, p.fileClause())}, nil
 	case p.recordGen:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("this machine's config records %s as the generation its layer file was written from: this run records %d", generationText(p.recorded), p.gen)}, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the local layer file %s is the published project layer (generation %d)", p.path, p.gen)}, nil
+}
+
+// migrateDetail is the migrate state's sentence for the side the removal still
+// has to rewrite: the published object, with this machine's file beside it when
+// that file holds the keys too, or that file alone when the object has already
+// lost them.
+func (p *layerPlan) migrateDetail() string {
+	if p.objectRemoval == nil {
+		return fmt.Sprintf("your local layer file holds %s: this run rewrites it without them, after your confirmation", p.localRemoval.text())
+	}
+	return fmt.Sprintf("the published project layer holds %s: this run rewrites it in place without them, after your confirmation", p.objectRemoval.text())
 }
 
 // removalClause is the half of a state's sentence for a run that also rewrites
@@ -353,6 +384,9 @@ func (p *layerPlan) planDetail() string {
 	case p.stale != nil:
 		return fmt.Sprintf("re-seed %s from the published project layer%s, after your confirmation", p.path, p.removalClause())
 	case p.migrate:
+		if p.objectRemoval == nil {
+			return fmt.Sprintf("rewrite your local layer file without %s, after your confirmation", p.localRemoval.text())
+		}
 		return fmt.Sprintf("rewrite the published project layer in place without %s, after your confirmation", p.objectRemoval.text())
 	case p.publish:
 		return fmt.Sprintf("publish the project layer from %s%s, after your confirmation", p.path, p.fileClause())
@@ -395,7 +429,7 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 	case p.publish:
 		return s.publish(ctx, env, p)
 	case p.migrate:
-		return s.migrateLocal(p)
+		return s.migrateLocal(env, p)
 	case p.recordGen:
 		if err := layerGenerationRecord(s.e.r.w, p.configPath, p.lc, p.gen); err != nil {
 			return initflow.Outcome{}, err

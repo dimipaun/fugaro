@@ -65,6 +65,20 @@ profiles:
 default_profile: svc
 `
 
+// flowLayer is a project layer whose profile writes the removed keys in flow
+// style — `svc: { … image: { apt: [libvips-dev] } }` — which is a document
+// yamledit has no edit for: it splices a member out of a flow mapping only
+// while the member's value is a plain value, and this one's is a collection.
+// Every reader refuses the document all the same, so the key stays where it is
+// and the run has to say so.
+const flowLayer = `version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  svc: { commands: { build: sh build.sh }, image: { apt: [libvips-dev] } }
+default_profile: svc
+`
+
 // localOnlyMigrated is localOnlyLayer as the publish writes it.
 const localOnlyMigrated = `version: 1
 project: aurora
@@ -76,7 +90,7 @@ default_profile: svc
 `
 
 // TestUpdateMigratesAPreviousReleaseLayer: the removal's own convergence, on
-// the three states a project layer is found in. The keys the repository-image
+// the four states a project layer is found in. The keys the repository-image
 // removal refuses go out of the published object (in place: the project is
 // never left with no layer), out of this machine's local layer file, or out of
 // both, with `fugaro update` alone and no second command.
@@ -90,6 +104,11 @@ func TestUpdateMigratesAPreviousReleaseLayer(t *testing.T) {
 		{"both sides hold them", previousLayer, previousLayer, migratedLayer},
 		{"only the published object holds them", previousLayer, "", migratedLayer},
 		{"only the local layer file holds them", "", localOnlyLayer, localOnlyMigrated},
+		// The object was published by a run that already took the keys out —
+		// or by another machine's — and this machine's file still holds them:
+		// the file is the whole of the work left, and a run that records the
+		// generation and returns leaves it holding keys every reader refuses.
+		{"the object already lost them and the file still holds them", migratedLayer, previousLayer, migratedLayer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newLayerRig(t, tc.published)
@@ -190,8 +209,51 @@ default_profile: svc
 	}
 }
 
+// TestUpdateRefusesALayerTheRemovalCannotCut: the removal has no edit for a
+// removed key written in a flow mapping whose value is a collection, and a run
+// that read that as "nothing to take out" would report the layer converged
+// while the object — and the file seeded from it — still hold a document every
+// reader refuses. Both sides refuse it, and both say which key and why.
+func TestUpdateRefusesALayerTheRemovalCannotCut(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		published string
+		local     string
+	}{
+		{"the published object holds it", flowLayer, ""},
+		{"only the local layer file holds it", "", flowLayer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newLayerRig(t, tc.published)
+			path := localLayerPath(t)
+			if tc.local != "" {
+				recordLayer(t, tc.local, "0")
+			}
+
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("fugaro update reported a layer converged that still holds a removed key: %v\n%s%s", err, out, errOut)
+			}
+			all := out + errOut + err.Error()
+			if !strings.Contains(all, "profiles.svc.image.apt") || !strings.Contains(all, "flow collection") {
+				t.Errorf("the refusal does not say which key the removal could not take out, and why:\n%s", all)
+			}
+			if got, ok := layerObject(t, r); ok && got != tc.published {
+				t.Errorf("the object was written from a layer this run cannot migrate: %q", got)
+			}
+			if tc.local != "" {
+				if data, rerr := os.ReadFile(path); rerr != nil || string(data) != tc.local {
+					t.Errorf("the local layer file was rewritten with keys still in it: %s%v", data, rerr)
+				}
+			}
+		})
+	}
+}
+
 // TestRemovedKeysOut pins the strip itself: what it takes out, what it leaves
-// byte for byte, and the two documents it refuses to write.
+// byte for byte, the two documents it refuses to write, and the third state
+// that is neither — a key yamledit will not cut out at all, which is not the
+// same as a document with nothing to take out.
 func TestRemovedKeysOut(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234"}
 
@@ -228,6 +290,19 @@ func TestRemovedKeysOut(t *testing.T) {
 	t.Run("nothing to take out", func(t *testing.T) {
 		if r := removedKeysOut([]byte(testProjectLayer), lc); r != nil {
 			t.Errorf("a layer with no removed key was rewritten: %+v", r)
+		}
+	})
+
+	t.Run("a key the editor cannot cut out", func(t *testing.T) {
+		r := removedKeysOut([]byte(flowLayer), lc)
+		if r == nil {
+			t.Fatal("a layer holding a removed key was read as a document with nothing to take out")
+		}
+		if r.Refused == "" || len(r.Problems) != 0 {
+			t.Fatalf("the editor's own refusal is not kept apart from a removal that was made: %+v", r)
+		}
+		if len(r.Keys) != 1 || r.Keys[0].Path() != "profiles.svc.image.apt" {
+			t.Errorf("the keys the removal could not take out are %v", r.Keys)
 		}
 	})
 

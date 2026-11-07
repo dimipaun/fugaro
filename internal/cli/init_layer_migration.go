@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 	"gopkg.in/yaml.v3"
 )
@@ -70,7 +71,21 @@ type layerRemoval struct {
 	// left of the document is not a project layer it reads, so the caller
 	// publishes nothing from it. Empty is the removal being writable.
 	Problems []config.Problem
+	// Refused is why the editor made no removal at all — a key written in a
+	// flow mapping whose value is a collection has no edit that takes it out,
+	// and yamledit splices nothing else — and "" when every edit landed. It is
+	// not Problems: Problems is what the document a removal DID make says, and
+	// this is the removal there is none of. Refused and Problems must both stay
+	// apart from a nil result, which is a document with nothing to take out: a
+	// caller that read either as nil would report a layer converged while the
+	// document still holds keys every reader refuses.
+	Refused string
 }
+
+// unwritable is why this run does not write this removal — the editor's own
+// refusal, or the problems of the document the removal left — and false when it
+// is one it may write.
+func (r *layerRemoval) unwritable() bool { return r.Refused != "" || len(r.Problems) > 0 }
 
 // text names what the removal takes out of one side, for a sentence.
 func (r *layerRemoval) text() string {
@@ -174,14 +189,17 @@ func removalTakesTheBlock(block string, sub map[string]any) bool {
 
 // removedKeysOut takes the keys the repository-image removal refuses out of a
 // project layer document, leaving every other byte as it is. It returns nil
-// when there is nothing to do: a document holding no removed key, one this
-// editor cannot walk, and one whose profiles the doc does not decode.
+// when there is nothing to do: a document holding no removed key, one whose
+// profiles the doc does not decode, and one whose every edit leaves the bytes
+// as they were.
 //
-// The result is not always one a caller may write. The removal can leave a
-// document this Fugaro does not read — a profile is emptied and `default_profile`
-// named it, say — and Problems then says so, with the problems of the document
-// the removal leaves rather than of the one it started from: the removed keys
-// are the migration's to answer for, and what stops it is the rest.
+// The result is not always one a caller may write, and the two ways it is not
+// are kept apart — Refused for the key yamledit will not cut out of the
+// document at all, Problems for the document the removal does make and this
+// Fugaro does not read (a profile is emptied and `default_profile` named it,
+// say) — because a caller that read either as "nothing to do" would report a
+// layer converged while the document still holds keys every reader refuses. Data
+// and Layer are what the side is written from, and mean nothing when unwritable.
 func removedKeysOut(data []byte, lc *localcfg.Config) *layerRemoval {
 	var doc layerProfiles
 	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Profiles) == 0 {
@@ -195,7 +213,12 @@ func removedKeysOut(data []byte, lc *localcfg.Config) *layerRemoval {
 			next, err := yamledit.RemoveKeyWithOptions(out,
 				append([]string{"profiles", name}, e.path...), yamledit.RemoveOptions{DropEmptyParents: true})
 			if err != nil {
-				return nil
+				// The keys of this edit go with the ones already taken out of
+				// the report, because this run writes neither: what the sentence
+				// names is what the removal would take out of the side.
+				r.Keys = append(r.Keys, e.keys...)
+				r.Refused = spliceRefusal(err)
+				return r
 			}
 			if yamledit.Changed(out, next) {
 				r.Keys = append(r.Keys, e.keys...)
@@ -240,12 +263,34 @@ func printLayerRemoval(w io.Writer, place string, r *layerRemoval) {
 	}
 }
 
+// spliceRefusal is yamledit's own refusal in the owner's words, the way a
+// models write renders it: the class, never the document's bytes. The removal
+// meets it on a layer whose profile writes a removed key inside a flow mapping
+// whose value is a collection — `image: { apt: [...] }` written as one member
+// of a `{ ... }` line — which has no edit that takes the key out.
+func spliceRefusal(err error) string {
+	reason := yamledit.ReasonOf(err)
+	if reason == "" {
+		return "this editor refused to cut the key out of the document"
+	}
+	return fmt.Sprintf("this editor will not cut the key out of the document as it is written — %s", reason)
+}
+
 // removedKeysFolded is the removal's sentence for the failures that stop it
-// before any write: the keys it would take out, and the problems of what is
-// left of the document.
+// before any write: the keys it would take out of one side, and what stopped it
+// — the editor's own refusal, or the problems of what is left of the document.
+// What the layer itself supplies (the profile names of the keys, the problems'
+// text) is wrapped printable here rather than the sentence being wrapped whole
+// at the call site: MaxPrintable runes is not enough for the reason and the
+// instruction that ends the sentence, and a cut refusal loses the half an
+// operator acts on.
 func removedKeysFolded(r *layerRemoval) string {
+	if r.Refused != "" {
+		return fmt.Sprintf("the repository-image removal takes %s out of it, and this run does not write it: %s; take the key out by hand and run %s again",
+			pluginwire.Printable(r.text()), r.Refused, selfCommand()+" update")
+	}
 	return fmt.Sprintf("the repository-image removal takes %s out of it, and what is left is not a project layer this Fugaro reads: %s",
-		r.text(), layerProblemsText(r.Problems))
+		pluginwire.Printable(r.text()), pluginwire.Printable(layerProblemsText(r.Problems)))
 }
 
 // layerMigrateWhat is the fourth thing this stage asks before it writes: the
@@ -327,16 +372,23 @@ func (p *layerPlan) fileRewriteWhat(base string) string {
 	return base + "; it also rewrites your local layer file " + p.path + " without the keys the repository-image removal refuses, keeping a copy of it"
 }
 
-// migrateLocal is the migration of a run whose object was rewritten and whose
-// file holds the same keys: the file is written from the object's own bytes
-// (the two sides are the same layer), and the generation the object landed at
-// is recorded beside it.
+// migrateLocal is the migration's half on this machine: the local layer file is
+// written from the object's own bytes (after a migrateObject the two sides are
+// the same layer), and the generation the object is at is recorded beside it.
 //
-// The object's half is what this stage confirmed (migrateObject); this half
-// prints what it takes out of the file and keeps a copy of it, the way the
-// re-seed does.
-func (s *layerStage) migrateLocal(p *layerPlan) (initflow.Outcome, error) {
-	out := s.e.r.w
+// The object's half is what this stage confirmed (migrateObject), and it is
+// only asked for when there is one: a file that is the only side still holding
+// the removed keys — the object was published by a run that already took them
+// out, or by another machine's — writes nothing but the file, so it is asked
+// for on its own. The file is printed and a copy of it kept either way, the way
+// the re-seed does.
+func (s *layerStage) migrateLocal(env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
+	cmd, out := s.e.r.cmd, s.e.r.w
+	if p.objectRemoval == nil {
+		if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, layerFileMigrateWhat) }); err != nil {
+			return initflow.Outcome{}, err
+		}
+	}
 	if p.localRemoval != nil {
 		printLayerRemoval(out, "your local layer file "+p.path, p.localRemoval)
 		if err := rewriteLocal(out, p, p.published); err != nil {
@@ -344,8 +396,18 @@ func (s *layerStage) migrateLocal(p *layerPlan) (initflow.Outcome, error) {
 		}
 	}
 	if err := layerGenerationRecord(out, p.configPath, p.lc, p.gen); err != nil {
-		return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("rewrote the published project layer (generation %d)", p.gen)}, err
+		return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("rewrote %s (generation %d)", p.rewroteWhat(), p.gen)}, err
 	}
 	return initflow.Outcome{Changed: true,
-		Detail: fmt.Sprintf("rewrote the project layer without the removed keys (generation %d)", p.gen)}, nil
+		Detail: fmt.Sprintf("rewrote %s without the removed keys (generation %d)", p.rewroteWhat(), p.gen)}, nil
+}
+
+// rewroteWhat names the side the migrate state rewrote, for the report of it:
+// the published object in place, or this machine's file alone when the object
+// already holds none of the removed keys.
+func (p *layerPlan) rewroteWhat() string {
+	if p.objectRemoval == nil {
+		return "your local layer file"
+	}
+	return "the published project layer"
 }
