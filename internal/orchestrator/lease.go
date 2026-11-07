@@ -7,7 +7,7 @@
 // fence**, so two daemons that both read a free lease cannot both take it.
 // Nothing here reads a clock of its own: the stamp is rtdb.ServerNow's, so a
 // laptop whose clock is wrong cannot hold an orchestrator id for ever, and a
-// claim that cannot be signed with a server time is not made at all.
+// claim with no server time behind it is not made at all.
 //
 // The lease decides **who writes**, never **what may be written**: the state's
 // compare-and-swap is what serialises intents, because a daemon that has lost
