@@ -126,21 +126,21 @@ func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc plugi
 	case u.agent != "":
 		cloudSkip, cloudParked = cloudAgentRefusal(u), true
 	default:
-		why, err := s.yamlNotValid(ctx, loc)
-		if err != nil {
-			return nil, err
-		}
-		if why != "" {
-			cloudSkip = why
-			break
-		}
 		origin, err := hasOriginRemote(ctx, loc.Root)
 		if err != nil {
 			return nil, fmt.Errorf("reading the checkout's remotes: %w", err)
 		}
-		if !origin {
-			cloudSkip = "this checkout has no origin repository to refresh"
+		why := "this checkout has no origin repository to refresh"
+		if origin {
+			// The origin is read first, as it always was: a checkout git
+			// cannot read is a failure of the stage and not a reason to drop
+			// a step, so the file is asked about only where there is one to
+			// drop over it.
+			if why, err = s.yamlNotValid(ctx, loc); err != nil {
+				return nil, err
+			}
 		}
+		cloudSkip = why
 	}
 	steps := make([]plannedStep, 0, len(checkoutSteps))
 	for _, step := range checkoutSteps {
@@ -189,7 +189,8 @@ func (s *checkoutStage) namesAnotherProject(loc pluginwire.Location) (string, er
 // Only the cloud step is dropped for it: the pin and the plugin read the
 // checkout's settings and Claude Code, never the file, and they are what
 // clears the staleness line that names `fugaro update` — the one door that
-// would otherwise not be able to clear it (#1836).
+// would otherwise not be able to clear it (#1836). planFor asks it after the
+// origin read, so a checkout git cannot read still fails the stage.
 func (s *checkoutStage) yamlNotValid(ctx context.Context, loc pluginwire.Location) (string, error) {
 	data, err := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml"))
 	if err != nil {

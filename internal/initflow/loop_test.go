@@ -1724,7 +1724,11 @@ func TestLoopPlanOnlyViewUnchanged(t *testing.T) {
 func TestLoopNoReporterPrintsAsToday(t *testing.T) {
 	// A nil reporter is the loop's own account, word for word: every caller
 	// that has not moved onto the reporter prints exactly what it printed
-	// before, closing line and all.
+	// before, closing line and all. One word moved with the gating rule
+	// (RunsPastStop, #1836): the plan view's "after X" names the stage that
+	// gates the line rather than the first one that is not done, so repository
+	// reads "after secrets" here -- the stage this run stops at, which the
+	// account below then says in full ("waits for secrets").
 	var log []string
 	var out bytes.Buffer
 	opts := yesOpts()
@@ -1737,7 +1741,7 @@ func TestLoopNoReporterPrintsAsToday(t *testing.T) {
   [done]       preflight
   [will do]    installation
   [needs you]  secrets
-  [will do]    repository       after installation
+  [will do]    repository       after secrets
 fugaro: result
 fugaro: project aurora (GCP aurora-prod, us-east5)
   [done]       preflight
