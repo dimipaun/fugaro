@@ -207,7 +207,7 @@ func TestEnsureReplacesATreeOfAnotherVersion(t *testing.T) {
 	}
 }
 
-func TestEnsureServesAWarmCacheWithoutGit(t *testing.T) {
+func TestAWarmCacheFetchesNothing(t *testing.T) {
 	r := newRemote(t, "v1.0.0")
 	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
 	run, calls := recordingGit(t)
@@ -218,9 +218,11 @@ func TestEnsureServesAWarmCacheWithoutGit(t *testing.T) {
 	if len(calls()) == 0 {
 		t.Fatal("the first call ran no git")
 	}
-	o.Run = func(context.Context, string, ...string) ([]byte, error) {
-		t.Error("a warm cache ran git again")
-		return nil, nil
+	o.Run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if !slices.Contains(args, "rev-parse") {
+			t.Errorf("a warm cache ran git %v", args)
+		}
+		return []byte(r.commit["v1.0.0"] + "\n"), nil
 	}
 	dir, rec, err := Ensure(context.Background(), o)
 	if err != nil {
@@ -228,6 +230,78 @@ func TestEnsureServesAWarmCacheWithoutGit(t *testing.T) {
 	}
 	if rec.Version != "v1.0.0" || read(t, filepath.Join(dir, "VERSION")) != "v1.0.0\n" {
 		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestAWarmCacheIsCheckedAgainstItsTree is the window between the tree and
+// the record beside it: a run that dies after installing a tree and before
+// writing the record leaves the record naming the version the tree is not,
+// and a cache that answered from the record alone would serve that tree for
+// the version asked for. The commit the tree's HEAD is at decides (D1610).
+func TestAWarmCacheIsCheckedAgainstItsTree(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+	if _, _, err := Ensure(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	root := cacheRootOf(t, o)
+	note := fmt.Sprintf("{\"version\":\"v1.1.0\",\"commit\":%q,\"kind\":\"git\"}\n", r.commit["v1.1.0"])
+	if err := os.WriteFile(filepath.Join(root, recordName), []byte(note), recordFileMod); err != nil {
+		t.Fatal(err)
+	}
+	o.Version, o.Commit = "v1.1.0", r.commit["v1.1.0"]
+	dir, _, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.1.0\n" {
+		t.Fatalf("the tree holds %q: a record the tree does not answer to was served", got)
+	}
+}
+
+// TestEnsureReplacesATreeOfAnotherVersionWithoutACommit is the plan's red
+// step with the commit unable to cover for it: a build that knows only its
+// version asks for a tag, so the recorded commit cannot decide the match and
+// the recorded version alone has to.
+func TestEnsureReplacesATreeOfAnotherVersionWithoutACommit(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	o := options(t, r, "v1.0.0", "")
+	if _, rec, err := Ensure(context.Background(), o); err != nil {
+		t.Fatal(err)
+	} else if rec.Version != "v1.0.0" {
+		t.Fatalf("record = %+v", rec)
+	}
+	o.Version = "v1.1.0"
+	dir, rec, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Version != "v1.1.0" || read(t, filepath.Join(dir, "VERSION")) != "v1.1.0\n" {
+		t.Fatalf("a record of another version was served: %+v, %q", rec, read(t, filepath.Join(dir, "VERSION")))
+	}
+}
+
+// TestAFailedFetchLeavesTheTreeReadOnly: the fetch widens the tree so git can
+// write into it, and every way out has to narrow it again — a run that could
+// not fetch must not leave the agent a tree it can write to (D1602).
+func TestAFailedFetchLeavesTheTreeReadOnly(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+	dir, _, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.Version, o.Commit = "v1.1.0", r.commit["v1.1.0"]
+	o.SourceURL = filepath.Join(t.TempDir(), "gone")
+	if _, _, err := Ensure(context.Background(), o); err == nil {
+		t.Fatal("a fetch from a source that is not there succeeded")
+	}
+	fi, err := os.Stat(filepath.Join(dir, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("the tree was left writable: %v", fi.Mode())
 	}
 }
 
@@ -354,11 +428,21 @@ func TestEveryGitCallIsHardened(t *testing.T) {
 	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
 	run, calls := recordingGit(t)
 	o.Run = run
-	if _, _, err := Ensure(context.Background(), o); err != nil {
+	dir, _, err := Ensure(context.Background(), o)
+	if err != nil {
 		t.Fatal(err)
 	}
 	o.Version, o.Commit = "v1.1.0", r.commit["v1.1.0"]
 	if _, _, err := Ensure(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	// A development build asks the remote which release is newest (D1611), and
+	// the note about what changed since a version is read with git too.
+	o.Version, o.Commit = "dev", ""
+	if _, _, err := Ensure(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if err := ChangesSince(context.Background(), o, dir, filepath.Join(t.TempDir(), "changes.md")); err != nil {
 		t.Fatal(err)
 	}
 	all := calls()

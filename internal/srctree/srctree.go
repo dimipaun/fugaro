@@ -167,7 +167,7 @@ func Ensure(ctx context.Context, o Options) (string, Record, error) {
 	}
 	dir := filepath.Join(root, treeName)
 	if rec, ok := readRecord(root); ok && matches(rec, w) {
-		if fi, err := os.Lstat(dir); err == nil && fi.IsDir() {
+		if fi, err := os.Lstat(dir); err == nil && fi.IsDir() && treeIsAt(ctx, o, dir, rec) {
 			return dir, rec, nil
 		}
 	}
@@ -180,6 +180,23 @@ func Ensure(ctx context.Context, o Options) (string, Record, error) {
 		return "", Record{}, err
 	}
 	return dir, w.Record, nil
+}
+
+// treeIsAt reports whether a tree the cache already holds is the one the
+// record beside it names. The record is written after the tree is installed,
+// so a run that dies in between — or two runs at once — leaves a record
+// naming a version the tree is not, and a cache that answered from the record
+// alone would serve the wrong source for a diagnosis. The commit HEAD is at
+// is the identity the record keeps, so it is asked for rather than assumed
+// (D1610). A tree from the tarball transport carries nothing to ask, and
+// git's answer is taken as it comes: a tree that cannot name its commit is
+// one to fetch again, not an error to stop on.
+func treeIsAt(ctx context.Context, o Options, dir string, rec Record) bool {
+	if rec.Kind != KindGit {
+		return true
+	}
+	out, err := o.Run(ctx, dir, gitArgs("rev-parse", "HEAD")...)
+	return err == nil && strings.TrimSpace(string(out)) == rec.Commit
 }
 
 // matches reports whether a record already names what this call is after. A
@@ -247,10 +264,14 @@ func gitTree(ctx context.Context, o Options, root string, w want) (string, error
 	fi, err := os.Lstat(dir)
 	switch {
 	case err == nil && fi.IsDir():
-		// A tree from an earlier run is read-only; git writes into it.
+		// A tree from an earlier run is read-only; git writes into it. Every
+		// way out of this function widens it back only for the length of the
+		// fetch: a fetch that fails, or a HEAD that is not the commit asked
+		// for, must not leave the agent a tree it can write to.
 		if err := chmodTree(dir, true); err != nil {
 			return "", err
 		}
+		defer func() { _ = chmodTree(dir, false) }()
 	case err == nil:
 		// A link or a file at the tree's name decides nothing: it is removed
 		// rather than followed into whatever it names.
