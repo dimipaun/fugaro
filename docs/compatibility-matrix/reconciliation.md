@@ -105,5 +105,5 @@ to draft and the owner's to read before the website promote, which the release p
 - Vertex's real-world operation (a run on Vertex) was not exercised here: F17 rests on the code defaults and `docs/design/v1.md`, and Check 20's FACTs are not recorded.
 - The mobile app's store state beyond "no tag and no release note" is taken from
   `docs/subscriptions/status-2026-11-07.md`; no store was inspected.
-- Findings F1–F31 were produced by a read-only reader of `origin/main` and are re-verified by the
+- Findings F1–F32 were produced by a read-only reader of `origin/main` and are re-verified by the
   review round before this PR leaves draft.
