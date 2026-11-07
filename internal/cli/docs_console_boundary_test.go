@@ -170,11 +170,11 @@ var consoleBoundaryAllowList = []string{
 // dependency rather than a promotion. `zitadel/oidc` is the authorization
 // library the owner answered D921 with (docs/mcp-server/reconciliation.md §4),
 // and the authorization server of ee/coordinator/mcpauth (plan task M5) is
-// built on it. Its licence is UNCONFIRMED and the first owner check of
-// reconciliation.md §6 is unmet while M5 is built: no gate file is in the tree
-// and counsel has not cleared the transitive set, so this require line is taken
-// ahead of that gate and the pull request that carries it is held until the
-// owner answers the check. The three indirect entries beside it
+// built on it. Its licence is the first owner check of reconciliation.md §6,
+// and the owner answered that check himself on 2026-11-07: he read
+// docs/mcp-server/licence-table.md and the clearance is recorded in
+// docs/mcp-server/licence-gate.md, so the require line below stands on a check
+// that is met rather than ahead of one. The three indirect entries beside it
 // (`zitadel/schema`, `muhlemmer/gu`, `kr/text`) and the version bumps `go mod
 // tidy` made at the same time are the module graph the new require brings, not
 // decisions of their own. The console contributes nothing to any of them

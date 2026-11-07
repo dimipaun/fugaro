@@ -165,18 +165,19 @@ repository's own rule for a documentation folder says so. **The one licence this
 on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONFIRMED**, and
 **nothing the independent security review of 2026-11-04 read could settle it** (finding M-c,
 [reconciliation.md](reconciliation.md) §4a) — the library's Apache 2.0 claim is the library's own.
-**That check is unmet, and this folder records it as unmet while M5 is built.** Nothing in this tree
-answers it: counsel has not been asked for **the transitive dependencies' clearance**, the gate file
-the check describes is not in the tree, and the licence confirmation this branch's runs report is not
-an artifact here ([reconciliation.md](reconciliation.md) §6, check 1). **So the pull request that
-builds M5 does not merge until the owner writes the gate file and counsel clears the transitive set,
-or the owner writes the relaxation of the check himself** — and a licence that is not cleared sends
-D921 back to its own alternatives, with the library out of `go.mod` and M5 rebuilt without it, rather
-than a dependency shipped ahead of its own gate. **The owner ruled on 2026-11-07 that he will clear
-the set by reading one table, and it is [licence-table.md](licence-table.md)**: every module this
-branch adds or bumps, its licence as the module's own file reads it, whether it is linked into the
-fugaro binary, and a column for anything not clearly permissive. **The table is evidence and not the
-gate, and it claims no clearance.**
+**The owner settled it himself on 2026-11-07.** He ruled that he would clear the set by reading one
+table — every module this branch adds or bumps, its licence as the module's own file reads it,
+whether it is linked into the fugaro binary, and a column for anything not clearly permissive — that
+table is [licence-table.md](licence-table.md), and **he read it the same day and cleared the set,
+recording no more than one line: "Cleared: all permissive."** That record is
+[licence-gate.md](licence-gate.md), the gate file the check describes, and **the table is evidence
+and not the gate: it claims no clearance of its own, and counsel was never asked for the transitive
+dependencies' clearance**, so what the tree carries is the owner's clearance and no other
+([reconciliation.md](reconciliation.md) §6, check 1). **So the first owner check is met, and the
+licence holds nothing back** — a licence that turned out to be unusable would still send D921 back to
+its own alternatives, with the library out of `go.mod` and M5 rebuilt without it — **and what keeps
+M5 dormant is M5b**, the paired-device approval (§3, §8), which is a hard prerequisite before any
+binary links the front door.
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -261,14 +262,15 @@ audience — the coordinator's own URL — so a client's standard check works.
 server is built on **zitadel/oidc** — the first option the owner listed, and the owner's answer —
 with the coordinator supplying two things the library does not: the storage over the project's own
 store (§6), and Dynamic Client Registration, which the owner's spec already expects to be a few
-hundred hand-written lines. **The library's licence is still UNCONFIRMED**, and the review settles the
-library's *behaviour* against this design and not its licence: **the owner or counsel confirms it —
-the transitive dependencies included — before any build**, and **the M5 gate file is the owner's to
-create** ([reconciliation.md](reconciliation.md) §6, check 1). **Nothing in this tree records that
-confirmation** — no gate file, and no clearance of the transitive set — **so the check stands unmet
-while M5 is built**, and **the pull request that builds it does not merge until they are there or the
-owner writes the relaxation of the check himself**. A licence that turns out to be unusable sends
-D921 back to its alternatives rather than to a
+hundred hand-written lines. **The library's licence was answered UNCONFIRMED**, and the review
+settles the library's *behaviour* against this design and not its licence, so the owner confirmed it
+himself: **he read [licence-table.md](licence-table.md) on 2026-11-07 and cleared the dependency set
+in one line — "Cleared: all permissive" — recorded in [licence-gate.md](licence-gate.md)**
+([reconciliation.md](reconciliation.md) §6, check 1). **Counsel was never asked, and no line here is
+counsel's clearance.** So the check that gated M5 is met, and **what still holds the front door
+dormant is M5b**, the paired-device approval the owner ruled a task of its own (§8), rather than the
+licence: a licence that had turned out to be unusable would send D921 back to its alternatives rather
+than to a
 workaround. The alternatives and their costs stay in the reconciliation; the short version is that
 ory/fosite brings the same missing piece and a heavier plugin API for a flow this small, and a
 standalone third-party server is a second resident service in a self-hosted product whose whole
@@ -1092,11 +1094,9 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   the text ([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
 - **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
-  (§3, D921, answered 2026-11-04 with its licence **UNCONFIRMED**, and **§6's first check is unmet
-  while M5 is built**: nothing in this tree records the confirmation, so **counsel's clearance of the
-  transitive dependencies included** and the gate file stand as the check writes them, and the pull
-  request that builds M5 does not merge until they are there or the owner writes the relaxation
-  himself); the
+  (§3, D921, answered 2026-11-04 with its licence **UNCONFIRMED** and cleared by the owner on
+  2026-11-07, so **§6's first check is met**: [licence-gate.md](licence-gate.md) is the record, and
+  counsel was never asked, the clearance of the transitive set being the owner's own); the
   standalone-server option is not taken; and
   re-verification against the live MCP specification and the project's Identity Platform features is
   an owner check before implementation ([reconciliation.md](reconciliation.md) §6). **The

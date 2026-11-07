@@ -119,7 +119,7 @@ note under the table says what moved.
 | D | The answer, 2026-11-04 | Why, in one line | Amendment |
 | --- | --- | --- | --- |
 | **D920** | **The recommendation** — the MCP endpoint is **public**, the bearer token is the gate, and the six unauthenticated paths are the metadata documents and the authorization endpoints. **Amended 2026-11-04** (M-e) — see §4a | A standard MCP client on a laptop or a phone cannot mint a Google ID token, so P8's IAM invoker makes the feature reachable only by software already written against Fugaro — and spec.md §8 is the price the owner accepts for that. |
-| **D921** | **The recommendation** — **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator — **and the licence is UNCONFIRMED.** **The owner or counsel must confirm the licence before any build.** **Amended 2026-11-04** (M-c) — see §4a | Apache 2.0 is the library's own claim and nothing in this container can check it, and a dependency a self-hosted product cannot ship would sink the whole design — so the licence becomes a gate of its own, and it is the first owner check in §6. |
+| **D921** | **The recommendation** — **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator — **and the licence is UNCONFIRMED.** **The owner or counsel must confirm the licence before any build.** **Amended 2026-11-04** (M-c) — and **answered by the owner on 2026-11-07: he read the branch's own licence table and cleared the set, "Cleared: all permissive", recorded in [licence-gate.md](licence-gate.md)** — see §4a | Apache 2.0 is the library's own claim and nothing in this container can check it, and a dependency a self-hosted product cannot ship would sink the whole design — so the licence becomes a gate of its own, and it is the first owner check in §6. |
 | **D922** | **The recommendation**, in the owner's words of 2026-11-04: the **separate top-level subtree** — **not under `coordinator/`** — is the **`mcpauth`** node, **not readable by any client** (`.read: false`) and with **`.write: false`**; **only the coordinator's account writes it**, because that account holds `roles/firebasedatabase.admin` and the rules do not bind it **Amended 2026-11-04** (H3) — see §4a | The separate subtree is what keeps the coordinator's shared view and the token records off one node, and the closed read is what keeps F26's finding closed against every client the rules bind — **and the amendment is what keeps it closed against the accounts IAM exempts from them**. The separate subtree, the closed read, the keyed hashes, the MAC and the public service's viewer-only grant are now **five independent barriers** rather than two, which is the honest answer to a review that showed the first two were not enough on their own. **This answer was restated the same day** — see the note under the table — and the restatement plus this amendment are the ones every document is written to. spec.md §6 and §8 state both, and M3's red step is the "named and denied to every client" one. |
 | **D923** | **The recommendation**, with the mechanism named: **a PAIRED DEVICE approves the sign-in**, and **the coordinator never mints a custom token**; **v1 admits only exact `user:` launcher entries, and refuses `group:`, `domain:` and `serviceAccount:` entries**; **the Firebase ID token is consumed only at `/oauth/authorize` and is never a grant at `/oauth/token`** **Amended 2026-11-04** (H1, not the recommendation) and again (M-a) — see §4a | The project's Identity Platform is initialized with no sign-in providers and refuses every public sign-up path (F6), so there is no hosted page to redirect to and enabling one is the exact reversal `docs/mobile-auth` D221 refused — and the pairing the repository already has (`fugaro pair`, D165) is the signer that does not make the coordinator one. A `user:` entry is one person (F8's lists), where `domain:`, `group:` and `serviceAccount:` are refused **at `fugaro user` already** (`internal/cli/user.go:266`). Consuming the ID token at authorize is what keeps it out of the token endpoint's grant list. |
 | **D924** | **The recommendation** — the token's limit travels in **a variable of its own** on the execution override, and the run's ceiling is the tighter of it and the job's own — and **spend is counted across the whole token family**, so a rotated refresh token is the same budget and not a new one | The override mechanism already exists (F19) and the gateway is already the place the real stop lives (F10, F27); a variable of its own is what makes "only narrows" structural rather than a launcher's arithmetic, and a per-family counter is what stops rotation from being a way to ask for the limit twice. | **Amended 2026-11-04** (M-b) — see §4a |
@@ -176,19 +176,23 @@ load-bearing:
   a CSRF-bound flow — are in §3's registration rules, §3's flow and §8's redirect-URI paragraph.
 
 **D921's licence, unconfirmed when the answers were given,** added the first owner check in §6 and a
-build gate in the plan, **and that check is unmet while M5 is built**: **counsel's clearance of the
-transitive dependencies** and **the gate file the check describes** are both still the owner's, and
-**nothing in this tree records either of them**.
+build gate in the plan, **and the owner answered it on 2026-11-07**: he ruled that he would clear the
+set by reading one table, and he read [licence-table.md](licence-table.md) and cleared the dependency
+set in one line — **"Cleared: all permissive"** — recorded in [licence-gate.md](licence-gate.md),
+which is **the gate file the check describes**. **Counsel was never asked**, so the clearance this
+tree carries is the owner's and no other.
 
-**No artifact here answers that check, and this folder does not answer it on the run's word.** The
-licence confirmation this branch's runs report is not a file, a signature or a review comment this
-tree can show, and the check's own text is what stands: **M5 does not start until the licence is
-settled and a person has written the gate file.** M5 is built while both are open, so **the pull
-request that builds it does not merge until the owner writes the gate file and counsel clears the
-transitive set, or the owner writes the relaxation of the check himself** — and a licence that is
-not cleared sends D921 back to its own alternatives, with the library out of `go.mod` and M5 rebuilt
-against them, rather than a dependency landing ahead of its gate. **The transitive set counsel has
-to read is named here for that reason**: `zitadel/schema`, `muhlemmer/gu` and `kr/text`, which are
+**What that settles, and what it does not.** Nothing here read as settled until a person wrote the
+gate file: the licence confirmation this branch's runs reported before the owner's ruling was not a
+file, a signature or a review comment this tree could show, and the check's own text is what stood —
+**M5 does not start until the licence is settled and a person has written the gate file.** Both
+halves are now there, so **M5 may merge and the licence holds nothing back**; what the clearance does
+not do is put the front door on a binary, because **M5 merges dormant: M5b is a hard prerequisite
+before any binary links it** (§4a, the ruling of 2026-11-07). Had the licence turned out to be
+unusable, it would still send D921 back to its own alternatives, with the library out of `go.mod` and
+M5 rebuilt against them, rather than a dependency landing ahead of its gate. **The transitive set the
+clearance covers is named here for that reason**: `zitadel/schema`, `muhlemmer/gu` and `kr/text`,
+which are
 new, and the version bumps `go mod tidy` made beside the library: `go-jose/v4` v4.1.4→v4.1.6,
 **`go-logr/logr`** v1.4.3→v1.4.4, `doublestar/v4` v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with
 `/metric` and `/trace`, `x/text` v0.42.0→v0.43.0 and `x/sync` v0.23.0→v0.24.0.
@@ -294,8 +298,9 @@ answer takes the recommendation, or defers a recommendation the owner judged not
 (H2, D936).
 
 **What the amendment moves, in one line each.** D920 gains the per-route rule an `allUsers` service
-needs; D921 gains four constraints its defaults would otherwise reverse, with its licence still
-**UNCONFIRMED**; D922 gains the records' marks — keyed hashes, a MAC over each — and loses the
+needs; D921 gains four constraints its defaults would otherwise reverse, with its licence cleared by
+the owner on 2026-11-07 by reading the branch's own table; D922 gains the records' marks — keyed
+hashes, a MAC over each — and loses the
 assumption that a closed rules node is closed to IAM; D923 gains an accepted residual risk and a hardened device approval; D924 gains an atomic
 family reservation; D929 gains a switch, off until it has an owner; D930 gains a generation-conditioned
 rotation; D931 loses `spawn_task` to D936; D932 gains redaction; D933 gains the lists' source;
@@ -322,15 +327,16 @@ M4 and M7 carry the rules; §8 states the risk.
 
 ### D921 — amended (finding M-c)
 
-**The licence is still UNCONFIRMED, and the check that names it is unmet while M5 is built** (§4a,
-the paragraph on it, and §6 check 1): **the owner or counsel confirms it — the transitive
-dependencies included — before any build**, and **the M5 gate file is the owner's to create**. **No
-artifact in this tree records that confirmation**, so the gate stands as written: **the pull request
-that builds M5 does not merge until the owner writes the gate file and counsel clears the transitive
-set, or the owner writes the relaxation of the check himself** — with D921's alternatives, the
-library out of `go.mod` and M5 rebuilt against them, the answer to a clearance that does not come.
-The review settles the library's *behaviour* against this design, which is the paragraph below, and
-not its licence.
+**The licence check is met, and it was answered by the owner himself** (§4a, the paragraph on it,
+and §6 check 1): D921 was answered with the licence **UNCONFIRMED**, because the library's Apache 2.0
+claim is the library's own and this container cannot check it, and the answer made confirming it —
+**the transitive dependencies included** — the first owner check. **The owner ruled on 2026-11-07
+that he would clear the set by reading one table, and he read it and cleared the set the same day**:
+[licence-table.md](licence-table.md) is the table, **"Cleared: all permissive"** is his answer, and
+[licence-gate.md](licence-gate.md) is the gate file the check describes. **Counsel was never asked**,
+so the clearance is the owner's alone, and **the check no longer gates anything**: what keeps M5
+dormant is **M5b**, the paired device M-a asks for. The review settles the library's *behaviour*
+against this design, which is the paragraph below, and not its licence.
 
 The review also found that **the library's defaults are the opposite of this design's rules**, and
 named them: PKCE is **optional** (`op/token_request.go` line 168) and an empty challenge method reads
@@ -629,17 +635,18 @@ and a refresh family ages. **It is a task and not a change to anything merged**:
 carry it does not exist yet, and the two limits beside the approve step (a token nothing spends, a
 family with no expiry of its own) are its second and fourth requirements.
 
-**2. The licence gate is cleared by a table the owner reads, and the gate is still unmet.** §6
-check 1's second half is D921's licence, and the owner ruled that he will clear the dependency set by
-reading one table. That table is [licence-table.md](licence-table.md): every module this branch adds
-or bumps against `main`, its licence as the module's own file in the module cache reads it, whether
-the module is linked into the fugaro binary or reached only by a dependency's own tests, and a column
-for anything not clearly permissive. **No clearance is recorded anywhere in this folder, and the
-table is evidence rather than the gate**: the licence is **UNCONFIRMED**, no gate file is written,
-and **the pull request that builds M5 does not merge until the gate file is written and the clearance
-comes, or the owner writes the relaxation of the check himself** (§6, check 1). **Nothing here, and
-no commit message, records the confirmation that check asks for**: the claim three commits on this
-branch made about it is withdrawn in the pull request rather than answered here.
+**2. The licence gate is cleared by a table the owner read, and the gate is met.** §6 check 1's
+second half is D921's licence, and the owner ruled that he would clear the dependency set by reading
+one table. That table is [licence-table.md](licence-table.md): every module this branch adds or bumps
+against `main`, its licence as the module's own file in the module cache reads it, whether the module
+is linked into the fugaro binary or reached only by a dependency's own tests, and a column for
+anything not clearly permissive. **He read it on 2026-11-07 and cleared the set: "Cleared: all
+permissive"**, and the record is [licence-gate.md](licence-gate.md), the gate file §6 check 1
+describes. **The table is evidence rather than the gate and claims no clearance of its own**, and
+**counsel was never asked**, so the clearance is the owner's and no other, and the check no longer
+gates anything (§6, check 1). **The claim three commits on this branch made about the licence before
+the owner ruled was unbacked and is withdrawn in the pull request**; the answer is the gate file the
+owner's own clearance produced, and nothing else here.
 
 ## 4b. The decision the amendment added
 
@@ -726,22 +733,21 @@ code task starts:
 
 0. **The launch-override fence is decided and built before M9 or D931.** Spec §8 states the owner's requirement (the runner ignores the override environment except an allowlist) as NOT BUILT: the runner reads its ceiling and wiring from variables `runWithOverrides` can rewrite today, so the mechanism that lets it read non-allowlisted configuration from something an override cannot set is an open owner decision.
 1. **`zitadel/oidc`'s licence is confirmed — by the owner or by counsel — before any build**, and
-   **the M5 gate file is the owner's to create.** D921 was answered with the licence
+   **the owner wrote the M5 gate file on 2026-11-07.** D921 was answered with the licence
    **UNCONFIRMED**: the library's Apache 2.0 claim is the library's own and nothing in this
    container can check it, and a dependency a self-hosted product cannot ship is a dependency the
    whole design rests on by mistake. **The independent security review of 2026-11-04 did not settle
    it either** — what it read is the library's behaviour against this design and not its licence —
-   so **the owner or counsel confirms the licence, the transitive dependencies included**. **That
-   leaves this check unmet, and this folder says so rather than reading it as settled:** the check
-   is a gate and not a note — M5 does not start until the licence is settled and a person has
-   written the gate file — and M5 is built while both are open. **Nothing in this tree records the
-   owner's answer**: there is no gate file, counsel has not been asked about the transitive set, and
-   the licence confirmation this branch's runs report is not an artifact here — the transitive set
-   counsel would have to read is named in §4a so the list is not what is missing. **So the pull
-   request does not merge while this check is unmet** — the owner writes the gate file and counsel
-   clears the transitive set, **or the owner writes the relaxation of this check himself** — and a
-   licence that is not cleared sends D921 back to its own alternatives, with the library taken out
-   of `go.mod` and M5 rebuilt against them, rather than a dependency landing ahead of its gate.
+   so the check left the licence to the owner or to counsel. **The owner took it himself: he ruled
+   that he would clear the set by reading one table, he read
+   [licence-table.md](licence-table.md), and he cleared it in one line — "Cleared: all
+   permissive"** ([licence-gate.md](licence-gate.md), the gate file this check describes). **Counsel
+   was never asked about the transitive set and has cleared nothing**, so the clearance the tree
+   carries is the owner's own and the check is **met**: the gate was never a note, and what met it is
+   an artifact rather than a run's word. **What that does not do is wire the front door** — M5 merges
+   dormant, because the paired device M-a asks for is **M5b** and M5b is a hard prerequisite before
+   any binary links it (§4a) — and D921's alternatives, with the library taken out of `go.mod` and M5
+   rebuilt against them, remain the answer to a licence that would not have been cleared.
 2. **The endpoint really is reachable from the public internet** once D920's answer says so: a
    request from outside the project reaches the handler and gets the 401, rather than being refused
    by the platform. spec.md §8 says what follows if it is not.

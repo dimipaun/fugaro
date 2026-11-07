@@ -16,10 +16,12 @@ package cli
 //  * TestDocsMCPServerIsWritten -- the four files exist, each carries the
 //    folder's status line word for word, and the plan states the two gates
 //    every task waits behind, with the amendment's own cuts (M9 out of the
-//    first slice, M4 and M6 cancelled and to be rerun) among them. The
-//    licence table the folder ships beside them carries the status line too
-//    (mcpFolderDocs), and it is pinned as the table it says it is: not the
-//    gate, and claiming no clearance.
+//    first slice, M4 and M6 cancelled and to be rerun) among them. The two
+//    licence files the folder ships beside them carry the status line too
+//    (mcpFolderDocs): the table is pinned as the table it says it is -- not the
+//    gate, and claiming no clearance of its own -- and the gate is pinned as the
+//    record it says it is, the owner's clearance of 2026-11-07 and no line of
+//    counsel's.
 //  * TestDocsMCPServerAnswersAreTheOnesInForce -- the answers of 2026-11-04 and
 //    the answer of 2026-11-05 are dated in reconciliation.md §4, every one of
 //    the fifteen and the sixteenth is the recommendation (no
@@ -79,6 +81,15 @@ const (
 	// that resolve -- and both are checked over mcpFolderDocs.
 	mcpLicence = "docs/mcp-server/licence-table.md"
 
+	// mcpGate is §6 check 1's gate file: the record of the owner's clearance of
+	// the set, which he gave on 2026-11-07 by reading the table above. The check
+	// asks for an artifact rather than a run's word, so what is pinned here is
+	// the artifact itself -- who cleared what, when, by what reading and in whose
+	// words -- and the one claim it must never carry, which is counsel's. A
+	// record that lost the owner's name or the date would be a clearance nobody
+	// could trace, which is the state the check exists to refuse.
+	mcpGate = "docs/mcp-server/licence-gate.md"
+
 	// mcpStatus is the line every file in this folder carries, word for word.
 	// It is the folder's whole claim about itself -- the design is answered,
 	// which of the plan's tasks are built and which are not, and the fact that
@@ -104,9 +115,9 @@ const (
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
 
 // mcpFolderDocs is every file of the folder that carries the status line and
-// whose citations have to resolve: the four documents that state the design,
-// and the licence table beside them.
-func mcpFolderDocs() []string { return append(mcpDocs(), mcpLicence) }
+// whose citations have to resolve: the four documents that state the design, the
+// licence table beside them, and the gate file that table is evidence for.
+func mcpFolderDocs() []string { return append(mcpDocs(), mcpLicence, mcpGate) }
 
 // TestDocsMCPServerIsWritten: the four files are there, each carries the status
 // line, and the plan still says what every task in it waits behind.
@@ -120,27 +131,55 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 	}
 
 	// The licence table says what it is, and what it is not: the artifact the
-	// owner reads to clear D921's set is the one a later edit could turn into a
+	// owner read to clear D921's set is the one a later edit could turn into a
 	// clearance nobody gave. Nothing else in the tree pins its two denials, so
 	// the reading it exists for and the reading it must never carry are both
 	// stated here -- and the second is a refusal as well as a demand, because a
 	// line saying the clearance had been given is the shape that reads as the
-	// gate's answer without being the gate file.
+	// gate's answer without being the gate file. What it says instead is where
+	// that answer is: the gate file, pinned below.
 	table := flattenDoc(readDoc(t, mcpLicence))
 	for _, want := range []string{
 		"This file is a table, and it is not a gate.",
-		"No clearance is claimed anywhere in this folder, by this file or by any other.",
-		"and that gate is unmet.",
+		"it claims no clearance of its own",
+		"the record of it is [licence-gate.md](licence-gate.md)",
 	} {
 		if !strings.Contains(table, want) {
-			t.Errorf("%s does not state %q: the owner clears D921's dependency set by reading this table, so a table that claimed the clearance, or that stopped saying it is evidence rather than the gate, would be the merge condition's answer written by the artifact under it",
+			t.Errorf("%s does not state %q: the owner cleared D921's dependency set by reading this table, so a table that claimed the clearance, or that stopped saying it is evidence rather than the gate, would be the merge condition's answer written by the artifact under it",
 				mcpLicence, want)
 		}
 	}
 	for _, refuse := range []string{"= the clearance", "the clearance is given", "the gate is met"} {
 		if strings.Contains(table, refuse) {
-			t.Errorf("%s carries %q: the table is evidence for reconciliation.md §6 check 1 and not the gate, and no line of it may read as the clearance having been given -- the gate file is the owner's to write and it is not written",
+			t.Errorf("%s carries %q: the table is evidence for reconciliation.md §6 check 1 and not the gate, and no line of it may read as the clearance itself -- the owner's clearance is a record of its own, and it is [licence-gate.md](licence-gate.md)",
 				mcpLicence, refuse)
+		}
+	}
+
+	// The gate file is the record §6 check 1 asks for, and it is pinned as a
+	// record: the owner by name, the date, the reading the clearance rests on,
+	// his words, the table as the evidence, and the refusal that keeps it honest
+	// -- counsel was never asked. A file that dropped any of them would still
+	// read as a clearance while being one nobody could trace to an act.
+	gate := flattenDoc(readDoc(t, mcpGate))
+	for _, want := range []string{
+		"Dimi Paun",
+		"2026-11-07",
+		`"Cleared: all permissive."`,
+		"The table is the evidence this clearance stands on",
+		"Counsel was not asked about the transitive set and has cleared nothing",
+		"§6 check 1 is met",
+		"M5b is a hard prerequisite before any binary links the front door",
+	} {
+		if !strings.Contains(gate, want) {
+			t.Errorf("%s does not state %q: the owner cleared D921's dependency set himself on 2026-11-07, that clearance is an artifact rather than a run's word, and the file that records it is the only thing this tree has that answers reconciliation.md §6 check 1",
+				mcpGate, want)
+		}
+	}
+	for _, refuse := range []string{"counsel cleared", "counsel has cleared", "counsel's clearance of the transitive"} {
+		if strings.Contains(gate, refuse) {
+			t.Errorf("%s carries %q: counsel was never asked about the transitive set, so a line of the gate file reading as counsel's clearance would record a review that has not happened -- the whole clearance is the owner's",
+				mcpGate, refuse)
 		}
 	}
 
@@ -148,22 +187,17 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 	for _, want := range []string{
 		// The two gates the plan states before the first task: the review the
 		// coordinator runs -- which has run, so the gate is the finding each
-		// task now answers -- and the licence, which the review could not settle
-		// and which nothing in this tree records an answer to.
+		// task now answers -- and the licence, which no review could settle and
+		// which the owner cleared himself on 2026-11-07 by reading the table.
 		"independent SECURITY review of [spec.md](spec.md) §8",
 		"**run by the coordinator**",
-		"D921's unconfirmed licence",
-		"the five whose marker says **mandatory** are M3, M4, M5, M7 and M9",
+		"The second gate is met",
 		"D921's licence",
-		"counsel's clearance of the transitive dependencies",
-		"the M5 gate file the owner is to create",
-		// The check's own state, pinned so the folder cannot go back to reading
-		// as though the branch's own word closed it: the licence is still
-		// UNCONFIRMED, the two things the check names are still missing, and the
-		// merge condition is the owner's act rather than the run's.
-		"The licence is still UNCONFIRMED",
-		"the pull request that builds M5 does not merge until the owner writes the gate file and counsel clears the transitive set",
-		"or the owner writes the relaxation of the check himself",
+		"the five whose marker says **mandatory** are M3, M4, M5, M7 and M9",
+		// The owner's act itself, and the gate file it produced, so the plan
+		// cannot go back to waiting on a check the owner has answered.
+		`"Cleared: all permissive"`,
+		"the gate file the check describes",
 		// And the cuts the amendment made: `spawn_task` out of the first slice,
 		// and the two tasks whose drafts predate the answers they now build.
 		"M9 leaves the first slice",
@@ -398,7 +432,10 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 // exists. A reconciliation is only worth as much as the code behind it, and a
 // citation whose line moved turns a checked finding into an unchecked one with
 // no other symptom. The licence table's one citation is read here too: it is
-// the line the whole table's claim about the library's surface rests on.
+// the line the whole table's claim about the library's surface rests on. The
+// gate file is the one file of the folder that cites no line at all -- it stands
+// on the table, which is a document rather than a line of code -- so the demand
+// that a file cite something is made of the files that stand on the tree.
 func TestDocsMCPServerCitationsResolve(t *testing.T) {
 	bare := csrBareNames(t)
 	for _, path := range mcpFolderDocs() {
@@ -420,7 +457,7 @@ func TestDocsMCPServerCitationsResolve(t *testing.T) {
 			cut := strings.LastIndex(tok, ":")
 			mcpCheckCitation(t, path, strings.TrimSuffix(tok[:cut], "`"), tok[cut:], bare)
 		}
-		if len(matches)+len(mcpPlainCitationRE.FindAllString(doc, -1)) == 0 {
+		if len(matches)+len(mcpPlainCitationRE.FindAllString(doc, -1)) == 0 && path != mcpGate {
 			t.Errorf("%s cites no file and line at all: every document in this folder stands on the code it was reconciled against, so a file the check finds no citation in is a file the check has gone blind on", path)
 		}
 		t.Logf("%s: %d backticked citations carrying a line, against a census of %d path-looking tokens with one, and %d written without backticks",

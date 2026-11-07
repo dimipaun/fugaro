@@ -19,20 +19,20 @@ answer, M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidate
 **and the answer of the same day that picked the bucket**, which closes the Open item that section
 carried: **nothing waits on it any more, and no task names a store it is not written to.** **This plan
 approves no task, and two things gate the whole plan:** the
-independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
-**unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7). **That second
-gate is unmet and M5 is built while it stands**: nothing in this tree records the confirmation the
-check asks for — no gate file, and counsel has not cleared the transitive set — so **the pull request
-that builds M5 does not merge until the owner writes the gate file and counsel clears the transitive
-set, or the owner writes the relaxation of the check himself**, and a licence that is not cleared
-sends D921 back to its own alternatives rather than shipping the dependency.
+independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's licence
+([reconciliation.md](reconciliation.md) §6, checks 1 and 7). **The second gate is met**: the owner
+read [licence-table.md](licence-table.md) on 2026-11-07 and cleared the dependency set — "Cleared:
+all permissive" — recorded in [licence-gate.md](licence-gate.md), the gate file the check describes,
+**so nothing about the licence holds M5 back**, and a licence that had turned out to be unusable
+would still send D921 back to its own alternatives rather than ship the dependency. What keeps M5
+from being wired into a binary is **M5b**, the paired device M-a asks for.
 
 ## 1. What the owner answered on 2026-11-04, and what each answer moves
 
 | D | The question | Answered 2026-11-04, and written to | If the owner later answers the other way |
 | --- | --- | --- | --- |
 | D920 | Public endpoint, or P8's IAM invoker | **Public**, bearer token is the gate — **the recommendation** | **M5, M6, M8, M9, M10 are void, and M4 and M7 shrink.** An IAM-invoked endpoint has no metadata documents, no registration and no token endpoint; what survives is M1–M3 and a tool registry reached by a Google identity. The plan is then a different, much smaller plan. |
-| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled**. **That check is unmet while M5 is built** — no gate file, no counsel's clearance of the transitive set, and no artifact in this tree recording the confirmation — so **the pull request that builds M5 does not merge until they are there or the owner writes the relaxation of the check himself** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
+| D921 | The OAuth library | **`zitadel/oidc` — the recommendation**, with the licence a gate the owner answered himself on 2026-11-07: he read the branch's own [licence-table.md](licence-table.md) and cleared the dependency set — **"Cleared: all permissive"** — recorded in [licence-gate.md](licence-gate.md), so **the check is met and M5 waits on the licence no longer**; counsel was never asked | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
 | D922 | Where the token records live | **The separate `mcpauth` subtree, `.read: false` and `.write: false`, written by the coordinator's own account only** — the recommendation (**restated the same day**: the first answer made it readable by any signed-in person) | **M3 changes** by taking `coordinator/`'s `.read: "USER"` for the new node, and its red step inverts from the denial to the admission. |
 | D923 | How the person signs in | **The installation's own custom-token flow, with a PAIRED DEVICE approving and the coordinator never minting a token** — the recommendation, mechanism named; the ID token is consumed at `/oauth/authorize` only, and only exact `user:` list entries are read | **M6 changes** (the verifier moves to the authorize endpoint), **M7 gains the `user:`-only rule**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
 | D924 | How the spend limit is enforced | **A variable of its own, tighter-of-two, counted across the whole token family** — the recommendation | **M9 loses its core change** and gains the launcher-side arithmetic instead, and **M2 gains the family counter** that makes rotation a lifetime mechanism rather than a budget one. |
@@ -106,12 +106,12 @@ it:
   discovery at `openid-configuration` rather than RFC 8414's path). M5 refuses a missing or
   non-`S256` challenge and an unknown scope **before the library sees them**, allows only the code
   and refresh grants, keeps its signing material in Secret Manager or uses opaque tokens, and serves
-  both metadata paths from one table. **The licence is still UNCONFIRMED** — nothing in that review
-  could settle the claim — so **the owner or counsel confirms it, and counsel's clearance of the
-  transitive dependencies** is part of that, with **the M5 gate file the owner is to create**. **M5
-  is built while that check is unmet**, and **the pull request that builds it does not merge until
-  the gate file is written and the clearance comes, or the owner writes the relaxation of the check
-  himself** ([reconciliation.md](reconciliation.md) §6, check 1).
+  both metadata paths from one table. **The licence that review could not settle is settled by the
+  owner**: he read [licence-table.md](licence-table.md) on 2026-11-07 and cleared the dependency set,
+  **"Cleared: all permissive"**, recorded in [licence-gate.md](licence-gate.md), which is the M5 gate
+  file ([reconciliation.md](reconciliation.md) §6, check 1). **Counsel was never asked**, so the
+  clearance is the owner's own, and **the check no longer holds M5 back** — the front door stays
+  dormant because of **M5b** rather than because of the licence.
 - **D922 — H3.** Keyed hashes and MACs, no database admin on the public service, and the records
   outside the main database (**D935**, the store of §8). M2, M3 and M4 carry it.
 - **D923 — H1 and M-a.** **H1 is the one amendment that is not the recommendation**: a device token
@@ -199,7 +199,7 @@ them and is not any more**: the owner gave it on 2026-11-05, so M2 and M4 wait o
 tasks and the review below.
 
 **M1** ← nothing. **M2** ← M1. **M3** ← nothing: it is a rules file and
-its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence confirmed. **M5b** ← M4, M5, and the verifier M6 carries (it spends the
+its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence (the owner cleared it on 2026-11-07). **M5b** ← M4, M5, and the verifier M6 carries (it spends the
 ID token the approve step verifies and binds the approval to the flow that token names; **the owner
 ruled on 2026-11-07 that it is a task of its own and a hard prerequisite before any binary links the
 front door**). **M6** ← M4, M5 (it wires a
@@ -227,7 +227,7 @@ registry end up four levels apart.
 | --- | --- | --- |
 | **L0** | M1, M3, M4 | nothing. M4's one remaining gate (the review) stands in front of the level rather than in it |
 | **L1** | M2 | `token.go` is M1's file, and D935's answer decides `store_bucket.go` |
-| **L2** | M5 | M2's store, M4's service, and D921's licence |
+| **L2** | M5 | M2's store, M4's service, and D921's licence — met, cleared by the owner on 2026-11-07 |
 | **L3** | M7, M5b | M7: `server.go` and `service.go` are M5's; M5b: `authorize.go` is M5's, and the approval it binds is the one M5's approve step takes today |
 | **L4** | M6, M8 | M6: `server.go`, which M5 and M7 both write; M8: `tools.go`, M7's |
 | **L5** | M9 | `tools.go` is M8's, `limits.go` is M1's, and `spend.go` needs a release window of its own (§5) |
@@ -284,13 +284,13 @@ is asked here for every task that changes who may reach what.
 starts until it has been read and its findings answered, and its scope is §8, every **SEC**-marked
 task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the two new
 privileges this design asks for (M9's launch grant, and M4's single binding on the store the
-`mcpauth` records moved to). **D921's unconfirmed licence** is the second
+`mcpauth` records moved to). **D921's licence** is the second
 ([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
-D921 back to its alternatives before any code exists rather than after. **That gate is unmet and M5
-is built while it stands** — nothing in this tree records the confirmation the check asks for — so
-**the pull request that builds M5 does not merge until the owner writes the gate file and counsel
-clears the transitive set, or the owner writes the relaxation of the check himself.**
+D921 back to its alternatives before any code exists rather than after. **The owner met that gate
+himself on 2026-11-07** — he read [licence-table.md](licence-table.md) and cleared the dependency
+set, **"Cleared: all permissive"**, recorded in [licence-gate.md](licence-gate.md) — **so it stands
+met and M5 waits on the licence no longer**: what keeps the front door off a binary is **M5b**.
 
 **That review has run, on 2026-11-04, and the gate from here on is per task**: its findings and the
 owner's answers to them are [reconciliation.md](reconciliation.md) §4a, every document in this folder
@@ -298,12 +298,13 @@ is written to them, and **a task starts only when the finding that names it is a
 it builds** — which is what §3 says of each task below. Its scope was §8, every SEC-marked task (the
 five whose marker says **mandatory** are **M3, M4, M5, M7 and M9**, **with M9 keeping the marker in
 the deferred slice**), and the two new privileges the design asks for. **D921's licence** is the half
-of the second gate that no review could settle: it is **UNCONFIRMED**, so what stands is **the owner
-or counsel confirming it — counsel's clearance of the transitive dependencies included — before any
-build**, with **the M5 gate file the owner is to create** ([reconciliation.md](reconciliation.md) §6,
-check 1). **That half is unmet and M5 is built while it stands**, and **the pull request that builds
-M5 does not merge until the gate file is written and the clearance comes, or the owner writes the
-relaxation of the check himself.**
+of the second gate that no review could settle: it was answered **UNCONFIRMED**, and **the owner met
+it himself on 2026-11-07** by reading [licence-table.md](licence-table.md) and clearing the
+dependency set — "Cleared: all permissive", with [licence-gate.md](licence-gate.md) the gate file
+§6 check 1 describes — **and counsel was never asked**
+([reconciliation.md](reconciliation.md) §6, check 1). **So that half is met and the gate in front of
+every task from here is the review's per-task one**, and **what keeps the front door off a binary is
+M5b, not the licence.**
 **A third gate stood in front of M2 and M4, and it has been answered rather than left standing.**
 D935 moved the records out of the project's database and left **which** separate store to the owner
 (§8), so M2's backend file and M4's Terraform were both written against an answer nobody had given
@@ -714,12 +715,13 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   [reconciliation.md](reconciliation.md) §4a, the two bounds no task carries).
 - **SEC:** **yes, mandatory** — this is the endpoint the threat model's redirect-URI, CSRF and open-
   registration paragraphs are about.
-- **Depends on:** M2, M4, D921, D928 — **and on D921's licence, which is still UNCONFIRMED**, so the
-  dependency was added ahead of the gate rather than behind it ([reconciliation.md](reconciliation.md)
-  §6, check 1). This is the one task the licence gates directly, and **that gate is unmet while this
-  task is built**: the pull request that carries it does not merge until the owner writes the gate
-  file and counsel clears the transitive set, or the owner writes the relaxation of the check
-  himself.
+- **Depends on:** M2, M4, D921, D928 — **and on D921's licence, which the owner cleared on
+  2026-11-07**: he read [licence-table.md](licence-table.md) and recorded it in
+  [licence-gate.md](licence-gate.md), the gate file [reconciliation.md](reconciliation.md) §6,
+  check 1 describes. This is the one task the licence gated directly, and **that gate is met**, so
+  the
+  dependency's `go.mod` entry no longer lands ahead of it; what this task still waits for is the
+  review's per-task gate, and **what keeps it off a binary is M5b**.
 - **The amendment's findings, and what this task carries (2026-11-04).** **M-a, M-c, M-f and the
   unverified client name**, all answered here: **a missing challenge, a challenge that is not `S256`
   and an unknown scope are refused before the library sees them**; only the code and refresh grants
@@ -734,14 +736,13 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   ([reconciliation.md](reconciliation.md) §4a) — rather than rewritten into this row.
 - **What the review settles about the library, and what it does not.** The review found the library's
   defaults are the opposite of this design's rules in five named ways, and that half is settled by
-  the constraints above; **the licence is not, and stays UNCONFIRMED** (the paragraph in §3 above).
-  **This task's `go.mod` entry is therefore taken ahead of §6's first check rather than behind it**,
-  and **nothing in this tree records the answer that check asks for**: no gate file is written, and
-  counsel has not cleared the transitive set — the set is named in
-  [reconciliation.md](reconciliation.md) §4a so the list is not what is missing. **So this pull
-  request does not merge while that check is unmet**, and a clearance that does not come sends D921
-  back to its alternatives: the library out of `go.mod` and this task rebuilt without it
-  ([reconciliation.md](reconciliation.md) §6 check 1).
+  the constraints above; **the licence is not, and the owner settled that half himself on
+  2026-11-07** — he read [licence-table.md](licence-table.md) and cleared the dependency set,
+  "Cleared: all permissive", recorded in [licence-gate.md](licence-gate.md), which is §6 check 1's
+  gate file (the paragraph in §3 above). **So this task's `go.mod` entry is no longer ahead of that
+  check**: the check is met, counsel was never asked, and a licence that had not been cleared would
+  still send D921 back to its alternatives — the library out of `go.mod` and this task rebuilt
+  without it ([reconciliation.md](reconciliation.md) §6 check 1).
 
 ### M5b — Paired-device approval: the number on the device, the token spent, and a family that ages
 

@@ -5,13 +5,13 @@ merged on `main`; M5 is built except the paired device M-a asks for, which is M5
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
 not started; this folder approves no task.**
 
-**This file is a table, and it is not a gate.** The owner ruled on 2026-11-07 that he will clear the
-`zitadel/oidc` dependency set by reading one table, and this is it. **No clearance is claimed
-anywhere in this folder, by this file or by any other.** The gate is
-[reconciliation.md](reconciliation.md) §6, check 1, and it is **unmet**: the licence is
-**UNCONFIRMED**, no gate file is written, and counsel has not cleared the transitive set. A file
-that said the gate were met would not be the gate file, so this one says nothing of the kind — it
-records what is in the tree and leaves the reading to the owner.
+**This file is a table, and it is not a gate.** The owner ruled on 2026-11-07 that he would clear the
+`zitadel/oidc` dependency set by reading one table, and this is it: he read it and cleared the set
+the same day. **The clearance is his own, and the record of it is
+[licence-gate.md](licence-gate.md)** — [reconciliation.md](reconciliation.md) §6 check 1's gate file.
+This table is the evidence that record stands on, and **it claims no clearance of its own**: what a
+table can do is set out its rows so that a person can read them the way the check asks, which is what
+the rest of this file does.
 
 ## What a row is, and how the rows were read
 
@@ -145,4 +145,5 @@ permissive in effect; both are noted under the table rather than left for the re
 - **What this table does not cover.** It reads the modules' licence files and nothing else: it is
   not counsel's clearance, it does not read the copyright headers of individual source files, and it
   says nothing about the modules `main` already carried. **The gate it is evidence for is
-  [reconciliation.md](reconciliation.md) §6, check 1, and that gate is unmet.**
+  [reconciliation.md](reconciliation.md) §6, check 1, and the owner cleared it on 2026-11-07 by
+  reading this table: the record is [licence-gate.md](licence-gate.md).**

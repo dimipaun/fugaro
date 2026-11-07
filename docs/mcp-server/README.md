@@ -38,7 +38,7 @@ instead of fixing it. The findings and what each changed, in one line each:
 | **H3** | **IAM bypasses the database rules**: launchers and operators can read the token records, admins can write them, and the public service would hold `firebasedatabase.admin` over the whole database | **Keyed hashes and MACs** where the records live now, **no database admin on the public service**, and the records **out of the main database** — **D935** states where they live and who may reach them | **D935** (the answer of 2026-11-05, F32); D922's amendment; spec.md §6, §8 |
 | **M-a** | The "loopback is the attacker's machine" argument **fails when approval happens on a phone** — cross-device phishing | QR proximity or number matching; the phone shows the client (**marked unverified**) and the redirect host; **a single-use POST**, an ID token never in a GET URL, nothing pushed unstarted — **and the device half is M5b, a task of its own and a gate (the owner's ruling of 2026-11-07)** | D923's amendment; spec.md §3, §8; M5, M5b, M6 |
 | **M-b** | The family spend limit was not enforced across **concurrent** runs | Reserve `min(job cap, remaining)` **atomically against the family counter** at spawn, settle at finalize; for `client_credentials` the family is the client | D924's amendment; spec.md §6, §8; M2, M9 (deferred) |
-| **M-c** | The library's defaults contradict the design (PKCE optional, empty challenge = `plain`, unknown scopes dropped, extra grants, a `SigningKey` with no home, non-RFC-8414 discovery) | Refuse a missing or non-`S256` challenge and an unknown scope **before the library**; only the code and refresh grants; opaque tokens or the key in Secret Manager; **the M5 gate file is the owner's to create** | D921's amendment; spec.md §1, §3, §6; M5 |
+| **M-c** | The library's defaults contradict the design (PKCE optional, empty challenge = `plain`, unknown scopes dropped, extra grants, a `SigningKey` with no home, non-RFC-8414 discovery) | Refuse a missing or non-`S256` challenge and an unknown scope **before the library**; only the code and refresh grants; opaque tokens or the key in Secret Manager; **the owner cleared the library's dependency set on 2026-11-07 by reading [licence-table.md](licence-table.md), and [licence-gate.md](licence-gate.md) is the record** | D921's amendment; spec.md §1, §3, §6; M5 |
 | **M-d** | Refresh rotation is a **check-then-write race** | Condition the rotation on the **generation of the same read**, with a small grace window — **the conditioning is built and the grace window is not**, so the loser of a race is refused `invalid_grant` rather than answered with the winner's pair | D930's amendment; spec.md §6; M2 |
 | **M-e** | `allUsers` makes **every route** public, including P8's `report_intent`/`record_override` | Every tool maps to a scope and an unmapped tool is refused; **"off" means no `allUsers` binding**; cap `max-instances` and the body size; log unauthenticated refusals and never write them to the database; **M4 must not widen `tf.Cover`** | D920's and D934's amendments; spec.md §2, §5, §8; M4, M7 |
 | **M-f** | Where D933's lists are read from was unspecified, and **nothing owned client pre-registration** | Read a source **only an operator can write**; **refuse pre-registration inside an agent session**; keep `client_credentials` **off until it has an owner** | D929's and D933's amendments; spec.md §4, §7; M5, M7 |
@@ -61,13 +61,11 @@ and PKCE and the project's own Firebase as the identity provider, so that MCP cl
 manage tasks without the CLI. The owner approved a design PR on 2026-10-31 and **answered the fifteen
 decisions on 2026-11-04** — D920's public endpoint, D923's paired-device sign-in and its `user:`-only
 lists, D930's rotating tokens, D931's single launch path, D934's off-by-default front door, D921's
-library **with its licence still UNCONFIRMED** — **and §6's first check is unmet while M5 is built:
-no gate file is in the tree, counsel has not been asked about the transitive set, and nothing here
-records the confirmation the check asks for, so the pull request that builds M5 does not merge until
-they are there or the owner writes the relaxation of the check himself; a licence that turns out to
-be unusable sends D921 back to its alternatives rather than shipping the dependency** — the owner
-ruled on 2026-11-07 that he will clear the set by reading [licence-table.md](licence-table.md), which
-is evidence for that check and not the gate — and D922's separate
+library **with its licence left to confirm** — the owner ruled on 2026-11-07 that he would clear the
+set by reading [licence-table.md](licence-table.md), which is evidence for that check and not the
+gate, **and he read it and cleared the set the same day, recorded in
+[licence-gate.md](licence-gate.md): §6's first check is met, so the licence no longer holds anything
+back, and the one thing that still holds this front door dormant is M5b** — and D922's separate
 **`mcpauth`** subtree, closed to
 every client. **And answered one more on 2026-11-05 (D935)**, on the independent review of PR
 #1715's M3: those records do not live in the project's shared Realtime Database at all, but in a
@@ -114,14 +112,15 @@ line at the latest commit, and its §7 records the eight things `main` had overt
 
 ## What it is
 
-One document set, five files:
+One document set, six files:
 
 | File | What it holds |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, copied **verbatim**, as §0 — and then the design written to the owner's answers of 2026-11-04 and to the amendments that followed the security review: the front door and its transport (§2), the authorization server and its flow (§3), Firebase as the identity provider (§4), the tools (§5, with **`spawn_task` deferred** out of the first slice), tokens, rigor windows and spend limits (§6), unattended agents (§7), **the threat model (§8)**, the coordinator's prohibitions (§9), **the two other works this design is wired to (§10)**, and what the design leaves open (§11) |
 | [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F32), each with a path and a line; then the **fifteen decisions, D920–D934** (§4) with the owner's answers of 2026-11-04 under them **and the answer of 2026-11-05, D935** (the records leave the project's database); **§4a**, the independent security review of 2026-11-04 and the owner's answers to it, written as a dated amendment note beside each decision it names; **§4b**, the one finding that is a decision of its own, **D936**; the number block and how it was read (§5), the owner checks that no hermetic test can stand in for (§6), and what `main` had overtaken (§7) |
 | [implementation-plan.md](implementation-plan.md) | What the owner was asked and answered (§1), the order and what forces it (§2), eleven tasks **M1–M10 and M5b** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block, **M9 deferred** out of the first slice, **M4 and M6 cancelled and to be rerun** and **M5b the paired-device approval the owner ruled a gate on 2026-11-07** — the **shared-files table** (§4), **the release slot** (§5), the test rules (§6), what the plan does not own (§7) and **the store the records move to (§8, D935)**, with the three candidates compared and **the answer of 2026-11-05** that picked the bucket |
-| [licence-table.md](licence-table.md) | The dependency licence table **the owner reads to clear the `zitadel/oidc` set** (his ruling of 2026-11-07): every module this branch adds or bumps against `main`, its licence as the module's own file in the module cache reads it, whether it is linked into the fugaro binary or reached only by a dependency's tests, and a column for anything not clearly permissive — **evidence for §6 check 1, which stays unmet: the table is not the gate and claims no clearance** |
+| [licence-table.md](licence-table.md) | The dependency licence table **the owner read to clear the `zitadel/oidc` set** (his ruling of 2026-11-07): every module this branch adds or bumps against `main`, its licence as the module's own file in the module cache reads it, whether it is linked into the fugaro binary or reached only by a dependency's tests, and a column for anything not clearly permissive — **evidence for §6 check 1, which the owner cleared by reading it: the table is not the gate and claims no clearance** |
+| [licence-gate.md](licence-gate.md) | **§6 check 1's gate file**: the owner's clearance of D921's dependency set on 2026-11-07, his answer word for word, the table the clearance stands on, and the two things it does not carry — counsel's clearance, which was never asked for, and the paired-device gate **M5b**, which stands |
 | `README.md` | This file: the status, the reading of the number block, and what a reader should not take from here |
 
 **Three works this folder is wired to.** The **stateless-orchestrator spec** (open as **#1682**, not
@@ -189,16 +188,18 @@ README, in its own diff, is where the block above D1189 is written.
   to be **rerun from the amended plan**, and **M1 and M3 may continue** — **and the tree has gone past
   that**, five tasks merged, M5 built and the rest of the plan not started
   ([reconciliation.md](reconciliation.md) §4a, "What has happened since"). **The first owner check of
-  §6 is unmet** — no gate file, no counsel's clearance of the transitive set, and no artifact in this
-  tree recording the confirmation — and the one **UNVERIFIED** half of D935 still stands too.
-- **Not a design anyone may build against yet.** D921's library was chosen with **its licence
-  UNCONFIRMED**, and the review of 2026-11-04 **could not settle it** — the Apache 2.0 claim is the
-  library's own — so **the owner or counsel confirms it, the transitive dependencies included**, and
-  **the gate file is the owner's to create**
-  ([reconciliation.md](reconciliation.md) §6, the first owner check). **M5 is built while that check
-  is unmet, and this pull request does not merge until it is answered** — by the gate file and
-  counsel's clearance, or by the owner writing the relaxation of the check himself. A licence that
-  turns out to be unusable still sends that decision back to its alternatives.
+  §6 was the licence, and the owner cleared it on 2026-11-07** — [licence-gate.md](licence-gate.md)
+  is the record and [licence-table.md](licence-table.md) the evidence — and the one **UNVERIFIED**
+  half of D935 still stands too.
+- **Not a design anyone may build against yet.** D921's library was chosen with its licence left to
+  confirm, and the review of 2026-11-04 **could not settle it** — the Apache 2.0 claim is the
+  library's own. **The owner settled it himself on 2026-11-07 by reading
+  [licence-table.md](licence-table.md) and clearing the set — counsel was never asked, and
+  [licence-gate.md](licence-gate.md) is the record** ([reconciliation.md](reconciliation.md) §6, the
+  first owner check). **M5 may therefore merge, and it merges dormant**: the paired device M-a asks
+  for is **M5b**, a task of its own and **a hard prerequisite before any binary links the front
+  door**, so the licence is no longer what holds the wiring back. Had the licence turned out to be
+  unusable, it would still send that decision back to its alternatives.
 - **Not the last word on the MCP specification.** §0's open item — re-verify the current revision —
   is still an owner check ([reconciliation.md](reconciliation.md) §6): **this container cannot reach
   the public specification**, which is the limitation `docs/coordinator/reconciliation.md`:794
