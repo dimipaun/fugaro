@@ -497,7 +497,7 @@ condition_json() {
 # and a `list` names no object — which is why a `&&` shape fails every request
 # this check makes.
 grant_bindings() {
-  local lruns=$1 lreports=$2
+  local lruns=$1 lreports=$2 out
   condition_json "$COND_RUNS" "$(clause_read runs) || $(clause_list "$lruns")" "fugaro-chk340-runs"
   condition_json "$COND_REPORTS" "$(clause_read reports) || $(clause_list "$lreports")" "fugaro-chk340-reports"
   say "granting roles/storage.objectViewer on runs/ and roles/storage.objectUser on reports/, each with its own listing clause"
@@ -509,17 +509,21 @@ grant_bindings() {
   # A grant that is REFUSED is a could-not-tell and never a verdict: the run has
   # measured nothing about the attribute, and every reading below it would be a
   # refusal for a reason that is not the listing clause. It stops here, by name,
-  # and the Restore still runs from the exit trap.
-  if ! gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
+  # and the Restore still runs from the exit trap. Each call's own output is
+  # captured rather than streamed, so the `aborted` row carries gcloud's whole
+  # message and not a pointer to a line the paste-back of the block leaves behind.
+  if ! out=$(gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
     --member="serviceAccount:$SA_EMAIL" --role=roles/storage.objectViewer \
-    --condition-from-file="$COND_RUNS" >&2; then
-    stop "the bucket refused the roles/storage.objectViewer binding on the runs/ prefix (gcloud's own words are the line above), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
+    --condition-from-file="$COND_RUNS" 2>&1); then
+    stop "the bucket refused the roles/storage.objectViewer binding on the runs/ prefix (gcloud said: $(gcloud_said "$out")), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
   fi
-  if ! gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
+  printf '%s\n' "$out" >&2
+  if ! out=$(gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
     --member="serviceAccount:$SA_EMAIL" --role=roles/storage.objectUser \
-    --condition-from-file="$COND_REPORTS" >&2; then
-    stop "the bucket refused the roles/storage.objectUser binding on the reports/ prefix (gcloud's own words are the line above), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
+    --condition-from-file="$COND_REPORTS" 2>&1); then
+    stop "the bucket refused the roles/storage.objectUser binding on the reports/ prefix (gcloud said: $(gcloud_said "$out")), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
   fi
+  printf '%s\n' "$out" >&2
 }
 
 # remove_bindings: both of them, and whichever condition they carry. A REFUSED
@@ -531,12 +535,13 @@ grant_bindings() {
 # removal that has taken effect — wait_for_removal, below, is what holds the next
 # form back until it has.
 remove_bindings() {
-  local role
+  local role out
   for role in roles/storage.objectViewer roles/storage.objectUser; do
-    if ! gcloud storage buckets remove-iam-policy-binding "gs://$B" --project="$P" \
-      --member="serviceAccount:$SA_EMAIL" --role="$role" --all >&2; then
-      stop "the bucket refused to remove the $role binding this form granted (gcloud's own words are the line above), so the next form would list through THIS form's clause and the answer would name the wrong form. The Restore below tries again and reads the bucket policy back"
+    if ! out=$(gcloud storage buckets remove-iam-policy-binding "gs://$B" --project="$P" \
+      --member="serviceAccount:$SA_EMAIL" --role="$role" --all 2>&1); then
+      stop "the bucket refused to remove the $role binding this form granted (gcloud said: $(gcloud_said "$out")), so the next form would list through THIS form's clause and the answer would name the wrong form. The Restore below tries again and reads the bucket policy back"
     fi
+    printf '%s\n' "$out" >&2
   done
   BINDINGS_GRANTED=no
 }
