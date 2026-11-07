@@ -221,6 +221,12 @@ type SharedAnchor struct {
 // the runs bucket's shared file would be choosing the code every teammate's
 // runs run, and the Dockerfile a build fetches with the project's credentials.
 //
+// orchestrator is the floor's case once more (D1239, D1234): Shared nils it,
+// and it is published through the policy node the runner fails closed on,
+// because the block is the daemon's own guardrails — the running cap and the
+// spawn rates a looping cycle is held to — and a launcher who could write it
+// into the shared file would be raising the guardrails that exist to bound it.
+//
 // default_claude_account, stages and claude_account_auto are the
 // account-choice keys, and they are operator-only for claude_accounts' own
 // reason (docs/accounts-add/spec.md §11.1): a key that names the account a
@@ -241,7 +247,7 @@ type SharedAnchor struct {
 // member table are dropped with it, because a shared file that could name a
 // workspace would be one that could join this project to a group nobody here
 // chose. localcfg.Config.Shared nils all four.
-var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "update_check", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "default_claude_account", "stages", "claude_account_auto", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
+var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "update_check", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin

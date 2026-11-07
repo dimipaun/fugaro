@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -1324,11 +1325,27 @@ func TestUpdatePublishAccountKeysRefuseYesAlone(t *testing.T) {
 // is asserted, not just the key, because the removal case is a member whose new
 // value the node states nothing for — a spelling nothing else in the node
 // carries.
+//
+// The orchestrator's guardrails are ceilings of the same rule (§4.1 rule 6, "a
+// command that would raise a cap is refused, whichever command it is"), so they
+// are members here too, with the two differences the block's own semantics
+// bring: a node that states no key is held to the shipped guardrail rather than
+// to no cap (WithDefaults, so 60 a minute over an unstated rate is a raise), and
+// a class's model tightens by moving UP the tier order, which is the one member
+// a larger number does not make looser.
 func TestPolicyLooseningCoversEveryCeiling(t *testing.T) {
 	node := func(mode string, usd float64, tokens int64, models ...string) *projectpolicy.Policy {
 		return &projectpolicy.Policy{Budget: projectpolicy.Budget{
 			Mode: mode, PerRunUSD: usd, MaxRunTokens: tokens, AllowedModels: models,
 		}}
+	}
+	guardrails := func(o *policy.Orchestrator) *projectpolicy.Policy {
+		// A budget block that names nothing but the mode, and no caps of its
+		// own (0 is "no cap at all"), so that a case about the orchestrator
+		// block is a case about that block and never about the four members
+		// beside it: the pair below compares like with like, and the one case
+		// whose other side is `node("enforce", 0, 0)` spells them the same way.
+		return &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce"}, Orchestrator: o}
 	}
 	for _, tc := range []struct {
 		name     string
@@ -1363,6 +1380,33 @@ func TestPolicyLooseningCoversEveryCeiling(t *testing.T) {
 				"budget.max_run_tokens 100 -> 0",
 				"budget.allowed_models a -> (removed)",
 			}},
+
+		{"a spawn rate raised", guardrails(&policy.Orchestrator{SpawnPerMinute: 1}), guardrails(&policy.Orchestrator{SpawnPerMinute: 60}),
+			[]string{"orchestrator.spawn_per_minute 1 -> 60"}},
+		{"a spawn rate lowered, which tightens", guardrails(&policy.Orchestrator{SpawnPerMinute: 60}), guardrails(&policy.Orchestrator{SpawnPerMinute: 1}), nil},
+		{"a spawn rate raised over the shipped guardrail the node stated none of",
+			guardrails(&policy.Orchestrator{BatchSize: 10}), guardrails(&policy.Orchestrator{BatchSize: 10, SpawnPerMinute: 60}),
+			[]string{"orchestrator.spawn_per_minute 2 -> 60"}},
+		{"a spawn rate given back to the shipped guardrail, which tightens",
+			guardrails(&policy.Orchestrator{SpawnPerHour: 40}), guardrails(&policy.Orchestrator{SpawnPerMinute: 1}), nil},
+		{"the batch size raised over the shipped one", guardrails(&policy.Orchestrator{SpawnPerMinute: 1}), guardrails(&policy.Orchestrator{SpawnPerMinute: 1, BatchSize: 25}),
+			[]string{"orchestrator.batch_size 10 -> 25"}},
+		{"the running cap raised", guardrails(&policy.Orchestrator{MaxRunning: 4}), guardrails(&policy.Orchestrator{MaxRunning: 8}),
+			[]string{"orchestrator.max_running 4 -> 8"}},
+		{"the running cap removed, which hands it back to the person's own limit", guardrails(&policy.Orchestrator{MaxRunning: 4}), guardrails(&policy.Orchestrator{SpawnPerMinute: 1}),
+			[]string{"orchestrator.max_running 4 -> (removed)"}},
+		{"a running cap over none, which the person's own max_parallel still bounds",
+			node("enforce", 0, 0), guardrails(&policy.Orchestrator{MaxRunning: 8}), nil},
+		{"a class's model moved down the order", guardrails(&policy.Orchestrator{DecisionModelPerClass: map[policy.DecisionClass]string{policy.DecisionRoutine: "opus"}}),
+			guardrails(&policy.Orchestrator{DecisionModelPerClass: map[policy.DecisionClass]string{policy.DecisionRoutine: "sonnet"}}),
+			[]string{"orchestrator.decision_model_per_class.routine opus -> sonnet"}},
+		{"a class's model raised, which tightens", guardrails(&policy.Orchestrator{DecisionModelPerClass: map[policy.DecisionClass]string{policy.DecisionRoutine: "haiku"}}),
+			guardrails(&policy.Orchestrator{DecisionModelPerClass: map[policy.DecisionClass]string{policy.DecisionRoutine: "opus"}}), nil},
+		{"a class's model given back to its floor", guardrails(&policy.Orchestrator{DecisionModelPerClass: map[policy.DecisionClass]string{policy.DecisionRoutine: "sonnet"}}),
+			guardrails(&policy.Orchestrator{SpawnPerMinute: 1}),
+			[]string{"orchestrator.decision_model_per_class.routine sonnet -> haiku"}},
+		{"the guardrails unchanged, state them or not",
+			guardrails(&policy.Orchestrator{SpawnPerMinute: 1}), guardrails(&policy.Orchestrator{SpawnPerMinute: 1}), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
@@ -1403,6 +1447,127 @@ func TestUpdatePublishLooserNodeNeedsTheTypedName(t *testing.T) {
 	}
 	if got := nodeCeiling(t, f); got != 7 {
 		t.Errorf("the node's ceiling is %v, want the typed 7", got)
+	}
+}
+
+// raisedGuardrailFixture is the review of O4's world on this door: the node
+// carries the guardrail this machine published — one spawn a minute — and the
+// file now states sixty. Nothing else differs, so the publish is the raise and
+// nothing but the raise.
+func raisedGuardrailFixture(t *testing.T) *projectFixture {
+	t.Helper()
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":      projectpolicy.Version,
+		"budget":       map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos":  []string{"bitbucket/acme/other", "github/acme/app"},
+		"orchestrator": map[string]any{"spawn_per_minute": 1},
+	})
+	rewriteProjectConfig(t, f, "orchestrator: {spawn_per_minute: 60}\n")
+	return f
+}
+
+// TestUpdatePublishRaisedGuardrailNeedsTheTypedName: the guardrails are caps of
+// §4.1 rule 6 — a command that would raise a cap is refused, whichever command
+// it is — and they travel on the node and nowhere else, so a `fugaro update`
+// that raises one raises a ceiling every run of the project is admitted by.
+// That is the widening D846 keeps for the project's own hand: the explicit door
+// refuses it in an agent's session and this one asks for the typed name, which
+// is one decision and not two.
+//
+// Before the fix, the block was a member no rule judged on either door: the
+// stage raised a spawn rate with the ordinary YesOrTyped class, so an agent's
+// session in a managed project published it with nothing asked and no record of
+// anything but a step that passed.
+func TestUpdatePublishRaisedGuardrailNeedsTheTypedName(t *testing.T) {
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	f := raisedGuardrailFixture(t)
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes alone raised the project's spawn rate:\n%s", out)
+	}
+	for _, want := range []string{"orchestrator.spawn_per_minute", "1", "60", "fugaro update", "needs a real terminal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if !strings.Contains(out, "orchestrator differs") {
+		t.Errorf("the diff the refusal stands on does not name the block that differs:\n%s", out)
+	}
+	if p := publishedPolicy(t, f); p.Orchestrator == nil || p.Orchestrator.SpawnPerMinute != 1 {
+		t.Errorf("the node carries %+v, want the published 1: the raise was written behind the refusal", p.Orchestrator)
+	}
+	if gen := recordedGeneration(t, f); gen != "" {
+		t.Errorf("policy_generation = %q, and the refused publish recorded a generation for a file it did not write", gen)
+	}
+
+	h = typedRig(t, f)
+	if out, err := h.apply(t, false); err != nil {
+		t.Fatalf("the project's name typed at a terminal did not confirm the publish: %v\n%s", err, out)
+	}
+	if p := publishedPolicy(t, f); p.Orchestrator == nil || p.Orchestrator.SpawnPerMinute != 60 {
+		t.Errorf("the node carries %+v, want the typed 60", p.Orchestrator)
+	}
+}
+
+// TestUpdatePublishOfAReplacedBlockAsksForTheMemberItDrops: the publish copies
+// the file's block whole (buildProjectPolicy), so a file that states one member
+// takes the node's other members away — and where the node's figure was the
+// tighter one, that is a raise of a cap like any other: the daemon goes from one
+// spawn a minute to the shipped two. The gate reads the block it is about to
+// write against the block the node holds (policyCeilingValues fills both sides
+// with the shipped guardrails), so the member the file leaves out is compared at
+// the default it falls back to and the typed name is asked for it.
+//
+// Without that the replace-not-merge call would be silent: a file stating a
+// lower running cap would publish a raised spawn rate on the ordinary class, and
+// an agent's session on a managed project would write it with nothing asked.
+func TestUpdatePublishOfAReplacedBlockAsksForTheMemberItDrops(t *testing.T) {
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":      projectpolicy.Version,
+		"budget":       map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos":  []string{"bitbucket/acme/other", "github/acme/app"},
+		"orchestrator": map[string]any{"max_running": 4, "spawn_per_minute": 1},
+	})
+	rewriteProjectConfig(t, f, "orchestrator: {max_running: 2}\n")
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes alone published a block that drops spawn_per_minute 1 back to the shipped 2:\n%s", out)
+	}
+	for _, want := range []string{"orchestrator.spawn_per_minute", "1", "2", "needs a real terminal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if p := publishedPolicy(t, f); p.Orchestrator == nil || p.Orchestrator.SpawnPerMinute != 1 || p.Orchestrator.MaxRunning != 4 {
+		t.Errorf("the node carries %+v, want the published block untouched behind the refusal", p.Orchestrator)
+	}
+
+	// The typed name closes it, and what reaches the node is the file's block
+	// whole — the member it does not state is not carried over from the node's.
+	h = typedRig(t, f)
+	if out, err := h.apply(t, false); err != nil {
+		t.Fatalf("the project's name typed at a terminal did not confirm the publish: %v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Orchestrator == nil || p.Orchestrator.MaxRunning != 2 || p.Orchestrator.SpawnPerMinute != 0 {
+		t.Errorf("the node carries %+v, want the file's own block", p.Orchestrator)
 	}
 }
 

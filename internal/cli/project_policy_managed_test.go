@@ -515,6 +515,56 @@ func TestPolicyPublishManagedRefusesARaisedCap(t *testing.T) {
 	refusalRecord(t, f, policyCapRule)
 }
 
+// The orchestrator's guardrails are caps of the same rule, and this is the
+// shape the review of O4 found: the block's spawn rates, batch size, running
+// cap and class models are what bounds how much work a project's orchestrator
+// sets going at once (D1239), so a publish that raises one raises a cap — and
+// the two doors have to read it as one. They did not: the explicit door refused
+// every change to the block as a member no rule judged, while a `fugaro update`
+// in an agent's session raised the same rate with nothing asked at all.
+//
+// The tightening direction is the other half, and the reason the member is
+// judged rather than merely refused: a session may lower a guardrail, which the
+// unjudged rule could never admit — any change to the block at all was "a
+// different orchestrator".
+func TestPolicyPublishManagedRefusesARaisedGuardrail(t *testing.T) {
+	f := newManagedPolicyFixture(t, "orchestrator: {spawn_per_minute: 1, max_running: 4}\n")
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("this installation's own publish was refused: %v\n%s", err, out)
+	}
+	if p := f.policyOf(t); p.Orchestrator == nil || p.Orchestrator.SpawnPerMinute != 1 {
+		t.Fatalf("the published node carries %+v, want the guardrails the file states", p.Orchestrator)
+	}
+	f.rewriteConfig(t, "orchestrator: {spawn_per_minute: 60, max_running: 4}\n")
+	before := nodeOf(t, f.db)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a coding agent's session raised the project's spawn rate:\n%s", out)
+	}
+	gateRefusal(t, err, policyCapRule)
+	for _, want := range []string{"orchestrator.spawn_per_minute", "1", "60"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
+	}
+	refusalRecord(t, f, policyCapRule)
+
+	// The same session lowers the running cap, which the rule admits: a
+	// guardrail moves down and never up.
+	f.rewriteConfig(t, "orchestrator: {spawn_per_minute: 1, max_running: 2}\n")
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("a coding agent's session could not tighten the project's guardrails: %v\n%s", err, out)
+	}
+	if p := f.policyOf(t); p.Orchestrator == nil || p.Orchestrator.MaxRunning != 2 {
+		t.Errorf("the published node carries %+v, want the lowered running cap", p.Orchestrator)
+	}
+}
+
 // And the widening rule the spec states with this example: a layer change that
 // adds a repository to a profile's scope (spec §4.1 rule 5). The first publish
 // is a person's and leaves a node whose default profile admits one repository;
