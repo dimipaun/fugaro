@@ -128,18 +128,38 @@ func (e *initEngine) setupCloud(ctx context.Context) error {
 // replace it.
 var secretsHeld = func() []string { return nil }
 
-// options is the loop's configuration from the flags.
-func (e *initEngine) options() initflow.Options {
-	r, o := e.r, e.r.o
-	if e.redact == nil { // built once: the loop and the stage share the slots
+// slots builds the run's redaction list once: the values the process held from
+// the start (secretsHeld), then one slot per value a stage prompts for
+// (initRun.hold). The loop and the log share it, and the log reads it at each
+// line, so the slots are the same list as the run grows into it.
+func (e *initEngine) slots() {
+	if e.redact == nil {
 		base := secretsHeld()
 		e.redact = append(slices.Clone(base), make([]string, maxHeldSecrets)...)
 		e.held = e.redact[len(base):]
 	}
+}
+
+// redaction is the list a run's log is redacted with, read at each line: what
+// slots built, as the stage that holds a value fills it in (F6).
+func (e *initEngine) redaction() func() []string {
+	e.slots()
+	return func() []string { return e.redact }
+}
+
+// options is the loop's configuration from the flags.
+func (e *initEngine) options() initflow.Options {
+	r, o := e.r, e.r.o
+	e.slots() // built once: the loop, the stage and the log share the slots
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
+		// The run's account: one line per stage and the closing line, in place
+		// of the result header and the plan view (CL5b). A run that has no
+		// reporter — --print-vars, --forget, --config-only, or a test's
+		// hand-built engine — prints exactly what it printed before.
+		Report:  r.rep,
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
 		// The managed gate is `fugaro update`'s (D1016, update_managed.go):

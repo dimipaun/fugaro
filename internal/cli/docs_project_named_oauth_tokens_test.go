@@ -10,6 +10,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"gopkg.in/yaml.v3"
 )
@@ -414,6 +415,82 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 	}
 	if bad := "claude setup-token; fugaro secrets set claude-oauth-token-<name> --project-wide"; strings.Contains(doc, bad) {
 		t.Errorf("%s still gives a named account the mint-then-store pair %q, which doctor no longer prints", projectClaudeAccountsDoc, bad)
+	}
+}
+
+// TestDocsProjectClaudeAccountsOneCommand is A5's own red step: the page's
+// happy path for one new account was two hand edits and five commands — the
+// owner's seven steps ([accounts-add spec](../../docs/accounts-add/spec.md) §1,
+// whose table lists this page step by step) — and it is one command now.
+// `fugaro accounts add <name>` writes both declarations, runs Anthropic's own
+// login when asked, stores the token project-wide and converges the
+// installation on the account through the stages `fugaro update` runs, behind
+// one confirmation (spec §2, D860: the deploy half is the update door's own
+// stages invoked in-process, because a command that ends in "now run fugaro
+// update" is the second command the HARD RULE forbids).
+//
+// What this pins is the claim and not the sentence: the command the page names
+// is the one …CommandsExist resolves in the real tree, with the flags the page
+// gives it, and the two hand edits are the file the command leaves behind
+// rather than what the reader is told to type.
+//
+// Mutation (verified, run and restored): put the old opening back —
+// "Two edits, both in the operator's local config" — and this fails naming it,
+// as it does with the command line removed.
+func TestDocsProjectClaudeAccountsOneCommand(t *testing.T) {
+	doc := readDoc(t, projectClaudeAccountsDoc)
+	for _, want := range []string{
+		// The path, under the heading a reader looks for it at.
+		"## 2. Add an account: one command",
+		// The command, an example of it with the flag that runs the login, and
+		// its inverse — the three the page has to show for the path to be one
+		// command end to end.
+		"fugaro accounts add <name>",
+		"fugaro accounts add acme-team --claude",
+		"fugaro accounts rm <name>",
+		// What the one command does, in the page's own words: the two
+		// declarations, the project-wide store, the converge.
+		"`claude_accounts.<name>.allow_data_to`",
+		"`profiles.<p>.claude_accounts`",
+		"stored **project-wide**",
+		"stages `fugaro update` runs",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer says %q: the happy path for one new account is one command (docs/accounts-add/spec.md §2), and this is where the page states it", projectClaudeAccountsDoc, want)
+		}
+	}
+	// The two hand edits are not the path any more. They are the file the
+	// command writes, and the page must not send a reader to write them first:
+	// that is the seven-step shape the design collapses.
+	if strings.Contains(doc, "Two edits, both in the operator's local config") {
+		t.Errorf("%s still presents the two hand edits as the work: fugaro accounts add does them, and the page's own §4 rules hold either way", projectClaudeAccountsDoc)
+	}
+	// A named account's token is stored project-wide only when the account
+	// names at least one repository, and §3 leans on §2 for that rule ("what
+	// decides whether the token's project-wide copy may exist at all"). It is
+	// projectWideAccepted that enforces it, so the page's bullet and the code
+	// are checked together: dropping the bullet leaves §3's cross-reference
+	// pointing at nothing.
+	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{"acme-team": {}}}
+	if projectWideAccepted(lc, config.ClaudeOAuthTokenPrefix+"acme-team") {
+		t.Error("projectWideAccepted accepted a named account whose allow_data_to names no repository: §2's bullet about a hand-stored named token is stale, and §3's cross-reference with it")
+	}
+	lc.ClaudeAccounts["acme-team"] = config.ClaudeAccount{AllowDataTo: []string{"acme/webapp"}}
+	if !projectWideAccepted(lc, config.ClaudeOAuthTokenPrefix+"acme-team") {
+		t.Error("projectWideAccepted refused a named account that names a repository: §2's bullet about a hand-stored named token is stale, and §3's cross-reference with it")
+	}
+	// The value's input is a read, and there are two of them: the hidden prompt
+	// on a terminal and stdin when there is none (spec §2.2 step 3), which is
+	// the way out --claude's own refusal names for a script. The page must not
+	// narrow that to the prompt alone, and readSecret is what decides it.
+	if !strings.Contains(doc, "read from stdin or at one hidden prompt") {
+		t.Errorf("%s no longer says the token is read from stdin or at one hidden prompt: the command's own --claude refusal sends a script to stdin", projectClaudeAccountsDoc)
+	}
+	if strings.Contains(doc, "that prompt is the only path to the value") {
+		t.Errorf("%s still says the hidden prompt is the only path to the value, and the command reads stdin when there is no terminal", projectClaudeAccountsDoc)
+	}
+	if src := sourceOfFunc(t, "secrets.go", "readSecret"); !strings.Contains(src, "io.ReadAll") {
+		t.Error("readSecret no longer reads stdin when there is no terminal: the page's sentence about the token's two input paths is now wrong")
 	}
 }
 

@@ -1,6 +1,9 @@
 # Secrets and credential brokering: reconciliation (draft)
 
-**Status: reconciliation answered (D497a amended after review, O5); plan written; nothing is implemented; no task approved.** The
+**Status: reconciliation answered (D497a amended after review, O5); plan written; no task approved.**
+This document is the reading of 2026-10-27 and is kept as written: much of it has since been built —
+[status-2026-11-07.md](status-2026-11-07.md) is the census of 2026-11-07 and says task by task what
+is on `main`, what remains and what can launch now. The
 owner answered D490–D506 on 2026-10-27 (§5): all as recommended except **D501** (the service keeps
 scaling to zero: not the recommendation; D502, staying opt-in, was relayed with it). **D494** is the
 recommendation and **departs from the owner's spec** (no RTDB token store). The plan is

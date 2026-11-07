@@ -685,7 +685,14 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 	}
 	w := s.out()
 	for _, name := range needs {
-		if err := s.take(ctx, st, f, w, name); err != nil {
+		// The prompt is read from the terminal file itself and printed where it
+		// always was: the stage's own writer, which is stderr, because what a
+		// run prints about a secret is not part of its account. The run's reader
+		// cannot put the step's line back for it, so the line in flight is taken
+		// down around the whole question and drawn again once the value is in
+		// (initRun.asking, G1): the spinner and the prompt are read on the same
+		// screen, whichever stream each one goes to.
+		if err := s.e.r.asking(func() error { return s.take(ctx, st, f, w, name) }); err != nil {
 			return initflow.Outcome{}, err
 		}
 		s.stored = append(s.stored, name)

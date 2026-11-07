@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -114,6 +113,107 @@ func TestUpdateSeedsTheLocalLayerFromThePublishedOne(t *testing.T) {
 	}
 	if all := out + errOut; !strings.Contains(all, path) || !strings.Contains(all, "the published project layer") {
 		t.Errorf("the run does not say what it wrote where:\n%s", all)
+	}
+}
+
+// TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile: the project's two
+// schedules are the layer's (R13), and the installation stage — which runs
+// before the layer stage — reads them from the local file the owner edits.
+// Every way of having no value reads as no value, which the installation's
+// options then take as paused: the one direction this setting may never take
+// by accident is the one that starts a job.
+func TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No local layer file at all: there is nothing to read, and the run
+	// leaves the schedules as the module deploys them.
+	if reports, catalog := jobsPaused(lc); reports != nil || catalog != nil {
+		t.Fatalf("with no local layer file the options are %v, %v, want no value at all", reports, catalog)
+	}
+	for _, tc := range []struct {
+		what string
+		text string
+		// want is the two values, reports first, or nil for "the file states
+		// nothing this run may take": a file that does not parse, or one with
+		// a jobs: key this release does not know. The layer stage refuses
+		// those a moment later, and the installation stage must not read a
+		// schedule out of a file that is about to be refused.
+		want []bool
+	}{
+		{"the layer states nothing", testProjectLayer, []bool{true, true}},
+		{"the layer writes both out", testProjectLayer + "jobs:\n  reports: { paused: true }\n  catalog_check: { paused: true }\n", []bool{true, true}},
+		{"the owner starts the reports job", testProjectLayer + "jobs:\n  reports: { paused: false }\n", []bool{false, true}},
+		{"the owner starts the catalog check", testProjectLayer + "jobs:\n  catalog_check: { paused: false }\n", []bool{true, false}},
+		{"the owner starts both", testProjectLayer + "jobs:\n  reports: { paused: false }\n  catalog_check: { paused: false }\n", []bool{false, false}},
+		{"a jobs: key this release does not know", testProjectLayer + "jobs:\n  digests: { paused: false }\n", nil},
+		{"a paused: that is not a bool", testProjectLayer + "jobs:\n  reports: { paused: nope }\n", nil},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			recordLayer(t, tc.text, "0")
+			reports, catalog := jobsPaused(lc)
+			if tc.want == nil {
+				if reports != nil || catalog != nil {
+					t.Fatalf("the options took %v, %v from a layer file this run cannot use, want no value at all", reports, catalog)
+				}
+				return
+			}
+			if reports == nil || catalog == nil {
+				t.Fatalf("the layer's jobs: block gave no value: %v, %v", reports, catalog)
+			}
+			if *reports != tc.want[0] || *catalog != tc.want[1] {
+				t.Errorf("reports paused = %v, catalog check paused = %v, want %v and %v", *reports, *catalog, tc.want[0], tc.want[1])
+			}
+		})
+	}
+}
+
+// TestUpdateAppliesThePublishedLayersJobsSettingWithNoLocalLayerFile: the
+// installation stage applies before the layer stage seeds a missing local layer
+// file from the published object, so a run that read the file alone would apply
+// paused — stopping the project's catalog check schedule the published layer
+// started, and putting it back only on the next update. What the installation
+// applies is the published layer's value, and a local file that IS there still
+// decides by itself: it is the file this run publishes, so the installation
+// must not carry a value the file it is about to publish does not have.
+//
+// The catalog check is the job that makes the value observable: the run's
+// installation tfvars are the only place the schedule's state is decided.
+func TestUpdateAppliesThePublishedLayersJobsSettingWithNoLocalLayerFile(t *testing.T) {
+	// A catalog with one entry whose source is an inline definition: the
+	// project's first repository builds it, so the installation plans the job
+	// (internal/infra.CatalogCheck) and its schedule.
+	catalog := "base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n" +
+		"image_catalog:\n  entries:\n    - name: tools\n      tags: [node]\n      source: { kind: inline, inline: \"FROM scratch\\n\" }\n"
+	for _, tc := range []struct {
+		what string
+		file bool // a local layer file that says nothing about jobs
+		want bool
+	}{
+		{"no local layer file", false, false},
+		{"a local layer file that says nothing", true, true},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newLayerRig(t, testProjectLayer+"jobs:\n  catalog_check: { paused: false }\n")
+			r.appendConfig(t, catalog)
+			r.save(t)
+			if tc.file {
+				recordLayer(t, testProjectLayer, "0")
+			}
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
+			}
+			cc, _ := r.tfvars(t)["catalog_check"].(map[string]any)
+			if cc == nil {
+				t.Fatalf("the installation's tfvars carry no catalog_check: %v", r.tfvars(t))
+			}
+			if cc["paused"] != tc.want {
+				t.Errorf("the installation applies paused %v, want %v", cc["paused"], tc.want)
+			}
+		})
 	}
 }
 
@@ -303,7 +403,7 @@ func TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes(t *testing.T)
 	if got, ok := layerObject(t, r); !ok || got != testProjectLayer {
 		t.Errorf("the object was written in an agent's session: %q", got)
 	}
-	if all := out + errOut; !strings.Contains(all, "layer") || !strings.Contains(all, "needs you") {
+	if all := out + errOut; !strings.Contains(all, markLeft+" layer") || !strings.Contains(all, "left for you (layer") {
 		t.Errorf("the run does not say the layer stage is left for a person:\n%s", all)
 	}
 }
@@ -548,7 +648,10 @@ func newLayerStageRig(t *testing.T, published, local, generation string) *layerS
 	cmd.SetOut(out)
 	cmd.SetErr(&syncBuf{})
 	cmd.SetIn(strings.NewReader(""))
-	run := &initRun{o: &initOptions{door: updateDoor.name}, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
+	// The run's own streams are the door's (newInitRun): the stage writes
+	// through initRun.w, which is the run's writer and not the buffer itself,
+	// so a test that gives this run a reporter sees what a person would.
+	run := newInitRun(cmd, &initOptions{door: updateDoor.name})
 	run.setProject(lc)
 	return &layerStageRig{initRig: r.initRig, runs: r.runs, s: newLayerStage(&initEngine{r: run, lc: lc, path: r.cfg}), out: out}
 }
