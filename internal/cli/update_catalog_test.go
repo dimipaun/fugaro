@@ -218,6 +218,56 @@ func TestUpdatePreviewNamesTheCatalogArmsSecondApply(t *testing.T) {
 	}
 }
 
+// catalogFlagBase is the image a --base-image flag names for base in these
+// tests: an image of the operator's own, in a repository named for its kind
+// (localcfg.BaseImageNameKind).
+func catalogFlagBase() string {
+	return "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/fugaro-base:dev-abc"
+}
+
+// TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase: the same installation
+// with the operator's own base image named on the command line instead of
+// pinned by the images stage. The config carries no base image until
+// writeConfig records the flag after the first apply, so a decision made
+// before any apply — the preview and the review screen the confirmation is —
+// has to read the flag, not the config: the stage it reports as work is the
+// one whose apply deploys the job from that image.
+func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
+	r := catalogUpdateRig(t)
+	// The two passes of the installation root: the first has nothing to deploy
+	// (the config records no base image yet), the second deploys the job.
+	r.script["plan@installation"] = []map[string]any{{"exit": 0}, {"exit": 2}}
+	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_job.catalog_check", "create"))}
+	// An owned project asks once, by the project's name — the confirmation the
+	// review screen is printed for.
+	r.markedRuns(t, initProjectName, initProject)
+	fakeTerminal(t)
+	r.save(t)
+	base := catalogFlagBase()
+	// The name is typed once per apply of the installation root: the first
+	// apply's own confirmation and this stage's, which isolates.
+	out, errOut, err := executeStdin(t, names(2), "update", "--base-image", config.BaseKind+"="+base)
+	if err != nil {
+		t.Fatalf("a catalog project whose base image the run names itself does not converge with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
+	}
+	if !regexp.MustCompile(`(?m)^\s+\[will do\]\s+installation-2\b`).MatchString(out) {
+		t.Errorf("the preview reports installation-2 as skipped, though the run records the flag's base image after the first apply and applies the root again with it:\n%s", out)
+	}
+	if !strings.Contains(out, "  installation-2: Terraform apply of the installation root again") {
+		t.Errorf("the review screen omits installation-2, so the apply that deploys the catalog check job is not one the user's confirmation named:\n%s", out)
+	}
+	if got := r.localConfig(t).BaseImage(config.BaseKind); got != base {
+		t.Errorf("the local config records base_images.%s = %q, want the image the flag named, %q", config.BaseKind, got, base)
+	}
+	cc, _ := r.tfvars(t)["catalog_check"].(map[string]any)
+	if cc == nil {
+		t.Fatalf("the installation tfvars carry no catalog_check, so the run applied the root without the job the flagged base image is for: %v", r.tfvars(t))
+	}
+	if got := cc["image"]; got != base {
+		t.Errorf("the catalog check job runs from %v, want the image the flag named, %q", got, base)
+	}
+}
+
 // TestUpdateSaysWhenItCannotPinTheCatalogBase: a run that cannot pin the base
 // image — a development build here, and any run that does not name base — has
 // to say so. The catalog is the user's, its entries are buildable, and nothing

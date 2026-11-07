@@ -765,7 +765,10 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 // upgrade — not only on the first pin — only the images stage can say whether
 // base_images.base is about to move. The preview, the review screen built from
 // it and the converge all ask this one function, so the second apply the user's
-// confirmation covers is the one the preview said would happen.
+// confirmation covers is the one the preview said would happen. The second arm
+// reads the base image the config will hold by the time this stage's apply
+// happens (catalogBaseImage), not the one the preview read: a run whose own
+// --base-image names base records it between the two applies.
 func (e *initEngine) catalogJobAwaitsItsBase() bool {
 	if !infra.CatalogBuilds(e.lc) {
 		return false
@@ -773,19 +776,35 @@ func (e *initEngine) catalogJobAwaitsItsBase() bool {
 	if e.images != nil && e.images.pinsBase() {
 		return true
 	}
-	img := e.lc.BaseImage(config.BaseKind)
+	img := e.catalogBaseImage()
 	return img != "" && (e.spec.CatalogCheck == nil || e.spec.CatalogCheck.Image != img)
+}
+
+// catalogBaseImage is the base image the catalog check job runs FROM by the
+// time the second apply happens: this run's own --base-image value for base
+// when it names one, else what the local config records. The flag is what
+// initRun.writeConfig writes into the config after the first apply (the
+// flag wins there), so it is the only way a decision made before any apply —
+// the preview and the review screen built from it — can see the base image
+// that apply is about to give the project.
+func (e *initEngine) catalogBaseImage() string {
+	for _, v := range e.r.o.baseImages {
+		if kind, ref, err := localcfg.ParseBaseImageFlag(v); err == nil && kind == config.BaseKind {
+			return ref
+		}
+	}
+	return e.lc.BaseImage(config.BaseKind)
 }
 
 // catalogBaseIsMissing reports the state no stage of this run can fix: the
 // project's catalog is one this installation builds and no base image is
-// recorded for its check job to run FROM, because this run pins none — a
-// development build pins nothing, and neither does a run that names the kinds
-// it handles. Nothing deploys the job, so nothing checks the catalog's entries
-// until a run that pins the base image is through, and the stage that would
-// deploy it says so rather than reporting the run converged.
+// recorded for its check job to run FROM, because this run pins none and
+// names none — a development build pins nothing, and neither does a run that
+// names the kinds it handles. Nothing deploys the job, so nothing checks the
+// catalog's entries until a run that pins the base image is through, and the
+// stage that would deploy it says so rather than reporting the run converged.
 func (e *initEngine) catalogBaseIsMissing() bool {
-	return infra.CatalogBuilds(e.lc) && e.lc.BaseImage(config.BaseKind) == ""
+	return infra.CatalogBuilds(e.lc) && e.catalogBaseImage() == ""
 }
 
 // installCatalogCheck applies the installation root again with the catalog
