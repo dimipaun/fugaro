@@ -16,8 +16,9 @@ disagrees with [spec.md](spec.md), it wins.**
   points at the tree the reader has, a finding's tense is the tree it was read on, and every finding
   the tree has refuted says so in place rather than in a footnote: **F1**, **F3**, **F4**, **F5**,
   **F10**, **F11**, **F12** and **F13**. *(Amended 2026-11-07: the commit named here is one merge
-  early for **F3** — its `ipc.ts` lines were read from `0410c189`, the merge of #1541, whose
-  `CONSOLE_OPERATIONS` holds twenty-five where `d1585a6f`'s holds twenty-four. F3 records it.)*
+  early for **F3**, whose citations were written from `0410c189`, the merge of #1541 — its
+  `CONSOLE_OPERATIONS` holds twenty-five where `d1585a6f`'s holds twenty-four, the one operation
+  between them being `link.openPullRequest`. F3 records it.)*
 - **S5, `fugaro settings get|set|unset`, pull request #1525**, branch `fugaro/20261101-151752-0d66`,
   head `f7871b3a` — **read while it was open, and merged into `main` as #1525
   (`f09f10e5`) while this design was in review**, unchanged. Every citation into it is marked **S5
@@ -85,17 +86,21 @@ side is `argvFor` (`console/src/main/spawn.ts:1333`), the only place an argv is 
 allow-list. *Consequence:* the two operations this design adds, the argv rows they drive and the
 count in rule 5 all move in **one commit each** (**D1115**), and the count is not decoration — it is
 what a reader checks against the table. *(Amended 2026-11-07: a review counted the surface from
-`d1585a6f`, the commit §1 names, where `CONSOLE_OPERATIONS` holds **twenty-four** — its own comment
-there says so — and seven operations landed after it. Both counts are true of their own tree, and
-**twenty-five is this finding's, because `d1585a6f` is one merge early for it:** F3 was written from
-`0410c189`, the merge of #1541 that landed at 18:15 that day. The lines this finding cites are that
-merge's — the table's own line and `MAX_REPLY_REASON_LENGTH`'s both sit at different ones at
-`d1585a6f` — and so is the count: that merge's table holds twenty-five, the twenty-fifth being
-`link.openPullRequest`, which is the seventh operation a reader counting from `d1585a6f` finds. Rule
-5 of `docs/design/desktop-console.md` said twenty-four at `d1585a6f` and twenty-five at `0410c189`,
-and **D1114**'s 25 → 27 baseline below counts from the same tree, so this sentence, that decision
-and the design document agree. It therefore stands: its six are the four named there and the two
-this design adds, and `link.openPullRequest` was already on the surface.)*
+`d1585a6f`, the commit §1 names, where the table holds **twenty-four** — the comment above it in that
+commit's `console/src/main/ipc.ts` says so, line 373 there — and seven operations have landed since.
+Both counts are true of their own tree, and **twenty-five is this finding's, because `d1585a6f` is
+one merge earlier than the tree it was written from.** The citations this finding was **written
+with** are lines of `0410c189`, the merge of #1541 that landed at 18:15 that day: the table, the
+flags, the `argv` shape, the never table and the startup check sit at 431, 1040, 1080, 1112 and 2653
+there, and at 417, 979, 1019, 1051 and 2538 at `d1585a6f`. **The ones printed above are the reader's
+tree's and not that one's** — the sweep re-anchored every citation onto today's tree, which is §1's
+own rule — so that merge's count is what this sentence was written from, and its twenty-five is the
+table's: the twenty-fifth is `link.openPullRequest`, which is exactly the seventh operation a reader
+counting from `d1585a6f` finds. Rule 5 of `docs/design/desktop-console.md:191` states the count in
+words at both commits — twenty-four at `d1585a6f`, twenty-five at `0410c189` — and **D1114**'s
+25 → 27 baseline below counts from the same tree, so this sentence, that decision and the design
+document agree. It therefore stands: its six are the four named there and the two this design adds,
+and `link.openPullRequest` was already on the surface.)*
 
 **F4: Exists. The console's child environment is fixed, and no coding-agent marker can reach it.**
 `CHILD_ENV_KEYS` (`console/src/main/spawn.ts:366`) is the whole environment a child receives, and it
