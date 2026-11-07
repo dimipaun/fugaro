@@ -382,7 +382,8 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    read.** That file is layer 1 of a launch's resolution, but it belongs to the session that owns
    the tree, which can write a `git.base_branch` into it, uncommitted, naming a ref this checkout does
    not hold; the ref comes from the installation config instead (`repos.<r>.base_branch`, else the
-   project's own default), and
+   project's own default — the installation config's own top-level `base_branch`, else the one the
+   published policy node carries, which are exactly the layers a launch resolves below its file), and
    **the branch the committed file then names is followed**, because a repository whose file writes
    `git.base_branch` has its runs read the file at that branch: the value is resolved out of the
    committed bytes and the file there is read in its place.
@@ -393,12 +394,18 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    repository whose runs stop at launch, and a read that covered the base alone would score it clean.
    A name at either ref is the warnable reference, and a read that failed at either is an unresolved
    value. A branch of origin that is neither — one a run reaches only with an explicit `--ref` — is
-   not read: what this check answers for is the runs the repository makes by itself. Of the two ways the read can come up short,
+   not read: what this check answers for is the runs the repository makes by itself. Of the ways the read can come up short,
    a repository this machine has **no checkout of** is a warning, while a checkout whose committed file
    **did not resolve** (a document the strict reader refuses, or a ref this checkout does not hold) is
    a warning for the owner and a **refusal** for a session, because there the answer was asked for and
    could not be read — and a document that was not read is never scored clean, whichever file sits in
-   the working tree beside it.
+   the working tree beside it. The third is the widest, and it is not about a repository at all: the
+   **record of which checkouts this machine holds**, when that document cannot be read. A corrupt one
+   is not an empty one (`localcfg.LoadCheckouts` refuses to read its own file that way, and the sibling
+   read in `settings set` is a hard refusal), and taking it for one would report every enrolled
+   repository as one this machine does not hold — the warning — with the question asked of none of
+   them. Nothing was read there, so nothing is scored clean: the same **refusal** for a session, and
+   the warning above for the owner.
 3. **Converge.** The same publish and deploy as `add` (§2.5), so the job the account owned is gone from
    the installation.
 
@@ -406,8 +413,9 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
 wherever no admission covers the removal. In a managed project the gate admits an `rm` whose referrers
 are checked and clean, which is the accounts row of the managed design's §4.2 and its rule for this
 command: no profile names the account, no enrolled repository this machine holds a checkout of names
-it in the committed `agent.oauth_token`, and no checkout's file went unread — a value the gate cannot
-resolve at plan time is a refusal and never a pass (that design's §4.1). A repository this machine has
+it in the committed `agent.oauth_token`, no checkout's file went unread, and the record of the
+checkouts itself was read — a value the gate cannot resolve at plan time is a refusal and never a pass
+(that design's §4.1). A repository this machine has
 no checkout of is the one case no read here can close, and it is the warning above rather than a pass:
 what it would break is a run that stops at launch, which the owner reads about on their own run too.
 

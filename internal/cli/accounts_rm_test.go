@@ -1007,6 +1007,71 @@ func TestAccountsRmWarnsAboutTheRefALaunchWouldUse(t *testing.T) {
 	}
 }
 
+// TestAccountsRmManagedRefusesThePolicyBaseBranch is layer 3 of the base a run
+// of a repository is cut from: an installation whose local config names no
+// base_branch for the repository and whose own top level names none either, so
+// the published policy node is the only place a launch of it reads one from
+// (basebranch.go's projectBaseBranch). The check resolved the base out of the
+// local config alone before, so it read main while every run of the repository
+// was cut from the policy's branch: the committed file at that branch was never
+// read, the repository was scored clean, the gate admitted the session and the
+// one-way delete ran while those runs kept stopping at launch.
+func TestAccountsRmManagedRefusesThePolicyBaseBranch(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmPolicyBaseBranch(t, r, "release")
+	accountsRmCheckoutBranched(t, "owner/repo-a", accountsRmRepoYAMLWithoutToken, accountsRmRepoYAML)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran while the base branch the policy names still names the account (%v):\n%s", got, out)
+	}
+	if err == nil {
+		t.Fatalf("the branch the project's own default points at was not read:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") || !strings.Contains(err.Error(), "agent.oauth_token") {
+		t.Errorf("the refusal does not name the repository and the key that still reference the account: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one refusal: %+v", len(recs), recs)
+	}
+	if recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the record's verdict is %q, want %q: the step was refused", recs[0].Verdict, managedmode.AuditRefused)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "owner/repo-a") }) {
+		t.Errorf("the record's rules (%v) do not name the repository that refused the removal", recs[0].Rules)
+	}
+}
+
+// TestAccountsRmWarnsAboutThePolicyBaseBranch is the same read on the owner's own
+// path, where the referrer it finds is the warning and not the block it is for a
+// session (spec §4 step 2, D783's shape).
+func TestAccountsRmWarnsAboutThePolicyBaseBranch(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmPolicyBaseBranch(t, r, "release")
+	accountsRmCheckoutBranched(t, "owner/repo-a", accountsRmRepoYAMLWithoutToken, accountsRmRepoYAML)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: team-a is named by owner/repo-a's committed fugaro.yaml in agent.oauth_token") {
+		t.Errorf("the run does not name the repository whose file at the project's own base branch names the account:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: the referrer is a warning and not a block", got, id)
+	}
+}
+
 // TestAccountsRmManagedRefusesABranchItCannotRead is the other half of that ref,
 // and the same split the base branch already answers: a document that was not
 // read is never scored clean, whichever ref it sits at. The branch this checkout
@@ -1107,6 +1172,85 @@ func TestAccountsRmManagedRefusesACheckoutItCannotRead(t *testing.T) {
 	}
 	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "owner/repo-a") }) {
 		t.Errorf("the record's rules (%v) do not name the checkout that refused the removal", recs[0].Rules)
+	}
+}
+
+// TestAccountsRmManagedRefusesAnUnreadableCheckoutsRecord is the third way the
+// read comes up short, and the one that is not about a repository at all: the
+// document that says which checkouts this machine holds is there and wrong.
+// Taken for an empty one — localcfg.EmptyCheckouts, which is what this command
+// did with the error — every enrolled repository becomes one this machine does
+// not hold, which is the warning and not a refusal: the gate found no referrer
+// and no unread checkout, admitted the session and ran the one-way delete having
+// asked its question of nothing. LoadCheckouts refuses to read its own document
+// that way (checkouts.go: a file that is there and wrong is not "nothing
+// recorded"), and the sibling read of the same file in settings_set.go is a hard
+// refusal; here the document is the unknown, so nothing is scored clean and the
+// session is refused on it.
+func TestAccountsRmManagedRefusesAnUnreadableCheckoutsRecord(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	accountsRmBreakCheckouts(t)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran with this machine's record of its checkouts unreadable (%v):\n%s", got, out)
+	}
+	if err == nil {
+		t.Fatalf("a session whose checkout record could not be read removed the account:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "record of its own checkouts could not be read") {
+		t.Errorf("the refusal does not say which read did not answer: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one refusal: %+v", len(recs), recs)
+	}
+	if recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the record's verdict is %q, want %q: the step was refused", recs[0].Verdict, managedmode.AuditRefused)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool {
+		return strings.Contains(rule, "record of its own checkouts could not be read")
+	}) {
+		t.Errorf("the record's rules (%v) do not name the read that refused the removal", recs[0].Rules)
+	}
+}
+
+// TestAccountsRmWarnsWhenTheCheckoutsRecordCannotBeRead is that state on the
+// owner's own path, where the same unknown is the warning and not the block
+// (spec §4 step 2, D783's shape): the repository this fixture has a checkout of
+// does name the account in its commit, and with the record unreadable the
+// command cannot see it — so what the owner reads is that nothing was checked,
+// and the removal they confirmed goes through. It is the same split the two
+// other ways of coming up short already answer, and the reason it is not a hard
+// refusal here: this file is the machine's own, and a removal blocked on it
+// would be blocked on state the owner's own edit is not about.
+func TestAccountsRmWarnsWhenTheCheckoutsRecordCannotBeRead(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	accountsRmBreakCheckouts(t)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: this machine's record of its own checkouts could not be read") {
+		t.Errorf("the run does not say which read did not answer:\n%s", out)
+	}
+	if strings.Contains(out, "warning: team-a is named by owner/repo-a") {
+		t.Errorf("the run names a referrer it could not have read:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: an unreadable checkout record is a warning on the owner's own path and not a block", got, id)
 	}
 }
 
@@ -1268,6 +1412,34 @@ func accountsRmCheckoutOnBranch(t *testing.T, repo, branch, atBase, atBranch str
 	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/"+branch, "HEAD")
 	t.Chdir(dir)
 	return accountsRmRemember(t, repo, dir)
+}
+
+// accountsRmBreakCheckouts makes this machine's record of its own checkouts a
+// document no reader of it can parse. The file is there and wrong, which is the
+// case LoadCheckouts refuses to answer as "nothing recorded" and the case this
+// command may not answer as "no checkout here" either: the rows it held — every
+// checkout the reference check reads — are exactly what the broken document
+// stopped saying.
+func accountsRmBreakCheckouts(t *testing.T) {
+	t.Helper()
+	path, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{ this is not a checkouts document\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// accountsRmPolicyBaseBranch publishes branch as the project's base branch in
+// the policy node. The rig's local config names no base_branch, at the top level
+// or for the repository, so this node is the only place a launch of this
+// installation reads one from (basebranch.go's projectBaseBranch, layer 3).
+func accountsRmPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
+	t.Helper()
+	node := addPolicyNode()
+	node["base_branch"] = branch
+	r.db.Set(projectpolicy.PathShared(), node)
 }
 
 // accountsRmRemember records dir as the project's checkout of repo, which is
