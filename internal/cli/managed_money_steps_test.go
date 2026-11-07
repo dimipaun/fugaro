@@ -1,30 +1,40 @@
 package cli
 
 import (
+	"bufio"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // The money and permanence steps of the managed set, pinned as tests: the
 // steps the ruling of 2026-11-01 takes the prompt from are the ones the gate's
-// own verdict covers and the ordinary steps the gate does not judge, and these
-// are the ones left out of both — a billable first image build, the Firestore
-// database's own location, and a registry tag replacement. What decides them is
-// D1026's class rule, and it is the design's rule rather than this build's
-// choice: `Covers` is true only for YesOrTyped, and a step that is money or
-// permanent is one a plan verdict cannot stand in for. The design's own
-// billable path says the same thing from the other end — `fugaro image
-// refresh` stops asking a session's per-build question only because D1013 gave
-// that path a document and a bound, so a prompt is only ever replaced by
-// something that bounds what the prompt was there for.
+// own verdict covers and the ordinary steps the gate does not judge, and two of
+// the three below are the ones left out of both — the Firestore database's own
+// location and a registry tag replacement. What decides them is D1026's class
+// rule, and it is the design's rule rather than this build's choice: `Covers`
+// is true only for YesOrTyped, and a step that is PERMANENT is one a plan
+// verdict cannot stand in for.
 //
-// So each test below asserts the SAME answer in the two worlds, and that is the
-// assertion: a managed project's own terminal is asked for these steps exactly
-// as a project that is not managed is, and what a reading of the marks may
-// never do is answer a money step. The mutation it catches is the tempting one
-// — an arm in askClass or askCovered that returns "confirmed" when
-// gateUnderway() is true — which would pass every other test in this package
-// and fail these three.
+// The first step — a billable first image build — is not one of them, and it is
+// the test that says so (NP3, the owner's ruling of 2026-11-07). A build is
+// money and neither data nor a secret, which is the whole of the distinction
+// this file exists for: a step that spends is one the gate's read covers, and a
+// step that cannot be undone is not. So the build's test asserts the SAME
+// answer in the two worlds told apart — nothing typed where the marks say the
+// project is managed, the typed name where they do not, nothing submitted
+// without it — and the two tests after it assert one answer in both worlds: the
+// owner's own word, exactly as a project that is not managed is asked for it.
+//
+// Two mutations are what this file catches: an arm in askClass or askCovered
+// that returns "confirmed" when gateUnderway() is true (which would answer the
+// Firestore location and the tag replacement, and would pass every other test in
+// this package), and a buildImages that stopped asking the unmanaged world for
+// the name after reading marks it did not find.
 
 // managedTerminalUpdate is one update door's run on a rig, in the session the
 // ruling is about: a real terminal, an empty stdin, no --yes, and no coding
@@ -84,21 +94,82 @@ func assertAsked(t *testing.T, out *syncBuf, reachable, confirmed bool) {
 }
 
 // The first billable image build of a repository: buildImages' own step
-// (cloudBuildBanner + askCovered), reached by the repository stage of an
+// (cloudBuildBanner + its confirmation), reached by the repository stage of an
 // update. The class is YesOrTyped in this door (D12's answer of 2026-10-20,
-// which is what lets --yes cover the build), and the gate judges no document
-// that names it — the repository stage's document is the Terraform plan, not
-// the Cloud Build the step submits — so the typed name stays.
-func TestManagedBillableFirstBuildKeepsItsTypedName(t *testing.T) {
-	for _, tc := range moneyWorlds() {
-		t.Run(tc.what, func(t *testing.T) {
+// which is what lets --yes cover the build), and a build is money and nothing
+// else — no data is destroyed and no secret is read — so in a managed project
+// the run's own read of the marks stands in for the name and the plan the run
+// printed is what the owner was shown (buildAsksNothing, and the same treatment
+// `fugaro image build` gives the same person there).
+//
+// The three worlds are the whole assertion. Where the marks say the project is
+// managed the person's stdin is a reader that fails the test when it is read at
+// all, so "nothing was asked" is a property of the run and not a reading of its
+// output; the gate's own sentence is what they read instead, and the build is
+// submitted. Where they do not say it, the typed name is what submits the build
+// and nothing typed submits nothing — the direction a mistake has to fall in.
+func TestManagedBillableFirstBuildTakesNoNameAtTheTerminal(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		managed bool
+		stdin   string
+		builds  int
+	}{
+		{"managed: the marks and the printed plan stand in for the name", true, "", 1},
+		{"not managed: the typed name submits the build", false, initProjectName + "\n", 1},
+		{"not managed: nothing typed submits nothing", false, "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fb := useFakeBuilder(t)
 			_, e, out := managedTerminalUpdate(t, tc.managed)
-			banner := cloudBuildBanner("acme/app", "app", "E2_HIGHCPU_8", "builder@acme.iam.gserviceaccount.com", "us-docker.pkg.dev/acme/images")
-			confirmed, reachable, err := e.r.askCovered(banner)
-			if err != nil {
-				t.Fatal(err)
+			// The person's own stdin, as the confirmation would read it: a
+			// reader that fails the test if anything reaches it in the managed
+			// world, and the typed line in the world that has to be asked.
+			stdin := &unreadStdin{}
+			if tc.stdin == "" {
+				e.r.in = bufio.NewReader(stdin)
+				e.r.cmd.SetIn(stdin)
+			} else {
+				e.r.in = bufio.NewReader(strings.NewReader(tc.stdin))
+				e.r.cmd.SetIn(strings.NewReader(tc.stdin))
 			}
-			assertAsked(t, out, reachable, confirmed)
+			lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+				RunsBucket: initRunsBucket,
+				BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
+			e.r.setProject(lc)
+			cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
+			spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r",
+				Workflows: map[string]infra.WorkflowSpec{"app": {}}}
+			what := cloudBuildBanner("acme/app", "app", lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath)
+
+			built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
+			if err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if built != tc.builds || len(fb.specs) != tc.builds {
+				t.Fatalf("built %d (%d submitted), want %d\n%s", built, len(fb.specs), tc.builds, out)
+			}
+			if !strings.Contains(out.String(), what) {
+				t.Errorf("the billable plan the step is about was not printed:\n%s", out)
+			}
+			if tc.managed {
+				if stdin.read {
+					t.Errorf("a managed project's own terminal was read, so the name was asked for:\n%s", out)
+				}
+				if !strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the person did not read why nothing is typed:\n%s", out)
+				}
+				if strings.Contains(out.String(), "Type "+initProjectName+" to confirm: ") {
+					t.Errorf("a managed project's own terminal was asked for the project's name:\n%s", out)
+				}
+				return
+			}
+			if !strings.Contains(out.String(), "Type "+initProjectName+" to confirm: ") {
+				t.Errorf("a project that is not managed did not read the prompt this step has always printed:\n%s", out)
+			}
+			if strings.Contains(out.String(), initflow.GateOrdinary()) {
+				t.Errorf("a step in a project that is not managed read the gate's own sentence:\n%s", out)
+			}
 		})
 	}
 }

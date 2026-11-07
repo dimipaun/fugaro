@@ -65,7 +65,7 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 		for _, w := range env.lc.Warnings() {
 			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 		}
-		return runImageBuildCatalog(cmd, o, env, cat, name)
+		return runImageBuildCatalog(cmd, o, env, cat, name, conds)
 	}
 	// No catalog and no name is the per-workflow build exactly, and that
 	// path opens the cloud itself: this read is closed again rather than
@@ -108,7 +108,12 @@ func catalogBuildNotConfirmable(conds initflow.Conditions, o imageBuildOptions, 
 // submitted: its build would run as an account that does not hold that
 // repository's credential. Building one from anywhere is a decision this
 // command does not take on its own.
-func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv, cat *config.Catalog, name string) error {
+//
+// conds is the reading runImageBuildCatalogOrDerived refused on — the terminal,
+// --json and the coding agent's marker — and it is passed rather than read
+// again so that the session this arm was admitted for and the session its
+// refusal is scoped to are one reading of the same facts.
+func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv, cat *config.Catalog, name string, conds initflow.Conditions) error {
 	ctx := cmd.Context()
 	lc := env.lc
 	root, rf, err := loadCheckoutResolved(ctx, "", lc, layerOptions{})
@@ -250,12 +255,25 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	case !exists:
 		return userErr("project %s has no shared image registry %s, where a catalog image is pushed. fugaro update creates it: run that from this checkout first", lc.GCPProject, registry)
 	}
-	if err := confirmBuild(cmd, lc.Name, lc.GCPProject, catalogBuildBanner(entries, lc.Build.MachineType, rs.BuildServiceAccountEmail, registry)); err != nil {
+	// The plan the whole command is judged and confirmed by, in one value: every
+	// entry this invocation builds is named in it, so one confirmation, one
+	// verdict and one record cover the builds that follow (image_build_managed.go).
+	entryNames := make([]string, len(entries))
+	for i, e := range entries {
+		entryNames[i] = e.Name
+	}
+	m := openBuildManaged(ctx, env, conds)
+	if err := m.confirm(ctx, cmd, conds, buildPlan{
+		Repo: repo, Origin: origin, Entries: entryNames, Kind: kind, Base: base,
+		Account: rs.BuildServiceAccountEmail, Registry: registry, Machine: lc.Build.MachineType,
+		What: catalogBuildBanner(entries, lc.Build.MachineType, rs.BuildServiceAccountEmail, registry),
+	}); err != nil {
 		return err
 	}
-	// The copies are written only now, after the typed confirmation: like
-	// the layer copy the per-workflow path writes, a declined (or
-	// unconfirmable) build must leave no trace in the bucket.
+	// The copies are written only now, after the confirmation (typed, or the
+	// gate's own in a managed project): like the layer copy the per-workflow
+	// path writes, a declined (or unconfirmable) build must leave no trace in
+	// the bucket.
 	rb, err := env.recordBucket(ctx)
 	if err != nil {
 		return remote(err)
@@ -263,8 +281,8 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// The provider's credential comes from where it actually is -- the local
 	// config and the repository's github-app-key secret -- rather than from
 	// the process environment, which holds neither (catalogProviderEnv). That
-	// read, like the copies below, waits for the typed confirmation: a
-	// declined build reads no secret.
+	// read, like the copies below, waits for the confirmation: a declined build
+	// reads no secret.
 	providerEnv, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv)
 	if err != nil {
 		return err
@@ -311,6 +329,15 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			return userErr("%v", err)
 		case err != nil:
 			return remote(err)
+		}
+		// The submission IS the write this command's record is about: once it is
+		// out the build happened and keeps billing, so the record is written
+		// whatever the wait after it did (D1014 on a write that cannot leave a
+		// trail). The verdict is spent by the first call, so the entries after
+		// this one submit under the admission this one recorded: one plan, one
+		// record, however many builds it named.
+		if err := m.recorded(ctx); err != nil {
+			return err
 		}
 		if !o.noWait {
 			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))

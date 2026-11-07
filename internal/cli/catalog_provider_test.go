@@ -325,6 +325,36 @@ func TestCatalogProviderEnv(t *testing.T) {
 			t.Errorf("the App key was read (%d resolutions, %d reads)", *resolves, *reads)
 		}
 	})
+
+	// An installation whose credentials service is on: providers.FromEnv opens
+	// the github provider keyless and reads no key at all — not even one the
+	// environment holds (C2.2, D145) — so the secret below is one this
+	// command's own provider would never use, and announcing a read of it would
+	// describe a read this build does not make on a build that never reads a
+	// GitHub App key. The ID stays: the keyless provider is constructed with it.
+	t.Run("the credentials service holds the key, so nothing is read", func(t *testing.T) {
+		catalogClearProviderEnv(t)
+		lc, rs, entries := catalogProviderEnvRig(t)
+		t.Setenv(providers.EnvCredentialsServiceURL, "https://creds.example.invalid/")
+		resolves, reads := catalogStubKeyRead(t, nil, errors.New("Secret Manager must not be read"))
+		var notice bytes.Buffer
+		env, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv)
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		if got := envValue(env, providers.EnvGitHubAppID); got != catalogBuildAppID {
+			t.Errorf("%s = %q, want the repository's own App ID even with the service on", providers.EnvGitHubAppID, got)
+		}
+		if _, ok := envHas(env, providers.EnvGitHubAppKey); ok {
+			t.Errorf("%s was set although the keyless provider reads no key", providers.EnvGitHubAppKey)
+		}
+		if *resolves != 0 || *reads != 0 {
+			t.Errorf("the key was read from Secret Manager (%d resolutions, %d reads) although the provider is keyless", *resolves, *reads)
+		}
+		if notice.Len() != 0 {
+			t.Errorf("a read that does not happen was announced to a build that never reads a key: %q", notice.String())
+		}
+	})
 }
 
 // catalogGitHubProvider is the copy's opener for a GitHub checkout: the REAL

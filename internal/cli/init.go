@@ -1879,6 +1879,29 @@ func (r *initRun) askCovered(what string) (confirmed, reachable bool, err error)
 	return r.askClass(initflow.YesOrTyped, what)
 }
 
+// buildAsksNothing is whether this run's billable image builds take no
+// confirmation here: the person who would have typed the project's name is at
+// their own real terminal in a managed project, which is exactly where the
+// gate's read of the marks stands in for it (the ruling of 2026-11-06).
+//
+// The two halves are asked separately because they are two facts. gateStandsIn
+// is the gate's own answer about this run — the marks were read, they said the
+// project is managed, no admit since has found that it is not, and --ask was
+// not given (which puts every question this run skips back) — and
+// PersonAtTheTerminal is the same reading of who is there that every note in
+// this package is scoped to: a real terminal, no marker, and none of --ask,
+// --non-interactive and --json. A run with --yes or with no terminal answers
+// false to the second, so it keeps the --yes path or the leave the step has
+// always had.
+//
+// It is asked of the billable builds alone and not of every step, because only
+// the build was outside the gate's own asks: the run's one confirmation and the
+// ordinary steps go through askOrdinary, whose managed branch is the same gate
+// and the same sentence.
+func (r *initRun) buildAsksNothing() bool {
+	return r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions())
+}
+
 // resourceManagerRetries are the waits between reads of the project's
 // number after Cloud Resource Manager was enabled, while the enable
 // propagates: a few minutes in all. Tests replace them.
@@ -4349,8 +4372,24 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 		// covered in both front doors (askCovered: D12's answer of 2026-10-20
 		// keeps only three steps typed, and this is not one of them). A run
 		// that cannot take it leaves the build.
-		ok, reachable, err := r.askCovered(cloudBuildBanner(spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
-		if err != nil {
+		//
+		// In a managed project the person at that same terminal is asked
+		// nothing (the owner's ruling of 2026-11-06, and the same treatment
+		// `fugaro image build` gives a person there): the banner above is the
+		// plan the run announced and printed, the marks were read by the run's
+		// own gate (update_managed.go's one read), and the sentence says why no
+		// name is typed. A billing step is not data and not a secret, so it is
+		// one of the steps the gate stands in for; --ask puts the question back
+		// (gateStandsIn asks the flag), and a session that is not a person at
+		// the terminal — --yes, a pipe, a coding agent's — keeps the path it
+		// has always had.
+		what := cloudBuildBanner(spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath)
+		var ok, reachable bool
+		if r.buildAsksNothing() {
+			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+			fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
+			ok, reachable = true, true
+		} else if ok, reachable, err = r.askCovered(what); err != nil {
 			return built, err
 		}
 		if !reachable {

@@ -102,7 +102,9 @@ var catalogAppKeySecretID = func(ctx context.Context, lc *localcfg.Config, rs in
 // Only an entry whose source is a Dockerfile in a repository opens a provider
 // (an inline definition is copied with no repository read at all), so a build
 // whose entries are all inline takes the environment as it stands and reads no
-// secret.
+// secret. Neither does a build in an installation whose credentials service is
+// on: the key the service holds is the one the provider uses, so no key of this
+// command's is read and no notice about reading one is printed.
 func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, entries []config.Entry, getenv func(string) string) ([]string, error) {
 	env := os.Environ()
 	if rs.Provider != gitprov.KindGitHub || !slices.ContainsFunc(entries, func(e config.Entry) bool {
@@ -118,6 +120,20 @@ func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, r
 	// build clones with.
 	env = append(env, providers.EnvGitHubAppID+"="+rs.GitHubAppID)
 	if getenv(providers.EnvGitHubAppKey) != "" || getenv(providers.EnvGitHubAppKeyFile) != "" {
+		return env, nil
+	}
+	// With the installation's credentials service on, the App's key is the
+	// service's: providers.FromEnv opens the github provider keyless and reads
+	// no key at all — not even one the environment holds, because a session
+	// that reached for a key it was not given would be a credential the
+	// installation meant to withhold (C2.2, D145). The secret below is
+	// therefore one this command's own provider would never use, and the notice
+	// readAppKey prints before it (appKeyReadNotice: the key is read here, in
+	// memory, and GODEBUG=http2debug would print the token it signs) would
+	// describe a read this build does not make and a key it never holds. The ID
+	// stays: FromEnv's keyless provider is constructed with it, and the spec
+	// the build is submitted with carries it either way.
+	if getenv(providers.EnvCredentialsServiceURL) != "" {
 		return env, nil
 	}
 	if err := refuseAppKeyReadInAgent(getenv, catalogKeyRead); err != nil {
