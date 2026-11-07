@@ -181,6 +181,64 @@ func TestLevelSettingNoneExcludesOthers(t *testing.T) {
 	}
 }
 
+// TestLevelSettingNoneModelIsTheSwitch: the literal model name `none` is the
+// level's own switch written the other way (owner, 2026-11-07), so a block that
+// writes it and nothing else is exactly `none: true`: validate folds it into
+// Off, the level is skipped, and no reader ever sees the string none as a model
+// name. Beside any other key it is refused by the rule `none: true` is refused
+// by, and the refusal names both keys — the written `none: false` included,
+// which is the one that says the level runs, so a block holding that beside
+// `model: none` says both things at once.
+func TestLevelSettingNoneModelIsTheSwitch(t *testing.T) {
+	set := &LevelSetting{Model: NoneModel}
+	if err := set.validate("l2"); err != nil {
+		t.Fatalf("model: none alone was refused: %v", err)
+	}
+	if !set.Off || set.Model != "" {
+		t.Errorf("after validate the level = %+v, want it folded into the switch (none: true, no model)", set)
+	}
+
+	for _, tc := range []struct {
+		name string
+		set  LevelSetting
+		want string
+	}{
+		{"model: none with an effort", LevelSetting{Model: NoneModel, Effort: "high"}, "model: none beside effort"},
+		{"model: none with a focus", LevelSetting{Model: NoneModel, Focus: "the migration"}, "model: none beside focus"},
+		{"model: none beside none: true", LevelSetting{Off: true, Model: NoneModel}, "none: true beside another key"},
+		{"model: none with both", LevelSetting{Model: NoneModel, Effort: "high", Focus: "the migration"}, "model: none beside effort and focus"},
+	} {
+		err := tc.set.validate("l2")
+		if err == nil {
+			t.Errorf("%s: validate() accepted the block", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "l2") || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: validate() = %q, want a refusal naming l2 and %q", tc.name, err, tc.want)
+		}
+	}
+
+	// A written `none: false` is the case no struct literal can build: the
+	// plain bool reads it as the absent key, and only the decoder sees the key
+	// at all.
+	if _, err := ParseReviewLevelsYAML([]byte("l2:\n  model: none\n  none: false\n")); err == nil ||
+		!strings.Contains(err.Error(), "model: none beside none: false") {
+		t.Errorf("model: none beside a written none: false = %v, want a refusal naming both keys", err)
+	}
+	// The fold is what the block says, not what a reader may hope: a level
+	// that writes `model: none` decodes to the switch and no model.
+	got, err := ParseReviewLevelsYAML([]byte("l1:\n  model: none\nl2:\n  none: false\n"))
+	if err != nil {
+		t.Fatalf("a document with model: none and a written none: false on another level was refused: %v", err)
+	}
+	if got.L1 == nil || !got.L1.Off || got.L1.Model != "" {
+		t.Errorf("l1 = %+v, want the level folded to none: true with no model", got.L1)
+	}
+	if got.L2 == nil || got.L2.Off || got.L2.Model != "" {
+		t.Errorf("l2 = %+v, want a level that runs: a written none: false says nothing", got.L2)
+	}
+}
+
 // TestParseReviewLevelsYAMLIsStrict: the file a launcher passes is refused
 // rather than partly read. An unknown key is the one that matters — the
 // block decides which reviews a run does and on which model, and yaml.v3
@@ -221,6 +279,9 @@ func TestParseReviewLevelsYAMLIsStrict(t *testing.T) {
 		{"an unknown key in the first level of three", "l1:\n  none: true\nl2:\n  none: true\nl3:\n  off: true\n", "off"},
 		{"an effort outside the set", "l3:\n  effort: auto\n", "auto"},
 		{"none: true beside another key", "l2:\n  none: true\n  model: claude-opus-5-5\n", "none: true"},
+		{"model: none beside an effort", "l2:\n  model: none\n  effort: high\n", "model: none beside effort"},
+		{"model: none beside a written none: false", "l2:\n  model: none\n  none: false\n", "model: none beside none: false"},
+		{"model: none beside none: true", "l2:\n  model: none\n  none: true\n", "none: true"},
 		{"a focus over the bound", "l3:\n  focus: " + strings.Repeat("a", MaxLevelFocusBytes+1) + "\n", "focus"},
 		{"a focus with a bidi override", "l3:\n  focus: \"the \\u202emigration\"\n", "focus"},
 		{"a second document", "l1:\n  none: true\n---\nl2:\n  none: true\n", "more than one"},

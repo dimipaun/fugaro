@@ -893,6 +893,29 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 			repoSource: "agent.levels.l3.model",
 			goneSource: "agent.levels.l3.none",
 		},
+		{
+			// The literal model name `none` is the same switch written the
+			// other way, so it replaces the level the layer below set exactly
+			// as none: true does: the project's model and effort are gone, and
+			// what the repository wrote is read as the level's own switch.
+			name:       "the repository turns the project's level off by its model name",
+			level:      "l1",
+			layerLevel: "      l1: { model: claude-haiku-4-5, effort: low }\n",
+			repoLevel:  "    l1: { model: none }\n",
+			off:        true,
+			repoSource: "agent.levels.l1.model",
+			goneSource: "agent.levels.l1.effort",
+		},
+		{
+			name:       "the repository turns the project's model-name none back on",
+			level:      "l3",
+			layerLevel: "      l3: { model: none }\n",
+			repoLevel:  "    l3: { model: claude-opus-5-5, effort: xhigh }\n",
+			model:      "claude-opus-5-5",
+			effort:     "xhigh",
+			repoSource: "agent.levels.l3.model",
+			goneSource: "agent.levels.l3.none",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			layer := mustLayer(t, head+"defaults:\n  git: { provider: github }\n  agent:\n    levels:\n"+tc.layerLevel)
