@@ -21,7 +21,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
-	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The credentials service's entry point (plan task C1.14) is not a command
@@ -713,11 +712,9 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// One of the four is read here and NOT set by the module yet
-// (internal/infra/tf's CredentialsServiceEnvAwaitingTheModule, which is also
-// what the cover's allow-list answers with): the entry is admitted first and
-// the module that renders it lands second, and the tripwire below fails the
-// moment credentials.tf sets it, so it cannot be left on that list.
+// All four are rendered conditionally — the module sets each of them only on an
+// installation where it applies — and the reason they belong here rather than
+// in credentialsServiceEnvNames is pinned by the tests around this one.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
@@ -729,15 +726,8 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 	for _, m := range regexp.MustCompile(`name\s*=\s*"(FUGARO_[A-Z0-9_]+)"`).FindAllStringSubmatch(tf, -1) {
 		inModule[m[1]] = true
 	}
-	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
 	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envCoordinatorAccount, envReviewJobAccounts)
 	for _, n := range read {
-		if slices.Contains(pending, n) {
-			if inModule[n] {
-				t.Errorf("credentials.tf sets %s, so it is no longer a name the module does not render yet: drop it from internal/infra/tf's CredentialsServiceEnvAwaitingTheModule, which this test reads", n)
-			}
-			continue
-		}
 		if !inModule[n] {
 			t.Errorf("this command reads %s, which credentials.tf does not set on the service: the service would refuse to start on a deployment that is right", n)
 		}

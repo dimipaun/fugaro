@@ -584,22 +584,34 @@ func credentialsJobKey(j CredentialsJob) string {
 	return j.Provider + "\x00" + j.Repo + "\x00" + j.Workflow
 }
 
+// credentialsReviewJobKey is the review table's row identity, the same rule
+// credentialsJobKey states for the coding table: two rows are one row exactly
+// when they name one variant, and no profile, provider or account can hold the
+// NUL separator.
+func credentialsReviewJobKey(j CredentialsReviewJob) string {
+	return j.Profile + "\x00" + j.Provider + "\x00" + j.Account
+}
+
 // RefreshCredentialsServiceJobAccounts returns vars with the credentials
-// service's job_accounts brought up to date with the installation the local
-// config names now, and every other member of the block — the image, the URL,
-// the bundle container, the database and the verifier list — exactly what it
-// was.
+// service's two job tables — job_accounts and review_job_accounts — brought up
+// to date with the installation the local config names now, and every other
+// member of the block — the image, the URL, the bundle container, the database
+// and the verifier list — exactly what it was.
 //
-// The table is the one member of the block this side composes out of the local
-// config (CredentialsJobAccounts over lc.Repos), and the deploy is its only
-// other writer: Credentials fills it in on the run that CREATES the block, and
-// every later run carries the block as it is found (CarriedCredentialsService).
-// A repository onboarded after that deploy is therefore in the table of
-// nobody — its root still grants its job roles/run.invoker on the service
-// (modules/workflow/sa.tf), and the running service then refuses every call
-// from an account whose row it does not hold, which is the failure
-// CredentialsJobAccounts' own comment calls the one that must not happen. No
-// other command could put the row there: `fugaro update` is the whole upgrade
+// The two tables are the members of the block this side composes out of the
+// local config (CredentialsJobAccounts over lc.Repos, CredentialsReviewJobAccounts
+// over lc.Profiles), and the deploy is their only other writer: Credentials
+// fills them in on the run that CREATES the block, and every later run carries
+// the block as it is found (CarriedCredentialsService). A repository onboarded
+// after that deploy is therefore in the table of nobody — its root still grants
+// its job roles/run.invoker on the service (modules/workflow/sa.tf), and the
+// running service then refuses every call from an account whose row it does not
+// hold, which is the failure CredentialsJobAccounts' own comment calls the one
+// that must not happen. The review table is the same hazard one step along the
+// axis: a profile, a provider or a Claude account added to the config after the
+// deploy is a review variant the service's table does not name, and that
+// variant's calls are refused exactly as a repository's would be. No other
+// command could put either row there: `fugaro update` is the whole upgrade
 // (CLAUDE.md's HARD RULE), so the refresh is part of it or it is nowhere.
 //
 // The rows found in the document are UNIONED with the derived ones rather than
@@ -608,14 +620,19 @@ func credentialsJobKey(j CredentialsJob) string {
 // no token is ever minted for, while a row a refresh DROPPED is a job that
 // holds an invoker grant and is refused. It is also what keeps an installation
 // whose config has not changed byte for byte what it was, which is what a
-// carried block owes its readers.
+// carried block owes its readers. The review table is read and unioned the same
+// way, with the one difference CredentialsReviewJobAccounts' own comment gives:
+// an installation that names no profile derives no review row at all, so the
+// empty table written here is the class's fail-closed state and not the refusal
+// an empty job_accounts is.
 //
-// A config that cannot describe the table at all — a named repository whose
-// provider it does not state, or no repository with a workflow — is refused
-// rather than written around, and so is a document whose rows this program
-// cannot read: the caller then keeps the block it found. Refreshing from a
-// config that is missing a repository is the removal the union is there to
-// prevent, and dropping the member is worse still.
+// A config that cannot describe a table at all — a named repository whose
+// provider it does not state, no repository with a workflow, or a profile whose
+// review variants cannot be derived — is refused rather than written around,
+// and so is a document whose rows this program cannot read: the caller then
+// keeps the block it found. Refreshing from a config that is missing a
+// repository is the removal the union is there to prevent, and dropping a
+// member is worse still.
 func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]byte, error) {
 	doc, err := varsDoc(vars)
 	if err != nil {
@@ -653,6 +670,49 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 	}
 	slices.SortFunc(merged, func(a, b CredentialsJob) int { return strings.Compare(credentialsJobKey(a), credentialsJobKey(b)) })
 	svc["job_accounts"] = merged
+	// The review table, read and unioned by the same rules and with the same
+	// refusal for a document it cannot read: the two tables are the two members
+	// this side composes, and a run that refreshed one of them and dropped the
+	// other would leave the class the service admits behind the deployment that
+	// creates it.
+	var foundReview []CredentialsReviewJob
+	if raw, ok := svc["review_job_accounts"]; ok && raw != nil {
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &foundReview); err != nil {
+			return nil, fmt.Errorf("the installation's credentials_service.review_job_accounts is not a list of profile, provider and account rows: %w", err)
+		}
+	}
+	reviews, err := CredentialsReviewJobAccounts(lc)
+	if err != nil {
+		return nil, err
+	}
+	mergedReview := make([]CredentialsReviewJob, 0, len(foundReview)+len(reviews))
+	mergedReview = append(mergedReview, foundReview...)
+	seenReview := make(map[string]bool, len(foundReview)+len(reviews))
+	for _, r := range foundReview {
+		seenReview[credentialsReviewJobKey(r)] = true
+	}
+	for _, r := range reviews {
+		if seenReview[credentialsReviewJobKey(r)] {
+			continue
+		}
+		seenReview[credentialsReviewJobKey(r)] = true
+		mergedReview = append(mergedReview, r)
+	}
+	// An empty union leaves the member exactly as the document carried it,
+	// absent included: the module renders no entry for an empty list, so writing
+	// one would change a carried block — and the plan of an installation whose
+	// config names no profile — for no fact at all. A union with a row in it is
+	// always written, so nothing found is ever dropped.
+	if len(mergedReview) > 0 {
+		slices.SortFunc(mergedReview, func(a, b CredentialsReviewJob) int {
+			return strings.Compare(credentialsReviewJobKey(a), credentialsReviewJobKey(b))
+		})
+		svc["review_job_accounts"] = mergedReview
+	}
 	doc["credentials_service"] = svc
 	return sortedJSON(doc)
 }

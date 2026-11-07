@@ -33,6 +33,14 @@ type credentialsFixture struct {
 			Repo     string `json:"repo"`
 			Workflow string `json:"workflow"`
 		} `json:"job_accounts"`
+		// The fields are declared in the order the module's jsonencode writes
+		// them (alphabetical), because this test compares the value the plan
+		// carries against this struct's own marshalling.
+		ReviewJobAccounts []struct {
+			Account  string `json:"account"`
+			Profile  string `json:"profile"`
+			Provider string `json:"provider"`
+		} `json:"review_job_accounts"`
 		VerifierAccounts []string `json:"verifier_accounts"`
 	} `json:"credentials_service"`
 	// Coordinator is the coordinator's opt-in (coordinator plan P5), which this
@@ -116,12 +124,13 @@ func credentialsServiceEnvOf(t *testing.T, rc ResourceChange) (plain map[string]
 // every one of them is there and well formed (internal/cli's
 // credentialsServiceConfig) — and the eighth, the verifier list, which this
 // fixture names and which the process reads as an optional value (C3.9g1,
-// D1068), the ninth, the read mint's admitted people (BB4), and the tenth, the
+// D1068), the ninth, the read mint's admitted people (BB4), the tenth, the
 // read mint's coordinator class (BB5), which arrives with the installation's
-// coordinator account. So a variable the Go side computes and the module drops
-// — or one the module sets from a value the fixture does not carry — is a
-// service that never answers a job, or a verify route that admits nobody, on an
-// installation whose init reports success.
+// coordinator account, and the eleventh, the review-only jobs (C3.9a), which
+// arrive with the installation's review variants. So a variable the Go side
+// computes and the module drops — or one the module sets from a value the
+// fixture does not carry — is a service that never answers a job, or a verify
+// route that admits nobody, on an installation whose init reports success.
 //
 // The Terraform tftest (roots/installation/tests/installation.tftest.hcl)
 // pins the same map against its own variable, and both halves are needed: the
@@ -147,6 +156,13 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(c.ReviewJobAccounts) == 0 {
+		t.Fatalf("the credentials fixture names no review job: this plan is the one that exercises the module's conditional review entry (C3.9a), and a fixture that names none could not tell it from the names the module always sets: %v", f)
+	}
+	review, err := json.Marshal(c.ReviewJobAccounts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(f.Operators) == 0 {
 		t.Fatalf("the credentials fixture names no operator: this plan is the one that exercises the module's conditional read-mint entry, and a fixture that names none could not tell it from the seven the module always sets: %v", f)
 	}
@@ -169,32 +185,21 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		"FUGARO_FIREBASE_PROJECT":        c.FirebaseProject,
 		"FUGARO_CREDENTIALS_SERVICE_URL": c.URL,
 		"FUGARO_JOB_ACCOUNTS":            string(jobAccounts),
+		"FUGARO_REVIEW_JOB_ACCOUNTS":     string(review),
 		"FUGARO_VERIFIER_ACCOUNTS":       string(verifiers),
 		"FUGARO_PERSON_ACCOUNTS":         string(people),
 		"FUGARO_COORDINATOR_ACCOUNT":     coordinator,
 	}
-	// The map's keys are the allow-list the cover holds the service to: a name
-	// here that the allow-list does not carry would make this test pass on an
-	// environment every run refuses.
-	//
-	// The cover admits a name before the module renders it
-	// (CredentialsServiceEnvAwaitingTheModule), so the plan plus that list is
-	// what the allow-list must hold — and each name on that list is checked
-	// against the plan first, which is the tripwire that fails once the module
-	// starts rendering it and the entry is left behind.
+	// The map's keys are the allow-list the cover holds the service to, and the
+	// two are equal rather than nested: a name here that the allow-list does not
+	// carry would make this test pass on an environment every run refuses, and a
+	// name the allow-list carries that no plan renders is one the cover would
+	// admit without the module ever setting it.
 	names := slices.Sorted(maps.Keys(want))
 	allowed := slices.Clone(credentialsServiceEnv)
 	slices.Sort(allowed)
-	pending := CredentialsServiceEnvAwaitingTheModule()
-	for _, n := range pending {
-		if slices.Contains(names, n) {
-			t.Fatalf("the plan carries %s, so the module renders it now: drop it from CredentialsServiceEnvAwaitingTheModule (cover.go), which exists only for the names the module does not render yet", n)
-		}
-	}
-	names = append(names, pending...)
-	slices.Sort(names)
 	if !slices.Equal(names, allowed) {
-		t.Fatalf("this test spells %v (the plan plus %v) as the service's environment, the cover allows %v", names, pending, credentialsServiceEnv)
+		t.Fatalf("this test spells %v as the service's environment, the cover allows %v", names, credentialsServiceEnv)
 	}
 
 	got, fromSource := credentialsServiceEnvOf(t, rc)
