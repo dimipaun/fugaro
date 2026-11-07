@@ -364,10 +364,11 @@ var credsImageReleaseRE = regexp.MustCompile(`:([0-9]+\.[0-9]+\.[0-9]+)@sha256:`
 // The Firebase facts come from the local config's budget block, which `fugaro
 // update --firebase-project` wrote from the Firebase root's outputs: the service reads
 // the installation's own database, so an installation whose config names none
-// cannot be configured at all — the stage's marker gate (requireCredsRules)
-// reads that same database, and a service with no database in its environment
-// refuses to bind a port. Both halves are refused here by name rather than
-// written empty, which is what the revision would refuse by.
+// cannot be configured at all — the service's own startup refuses a database
+// URL that is missing or is not this installation's, and it builds that client
+// before it serves anything, so the block would be a revision that never comes
+// up. Both halves are refused here by name rather than written empty, which is
+// what the revision would refuse by.
 //
 // publishedVerifiers is the verifier list the published policy node carries,
 // which the caller reads and this writer cannot: the list reaches the service
