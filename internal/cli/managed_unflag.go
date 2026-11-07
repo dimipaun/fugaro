@@ -107,6 +107,11 @@ there is no bulk form, no wildcard and no prefix.`,
 // runs bucket is the one the read uses — and only then what the command does
 // and does not do, the typed confirmation, and the two writes.
 func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
+	rep, sink := reporterFor(cmd, "managed-unflag", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs and cannot be unset in time (refuseHTTP2Debug).
@@ -182,13 +187,21 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
 		return err
 	}
+	// Both halves and the read that settles them are one step, opened once the
+	// confirmation is answered so nothing in flight is drawn over the prompt
+	// (G1).
+	step := rep.Step("unflag")
+	fail := func(err error) error {
+		step.Failed(err, nil)
+		return err
+	}
 	// The object first, in the flag's order and for the flag's reason: it is
 	// the authority, and the label is the narrowing mark beside it. Either half
 	// alone leaves the project unmanaged, so an error here removes nothing else
 	// and a success here already revokes.
 	objectRemoved, err := managed.RemoveMarker(ctx, c.Storage, bucket, lc.GCPProject, number)
 	if err != nil {
-		return managedUnflagErr(lc, bucket, err)
+		return fail(managedUnflagErr(lc, bucket, err))
 	}
 	labelRemoved, err := managed.RemoveManagedLabelForFlag(ctx, c.CRM, lc.GCPProject)
 	if err != nil {
@@ -196,8 +209,8 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 		// fail-closed direction — either mark alone leaves the project
 		// unmanaged — so this is not a state that keeps a control, and it is
 		// said rather than reported as if nothing had happened.
-		return remote(fmt.Errorf("removed gs://%s/%s, but not the %s label on GCP project %s (%v): the read requires both, so %s is not managed any more, but the label is still on the project and this command could not take it off. Run it again as the account that owns the project",
-			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name)))
+		return fail(remote(fmt.Errorf("removed gs://%s/%s, but not the %s label on GCP project %s (%v): the read requires both, so %s is not managed any more, but the label is still on the project and this command could not take it off. Run it again as the account that owns the project",
+			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name))))
 	}
 	fmt.Fprintf(w, "  marker object gs://%s/%s: %s\n", safetext.Field(bucket), managed.MarkerObject,
 		removedOr(objectRemoved, "removed", "was not there"))
@@ -209,13 +222,17 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	// so what is claimed and what a later command believes are one thing.
 	ok, reason, err := managed.IsManaged(ctx, c.Storage, c.CRM, lc.Name, lc.GCPProject)
 	if err != nil {
-		return remote(fmt.Errorf("reading back GCP project %s after removing both marks: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
+		return fail(remote(fmt.Errorf("reading back GCP project %s after removing both marks: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error()))))
 	}
 	if ok {
-		return remote(fmt.Errorf("both marks were removed from GCP project %s, but it still reads as managed: check it with `gcloud storage cat gs://%s/%s` and `gcloud projects describe %s` as the operator before relying on it",
-			safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.GCPProject)))
+		return fail(remote(fmt.Errorf("both marks were removed from GCP project %s, but it still reads as managed: check it with `gcloud storage cat gs://%s/%s` and `gcloud projects describe %s` as the operator before relying on it",
+			safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.GCPProject))))
 	}
-	fmt.Fprintf(w, "read back through the managed read, with the project-number check: %s is not managed\n", safetext.Field(lc.Name))
+	// What the step ends on is the read's own answer, which is what a later
+	// command believes; the per-half lines above it say which of the two was
+	// already gone, which is the difference between converging a project and
+	// doing nothing to it.
+	step.Done(fmt.Sprintf("read back through the managed read, with the project-number check: %s is not managed", safetext.Field(lc.Name)))
 	if reason != "" {
 		fmt.Fprintf(w, "  the read says: %s\n", safetext.Field(reason))
 	}

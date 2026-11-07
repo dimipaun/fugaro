@@ -34,10 +34,24 @@ func reported(t *testing.T, out string, steps ...string) {
 		t.Errorf("the run does not end with the reporter's closing line, it ends with %q:\n%s", last, out)
 	}
 	for _, name := range steps {
-		if stepLineOf(lines, name) == "" {
+		if !stepNamed(out, name) {
 			t.Errorf("no step line names %q:\n%s", name, out)
 		}
 	}
+}
+
+// stepNamed is whether the account carries a step line naming name. It is not
+// stepLineOf: a typed confirmation prints "Type <name> to confirm: " and reads
+// a line, and the newline that separates the step from it is the terminal's
+// own echo — which a test's pipe does not have, so the step line lands at the
+// end of the prompt's line rather than the start of its own.
+func stepNamed(out, name string) bool {
+	for _, mark := range []string{markDone, markFailed, markLeft, markSkipped} {
+		if strings.Contains(out, mark+" "+name+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // writesALog is D1352's half of the batch: the run kept a log filed under its

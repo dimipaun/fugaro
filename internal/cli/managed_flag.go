@@ -180,6 +180,11 @@ is overwritten blind.`,
 // Every refusal before the write is a hard return, and nothing is written by
 // any of them.
 func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, currency string) error {
+	rep, sink := reporterFor(cmd, "managed-flag", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs and cannot be unset in time (refuseHTTP2Debug).
@@ -287,9 +292,18 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
 		return err
 	}
+	// The write, and the read that settles it, are one step: the marker, the
+	// label and the read-back are one thing an operator either has or has not
+	// (Task 3.0). It is opened once the confirmation is answered, so no line
+	// in flight is ever drawn over the prompt (G1).
+	step := rep.Step("flag")
+	fail := func(err error) error {
+		step.Failed(err, nil)
+		return err
+	}
 	replaced, err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
 	if err != nil {
-		return managedFlagErr(lc, bucket, err)
+		return fail(managedFlagErr(lc, bucket, err))
 	}
 	// The other half of the same statement, in the same step (Task 3.0): the
 	// label on the project itself. Both are what the read requires, so a flag
@@ -318,8 +332,8 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		// command, the rule Task 3.0's refusal text keeps, because this
 		// command's output is the operator's (a coding agent's session is
 		// refused above and never reaches it).
-		return remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/design/managed-projects.md has that one line; it is not a second run of this command, which replaces only the creation fact that records no amount",
-			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name)))
+		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/design/managed-projects.md has that one line; it is not a second run of this command, which replaces only the creation fact that records no amount",
+			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name))))
 	}
 	// Read back through the managed read itself, with its project-number
 	// check (the plan's step 3): a marker the apply would not believe, or one
@@ -333,10 +347,13 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		} else if ok {
 			why = fmt.Sprintf("it records %d %s", got.Amount, safetext.Field(got.Currency))
 		}
-		return remote(fmt.Errorf("wrote gs://%s/%s, but it does not read back as %s's marker with the budget %d %s (%s): check it with `gcloud storage cat gs://%s/%s` as the operator before relying on it",
-			safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), amount, safetext.Field(currency), why, safetext.Field(bucket), managed.MarkerObject))
+		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but it does not read back as %s's marker with the budget %d %s (%s): check it with `gcloud storage cat gs://%s/%s` as the operator before relying on it",
+			safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), amount, safetext.Field(currency), why, safetext.Field(bucket), managed.MarkerObject)))
 	}
-	fmt.Fprintf(w, "read back gs://%s/%s through the managed read, with the project-number check: managed, budget %d %s\n", safetext.Field(bucket), managed.MarkerObject, got.Amount, safetext.Field(got.Currency))
+	// The read-back is what the step ends on, so the line a person reads is
+	// the one the command is willing to claim.
+	step.Done(fmt.Sprintf("read back gs://%s/%s through the managed read, with the project-number check: managed, budget %d %s",
+		safetext.Field(bucket), managed.MarkerObject, got.Amount, safetext.Field(got.Currency)))
 	// What happened is said, and the two are different things: this project
 	// had no marker, or it had the version-1 creation fact and now records an
 	// amount.
