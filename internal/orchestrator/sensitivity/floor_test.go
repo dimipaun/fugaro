@@ -63,8 +63,29 @@ func TestFloorRowsAreNamedAndBounded(t *testing.T) {
 // checksums, the install commands, the website's manifests and the redesign
 // scripts were matched by nothing, which is exactly the floor this design
 // carried before review.
+//
+// Each half asks both halves of the contract about the case-flipped spelling of
+// every path it holds as well, because that is where the two answers disagreed:
+// the classifier's exceptions fold ASCII case and a match on the path's own
+// bytes does not, so `docs/Pending-Workflows/ci.yml`, `website/Package.json` and
+// `website/data/Install.yaml` were Sensitive to the classifier and named by no
+// row — a change to the CI tree that could never reach level 3 on the machine
+// whose filesystem resolves the two spellings into one file.
 func TestFloorIsAtLeastWhatTheRoutingRuleNames(t *testing.T) {
 	floor := sensitivity.Floor()
+
+	// folded is the contract in one place: a path the classifier calls Sensitive
+	// is a path the floor has to name, in the case the classifier matched it in.
+	folded := func(p, what string) {
+		t.Helper()
+		variant := caseFlipped(p)
+		if got := sensitivity.Classify([]string{variant}); got != sensitivity.Sensitive {
+			t.Errorf("Classify([%q]) = %q, want %q: %q is %s, and a spelling the classifier does not call Sensitive would make this assertion vacuous", variant, got, sensitivity.Sensitive, p, what)
+		}
+		if got := sensitivity.Match([]string{variant}, floor); len(got) == 0 {
+			t.Errorf("no floor row matches %q, the case-flipped spelling of %q, %s: the classifier calls it Sensitive, so a change spelled that way would never reach level 3", variant, p, what)
+		}
+	}
 
 	paths := 0
 	for _, s := range pathsFixture(t) {
@@ -73,6 +94,7 @@ func TestFloorIsAtLeastWhatTheRoutingRuleNames(t *testing.T) {
 			if got := sensitivity.Match([]string{p}, floor); len(got) == 0 {
 				t.Errorf("no floor row matches %q, a path of the routing rule's %q category: the floor is the list every layer is measured against", p, s.category)
 			}
+			folded(p, "a path of the routing rule's "+s.category+" category")
 		}
 	}
 	if paths < 20 {
@@ -91,7 +113,26 @@ func TestFloorIsAtLeastWhatTheRoutingRuleNames(t *testing.T) {
 		if got := sensitivity.Match([]string{p}, floor); len(got) == 0 {
 			t.Errorf("no floor row matches %q, which the classifier's %q exception calls sensitive: a change to it would never reach level 3", p, e.Name)
 		}
+		folded(p, "covered by the classifier's "+e.Name+" exception")
 	}
+}
+
+// caseFlipped flips the case of every ASCII letter in p: the spelling a
+// filesystem that does not distinguish case resolves to the same file, and so
+// the twin the classifier's table and the floor have to agree about. It is ASCII
+// only, like the fold itself — a path carrying a byte outside it is refused by
+// cleanRelative before any table is asked.
+func caseFlipped(p string) string {
+	out := []byte(p)
+	for i, c := range out {
+		switch {
+		case c >= 'a' && c <= 'z':
+			out[i] = c - ('a' - 'A')
+		case c >= 'A' && c <= 'Z':
+			out[i] = c + ('a' - 'A')
+		}
+	}
+	return string(out)
 }
 
 // coveredPath is one path an exception line covers, built from the line's own

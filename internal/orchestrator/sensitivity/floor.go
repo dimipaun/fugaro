@@ -31,10 +31,12 @@ import "slices"
 //
 // TestFloorIsAtLeastWhatTheRoutingRuleNames is what holds the table above the
 // two machine-readable statements of the rule, in both halves: every path of the
-// routing fixture and every rule of the classifier's exception table. The second
-// half is the one a fixture-only test misses — the published checksums, the
-// install commands and the plan-graph artifacts live under website/ and docs/
-// and are in no fixture, so a floor that lost them would still pass the first.
+// routing fixture and every rule of the classifier's exception table — the
+// latter in the case-folded spelling the classifier's own covers matches it in,
+// which is what Match folds for (see its doc). The second half is the one a
+// fixture-only test misses — the published checksums, the install commands and
+// the plan-graph artifacts live under website/ and docs/ and are in no fixture,
+// so a floor that lost them would still pass the first.
 func Floor() []Pattern { return slices.Clone(floor) }
 
 // floor is the table Floor answers with, cloned on the way out: a caller merges

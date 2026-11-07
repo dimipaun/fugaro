@@ -202,9 +202,26 @@ func hasAlternation(match string) bool {
 //
 // A path this package cannot place — absolute, escaping, uncleaned, or spelled
 // with a byte outside ASCII — is therefore skipped rather than matched by its
-// bytes: `docs/./x` and a floor file spelled with a case variant its filesystem
-// folds are refused by the same cleanRelative the classifier asks, so a
-// spelling that means more than one path is placed by no rule at all.
+// bytes: `docs/./x`, `internal\creds\x.go` and `docs/pending-workflowſ/x.yml`
+// are refused by the same cleanRelative the classifier asks, so a spelling that
+// means more than one path is placed by no rule at all. That check is asked of
+// the path as it was written, before anything else is done to it.
+//
+// Both sides are then matched in folded ASCII case, because that is the case the
+// classifier's own exceptions are matched in (covers) and the two answers have
+// to agree on the paths they name. A checkout whose filesystem does not
+// distinguish `docs/pending-workflows` from `docs/Pending-Workflows` resolves
+// the second spelling into the folder a person copies into .github/workflows, so
+// a case-sensitive match here would leave a path Classify calls Sensitive
+// matched by no row — a change that never reaches level 3 on the machine that
+// can check it out, which is the direction this table exists to close. The
+// globs are folded with the paths, not the paths alone, because a row written
+// `internal/Creds/**` names the same tree on that machine as `internal/creds/**`
+// does; folding both sides only ever adds matches, and a list whose additions
+// are all toward level 3 is the list D1506 describes. This is the classifier's
+// own rule with one difference: its routine table is still asked in the bytes it
+// was written in, so that folding cannot admit a path to the cheaper class —
+// this list has no cheaper class to admit anything to.
 //
 // A row whose glob doublestar cannot read matches nothing for the same reason.
 // Every caller merges lists a layer validated at load, so a row that slipped
@@ -221,11 +238,12 @@ func hasAlternation(match string) bool {
 func Match(paths []string, list []Pattern) []Pattern {
 	var matched []Pattern
 	for _, row := range list {
+		match := strings.ToLower(row.Match)
 		for _, p := range paths {
 			if !cleanRelative(p) {
 				continue
 			}
-			if ok, err := doublestar.Match(row.Match, p); err == nil && ok {
+			if ok, err := doublestar.Match(match, strings.ToLower(p)); err == nil && ok {
 				matched = append(matched, row)
 				break
 			}
