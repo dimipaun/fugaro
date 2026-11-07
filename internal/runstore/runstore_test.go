@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -859,4 +860,166 @@ func TestRecordABOmittedWhenEmpty(t *testing.T) {
 	if err != nil || got.AB != nil || got.PatchObject != "" || got.PatchTruncated {
 		t.Fatalf("old record = %+v, %v", got, err)
 	}
+}
+
+// TestStageNamesTheCredentialThatServedIt is the record's own contract for
+// StageTiming.ServedBy (plan AK3 of docs/api-key-review, F18, D1415): the new
+// field names the credential a stage ran on, the run's own included, which is
+// the case Credential excludes. Both shapes round-trip -- a stage the run's
+// own api-key credential served carries served_by and no credential, and a
+// stage an account served carries served_by beside credential -- and both
+// survive the record's own encoding.
+func TestStageNamesTheCredentialThatServedIt(t *testing.T) {
+	s := newStore(t)
+	at := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady, StartedAt: at,
+		Stages: []StageTiming{
+			{Name: "implement", StartedAt: at, DurationS: 61, Model: "claude-sonnet-5-5", ModelUSD: 0.04,
+				ServedBy: CredentialAPIKey},
+			{Name: "review", StartedAt: at, DurationS: 42, Model: "claude-opus-5", ModelUSD: 0.42,
+				ModelNotionalUSD: 0.42, Credential: CredentialOAuth, ServedBy: CredentialOAuth},
+		}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Stages) != 2 {
+		t.Fatalf("ReadRecord stages = %+v", got.Stages)
+	}
+	if own := got.Stages[0]; own.ServedBy != CredentialAPIKey || own.Credential != "" {
+		t.Errorf("the run's own credential's stage = %+v, want served_by %q and no credential", own, CredentialAPIKey)
+	}
+	if account := got.Stages[1]; account.ServedBy != CredentialOAuth || account.Credential != CredentialOAuth {
+		t.Errorf("the account's stage = %+v, want served_by beside credential, both %q", account, CredentialOAuth)
+	}
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"served_by":"api-key"`) {
+		t.Errorf("the stage the run's own credential served encodes no served_by: %s", data)
+	}
+	if !strings.Contains(string(data), `"credential":"oauth","served_by":"oauth"`) {
+		t.Errorf("the account's stage does not carry served_by beside credential: %s", data)
+	}
+}
+
+// TestStageCredentialKeepsItsMeaning is AK3's other direction, and the one
+// D1415's recommendation exists for: the new field is additive, so credential
+// keeps its stated meaning -- the credential that served the stage when it was
+// NOT the run's own -- and its single value. A stage the run's own key served
+// carries served_by and no credential at all (which is the mutation this test
+// catches: writing "api-key" into credential instead), a record written before
+// the field existed still parses, and the published schema still closes
+// credential's set at ["oauth"] with served_by beside it.
+func TestStageCredentialKeepsItsMeaning(t *testing.T) {
+	at := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(StageTiming{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.04,
+		ServedBy: CredentialAPIKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"credential"`) {
+		t.Errorf("a stage the run's own credential served carries credential: %s", data)
+	}
+	if !strings.Contains(string(data), `"served_by":"api-key"`) {
+		t.Errorf("a stage the run's own credential served does not name it: %s", data)
+	}
+	// Additive: a stage written before the field existed parses, and its
+	// ServedBy is the absent empty value rather than a wrong one.
+	var old StageTiming
+	if err := json.Unmarshal([]byte(`{"name":"review","started_at":"2026-11-05T10:00:00Z","duration_s":42,`+
+		`"credential":"oauth","model_usd":0.42,"model_notional_usd":0.42}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.ServedBy != "" || old.Credential != CredentialOAuth {
+		t.Errorf("a record written before the field = %+v, want credential %q alone", old, CredentialOAuth)
+	}
+
+	// The published contract, in the schema's own words: credential is still
+	// the one value, and the new field sits beside it, optional.
+	props, required := resultStageProperties(t)
+	cred, ok := props["credential"].(map[string]any)
+	if !ok {
+		t.Fatalf("result.schema.json's credential property = %v", props["credential"])
+	}
+	if got := schemaEnum(cred["enum"]); !slices.Equal(got, []string{CredentialOAuth}) {
+		t.Errorf("result.schema.json's credential enum = %v, want %v alone: the new field is additive, not a widening",
+			got, CredentialOAuth)
+	}
+	if desc, _ := cred["description"].(string); !strings.Contains(desc, "when it was not the run's own") {
+		t.Errorf("result.schema.json's credential description no longer states the field's meaning: %q", desc)
+	}
+	served, ok := props["served_by"].(map[string]any)
+	if !ok {
+		t.Fatalf("result.schema.json has no served_by beside credential: a stage carrying one is schema-invalid (%v)",
+			schemaNames(props))
+	}
+	if got := schemaEnum(served["enum"]); !slices.Equal(got, []string{CredentialOAuth, CredentialAPIKey}) {
+		t.Errorf("result.schema.json's served_by enum = %v, want [%s %s]", got, CredentialOAuth, CredentialAPIKey)
+	}
+	if desc, _ := served["description"].(string); !strings.Contains(desc, "the run's own") {
+		t.Errorf("result.schema.json's served_by description does not say it includes the run's own credential: %q", desc)
+	}
+	for _, name := range required {
+		if name == "served_by" || name == "credential" {
+			t.Errorf("result.schema.json requires %v: both are optional, and absent is what every record written before them carries", name)
+		}
+	}
+}
+
+// resultStageProperties is schemas/result.schema.json's stages item: its
+// properties and what it requires of a stage. The record's contract is that
+// file, and a test that pins a field's meaning reads it here rather than
+// restating it.
+func resultStageProperties(t *testing.T) (map[string]any, []any) {
+	t.Helper()
+	data, err := os.ReadFile("../../schemas/result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties struct {
+			Stages struct {
+				Items struct {
+					Properties map[string]any `json:"properties"`
+					Required   []any          `json:"required"`
+				} `json:"items"`
+			} `json:"stages"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	props := doc.Properties.Stages.Items.Properties
+	if len(props) == 0 {
+		t.Fatal("result.schema.json's stages item has no properties: this test's anchor moved")
+	}
+	return props, doc.Properties.Stages.Items.Required
+}
+
+// schemaEnum is a schema property's enum as strings, so a comparison reads as
+// the values rather than as the JSON.
+func schemaEnum(v any) []string {
+	raw, _ := v.([]any)
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		s, _ := e.(string)
+		out = append(out, s)
+	}
+	return out
+}
+
+// schemaNames is a schema object's property names, sorted, for a failure that
+// names what the contract does carry.
+func schemaNames(props map[string]any) []string {
+	out := make([]string, 0, len(props))
+	for name := range props {
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
 }
