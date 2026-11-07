@@ -997,7 +997,7 @@ export const CONSOLE_OPERATIONS = [
   // D1111). The document carries no `value` member for one at all
   // (`settingsJSON`), and the screen drops the row whole: no key, no value, no
   // pencil. That is the screen's rule and not this table's; what belongs here
-  // is that the row's *edit* is the next task's (`settings.edit`), and this
+  // is that the row's *edit* is `settings.edit`, the row below (C3), and this
   // operation reads.
   {
     name: 'settings.read',
