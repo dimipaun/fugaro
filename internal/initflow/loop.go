@@ -213,6 +213,17 @@ type loop struct {
 	// goes with it is not the account's, so the reporter has no outcome to
 	// close the run with and prints no closing line.
 	refused bool
+	// executing is the execution pass (converge): the results it records are
+	// the run's account and print as the stages happen. The plan view's own
+	// rows (preview) are the review screen, and print as the one block they
+	// always were.
+	executing bool
+	// step is the line in flight for the stage the run is on, opened when the
+	// loop reaches it (openStep) and ended by the result it records (record):
+	// what a person watches through a stage's minutes. stepStage is the stage
+	// it belongs to. Both are nil when no reporter is drawing one.
+	step      *report.Step
+	stepStage string
 }
 
 // defaultProgram is what the run's lines name when the caller names no
@@ -367,8 +378,9 @@ func (l *loop) fail(stage string, err error) {
 		f.Fix = l.redact(oneLine(se.Fix))
 	}
 	l.res.Failed, l.res.Cause = f, l.redactedCause(err)
-	l.res.Stages = append(l.res.Stages, StageResult{Name: stage, State: Failed, Detail: f.Error})
 	l.failedContext = l.failureContext(err)
+	// After the context, which the line the reporter prints carries under it.
+	l.record(StageResult{Name: stage, State: Failed, Detail: f.Error})
 }
 
 // failureContext is a stage's error under its first line: the last lines of
@@ -401,18 +413,22 @@ func (l *loop) failureContext(err error) []string {
 func (l *loop) converge(ctx context.Context, stages []Stage) error {
 	l.res.Stages, l.res.Left, l.res.Failed, l.res.Cause = nil, []Left{}, nil, nil
 	l.failedContext = nil
+	l.executing = true
 	stopped := "" // the stage everything after waits for
 	paused := ""  // the stage that paused for billing: what needs billing waits for it
 	for _, s := range stages {
 		name := s.Name()
 		if stopped != "" {
-			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: Blocked, Detail: "waits for " + stopped})
+			l.record(StageResult{Name: name, State: Blocked, Detail: "waits for " + stopped})
 			continue
 		}
 		if paused != "" && NeedsBilling(name) {
-			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: WaitingForBilling, Detail: "waiting for billing"})
+			l.record(StageResult{Name: name, State: WaitingForBilling, Detail: "waiting for billing"})
 			continue
 		}
+		// The line in flight goes up before the stage is looked at: its check
+		// and its plan are seconds, and the apply behind them is minutes.
+		l.openStep(name)
 		if l.cancelled(ctx, name) {
 			return nil
 		}
@@ -425,10 +441,10 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		detail := l.redact(oneLine(st.Detail))
 		switch st.State {
 		case Done, Skipped:
-			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: st.State, Detail: detail})
+			l.record(StageResult{Name: name, State: st.State, Detail: detail})
 			continue
 		case Blocked:
-			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: Blocked, Detail: detail})
+			l.record(StageResult{Name: name, State: Blocked, Detail: detail})
 			stopped = name
 			continue
 		case NeedsYou:
@@ -538,10 +554,13 @@ func (l *loop) applied(stage string, out Outcome) {
 	if !out.Changed {
 		r.State = Done
 	}
-	l.res.Stages = append(l.res.Stages, r)
+	// The Left first: the stage's own line is a left-for-you marker when the
+	// stage applied what this session may do and left the rest (G3), and the
+	// line prints the moment it is recorded.
 	if out.Left != nil {
 		l.res.Left = append(l.res.Left, l.left(stage, *out.Left))
 	}
+	l.record(r)
 }
 
 // agentStage is a stage's turn in a coding agent's session, which applies
@@ -576,7 +595,7 @@ func (l *loop) agentStage(ctx context.Context, s Stage) (done bool, err error) {
 			if d == "" {
 				d = "No changes"
 			}
-			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: Done, Detail: l.redact(d)})
+			l.record(StageResult{Name: name, State: Done, Detail: l.redact(d)})
 			return true, nil
 		}
 	}
@@ -643,12 +662,48 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 // step left for you, and it is not a failure.
 func (l *loop) billingPending(stage, detail string, lf Left) {
 	l.res.Left = append(l.res.Left, l.left(stage, lf))
-	l.res.Stages = append(l.res.Stages, StageResult{Name: stage, State: BillingPending, Detail: l.redact(oneLine(detail))})
+	l.record(StageResult{Name: stage, State: BillingPending, Detail: l.redact(oneLine(detail))})
 }
 
 func (l *loop) needsYou(stage, detail string, lf Left) {
 	l.res.Left = append(l.res.Left, l.left(stage, lf))
-	l.res.Stages = append(l.res.Stages, StageResult{Name: stage, State: NeedsYou, Detail: detail})
+	l.record(StageResult{Name: stage, State: NeedsYou, Detail: detail})
+}
+
+// record adds a stage's result to the run and, in the execution pass, prints
+// its line as the stage ends rather than in one block at the end of the run:
+// a stage that takes minutes — a Terraform apply, an image build — leaves a
+// terminal nobody is drawing on, and a person who reads that as a hang stops
+// the run in the middle of an apply. A run with no reporter records exactly
+// what it recorded before, and the plan view's rows are not a run at all.
+func (l *loop) record(r StageResult) {
+	l.res.Stages = append(l.res.Stages, r)
+	if l.o.Report == nil || !l.executing {
+		return
+	}
+	l.endStep(r)
+}
+
+// openStep starts the stage's line in flight, before the stage is even looked
+// at: its checks and its plan are seconds and what follows them is minutes,
+// and a stage somebody is watching is a stage nobody interrupts.
+func (l *loop) openStep(name string) {
+	if l.o.Report == nil || !l.executing {
+		return
+	}
+	l.step, l.stepStage = l.o.Report.Step(name), name
+}
+
+// closeStep takes down a line in flight that no result ended: a refusal stops
+// the run before the stage it was started for has one, and a line in flight
+// must not outlive the run that drew it. It prints nothing and counts
+// nothing, so a refused run's account is what it was.
+func (l *loop) closeStep() {
+	if l.step == nil {
+		return
+	}
+	l.step.Abandon()
+	l.step, l.stepStage = nil, ""
 }
 
 var stateLabel = map[State]string{
@@ -676,37 +731,41 @@ func (l *loop) view(rs []StageResult) {
 	}
 }
 
-// steps prints the run's account through the reporter: one line per stage,
-// with the marker the stage's state earns. The plan view is not a run — it is
-// the review screen, and it prints as it always has — so the steps are the
-// converge's own result, and finish prints the closing line after them.
-func (l *loop) steps(rs []StageResult) {
-	for _, r := range rs {
-		s := l.o.Report.Step(r.Name)
-		switch r.State {
-		case Done, Changed:
-			if l.leftFor(r.Name) != nil {
-				// The stage applied what this session may do and left the
-				// rest for the user (Outcome.Left): the result carries the
-				// entry and the run exits 1, so a tick here would say the
-				// run is done when it is not (G3).
-				s.Left(l.stageText(r))
-			} else {
-				s.Done(r.Detail)
-			}
-		case Failed:
-			// The stage's detail is the error's first line; the lines under
-			// it are the context the failure block prints (G8).
-			s.Failed(errors.New(r.Detail), l.failedContext)
-		case NeedsYou, BillingPending, WaitingForBilling:
-			// The user still owes this stage — a confirmation, a billing
-			// account — so it is never a tick, whatever it says (G3).
+// endStep prints one stage's line through the reporter: the marker the
+// stage's state earns, which is the line the run's account has always been,
+// printed where the stage ends instead of at the end of the run. The stage's
+// own line in flight, when there is one, is the line it replaces.
+func (l *loop) endStep(r StageResult) {
+	s := l.step
+	if s == nil || l.stepStage != r.Name {
+		// A stage nothing was opened for: one that waits for a stage before
+		// it. Its whole line prints at once, the moment the loop reaches it.
+		s = l.o.Report.Step(r.Name)
+	}
+	l.step, l.stepStage = nil, ""
+	switch r.State {
+	case Done, Changed:
+		if l.leftFor(r.Name) != nil {
+			// The stage applied what this session may do and left the rest
+			// for the user (Outcome.Left): the result carries the entry and
+			// the run exits 1, so a tick here would say the run is done when
+			// it is not (G3).
 			s.Left(l.stageText(r))
-		default:
-			// Skipped and blocked: the stage did not run, and what it waits
-			// for is not this session's to give.
-			s.Skipped(r.Detail)
+		} else {
+			s.Done(r.Detail)
 		}
+	case Failed:
+		// The stage's detail is the error's first line; the lines under it
+		// are the context the failure block prints (G8).
+		s.Failed(errors.New(r.Detail), l.failedContext)
+	case NeedsYou, BillingPending, WaitingForBilling:
+		// The user still owes this stage — a confirmation, a billing
+		// account — so it is never a tick, whatever it says (G3).
+		s.Left(l.stageText(r))
+	default:
+		// Skipped and blocked: the stage did not run, and what it waits for
+		// is not this session's to give.
+		s.Skipped(r.Detail)
 	}
 }
 
@@ -744,7 +803,10 @@ func (l *loop) finish() {
 			fmt.Fprintln(l.o.Out, l.res.Note)
 		}
 	} else if l.o.Report != nil {
-		l.steps(l.res.Stages)
+		// The account is already on the screen: every step printed as its
+		// stage ended (record), so what is left is the closing line below
+		// and the blocks a run owes the user.
+		l.closeStep()
 	} else {
 		fmt.Fprintf(l.o.Out, "%s: result\n", l.program())
 		l.view(l.res.Stages)

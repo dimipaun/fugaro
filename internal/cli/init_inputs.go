@@ -38,6 +38,11 @@ import (
 // command lands in the wrong project), so neither gcloud's properties file nor
 // CLOUDSDK_CORE_PROJECT is read here.
 
+// defaultRegion is the region the installation's jobs and the scheduler run
+// in: the wizard's own question, answered once and changeable on a later run.
+// It is not the Firestore database's location (infra.FirestoreLocation, C1),
+// which is permanent and is confirmed by typing it; the two happen to hold the
+// same value and are never derived from one another.
 const defaultRegion = "us-east5"
 
 // regionRE is the shape of a Google Cloud region (us-east5, europe-west4).

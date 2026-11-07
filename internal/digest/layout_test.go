@@ -53,3 +53,68 @@ func TestFileBodyCarriesPatternsForEveryHead(t *testing.T) {
 		}
 	}
 }
+
+// TestPeriodOfKeyIsPeriodKeysInverse: every key PeriodKey writes is a period
+// for PeriodOfKey, whatever the dimension, and it is the period the key came
+// from -- the start and the end included, which is what a reader over a folder
+// of files needs and cannot get from the key alone. The week cases are the
+// interesting ones: a week's Monday is in another year for the one week a year
+// spans the boundary, and 2026 has a 53rd.
+func TestPeriodOfKeyIsPeriodKeysInverse(t *testing.T) {
+	for _, tc := range []struct {
+		dim  Dim
+		date string
+	}{
+		{ByDay, "2026-10-25"},
+		{ByWeek, "2026-10-21"},
+		{ByMonth, "2026-10-21"},
+		{ByYear, "2026-10-21"},
+		{ByWeek, "2026-12-31"},
+		{ByWeek, "2027-01-01"},
+		{ByWeek, "2027-01-04"},
+		{ByDay, "2026-01-01"},
+		{ByMonth, "2027-01-01"},
+		{ByYear, "2027-01-01"},
+	} {
+		want, err := NewPeriod(tc.dim, tc.date)
+		if err != nil {
+			t.Fatalf("NewPeriod(%s, %s): %v", tc.dim, tc.date, err)
+		}
+		got, err := PeriodOfKey(tc.dim, want.Key)
+		if err != nil {
+			t.Errorf("PeriodOfKey(%s, %q) refused a key PeriodKey wrote: %v", tc.dim, want.Key, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("PeriodOfKey(%s, %q) = %+v, want the period of %s: %+v", tc.dim, want.Key, got, tc.date, want)
+		}
+	}
+}
+
+// TestPeriodOfKeyRefusesWhatTheLayoutCannotName: a key is a period only in the
+// dimension its own shape gives, and only when it names one. A reader walking a
+// hand-written folder gets an error rather than a period this package made up.
+func TestPeriodOfKeyRefusesWhatTheLayoutCannotName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dim  Dim
+		key  string
+	}{
+		{"a day key read as a week", ByWeek, "2026-10-25"},
+		{"a week key read as a day", ByDay, "2026-W43"},
+		{"a month key read as a week", ByWeek, "2026-10"},
+		{"a year key read as a month", ByMonth, "2026"},
+		{"a dimension that is no period", ByRepo, "acme/app"},
+		{"a week the year does not have", ByWeek, "2026-W54"},
+		{"a week with no zero padding", ByWeek, "2026-W1"},
+		{"a thirteenth month", ByMonth, "2026-13"},
+		{"a month that is not a month", ByMonth, "2026-00"},
+		{"30 February", ByDay, "2026-02-30"},
+		{"a day that is not a date", ByDay, "2026-1-1"},
+		{"nothing at all", ByDay, ""},
+	} {
+		if p, err := PeriodOfKey(tc.dim, tc.key); err == nil {
+			t.Errorf("%s: PeriodOfKey(%s, %q) = %+v, and the layout names no such period", tc.name, tc.dim, tc.key, p)
+		}
+	}
+}

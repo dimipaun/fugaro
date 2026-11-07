@@ -10,10 +10,11 @@ import (
 )
 
 // loadCatalog is the embedded catalog behind a variable, like this package's
-// other seams (doctorLookPath, readAppKey). The file a released binary reads
-// is valid — TestShippedCatalogLoads and the generator's own Parse keep it so
-// — which leaves the surfaces' reporting of a catalog that will not load, and
-// of a row the compile refuses, with no way to be exercised from a test.
+// other seams (doctorLookPath, readSecretValue). The file a released binary
+// reads is valid — TestShippedCatalogLoads and the generator's own Parse keep
+// it so — which leaves the surfaces' reporting of a catalog that will not
+// load, and of a row the compile refuses, with no way to be exercised from a
+// test.
 var loadCatalog = catalog.Load
 
 // priceTableFor is the table every CLI pricing surface builds: config.PriceTable

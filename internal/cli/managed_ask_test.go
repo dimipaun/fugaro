@@ -524,7 +524,7 @@ func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
 				if strings.Contains(flagged, initflow.AskRestored()) || strings.Contains(flagged, "never a silent proceed") {
 					t.Errorf("--ask answered as if the project were managed:\n%s", flagged)
 				}
-				if stripped := strings.Replace(flagged, initflow.AskUnmanaged()+"\n", "", 1); stripped != plain {
+				if stripped := withoutRunOwn(strings.Replace(flagged, initflow.AskUnmanaged()+"\n", "", 1)); stripped != withoutRunOwn(plain) {
 					t.Errorf("--ask changed the run in a project that is not managed (the flag's line stripped from the middle).\nwithout: %s\nwith:    %s", plain, flagged)
 				}
 				// The flag is a sentence and not a decision: a project that

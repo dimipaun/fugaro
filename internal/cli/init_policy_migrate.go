@@ -1104,8 +1104,16 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
 		}
 	}
+	// The diff, the confirmation and every line of the write go through the
+	// run's own writer, and the questions this stage asks are the shared ones
+	// (confirmEmptyAllowList, confirmTypedStrict, confirmRemoval), which hold
+	// the command rather than the run: the whole call is put to the person with
+	// the line in flight down (initRun.asking), so neither the diff nor the
+	// CONFIRM block nor the project's name typed under it is drawn over (G1).
 	cmd := s.e.r.cmd
-	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted, s.e.r.gateUnderway(), s.e.r.conditions()); err != nil {
+	if err := s.e.r.asking(func() error {
+		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.conditions())
+	}); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if admitted {

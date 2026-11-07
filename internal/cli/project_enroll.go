@@ -917,7 +917,7 @@ func syncAppKey(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, al
 	}
 	secretID := gcp.ProjectSecretID(lc.Name, config.GitHubAppKeySecret)
 	fmt.Fprintf(cmd.ErrOrStderr(), "%s: reads the GitHub App's private key from %s with your own credentials and holds it in memory only to sign a 9-minute token; only the PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection); GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first\n", syncAppKeyFlag, secretID)
-	pem, err := readAppKey(ctx, lc, secretID)
+	pem, err := readSecretValue(ctx, lc, secretID)
 	switch {
 	case errors.Is(err, gcp.ErrNoVersion):
 		return nil, userErr("the project has no github-app-key secret with a version, so the App's repositories cannot be listed: store it with 'fugaro secrets set github-app-key --project-wide < PATH-TO-THE-PEM-FILE'")
