@@ -2555,6 +2555,27 @@ old value and shape come from this document and from nowhere else.
 | `old` | string | never | never | the value the TARGET layer's own file holds for the key before the edit, which is not the value a run gets (the winning layer decides that). Empty when that layer's file holds none |
 | `new` | string | never | never | the value the edit would write. Empty for an unset, which is the fact that makes the pair meaningful: `changed` is the CLI's comparison and not a consumer's reading of these two strings |
 | `refusal` | string | never | never | **empty in every document this CLI prints.** A refusal is the CLI's own sentence with a non-zero exit and **no document at all**, which is what a consumer branches on (D1106, D1112); the member is written out because the shape is the contract, and a consumer reads it by name |
+| `operation` | string | unless the write is one that has a word of its own | never | **which edit this is, where the write has a word of its own for it** — the three the schema's enum carries: `add-entry` (`settingsEntryAdd`) and `remove-entry` (`settingsEntryRemove`) for the entry pair (D1164), and **`remove-secret`** for `fugaro secrets rm NAME` (`secretsRmDryRun`, D1171), which takes away the entry the name has — `project_secrets.NAME` for a reserved name, **`workflow_secrets.NAME` for a workflow secret** (D1260) — *and* the Secret Manager container behind it. It is the write path's own word and a consumer **never re-derives it**: `key`, `old` and `new` alone cannot say which of the three the CLI decided, because a map's removal and an object list's read alike in them. `remove-secret` is the one value §6.20's own pair never writes — that command is `settings set\|unset`, and this section is its dry run — and it is also the value that carries **no** entry member below: what it removes is addressed by `key` alone |
+| `entry_key` | string | unless the write is an entry write | never | **the field the entry is addressed by**, printed through `safetext.Field`: an object list's own key field — `name`, for `workflows.*.secrets`, the pair's only keyed list (`settingsEntryBlocks`) — and the member's own name for a map, whose entry *is* one member. It is an address, not a value a form is drawn from |
+| `entry_value` | string | unless the write is an entry write that carries one — absent for a map's `remove-entry` too | never | that field's value — the key field's value for an object list, the member's value for a map's add — printed through `safetext.Field`. **A map's `remove-entry` leaves it out**: its address is the member's name and nothing else, what the member held is in `old` as its own `field=value` pair, and a document omits a member it has no value for rather than writing an empty one |
+| `entry_fields` | `map[string]string` | unless the write is an object list's `add-entry` | never | the members the entry carries **beside** the field that names it, keyed by member name, both sides printed through `safetext.Field`. **Only an object list's `add-entry` has any**: a map's entry is one member and carries none, and no removal carries any. The table spells it the one way a cell carries an entry — the pairs sorted by field and joined with `, ` (`settingsEntryFieldsString`) — which is the same spelling `old` and `new` carry an entry in |
+
+**Version 1 has grown four optional members, and a scalar write's document is
+the shape it has always had** (D1164, under D848's rule that a version gains
+only members a document may leave out): they are `omitempty`, and the entry pair
+writes them — `settingsEntryAdd` and `settingsEntryRemove` set the three the
+entry carries, `operation` is the fourth, `secretsRmDryRun` writes it alone, and
+it carries none of the other three, because what `remove-secret` takes away is
+addressed by `key`. A map's `add-entry` sets no `entry_fields` either: a map's
+entry *is* the one member `entry_key` names.
+**The console's own row builds no entry write at all** — `settings set KEY
+--layer <L>` carries one key and one value, and `--add-entry`/`--remove-entry`
+are not words of it (design §5.1 rule 6, and no screen control can choose a form
+whose row would have to say a key is map- or list-shaped). A consumer that pins
+this version therefore **ignores these four and reads the ten members it has
+always read**: an entry write's document reaches no window this console draws,
+and a reader that meets one in the CLI's own output finds the entry's address in
+the entry's own terms rather than inferring it from `key`.
 
 **Every string is printed through `safetext.Field`**, for §6.19's reason: a key,
 a path and a value are as much the file's and the command line's as they are the
@@ -2565,17 +2586,26 @@ built.
 one `FIELD`/`VALUE` row per member, in this document's own order, so the two
 shapes cannot drift into two contracts.
 
-**The two phase words are exclusive, and that is the command's own rule.**
-`--json` without `--dry-run` is refused ("`--json` is the dry run's document"),
-and `--dry-run` with `--yes` is refused too ("a dry run says what the edit would
-do and writes nothing, `--yes` answers a write"): a console passes exactly one
-of the two spellings, and the CLI is what makes that a property rather than a
-convention. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+**The phase words are exclusive, and that is the command's own rule**
+(`settingsDryRunFlags`, `askConflict`). `--json` without `--dry-run` is refused
+("`--json` is the dry run's document"), `--dry-run` with `--yes` is refused too
+("a dry run says what the edit would do and writes nothing, `--yes` answers a
+write"), and so is `--dry-run` with **`--ask`**, the slot's third word: `--ask`
+is about the confirmations a write is given, which a dry run has none of and
+asks for none of (a managed project writes on the gate's verdict and asks
+nothing, and `--ask` is the flag that puts those questions back), and `--ask`
+beside `--yes` is refused as well, because the two are the slot's two answers to
+the same question. **A console passes exactly one of the two spellings this
+document is about** — `--dry-run --json` or `--yes` — and the CLI is what makes
+that a property rather than a convention: `--ask` is not a word of the console's
+argv (design §5.1 rule 6), because the questions it restores are asked at a
+terminal and the console's child, whose stdin is ignored, is given `--yes`
+instead. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
 omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
 one `settingsWriteLayers` names, and a layer outside them is a refusal rather
 than a document. The command is the same pair §6.19's paragraph describes, so the
-`--`-terminated value, the two phase words and the layer's provenance are
-written down there and not twice here.
+`--`-terminated value, the two spellings the console passes and the layer's
+provenance are written down there and not twice here.
 
 ### 6.22 `fugaro graph --json` — the dependency graph, and its stream
 

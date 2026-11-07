@@ -9732,6 +9732,31 @@ func TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections(t *testing.T) {
 	if !strings.Contains(never, "the console's first write") {
 		t.Errorf("%s's rule 6 never names the launch as the console's *first* write, so the second write has nothing to be second to", path)
 	}
+	// And the one line number that row carries. `VALUE` is the word after the
+	// `--` terminator rather than an `=` away, and the row proves it by citing
+	// the line of the pair's own `Use:` string — the citation a reader follows
+	// by hand, and the one nothing read: the key list under that command grew
+	// (`--add-entry`, `--remove-entry`), `Use:` moved with it, and the number
+	// stayed where it was, pointing at the list. The line is found in the file
+	// rather than pinned as a number here, so the check says what the row
+	// claims and not what the file happened to be the day the row was written.
+	body, err := os.ReadFile("../../internal/cli/settings_set.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for i, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) == `Use:   "set KEY VALUE",` {
+			want = i + 1
+			break
+		}
+	}
+	if want == 0 {
+		t.Fatalf("internal/cli/settings_set.go no longer declares `Use:   \"set KEY VALUE\"`: rule 6's write row turns on that declaration, so the two move together")
+	}
+	if !strings.Contains(never, fmt.Sprintf("`internal/cli/settings_set.go:%d`", want)) {
+		t.Errorf("%s's rule 6 does not cite internal/cli/settings_set.go:%d, the line that declares the `Use: \"set KEY VALUE\"` the row turns on: what makes `VALUE` a positional and the `--` terminator necessary is that declaration, and a citation to a line of the key list below it is one a reader cannot follow", path, want)
+	}
 
 	// §6.2 item 3, the Project screen: the settings section is the tab's third
 	// read and rule 12's window is where its pencil leads.
@@ -9798,6 +9823,31 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"`widening`",
 		"`changed`",
 		"`refusal`",
+		// The four optional members version 1 has since grown (D1164), off the
+		// four `omitempty` fields of `settingsWriteDoc` and the four rows
+		// `writeSettingsWriteTable` prints below `refusal`. The console's own
+		// row cannot build an entry write, so its reader ignores them — but the
+		// section is the document described member by member, and a reader who
+		// finds ten of the fourteen members is reading a shape the CLI no
+		// longer writes.
+		// `operation` is not only the entry pair's word: the schema's enum has
+		// three values, and `remove-secret` is the one §6.20's own pair never
+		// writes (secretsRmDryRun, D1171).
+		"`operation`",
+		"`remove-secret`",
+		// And the block the entry it takes away lives in: `secrets rm` removes
+		// the entry the NAME has, which is `workflow_secrets.NAME` for a
+		// workflow secret (D1260) — a row that named only `project_secrets`
+		// describes a key the command does not touch (secretsRmWhat).
+		"`workflow_secrets.NAME`",
+		"`entry_key`",
+		"`entry_value`",
+		"`entry_fields`",
+		// And the phase slot's third word. `settingsDryRunFlags` refuses
+		// `--ask` beside `--dry-run` exactly as it refuses `--yes`, so a
+		// section that counts the slot's words and stops at two is short by
+		// one, whatever the console's own argv passes.
+		"`--ask`",
 	} {
 		if !strings.Contains(write, want) {
 			t.Errorf("%s's §6.20 does not state %q: the write's dry run is the document the window and the write are built over, and it is the console's contract to describe", path, want)
