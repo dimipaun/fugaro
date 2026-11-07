@@ -361,7 +361,8 @@ type accountsRmReferrers struct {
 // session on and warns the owner about. The conservative direction is the only
 // one available here: a document this machine could not read is never scored
 // clean, and every ref the runs of the repository can be cut from
-// (accountsRmRefs) is read rather than one of them.
+// (accountsRmRefs) is read rather than one of them, with the base branch each
+// of those documents names read beside it (accountsRmCommittedYAML).
 //
 // unseen, unread and unresolved are three of the ways this machine can come up
 // short, and they are not the same: no checkout here — no row at all, or a row
@@ -441,15 +442,26 @@ func accountsRmRepos(ctx context.Context, env *cloudEnv, name string, session bo
 			read.unread = append(read.unread, repo)
 			continue
 		}
-		// Every ref a run of this repository can be cut from is read, and the
-		// answer is the referrer when ANY of them names the account, before the
-		// read that did not answer: a name at a ref the runs use is a fact, while
-		// an unread document beside it is the absence of one, and a repository
-		// that is both is reported as what it is — a referrer, and therefore a
-		// refusal for a session and a warning for the owner either way.
+		// Every ref a run of this repository can be cut from is read, and with each
+		// of those documents the branch it names as its base — beside it and never
+		// in its place, because a run reads its account out of the file at the ref
+		// it is cut from (accountsRmCommittedYAML). The answer is the referrer when
+		// ANY of them names the account, before the read that did not answer: a name
+		// at a ref the runs use is a fact, while an unread document beside it is the
+		// absence of one, and a repository that is both is reported as what it is —
+		// a referrer, and therefore a refusal for a session and a warning for the
+		// owner either way.
 		var named, failed bool
-		for _, ref := range refs {
-			data, err := accountsRmCommittedYAML(ctx, dir, ref)
+		seen := map[string]bool{}
+		queue := slices.Clone(refs)
+		for len(queue) > 0 {
+			ref := queue[0]
+			queue = queue[1:]
+			if seen[ref] {
+				continue
+			}
+			seen[ref] = true
+			data, base, err := accountsRmCommittedYAML(ctx, dir, ref)
 			if err != nil {
 				failed = true
 				continue
@@ -461,6 +473,9 @@ func accountsRmRepos(ctx context.Context, env *cloudEnv, name string, session bo
 			}
 			if agent.OAuthToken == name {
 				named = true
+			}
+			if base != "" && !seen[base] {
+				queue = append(queue, base)
 			}
 		}
 		switch {
@@ -530,7 +545,9 @@ func accountsRmRefs(ctx context.Context, env *cloudEnv, repo string) ([]string, 
 // the way a run of it reads that file: the blob at ref, out of the checkout's
 // object database, through the reader the launch uses (readFugaroYAMLAtRef,
 // which is git cat-file). An error is "this machine could not read the document
-// that answers", which is unknown and not clean.
+// that answers", which is unknown and not clean. Beside the document it answers
+// the branch that document itself names as its base (config.GitBaseBranchOf),
+// which accountsRmRepos reads as a ref of its own and never in the ref's place.
 //
 // ref comes from accountsRmRefs and NEVER from the checkout's file. A launch
 // consults that file first (basebranch.go's layer 1), but it belongs to the
@@ -542,20 +559,27 @@ func accountsRmRefs(ctx context.Context, env *cloudEnv, repo string) ([]string, 
 // judged (accountsRmRefs), because that is the ref a launch from here is cut
 // from whether or not any file says so.
 //
-// The file read at ref may itself write git.base_branch, which is the branch a
-// launch out of that ref resolves (basebranch.go's layer 1) and the run checks
-// out: resolving that name out of the committed bytes and reading the file there
-// keeps this read on the document the runs use, and a ref this checkout does not
-// hold is an error rather than an older copy of the file.
-func accountsRmCommittedYAML(ctx context.Context, dir, ref string) ([]byte, error) {
+// The base branch is read BESIDE the ref and never in its place. A run cut from
+// ref reads its account out of the file at ref itself (project_job.go's
+// agentAtRef and projectJobAgentAuth: spec.Ref is the ref the job clones and
+// resolves, and the base a file names is what the run measures its work against
+// — a different branch, not a different document for the credential), so a file
+// at a ref a run uses that names the account is a referrer even when the branch
+// it names is clean. Reading that branch in the file's place is what scored
+// exactly that repository clean. The named branch is a ref in its own right: a
+// run with an explicit --ref names it, and there it reads its account out of
+// that branch's file, so that file is judged too — and a ref this checkout does
+// not hold is an error rather than an older copy of the file.
+func accountsRmCommittedYAML(ctx context.Context, dir, ref string) ([]byte, string, error) {
 	data, err := readFugaroYAMLAtRef(ctx, dir, ref)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if named, ok := config.GitBaseBranchOf(data); ok && named != ref {
-		return readFugaroYAMLAtRef(ctx, dir, named)
+	base, ok := config.GitBaseBranchOf(data)
+	if !ok || base == ref {
+		return data, "", nil
 	}
-	return data, nil
+	return data, base, nil
 }
 
 // accountsRmWarn is the whole of the protection spec §4 step 2 leaves for a

@@ -384,9 +384,12 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    not hold; the ref comes from the installation config instead (`repos.<r>.base_branch`, else the
    project's own default — the installation config's own top-level `base_branch`, else the one the
    published policy node carries, which are exactly the layers a launch resolves below its file), and
-   **the branch the committed file then names is followed**, because a repository whose file writes
-   `git.base_branch` has its runs read the file at that branch: the value is resolved out of the
-   committed bytes and the file there is read in its place.
+   **the branch the committed file names as its base is read beside it and never in its place**: a run
+   reads its account out of the file at the ref it checks out (`spec.Ref`) and the name only decides
+   what that run measures its work against, so a file at a ref the runs use that names the account is a
+   reference even when the branch it names is clean — and that branch is a ref of its own, one a run
+   with an explicit `--ref` reads the same key out of, so its file is read too, and the value there is
+   resolved out of the committed bytes as well.
    **Every ref a run can be cut from is read, and the base branch alone is not all of them.** A launch
    with no `--ref` from a checkout of a pushed branch is cut from that branch, so when this working
    directory is on one and origin has it, that ref is read beside the base branch: a repository whose

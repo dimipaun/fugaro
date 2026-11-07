@@ -870,11 +870,11 @@ func TestAccountsRmWarnsOnlyWhenTheCommitItselfIsUnread(t *testing.T) {
 	}
 }
 
-// TestAccountsRmReadsTheBranchTheCommittedFileNames: the ref is resolved out of
-// the committed bytes and then followed, so the file judged is the one at the
-// branch the repository's runs use. A read that stopped at the local config's
-// default would judge the file at main while every run of that repository reads
-// the file at release — the document that names the account here.
+// TestAccountsRmReadsTheBranchTheCommittedFileNames: the branch the committed
+// file names as its base is read as a ref of its own, so the file judged is the
+// one a run of that branch reads. A read that stopped at the local config's
+// default would judge the file at main while a run with --ref release reads the
+// file at release — the document that names the account here.
 func TestAccountsRmReadsTheBranchTheCommittedFileNames(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
@@ -888,6 +888,60 @@ func TestAccountsRmReadsTheBranchTheCommittedFileNames(t *testing.T) {
 	}
 	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
 		t.Errorf("the secret deletes were %v, want %v", got, id)
+	}
+}
+
+// TestAccountsRmManagedRefusesTheNameAtTheRefThatNamesABaseBranch is the other
+// half of that read, pinned: the branch a committed file names is read BESIDE
+// the file and never in its place, because a run cut from that ref reads its
+// account out of the file at that ref itself (project_job.go's agentAtRef) and
+// the name is only what it measures its work against. A repository whose
+// base-branch file names the account while the branch that file names as its own
+// base is clean is therefore a repository every run of it stops at launch on —
+// and reading the named branch in the ref's place judged the clean file alone,
+// scored the repository clean — the read that reported it clean, and not the
+// reference — and let the one-way delete through.
+//
+// What the record says is the assertion, and not the refusal alone: a session is
+// refused here whatever the walk found (accountsRmRules's class rule), so a run
+// that stops is no evidence that the walk found anything. The rule the walk
+// writes is the evidence: the ref's own file named the account, so the record
+// carries the referrer rule and not the "read it here and could not resolve
+// it" one a clean read of the branch the file names leaves behind.
+func TestAccountsRmManagedRefusesTheNameAtTheRefThatNamesABaseBranch(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckoutBranched(t, "owner/repo-a", accountsRmRepoYAMLReleaseWithToken, accountsRmRepoYAMLWithoutToken)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran while the ref the runs use still names the account (%v):\n%s", got, out)
+	}
+	if err == nil {
+		t.Fatalf("a ref that names the account did not stop the removal:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") || !strings.Contains(err.Error(), "agent.oauth_token") {
+		t.Errorf("the refusal does not name the repository and the key that still reference the account: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one refusal: %+v", len(recs), recs)
+	}
+	if recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the record's verdict is %q, want %q: the step was refused", recs[0].Verdict, managedmode.AuditRefused)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool {
+		return strings.Contains(rule, "committed fugaro.yaml of owner/repo-a names team-a in agent.oauth_token")
+	}) {
+		t.Errorf("the record's rules (%v) do not report the ref's own file as the referrer: the read followed the branch the file names and judged that clean file in the ref's place", recs[0].Rules)
 	}
 }
 
@@ -1479,6 +1533,23 @@ project: aurora
 git: { provider: github, base_branch: release }
 agent:
   auth: oauth
+workflows:
+  web:
+    commands: { build: go build ./..., test: go test ./... }
+`
+
+// accountsRmRepoYAMLReleaseWithToken is the committed file at the default branch
+// of a repository whose runs measure their work against release: it names the
+// branch in git.base_branch AND the account in agent.oauth_token. The name is a
+// base and not a redirection — a run cut from this branch reads its account out
+// of this file (project_job.go's agentAtRef) — so this document is a referrer
+// whatever the branch it names holds.
+const accountsRmRepoYAMLReleaseWithToken = `version: 1
+project: aurora
+git: { provider: github, base_branch: release }
+agent:
+  auth: oauth
+  oauth_token: team-a
 workflows:
   web:
     commands: { build: go build ./..., test: go test ./... }
