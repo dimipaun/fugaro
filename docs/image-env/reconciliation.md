@@ -49,8 +49,8 @@ The chain, end to end, because the whole design turns on where the image's `ENV`
    shape: gated on a fact, never on a name happening to be there.
 5. **The redaction that follows** is over **values**, registered by `run.addSecret`
    (`internal/runner/runner.go:934-941`) and applied by `agent.NewRedactor` to the transcript and the
-   stage's stderr (`internal/runner/runner.go:3408-3428`), by `agent.Redact` to the PR title and body
-   (`internal/runner/runner.go:4329-4346`), and by `RedactFunc` to logs, reasons and reports (F11).
+   stage's stderr (`internal/runner/runner.go:3488-3508`), by `agent.Redact` to the PR title and body
+   (`internal/runner/runner.go:4544-4561`), and by `RedactFunc` to logs, reasons and reports (F11).
 
 ## 3. Findings
 
@@ -187,7 +187,7 @@ environment.** The agent gets `ANTHROPIC_BASE_URL` and the gateway's per-run tok
 `ANTHROPIC_API_KEY` (`internal/agent/env.go:302-344`); both names are reserved, so an image cannot
 set, shadow or redirect them, and `GatewayVars` is copied **last** (`:218-223`). The real key is in
 the runner and is registered for redaction only (`internal/agent/env.go:148-163`; the gateway
-attaches it upstream, `internal/gateway/forward.go:1128-1136`).
+attaches it upstream, `internal/gateway/forward.go:1163-1171`).
 
 **F13. `doctor`'s one-screen rule is pinned, so the report cannot go on the default screen.** The
 default view is capped at **25 lines** (`internal/cli/doctor_render.go:23-26`) by
@@ -297,7 +297,7 @@ settles.
   consequence of D1372, stated because the stamp depends on it) and every name in
   `FUGARO_SECRET_ENVS` that this run's own workflow did not declare (F8).** *Recommendation.* A
   declared secret still reaches the agent through the existing path only
-  (`internal/runner/runner.go:2310-2312`). *Alternative:* let the workflow's own declarations decide
+  (`internal/runner/runner.go:2314-2316`). *Alternative:* let the workflow's own declarations decide
   (i.e. pass an undeclared secret name only if the image also set it) — refused: at run time nothing
   can tell the image's value from the mounted one, and the mounted one wins in the merged
   environment. *Cost:* an operator who needs a secret-shaped value must use `workflows.*.secrets`,

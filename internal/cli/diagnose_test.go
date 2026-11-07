@@ -337,6 +337,86 @@ func TestDiagnoseRedactsAndClips(t *testing.T) {
 	}
 }
 
+// TestDiagnoseReadsTheLastImplementAttempt: transcripts are written per
+// attempt (transcripts/<stage>-<n>.jsonl, n the stage's own attempt number),
+// so a run whose implement stage ran twice -- a retried implement after a
+// cut stream (issue #1827), a recovered failure -- has two of them, and the
+// agent's last word is the attempt the run went on with. diagnose reads the
+// highest implement number rec.Stages holds, the way it already reads fix-<n>,
+// rather than implement-1 alone, which is the attempt the run threw away.
+func TestDiagnoseReadsTheLastImplementAttempt(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	const cut = "API Error: stream closed before completion"
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, Retries: 1,
+		Stages: []runstore.StageTiming{{Name: "implement"}, {Name: "implement"}, {Name: "review"}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutFile(ctx, "transcripts/implement-1.jsonl", []byte(`{"type":"result","subtype":"success","is_error":true,"result":"`+cut+`"}`+"\n"), "application/x-ndjson")
+	_ = s.PutFile(ctx, "transcripts/implement-2.jsonl", []byte(`{"type":"result","subtype":"success","result":"added the feature"}`+"\n"), "application/x-ndjson")
+	_ = s.PutFile(ctx, "transcripts/review-1.jsonl", []byte(`{"type":"result","subtype":"success","result":"looks right"}`+"\n"), "application/x-ndjson")
+
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.AgentMessage != "added the feature" {
+		t.Errorf("agent message = %q, want the second implement attempt's: the first is the attempt the retry threw away", d.AgentMessage)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human, "added the feature") || strings.Contains(human, cut) {
+		t.Errorf("diagnose printed the abandoned attempt's words, not the run's own:\n%s", human)
+	}
+}
+
+// TestDiagnoseReadsImplement1WithoutAStageTiming: the implement walk's floor
+// is implement-1, because a record can hold no implement timing while the
+// transcript is there. Every attempt uploads its transcript and only then
+// writes its stage timing (internal/runner's stageOnce), and a run killed in
+// between leaves exactly that: the transcript, no timing. A record written
+// before the timings were (2026-10-03) has the same shape. Reading the count
+// alone would print no agent message at all for the dead run diagnose exists
+// for -- origin/main read implement-1 here whatever rec.Stages held.
+func TestDiagnoseReadsImplement1WithoutAStageTiming(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusFailed, Stage: "implement", Reason: "the run was killed"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutFile(ctx, "transcripts/implement-1.jsonl", []byte(`{"type":"result","subtype":"success","result":"got halfway"}`+"\n"), "application/x-ndjson")
+
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.AgentMessage != "got halfway" {
+		t.Errorf("agent message = %q, want the one implement transcript the record has", d.AgentMessage)
+	}
+}
+
 // A failed log read is the one GCP error diagnose tolerates: it warns on
 // stderr, exits 0 and still prints everything the bucket holds.
 func TestDiagnoseToleratesLogFailure(t *testing.T) {
@@ -1252,6 +1332,65 @@ func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 			}
 		} else if lines != 1 || !strings.Contains(human, tc.want+"\n") {
 			t.Fatalf("want exactly %q:\n%s", tc.want, human)
+		}
+	}
+}
+
+// TestDiagnosePrintsRetries: a run that retried a stage because its model
+// stream was closed before the response finished (issue #1827) says so where
+// a reader looks for why a run took longer or cost more than its stages
+// suggest, and a run that retried nothing says nothing -- the count is
+// additive (runstore.Record.Retries) and absent, not zero, when it is 0.
+func TestDiagnosePrintsRetries(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		retries int
+		want    string
+	}{
+		{0, ""},
+		{1, "Retries:  1 (the model's stream was closed before a stage finished, so that stage was run once more)"},
+		{2, "Retries:  2 (the model's stream was closed before a stage finished, so that stage was run once more)"},
+	} {
+		id := fmt.Sprintf("20260927-21000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		s := runstore.Open(b, appSlug, id)
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, Retries: tc.retries}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := 0
+		for _, ln := range strings.Split(human, "\n") {
+			if strings.HasPrefix(ln, "Retries:") {
+				lines++
+			}
+		}
+		if tc.want == "" {
+			if lines != 0 {
+				t.Fatalf("a run that retried nothing printed a retries line:\n%s", human)
+			}
+		} else if lines != 1 || !strings.Contains(human, tc.want+"\n") {
+			t.Fatalf("%d retries: want exactly %q:\n%s", tc.retries, tc.want, human)
+		}
+		js, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(js), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Retries != tc.retries {
+			t.Fatalf("%d retries: json retries = %d", tc.retries, d.Retries)
+		}
+		if tc.retries == 0 && strings.Contains(js, `"retries"`) {
+			t.Fatalf("a run that retried nothing carries a retries key in --json: the field is additive and absent at 0:\n%s", js)
 		}
 	}
 }
