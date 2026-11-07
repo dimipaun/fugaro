@@ -374,14 +374,25 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    A repository whose committed `fugaro.yaml`
    still names the account in `agent.oauth_token` is **warned about**, naming the repository and the
    run that will fail at launch — the shape D783 chose for `fugaro models rm`, and for the same reason:
-   the owner's own edit should not be blocked by a file the command cannot see.
+   the owner's own edit should not be blocked by a file the command cannot see. The file judged is the
+   **committed** one, read at the ref a run of that repository checks out (`git cat-file`, the reader
+   the launch itself uses) and **never the working tree**: the commit is what the next run resolves its
+   account from, and a session's uncommitted edit — the state a coding agent leaves a checkout in —
+   would otherwise hide a reference the run still stops on. Of the two ways the read can come up short,
+   a repository this machine has **no checkout of** is a warning as well, while a checkout whose own
+   committed file **did not resolve** (a document the strict reader refuses) is a warning for the owner
+   and a **refusal** for a session, because there the answer was asked for and could not be read.
 3. **Converge.** The same publish and deploy as `add` (§2.5), so the job the account owned is gone from
    the installation.
 
 `rm` is refused in a coding agent's session for the same reason `add` is — the refusal above, kept
 wherever no admission covers the removal. In a managed project the gate admits an `rm` whose referrers
 are checked and clean, which is the accounts row of the managed design's §4.2 and its rule for this
-command: no profile and no repository this machine can read may still name the account.
+command: no profile names the account, no enrolled repository this machine holds a checkout of names
+it in the committed `agent.oauth_token`, and no checkout's file went unread — a value the gate cannot
+resolve at plan time is a refusal and never a pass (that design's §4.1). A repository this machine has
+no checkout of is the one case no read here can close, and it is the warning above rather than a pass:
+what it would break is a run that stops at launch, which the owner reads about on their own run too.
 
 ## 5. What the existing commands become
 

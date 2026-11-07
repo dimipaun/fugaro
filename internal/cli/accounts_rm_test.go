@@ -131,6 +131,15 @@ func TestAccountsRmDeletesTheSecretAndConverges(t *testing.T) {
 	if got := accountsAddRow(t, out, "secret"); !strings.Contains(got, id) {
 		t.Errorf("the block's secret line reads %q, and the ID it deleted is %s", got, id)
 	}
+	// The line's columns and not only its words: the secret's ID is longer than
+	// the value column is wide, so a line that puts the ID there prints it run
+	// together with the sentence beside it ("claude-oauth-token-team-adeleted:
+	// …"), which a `strings.Contains` cannot see. add's report has the same shape
+	// — the short account name in the column, the secret in the rest.
+	if value, rest := accountsRmColumns(accountsAddRow(t, out, "secret")); value != "team-a" ||
+		!strings.HasPrefix(rest, config.ClaudeAccountSecret("team-a")+" deleted: ") {
+		t.Errorf("the block's secret line is %q / %q, want the account in the value column and the secret's ID opening the rest", value, rest)
+	}
 	if p := r.policy(t); len(p.Accounts) != 0 {
 		t.Errorf("the published node still carries accounts = %v, want the account gone", slices.Sorted(maps.Keys(p.Accounts)))
 	}
@@ -651,7 +660,7 @@ func TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession(t *testing.T) {
 	if want := gateDigest(next); rec.PlanDigest != want {
 		t.Errorf("the record's plan_digest is %q and the removal this command would write hashes to %q: the record does not name the document that was applied", rec.PlanDigest, want)
 	}
-	for _, want := range []string{"no profile lists claude_accounts.team-a", "no repository this machine can read names team-a"} {
+	for _, want := range []string{"no profile lists claude_accounts.team-a", "no repository this machine holds a checkout of names team-a in the committed agent.oauth_token"} {
 		if !slices.ContainsFunc(rec.Rules, func(rule string) bool { return strings.Contains(rule, want) }) {
 			t.Errorf("the record's rules (%v) do not name the rule %q: the record is what an owner reads to see what was judged", rec.Rules, want)
 		}
@@ -664,10 +673,16 @@ func TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession(t *testing.T) {
 // removal BY THE GATE, before the file is written and before the secret is
 // touched — with the refusal, and the record of it, naming the repository that
 // was found rather than the key that would have been removed.
+//
+// The checkout's working tree has the line deleted and its commit still has it,
+// which is the state a coding agent's session is in before it commits anything:
+// the referrer is the COMMIT, so the uncommitted edit may not flip this refusal
+// into an admission — the next run of that repository resolves its account out
+// of the commit and would still stop at launch.
 func TestAccountsRmManagedRefusesWhileARepositoryStillNamesIt(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
-	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	accountsRmCheckoutDirty(t, "owner/repo-a", accountsRmRepoYAML, accountsRmRepoYAMLWithoutToken)
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
@@ -709,10 +724,15 @@ func TestAccountsRmManagedRefusesWhileARepositoryStillNamesIt(t *testing.T) {
 // The warning is printed BEFORE the confirmation and not after it, which is the
 // order this test pins: the break it names is one the removal makes, so the
 // moment it can still be declined is the moment it belongs in.
+//
+// The checkout's working tree has the line deleted and its commit still has it:
+// the reference is the COMMIT — the file the repository's next run resolves its
+// account from — so the uncommitted edit may not make this warning disappear,
+// and a coding agent's session is exactly what leaves a tree in that state.
 func TestAccountsRmWarnsWhileARepositoryStillNamesIt(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
-	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	accountsRmCheckoutDirty(t, "owner/repo-a", accountsRmRepoYAML, accountsRmRepoYAMLWithoutToken)
 	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 
 	out := r.rm(t, "team-a", "--profile", "standard")
@@ -735,27 +755,123 @@ func TestAccountsRmWarnsWhileARepositoryStillNamesIt(t *testing.T) {
 	}
 }
 
-// TestAccountsRmWarnsAboutARepositoryItCannotRead is the other half of that
-// warning: a repository this machine has no readable checkout of is unknown
-// rather than clean, and unknown is said rather than assumed. It is a warning
-// and not a refusal on purpose — refusing on it would refuse every machine that
-// does not hold every checkout of the project, and what the unread reference
-// would break is a run that stops at launch, which the owner reads about here.
-func TestAccountsRmWarnsAboutARepositoryItCannotRead(t *testing.T) {
+// TestAccountsRmWarnsAboutARepositoryWithNoCheckoutHere is one half of the way
+// the read can come up short: a repository this machine holds no checkout of is
+// unknown rather than clean, and unknown is said rather than assumed. It is a
+// warning and not a refusal on purpose — refusing on it would refuse every
+// machine that does not hold every checkout of the project, and what the unread
+// reference would break is a run that stops at launch, which the owner reads
+// about here.
+func TestAccountsRmWarnsAboutARepositoryWithNoCheckoutHere(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 
 	out := r.rm(t, "team-a", "--profile", "standard")
 
-	if !strings.Contains(out, "warning: this machine cannot read owner/repo-a") {
-		t.Errorf("the run does not say which repository it could not read:\n%s", out)
+	if !strings.Contains(out, "warning: this machine has no checkout of owner/repo-a") {
+		t.Errorf("the run does not say which repository it has no checkout of:\n%s", out)
 	}
 	if !strings.Contains(out, "fugaro accounts ls") {
 		t.Errorf("the warning does not name the read that shows the reference:\n%s", out)
 	}
 	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
-		t.Errorf("the secret deletes were %v, want %v: an unread repository is a warning and not a block", got, id)
+		t.Errorf("the secret deletes were %v, want %v: a repository with no checkout here is a warning and not a block", got, id)
+	}
+}
+
+// TestAccountsRmWarnsAboutACheckoutThatIsGone is the second shape of "no
+// checkout here": the store remembers a row whose directory is not there any
+// more, which is the same answer as a repository this machine never checked out
+// — the question was never asked — and therefore the warning, not the refusal a
+// checkout whose document could not be read gets.
+func TestAccountsRmWarnsAboutACheckoutThatIsGone(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	dir := accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: this machine has no checkout of owner/repo-a") {
+		t.Errorf("the run does not say which repository it has no checkout of:\n%s", out)
+	}
+	if strings.Contains(out, "could not read the committed fugaro.yaml") {
+		t.Errorf("a checkout whose directory is gone is reported as a document that could not be read:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: a row whose directory is gone is a warning and not a block", got, id)
+	}
+}
+
+// TestAccountsRmWarnsAboutACheckoutItCannotRead is the other half: a checkout
+// this machine HAS, whose own committed fugaro.yaml it could not read, is unknown
+// in a different way — the question was asked and the answer could not be read —
+// and it is still a warning on the owner's own path, because that file is a
+// repository's and their edit may not be blocked by one this command cannot
+// write. The session that makes the same read refuses it (accountsRmRules,
+// managed spec §4.1: an unresolved value is a refusal and never a pass).
+func TestAccountsRmWarnsAboutACheckoutItCannotRead(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAMLUnreadable)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: this machine could not read the committed fugaro.yaml of owner/repo-a") {
+		t.Errorf("the run does not say whose committed file it could not read:\n%s", out)
+	}
+	if !strings.Contains(out, "fugaro accounts ls") {
+		t.Errorf("the warning does not name the read that shows the reference:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: on the owner's own path an unread checkout is a warning and not a block", got, id)
+	}
+}
+
+// TestAccountsRmManagedRefusesACheckoutItCannotRead is the gate's half of that
+// split, and the decision this round took on it: a repository with no checkout
+// here stays a warning (accountsRmWarn), while a checkout whose own file did not
+// resolve is a refusal — "a value the gate cannot resolve at plan time" is "a
+// refusal, never a pass" (managed spec §4.1). Without it, a file this machine
+// could not parse would be scored as a clean referrer and a session would take
+// the one-way delete while the repository may still name the account.
+func TestAccountsRmManagedRefusesACheckoutItCannotRead(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAMLUnreadable)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if err == nil {
+		t.Fatalf("a checkout this machine could not read did not stop the removal:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") {
+		t.Errorf("the refusal does not name the checkout whose file could not be read: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Errorf("the refused removal deleted %v", got)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one refusal: %+v", len(recs), recs)
+	}
+	if recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the record's verdict is %q, want %q: the step was refused", recs[0].Verdict, managedmode.AuditRefused)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "owner/repo-a") }) {
+		t.Errorf("the record's rules (%v) do not name the checkout that refused the removal", recs[0].Rules)
 	}
 }
 
@@ -775,23 +891,76 @@ workflows:
     commands: { build: go build ./..., test: go test ./... }
 `
 
+// accountsRmRepoYAMLWithoutToken is that same file with the oauth_token line
+// deleted — what a session that took the account out of the repository it owns
+// leaves in the working tree until someone commits it, and therefore the half of
+// the fixture that says the reference is read out of the commit.
+const accountsRmRepoYAMLWithoutToken = `version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: oauth-token
+workflows:
+  web:
+    commands: { build: go build ./..., test: go test ./... }
+`
+
+// accountsRmRepoYAMLUnreadable is a fugaro.yaml this Fugaro cannot read at all —
+// a key the strict reader refuses — which is "cannot tell" and not the same
+// answer as "names no account" (config.AgentOf).
+const accountsRmRepoYAMLUnreadable = `version: 1
+project: aurora
+git: { provider: github }
+a_key_this_fugaro_does_not_know: 1
+`
+
 // accountsRmCheckout makes a real checkout of repo and remembers it for the
 // project, so the reference check has something to read: the file is committed
-// on the base branch, as the file a run would check out is.
+// on the base branch, as the file a run would check out is, and the working tree
+// it is read against is the same file.
 func accountsRmCheckout(t *testing.T, repo, fugaroYAML string) string {
+	t.Helper()
+	return accountsRmCheckoutDirty(t, repo, fugaroYAML, "")
+}
+
+// accountsRmCheckoutDirty is accountsRmCheckout for the checkout whose working
+// tree holds something other than what it committed — the state a coding agent's
+// session is in between its edit and its commit. An empty working file leaves
+// the tree clean.
+func accountsRmCheckoutDirty(t *testing.T, repo, committed, working string) string {
 	t.Helper()
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": fugaroYAML})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": committed})
 	testutil.Git(t, dir, "init", "-q", "-b", "main")
 	testutil.Git(t, dir, "add", "-A")
 	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's files")
 	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	if working != "" {
+		if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(working), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
 		localcfg.CheckoutIdentity{Provider: "github", Repo: repo}, dir, time.Now(), checkoutTempRoots()); err != nil {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// accountsRmColumns splits one of the block's lines into its value column and
+// everything after it (the block writes label 10, value 18, rest). It is what a
+// `strings.Contains` cannot see: a value wider than its column runs into the
+// sentence beside it, and the assertion that catches it is about where the two
+// begin.
+func accountsRmColumns(line string) (value, rest string) {
+	if len(line) <= 10 {
+		return "", ""
+	}
+	if len(line) <= 28 {
+		return strings.TrimSpace(line[10:]), ""
+	}
+	return strings.TrimSpace(line[10:28]), line[28:]
 }
 
 // accountsRmLocalShared is the world two profiles sharing one account are in:

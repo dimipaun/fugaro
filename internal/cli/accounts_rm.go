@@ -43,15 +43,17 @@ import (
 //
 // Both worlds judge the same thing before anything moves (spec §4 step 1, and
 // the managed plan's accounts handoff row): a profile that still lists the
-// account refuses the removal, and so does a repository this machine can read
-// whose committed fugaro.yaml names it in agent.oauth_token. What differs is
-// who acts on the answer. A person's own run warns about the repository and
-// goes on — that file is a repository's and not this installation's, so their
-// edit may not be blocked by one this command cannot write (spec §4 step 2,
-// D783's shape) — while a coding agent's session is admitted only by a managed
-// project's gate, whose rules are those referrers read back (managed spec §4.2,
-// D1180). Everywhere else a session keeps the refusal this command has always
-// made.
+// account refuses the removal, and so does a repository whose COMMITTED
+// fugaro.yaml names it in agent.oauth_token — read out of the commit the next
+// run of that repository resolves its account from, never out of the working
+// tree, which a coding agent's session owns and may have edited without
+// committing. What differs is who acts on the answer. A person's own run warns
+// about the repository and goes on — that file is a repository's and not this
+// installation's, so their edit may not be blocked by one this command cannot
+// write (spec §4 step 2, D783's shape) — while a coding agent's session is
+// admitted only by a managed project's gate, whose rules are those referrers
+// read back (managed spec §4.2, D1180). Everywhere else a session keeps the
+// refusal this command has always made.
 //
 // The local config half is internal/yamledit's edit and the settings commands'
 // shared write path, as add's is (D847); the converge is add's own runner,
@@ -165,7 +167,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// is a reference this command cannot edit, and it is what the gate refuses a
 	// session on and what the confirmation warns a person about (spec §4 step 2,
 	// managed spec §4.2).
-	referrers, unseen := accountsRmRepos(lc, plan.name)
+	referrers, unseen, unread := accountsRmRepos(cmd.Context(), lc, plan.name)
 
 	// The managed gate, before anything is screened and written
 	// (accounts_managed.go, add's own file, and the helper below): in a managed
@@ -174,7 +176,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// and refusing one whose are not — before the diff is shown, so a refusal
 	// leaves the file and the secret exactly as they were. Everywhere else it
 	// answers the zero Managed, which is every fence below unchanged.
-	m, gate, err := accountsRmGate(cmd.Context(), lc, plan, next, referrers)
+	m, gate, err := accountsRmGate(cmd.Context(), lc, plan, next, referrers, unread)
 	if err != nil {
 		return err
 	}
@@ -190,7 +192,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// answers the confirmation and not after it: what it warns about is a break
 	// the removal makes, and the confirmation is the moment that break can still
 	// be declined.
-	accountsRmWarn(cmd, plan, referrers, unseen)
+	accountsRmWarn(cmd, plan, referrers, unseen, unread)
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
@@ -310,16 +312,38 @@ func accountsRmServing(lc *localcfg.Config, name string) []string {
 
 // accountsRmRepos is the repository half of the reference check (spec §4 step 2,
 // managed spec §4.2): the repositories this project has enrolled whose committed
-// fugaro.yaml names the account in agent.oauth_token, and the ones this machine
-// cannot read — no checkout here, a file that does not parse — whose state is
-// unknown rather than clean. It is the same walk `fugaro models rm` makes over
-// the same set (modelsModelPinned), with no network and no cloud in it.
+// fugaro.yaml names the account in agent.oauth_token, the ones this machine has
+// no checkout of, and the checkouts whose own fugaro.yaml this machine could not
+// resolve — a document the strict reader refuses, or no document at all. It is
+// the same walk `fugaro models rm` makes over the same set (modelsModelPinned),
+// with no network and no cloud in it.
+//
+// The bytes judged are the COMMITTED ones and never the working tree, because
+// the committed file is what the next run of the repository resolves its account
+// from (project_job.go's agentAtRef: "never the network and never the working
+// tree"). A checkout whose working tree has the line removed while the branch it
+// was made from still names the account is exactly the state this check has to
+// see: a coding agent's session owns that working tree and its edits are
+// uncommitted until someone pushes them, so judging the working tree would admit
+// a removal that the repository's very next run still stops on. The file is read
+// through readFugaroYAMLAtRef at the ref a run of the repository checks out, and
+// the working tree is read only when the checkout holds no committed document
+// there at all: with nothing committed at the ref there is no answer for the
+// working tree to contradict, so that read can add a referrer and never hide one.
+//
+// unseen and unread are the two ways this machine can come up short, and they
+// are not the same: no checkout here — no row at all, or a row whose directory
+// is gone — means the question was never asked, which is a warning (refusing on
+// it would refuse every machine that does not hold every checkout of the
+// project), while a checkout that IS there and whose own file does not resolve
+// is a value the gate cannot read at plan time, which is a refusal and never a
+// pass (managed spec §4.1).
 //
 // The file is read through config.AgentOf and not through a resolved config:
 // agent.oauth_token is repository-scope, so the file's own bytes are the whole
 // answer, and a repository whose file leans on the project layer for something
 // else is one this command can still read.
-func accountsRmRepos(lc *localcfg.Config, name string) (referrers, unseen []string) {
+func accountsRmRepos(ctx context.Context, lc *localcfg.Config, name string) (referrers, unseen, unread []string) {
 	checkouts, err := localcfg.LoadCheckouts(os.Getenv)
 	if err != nil {
 		checkouts = localcfg.EmptyCheckouts()
@@ -334,33 +358,64 @@ func accountsRmRepos(lc *localcfg.Config, name string) (referrers, unseen []stri
 			unseen = append(unseen, repo)
 			continue
 		}
-		data, err := readFugaroYAML(filepath.Join(dir, "fugaro.yaml"))
-		if err != nil {
+		// A row whose directory is not there any more is the same answer as a
+		// repository this machine never checked out (config_list.go's `missing`):
+		// there is no checkout here to read, so the question of what it names was
+		// never asked — which is the warning below and not the refusal an
+		// unreadable DOCUMENT gets.
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			unseen = append(unseen, repo)
+			continue
+		}
+		data, ok := accountsRmCommittedYAML(ctx, lc, repo, dir)
+		if !ok {
+			unread = append(unread, repo)
 			continue
 		}
 		agent, ok := config.AgentOf(data)
 		if !ok {
-			unseen = append(unseen, repo)
+			unread = append(unread, repo)
 			continue
 		}
 		if agent.OAuthToken == name {
 			referrers = append(referrers, repo)
 		}
 	}
-	return referrers, unseen
+	return referrers, unseen, unread
+}
+
+// accountsRmCommittedYAML is a repository's own fugaro.yaml as its next run will
+// read it: the blob at the ref that run checks out, out of the checkout's object
+// database, through the same reader the launch uses (readFugaroYAMLAtRef, which
+// is git cat-file). ok is false when the checkout is there and no document
+// resolved out of it, which is what a gate may not treat as a clean referrer.
+func accountsRmCommittedYAML(ctx context.Context, lc *localcfg.Config, repo, dir string) ([]byte, bool) {
+	if data, err := readFugaroYAMLAtRef(ctx, dir, modelsBaseBranch(lc, repo, dir)); err == nil {
+		return data, true
+	}
+	// The checkout holds no committed fugaro.yaml at that ref — a branch never
+	// fetched, a repository whose file is not in the tree it was made from — so
+	// the working tree is the only document there is. It is read here and not
+	// preferred: this path is reached only when there is no committed file whose
+	// content the working tree could differ from.
+	data, err := readFugaroYAML(filepath.Join(dir, "fugaro.yaml"))
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }
 
 // accountsRmWarn is the whole of the protection spec §4 step 2 leaves for a
 // reference this command cannot edit (D783's shape, as `fugaro models rm` warns
 // about a pin): it names every repository this machine can see whose committed
 // fugaro.yaml names the account, what that repository's next run does once the
-// declaration is gone, and the repositories it cannot read. It is a warning and
-// never a block — that file is a repository's and not this installation's, so
-// the owner's own edit may not be stopped by one this command cannot write —
-// and it is printed while the confirmation below can still be declined, because
-// the break it describes is one the removal makes.
-func accountsRmWarn(cmd *cobra.Command, plan accountsRmPlan, referrers, unseen []string) {
+// declaration is gone, and the repositories whose state it could not read at
+// all — no checkout here, and a checkout whose own file did not resolve. It is a
+// warning and never a block — that file is a repository's and not this
+// installation's, so the owner's own edit may not be stopped by one this command
+// cannot write — and it is printed while the confirmation below can still be
+// declined, because the break it describes is one the removal makes.
+func accountsRmWarn(cmd *cobra.Command, plan accountsRmPlan, referrers, unseen, unread []string) {
 	if !plan.drop {
 		return
 	}
@@ -372,8 +427,12 @@ func accountsRmWarn(cmd *cobra.Command, plan accountsRmPlan, referrers, unseen [
 			pluginwire.Printable(plan.name), quoteWord(plan.name))
 	}
 	if len(unseen) > 0 {
-		fmt.Fprintf(out, "warning: this machine cannot read %s, so a reference there is unknown: run `fugaro accounts ls` in that checkout to see it\n",
+		fmt.Fprintf(out, "warning: this machine has no checkout of %s, so a reference there is unknown: run `fugaro accounts ls` in that checkout to see it\n",
 			strings.Join(unseen, ", "))
+	}
+	if len(unread) > 0 {
+		fmt.Fprintf(out, "warning: this machine could not read the committed fugaro.yaml of %s, so a reference there is unknown: run `fugaro accounts ls` in that checkout to see it\n",
+			strings.Join(unread, ", "))
 	}
 }
 
@@ -421,7 +480,7 @@ func accountsRmSession(marker string, plan accountsRmPlan, command string) error
 //
 // doc is the file as this command would write it, and it is the same bytes the
 // rules were read from and the same bytes the caller applies.
-func accountsRmGate(ctx context.Context, lc *localcfg.Config, plan accountsRmPlan, doc []byte, referrers []string) (initflow.Managed, managedGate, error) {
+func accountsRmGate(ctx context.Context, lc *localcfg.Config, plan accountsRmPlan, doc []byte, referrers, unread []string) (initflow.Managed, managedGate, error) {
 	marker := agentMarker(os.Getenv)
 	if marker == "" {
 		return initflow.Managed{}, managedGate{}, nil
@@ -452,7 +511,7 @@ func accountsRmGate(ctx context.Context, lc *localcfg.Config, plan accountsRmPla
 		// recorded.
 		return initflow.Managed{}, managedGate{}, nil
 	}
-	applied, refused := accountsRmRules(plan, referrers)
+	applied, refused := accountsRmRules(plan, referrers, unread)
 	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
 	if len(refused) > 0 {
 		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
@@ -480,14 +539,21 @@ func accountsRmGate(ctx context.Context, lc *localcfg.Config, plan accountsRmPla
 // (D1021).
 //
 // The rule is the design's whole content for this command (managed spec §4.2,
-// D1172, D1180's row): a removal is admitted only when no profile and no
-// repository this machine can read still references the account, and each
-// refusal names the referrer it found rather than the key it would remove. A
-// repository this machine cannot read is not one of these refusals but a warning
-// (accountsRmWarn): refusing on it would refuse every project whose checkouts
-// are not all on this machine, and what it would prevent is a run that stops at
-// launch, which is a break the owner reads about rather than a permission.
-func accountsRmRules(plan accountsRmPlan, referrers []string) (applied, refused []string) {
+// D1172, D1180's row): a removal is admitted only when no profile names the
+// account and no repository this machine can read names it in its committed
+// agent.oauth_token, and each refusal names the referrer it found rather than
+// the key it would remove. The two ways the read can come up short are answered
+// differently on purpose. A repository this machine holds no checkout of is a
+// warning (accountsRmWarn) and not one of these refusals: refusing on it would
+// refuse every project whose checkouts are not all on this machine, and what it
+// would prevent is a run that stops at launch, which is a break the owner reads
+// about rather than a permission. A checkout whose own committed fugaro.yaml
+// does not resolve is a refusal, because there the question WAS asked and the
+// answer could not be read — "a value the gate cannot resolve at plan time" is
+// "a refusal, never a pass" (managed spec §4.1), and a session admitted on an
+// unread file would take the one-way delete while the repository may still name
+// the account.
+func accountsRmRules(plan accountsRmPlan, referrers, unread []string) (applied, refused []string) {
 	if plan.drop {
 		applied = append(applied, "no profile lists claude_accounts."+pluginwire.Printable(plan.name)+" once this step has run")
 	} else {
@@ -495,8 +561,12 @@ func accountsRmRules(plan accountsRmPlan, referrers []string) (applied, refused 
 	}
 	if len(referrers) > 0 {
 		refused = append(refused, "the committed fugaro.yaml of "+strings.Join(referrers, ", ")+" names "+pluginwire.Printable(plan.name)+" in agent.oauth_token, so the next run of each stops at launch: that file belongs to a repository this command cannot write, and repairing it is the owner's own edit (D783)")
-	} else {
-		applied = append(applied, "no repository this machine can read names "+pluginwire.Printable(plan.name)+" in its agent.oauth_token")
+	}
+	if len(unread) > 0 {
+		refused = append(refused, "this machine holds a checkout of "+strings.Join(unread, ", ")+" and could not read the committed fugaro.yaml its agent.oauth_token resolves from, so whether it names "+pluginwire.Printable(plan.name)+" is a value this step cannot resolve at plan time, and an unresolved value is a refusal and never a pass (managed spec §4.1)")
+	}
+	if len(referrers) == 0 && len(unread) == 0 {
+		applied = append(applied, "no repository this machine holds a checkout of names "+pluginwire.Printable(plan.name)+" in the committed agent.oauth_token of its fugaro.yaml")
 	}
 	return applied, refused
 }
@@ -693,13 +763,17 @@ func accountsRmReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string
 	}
 	if plan.drop {
 		row("account", plan.name, "claude_accounts."+pluginwire.Printable(plan.name)+" removed, its allow_data_to was ["+strings.Join(plan.allow, ", ")+"]")
-		row("secret", config.ClaudeAccountSecret(plan.name), secret)
+		// The account's name is the value column and the secret's ID opens the
+		// rest, as add's report has it: the ID is longer than that column, so
+		// naming it there would run into the sentence that says what happened to
+		// it ("claude-oauth-token-team-adeleted: …").
+		row("secret", plan.name, config.ClaudeAccountSecret(plan.name)+" "+secret)
 	} else {
 		row("account", plan.name, "claude_accounts."+pluginwire.Printable(plan.name)+" stays: "+accountsAddProfiles(plan.rest)+" still lists it")
 		// The secret's row is here too, and says the step did not run: a block
 		// that leaves it out reads as a deletion that printed nothing, and this
 		// is the one row a reader checks for whether the credential is gone.
-		row("secret", config.ClaudeAccountSecret(plan.name), "kept, not deleted: "+accountsAddProfiles(plan.rest)+" still serves the account, so its token is untouched")
+		row("secret", plan.name, config.ClaudeAccountSecret(plan.name)+" kept, not deleted: "+accountsAddProfiles(plan.rest)+" still serves the account, so its token is untouched")
 	}
 	row("publish", "policy node", accountsRmPublishLine(plan, stages[initflow.Policy], allow, carried, why))
 	row("deploy", "jobs", accountsRmDeployLine(lc, plan, stages[initflow.Installation]))
