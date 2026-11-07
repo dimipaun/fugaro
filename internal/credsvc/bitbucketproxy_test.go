@@ -485,6 +485,52 @@ func TestBitbucketRouteForwardsFetch(t *testing.T) {
 	}
 }
 
+// TestBitbucketRouteForwardsOnlyTheCallsOwnQuery: the two list calls carry a
+// query, and it is the CLASSIFIED query that reaches bitbucket.org — Classify
+// keeps the parameters the call's own definition allows and refuses a query
+// that carries any other, so a caller cannot append a parameter and have the
+// upstream act on it. The refusal is asserted to forward no byte: a refused
+// query is a refused call and not a call with its query trimmed.
+func TestBitbucketRouteForwardsOnlyTheCallsOwnQuery(t *testing.T) {
+	s, up, _ := proxySvc(t)
+	up.answerWith(http.StatusOK, `{"values":[]}`)
+
+	// A parameter this call does not define: the pull-request list carries q
+	// alone, so pagelen is not the caller's to send.
+	resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("/pullrequests"))+"?q=state%3D%22OPEN%22&pagelen=10", nil)
+	proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonCallNotAllowed)
+	if n := up.count(); n != 0 {
+		t.Fatalf("the upstream saw %d calls, and a refused query must forward none: %+v", n, up.calls())
+	}
+
+	// The call's own parameter: forwarded, and unchanged.
+	resp, ans = s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("/pullrequests"))+"?q=state%3D%22OPEN%22", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the list answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	// The comment list's own two parameters, on the path its call rebuilds.
+	resp, ans = s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("/pullrequests/7/comments"))+"?pagelen=20&page=2", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the comment list answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	calls := up.calls()
+	if len(calls) != 2 {
+		t.Fatalf("the upstream saw %d calls, want the two admitted list calls: %+v", len(calls), calls)
+	}
+	if want := "/2.0/repositories/" + testBitbucketRepo + "/pullrequests"; calls[0].path != want {
+		t.Errorf("the list was addressed to %q, want %q", calls[0].path, want)
+	}
+	if calls[0].query != "q=state%3D%22OPEN%22" {
+		t.Errorf("the list's upstream query = %q, want the classified q and nothing else", calls[0].query)
+	}
+	if want := "/2.0/repositories/" + testBitbucketRepo + "/pullrequests/7/comments"; calls[1].path != want {
+		t.Errorf("the comment list was addressed to %q, want %q", calls[1].path, want)
+	}
+	if calls[1].query != "page=2&pagelen=20" {
+		t.Errorf("the comment list's upstream query = %q, want the call's own paging parameters", calls[1].query)
+	}
+}
+
 // TestBitbucketRouteForwardsFetchPack: a fetch's second call — the POST that
 // carries what the run wants and brings the pack back — is forwarded the same
 // way. Its body is git's own negotiation and NOT an update request: this route
