@@ -244,6 +244,59 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 	}
 }
 
+// TestUpdateWithoutALogKeepsTheStreamOnScreen: a converge whose log could not
+// be opened at all — a state directory that is a link, foreign-owned or
+// read-only, which is G5's "a run with no log is still a run" — has nowhere to
+// keep the run's own output. It must not swallow it either: the stream goes to
+// stderr, where every run wrote before CL5b, because the output behind a
+// failure is the last thing a run may drop (G8).
+func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
+	applyingRig(t)
+	state, err := localcfg.UserDir(os.Getenv, runtime.GOOS, localcfg.DirState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A link where the log's own directory belongs is one of OpenLog's
+	// refusals (CL3), and the one no uid can write around.
+	elsewhere := t.TempDir()
+	if err := os.RemoveAll(filepath.Join(state, "fugaro")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(state, "fugaro")); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	all := out + errOut
+	if !strings.Contains(all, convergeNoise) {
+		t.Errorf("the run opened no log and dropped its own output with it:\n%s", all)
+	}
+	if !strings.Contains(all, markDone+" installation") {
+		t.Errorf("the run with no log lost its account too:\n%s", all)
+	}
+	if strings.Contains(all, "full output: ") {
+		t.Errorf("a run that opened no log printed a path to one:\n%s", all)
+	}
+	// The run's workdir lives under the same state directory and is none of
+	// this test's business; a log behind the link is: the refusal is what
+	// makes the run fall back to stderr at all.
+	var logs []string
+	_ = filepath.WalkDir(elsewhere, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".log") {
+			logs = append(logs, p)
+		}
+		return nil
+	})
+	if len(logs) != 0 {
+		t.Errorf("the run kept a log behind the link it should have refused: %v", logs)
+	}
+}
+
 // TestUpdateVerboseStreamsTerraform: --verbose is the run's own output on the
 // screen as well as in the log, which is what it always was (G10).
 func TestUpdateVerboseStreamsTerraform(t *testing.T) {

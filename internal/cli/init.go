@@ -1186,10 +1186,13 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 // children that print like it. Under the converge it is the reporter's stream —
 // the log always, the terminal under --verbose — so the default view stays one
 // line per stage and the full output is kept (D1352). A run with no reporter
-// (--forget, --config-only, --print-vars) writes to stderr, which is what
-// every run did before CL5b.
+// (--forget, --config-only, --print-vars) writes to stderr, which is what every
+// run did before CL5b — and so does a converge whose log could not be opened at
+// all (a state directory that is a link, foreign-owned or read-only, G5): the
+// stream goes nowhere else, and the output that explains a failure is the last
+// thing a run may swallow (G8).
 func (r *initRun) progress() io.Writer {
-	if r.rep != nil {
+	if r.rep != nil && (r.repLog != nil || boolFlag(r.cmd, verboseFlag)) {
 		return r.rep.Stream()
 	}
 	return r.cmd.ErrOrStderr()
