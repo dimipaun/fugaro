@@ -171,6 +171,53 @@ func TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile(t *testing.T) {
 	}
 }
 
+// TestUpdateAppliesThePublishedLayersJobsSettingWithNoLocalLayerFile: the
+// installation stage applies before the layer stage seeds a missing local layer
+// file from the published object, so a run that read the file alone would apply
+// paused — stopping the project's catalog check schedule the published layer
+// started, and putting it back only on the next update. What the installation
+// applies is the published layer's value, and a local file that IS there still
+// decides by itself: it is the file this run publishes, so the installation
+// must not carry a value the file it is about to publish does not have.
+//
+// The catalog check is the job that makes the value observable: the run's
+// installation tfvars are the only place the schedule's state is decided.
+func TestUpdateAppliesThePublishedLayersJobsSettingWithNoLocalLayerFile(t *testing.T) {
+	// A catalog with one entry whose source is an inline definition: the
+	// project's first repository builds it, so the installation plans the job
+	// (internal/infra.CatalogCheck) and its schedule.
+	catalog := "base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n" +
+		"image_catalog:\n  entries:\n    - name: tools\n      tags: [node]\n      source: { kind: inline, inline: \"FROM scratch\\n\" }\n"
+	for _, tc := range []struct {
+		what string
+		file bool // a local layer file that says nothing about jobs
+		want bool
+	}{
+		{"no local layer file", false, false},
+		{"a local layer file that says nothing", true, true},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newLayerRig(t, testProjectLayer+"jobs:\n  catalog_check: { paused: false }\n")
+			r.appendConfig(t, catalog)
+			r.save(t)
+			if tc.file {
+				recordLayer(t, testProjectLayer, "0")
+			}
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
+			}
+			cc, _ := r.tfvars(t)["catalog_check"].(map[string]any)
+			if cc == nil {
+				t.Fatalf("the installation's tfvars carry no catalog_check: %v", r.tfvars(t))
+			}
+			if cc["paused"] != tc.want {
+				t.Errorf("the installation applies paused %v, want %v", cc["paused"], tc.want)
+			}
+		})
+	}
+}
+
 // layerObject is the project layer as the rig's bucket holds it right now, and
 // whether it is there at all.
 func layerObject(t *testing.T, r *layerRig) (string, bool) {
