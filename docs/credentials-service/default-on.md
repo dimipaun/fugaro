@@ -821,10 +821,10 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
 
   | state | the line |
   |---|---|
-  | no block in the local config | the installation has not converged on the service; `fugaro update` deploys it |
+  | no block in the local config | the installation has not converged on the service; `fugaro update --provision-credentials` deploys it (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it) |
   | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update` re-applies the root |
   | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer |
-  | deployed, no `verifier_accounts` | deployed and admitting nobody on the verify route: the verifier account is not named |
+  | deployed, `verifier_accounts` written **empty** | deployed and admitting nobody on the verify route: a list written empty names no verifier account. An absent key is NOT this state — it leaves the module's own account admitted |
   | deployed, a job account missing `roles/run.invoker` | the existing half of the check, unchanged |
 
   **And, because the answer made the switch a state of its own, one line per repository — the "why
@@ -845,10 +845,17 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   second answer to "is this repository switched on", and the first time the two disagreed `doctor`
   would be the one lying.
 
-  The severity stays **warning**, for the reason the check's own comment gives (an installation mid-
-  convergence is a legitimate state) and one more this ruling adds: **an installation that has not run
-  `update` yet is not broken**, it is behind — and **a repository held off is not broken either, it is
-  the answer's own state.** `--strict` is where that becomes a failure, as it already is.
+  **The severity is the state's own, and it is the state's own for the one reason doctor's classes
+  exist: whether a run can work around it.** The two states a run cannot work around — the block
+  written and no service behind it, and a job account the service does not admit — keep the
+  **warning** they already had: they print in the default view, and `--strict` is where they become a
+  failure. The other three — never converged, an empty bundle, an empty verifier list — are `OK` with
+  severity **info**, which is doctor's measurement class: **an installation that has not run `update`
+  yet is not broken, it is behind**, and **a repository held off is not broken either, it is the
+  answer's own state**, so neither may be an item of doctor's one screen — a clean installation would
+  print an item for merely being behind the release, and `fugaro doctor --strict` in a repository's CI
+  would go red for it. They are the answer §1.4 asks for under `--all` and in `--json`, where a reader
+  who wants the service *used* reads which half is missing, and none of them fails `--strict`.
 - **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the five service states, each producing
   exactly one check with the expected `ID` and severity), `TestDoctorNamesTheMissingHalfNotNotConfigured`
   (the line never reads "not configured": it names the App key, the verifier account, the bundle or the

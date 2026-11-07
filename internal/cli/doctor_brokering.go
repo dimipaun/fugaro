@@ -116,6 +116,13 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // account the service does not admit — keep the warning they already had, and
 // --strict is where those become a failure.
 //
+// The fix on the two "no service" states names the flag that deploys it today
+// (update --provision-credentials): the credentials stage is registered behind
+// it and is the only writer of the credentials_service block, so a fix naming
+// plain `fugaro update` would send an operator to a run that changes nothing
+// and print the same line again. DON1 removes the flag and rewrites both
+// strings with it.
+//
 // Both halves of the deployed service's state are read from the service's own
 // IAM policy, which is where the module writes the grant: one member, the
 // job's own account, roles/run.invoker on that one service. The project's
@@ -137,8 +144,8 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	const id = "credentials-service-deployed"
 	if lc.CredentialsService == nil {
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
-			Problem: fmt.Sprintf("the installation has not converged on the credentials service (%s): %s deploys it on every installation, and until that run has been made this installation has no service for a run to fetch a model credential from", infra.CredentialsServiceName, selfCommand()+" update"),
-			Fix:     selfCommand() + " update (its credentials stage deploys the service: nothing else does)"}}
+			Problem: fmt.Sprintf("the installation has not converged on the credentials service (%s): the credentials stage of %s deploys it on every installation, and until that run has been made this installation has no service for a run to fetch a model credential from", infra.CredentialsServiceName, selfCommand()+" update --provision-credentials"),
+			Fix:     selfCommand() + " update --provision-credentials (its credentials stage is the only writer of the block, and this release runs it behind that flag)"}}
 	}
 	unreadable := func(what string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning",

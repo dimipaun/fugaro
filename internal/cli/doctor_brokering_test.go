@@ -490,7 +490,7 @@ func brokeringServiceStates() []brokeringServiceState {
 	return []brokeringServiceState{
 		{
 			name:     "the installation has not converged on the service",
-			names:    []string{infra.CredentialsServiceName, selfCommand() + " update"},
+			names:    []string{infra.CredentialsServiceName, selfCommand() + " update --provision-credentials"},
 			severity: "info",
 			build:    newBrokeringUnoptedRig,
 		},
