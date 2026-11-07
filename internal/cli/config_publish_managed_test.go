@@ -1443,13 +1443,19 @@ func TestConfigPublishManagedRefusesAnEmptyBlockAddedOrDropped(t *testing.T) {
 // A value can be spelled so that it renders as another document's value. Two
 // shapes reach the command. A list of two scalars and a list of one scalar
 // whose text carries the first list's own punctuation are different documents,
-// and `rebuild.paths: [go.mod, go.sum]` against `rebuild.paths: ["go.mod, !!str
-// go.sum"]` is a change to a key outside the allowlist whichever way round it
-// is written. Two lists of the same length whose texts are cut differently are
-// another — `labels: [pval!!strq, Y]` and `labels: [p, qval!!strY]` are
-// different label sets — and they are the shape that shows what injectivity
-// needs here: every piece has to be readable to its own end, and the length
-// prefix is what gives it that.
+// and `labels: [go.mod, go.sum]` against `labels: ["go.mod, !!str go.sum"]` is
+// a change to a key outside the allowlist whichever way round it is written.
+// Two lists of the same length whose texts are cut differently are another —
+// `labels: [pval!!strq, Y]` and `labels: [p, qval!!strY]` are different label
+// sets — and they are the shape that shows what injectivity needs here: every
+// piece has to be readable to its own end, and the length prefix is what gives
+// it that.
+//
+// `labels` carries both shapes because it is the one key of the layer that the
+// settings registry knows, that the gate's allowlist does not admit, and whose
+// value is a free-form list of strings — the key the two shapes used to be
+// written on (`profiles.web.rebuild.paths`) went with the repository-image
+// removal, which leaves the layer no other key with those three properties.
 //
 // The comparison reads values as rendered text, so a rendering that is not
 // injective reports the two as the same value and admits the change — the hole
@@ -1457,20 +1463,19 @@ func TestConfigPublishManagedRefusesAnEmptyBlockAddedOrDropped(t *testing.T) {
 // because the collision is symmetric and a fix that caught only one of them
 // would still be a hole.
 func TestConfigPublishManagedRefusesAValueSpelledAsAnotherValue(t *testing.T) {
-	head := minimalAnchored + "default_profile: web\nprofiles:\n  web:\n    rebuild:\n      paths: "
+	head := minimalAnchored + "defaults:\n  git:\n    pr:\n      labels: "
 	plain := head + "[go.mod, go.sum]\n"
 	spelled := head + "[\"go.mod, !!str go.sum\"]\n"
-	labelsHead := minimalAnchored + "defaults:\n  git:\n    pr:\n      labels: "
-	first := labelsHead + "[\"pval!!strq\", \"Y\"]\n"
-	second := labelsHead + "[\"p\", \"qval!!strY\"]\n"
+	first := head + "[\"pval!!strq\", \"Y\"]\n"
+	second := head + "[\"p\", \"qval!!strY\"]\n"
 	cases := []struct {
 		name      string
 		published string
 		next      string
 		names     string
 	}{
-		{"two paths spelled as one", plain, spelled, "layer.profiles.web.rebuild.paths"},
-		{"one path spelled as two", spelled, plain, "layer.profiles.web.rebuild.paths"},
+		{"two labels spelled as one", plain, spelled, "layer.defaults.git.pr.labels"},
+		{"one label spelled as two", spelled, plain, "layer.defaults.git.pr.labels"},
 		{"two labels whose text carries the next", first, second, "layer.defaults.git.pr.labels"},
 		{"the same two labels the other way round", second, first, "layer.defaults.git.pr.labels"},
 	}
