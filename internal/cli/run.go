@@ -505,6 +505,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 	}
 	if attemptsSet {
+		// The batch opens its own reporter once its own refusals are behind
+		// it (runAttempts): a batch this launcher refuses is no run to keep a
+		// log of either (D1352, D1354).
 		return runAttempts(cmd, env, o, text, total)
 	}
 
@@ -545,14 +548,43 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The launch's reporter opens where the launch's own work does, once the
+	// task is built: every refusal above it — the flags, and the spec a
+	// --repo, --retry, --pr or --recipe does not resolve — is answered before
+	// the run begins, and a launch that never began keeps no log (D1352,
+	// D1354).
+	rep, sink := reporterFor(cmd, "run", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
 	if o.retry == "" {
 		noteRigorRequest(ctx, o, spec.Repo, cmd.ErrOrStderr())
 	}
+	step := rep.Step("launch")
 	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr(), false)
 	if err != nil {
-		return err
+		return failStep(rep, step, err)
 	}
-	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
+	if res.Status == "already-launched" {
+		// The launch the caller asked for is the one that already ran: there
+		// is nothing to wait for, and the run it names is the run to look at,
+		// so the reason carries it — a skipped step's tail is its reason, and
+		// the reader still has to be told which run was not launched again.
+		step.Skipped(launchWhat(res) + " already launched")
+	} else {
+		step.Done(launchWhat(res))
+	}
+	if o.asJSON {
+		// One document, and the step above went to stderr with it (G2). The
+		// log keeps a copy beside the screen's: the document is this
+		// command's whole output, and the log holds what the command printed
+		// (D1352).
+		err = printLaunch(loggedOut(cmd.OutOrStdout(), sink), res, true)
+	} else {
+		err = launchDetail(loggedOut(cmd.OutOrStdout(), sink), res)
+	}
+	rep.Summary()
+	return err
 }
 
 // finishLaunch is everything a launch does once its spec is built, however
@@ -1545,6 +1577,9 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	ctx := cmd.Context()
 	warn := cmd.ErrOrStderr()
 	n := o.attempts
+	// A batch prints one step per attempt, and stops the run on the attempt
+	// that failed: the launcher returns the error that says which of how many
+	// it was, and the step above it says the same thing on the screen.
 	// Resolved, including the recipe, before checkMaxParallelFor's backend
 	// listing call and the budget pre-check's database read (design
 	// generic-tool review, 2026-10-13): a batch a review-mode recipe (or an
@@ -1561,11 +1596,22 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	if err := env.batchBudgetPrecheck(ctx, plan.slug, plan.repo, n, warn); err != nil {
 		return err
 	}
+	// The batch's reporter opens where its own refusals end — a recipe that
+	// does not resolve, a mode the batch cannot run, no room for all the
+	// attempts, no budget headroom — so a refused batch keeps no log, and
+	// from here every attempt is one step of this run (D1352, D1354).
+	rep, sink := reporterFor(cmd, "run", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	out := loggedOut(cmd.OutOrStdout(), sink)
 	seen := make(map[string]bool, n)
 	results := make([]launchResult, 0, n)
 	for i := 0; i < n; i++ {
+		step := rep.Step(fmt.Sprintf("launch %d of %d", i+1, n))
 		slug, spec, err := buildUniqueAttemptSpec(plan, o, text, seen)
 		if err != nil {
+			failStep(rep, step, err)
 			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
 		}
 		if i == 0 && o.batch == "" {
@@ -1575,6 +1621,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 			// attempt's spec carries the same label.
 			spec.Batch = "bestof-" + spec.RunID
 			if err := spec.Validate(); err != nil {
+				failStep(rep, step, err)
 				return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, userErr("%v", err))
 			}
 			o.batch = spec.Batch
@@ -1585,6 +1632,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 		// re-evaluate state it already judged and print its notes n times.
 		res, err := launchAttempt(ctx, env, o, slug, spec, false, warn, true)
 		if err != nil {
+			failStep(rep, step, err)
 			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
 		}
 		if res.Status == "already-launched" {
@@ -1593,17 +1641,20 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 			// only be some other process's run reusing the id — too
 			// improbable to recover from; the batch must not silently count
 			// a run it did not itself start.
-			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, fmt.Errorf("run %s was already launched, not by this batch", oneLine(res.Run)))
+			err := fmt.Errorf("run %s was already launched, not by this batch", oneLine(res.Run))
+			failStep(rep, step, err)
+			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
 		}
+		step.Done(launchWhat(res))
 		if !o.asJSON {
-			if err := printLaunch(cmd.OutOrStdout(), res, false); err != nil {
+			if err := launchDetail(out, res); err != nil {
 				return err
 			}
 		}
 		results = append(results, res)
 	}
 	if o.asJSON {
-		if err := printBatch(cmd.OutOrStdout(), o.batch, n, false, results); err != nil {
+		if err := printBatch(out, o.batch, n, false, results); err != nil {
 			return err
 		}
 	}
@@ -1613,6 +1664,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	}
 	fmt.Fprintf(warn, "pick: fugaro run --recipe pick %s once all have opened PRs (fugaro runs ls --batch %s)\n",
 		strings.Join(parts, " "), o.batch)
+	rep.Summary()
 	return nil
 }
 
@@ -3198,15 +3250,33 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 	if res.Status == "already-launched" {
 		verb = "already launched"
 	}
+	if _, err := fmt.Fprintf(w, "%s %s\n", verb, launchWhat(res)); err != nil {
+		return err
+	}
+	return launchDetail(w, res)
+}
+
+// launchWhat is what a launch is of: the run, and, for a follow-up, the pull
+// request it continues. It is the tail of the line a launch prints, whether
+// that line is the command's own ("launched <what>") or the reporter's step
+// for a migrated launch ("launch <what>", CL7c).
+func launchWhat(res launchResult) string {
 	what := oneLine(res.Run)
 	if res.PR > 0 {
 		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, oneLine(res.PreviousRun))
 	}
+	return what
+}
+
+// launchDetail prints what is under a launch's line — the branch it cut, and
+// the run's own cloud log when the launcher named one — which is the same
+// whatever that line was.
+func launchDetail(w io.Writer, res launchResult) error {
 	branch := oneLine(res.Branch)
 	if res.Ref != "" {
 		branch += " cut from " + oneLine(res.Ref)
 	}
-	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, what, branch); err != nil {
+	if _, err := fmt.Fprintf(w, "  branch %s\n", branch); err != nil {
 		return err
 	}
 	if res.LogURL != "" {
