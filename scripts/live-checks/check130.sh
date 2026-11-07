@@ -105,6 +105,9 @@ ABORT_REASON=""
 # argument was -h/--help, which asks nothing of the check and gets no block.
 REACHED_END=no
 HELP=""
+# Set while the exit trap is running, so a second Ctrl-C is refused rather than
+# killing this shell mid-cleanup: see on_signal.
+CLEANUP_RUNNING=no
 die() { say "$*"; ABORT_REASON=$*; exit 2; }
 
 # stop REASON: records a FAILed fact and ends the run. The EXIT trap prints the
@@ -173,6 +176,7 @@ scratch_up() {
 # it managed to do in SCRATCH_REMOVED, and a `$(cleanup)` would throw that
 # answer away with the subshell.
 cleanup() {
+  CLEANUP_RUNNING=yes
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   remove_scratch
 }
@@ -323,7 +327,7 @@ guard_links() {
 }
 
 # ------------------------------------------------------------- the API reads
-# read_licence_api FILE: the three keys step 2 records, out of the endpoint's
+# read_licence_api FILE: the fields step 2 records, out of the endpoint's
 # answer. The program prints one `key|value` line per field rather than echoing
 # the document: what reaches the block is this fixed vocabulary — the path, the
 # licence's `spdx_id`, `key` and `name`, the `message` — plus the compact object
@@ -504,7 +508,6 @@ interrupted() {
 # — including through the cleanup, which is where its second answer matters. A
 # second Ctrl-C during the Restore would otherwise kill this shell mid-cleanup
 # and the block that says what was left behind would never be printed.
-CLEANUP_RUNNING=no
 on_signal() {
   if [ "$CLEANUP_RUNNING" = yes ]; then
     owner "cleanup is running, do not press Ctrl-C again"
