@@ -2,7 +2,7 @@
 
 Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**. **Nothing is
 implemented and no task is approved**: each task needs the owner's explicit go (an answer to a
-decision is not that go). The owner's answers that shaped the plan (D1527's Vertex answer is amended after review and awaits the owner's confirmation): D1520 a "Built, not enabled"
+decision is not that go). The owner's answers that shaped the plan (D1527's Vertex answer is amended after review and was confirmed by the owner on 2026-11-07; D1539's answer is amended after review and awaits the owner's confirmation): D1520 a "Built, not enabled"
 status; D1522 the editions are "Core (MIT)" and "Subscription"; D1537 a data file, one page and an
 evidence test; D1538 an "as of" stamp refreshed by the release procedure; every row's wording is
 the reconciliation's findings F1–F31.
@@ -28,12 +28,12 @@ the reconciliation's findings F1–F31.
 | Every `supported` and `built-not-enabled` row names an evidence path that exists in the repository | CM1 |
 | The page never claims a feature the reconciliation marked Wrong: no mobile web, no gen 1, no Enterprise SSO, no tracker MCP inside a run, no "any model" | CM2's rendered-page test, which reads the forbidden phrases from the data file's own `never_say` list |
 | The "as of" stamp equals the latest `docs/releases/vX.Y.Z.md` | CM3 |
-| The Claude terms caveat is the Terms page's own sentence and no other | CM1 (the row's note must equal the sentence read from `website/content/subscription-terms.md`) |
+| The Claude OAuth row carries no terms caveat and no new legal sentence (D1539 as amended, pending the owner's confirmation) | CM1 (a test that the row's note names neither "terms" nor "allowed") |
 
 ## Slice A: the data and the page (inert until the website promote)
 
 ### CM1. The data file and its test
-- **Files:** `website/data/compatibility.yaml` (new), `website/test/compatibility.mjs` (new), `website/README.md` (one line naming the data file, as it names `data/mobile-claims.yaml`; its structure is pinned by the site's readme test).
+- **Files:** `website/data/compatibility.yaml` (new), `website/test/compatibility.mjs` (new), `website/README.md` (one line naming the data file, as it names `data/mobile-claims.yaml`; only `website/test/budget.mjs` reads that file, for the budget figures, so the line must leave those unchanged).
 - **Interfaces:** produces the file the page reads. Rows are grouped as the spec groups them
   (local environment, console, mobile, agent harness, model access, cloud, backends, forges, trackers,
   notifications, identity and roles); each row has `name`, `status`, `edition` (where the spec has
@@ -41,19 +41,19 @@ the reconciliation's findings F1–F31.
   Every row of the reconciliation (F1–F31) maps to one row or one removal.
 - **Schema/rules/config change:** none beyond the new file.
 - **Tests:** `website/test/compatibility.mjs`: closed statuses and editions; every evidence path
-  exists; the Claude row's note is the Terms page's sentence; no row text contains a `never_say` phrase.
+  exists; the Claude OAuth row's note contains no terms or permission wording; no row text contains a `never_say` phrase.
 - **Command:** `cd website && node --test test/compatibility.mjs` then `npm run check`; `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` if `website/README.md` is pinned from Go.
-- **Depends on:** nothing.
+- **Depends on:** nothing (the Vertex row is written from the owner-confirmed amended D1527; the Claude OAuth row waits on the owner's confirmation of D1539 as amended: until then it carries no caveat, which is also what the amended answer says).
 - **Red step:** the test fails because the file does not exist, then fails once with a row that
   carries an unknown status.
 - **Reviewer tier:** standard.
 - **Commit:** `website: the compatibility matrix as data, with an evidence test`.
 
 ### CM2. The page and its link
-- **Files:** `website/src/pages/compatibility.astro` (new), `website/src/content.ts` (the data loader), `website/src/layouts/Base.astro` (the navigation entry, **added only after the owner approves the nav change**: `.claude/rules/website.md`; until then the page is reachable by URL and from the Docs hub), `website/test/compatibility-page.mjs` (new), `website/test/linkcheck.mjs` only if its list
+- **Files:** `website/src/pages/compatibility.astro` (new), `website/src/content.ts` (the data loader), `website/src/pages/docs.astro` and `website/test/docs-hub.mjs` (the Docs hub entry), `website/src/layouts/Base.astro` (the navigation entry, **added only after the owner approves the nav change**: `.claude/rules/website.md`; until then the page is reachable by URL and from the Docs hub), `website/test/compatibility-page.mjs` (new), `website/test/linkcheck.mjs` only if its list
   of pages is explicit.
 - **Interfaces:** consumes CM1's file; produces `/compatibility/`.
-- **Tests:** the built page contains one table per group with the legend, every status renders with
+- **Tests:** every page-wide gate named in `website/test/console-option.mjs` (accessibility, budget, copy, fold, linkcheck, meta, origins, os-cards) and the page's meta and sitemap registration, `website/test/lib/exempt.mjs` if it lists document pages; and the built page contains one table per group with the legend, every status renders with
   its glyph and text (not colour alone), no `never_say` phrase appears in the built HTML, the page is
   linked from the navigation and passes the site's accessibility and link tests.
 - **Command:** `cd website && npm run check`.
@@ -92,7 +92,7 @@ CM1 → CM2 (the page), one website `npm run check` each.
 | Level | Task | Files it writes |
 | --- | --- | --- |
 | 0 | CM1 | `website/data/compatibility.yaml`, `website/test/compatibility.mjs` |
-| 1 | CM2 | `website/src/pages/compatibility.astro`, `website/src/content.ts`, `website/src/layouts/Base.astro`, `website/test/compatibility-page.mjs` |
+| 1 | CM2 | `website/src/pages/compatibility.astro`, `website/src/content.ts`, `website/src/pages/docs.astro`, `website/test/docs-hub.mjs`, `website/src/layouts/Base.astro`, `website/test/compatibility-page.mjs` |
 | 1 | CM3 | `website/test/compatibility.mjs` (a level after CM1 wrote it), `docs/release.md`, `.claude/skills/new-release/SKILL.md` |
 
 No level holds two writers of one file: CM1 is the only writer of the data file; CM2 and CM3 write

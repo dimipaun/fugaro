@@ -8,7 +8,7 @@ A public page of what Fugaro supports today and what it does not, built from the
 | File | What it holds |
 | --- | --- |
 | [spec.md](spec.md) | the draft as received |
-| [reconciliation.md](reconciliation.md) | findings F1–F32 against the code, decisions D1520–D1539 (all answered as recommended on 2026-11-07), UNVERIFIED |
+| [reconciliation.md](reconciliation.md) | findings F1–F32 against the code, decisions D1520–D1539 (answered 2026-11-07, all as recommended except D1527 and D1539, which were amended after review: D1527's amendment is confirmed, D1539's awaits the owner), UNVERIFIED |
 | [implementation-plan.md](implementation-plan.md) | CM1–CM4: the data file and its test, the page, the release stamp, the owner's read |
 
 Numbers: decisions **D1520–D1539**; no check is taken. The owner's three open questions are
