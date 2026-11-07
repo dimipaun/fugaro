@@ -4273,6 +4273,12 @@ func (r *run) finalize(ctx context.Context) error {
 	// challenger's is the diff it holds back.
 	r.uploadPatch(ctx, sha)
 
+	// The decisions the deciding round left go into the record before Decide
+	// reads it: the loop stops on an all-owner round (ownerStop), and a round
+	// that shipped with one or left it beside a fixable finding ends a draft
+	// that waits on it just the same (OD1). A run that stopped for its own
+	// reason records none (recordOwnerDecisions).
+	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	ready, reason := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)

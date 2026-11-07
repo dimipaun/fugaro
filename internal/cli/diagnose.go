@@ -490,7 +490,8 @@ func ownerDecisionsOf(od *runstore.OwnerDecisions, red func(string) string) *run
 }
 
 // ownerBlock is what a run is waiting for its owner to decide (OD1), printed
-// under the run's status and above its cost: the count the halt reason names,
+// under the run's status and above its cost: the count the run's own reason
+// names (its halt's where it halted on the decisions),
 // then one line per decision with the file and the reviewer's own sentence, in
 // the words the pull request's status section and `fugaro runs ls` use. It is
 // empty for a run that is waiting on nothing, which is every ordinary run.

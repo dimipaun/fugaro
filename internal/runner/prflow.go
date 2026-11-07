@@ -787,11 +787,21 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)", id, id)
 }
 
-// ownerWaiting reports whether the run stopped waiting on the owner's
-// decisions (OD1): its halt is the owner-decision one. It is what gives the
-// section its own head instead of the halted one — the run is over because a
-// person has to answer, not because a limit stopped it.
+// ownerWaiting reports whether the run ended waiting on the owner's decisions
+// (OD1), whether its loop stopped on them or its review left them and the run
+// ended a draft. It is what gives the section its own head instead of the
+// halted or draft one — the run is over because a person has to answer, not
+// because a limit stopped it.
 func (r *run) ownerWaiting() bool {
+	// The decisions on the record are the fact the section reads: the run
+	// halted on them (ownerStop) or its review left them and the run ended a
+	// draft that carries them (recordOwnerDecisions) — either way what comes
+	// next is a person's answer, and the head above the list says so. The halt
+	// is still read, so a record whose block could not be stored (a decision
+	// with no sentence is not one) still says the run is waiting.
+	if od := r.rec.OwnerDecisions; od != nil && len(od.Decisions) > 0 {
+		return true
+	}
 	return r.rec.Halt != nil && r.rec.Halt.Reason == runstore.HaltOwnerDecision
 }
 

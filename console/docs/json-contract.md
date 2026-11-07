@@ -615,7 +615,7 @@ reads:
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
 | `rigor` | `*runstore.RigorRecord` | **yes** | the mode the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `mode`, `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
-| `owner_decisions` | `*runstore.OwnerDecisions` | **yes** | what the run's review left for the repository's owner to settle (OD1): `decisions` (each one `file`° and `summary`, below) and `total`. **Absent for a run that left none** — every run that did not stop on such a finding, and every record written before the field existed — and absence means **"nothing is pending"**, never "the review had nothing to say" (the `halt.reason` of `owner_decision` is the other half of the same fact) |
+| `owner_decisions` | `*runstore.OwnerDecisions` | **yes** | what the run's review left for the repository's owner to settle (OD1): `decisions` (each one `file`° and `summary`, below) and `total`. **Absent for a run that left none** — every run whose review named no such finding, every run that stopped for its own reason, and every record written before the field existed — and absence means **"nothing is pending"**, never "the review had nothing to say" (the row's `reason` says the same sentence, and the `halt.reason` of `owner_decision` is the other half of the same fact where the loop stopped on the finding) |
 
 **`rigor` is the mode the run resolved, and it is read from the base branch.**
 The block is one decision (docs/rigor-modes D24), carrying the mode, the layer
@@ -650,13 +650,18 @@ strictest ones and the first of them is the rule a reader names. A tampered
 `result.json` therefore reaches the console as no block or as a bounded one,
 never as a value no reader can check.
 
-**`owner_decisions` is what stopped the loop, and it is a count and a list
+**`owner_decisions` is what the run is waiting on, and it is a count and a list
 together.** A review finding whose only remedies are a decision the run cannot
 make — a licence or legal clearance, a product or policy choice, a step only the
 owner can run — is marked by the reviewer (`needs_owner`) and is never handed to
-a fixer. When every finding of the last round is one of those, the run halts
+a fixer. When every finding of the deciding round is one of those, the run halts
 with `halt.reason: "owner_decision"` (a reason of its own, beside the five
-governance ones) and its pull request stays a draft:
+governance ones) and its pull request stays a draft. A deciding round that left
+one beside a fixable finding, or that shipped while carrying one, ends no halt —
+the loop ran to its own end — but a draft for the same reason: the block is on
+the record, `reason` is the same waiting sentence, and readiness is blocked
+above every verdict, so a console that reads `outcome: "draft"` and a block
+together is reading one fact. Either way the list is:
 
 | Field | Type | omitempty | Note |
 |---|---|---|---|
@@ -668,7 +673,8 @@ other.** The block is capped at `runstore.MaxOwnerDecisions` = **100** when it i
 written, and an entry without a sentence is not stored at all; the reader bounds
 it **again** (`runview.Join`, `OwnerDecisions.Bounded`), because the record is an
 object the job can write, and a block whose every sentence is unreadable reads as
-no block — the run's halt reason still says it is waiting. The count a reader
+no block — the run's own `reason`, and its `halt.reason` where it halted on them,
+still says it is waiting. The count a reader
 shows is `total`, never `len(decisions)`.
 
 **The derived status (`derived`), and why it is not a status.** A Cloud Batch

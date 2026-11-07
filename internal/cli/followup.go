@@ -526,11 +526,17 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// reported as success. The same shape as the title: a flag that is given
 	// must be the stored one, and a launch that gives none makes no claim
 	// (the stored request stands, exactly as the stored title does).
+	//
+	// The owner's ruling (--owner-ruled, OD1) is that shape too, and it is the
+	// one a repeat most often omits: a launch that answers the review's
+	// pending decisions again must carry the same ruling, and one that gives
+	// none repeats the stored task — the ruling it holds stands — rather than
+	// being refused as a different one.
 	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
 		(o.planTask != "" && have.PlanTask != o.planTask) ||
 		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
-		(have.OwnerRuled != o.ownerRuled) ||
+		(o.ownerRuled != "" && have.OwnerRuled != o.ownerRuled) ||
 		(o.tier != "" && string(have.Tier) != o.tier) ||
 		(len(o.paths) > 0 && !slices.Equal(have.Paths, o.paths)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)

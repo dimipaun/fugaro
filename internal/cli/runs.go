@@ -907,7 +907,7 @@ func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot ru
 
 // printOwnerWaiting prints, under the table, what each listed run is waiting
 // for the repository's owner to decide (OD1), in the same words the pull
-// request's own status section uses: the run, the count its halt reason names,
+// request's own status section uses: the run, the count its own reason names,
 // and one line per decision with the file and the reviewer's sentence. It
 // prints nothing when no listed run is waiting, which is every ordinary
 // listing. The sentences are untrusted text — a reviewer wrote them — so they
