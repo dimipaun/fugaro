@@ -376,6 +376,35 @@ func TestSessionCannotRequeueAnApprovedItem(t *testing.T) {
 //
 // Mutation: make the daemonOnly check look at op.Phase alone and the other
 // three fields pass from a session.
+// TestASpentMarkerNeverStandsBesideAnApproval is the retry rule read from the
+// other side: the marker names the approval a retry spent, and the write that
+// spends it clears the approval in the same one, so an item carrying both is
+// a document no correct writer produces. The daemon is the class that writes
+// the marker, and a write that leaves the approval standing is refused rather
+// than stored — a summary reads the approval, so an item with both is
+// reported as one a tick may still launch, while its allowance is gone.
+//
+// Mutation: drop the pair check from ValidateState and this upsert lands.
+func TestASpentMarkerNeverStandsBesideAnApproval(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	approved := mustApprove(t, now)
+	spent := approved.WorkItems[0].Approved.At
+
+	_, err := applyAs(t, approved, orchestrator.Daemon, "orchestrator-a", now, orchestrator.Op{
+		Op:       orchestrator.OpWorkItemUpsert,
+		WorkItem: &orchestrator.WorkItemOp{ID: "wi-1", SpentApprovalAt: &spent},
+	})
+	if !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("a spent marker landed beside a standing approval: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+	// The write that spends it does both, and that one lands.
+	launched := mustApply(t, approved, orchestrator.Daemon, "orchestrator-a", now,
+		intentDeclareOp("wi-1:1", "20261107-090000-abcd", orchestrator.SpecDigest(approved.WorkItems[0]), now))
+	if launched.WorkItems[0].SpentApprovalAt != nil || launched.WorkItems[0].Approved == nil {
+		t.Fatal("the first attempt spent the approval")
+	}
+}
+
 func TestOnlyTheDaemonWritesPhaseRunIDAndAttempts(t *testing.T) {
 	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
 	approved := mustApprove(t, now)
