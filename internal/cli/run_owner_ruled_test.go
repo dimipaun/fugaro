@@ -118,6 +118,21 @@ func TestRunOwnerRuledNeedsAPullRequest(t *testing.T) {
 	}
 }
 
+// TestRunOwnerRuledIsRefusedOnAReviewRecipe: the ruling is the owner's answer
+// to findings a run on the pull request left, and it is a follow-up's field —
+// the runner appends it to that follow-up's brief, and task.Validate refuses
+// owner_ruled on a spec with no branch, pr and previous_run. A mode: review
+// recipe builds exactly such a spec (it reviews a pull request rather than
+// continuing one), so the launch is refused rather than started with the
+// owner's answer dropped: the way --review-run is refused for the same reason.
+func TestRunOwnerRuledIsRefusedOnAReviewRecipe(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	seedWaitingRoot(t, f)
+	wantRefused(t, f, "--owner-ruled answers the findings a run on a pull request left, and --recipe review-only reviews a pull request instead of fixing one",
+		"run", "--repo", "acme/app", "--pr", "7", "--recipe", "review-only", "--owner-ruled", "keep the flow")
+}
+
 // TestRunPRFollowUpAfterARulingIsNotRefused: the next follow-up of that pull
 // request finds a previous run that is not waiting on anything (the ruled run
 // pushed on), so it launches with no flag at all — the refusal is about the
