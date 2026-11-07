@@ -997,7 +997,7 @@ export const CONSOLE_OPERATIONS = [
   // D1111). The document carries no `value` member for one at all
   // (`settingsJSON`), and the screen drops the row whole: no key, no value, no
   // pencil. That is the screen's rule and not this table's; what belongs here
-  // is that the row's *edit* is the next task's (`settings.edit`), and this
+  // is that the row's *edit* is `settings.edit`, the row below (C3), and this
   // operation reads.
   {
     name: 'settings.read',
@@ -1036,9 +1036,12 @@ export const CONSOLE_OPERATIONS = [
   // file would be is the fourth one the read's `target_layer` would name if that
   // were the one), no `--add`/`--remove` (a list edit is a form no control can
   // choose: the read carries no member that says a key is list-shaped), and no
-  // third subcommand: `settings get` and every other word of the group stay off
-  // this surface and are on the never table below with the reason they are
-  // there.
+  // third subcommand: `settings get` is a read of one key this screen does not
+  // need and `set`/`unset` are this row's own two, so no other word of the group
+  // is reachable. **Unlike `models`, none of them is on `NEVER_REACHABLE`**: the
+  // group's other words are off this surface rather than refused by the table,
+  // and no settings row moved when this write landed (D1114, the design's
+  // rule 6).
   {
     name: 'settings.edit',
     method: 'editSetting',

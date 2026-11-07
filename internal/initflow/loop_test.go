@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // fake is a stage with no cloud behind it: it logs every call into the
@@ -19,10 +21,13 @@ type fake struct {
 	log    *[]string
 	status Status
 	// statusAfter, when set, is what Check says once Apply has run.
-	applied     bool
-	applyErr    error
-	verifyErr   error
-	unchanged   bool // Apply finds nothing to do
+	applied   bool
+	applyErr  error
+	verifyErr error
+	unchanged bool // Apply finds nothing to do
+	// outLeft is the step Apply leaves for the user: a stage that applied
+	// what this session may do and left the rest (Outcome.Left).
+	outLeft     *Left
 	left        Left
 	missing     []string
 	planSummary string
@@ -55,9 +60,9 @@ func (f *fake) Apply(_ context.Context, env Env) (Outcome, error) {
 	}
 	f.applied = true
 	if f.unchanged {
-		return Outcome{Detail: "No changes"}, nil
+		return Outcome{Detail: "No changes", Left: f.outLeft}, nil
 	}
-	return Outcome{Changed: true, Detail: "applied"}, nil
+	return Outcome{Changed: true, Detail: "applied", Left: f.outLeft}, nil
 }
 func (f *fake) Verify(context.Context) error { f.rec("verify"); return f.verifyErr }
 func (f *fake) Left() Left {
@@ -96,6 +101,85 @@ func states(r *Result) map[string]State {
 		m[s.Name] = s.State
 	}
 	return m
+}
+
+// outputLines is a view's non-empty lines: every line of it is one of the
+// run's own, so an empty one is a bug and not a line.
+func outputLines(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// reporterTo builds the reporter a run's steps print through, over the same
+// writer the loop's own lines go to: the CLI points the two at one terminal,
+// and these tests read one view. Colour is off and the writer is not a
+// terminal, so nothing a rule would not draw reaches a buffer.
+func reporterTo(out *bytes.Buffer, o report.Options) *report.Reporter {
+	o.Out, o.NoColor = out, true
+	return report.New(o)
+}
+
+// marks are the reporter's own markers, read from a reporter rather than
+// copied: the tests below assert the loop's lines carry them, so a change to
+// a mark stays a change in one place.
+type marks struct{ done, skipped, failed, left string }
+
+func reporterMarks(t *testing.T) marks {
+	t.Helper()
+	probe := func(end func(*report.Step)) string {
+		var b bytes.Buffer
+		r := report.New(report.Options{Out: &b, NoColor: true})
+		end(r.Step("probe"))
+		return strings.Fields(strings.TrimSpace(b.String()))[0]
+	}
+	return marks{
+		done:    probe(func(s *report.Step) { s.Done("") }),
+		skipped: probe(func(s *report.Step) { s.Skipped("") }),
+		failed:  probe(func(s *report.Step) { s.Failed(errors.New("x"), nil) }),
+		left:    probe(func(s *report.Step) { s.Left("") }),
+	}
+}
+
+// steps is the run's own account in a view: the lines the reporter drew,
+// which are the ones a marker starts. The plan view above them is the review
+// screen and is not a step.
+func (m marks) steps(view string) []string {
+	var out []string
+	for _, l := range outputLines(view) {
+		if m.isStep(l) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func (m marks) isStep(line string) bool {
+	for _, mark := range []string{m.done, m.skipped, m.failed, m.left} {
+		if strings.HasPrefix(line, mark+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// line is the step line a stage's own result was printed on, or "" when the
+// view has none. The name is matched whole, so a stage is never found by
+// another one's prefix (installation2 is not installation).
+func (m marks) line(view, stage string) string {
+	for _, l := range m.steps(view) {
+		for _, mark := range []string{m.done, m.skipped, m.failed, m.left} {
+			rest, ok := strings.CutPrefix(l, mark+" "+stage)
+			if ok && (rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, ":")) {
+				return l
+			}
+		}
+	}
+	return ""
 }
 
 func TestStageOrderMatchesDependencies(t *testing.T) {
@@ -1290,5 +1374,378 @@ func TestBillingPauseLetsLocalStagesFinish(t *testing.T) {
 		if !strings.Contains(string(b), s) {
 			t.Errorf("--json lacks the status %s:\n%s", s, b)
 		}
+	}
+}
+
+// convergeStages is a run with one stage already done, one to apply, one the
+// user still owes and one that waits for it: the four states a default view
+// has to tell apart, in the canonical order the loop runs them in.
+func convergeStages(log *[]string) []Stage {
+	st := fakes(log, Preflight, Installation, Secrets, Repository)
+	st[0].(*fake).status = Status{State: Done}
+	st[2].(*fake).status = Status{State: NeedsYou, Left: &Left{Stage: Secrets, Kind: LeftPrompt, Text: "run fugaro update in your terminal"}}
+	return st
+}
+
+func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
+	// The run's account is one line per stage and one closing line: the
+	// "[state] stage" words and the "result" header are the plan view's and
+	// go with it, and nothing but the reporter's own lines carries a result.
+	var log []string
+	var out bytes.Buffer
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), convergeStages(&log), opts); err != nil {
+		t.Fatal(err)
+	}
+	m := reporterMarks(t)
+	got := m.steps(out.String())
+	if len(got) != 4 {
+		t.Fatalf("the account is %d step lines, want one per stage:\n%s", len(got), out.String())
+	}
+	for i, name := range []string{Preflight, Installation, Secrets, Repository} {
+		if !strings.Contains(got[i], name) {
+			t.Errorf("step %d is %q, want the stage %s:\n%s", i, got[i], name, out.String())
+		}
+	}
+	if !strings.HasPrefix(got[0], m.done) || !strings.HasPrefix(got[1], m.done) {
+		t.Errorf("a stage that is done or changed does not carry the tick:\n%s", out.String())
+	}
+	if !strings.HasPrefix(got[2], m.left) {
+		t.Errorf("the stage the user owes does not carry the left-for-you marker:\n%s", out.String())
+	}
+	if !strings.HasPrefix(got[3], m.skipped) {
+		t.Errorf("a stage that never ran does not carry its own marker:\n%s", out.String())
+	}
+	if strings.Contains(strings.Join(got, "\n"), "[") || strings.Contains(out.String(), ": result") {
+		t.Errorf("the plan view's words are in the run's account:\n%s", out.String())
+	}
+	lines := outputLines(out.String())
+	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Left for you in ") || !strings.HasSuffix(last, ", 4 steps") {
+		t.Errorf("the account does not end in the run's closing line: %q\n%s", last, out.String())
+	}
+}
+
+func TestLoopLeftForYouIsNotATick(t *testing.T) {
+	// A stage left for the user is never a green tick (G3), and what to run
+	// stays on the screen under it.
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Secrets)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).status = Status{State: NeedsYou, Left: &Left{Stage: Secrets, Kind: LeftPrompt,
+		Text: "run fugaro update in your terminal", Commands: []string{"fugaro secrets set github-app-key"}}}
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{})
+	res, err := Run(context.Background(), stages, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := reporterMarks(t)
+	line := m.line(out.String(), Secrets)
+	if !strings.HasPrefix(line, m.left+" "+Secrets) {
+		t.Errorf("the stage the user owes is %q, want the reporter's left-for-you marker:\n%s", line, out.String())
+	}
+	if strings.HasPrefix(line, m.done) {
+		t.Errorf("a stage left for the user printed the tick:\n%s", out.String())
+	}
+	for _, want := range []string{
+		"left for you (secrets, prompt): run fugaro update in your terminal",
+		"    fugaro secrets set github-app-key",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the left-for-you block lost %q:\n%s", want, out.String())
+		}
+	}
+	if o := opts.Report.Summary(); o.State != report.Left {
+		t.Errorf("the run reported %v, want Left: a step left for the user is exit 1, never a done", o.State)
+	}
+	if res.ExitCode() != 1 {
+		t.Errorf("exit %d, want 1", res.ExitCode())
+	}
+}
+
+func TestLoopFailureShowsContextAndFix(t *testing.T) {
+	// A failure shows the stage, the error, the lines of context under it and
+	// the fix — on the screen, because a coding agent's session often cannot
+	// read the log (G8) — and the closing line says the run failed.
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation, Firebase)
+	stages[1].(*fake).applyErr = &StageError{
+		Err: errors.New("\nterraform apply exited 1: Error: quota exceeded\n  on main.tf line 3\n  with google_project_service.this"),
+		Fix: "raise the quota, then rerun fugaro update",
+	}
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{})
+	res, err := Run(context.Background(), stages, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := reporterMarks(t)
+	got := out.String()
+	line := m.line(got, Installation)
+	if !strings.HasPrefix(line, m.failed+" "+Installation+": ") {
+		t.Errorf("the failed stage is %q, want the reporter's cross and its error:\n%s", line, got)
+	}
+	for _, want := range []string{
+		"terraform apply exited 1: Error: quota exceeded",
+		"on main.tf line 3",
+		"with google_project_service.this",
+		"stopped at " + Installation + "; fix: raise the quota, then rerun fugaro update",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the failure block lost %q:\n%s", want, got)
+		}
+	}
+	if lines := outputLines(got); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
+		t.Errorf("the account does not end in a failed run's closing line:\n%s", got)
+	}
+	// The error starts with a blank line, which oneLine trims: the message is
+	// the first line that is not blank, and it prints once, not twice.
+	if n := strings.Count(got, "quota exceeded"); n != 1 {
+		t.Errorf("the message printed %d times, want once:\n%s", n, got)
+	}
+	if res.Failed == nil || strings.Contains(res.Failed.Error, "\n") {
+		t.Errorf("the result's error is not one line: %+v", res.Failed)
+	}
+}
+
+func TestLoopFailureContextIsRedacted(t *testing.T) {
+	// The failure block prints the error's lines under the message (G8), so
+	// they go through the same redaction every other printed line does: a
+	// value the process holds is not on the screen because the stage put it
+	// in a line of context, and --json never carried it.
+	const secret = "s3cr3t-in-context"
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation)
+	stages[1].(*fake).applyErr = errors.New("apply failed\nDetails: token=" + secret + " rejected\nretry later")
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Redact = []string{secret}
+	opts.Report = reporterTo(&out, report.Options{})
+	res, err := Run(context.Background(), stages, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if strings.Contains(got, secret) {
+		t.Errorf("a held value reached the screen through the failure context:\n%s", got)
+	}
+	if !strings.Contains(got, "Details: token=[redacted] rejected") || !strings.Contains(got, "retry later") {
+		t.Errorf("the failure block did not print the error's context, redacted:\n%s", got)
+	}
+	js, err := res.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(js), secret) {
+		t.Errorf("a held value reached --json:\n%s", js)
+	}
+}
+
+func TestLoopAStageThatLeftSomethingIsNotATick(t *testing.T) {
+	// A stage that applied what this session may do and left the rest for the
+	// user (Outcome.Left) is not a tick: the result carries the left-for-you
+	// entry and the run exits 1, so the step and the closing line say so (G3).
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Checkout)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).outLeft = &Left{Stage: Checkout, Kind: LeftCommand,
+		Text: "run fugaro upgrade's cloud half in your terminal"}
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{})
+	res, err := Run(context.Background(), stages, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := reporterMarks(t)
+	got := out.String()
+	line := m.line(got, Checkout)
+	if !strings.HasPrefix(line, m.left+" "+Checkout) {
+		t.Errorf("the stage that left something is %q, want the left-for-you marker:\n%s", line, got)
+	}
+	if strings.HasPrefix(line, m.done) {
+		t.Errorf("a stage with a step left for the user printed the tick:\n%s", got)
+	}
+	if !strings.Contains(got, "left for you (checkout, command): run fugaro upgrade's cloud half in your terminal") {
+		t.Errorf("the left-for-you block is missing:\n%s", got)
+	}
+	if res.ExitCode() != 1 {
+		t.Errorf("exit %d, want 1: the run has something only the user can do", res.ExitCode())
+	}
+	if o := opts.Report.Summary(); o.State != report.Left {
+		t.Errorf("the run reported %v, want Left", o.State)
+	}
+	if lines := outputLines(got); !strings.HasPrefix(lines[len(lines)-1], "Left for you in ") {
+		t.Errorf("the account does not end in a left-for-you closing line:\n%s", got)
+	}
+}
+
+func TestLoopRefusalPrintsNoClosingLine(t *testing.T) {
+	// A refusal is the caller's error, not the account's outcome: the stages
+	// that ran print their lines, and there is no closing line, because
+	// "Done in ..." under a run that refused is the one thing it must not say.
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation)
+	stages[0].(*fake).status = Status{State: Done}
+	opts := Options{Out: &out}
+	opts.Report = reporterTo(&out, report.Options{})
+	res, err := Run(context.Background(), stages, opts)
+	var refuse *NoTerminalError
+	if !errors.As(err, &refuse) {
+		t.Fatalf("err is %v, want the refusal of %s", err, Installation)
+	}
+	got := out.String()
+	m := reporterMarks(t)
+	if steps := m.steps(got); len(steps) != 1 || !strings.Contains(steps[0], Preflight) {
+		t.Errorf("the account is %q, want the one stage that ran:\n%s", steps, got)
+	}
+	for _, closing := range []string{"Done in ", "Failed in ", "Left for you in "} {
+		if strings.Contains(got, closing) {
+			t.Errorf("a refused run printed %q:\n%s", closing, got)
+		}
+	}
+	if res == nil || len(res.Stages) != 1 {
+		t.Errorf("result %+v, want the partial account of the stage that ran: the caller still has it to print", res)
+	}
+}
+
+func TestLoopVerboseStreamsEverything(t *testing.T) {
+	// --verbose is today's behaviour: the run's own output — the Terraform
+	// stream the caller wires to Reporter.Stream — reaches the terminal, and
+	// the account keeps every line. The default view streams nothing: it is
+	// one line per step.
+	for _, verbose := range []bool{false, true} {
+		var log []string
+		var out bytes.Buffer
+		opts := yesOpts()
+		opts.Out = &out
+		rep := reporterTo(&out, report.Options{Verbose: verbose})
+		opts.Report = rep
+		if _, err := fmt.Fprint(rep.Stream(), "terraform: creating...\n"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Run(context.Background(), convergeStages(&log), opts); err != nil {
+			t.Fatal(err)
+		}
+		m := reporterMarks(t)
+		if got := m.steps(out.String()); len(got) != 4 {
+			t.Errorf("--verbose %v: the account is %d step lines, want one per stage:\n%s", verbose, len(got), out.String())
+		}
+		lines := outputLines(out.String())
+		if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Left for you in ") {
+			t.Errorf("--verbose %v: the account does not end in the closing line: %q", verbose, last)
+		}
+		if !strings.Contains(out.String(), "left for you (secrets, prompt): run fugaro update in your terminal") {
+			t.Errorf("--verbose %v: the left-for-you block is missing:\n%s", verbose, out.String())
+		}
+		streamed := strings.Contains(out.String(), "terraform: creating...")
+		if streamed != verbose {
+			t.Errorf("--verbose %v: the run's own output streamed=%v, want %v:\n%s", verbose, streamed, verbose, out.String())
+		}
+	}
+}
+
+func TestLoopPlanOnlyViewUnchanged(t *testing.T) {
+	// The plan view is not a run: it keeps its one line per stage and the
+	// "[state] stage" words the tests and the docs quote, and it reports no
+	// step, so a reporter adds no closing line to it.
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Installation, Firebase)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).planSummary = "14 to create"
+	opts := yesOpts()
+	opts.PlanOnly, opts.Out = true, &out
+	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	want := `fugaro: project aurora (GCP aurora-prod, us-east5)
+  [done]       preflight
+  [will do]    installation     14 to create
+  [will do]    firebase         after installation
+`
+	if out.String() != want {
+		t.Errorf("the plan view changed:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+func TestLoopNoReporterPrintsAsToday(t *testing.T) {
+	// A nil reporter is the loop's own account, word for word: every caller
+	// that has not moved onto the reporter prints exactly what it printed
+	// before, closing line and all.
+	var log []string
+	var out bytes.Buffer
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
+	if _, err := Run(context.Background(), convergeStages(&log), opts); err != nil {
+		t.Fatal(err)
+	}
+	want := `fugaro: project aurora (GCP aurora-prod, us-east5)
+  [done]       preflight
+  [will do]    installation
+  [needs you]  secrets
+  [will do]    repository       after installation
+fugaro: result
+fugaro: project aurora (GCP aurora-prod, us-east5)
+  [done]       preflight
+  [changed]    installation     applied
+  [needs you]  secrets
+  [blocked]    repository       waits for secrets
+left for you (secrets, prompt): run fugaro update in your terminal
+`
+	if out.String() != want {
+		t.Errorf("the account without a reporter changed:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+func TestLoopBillingStagesAreNotTicks(t *testing.T) {
+	// Billing pending is the user's to resolve and waiting for billing is a
+	// stage that cannot run until they do: neither is a green tick, and a
+	// stage that needs no billing applies as it always did.
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Project, Installation, Images, Secrets, Plugin, Repository)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).applyErr = &BillingPausedError{
+		Left:   Left{Kind: LeftCommand, Text: "billing is not linked yet", Commands: []string{"gcloud billing projects link p --billing-account=<billing-account-id>"}},
+		Detail: "created; billing pending",
+	}
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	m := reporterMarks(t)
+	got := out.String()
+	if steps := m.steps(got); len(steps) != len(stages) {
+		t.Fatalf("the account is %d step lines, want one per stage:\n%s", len(steps), got)
+	}
+	for _, stage := range []string{Project, Installation, Images, Secrets, Repository} {
+		line := m.line(got, stage)
+		if !strings.HasPrefix(line, m.left+" "+stage) {
+			t.Errorf("%s is %q, want the reporter's left-for-you marker:\n%s", stage, line, got)
+		}
+	}
+	if line := m.line(got, Plugin); !strings.HasPrefix(line, m.done+" "+Plugin) {
+		t.Errorf("the stage that needs no billing is %q, want the tick:\n%s", line, got)
+	}
+	if !strings.Contains(got, "left for you (project, command): billing is not linked yet") {
+		t.Errorf("the left-for-you block is missing:\n%s", got)
+	}
+	if lines := outputLines(got); !strings.HasPrefix(lines[len(lines)-1], "Left for you in ") {
+		t.Errorf("the account does not end in a left-for-you closing line:\n%s", got)
 	}
 }

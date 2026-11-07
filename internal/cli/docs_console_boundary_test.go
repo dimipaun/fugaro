@@ -153,15 +153,18 @@ var consoleBoundaryAllowList = []string{
 // commit's message. A require line that arrives WITHOUT an edit here is the
 // failure this test exists for.
 //
-// Two entries that rule has already been applied to. `spf13/pflag` was
+// Three entries that rule has already been applied to. `spf13/pflag` was
 // promoted from the indirect block to the direct one by `next`'s Task 1.6 work
 // (internal/cli and plugin test files import it directly, so the direct require
 // is what the toolchain asks for), which is why its line here carries no
 // "// indirect" comment. `rsc.io/qr` was a new require of the pairing CLI's
 // T4: `internal/cli/pair.go` draws the QR the operator shows from it, so the
 // module is a direct dependency of the CLI and nothing else in the tree
-// imports it. Neither promotion is the console's: the console still contributes
-// nothing to this module.
+// imports it. `muesli/termenv` was promoted the same way by the CLI output
+// work's CL1 (D1355, the owner's approved dependency): `internal/report`
+// renders its step markers with it, forcing the colour profile the reporter
+// itself decided on. None of the three is the console's: the console still
+// contributes nothing to this module.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
@@ -205,7 +208,7 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/mattn/go-runewidth v0.0.16",
 	"github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect",
 	"github.com/muesli/cancelreader v0.2.2 // indirect",
-	"github.com/muesli/termenv v0.16.0 // indirect",
+	"github.com/muesli/termenv v0.16.0 // the reporter's steps, with the colour profile forced (D1355)",
 	"github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect",
 	"github.com/rivo/uniseg v0.4.7 // indirect",
 	"github.com/santhosh-tekuri/jsonschema/v6 v6.0.3",

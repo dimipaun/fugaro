@@ -434,7 +434,7 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	// refuses invented names document-wide, and this is the same rule where the
 	// runs stats shapes are described.
 	const stats = "### 6.10 "
-	body := section(t, doc, stats, "\n## 7. ")
+	body := mdSection(t, path, doc, stats)
 	listed := map[string]bool{}
 	for _, header := range []string{
 		"| Field | Type | omitempty | Availability state |",
@@ -533,18 +533,42 @@ var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
 // consoleMovedSections are the document's headings whose command and shapes
-// moved out of the core — the coordinator's with E2.1b, the report's with
-// E2.2b: the code they document is under ee/, so this build cannot name a field
-// or a flag of it and the checks below would be reading the shapes of a package
-// they cannot import. The same checks run over these sections against the
-// tagged tree, where the code is in the build
-// (ee/coordinator/cli/console_contract_test.go, ee/report/cli/console_contract_test.go).
-// §6.15 is the coordinator's too — coordinator v2 C3's `coordinator show`, whose
-// document and command are both under ee/ — and it is a heading of its own
-// rather than a part of §6.13 because the two document different reads of
-// different shapes. §6.16 is coordinator v2 C4's `coordinator intents`, under
-// ee/ for the same reason.
-var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "### 6.16 ", "## 4. `fugaro report --json`"}
+// live under ee/: the coordinator's moved there with E2.1b, the report's with
+// E2.2b, and the graph's never lived in the core at all — D1362 puts `fugaro
+// graph` in ee/ from its first line. Nothing outside ee/ imports anything under
+// it (the rule internal/eeboundary's TestCoreNeverImportsEE guards: the core
+// builds and tests with the directory deleted), so this build cannot name a
+// field or a flag of any of them and the checks below would be reading the
+// shapes of a package they cannot import. For the two sections that moved, the
+// same checks run against the tagged tree, where the code is in the build
+// (ee/coordinator/cli/console_contract_test.go,
+// ee/report/cli/console_contract_test.go). §6.22 has no such counterpart, and
+// none is scheduled: the task that lands the command (CG3) lists no ee-side
+// contract test, and the one that lands the console's read of its document
+// (CG9a) names this file as "not edited here". So the graph's section is held
+// here by nothing but the heading and spelling rules every section gets, and
+// stands on the plan's H1 to H5 and on the review that read it against
+// `ee/graph/document.go` until a later task writes the counterpart. That is a
+// gap recorded rather than a licence. §6.15 is the coordinator's too —
+// coordinator v2 C3's `coordinator show`, whose document and command are both
+// under ee/ — and it is a heading of its own rather than a part of §6.13 because
+// the two document different reads of different shapes. §6.16 is coordinator v2
+// C4's `coordinator intents`, under ee/ for the same reason.
+//
+// Every entry names its command as well as its number. A number alone exempts
+// whatever section is later written at that number: the graph's own section
+// reads §6.22 because §6.21 is claimed by `fugaro managed status --json`
+// (docs/console-managed-screens/implementation-plan.md, its CM2), and a
+// "### 6.21 " entry would have gone on skipping that section's field table and
+// its flags — the two checks its plan's F27 counts on. The command in the entry
+// is the same shape the ee-side contract tests match their own sections by.
+var consoleMovedSections = []string{
+	"### 6.13 `fugaro coordinator status",
+	"### 6.15 `fugaro coordinator show",
+	"### 6.16 `fugaro coordinator intents",
+	"### 6.22 `fugaro graph",
+	"## 4. `fugaro report --json`",
+}
 
 // consoleMovedRows are the document's individual lines that name a flag of a
 // moved command without sitting under a moved heading: §8's inventory carries
@@ -5760,6 +5784,55 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 	}
 }
 
+// mdHeadingLineRE is the heading a line opens, `##` or deeper. The lines are fed
+// to it one at a time by mdNextHeading, which is also where fenced blocks are
+// skipped.
+var mdHeadingLineRE = regexp.MustCompile(`^#{2,} `)
+
+// mdSection returns the contract's text for one section, from its heading to the
+// next heading of any level. A section read that stops at a fixed later marker
+// swallows every section inserted between the two, and a pin over it then
+// asserts over a neighbour's text: CG8's §6.22 landed between §6.20 and
+// `## 7. The CLI gaps`, and the four reads that ended at that marker had been
+// reading past their own section ever since the first insertion above them. A
+// truncated read is the other half of the same hazard — a "does not contain"
+// pin can pass on a section it never read — so the boundary skips a fenced
+// block's own lines.
+func mdSection(t *testing.T, path, doc, heading string) string {
+	t.Helper()
+	i := strings.Index(doc, heading)
+	if i < 0 {
+		t.Fatalf("%s: %q is not in the document; this test reads that section", path, heading)
+	}
+	rest := doc[i+len(heading):]
+	end, ok := mdNextHeading(rest)
+	if !ok {
+		t.Fatalf("%s: %q is the document's last section, so this test cannot tell where it stops", path, heading)
+	}
+	return rest[:end]
+}
+
+// mdNextHeading returns the offset at which the first markdown heading of any
+// level opens in s, and whether there is one. It walks the lines rather than
+// matching a pattern anchored at a line start, because a line start is all such
+// a pattern sees: a fenced block quoting a document that has headings of its own
+// would be read as the section's end.
+func mdNextHeading(s string) (int, bool) {
+	off := 0
+	inFence := false
+	for _, line := range strings.SplitAfter(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "```"), strings.HasPrefix(trimmed, "~~~"):
+			inFence = !inFence
+		case !inFence && mdHeadingLineRE.MatchString(line):
+			return off, true
+		}
+		off += len(line)
+	}
+	return 0, false
+}
+
 // TestDocsDesktopConsoleContractCitesRunsStatsBySymbol: the contract's
 // `runs stats --json` section (6.10) cites the code it describes by SYMBOL, not
 // by line. The line numbers it used to carry (`runs_stats.go:69`, `:467`,
@@ -5776,12 +5849,7 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 func TestDocsDesktopConsoleContractCitesRunsStatsBySymbol(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
-	start := strings.Index(doc, "### 6.10 `fugaro runs stats --json`")
-	end := strings.Index(doc, "## 7. The CLI gaps")
-	if start < 0 || end <= start {
-		t.Fatalf("%s's runs stats section was renamed or reordered; update this test's markers", path)
-	}
-	section := doc[start:end]
+	section := mdSection(t, path, doc, "### 6.10 `fugaro runs stats --json`")
 	// The three symbols the section describes, each of which exists in the file
 	// it names (read from the source, so a rename cannot leave the contract
 	// pointing at a function that is gone).
@@ -9691,9 +9759,15 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
 
-	read := mdBetween(t, path, doc, "### 6.19 ", "\n## 7. The CLI gaps")
+	read := mdSection(t, path, doc, "### 6.19 ")
 	for _, want := range []string{
-		"operation `settings.edit`",
+		// §6.19's own words. The phrase "operation `settings.edit`" that stood
+		// here was never §6.19's: only §6.20 and §9 write it, and this read ran
+		// past §6.19's end into them until mdSection bounded it. The section does
+		// make the claim — it is where a reader learns the console writes this
+		// group — so it is pinned as the section states it.
+		"The write is an operation of the console",
+		"`settings.edit`",
 		"it is the console's second",
 		"`settings set|unset KEY --layer <L> --dry-run --json",
 		"retried silently",
@@ -9708,7 +9782,7 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 
 	// The dry run's document: the shape the confirmation window is drawn from,
 	// member by member, off `settingsWriteDoc`.
-	write := mdBetween(t, path, doc, "### 6.20 ", "\n## 7. The CLI gaps")
+	write := mdSection(t, path, doc, "### 6.20 ")
 	for _, want := range []string{
 		"settingsWriteDoc",
 		"schemas/settings-write.schema.json",
