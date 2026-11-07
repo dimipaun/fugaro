@@ -326,7 +326,7 @@ func layerCopyCheck(ctx context.Context, b *blobx.Bucket, slug string, l *config
 
 // imageCatalogUnreadCheck is doctor's line for the one state in which the
 // catalog the two checks below judge workflows against was not read: this
-// checkout's config states none of its own, and the published node it would
+// machine's config states none of its own, and the published node it would
 // take one from did not answer (effectiveCatalog's error). Every workflow is
 // then judged against a catalog nobody read — a pinned entry is neither
 // compared nor called unbuilt — so the unknown is a line of its own, never
@@ -341,7 +341,7 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 		return nil
 	}
 	return []doctorCheck{{ID: "image-catalog", Severity: "info", unread: true,
-		Problem: "whether the project's image catalog decides a workflow's image could not be checked: this config states no catalog of its own, and the published policy node it would take one from could not be read (" + oneLineCLI(catErr.Error()) + "), so a workflow that pins an entry, needs a tag one covers, or runs the project's default is not judged here",
+		Problem: "whether the project's image catalog decides a workflow's image could not be checked: this machine's config states no catalog of its own, and the published policy node it would take one from could not be read (" + oneLineCLI(catErr.Error()) + "), so a workflow that pins an entry, needs a tag one covers, or runs the project's default is not judged here",
 		Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 }
 
