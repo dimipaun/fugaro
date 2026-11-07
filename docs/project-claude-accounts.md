@@ -125,6 +125,11 @@ prompt, never from an argument, a flag or the environment.
   Without a `project_secrets.claude-oauth-token` entry with a non-empty `allow_data_to`, that
   command is refused: the name has a project-wide meaning only when the project states which
   repositories it is for.
+- **A named account's token, stored by hand.** `fugaro secrets set claude-oauth-token-<name>` is
+  what `accounts add` runs for you, and on its own — as §8's rotation does — it is accepted only
+  when `claude_accounts.<name>.allow_data_to` lists at least one repository (§4). Otherwise it is
+  refused and names that field, because a token whose repositories are undecidable is one no policy
+  can bound.
 - **A repository copy.** `fugaro secrets set claude-oauth-token-<name> --repo acme/webapp` (per
   installation, naming the repository; or per repository checkout without a value, which uses this
   checkout's origin) stores the repository's own copy, which overrides the project copy for that
@@ -145,10 +150,13 @@ prompt, never from an argument, a flag or the environment.
 
 ## 3. What the command writes
 
-The two blocks below are what `fugaro accounts add` writes — and what a hand edit writes instead, in
-which case the same rules (§4) hold. Both live in the operator's local config —
-`~/.config/fugaro/projects/<project>.yaml`, per installation, operator-only, never published to the
-runs bucket.
+Both blocks live in the operator's local config — `~/.config/fugaro/projects/<project>.yaml`, per
+installation, operator-only, never published to the runs bucket.
+
+`fugaro accounts add` writes two keys in them: the account's `allow_data_to` and the name in one
+profile's `claude_accounts`. The rest is written by hand — the `project_secrets` entry the `default`
+account's token is declared by (§2), and the profile's own `allow_repos`, which the command requires
+to be there but never writes — and §4's rules hold either way.
 
 **The account**, next to `providers` and `project_secrets`:
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"gopkg.in/yaml.v3"
 )
@@ -445,6 +446,20 @@ func TestDocsProjectClaudeAccountsOneCommand(t *testing.T) {
 	// that is the seven-step shape the design collapses.
 	if strings.Contains(doc, "Two edits, both in the operator's local config") {
 		t.Errorf("%s still presents the two hand edits as the work: fugaro accounts add does them, and the page's own §4 rules hold either way", projectClaudeAccountsDoc)
+	}
+	// A named account's token is stored project-wide only when the account
+	// names at least one repository, and §3 leans on §2 for that rule ("what
+	// decides whether the token's project-wide copy may exist at all"). It is
+	// projectWideAccepted that enforces it, so the page's bullet and the code
+	// are checked together: dropping the bullet leaves §3's cross-reference
+	// pointing at nothing.
+	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{"acme-team": {}}}
+	if projectWideAccepted(lc, config.ClaudeOAuthTokenPrefix+"acme-team") {
+		t.Error("projectWideAccepted accepted a named account whose allow_data_to names no repository: §2's bullet about a hand-stored named token is stale, and §3's cross-reference with it")
+	}
+	lc.ClaudeAccounts["acme-team"] = config.ClaudeAccount{AllowDataTo: []string{"acme/webapp"}}
+	if !projectWideAccepted(lc, config.ClaudeOAuthTokenPrefix+"acme-team") {
+		t.Error("projectWideAccepted refused a named account that names a repository: §2's bullet about a hand-stored named token is stale, and §3's cross-reference with it")
 	}
 }
 
