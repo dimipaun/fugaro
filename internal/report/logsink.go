@@ -59,12 +59,12 @@ var euid = os.Geteuid
 // spec's `~/.fugaro` would have been a fourth beside (F5).
 //
 // Every failure — no state directory, a directory the process does not own, a
-// name already taken, a read-only home — is returned as an error **and** as a
-// sink whose Path is empty, because a run with no log is still a run: the
-// caller's command must not fail over its log (G5). The values secrets
-// returns are the ones the run must never keep; they are read at each line,
-// so a value the converge fills in after OpenLog still applies (F6), and a
-// nil secrets keeps the stage's own lines only.
+// name already taken, a read-only home — is returned as an error and, with
+// it, as a sink whose Path is empty, because a run with no log is still a
+// run: the caller's command must not fail over its log (G5). The values
+// secrets returns are the ones the run must never keep; they are read at each
+// line, so a value the converge fills in after OpenLog still applies (F6),
+// and a nil secrets keeps the stage's own lines only.
 func OpenLog(cmdName string, getenv func(string) string, goos string, now func() time.Time, secrets func() []string) (Sink, error) {
 	if !logCommandRE.MatchString(cmdName) {
 		return noLog{}, fmt.Errorf("report: %q is not a command name, and a log is named after one", cmdName)
@@ -141,13 +141,15 @@ func logDir(dir string) (string, error) {
 	return dir, nil
 }
 
-// createLogFile creates the log and never an existing one: O_EXCL fails on a
-// file or a symlink already at the name, and the os.Root it is opened inside
-// puts O_NOFOLLOW under it on Unix, so a link swapped in between the Lstat
-// above and here is refused rather than followed (F6a). Windows is the
-// stricter of the two — os.Root there refuses any link (the note in
-// internal/cache/openfile_other.go) — which is why this is one portable call
-// rather than a per-platform pair.
+// createLogFile creates the log and never an existing one. The name is
+// predictable, so what is already at it decides nothing: O_EXCL refuses a
+// file or a symlink at the name outright, and the os.Root the create happens
+// inside is what puts O_NOFOLLOW under the open on Unix (os/root_unix.go) —
+// on Windows os.Root is stricter and refuses any link at all (the note in
+// internal/cache/openfile_other.go) — so nothing planted at the name is
+// followed, and the mode is 0600 from the first byte (F6a). os.Root is also
+// what makes this one portable call where a bare O_NOFOLLOW would need a
+// second platform pair.
 func createLogFile(dir, name string) (*os.File, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
