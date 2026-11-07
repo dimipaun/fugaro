@@ -33,12 +33,10 @@ bypassing the gateway — so their dollars are **notional** (`runstore.StageTimi
 review-only`; `internal/credsvc/review.go`): its model calls are served by the credentials service's
 **review class** from the installation's Claude OAuth account, and the class **refuses** a repository
 whose own `agent.auth` is an API key (`internal/runner/routing.go` `checkReviewClassModelPath`). It
-was **built and not admitted** while `internal/cli/review.go`'s `reviewJobAdmitted` was `false`, which
-is what `docs/releases/v0.20.2.md`'s known limits said, and it **is admitted from 0.21.0**: the
-constant is `true` (the owner's ruling of 2026-11-07, **CSR11**'s flip), because the service's review
-class serves a project-scoped review caller (`internal/credsvc/review.go`'s `pairReview`) — the
-second half of `docs/cloud-senior-review` §1's **E7**, which is met wherever the installation has
-enabled the service. The owner
+is **built and not admitted**: `internal/cli/review.go`'s `reviewJobAdmitted` is `false`, so
+`checkReviewJobAdmitted` refuses every launch until the service admits the review caller —
+`docs/cloud-senior-review` §1's **E7**, then **CSR11**'s flip after the owner's live checks
+(`docs/releases/v0.20.2.md`'s known limits: "the cloud review is built and not admitted"). The owner
 wants the same review served
 by an **Anthropic API key**, with the dollars real and capped, no subscription needed, and the key
 able to be a secret of its own.
@@ -62,10 +60,9 @@ for a tier-B entry and sends it to Anthropic with `gateway.UpstreamHeaders` — 
 half needs no base URL, no auth shape and no new upstream, only a pairing that may name the project's
 own key instead of a Claude account. The **OpenRouter** half is the provider-key apparatus §6.7
 describes, and it is a different slice. **Both cloud slices are cheaper than §6.7 prices the whole
-of it, and neither of them was what stood between the owner and a review: the launch was refused
-outright by `reviewJobAdmitted` until the flip landed, and 0.21.0 admits it** (**F10**, **U6**) — so
-this design prices the cloud code, and what an installation cannot yet do is have that review served
-by the project's own Anthropic key.
+of it, and neither of them is what stands between the owner and a review: the launch is refused
+outright by `reviewJobAdmitted` until E7** (**F10**, **U6**) — so this design prices the cloud code
+and says plainly that no installation can reach it yet.
 
 | File | What it is |
 | --- | --- |
@@ -134,10 +131,8 @@ recommended.** The full text, with the reason each one existed and the answer it
    tree has **two** independent reviews: the in-job stage and the cloud review run. The gate that
    carried — **no task in [implementation-plan.md](implementation-plan.md) may start before this is
    answered** — is lifted, and the plan covers both halves. The in-job half needs a name and a test,
-   while the cloud half needs the credentials service changed **and was refused outright while the
-   flip was pending**: every review launch was gated by `reviewJobAdmitted`, which is `true` from
-   0.21.0 (**CSR11**), so what the cloud half still needs is the key served to the review class and
-   not an admitted launch (**F10**, **U6**).
+   while the cloud half needs the credentials service changed **and is refused outright today**: every
+   review launch is gated by `reviewJobAdmitted`, which is `false` until E7 (**F10**, **U6**).
 2. **D1421 — answered: after 0.20.0.** The owner cut the api-key review from 0.20.0 on 2026-11-06,
    and the answer keeps that cut, so this design reopens nothing.
 3. **D1412 / D1413 — answered: no secret of its own, and the key wins when the owner asks for it

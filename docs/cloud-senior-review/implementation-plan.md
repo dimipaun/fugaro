@@ -5,10 +5,8 @@
 with the options named below, and the owner's seven rulings of 2026-11-01 (**O1–O7**) amending the ones
 they touch. An answered decision is not an
 approval to start: **every task still carries its own gate**, and one of them is hard. **E7** (the
-credentials service enabled and admitting a project-scoped job) **blocked** CSR7, CSR2 and the
-coordinator's merge path, and it is **met on `main`** — the service admits a project-scoped review
-caller (C3.9a–C3.9g merged) and **CSR11**'s flip admits the launch from 0.21.0 — so what a person still
-owes is the service enabled on the installation. **U7** (the owner-run live observation of the deployed fence) **is ANSWERED
+credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's
+merge path. **U7** (the owner-run live observation of the deployed fence) **is ANSWERED
 (2026-11-01)** — both fences hold — so it gates nothing **for the environment it probed**, an ordinary
 coding job on Cloud Run gen2 (if CSR7's review-only variant runs somewhere else, Check 125's step 7
 confirms again there), and the same answer is the observation the
@@ -1126,19 +1124,6 @@ is untouched by anything here.
 
 ### CSR11. Flip `reviewJobAdmitted` — after the owner's live check, and only then (SEC, OWNER-RUN)
 
-**LANDED (2026-11-07), and the order was the owner's.** The owner ruled on 2026-11-07 — "Let's flip
-it for 0.21.0" — so the flip shipped with that release and **the live checks this section gated it on
-run after the tag instead of before it**: C3.9, Check 125's steps 6 and 7 and Check 290's rerun, with a
-finding going to 0.21.1 and never gating this change. The OWNER-RUN bullet below is overridden in
-**order**, not in substance: the checks are still the owner's, in their own terminal, and an agent ran
-the flip itself. The flip's commit is the one that **deletes
-CSR12's switch**, exactly as the two tasks wrote it, and it took the rule below as the reason: a switch
-that outlives the gate it was built for is a hole with no reason left to be open. What the flip rests
-on is a fact in the tree and not a promise: `internal/credsvc/review.go`'s `pairReview` admits a
-project-scoped review caller through `admittedAccounts`, and `internal/credsvc/auth.go`'s `verifyJob`
-reads the review class before the per-repository table, so a review variant's own account is no longer
-refused whole (**CSR14** #1778, **CSR15** #1781).
-
 **Decisions:** **D893 (c)** — the flip is E7's second half made true by C3.9a–C3.9g, which are **merged**
 on the credentials service's side; **O1**; and **D888/O7** for the release it lands in.
 **Findings:** F1, F5, **F9**. **Depends on:** **CSR8** (a flipped constant launches a run the container
@@ -1180,12 +1165,10 @@ deletes it — a switch that outlives the gate it was built for is a hole with n
   same two facts it reports today, and the honest consequence is stated in its own words: **a green
   `doctor` is the two halves, and the release notes are where the constant's state is written** — a
   binary older than the flip keeps refusing whatever the installation says.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewLaunchIsAdmitted|TestReviewRefusesWhereTheCredentialsServiceIsOff|TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit|TestReviewReadsNoAdmissionSwitch' -count=1`.
-- **Tests:** `TestReviewLaunchIsAdmittedOnADefaultTree` (the release's own state: the launch proceeds on a
-  default tree, the job it names is the review variant's, and the two halves are still checked first — the
-  constant removes one refusal, not the others), `TestReviewRefusesWhereTheCredentialsServiceIsOff` (E7's
-  first half, unchanged by the flip), `TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit` (the
-  refusal's sentence, kept for a binary that predates the flip and for the test seam), and
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewAdmitted|TestReviewStillRefuses|TestReviewReadsNoAdmissionSwitch' -count=1`.
+- **Tests:** `TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped` (the release's own state: the launch
+  proceeds and the two halves are still checked first — the constant removes one refusal, not the others),
+  `TestReviewStillRefusesWhenTheCredentialsServiceIsOff` (E7's first half, unchanged by the flip), and
   `TestReviewReadsNoAdmissionSwitch` (**CSR12's switch is gone**: with the test seam back at `false` and
   `FUGARO_REVIEW_SKIP_ADMISSION_CHECK` set in the environment, the launch is refused **exactly as with it
   unset** — which is what "no code path reads it" means once the constant is `true`; the mutation is
@@ -1195,7 +1178,7 @@ deletes it — a switch that outlives the gate it was built for is a hole with n
   it is the owner's C3.9 check — which is why the check comes first and why the constant is not a claim
   the code can make. The hermetic half is the half this task can hold: the two refusals above, and the
   switch's absence.
-- **Red step:** `TestReviewLaunchIsAdmittedOnADefaultTree` fails while the constant is `false`:
+- **Red step:** `TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped` fails while the constant is `false`:
   a review cannot be launched at all, and the command says so. **SEC flag:** yes — a wrong flip launches a
   job the service answers 401 (a run that spends and fails), and a flip ahead of CSR8 would have left a
   container that halts at admission with a refusal nobody can act on — **that risk is closed rather than

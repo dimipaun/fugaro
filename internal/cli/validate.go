@@ -733,12 +733,7 @@ func reviewJobNotes(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 // The two halves are named apart because only one of them is reachable from
 // `fugaro update`. The note never offers a second command for the admission
 // half — none exists — and it never reads as "deploy the service and the review
-// works": the launch refuses until both hold, and so does this sentence. From
-// 0.21.0 the admission half holds (reviewJobAdmitted), so an installation of
-// this release is answered by the service's own sentence alone; the two cases
-// below it are what a binary predating the flip prints, kept because such a
-// binary is what an operator may still be running, and set false only by a
-// test's seam.
+// works": the launch refuses until both hold, and so does this sentence.
 func reviewPreconditionNote(lc *localcfg.Config) string {
 	const launch = "fugaro review --pr N refuses until it holds"
 	enabled := lc.CredentialsService != nil && lc.CredentialsService.URL != ""

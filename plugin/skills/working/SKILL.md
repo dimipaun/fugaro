@@ -52,7 +52,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 - `fugaro diagnose <run>` explains one run: its stage, reason, tests, review findings, the agent's last word, cost and pull request.
 - `fugaro report --by repo` (or `day`, `week`, `month`, `year`, `model`, `person`, `mode`) shows what the project spent. It is part of Fugaro Enterprise: a build without it answers that this build does not include it.
 - `fugaro budget show` shows the caps, today's counters and any kill switch.
-- `fugaro review --pr N` starts an independent review of a pull request that already exists, in a job of its own rather than the run's: `--token NAME` names the account it runs as, `--mutate <file>:<test>` asks for one mutation check, and `fugaro review show RUN` prints the verdict that job wrote. It needs the installation's credentials service, because the reviewer's read-only git credential and its model calls both come from there, so where an installation has no such service the launch is refused: that refusal is the sentence to read out, never a retry and never something to work around.
+- `fugaro review --pr N` starts an independent review of a pull request that already exists, in a job of its own rather than the run's: `--token NAME` names the account it runs as, `--mutate <file>:<test>` asks for one mutation check, and `fugaro review show RUN` prints the verdict that job wrote. It needs the installation's credentials service, because the reviewer's read-only git credential and its model calls both come from there, so where an installation has no such service, or none that admits a review caller, the launch is refused: that refusal is the sentence to read out, never a retry and never something to work around.
 
 ## Cancel and retry
 

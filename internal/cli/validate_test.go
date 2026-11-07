@@ -3294,10 +3294,7 @@ func TestValidateNotesTheSubscriptionStageBound(t *testing.T) {
 // admission of a project-scoped caller inside the service itself (C3.9). A note
 // that told the owner to run a second command for it would send them looking
 // for one that does not exist, and one that stayed silent about it would read
-// as "the review will work once the service is deployed". The rows that set
-// admitted false are the ones a binary predating 0.21.0's flip answers (the
-// seam; reviewJobAdmitted), and the tree's own state is the rows whose
-// admission holds.
+// as "the review will work once the service is deployed".
 func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 	const service = "credentials_service: { url: https://fugaro-credentials-abcde-uc.a.run.app }\n"
 	preconditionNote := func(errOut string) []string {
@@ -3310,7 +3307,7 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 		}
 		return got
 	}
-	t.Cleanup(func() { reviewJobAdmitted = true })
+	t.Cleanup(func() { reviewJobAdmitted = false })
 	for _, tc := range []struct {
 		name     string
 		local    string
