@@ -38,6 +38,13 @@ const recordEndFile = "recordend.go"
 // record's Status is the same fact, so every one of them is reported by the
 // file and line that makes it.
 //
+// The field is not the only way in, so the guard does not stop at it: writeEnd
+// is the pair of assignments recordEnd is, and a second writer could as easily
+// be a helper in another file calling writeEnd(r.rec, …). That call is the same
+// fact through one more hop, so it is reported like an assignment — which is
+// what makes "one writer" a statement about recordEnd and not about the syntax
+// it happens to use.
+//
 // storeUnposted is accounted for rather than excepted: it renders a copy of
 // the record into the stored report, and the copy's status is written by
 // recordend.go's own writeEnd like every other, which is why no statement
