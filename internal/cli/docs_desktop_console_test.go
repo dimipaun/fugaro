@@ -533,18 +533,20 @@ var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
 // consoleMovedSections are the document's headings whose command and shapes
-// moved out of the core — the coordinator's with E2.1b, the report's with
-// E2.2b: the code they document is under ee/, so this build cannot name a field
-// or a flag of it and the checks below would be reading the shapes of a package
-// they cannot import. The same checks run over these sections against the
-// tagged tree, where the code is in the build
-// (ee/coordinator/cli/console_contract_test.go, ee/report/cli/console_contract_test.go).
-// §6.15 is the coordinator's too — coordinator v2 C3's `coordinator show`, whose
-// document and command are both under ee/ — and it is a heading of its own
-// rather than a part of §6.13 because the two document different reads of
-// different shapes. §6.16 is coordinator v2 C4's `coordinator intents`, under
-// ee/ for the same reason.
-var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "### 6.16 ", "## 4. `fugaro report --json`"}
+// live under ee/: the coordinator's moved there with E2.1b, the report's with
+// E2.2b, and the graph's never lived in the core at all (D1362 puts `fugaro
+// graph` in ee/ from its first line, the graph plan's CG3). This build can name
+// no field or flag of any of them — an untagged build compiles neither the
+// command nor the shapes — so the checks below would be reading a package they
+// cannot import. The same checks run over these sections against the tagged
+// tree, where the code is in the build
+// (ee/coordinator/cli/console_contract_test.go, ee/report/cli/console_contract_test.go;
+// §6.21's own pin arrives with the graph command, CG3). §6.15 is the
+// coordinator's too — coordinator v2 C3's `coordinator show`, whose document and
+// command are both under ee/ — and it is a heading of its own rather than a part
+// of §6.13 because the two document different reads of different shapes. §6.16
+// is coordinator v2 C4's `coordinator intents`, under ee/ for the same reason.
+var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "### 6.16 ", "### 6.21 ", "## 4. `fugaro report --json`"}
 
 // consoleMovedRows are the document's individual lines that name a flag of a
 // moved command without sitting under a moved heading: §8's inventory carries

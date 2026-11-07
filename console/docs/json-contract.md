@@ -2577,6 +2577,158 @@ than a document. The command is the same pair §6.19's paragraph describes, so t
 `--`-terminated value, the two phase words and the layer's provenance are
 written down there and not twice here.
 
+### 6.21 `fugaro graph --json` — the dependency graph, and its stream
+
+**Command:** `ee/graph/cli/graph.go`, registered through `RegisterCommand`
+(`ee/register/graph.go`) — the graph plan's CG3. It is a **paid command** like
+the Coordinator tab's, because its `all` scope is the coordinator's stored view
+(D1362, F26); the plan scope the Graph already draws stays where it is.
+**Document:** `graph.Document`, `graph.SourceState`, `graph.Node` and
+`graph.Edge` (`ee/graph/document.go`), with the node key built by
+`graph.NodeKey` and the `--source` value parsed by `graph.ParseScope`
+(`ee/graph/key.go`). Cited by symbol, not by line, for §6.11's reason.
+
+**The command this section describes is not on `main` yet, and the section is
+written first on purpose.** CG1 (the document, the key and the scope pattern)
+has landed; CG3 (`graph --json`), CG7 (`graph --watch --json`) and the console's
+own read (CG9a, CG9b) are the tasks that follow, in that order. Every field
+below is read off `ee/graph/document.go`'s struct tags and every rule off the
+plan's H1 to H5, so a later task that finds the code disagreeing with this
+section has found a defect in one of the two.
+
+**It needs no checkout, and that is the point of the read.** `plan status`
+(§6.12) and `plan graph` (§6.9) read the plans of the installation's checkout and
+show a card when there is none (F10); `graph` asks the project's database what
+the coordinator's sweep stored — the read §6.13 already makes, through the
+caller's own credentials (`roles/firebasedatabase.viewer`) — so a scope paints
+with no checkout at all. **The plan scope keeps its checkout and its card**; the
+new scopes are what the dropdown adds beside it (D1356).
+
+**`--source` selects the scope, and the set is closed.** `all` is the default and
+is the union of the scopes that exist — today the coordinator alone —
+`coordinator` is the stored view, and `orchestrator:<id>` and `local:<id>` are
+**refused with "no orchestrator is installed in this build"** until CG4 and CG5
+register their readers: an honest refusal, never an empty graph, because a screen
+must be able to tell "nothing here" from "not asked". The value reaches argv from
+the renderer, so the CLI refuses everything but the closed set below **before it
+reads anything** (H1), and the console sends only a value a previous read listed
+(F21):
+
+| Value | What it names |
+| --- | --- |
+| `all` | every scope that exists: today the coordinator's stored view, and the orchestrator scopes as they are built |
+| `coordinator` | the coordinator's stored view: every repository it has reconciled (§6.13), with no checkout |
+| `orchestrator:<id>` | one orchestrator's node under `orchestrator/` — **refused today**, CG4's reader |
+| `local:<id>` | one local orchestrator, read through its node and its cache file — **refused today**, CG5's reader |
+
+An id is one lower-case letter or digit, then up to 39 more of those or a hyphen,
+and nothing else. So a leading `-` (which would reach argv as a flag), a path
+separator, an uppercase letter, whitespace, a `.`, an `@` and a 41-character id
+are each refused, by `graph.ParseScope`'s anchored pattern.
+
+The document:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's own shape version, `1` today (`graph.DocumentVersion`). **A field's meaning never changes under it** (the rule at the top of this document): adding a field is compatible, removing or retyping one bumps the version, and a field whose meaning must change gets a new name. A reader reads the version first and refuses one it does not know rather than guessing — and the Go side reads the document **strictly**, so an unknown key is an error and never a key quietly dropped (`ParseDocument`) |
+| `stream_id` | string | never | never | the stream this document belongs to. **`""` in a one-shot read** — the value that answers "not a stream" — and a value drawn once per `--watch` child, printed in every document that child writes |
+| `seq` | number | never | never | the document's place in its stream: **`0` in a one-shot read**, and `1`, `2`, … within one `stream_id` in a stream, rising by one per document. It is never compared across `stream_id`s |
+| `generated_at` | string | never | never | RFC 3339; when the document was assembled. A **clock**, not an as-of: what a scope's data is worth is `sources[].as_of`, and a screen that draws an age draws it from that and never from this |
+| `sources` | array | never | never | one entry per scope the document covers, below. `[]` is a fact — the document covers nothing — and never a null: an empty list is written as an array (`MarshalJSON`), and a `null` read back is the empty list it means |
+| `nodes` | array | never | never | the graph's nodes, below. `[]` is a fact — the scope has nothing to draw — and the scope's own state sits beside it in `sources`, so a screen tells "empty" from "down" (H3) |
+| `edges` | array | never | never | the relations between nodes, by `key`, below. **The coordinator's stored view has no edges, so a document drawn from it alone carries `[]`** (F17); the orchestrator scopes' `depends_on` are what fills it (CG5) |
+| `warnings` | array | never | never | what the read could not do, as sentences fit to print; `[]` is the ordinary case. Sanitised with `safetext.Field` like every other string here |
+
+one entry of `sources`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `source` | string | never | never | the scope this state is about, exactly as it is written on the command line (`graph.Scope.String`): `all`, `coordinator`, `orchestrator:<id>` or `local:<id>`. It is the source half of every `key` that came from it, and the value the console sends back as `--source` |
+| `state` | string | never | never | one of the four words below. **The whole answer**, so a screen draws it as a word and never as a colour alone (H3, H10) |
+| `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good — for the coordinator scope, the sweep's stored time (CG2). **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it |
+| `reason` | string | never | never | why, in words, when the state is not `up`; `""` when it is. The read's own sentence, sanitised like every other string here, and the field a screen shows **beside** the state rather than instead of it |
+
+**The four states, defined.** A scope that is down is a **state and not an
+exit** (H3): the read answered, and this entry is its answer.
+
+- `up` — the source was read and its data is what it is. `reason` is `""`.
+- `down` — the source could not be reached: a withdrawn RTDB stream, a local
+  orchestrator whose node is gone. The other scopes keep their figures, and a
+  stream keeps streaming.
+- `stale` — the source answered with data known to be old: the coordinator's
+  stored view is stale once it is older than twice the sweep period (the sweep
+  is the 15-minute Scheduler job, F16; CG2), and the instant it is old as of is
+  `as_of`.
+- `unreadable` — the source answered with something this build cannot read. It
+  is a state of the source, never a refusal of the whole read.
+
+**A refused read is the other case, and it is terminal.** An invalid `--source`
+(H1), or a scope this build does not have (`orchestrator:` and `local:` before
+CG4 and CG5), is an error with a non-zero exit and **no document at all**, naming
+the command — which is what the console reads as "this CLI has no graph" and
+answers by keeping the plan scope and a refusal sentence (T3, CG10). A refusal
+and a `down` source are told apart by exactly that: one is a process that printed
+nothing and failed, the other is a document with the state in it.
+
+one entry of `nodes`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `key` | string | never | never | `<source>:<id>`, built by `graph.NodeKey` — the one place the join happens, so a reader that takes a key apart and a writer that builds one cannot drift. **Unique within one source and not across them**: `coordinator:42` and `local:o1:42` are two nodes, and nothing dedupes across sources (D1356). **A reader takes a key apart with the `source` and `id` beside it and never by splitting on the first colon**, because a local scope's own string carries one: the key `local:o1:42` is source `local:o1` and id `42` |
+| `source` | string | never | never | the scope the node came from, as `sources[].source` spells it: the identity half of the node and not prose, refused rather than sanitised for `id`'s reason |
+| `kind` | string | never | never | one of `pull_request`, `run`, `task` (`graph.NodePullRequest`, `NodeRun`, `NodeTask`) — the kinds this document knows today. The coordinator scope produces the first two: its pull requests and the runs joined to them (CG2). `task` is the orchestrator scopes' (CG5) |
+| `id` | string | never | never | the source's own id for the thing: the other half of `key`, and the pull request's number, the run's id or the task's id as that source writes it. **Identity, not prose**: `source` and `id` are the two fields the read refuses rather than sanitises, because `safetext.Field` is lossy and two raw ids that collapse to one string would otherwise share one key (D1356) |
+| `title` | string | never | never | what a person reads. **Untrusted display text**: sanitised with `safetext.Field` on construction, and re-sanitised by the console's own class before a renderer sees it |
+| `repo` | string | never | never | the repository the node belongs to, `owner/name`. **Untrusted display text**: a screen draws it as text and never as a link, a path or an attribute |
+| `state` | string | never | never | the source's own word for the node's state — what a pull request, a run or a task carries in the source it came from, carried through with no translation here, because the document has no vocabulary of its own. `""` is a source with no state to give, not a gap |
+| `release` | string | never | never | the release the node belongs to, as the source spells it — the coordinator's stored records each carry one (`coordinator.Record`) — which is what groups the coordinator scope's nodes. `""` means the node names no release |
+| `updated` | string | never | **yes** | RFC 3339; when the node last changed. **Null when the source does not say**, and null is not "just now" |
+
+one entry of `edges`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `from` | string | never | never | the `key` of the node the relation starts at |
+| `to` | string | never | never | the `key` of the node it ends at |
+| `kind` | string | never | never | the source's own word for the relation (`depends_on` is the one the orchestrator state carries, F14); the document defines no vocabulary of its own. An edge whose two keys name no node in the same document is drawn as nothing rather than as a node of its own |
+
+**`graph --watch --json`: whole snapshots, one per change.** The stream prints
+whole documents rather than event deltas (D1360, F19). The first snapshot arrives
+within a bounded time, then one document per change, at most one a second
+(`watch --json`'s own floor, `watchJSONGap`), each written **compact, one object
+per line** — so §10's guarantees and the console's reader apply to it unchanged:
+a slow reader makes the child block and never drops a document (§10.3), and a
+closed stdout ends the child on its next write (§10.4). **A lost document needs
+no repair**: the next one is the whole graph. §9 rule 2 counts the
+line-delimited commands of the console's own set, and the graph is not in that
+set yet — the spawn row that puts it there is CG9b's, and that task moves the
+count with its row.
+
+**`stream_id` and `seq`, and why both.** Each child draws a `stream_id` once and
+prints it in every document it writes; `seq` starts at `1` and rises by one per
+document within that child, and it is **not comparable across children** — so the
+console compares a `seq` only inside one `stream_id`, and treats a new
+`stream_id` as a whole new snapshot whatever numbers the two carry (H4, F20). A
+one-shot read carries `stream_id: ""` and `seq: 0`, the two values that answer
+"this is not a stream" without a flag a reader has to be told about.
+
+**A keep-alive, because a quiet graph prints nothing.** A hard-killed console
+(SIGKILL, a crash) leaves a child that exits on its **next stdout write** (§10.4,
+F11), which for a graph that does not change could be minutes: so the stream
+writes a keep-alive document **on a timer — every 30 seconds** — carrying the
+same `stream_id`, the next `seq` and the sources' states (H4, F20). There is no
+`keep_alive` field: the tick is an ordinary document of this shape, and a reader
+applies it like any other. A reconnected RTDB stream prints a **full snapshot**
+and the next `seq` rather than a delta — the client restarts its own subscription
+and each connect begins with a full `put` of the subtree (`rtdb.Client.Stream`)
+— so a reader never has to ask what it missed.
+
+**One subscription per scope.** The child subscribes to **one** `coordinator/`
+subtree per scope it covers, shared across that scope's nodes rather than opened
+once per node (H6, F12): an RTDB stream is a held connection, and the console
+runs this one only while the Graph tab is visible and counts it in
+`MAX_LIVE_FEEDS` (CG9b, CG11).
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
