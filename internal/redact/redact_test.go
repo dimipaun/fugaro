@@ -163,7 +163,7 @@ func TestTextRedactsPatterns(t *testing.T) {
 
 // TestTextIsBothPasses: Text is the exact pass and then the pattern pass, so
 // one string holding a value Fugaro holds and one it does not loses both.
-func TestTextIsBothPasses(t *testing.T) {
+func TestRedactsBothPasses(t *testing.T) {
 	known := fake("known-", "value-0123456789")
 	shaped := fake("ghp_", strings.Repeat("A1b2C3d4", 5))
 	got := Text("line "+known+" and "+shaped+" end", []string{known})
@@ -177,7 +177,7 @@ func TestTextIsBothPasses(t *testing.T) {
 
 // TestReportMasksThePerson: the issue report is the one output that must not
 // carry the address or the home directory of whoever filed it.
-func TestReportMasksThePerson(t *testing.T) {
+func TestReportRedactsThePerson(t *testing.T) {
 	for _, tc := range []struct{ name, in, leak string }{
 		{"email", "filed by " + fake("dimi", "@", "example.com") + " today", fake("dimi", "@", "example.com")},
 		{"home path", "at " + fake("/home/", "someone", "/.config/fugaro/fugaro.yaml") + " the file is", fake("/home/", "someone")},
@@ -205,7 +205,7 @@ func TestReportAlsoRedactsPatterns(t *testing.T) {
 
 // TestPassesLeaveCleanTextAlone: a diagnosis is mostly ordinary words, and a
 // pass that redacted them would be unreadable.
-func TestPassesLeaveCleanTextAlone(t *testing.T) {
+func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 	for _, s := range []string{
 		"the update failed with exit code 1: terraform apply",
 		"see https://github.com/dimipaun/fugaro/pull/1918 for the change",
@@ -224,7 +224,7 @@ func TestPassesLeaveCleanTextAlone(t *testing.T) {
 
 // TestPassesAreIdempotent: a diagnosis is redacted again on its way into the
 // report, and a second pass must not keep eating the text.
-func TestPassesAreIdempotent(t *testing.T) {
+func TestRedactPassesAreIdempotent(t *testing.T) {
 	for _, tc := range patternCases {
 		exact := []string{"a-known-value", "another-known-value"}
 		once := Text(tc.in, exact)
@@ -243,7 +243,7 @@ func TestPassesAreIdempotent(t *testing.T) {
 // loose on purpose — this runs under -race on a shared machine, where the
 // same pass costs an order of magnitude more — and it is still far below what
 // a pass that scanned the text again for every position would take.
-func TestPassesAreBounded(t *testing.T) {
+func TestRedactPassesAreBounded(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i < 500; i++ {
 		b.WriteString("Authorization: Bearer " + strings.Repeat("A1b2C3d4", 3) + "\n")
