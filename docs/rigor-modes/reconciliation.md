@@ -745,7 +745,10 @@ pin over the three comment-only fragments under `docs/pending-workflows/`, moved
 the table's row from 103 to 104: it is a check's pin rather than a folder's, and
 the figure is the tree's either way. Amended 2026-11-07: `internal/cli/docs_roles_scopes_test.go`, the
 roles-and-scopes folder's pin (RS1: the decision block, the answered cells, the files
-and the tests the plan names), moved the table's row from 105 to 106.) They
+and the tests the plan names), moved the table's row from 105 to 106. Amended 2026-11-07:
+`internal/cli/docs_release_gate_test.go`, the subscriptions release gate's pin over the two release
+procedures' counsel sign-off and the honour-based release that checks no key (S0.7), moved the
+table's row from 109 to 110.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

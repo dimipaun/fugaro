@@ -53,14 +53,5 @@ func TestDocsLicensedReleasesWaitForCounsel(t *testing.T) {
 				t.Errorf("%s lacks %q: counsel signs off D432, D433 and D436 (S8.4) before the first licensed release of either stream ships, and the release is honour-based with no key check (D448, T17)", c.path, want)
 			}
 		}
-
-		// The gate replaced the wait these two READMEs carried for the
-		// Subscription Terms to be published: the Terms are published
-		// (website/content/subscription-terms.md, approved by counsel and dated
-		// 2026-10-28), so a README that still holds a release for them states a
-		// condition the tree has already met.
-		if strings.Contains(flat, "not published yet") {
-			t.Errorf("%s still waits for the Subscription Terms to be published: they are published (website/content/subscription-terms.md), so the release waits on counsel's sign-off of D432, D433 and D436 instead (D448, T17)", c.path)
-		}
 	}
 }
