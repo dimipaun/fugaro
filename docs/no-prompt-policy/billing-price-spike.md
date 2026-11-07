@@ -4,8 +4,11 @@
 UNVERIFIED the plan left open — *"D1550's Billing grant"* (reconciliation §6) — and answers the six
 questions the owner asked of it. Everything below is either a quotation from Google's own
 documentation (by URL, in §7), a fact read out of this repository (by path and symbol), or marked
-**UNVERIFIED**. Nothing here is a live cloud read: the only network calls the spike made were to
-Google's public documentation and two unauthenticated requests to a public endpoint (§1.4).
+**UNVERIFIED**. There is a fourth kind, marked as such where it appears: a **spot observation** from
+an unauthenticated request to a public endpoint (§1.4), reproducible only in outline, which never
+carries a conclusion on its own. Nothing here is a live cloud read and no credential is used: the only
+network calls the spike made were to Google's public documentation and a handful of unauthenticated
+requests to a public endpoint — no token, no key, no project.
 
 **Decisions this answers:** D1550 (the rate is queried from Cloud Billing at run time), tension T5,
 F19 (the lease path), F5 (the estimator), and T8's file list (`iam.tf` *"only if the spike finds a
@@ -118,18 +121,24 @@ Three consequences, and they are the heart of this spike:
 
 ### 1.4 Credential: API key or the caller's own credentials — **UNVERIFIED**
 
-What is verified:
+What is documented, and what was observed:
 
 - Every public example on the pricing page sends `…?key=API_KEY`, and the page says *"you must
   create an API key"*.
 - Every billing-account example sends `-H "Authorization: Bearer $(gcloud auth print-access-token)"`
   and is what the IAM permissions above are for.
-- A request to the public endpoint with no credential at all is refused with
-  *"Method doesn't allow unregistered callers … Please use API Key or other form of API consumer
-  identity to call this API."* (`GET https://cloudbilling.googleapis.com/v1/services`, no
-  credential, HTTP 403, run 2026-11-07). With a syntactically valid but unissued key it answers
-  `API_KEY_INVALID` (HTTP 400). So the endpoint wants **an identity**, and an API key is one form of
-  it — but this says nothing about which IAM a *token* would need.
+- *Spot observation, not a quotation, and the wording is not stable.* A request to the public
+  endpoint with no credential at all is refused — HTTP 403 on every attempt — but **the body differs
+  between identical requests**, so no argument here may rest on the text. Re-run 2026-11-07 against
+  `GET https://cloudbilling.googleapis.com/v1/services`, the same URL seconds apart answered both
+  *"Method doesn't allow unregistered callers (callers without established identity). Please use API
+  Key or other form of API consumer identity to call this API."* (plain, `status: PERMISSION_DENIED`)
+  and, with a `google.rpc.ErrorInfo` detail, *"Permission denied on the service."* (`reason:
+  ACCESS_DENIED`) — in both orders, and with and without `?pageSize=5`, which does not predict which
+  comes back. What holds every time is the status, not the sentence: the endpoint wants an
+  **identity**, and an API key is one form of it. With a well-formed but unissued key the answer is
+  instead HTTP 400 with `reason: API_KEY_INVALID` (*"API key not valid…"*), which is the stable one and
+  is what the pricing page's examples exist for. Neither says which IAM a *token* would need.
 - No Cloud Billing IAM role or permission for the **public** catalog exists at all: neither
   `https://cloud.google.com/billing/docs/how-to/billing-access` nor
   `https://cloud.google.com/iam/docs/roles-permissions/billing` lists a `services.skus.*`
@@ -150,9 +159,11 @@ curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
 ```
 
 *If it answers with services, the token route is real and no key exists anywhere in the design. If it
-answers 403, the lookup needs an API key — and §3 and §6 change accordingly.* Note the second
-header: without it a user token is billed to Google's own quota project, which is the case
-`ErrNoQuotaProject` describes and not the one the code will be in (§1.2).
+answers 403, the lookup needs an API key — and §3 and §6 change accordingly.* The unauthenticated 403
+above decides neither way: Google's frontend refuses the caller before any IAM is consulted, so only
+the same call **with** a token separates "public data, no permission" from "the token needs a role".
+Note the second header: without it a user token is billed to Google's own quota project, which is the
+case `ErrNoQuotaProject` describes and not the one the code will be in (§1.2).
 
 ### 1.5 The Cloud Build machine-minute SKU — **UNVERIFIED**
 
