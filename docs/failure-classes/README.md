@@ -1,13 +1,13 @@
 # A closed failure class on every run record, and a failures report — spec, reconciliation and plan
 
-**Status: plan only; nothing is implemented; no task approved.** This is a plan for the owner to read.
-The design it reads is already merged (`docs/design/failure-classes.md`, pull request **#1746**, docs
-only) and already pinned; what this folder adds is the reconciliation of that design against the code
-on `main`, the reader census it needs and does not carry, and a plan sliced so the tasks can run in
-parallel. It adds no code, no schema, no config key, no command and no Terraform; it edits no file
-outside `docs/`; and **nothing in it is an approval** — every task in
-[implementation-plan.md](implementation-plan.md) needs the owner's own go, and the first of them needs
-the decisions below narrowed to a range first (see **Open items**).
+**Status (2026-11-07): the owner approved this plan and answered every decision below as recommended;
+FC1 is built on `main`, and FC2–FC9 are not started.** The design it reads is already merged
+(`docs/design/failure-classes.md`, pull request **#1746**, docs only) and already pinned; what this
+folder adds is the reconciliation of that design against the code on `main`, the reader census it
+needs and does not carry, and a plan sliced so the tasks can run in parallel. It adds no code, no
+schema, no config key, no command and no Terraform; it edits no file outside `docs/`; and the approval
+is the plan's — every task in [implementation-plan.md](implementation-plan.md) is built on its own, in
+its own run, in the order its §2 fixes.
 
 **Asked by:** the repository owner, in a message of **2026-11-07** that put the work in the **0.22.0**
 slot. The role is the one the design's own §2 describes: the person who owns the installation and
@@ -27,8 +27,8 @@ the digest. `reason` keeps its meaning byte for byte; the field is additive, so 
 
 | File | What it is |
 | --- | --- |
-| [spec.md](spec.md) | `docs/design/failure-classes.md`, **byte for byte**, with a header naming the owner by role, the pull request that merged it and the fact that the copy is dated. Where this file and the others disagree about what the design *says*, this file wins |
-| [reconciliation.md](reconciliation.md) | Every claim of the design against the code on `main`, read by path and symbol: how the record and its five readers work today (§2: `result.json` and the schema, `runs ls --json`, `diagnose`, the console, the phone, the history census, the plugin and `watch`), where a failure reason is produced today (§3: `internal/runner`, `internal/runstore`, `internal/cli`'s `diagnose`), the findings **F1–F36** (Wrong / Exists / Gap / Rule / Open), the closed-field rule applied (§5), the decisions **D1450–D1469** with an **empty owner's-answer cell each** (§6), the number block and how it was read (§7), the **UNVERIFIED** section (§8) and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
+| [spec.md](spec.md) | `docs/design/failure-classes.md` **as it stood at `56c91f66`**, byte for byte, with a header naming the owner by role, the pull request that merged it and the fact that the copy is dated. Where this file and the others disagree about what the design *says*, this file wins — and the design has moved since the copy: its status line now records that FC1 shipped and its §3 names `failure.Classes()`, both of which the copy predates |
+| [reconciliation.md](reconciliation.md) | Every claim of the design against the code on `main`, read by path and symbol: how the record and its five readers work today (§2: `result.json` and the schema, `runs ls --json`, `diagnose`, the console, the phone, the history census, the plugin and `watch`), where a failure reason is produced today (§3: `internal/runner`, `internal/runstore`, `internal/cli`'s `diagnose`), the findings **F1–F36** (Wrong / Exists / Gap / Rule / Open), the closed-field rule applied (§5), the decisions **D1450–D1469**, each carrying **the owner's answer of 2026-11-07 — the recommendation** (§6), the number block and how it was read (§7), the **UNVERIFIED** section (§8) and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The **six levels** and the tasks **FC1–FC9**, each with its files, its interfaces, its named tests **and the command that runs them**, what it depends on, its **red step**, its **reviewer tier**, whether it is owner-run and whether it is SEC, and its commit; the levels and the **critical path** (§1), the **shared-files table that holds no two writers of one file in a level** (§2), what is deliberately not in the plan (§4), the release slot the owner named (§5), the owner-run live check **Check 350** (§6) and the gates a task may not start without (§7) |
 | `README.md` | This file: the status, the asker, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
@@ -38,7 +38,7 @@ the digest. `reason` keeps its meaning byte for byte; the field is additive, so 
 in 36 statements, in 24 functions across 8 files** — reproduced statement by statement from
 `grep -rn 'rec\.Status[^=!]*= runstore\.Status' internal/runner --include='*.go' | grep -v _test.go`,
 and held by `TestDocsFailureClassCensusMatchesTheRunner`
-(`internal/cli/docs_pr_state_test.go:250`), which counts it from the tree rather than trusting the
+(`internal/cli/docs_pr_state_test.go:279`), which counts it from the tree rather than trusting the
 document. Everything the design's §1–§5 rests on — the free-text `reason`, `fail`/`failLocked` and the
 three sites that overwrite the record's reason after them, the phrase-table classifier beside
 `oauthLimitPhrases`, the six digest flags, the four pattern rules, the additive-schema precedent —
@@ -83,8 +83,10 @@ reconciliation §2 reads **every reader** — the console (`console/docs/json-co
 
 ## What a reader should not take from this folder
 
-- **It is not an approval, and it is not a decision.** D1450–D1469 are questions with a recommended
-  answer each and an **empty** owner's-answer cell; no recommendation here has been taken.
+- **The approval is the plan's, not each task's.** D1450–D1469 are questions with a recommended answer
+  each, and the owner answered all twenty on **2026-11-07** as recommended — so the gates are met and
+  the tasks are still built one at a time, in the order [implementation-plan.md](implementation-plan.md)
+  §2 fixes, each in its own run.
 - **It is not a second design.** The design is merged and pinned; this folder does not re-argue it. It
   reads it against the tree, and where a citation drifted or a claim does not match the code, the
   reconciliation says so and the plan is written against the correction.

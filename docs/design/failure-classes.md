@@ -1,9 +1,11 @@
 # Failure classes: a closed vocabulary on the run record, and a failures report
 
-**Status: a design; nothing is built; no decision below is answered.** This document recommends, and
-names the alternative and what it costs, for every question it takes up; the owner rules. The tasks
-in §10 are a plan, not an approved one. What is written here was read against `main` on 2026-11-05,
-and the line citations are taken from that tree.
+**Status: a design, and its FC1 has shipped; the owner ruled on 2026-11-07, and the rest of §10 is not
+built.** This document recommends, and names the alternative and what it costs, for every question it
+takes up; every decision below is answered, as recommended. **FC1** — the vocabulary, the record's
+field and the schema's enum — is on `main`: `internal/failure`, the `failure.Classes()` slice §3 names,
+and `Record.FailureClass`, which no producer writes yet. **FC2–FC9 are not started.** What is written
+here was read against `main` on 2026-11-05, and the line citations are taken from that tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
 [artifact-runs.md](artifact-runs.md) (the report a run writes with the digest), the digest's own
@@ -163,9 +165,9 @@ knows what to do without reading a sentence:
 | `unclassified` | the terminal the run reached has no class of its own (`stage_no_result`'s neighbour: a class the vocabulary does not yet hold). The report prints its count, and that count is the signal to name one. | other | yes | yes |
 
 **Nineteen values, and the set is closed in Go, in the schema and in the digest**, the way
-`runstore.HaltReason` and the six digest flags are: one slice the tests read (`FailureClasses`), the
-schema's enum, and the report's table all built from it (the shape
-`TestResultSchemaStatusesAgreeWithGo` already uses for `status`).
+`runstore.HaltReason` and the six digest flags are: one slice the tests read (`failure.Classes()`,
+`internal/failure/failure.go`, built by FC1), the schema's enum, and the report's table all built from
+it (the shape `TestResultSchemaStatusesAgreeWithGo` already uses for `status`).
 
 ### 3.1 "Delivered despite the label": not a class
 
@@ -556,9 +558,10 @@ that is already long; no reader of it is a contract.
 
 ## 10. Tasks
 
-**Status: a plan; no task is approved.** Each task is written to fit one run's $5 cap: it names at
-most twelve files, one command, one commit message and one red step. The convention is the one the
-active plans use (`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,
+**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC9 are not started.** Each
+task is written to fit one run's $5 cap: it names at most twelve files, one command, one commit message
+and one red step. The convention is the one the active plans use
+(`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,
 **Interfaces**, **Tests**, **Command**, **Depends on**, **Red step**, **Reviewer**, **Commit**, and a
 **SEC** flag where the change moves a security boundary. **This work is SECURITY-SENSITIVE: the
 classifier reads model output, so FC2 carries an SEC flag and needs an independent review.**

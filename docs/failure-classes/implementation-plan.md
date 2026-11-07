@@ -1,7 +1,8 @@
 # A closed failure class on every run record, and a failures report: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** Nine tasks, **FC1–FC9** — the
-design's own FC1–FC8 (its §10, kept by name, by order and by edge — its **task** names, that is: one
+**Status (2026-11-07): approved to build; the owner answered every decision as recommended, FC1 is
+built on `main`, and FC2–FC9 are not started.** Nine tasks, **FC1–FC9** — the design's own FC1–FC8
+(its §10, kept by name, by order and by edge — its **task** names, that is: one
 of the tests §10 names cannot be written as named, F35) plus **FC9**, which the plugin
 finding F13 adds — each with its files, its interfaces, its named tests **and the command that runs
 them**, its **red step**, the mutation that holds it, its **reviewer tier**, its **SEC** and
@@ -19,9 +20,11 @@ docs-pin census — is re-read in the reconciliation's §7 and F28.
 [reconciliation.md](reconciliation.md). **Where a task below and the reconciliation disagree, the
 reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the task is wrong.**
 
-**Nothing here is an approval.** The design is a design and this is a plan (§10 of the design and
-[README.md](README.md) say so); each task's gate is in §7, and most of them name a decision row whose
-owner's-answer cell is empty.
+**The plan is approved; the tasks are not approved in bulk.** The design is a design and this is a
+plan (§10 of the design and [README.md](README.md) say so); the owner approved this plan on 2026-11-07
+and answered every decision it names as recommended, so each task's gate in §7 is met — and each task
+is still built on its own, in its own run, in the order §2 fixes. **FC1 is built; FC2–FC9 are not
+started**, and FC1's own heading says so.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -135,6 +138,10 @@ reference FC6 regenerates, and `.github/workflows/**`.
 
 ### FC1. The vocabulary, the field and its schema
 
+**Status: built.** The six files below are on `main` as `feat(failure): the failure_class vocabulary
+and the record's field`; FC1's gate (D1453, and the plan's own approval) is answered, and FC1 was built
+alone, before any task that depends on it.
+
 **Decisions:** D1453 (the vocabulary's package), D1462 (no new pin file). **Findings:** F2, F8, F15,
 F21, F27, F28. **Depends on:** nothing. **Reviewer tier:** standard. **SEC:** no. **Owner-run:** no.
 
@@ -203,7 +210,7 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   unmatched reason reading `unclassified` — is the reader's, FC5's
   `TestLegacyUnmatchedReasonIsUnclassified` (F35). Also `TestHaltedRunCarriesItsHaltsClass` (a
   failure then a halt ends `halted` with the halt's class). And the **rewritten**
-  `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:250`): its
+  `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:279`): its
   `statements == 0` fatal is the state this task produces, so the pin turns from *a census of 36
   statements* into *no statement outside `recordend.go` writes a status*, and the design's §1 sentence
   it holds is rewritten in the same commit (F25).
@@ -592,8 +599,10 @@ and it is not one of FC1–FC9.
 
 ## 7. Gates, and what a task may not start without
 
-**No task is approved.** Every row below needs the owner's explicit go, and the plan as a whole needs
-**D1450** answered (keep FC1–FC8 and add FC9) before any of it starts.
+**Every row below was a gate; the owner opened them all on 2026-11-07.** The plan as a whole needed
+**D1450** answered (keep FC1–FC8 and add FC9) and each row needed its own go; the owner approved the
+plan and answered every decision the rows name as recommended. **A met gate is not a schedule**: the
+tasks are still built one at a time, in the order §2 fixes, each in its own run.
 
 | Task | Gate |
 | --- | --- |
@@ -623,6 +632,10 @@ sentence and nothing else moves. **If D1460 = no**, FC5's diagnose field and FC8
 fall away. **If FC2 slips**, FC1 ships alone — a field nothing writes, which is harmless and true —
 and FC3–FC9 start when it lands.
 
-**And the plan's own status, unchanged:** a plan; **no task is approved**; the design's own §10 status
-and every empty owner's-answer cell in [reconciliation.md](reconciliation.md) §6 stand beside every
-row above.
+**FC1's row is answered in full.** The plan was approved, **D1453** is answered as recommended
+(`internal/failure`), and FC1 is merged — so FC2's first gate (FC1 merged) is met as well. Every other
+row waits on its own run, in the order §2 fixes.
+
+**And the plan's own status:** approved on 2026-11-07; every owner's-answer cell in
+[reconciliation.md](reconciliation.md) §6 carries the owner's answer; **FC1 is built and FC2–FC9 are
+not started**, which FC1's heading above and the design's §10 status both say.

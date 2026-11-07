@@ -113,8 +113,9 @@ const fcDoc = "docs/design/failure-classes.md"
 // open with a path or a word that is not one.
 var fcClassRowRE = regexp.MustCompile("^\\| `([a-z][a-z_]+)` \\| ")
 
-// TestDocsFailureClassDesignPinsTheVocabulary: the design is a design, its
-// vocabulary is closed, the count it states is the vocabulary's own, and every claim a reader would act
+// TestDocsFailureClassDesignPinsTheVocabulary: the design says how far its
+// plan has got -- FC1 built, the rest not -- its vocabulary is closed, the
+// count it states is the vocabulary's own, and every claim a reader would act
 // on -- one writer, the source of the table it is built on, the report, the
 // legacy reader, the unchanged version, the census it promises not to move --
 // is in it, in the words this test names.
@@ -128,15 +129,30 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	flat := flattenDoc(doc)
 
 	// The state of the document first: a reader who skims it for a decision
-	// must find that there is none to find.
+	// must find the owner's answer, and a reader arriving after FC1 must find
+	// that the vocabulary it describes is in the tree -- a status line that
+	// reads as an open question while the code is on `main` is the defect
+	// TestDocsProjectWorkflowSecretsSaysTheBuildLanded fails a document for.
 	for _, want := range []string{
-		"**Status: a design; nothing is built; no decision below is answered.**",
-		"the owner rules",
+		"**Status: a design, and its FC1 has shipped; the owner ruled on 2026-11-07, and the rest of §10 is not built.**",
+		"every decision below is answered, as recommended",
+		// §10's own status, in the shape the coordinator plan's parts use: a
+		// line above the tasks saying how far the plan has got.
+		"**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC9 are not started.**",
 		"## 9. Open items (the owner's)",
 		"## 11. What this design does not do",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s no longer says %q: the document's status, its open items and the line between what it designs and what it does not are what a reader acts on", fcDoc, want)
+		}
+	}
+	// The wording the flip replaced is banned rather than merely absent, as it
+	// is in the design folder it was flipped in: a status line that reads as
+	// an open question is one a reader does not act on, so a revert of the
+	// flip has to fail here rather than read plausibly.
+	for _, gone := range []string{"nothing is built", "no decision below is answered", "no task is approved"} {
+		if strings.Contains(flat, gone) {
+			t.Errorf("%s still says %q: FC1 -- the package, the record's field and the schema's enum -- is on `main`, and the status lines are where a reader checks the document against the build", fcDoc, gone)
 		}
 	}
 
@@ -191,6 +207,11 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	// The claims the implementation tasks rest on, each one a thing a reader
 	// would otherwise take from the prose and get wrong.
 	for _, want := range []string{
+		// §3's own name for the slice, in the sentence that calls it the one
+		// place the vocabulary is written: FC1 is what moved the design onto
+		// this name, and a design that went back to naming a symbol the tree
+		// does not carry would be a pin holding a name to nothing.
+		"one slice the tests read (`failure.Classes()`, `internal/failure/failure.go`, built by FC1)",
 		// Where the classes come from: a listing's own row, not a script.
 		"`fugaro runs ls --since 7d --json`",
 		// The field, and the sentence that it is additive.
