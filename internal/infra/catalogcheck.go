@@ -59,6 +59,13 @@ type CatalogCheckSpec struct {
 	Image           string `json:"image"`
 	SchedulerJob    string `json:"scheduler_job"`
 	SchedulerRegion string `json:"scheduler_region"`
+	// Paused stops the schedule. The module's variable defaults it to true and
+	// applies whatever it is given on every apply, which is why this field has
+	// to exist: paused was a variable no run could set, so the operator note
+	// the 0.18.0 job shipped offered a `gcloud scheduler jobs resume` that the
+	// next `fugaro update` reverted. It is now the layer's
+	// jobs.catalog_check.paused, which the owner writes and update applies.
+	Paused bool `json:"paused"`
 	// Env is the job's environment: the platform variables every job has
 	// (platformEnvFor, the same bytes the repository check job's env carries)
 	// and CatalogCheckSpecEnv's document.
@@ -146,11 +153,17 @@ type CatalogCheckRepoSpec struct {
 // then holds itself to M5's default of one build per run (the reader's own
 // default, the one an absent max_image_builds means).
 //
+// paused is the schedule's own state, already resolved: the layer's
+// jobs.catalog_check.paused, or true wherever it wrote none (InstallOptions'
+// CatalogCheckPaused and jobPaused). It is a parameter rather than a field the
+// caller sets afterwards so that every field of the spec is built here, where
+// the plan review reads it.
+//
 // The job is what makes the catalog check run at all: nothing else submits a
 // build for an entry nobody pushed by hand, so the installation either deploys
 // this job (and its schedule) or leaves every entry of the project's catalog
 // exactly as it is.
-func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64) (*CatalogCheckSpec, error) {
+func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64, paused bool) (*CatalogCheckSpec, error) {
 	cat := lc.ImageCatalogEffective(nil)
 	if cat == nil {
 		return nil, nil
@@ -210,6 +223,7 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64) (*Catal
 		Image:           image,
 		SchedulerJob:    CatalogCheckSchedulerJob,
 		SchedulerRegion: region,
+		Paused:          paused,
 		Env:             env,
 		DefinitionsCondition: Condition{
 			Title:      gcp.CatalogReadConditionTitle(tf.CatalogCheckAccountID),

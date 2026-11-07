@@ -150,6 +150,15 @@ type Request struct {
 	Call Call
 	// PR is the pull request the call names, 0 for the calls that name none.
 	PR int
+	// Rev is the revision a commit read names (CallCommitRead only), empty for
+	// every other call. It is carried because the route that forwards the call
+	// rebuilds the upstream path out of what this file decided on and never out
+	// of the caller's path (G13), and the revision is the one segment of the
+	// commit route that is not a name this file can derive: the adapter's own
+	// resolveFullHash asks for it (bitbucket.resolveFullHash) and the
+	// classification has already held it to a hex hash (validRev) before it is
+	// put here.
+	Rev string
 	// Query is exactly the query the call may carry: the parameters
 	// bitbucket.Provider's own code sends to it, and nothing else the caller
 	// may have appended. The upstream URL is rebuilt from these.
@@ -440,7 +449,14 @@ func classifyREST(method string, segs []string, query url.Values) (Request, erro
 	case len(tail) == 0 && method == http.MethodGet:
 		return restCall(CallRepoRead, repo, 0, query)
 	case len(tail) == 2 && tail[0] == "commit" && method == http.MethodGet && validRev(tail[1]):
-		return restCall(CallCommitRead, repo, 0, query)
+		req, err := restCall(CallCommitRead, repo, 0, query)
+		if err != nil {
+			return Request{}, err
+		}
+		// The revision is a part of the call the route has to rebuild upstream,
+		// so it is carried beside the call's name (Rev).
+		req.Rev = tail[1]
+		return req, nil
 	case len(tail) >= 1 && tail[0] == "pullrequests":
 		return classifyPullRequest(method, repo, tail[1:], query)
 	}
