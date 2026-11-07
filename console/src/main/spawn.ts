@@ -898,11 +898,10 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // express at all.
     //
     // **The group's other words are not on this table either**, and unlike
-    // `models` they are not on `NEVER_REACHABLE` yet: the settings-edit plan's
-    // C3 is the task that adds the write's own operation and its never rows, and
-    // until it lands no operation drives `settings set` or `settings unset`.
-    // `settings get` is a read of one key this screen does not need -- the row
-    // set is the whole document -- so it stays off the surface too.
+    // `models` they are not on `NEVER_REACHABLE`: `settings get` is a read of
+    // one key this screen does not need -- the row set is the whole document --
+    // and `set` and `unset` are `settings.edit`'s own two subcommands (the row
+    // below), so no other word of the group is reachable.
     //
     // The read writes nothing and reaches no host: it reads the registry, the
     // project layer's cache, the local config and the checkouts this machine
