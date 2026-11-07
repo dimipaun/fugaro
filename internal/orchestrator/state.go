@@ -645,6 +645,11 @@ const (
 // it over the target and OverCap says so — the daemon stops spawning, fail
 // closed, rather than the count moving.
 func Retain(s State, now time.Time) State {
+	// On a copy: the passes below drop history in place — a slice shortened
+	// through its own backing array, a fact deleted from the map — and a
+	// caller that kept the state it passed in would go on reading one that no
+	// longer matches what is stored, down to a digest it hands a launcher.
+	s = s.Clone()
 	s.WorkItems, s.Archived = retainItems(s, now)
 	s.Decisions = retainDecisions(s.Decisions, now)
 	s.Facts = retainFacts(s.Facts)

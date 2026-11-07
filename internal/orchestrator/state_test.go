@@ -505,7 +505,17 @@ func TestRetentionKeepsStateUnderTheCap(t *testing.T) {
 		t.Fatalf("the state this test built is %d bytes and not over the target, so retention has nothing to do", stateBytes(t, s))
 	}
 
+	// The state this test passed in is not the one retention changed. Its
+	// passes free room in place — a slice shortened through its own backing
+	// array, a fact deleted from the map — so a caller that kept the state it
+	// handed over would go on reading a document that no longer matches what
+	// is stored, down to a digest it hands a launcher.
+	was := s.Clone()
 	kept := orchestrator.Retain(s, now)
+	if !reflect.DeepEqual(was, s.Clone()) {
+		t.Fatal("Retain changed the state it was given")
+	}
+
 	if orchestrator.OverCap(kept) {
 		t.Fatalf("retention left the node at %d bytes, over the target of %d", stateBytes(t, kept), orchestrator.MaxStateBytes)
 	}
