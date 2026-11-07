@@ -30,18 +30,28 @@ func doctorJobsParent(lc *localcfg.Config) string {
 	return fmt.Sprintf("projects/%s/locations/%s", lc.GCPProject, lc.Region)
 }
 
-// doctorJobNames lists the Cloud Run jobs of parent, by resource name, for the
-// checks that then read each job: the launcher policies doctor compares against
-// its launcher list, and the container env the report of what a run drops is
-// made of. One listing per check, each with its own walk, so neither check
-// depends on the other having run.
+// doctorListedJob is one job of a location's listing as jobs.list answers it:
+// the resource name every check then reads, and the labels the report of what a
+// run drops tells a job a run lands on from the rest of the project's jobs by
+// (doctorTaskJob). The listing carries no container, so each job's environment
+// is a second read of its own.
+type doctorListedJob struct {
+	Name   string
+	Labels map[string]string
+}
+
+// doctorListedJobs lists the Cloud Run jobs of parent as jobs.list answers
+// them, for the checks that then read each job: the launcher policies doctor
+// compares against its launcher list, and the container env the report of what
+// a run drops is made of. One listing per check, each with its own walk, so
+// neither check depends on the other having run.
 //
 // A walk past doctorMaxJobPages, or one the server answers with a token it has
 // already given, is an error and never a shorter list: the caller's own failure
 // message is what a reader sees, and a listing cut short would read as jobs that
 // are not there.
-func doctorJobNames(ctx context.Context, svc *runapi.Service, parent string) ([]string, error) {
-	var jobs []string
+func doctorListedJobs(ctx context.Context, svc *runapi.Service, parent string) ([]doctorListedJob, error) {
+	var jobs []doctorListedJob
 	seen := map[string]bool{}
 	page := ""
 	for pages := 1; ; pages++ {
@@ -53,7 +63,7 @@ func doctorJobNames(ctx context.Context, svc *runapi.Service, parent string) ([]
 			if j.Name == "" {
 				continue
 			}
-			jobs = append(jobs, j.Name)
+			jobs = append(jobs, doctorListedJob{Name: j.Name, Labels: j.Labels})
 		}
 		next := resp.NextPageToken
 		if next == "" {
@@ -120,7 +130,7 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		return unchecked(err)
 	}
 	launchers := launcherMembers(lc.Terraform.Launchers, lc.Terraform.Operators)
-	jobs, err := doctorJobNames(ctx, svc, doctorJobsParent(lc))
+	jobs, err := doctorListedJobs(ctx, svc, doctorJobsParent(lc))
 	if err != nil {
 		return unchecked(err)
 	}
@@ -132,7 +142,11 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		withheld  int      // jobs whose policy the caller may not read
 		selfCan   []string // of those, the jobs the caller can start
 	)
-	for _, job := range jobs {
+	for _, lj := range jobs {
+		// Every job of the location, whatever it is: a launcher's grant on
+		// the reaper is as much a grant as one on a workflow job, and the
+		// count this check reports is the reach the migration moves.
+		job := lj.Name
 		p, err := svc.Projects.Locations.Jobs.GetIamPolicy(job).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 		if err != nil && isAccessDenied(err) {
 			// A plain launcher's doctor: the fugaroLauncher role lists

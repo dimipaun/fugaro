@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
@@ -13,11 +14,22 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
-// envJob is a Cloud Run job of the rig's installation carrying env, as
-// jobs get reports it.
+// envJob is a workflow job of the rig's installation carrying env, as jobs get
+// reports it: one a run lands on, labelled the way the workflow module labels
+// the job it deploys (deploy/terraform/gcp/modules/workflow/job.tf), which is
+// what makes the report consider it at all.
 func (r *doctorRig) envJob(t *testing.T, name string, env map[string]string) {
 	t.Helper()
-	r.run.AddJob(name, "2", "2Gi")
+	r.labelledEnvJob(t, name, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: "acme-app", gcp.LabelWorkflow: "web",
+	}, env)
+}
+
+// labelledEnvJob is a job of the rig's installation with labels of the caller's
+// choosing, for the tests about which jobs the report is made of.
+func (r *doctorRig) labelledEnvJob(t *testing.T, name string, labels, env map[string]string) {
+	t.Helper()
+	r.run.SetJob(name, labels, "img:1")
 	r.run.SetJobEnv(name, env)
 }
 
@@ -60,6 +72,90 @@ func TestDoctorAllNamesAJobsDroppedImageVariables(t *testing.T) {
 	for _, name := range []string{"FUGARO_IMAGE_ENTRY", "NEXUS_BASEURL", "NPM_TOKEN"} {
 		if strings.Contains(c.Problem, name) {
 			t.Errorf("the job's line calls %s dropped: it is Fugaro's own, reaches a run as an image's own name, or arrives through the declared secret path: %s", name, c.Problem)
+		}
+	}
+}
+
+// The report is made of the jobs a run lands on and of no others. A real
+// installation's location holds Fugaro's own support jobs — the reaper, the
+// coordinator, the history and catalog checks, a repository's image check — and
+// whatever else shares the project; none of them runs a task, so no variable of
+// an image could reach a run through one, and a line calling it not
+// catalog-stamped is a wrong measurement on every installation. The two kinds a
+// run does land on — a workflow job and a shared project job — are reported.
+//
+// Mutation (verified, run and restored): drop the doctorTaskJob guard, so every
+// listed job is reported — this test fails on the reaper's and the foreign
+// job's line.
+func TestDoctorImageEnvReportsOnlyTheJobsARunLandsOn(t *testing.T) {
+	r := newDoctorRig(t)
+	r.envJob(t, "fugaro-acme-app-web", map[string]string{"FUGARO_IMAGE_ENTRY": "acme-base"})
+	// The reaper as the compute module deploys it, and a job of another team's
+	// in the same project and region.
+	r.labelledEnvJob(t, "fugaro-reaper", map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: "reaper",
+	}, map[string]string{"NEXUS_BASEURL": "https://example.invalid/repository/maven-public/"})
+	r.labelledEnvJob(t, "someone-elses", map[string]string{"team": "other"}, nil)
+	// The shared project job of a (profile, provider, account) triple, with the
+	// project module's labels and no stamp: its image is the installation's
+	// base image, which no catalog entry chose.
+	r.labelledEnvJob(t, "fugaro-p-team-github", map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProfile: "team", "fugaro_provider": "github", "fugaro_account": "",
+	}, map[string]string{"FUGARO_BUCKET": "gs://fugaro-runs-proj-1234"})
+
+	o := r.runDoctorJSON(t)
+	for _, job := range []string{"fugaro-reaper", "someone-elses"} {
+		if c, found := doctorCheckByID(o.Checks, "image-env-"+job); found {
+			t.Errorf("%s is not a job a run lands on, and the report carries a line for it anyway: %s", job, c.Problem)
+		}
+	}
+	for _, job := range []string{"fugaro-acme-app-web", "fugaro-p-team-github"} {
+		if _, found := doctorCheckByID(o.Checks, "image-env-"+job); !found {
+			t.Errorf("--json carries no report for %s, which is a job a run lands on", job)
+		}
+	}
+	out, _, err := execute(t, "doctor", "--all", "--dir", t.TempDir())
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	for _, job := range []string{"fugaro-reaper", "someone-elses"} {
+		if strings.Contains(out, "image-env-"+job+": ") {
+			t.Errorf("--all prints a report for %s:\n%s", job, out)
+		}
+	}
+}
+
+// doctorTaskJob is the line between the jobs this report is about and the rest
+// of the location, and both halves are pinned here: the labels a job a run
+// lands on wears (the workflow module's, and the project module's) are reported,
+// and Fugaro's own support jobs, a foreign job and a job with no labels at all
+// are not.
+func TestDoctorTaskJobIsAJobARunLandsOn(t *testing.T) {
+	landed := []map[string]string{
+		{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: "acme-app", gcp.LabelWorkflow: "web"},
+		{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProfile: "team", "fugaro_provider": "github", "fugaro_account": ""},
+	}
+	for _, labels := range landed {
+		if !doctorTaskJob(labels) {
+			t.Errorf("%v is how a job a run lands on is labelled, and the report leaves it out", labels)
+		}
+	}
+	skipped := []map[string]string{
+		// Fugaro's own support jobs, as deploy/terraform/gcp labels them: the
+		// reaper, the coordinator, the history and catalog checks, and a
+		// repository's image check.
+		{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: "reaper"},
+		{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: "coordinator"},
+		{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: "history"},
+		{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: "catalog-check"},
+		{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: "acme-app", gcp.LabelRole: gcp.RoleCheck},
+		// A job of somebody else's, and a job the API listed with no labels.
+		{"team": "other"},
+		nil,
+	}
+	for _, labels := range skipped {
+		if doctorTaskJob(labels) {
+			t.Errorf("%v is not a job a run lands on, and the report considers it", labels)
 		}
 	}
 }

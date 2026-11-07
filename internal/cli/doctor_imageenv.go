@@ -7,6 +7,7 @@ import (
 
 	runapi "google.golang.org/api/run/v2"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -50,6 +51,13 @@ const doctorImageEnvUnreadID = "image-env-unread"
 // whatever they are (D1371's fail-closed), which is a different fact from
 // "drops nothing".
 //
+// Only the jobs a run lands on are reported (doctorTaskJob): the workflow jobs
+// and the project jobs. The installation's own support jobs — the reaper, the
+// coordinator, the history and catalog checks, a repository's image check —
+// and whatever else lives in the project run no task, so no image's variable
+// could reach a run through them; reporting them would print a wrong
+// "not catalog-stamped" line for each of them on every installation.
+//
 // The default view never prints any of this: the report is a measurement, and
 // --all (and --json) is where measurements print (F13).
 func doctorImageEnvChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
@@ -60,23 +68,28 @@ func doctorImageEnvChecks(ctx context.Context, lc *localcfg.Config) []doctorChec
 	if err != nil {
 		return doctorImageEnvUnread(err)
 	}
-	parent := fmt.Sprintf("projects/%s/locations/%s", lc.GCPProject, lc.Region)
-	jobs, err := doctorJobNames(ctx, svc, parent)
+	jobs, err := doctorListedJobs(ctx, svc, doctorJobsParent(lc))
 	if err != nil {
 		return doctorImageEnvUnread(err)
 	}
 	var out []doctorCheck
 	var unread []string
-	for _, name := range jobs {
+	for _, lj := range jobs {
+		// A job no run lands on is not reported at all: it has no task for an
+		// image's variables to reach, so the only line it could carry is the
+		// false "not catalog-stamped" one.
+		if !doctorTaskJob(lj.Labels) {
+			continue
+		}
 		// One Jobs.Get per job: the listing carries no container, and this is
 		// the read doctor did not make before (F14). The launcher role already
 		// holds run.jobs.get, so the report needs no new grant.
-		j, err := svc.Projects.Locations.Jobs.Get(name).Context(ctx).Do()
+		j, err := svc.Projects.Locations.Jobs.Get(lj.Name).Context(ctx).Do()
 		if err != nil {
-			unread = append(unread, shortJobName(name))
+			unread = append(unread, shortJobName(lj.Name))
 			continue
 		}
-		out = append(out, doctorImageEnvCheck(shortJobName(name), j))
+		out = append(out, doctorImageEnvCheck(shortJobName(lj.Name), j))
 	}
 	if len(unread) > 0 {
 		out = append(out, doctorCheck{ID: doctorImageEnvUnreadID, Severity: "warning",
@@ -99,7 +112,7 @@ func doctorImageEnvCheck(job string, j *runapi.GoogleCloudRunV2Job) doctorCheck 
 	// nothing here is wrong, it is what doctor measured (F13).
 	c := doctorCheck{ID: "image-env-" + job, Severity: "info", OK: true}
 	if entry == "" {
-		c.Problem = "the job's image is not catalog-stamped — no project image_catalog entry chose it (a repository-built image, or a job deployed before the stamp) — so a run of it passes none of its image's own variables"
+		c.Problem = "the job's image is not catalog-stamped — no project image_catalog entry chose it (a repository-built image, a job deployed before the stamp, or a project job, which runs the installation's base image) — so a run of it passes none of its image's own variables"
 		return c
 	}
 	// declared is the job's own FUGARO_SECRET_ENVS: no run is in hand here, and a
@@ -120,6 +133,23 @@ func doctorImageEnvCheck(job string, j *runapi.GoogleCloudRunV2Job) doctorCheck 
 // itself" reads as "everything your image declares reaches a run", which is a
 // claim this line cannot make either way.
 const doctorImageEnvCaveat = " (an image's own ENV lives in the image and not in the job, so what that image declares is not in this line)"
+
+// doctorTaskJob reports whether a job is one a run lands on, which is what this
+// report is about: a workflow job (one per repository and workflow, labelled
+// LabelWorkflow by the workflow module) or a project job (one per profile,
+// provider and account, labelled LabelProfile by the project module — the job
+// a clone workflow runs on).
+//
+// Every other job of the location runs no task, so no variable of an image
+// could reach a run through it: Fugaro's own reaper, coordinator, history and
+// catalog-check jobs and a repository's image check (each wearing LabelRole),
+// and any job of somebody else's that shares the project. A line for one of
+// them would be the false "not catalog-stamped" sentence — about six wrong
+// measurements on every installation — and for a foreign job it would be a
+// claim about a job Fugaro does not deploy.
+func doctorTaskJob(labels map[string]string) bool {
+	return labels[gcp.LabelWorkflow] != "" || labels[gcp.LabelProfile] != ""
+}
 
 // doctorFugaroEnvPrefix is the family every name Fugaro's own deployment writes
 // into a job belongs to, the Vertex pair below aside. A test pins it to
