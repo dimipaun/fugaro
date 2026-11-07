@@ -227,11 +227,12 @@ func (s Scope) String() string {
 // Node is one read of the grants node: the stored grants, the ETag a write must
 // carry, and whether the node exists.
 //
-// Found is the difference between an installation that has not migrated yet and
-// one whose node is empty. An absent node means the old launchers/operators
-// lists are still the source of truth (RS3 migrates them) and never "everyone":
-// the zero Node grants nobody anything beyond the implicit admins the caller
-// supplies, so a caller that read nothing admits nobody.
+// Found is false both for an installation that has not migrated its lists and
+// for one that holds no grants, because the two are one state in the database: a
+// list is an object with numeric keys there, so an empty grants list is an empty
+// object and is pruned, and no node is left to find (WriteIfMatch). Neither is
+// "everyone": the zero Node grants nobody anything beyond the implicit admins
+// the caller supplies, so a caller that read nothing admits nobody.
 type Node struct {
 	// Grants are the stored role and scope pairs, in the node's order.
 	Grants []Grant
@@ -250,10 +251,10 @@ type Node struct {
 // last-admin rule.
 //
 // An absent node is (Found=false, the null ETag, no grants, no error): the
-// installation has not migrated its lists, which is not an error and is
-// emphatically not "everyone". A node that is present but unreadable — denied,
-// not JSON, over a cap, carrying an unknown role or a scope that does not parse
-// — is an error the caller must halt on, never read as an empty node.
+// installation has not migrated its lists, or has none to hold, which is not an
+// error and is emphatically not "everyone". A node that is present but unreadable
+// — denied, not JSON, over a cap, carrying an unknown role or a scope that does
+// not parse — is an error the caller must halt on, never read as an empty node.
 func Read(ctx context.Context, db *rtdb.Client) (Node, error) {
 	var raw json.RawMessage
 	etag, found, err := db.GetETag(ctx, PathNode, &raw)
@@ -273,9 +274,18 @@ func Read(ctx context.Context, db *rtdb.Client) (Node, error) {
 // WriteIfMatch writes grants at the node, conditional on the ETag of the read
 // the caller judged (F23): the write lands only if the node has not moved since
 // that read, and a moved node is rtdb.ErrPrecondition, which the caller answers
-// by re-reading and re-judging. An empty grants list is written as an empty
-// list rather than a delete, so "this project has no grants" stays distinct
-// from "this project has not migrated".
+// by re-reading and re-judging.
+//
+// An empty grants list is a write of "no grants", and the database keeps no
+// member for it: a Realtime Database list is an object with numeric keys, so an
+// empty list is an empty object and is pruned, and the document {"grants":[]}
+// leaves the node absent (the #1658 finding; internal/cli's sameNode does the
+// same folding when it compares a published node with what it wrote). There is
+// therefore no "present and empty" node to write — a project with no grants and
+// a project that has not migrated are one state, and Read reports both as
+// Found=false with no grants, which grants nobody anything beyond the implicit
+// admins either way. That is what the plan means by an absent node being the
+// migrated lists' meaning and never "everyone".
 //
 // It refuses a document its own reader would refuse (Encode) and lets
 // rtdb.PutIfMatch refuse an empty ETag, which is no precondition at all.

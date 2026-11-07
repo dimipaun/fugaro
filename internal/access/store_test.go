@@ -23,6 +23,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -110,8 +111,9 @@ func TestAccessNodeRefusesUnknownRole(t *testing.T) {
 // TestAbsentAccessNodeGrantsNothingNew: an installation whose node has not been
 // written is Found=false and holds no grants — the migrated lists' meaning,
 // never "everyone". A caller the policy admits holds nothing from it, and the
-// same is true of a node that is present but empty: an empty list is not an
-// absent one, and neither is a wildcard.
+// same is true of a document whose grants list is empty: the database keeps no
+// member for an empty list, so there is no third "present and empty" state, and
+// neither shape is a wildcard.
 func TestAbsentAccessNodeGrantsNothingNew(t *testing.T) {
 	ctx := context.Background()
 	f, db := accessDB(t)
@@ -128,17 +130,70 @@ func TestAbsentAccessNodeGrantsNothingNew(t *testing.T) {
 		t.Errorf("an absent node granted %s: absent means the lists' meaning, never everyone", got)
 	}
 
+	// A document holding an empty grants list is the absent state, not a third
+	// one: the database prunes an empty list as it prunes an empty object, so
+	// nothing is left at the node. The fake prunes it the way the real database
+	// does, so the read below is the read an installation gets.
 	f.Set(PathNode, json.RawMessage(`{"grants":[]}`))
-	present, err := Read(ctx, db)
+	if v := f.Value(PathNode); v != nil {
+		t.Fatalf("the database kept %#v at the node: a list is an object with numeric keys there, so an empty one is pruned (#1658)", v)
+	}
+	empty, err := Read(ctx, db)
 	if err != nil {
-		t.Fatalf("Read of an empty node: %v", err)
+		t.Fatalf("Read after writing an empty grants list: %v", err)
 	}
-	if !present.Found || len(present.Grants) != 0 {
-		t.Fatalf("Read of an empty node = %+v, want found with no grants", present)
+	if empty.Found || len(empty.Grants) != 0 {
+		t.Fatalf("Read after writing an empty grants list = %+v, want the absent node", empty)
 	}
-	in = Input{Grants: present.Grants, AllowRepos: []string{"github/acme/app"}}
+	in = Input{Grants: empty.Grants, AllowRepos: []string{"github/acme/app"}}
 	if got := Effective(in, alice, "github/acme/app"); got != RoleNone {
-		t.Errorf("an empty node granted %s", got)
+		t.Errorf("a node with an empty grants list granted %s", got)
+	}
+}
+
+// TestAccessNodeZeroGrantWriteLeavesTheAbsentState: the write of "no grants" is
+// a real conditional write, and what it leaves is the absent node — the database
+// keeps no member for an empty list, so {"grants":[]} is pruned whole and the
+// node is gone (WriteIfMatch). Clearing the roster therefore lands the
+// installation back in the state it started in, which grants nothing beyond the
+// implicit admins.
+func TestAccessNodeZeroGrantWriteLeavesTheAbsentState(t *testing.T) {
+	ctx := context.Background()
+	f, db := accessDB(t)
+
+	absent, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteIfMatch(ctx, db, nil, absent.ETag); err != nil {
+		t.Fatalf("WriteIfMatch of no grants on an absent node: %v", err)
+	}
+	if v := f.Value(PathNode); v != nil {
+		t.Fatalf("the database holds %#v at the node: an empty grants list is an empty object there and is pruned (#1658)", v)
+	}
+
+	if err := WriteIfMatch(ctx, db, []Grant{grant(alice, RoleViewer, Scope{Kind: ScopeProject})}, absent.ETag); err != nil {
+		t.Fatalf("WriteIfMatch of one grant: %v", err)
+	}
+	held, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !held.Found || len(held.Grants) != 1 {
+		t.Fatalf("Read = %+v, want the one grant just written", held)
+	}
+	if err := WriteIfMatch(ctx, db, nil, held.ETag); err != nil {
+		t.Fatalf("WriteIfMatch of no grants: %v", err)
+	}
+	if v := f.Value(PathNode); v != nil {
+		t.Fatalf("the database holds %#v at the node: the emptied list is pruned with it", v)
+	}
+	after, err := Read(ctx, db)
+	if err != nil {
+		t.Fatalf("Read after clearing the node: %v", err)
+	}
+	if after.Found || len(after.Grants) != 0 {
+		t.Fatalf("Read after clearing the node = %+v, want the absent node that grants nothing new", after)
 	}
 }
 
@@ -336,6 +391,15 @@ func readerAccepts(doc string) bool {
 	return err == nil
 }
 
+// longScope is a one-entry scope of exactly n characters: a provider and an
+// owner, then a repository name that fills the rest. projectpolicy.MaxPatternLen
+// is the longest entry the reader accepts, so n at that length is the boundary
+// and n past it is over.
+func longScope(n int) string {
+	const prefix = "github/acme/"
+	return prefix + strings.Repeat("a", n-len(prefix))
+}
+
 // TestAccessNodeSchemaAndReaderAgree: the schema in schemas/ is the aid a person
 // validates a hand-written node against, and internal/access.Decode is the
 // authority that reads it. The two are held together here in the one direction
@@ -364,6 +428,11 @@ func TestAccessNodeSchemaAndReaderAgree(t *testing.T) {
 		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/group/nested"}]}`,
 		`{"grants":[{"user":"user:a.b+tag@example.com","role":"viewer","scope":"github/*/app"}]}`,
 		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/*/*/*/*"}]}`,
+		// Four wildcards is the cap per entry, not per scope, and the length
+		// bound is per entry too: both are documents the reader accepts and the
+		// writer can write, so the schema must accept them.
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/*/*/*,github/acme/*/*/*"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"` + longScope(projectpolicy.MaxPatternLen) + `"}]}`,
 	} {
 		if !readerAccepts(doc) {
 			t.Errorf("Decode refused %s: the corpus of documents both accept is wrong", doc)
@@ -408,6 +477,12 @@ func TestAccessNodeSchemaAndReaderAgree(t *testing.T) {
 		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/**"}]}`,
 		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/.."}]}`,
 		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/*/*/*/*/*"}]}`,
+		// A fifth wildcard in one entry, past the cap; a fifth in a second entry
+		// is not past it and is accepted above.
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/*/*/*,github/acme/*/*/*/*/*"}]}`,
+		// An entry past projectpolicy.MaxPatternLen, which the reader refuses
+		// though the scope as a whole is well under any byte cap.
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"` + longScope(projectpolicy.MaxPatternLen+1) + `"}]}`,
 	} {
 		if readerAccepts(doc) {
 			t.Errorf("Decode accepted %s: the corpus of refused documents is wrong", doc)
@@ -446,6 +521,9 @@ func TestAccessNodeSchemaAndReaderAgree(t *testing.T) {
 		{grant(alice, RoleAdmin, scope(t, "github/acme/api-*"))},
 		{grant(alice, RoleViewer, scope(t, "github/acme/app,bitbucket/other/thing"))},
 		{grant(bob, RoleViewer, scope(t, "github/acme/group/nested"))},
+		// Six wildcards across two entries: the cap is per entry, so this is a
+		// scope the writer writes and the schema must accept.
+		{grant(alice, RoleViewer, scope(t, "github/*/*/*,github/acme/*/*/*"))},
 		{{User: alice, Role: RoleViewer, Scope: Scope{Kind: ScopeRepos, Repos: []string{"GitHub/ACME/APP", "github/acme/app.git"}}}},
 	} {
 		raw, err := Encode(grants)

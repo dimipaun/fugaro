@@ -28,14 +28,19 @@
           },
           "scope": {
             "type": "string",
-            "description": "What the role covers: `project`, `all-repos`, or a comma-separated list of canonical repository patterns. The pattern is the reader's grammar: a whole scope is spelled exactly once and never mixed with repositories; a repository names a provider (one of config.Providers), an owner and a repository, at least three segments with none of them empty, and a wildcard may be a segment's only character only when the segment is `*` alone. A lone `*` is refused — it is `all-repos`, which only a project admin grants (D1583) — as are a doubled `*`, a `.` or `..` segment, a provider no repository can carry, and a fifth wildcard (projectpolicy's maxPatternStars, written as a `not` because a regular expression cannot count).",
+            "description": "What the role covers: `project`, `all-repos`, or a comma-separated list of canonical repository patterns. The pattern is the reader's grammar: a whole scope is spelled exactly once and never mixed with repositories; a repository names a provider (one of config.Providers), an owner and a repository, at least three segments with none of them empty, and a wildcard may be a segment's only character only when the segment is `*` alone. A lone `*` is refused — it is `all-repos`, which only a project admin grants (D1583) — as are a doubled `*`, a `.` or `..` segment, a provider no repository can carry, a fifth wildcard in one entry and an entry longer than projectpolicy.MaxPatternLen. The last two are counted per entry, over the comma-free runs a `not` can match, because the reader applies them to each comma-separated pattern rather than to the scope as a whole; a regular expression cannot count, so they are written as `not`s.",
             "allOf": [
               {
                 "pattern": "^(project|all-repos|(github|bitbucket)/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+)/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+)(/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+))*(,(github|bitbucket)/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+)/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+)(/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+))*)*)$"
               },
               {
                 "not": {
-                  "pattern": "(.*\\*){5}"
+                  "pattern": "[^,]*(\\*[^,]*){5}"
+                }
+              },
+              {
+                "not": {
+                  "pattern": "[^,]{256}"
                 }
               },
               {
