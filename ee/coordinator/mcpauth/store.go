@@ -146,9 +146,15 @@ type Client struct {
 	// can spend the project's budget at whatever mode it likes is the one
 	// token §7 refuses to mint.
 	Limits Limits `json:"limits"`
-	// CreatedAt is when the registration was written, so a registration
-	// record is expirable (spec.md §8, the residual risk of an open
-	// registration endpoint).
+	// CreatedAt is when the registration was written. It is the field a
+	// lifecycle reads, and it is deliberately the only thing here that
+	// anticipates one: spec.md §8 bounds an open registration endpoint's
+	// residual risk by a per-source rate limit and by these records being
+	// expirable, and neither bound is implemented in this package. Both are
+	// M7's (implementation-plan.md, the note in its entry), because M7 is the
+	// task that makes the endpoint reachable from a real binary; until then
+	// the exposure is latent and the record carries the timestamp the
+	// lifecycle will need.
 	CreatedAt time.Time `json:"created_at"`
 }
 
