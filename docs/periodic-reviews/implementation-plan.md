@@ -842,8 +842,12 @@ argument runs the other way too: two documents already own these two works, and 
 either would be a plan that can disagree with the one a run picks up. **R12, R13, R7, R11, R8, R9 and
 R10 are the reports job's cut and are cited by number; FC1–FC8 are the failures report's cut and are
 cited by number.** Where this part disagrees with either about the code it says so in
-[reconciliation.md](reconciliation.md) §6, and **there is exactly one such disagreement** (**F27**,
-§P5): R11's file list omits the generated CLI reference its own subcommand changes.
+[reconciliation.md](reconciliation.md) §6, and **there is exactly one such disagreement about a file
+list** (**F27**, §P5): R11's file list omits the generated CLI reference its own subcommand changes.
+**§P4's shared-files table is read off both owning documents' file lists rather than asserted**, so
+a file two or more tasks of the release write belongs in it whether or not either document's own
+shared-files table names it — `schemas/schemas_test.go` is FC1's at level 0 and R1's at level 1, and
+it is named in both owning lists.
 
 **What is not in this part at all.** **R5** (Fugaro's own reports) is the owner's, at their terminal,
 with no agent step. The **`plugin/**` rename (#1488)** that R3, R6 and FC8 wait on is named where it
@@ -883,8 +887,8 @@ all the tasks it depends on; no level holds two writers of one file. The two wor
 **No task moves a level, and that is a property of the two designs rather than a coincidence.** The
 reports job's tasks live in `internal/infra`, `deploy/terraform/**`, `internal/digest` and
 `internal/cli`; the failures report's live in `internal/runner`, `internal/runstore`,
-`internal/runview`, `schemas/` and the same two packages. The two therefore meet in seventeen files
-(§P4), and every one of the fourteen already had a level of its own in one work or the other — which
+`internal/runview`, `schemas/` and the same two packages. The two therefore meet in **eighteen files**
+(§P4), and every one of the eighteen already had a level of its own in one work or the other — which
 is why the union adds **no edge that re-levels anything**: the only cross-work edges are **R11 (3) →
 FC7 (4)**, stated in §P6, and the shared files' own ordering. **A union that had to re-level would be
 a union that had to re-cut**, and the point of this table is that it does not.
@@ -903,6 +907,7 @@ and the design's own: **no level holds two writers of one file.**
 | `internal/cli/runs_test.go` | FC1 (0), FC5 (3), FC6 (4) | the record's field cases, the legacy reader's, and the grouping's |
 | `internal/cli/runs_digest.go`, `runs_digest_test.go` | R1 (1), R2 (2), R10 (5) | the flag and the refusal set, the doctor line's reading, and the default target |
 | `internal/cli/docs_pr_state_test.go` | FC1 (0), FC2 (1) | the census pin FC1 extends and FC2 rewrites |
+| `schemas/schemas_test.go` | FC1 (0), R1 (1) | FC1's enum check against `failure.Classes()`, and R1's new due schema loading and validating through the same file |
 | `internal/runner/runner.go` | FC2 (1), FC3 (2), FC4 (3) | `recordEnd`, the structural classes, the message classifier |
 | `internal/runner/refused.go` | FC2 (1), FC3 (2) | `endRefused`'s call and the push rejection's class |
 | `internal/infra/tfvars.go` | R13 (0), R7 (1) | the two `paused` settings, then the `reports` node and `reports_days` |
@@ -910,9 +915,13 @@ and the design's own: **no level holds two writers of one file.**
 | `docs/recipes.md` | R1 (1), R10 (5) | the `--due` pointer, and the sentence E8 changes |
 | `website/content/cli-reference.md` (generated) | R11 (3), FC6 (4) | `fugaro runs reports` and `runs ls --group-by`, each regenerated in its own commit (F27) |
 
-**The table is the check, and it is read against §P3 rather than asserted.** Every row's levels are
-distinct; the widest rows — `patterns.go`/`patterns_test.go` and `periodic-reviews.md` with three
-writers each — are the two the union actually creates, and both are spread over three levels. **The
+**The table is the check, and it is read against §P3 rather than asserted.** It is built from the two
+owning documents' own **file lists**, not from their shared-files tables: a file the rule counts is
+one two or more tasks write, wherever it was first written down, and `schemas/schemas_test.go` —
+FC1's at level 0 and R1's at level 1 — is in both owning lists and in neither of their shared-files
+tables. Every row's levels are distinct; the widest rows — `patterns.go`/`patterns_test.go` and
+`periodic-reviews.md`, three writers each — are the two the union actually creates, and both are
+spread over three levels. **The
 one place a glob could have hidden a collision is the one worth stating plainly:** the design's
 §10.2 row `internal/digest/*.go` (FC7, L4) resolves to FC7's own six files
 (`digest.go`, `render.go`, `patterns.go`, `digest_test.go`, `patterns_test.go`, `testdata`) and

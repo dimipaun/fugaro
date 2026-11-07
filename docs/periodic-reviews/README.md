@@ -137,7 +137,7 @@ as a docs-only change. `docs/release-streams.yaml` has the CLI stream's `current
 - **The failures report** is `docs/design/failure-classes.md`'s own cut — its **FC1–FC8**, with its
   D1–D9, its O1–O6 and its own levels and shared-files table. **That document is not edited.**
 - **What Part II adds is what neither can state alone:** the union's leveling (Part II §P3), the
-  seventeen files the two meet in (§P4), every task's commit and reviewer tier (§P5), the critical path
+  eighteen files the two meet in (§P4), every task's commit and reviewer tier (§P5), the critical path
   (§P6), the release slot and its `### For operators` text (§P7), and the owner-run checks (§P8).
   **One file list is wrong and Part II corrects it** (F27): R11 registers `fugaro runs reports`, so it
   changes the generated `website/content/cli-reference.md`, which its own file list omits.
@@ -179,5 +179,5 @@ about R12's grants that is listed under Open items rather than decided.
 `internal/runstore/runstore.go`, `internal/runview/runview.go`, `schemas/result.schema.json` and the
 two documents that describe the record are `docs/design/failure-classes.md`'s to change, and this
 folder's plan cites its **FC1–FC8** rather than restating them ([implementation-plan.md](implementation-plan.md)
-Part II §P1). **The two plans meet in seventeen files and Part II §P4 is where that is checked**, so
+Part II §P1). **The two plans meet in eighteen files and Part II §P4 is where that is checked**, so
 neither folder becomes a second plan for the other's feature.
