@@ -1,6 +1,8 @@
 # Diagnose: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** Each task needs the owner's explicit go, by name; answering a decision approved none. This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (which wins). **Independent review rounds have not run.** The command is `fugaro troubleshoot` (D1604).
+**Status (2026-11-07, later): one task is written — T-DG5, the credential resolver: `internal/diagnoseagent/creds.go` and `creds_test.go`, the two files its Files line names, with its red step run and the in-run review round its tier requires, on the branch `fugaro/20261107-212231-bc83`.** Nothing calls it yet (the command, the evidence collector and the read-only agent that would are T-DG8, T-DG6 and T-DG7), and **every other task, every other file and every step below is plan only, and no other task is approved.** This line records what that branch holds and nothing more.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task is approved.** Each task needs the owner's explicit go, by name; answering a decision approved none. This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (which wins). **Independent review rounds have not run.** The command is `fugaro troubleshoot` (D1604).
 
 **Owner answers that shaped it (2026-11-07; D1605–D1614 recommended on the owner's delegation, D1604 `troubleshoot`):** D1600 (not the recommendation) `diagnose` unchanged, new name for the agent command; D1601 own credentials first, project's account as an in-memory fallback gated by `allow_data_to`; D1602 read-only agent (Read/Grep/Glob), Fugaro fetches and prints, never runs a fix; D1603 amended after review (logs per the output plan's D1351/D1352; source tree in the cache dir).
 

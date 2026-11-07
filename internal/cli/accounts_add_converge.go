@@ -52,6 +52,15 @@ import (
 // account in more than one place would otherwise report a different profile
 // than the one this run's edit — and its confirmation — were about.
 func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, path string, old []byte, name, profile string, repos []string) error {
+	// The command's own account (CL7a): the steps below print through one
+	// reporter and the run's full output is kept in one log, and both are this
+	// command's — the converge is invoked in-process, so a second run with a
+	// log of its own would file two. The human lines go to stderr, which is
+	// where this command's run already accounted for itself: its stdout is the
+	// block below and nothing else.
+	run := stepRunFor(cmd, "accounts-add", cmd.ErrOrStderr())
+	defer run.close()
+
 	env, err := openCloudFor(ctx, after)
 	if err != nil {
 		return err
@@ -62,7 +71,7 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	// ID. It runs after the local config and not before it because
 	// projectWideAccepted refuses a name whose allow_data_to lists no
 	// repository: the field has to exist first (spec §2.2 step 5).
-	version, err := accountsAddStoreSecret(cmd, env, name)
+	version, err := accountsAddStoreSecret(run, cmd, env, name)
 	if err != nil {
 		return err
 	}
@@ -74,15 +83,24 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 
 	// Step 7: the publish and the deploy, through the registered stages and
 	// nothing else.
-	stages, err := accountsAddRunStages(ctx, cmd, after, path, old, "accounts add")
+	stages, err := accountsAddRunStages(ctx, cmd, run, after, path, old, "accounts add")
 	if err != nil {
 		return err
 	}
 
 	// Step 8: the read-back, which is what the command's own last line is made
-	// of.
+	// of. It is a step of the run's account only when it fails: the account it
+	// prints on success IS this step's answer — the block below is read off it —
+	// so a line of its own would be the run saying the same thing twice. An
+	// abandoned step ends nothing and counts nothing (Reporter.Step), and a
+	// read-back that fails ends it with a cross: this command's last line says
+	// there is nothing left to run, and a run that cannot read back what it
+	// wrote may not close on "Done" (G3, G8).
+	readBack := run.rep.Step("Reading back " + pluginwire.Printable(repos[0]))
+	defer readBack.Abandon()
 	check, err := accountsAddCheck(cmd, repos[0])
 	if err != nil {
+		readBack.Failed(errors.New(oneLine(err.Error())), nil)
 		return err
 	}
 	// The publish line is read off the node itself and not off what the
@@ -125,42 +143,18 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 }
 
 // accountsAddStoreSecret runs the project-wide store (secretsSetProjectWide,
-// spec §2.2 step 5) and answers the version it wrote. The store's own line is
-// captured rather than printed: this command answers with one block, and the
-// version belongs on that block's account line. Nothing is swallowed — a line
-// this release cannot read is printed as it came.
-func accountsAddStoreSecret(cmd *cobra.Command, env *cloudEnv, name string) (string, error) {
+// spec §2.2 step 5) and answers the version it wrote. It opens the step through
+// the one opener both stores share (secretsStoreStep), so this step of the
+// account is `fugaro secrets set`'s own: one line naming the container, a cross
+// carrying the server's error when the store fails, and the run's log beside
+// it. The version then reaches this command's block as the store's answer and
+// not as a line read back out of its output (CL7a): the step and the block are
+// two accounts of one store, and neither is parsed out of the other.
+func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, name string) (string, error) {
 	secret := config.ClaudeAccountSecret(name)
-	out := cmd.OutOrStdout()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	err := secretsSetProjectWide(cmd, env, secretsOptions{}, secret)
-	cmd.SetOut(out)
-	if err != nil {
-		return "", err
-	}
-	if v, ok := storedVersion(buf.String()); ok {
-		return v, nil
-	}
-	// A store this release cannot read back is still a store: its own line is
-	// the evidence, and printing it beats dropping it.
-	_, _ = out.Write(buf.Bytes())
-	return "", nil
-}
-
-// storedVersion is the version `fugaro secrets set` prints ("stored <id>,
-// version <n>"), read off the line the store wrote. ok is false for a line this
-// release does not recognise, which the caller prints rather than losing.
-func storedVersion(line string) (string, bool) {
-	i := strings.LastIndex(line, ", version ")
-	if i < 0 {
-		return "", false
-	}
-	v := strings.TrimSpace(strings.TrimSuffix(line[i+len(", version "):], "\n"))
-	if v == "" {
-		return "", false
-	}
-	return v, true
+	return secretsStoreStep(run, secret, func() (string, string, error) {
+		return secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
+	})
 }
 
 // accountsAddClearMark clears the account's mark (spec §2.2 step 6) and answers
@@ -270,9 +264,19 @@ var (
 // header, the fix a stage leaves, the step left for the person), so a removal
 // run that borrowed add's name would print its own progress as add's and hand
 // the person the inverse command to finish with.
-func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, path string, old []byte, door string) (map[string]initflow.StageResult, error) {
+func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun, lc *localcfg.Config, path string, old []byte, door string) (map[string]initflow.StageResult, error) {
 	o := &initOptions{door: door, yes: true, nonInteractive: true, asJSON: true}
 	r := newInitRun(cmd, o)
+	// The caller's account, not a second one (CL7a): the stages print one line
+	// each through the reporter this command opened, and the run's own output —
+	// Terraform's above all — goes to the log this command keeps. A converge
+	// invoked here with a reporter of its own would file a log the command
+	// never names and close it behind the command's back. The engine's own
+	// redaction list is not handed over with them: the three stages this door
+	// selects hold no value (initEngine.hold's one caller is the secrets stage),
+	// and what keeps the command's own token out of the log is the run's own
+	// hold (stepRun.hold).
+	r.rep, r.repLog = run.rep, run.log
 	r.setProject(lc)
 	spec, err := installOptions(o, lc)
 	if err != nil {
@@ -287,7 +291,14 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, lc *localcfg.
 	// captures in this file do it, so stdout is the answer alone.
 	answer := cmd.OutOrStdout()
 	cmd.SetOut(cmd.ErrOrStderr())
-	res, err := initflow.Run(ctx, accountsAddStages(e), e.options())
+	opts := e.options()
+	// The reporter is this command's (ReportBorrowed): the loop's steps are
+	// three of the eight this command accounts for, and the closing line is
+	// printed where this command's own run ends — after the read-back, which is
+	// what its last line is made of. The loop printing it here would account a
+	// run "Done" before the step that may fail (G3).
+	opts.ReportBorrowed = true
+	res, err := initflow.Run(ctx, accountsAddStages(e), opts)
 	cmd.SetOut(answer)
 	if err != nil {
 		return nil, userErr("%v", err)

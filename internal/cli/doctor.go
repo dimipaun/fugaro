@@ -700,10 +700,10 @@ func doctorCosign(lc *localcfg.Config) doctorCheck {
 	if basepin.CosignPath() != "" {
 		return doctorCheck{ID: id, OK: true}
 	}
-	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image and the credentials service's image are pinned at the digest their cosign signature was verified for, so fugaro update --base, fugaro image refresh, and an ordinary fugaro update of an installation that opted in with --provision-credentials all refuse without it"
+	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image and the credentials service's image are pinned at the digest their cosign signature was verified for, so fugaro update --base, fugaro image refresh, and an installation's ordinary fugaro update (which pins the credentials service it deploys) all refuse without it"
 	fix := "install cosign (https://docs.sigstore.dev/cosign/installation/), or name a base image explicitly with --base-image KIND=IMAGE"
 	if lc.BaseImage(config.BaseKind) == "" {
-		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it, and so does an ordinary fugaro update of an installation that opted in with --provision-credentials"
+		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it, and an installation's ordinary fugaro update (which pins the credentials service it deploys) does too"
 	}
 	return doctorCheck{ID: id, OK: false, Severity: "info", Problem: problem, Fix: fix}
 }
@@ -845,7 +845,7 @@ func doctorSecrets(cmd *cobra.Command, lc *localcfg.Config) []secretEntry {
 	ctx := cmd.Context()
 	env := &cloudEnv{lc: lc, gcp: gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
 		Endpoints: gcp.Endpoints{SecretManager: lc.Endpoints.SecretManager, NoAuth: lc.Endpoints.NoAuth}}}
-	r, err := resolveSecretRepo(cmd, env, "")
+	r, err := resolveSecretRepo(cmd, env, cloudOptions{}, "")
 	if err != nil {
 		return nil
 	}

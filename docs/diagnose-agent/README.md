@@ -1,6 +1,8 @@
 # Diagnose (a local agent over a failed command's log)
 
-**Status: plan only; nothing is implemented; no task is approved.** Spec owner: Dimi Paun. Written 2026-11-07. **Independent review rounds have not run.**
+**Status (2026-11-07, later): one task of the plan below is written — T-DG5, the credential resolver (`internal/diagnoseagent/creds.go` and `creds_test.go`, on the branch `fugaro/20261107-212231-bc83`, with the in-run review round its tier requires); everything else the folder holds is plan only, and no other task is approved.** Spec owner: Dimi Paun. Written 2026-11-07. **Review rounds over the plan documents themselves have not run.**
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task is approved.** Spec owner: Dimi Paun. Written 2026-11-07. **Independent review rounds have not run.**
 
 - [spec.md](spec.md): the spec as received.
 - [reconciliation.md](reconciliation.md): findings F1–F23, decisions D1600–D1614 (all answered 2026-11-07, D1605–D1613 as recommended on the owner's delegation; D1600 not the recommendation; D1603 amended after review), tensions, UNVERIFIED. Wins over the spec.

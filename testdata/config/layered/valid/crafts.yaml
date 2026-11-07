@@ -1,0 +1,10 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+git: { base_branch: develop }
+agent:
+  crafts:
+    coder: { model: deepseek-v4-1, access: openrouter-main }
+    review: { model: claude-sonnet-5-5 }
+workflows:
+  server: { commands: { build: make, test: make test } }
