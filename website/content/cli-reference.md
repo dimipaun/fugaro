@@ -2557,8 +2557,8 @@ about one project, holding the two marks' own answer and the bounded subset of
 the newest audit record — never a sentence to be parsed, whose next rewording
 would change what a screen draws.
 
-It reads the same two facts a managed apply reads and writes nothing: whether
-the project is managed is the creation fact in its runs bucket and the
+It reads the same two facts a managed apply reads, and changes no cloud object:
+whether the project is managed is the creation fact in its runs bucket and the
 fugaro_managed label on the project itself, which have to agree, and the trail
 is the records the managed commands file under gs://<runs bucket>/fugaro/managed-audit/.
 

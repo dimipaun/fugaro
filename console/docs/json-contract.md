@@ -2675,9 +2675,24 @@ it.
 **Flags** (`newManagedStatusCmd`): `--json`, and the aiming pair `--project
 <name>` and `--config <path>` that every project read carries. `--gcp-project
 <id>` and `--region <r>` come with `addCloudFlags` and are not part of the
-console's row. The command takes no argument, and it writes nothing — no file,
-no cache, no cloud object — so it runs anywhere, a coding agent's session
-included, exactly like the other reads in the console's set (§9).
+console's row. The command takes no argument, writes no cloud object and keeps
+no cache of its own, and needs no checkout to answer — so it runs anywhere, a
+coding agent's session included.
+
+**It is not in the console's read set yet, and the difference is one local
+file.** The command resolves the selected project the way every cloud command
+does: `selectProject` resolves the working directory as a checkout on the way to
+the installation, and that resolution remembers the checkout it ran in
+(`recordCheckout`, `internal/cli/project.go`) unless the command's own path
+stands on the read-only list that stops it (`consoleReadPaths`,
+`internal/cli/project.go`, §6.8). `managed status` is **not** on that list: CM3
+is the task that adds its rule 6 row, and that task adds the design §5.1 row
+with it, because a `consoleReadPaths` entry whose argv the design's own table
+does not allow fails the test that reads that table back out of the design. So
+until CM3 lands, a console that spawned it would write
+`$XDG_CONFIG_HOME/fugaro/state/checkouts.json` in an enrolled checkout exactly
+as a person's own run does: local state, the file §6.8's `checkouts` reads, and
+never a cloud object.
 
 ### 6.22 `fugaro graph --json` — the dependency graph, and its stream
 

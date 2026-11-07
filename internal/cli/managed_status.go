@@ -66,13 +66,21 @@ import (
 // managed", which is a different claim. A state the CLI does not have must not
 // be drawn as though it did, and a screen is not the place to invent one.
 //
-// What it is not. It writes nothing — no file, no cache, no cloud object — so
-// it runs anywhere, a coding agent's session included, and it needs no checkout
-// and no agent refusal for the same reason. It reads with the caller's own
-// credentials: the roles a request for this document needs are the runs
-// bucket's viewer and the project's viewer, the ones every read of the marks
-// already takes. And it is not a tamper-proof trail: the bucket is unversioned
-// and any project-level storage writer can rewrite an object in it.
+// What it is not. It is a read of the caller's own credentials, so a coding
+// agent's session runs it with no refusal (a writer is refused for what it
+// changes), and it needs no checkout to answer, since --project and --config
+// name the installation. It writes no cloud object and keeps no cache of its
+// own. It is NOT one of the reads the desktop console spawns, though, and that
+// difference is a file: selectProject resolves the working directory as a
+// checkout on the way to the installation, and the resolution remembers the
+// checkout it ran in (recordCheckout, project.go) unless the command's own
+// path stands on consoleReadPaths. This command joins that list in CM3, with
+// the design's §5.1 rule 6 row it needs there, so until it does a console
+// spawn of it records the checkout exactly as a person's own run does. The
+// roles a request for this document needs are the runs bucket's viewer and
+// the project's viewer, the ones every read of the marks already takes. And
+// it is not a tamper-proof trail: the bucket is unversioned and any
+// project-level storage writer can rewrite an object in it.
 
 // managedStatusNow is the day the trail is read about and the clock the read's
 // own two-day window is measured from. It is a package variable for the reason
@@ -173,8 +181,8 @@ about one project, holding the two marks' own answer and the bounded subset of
 the newest audit record — never a sentence to be parsed, whose next rewording
 would change what a screen draws.
 
-It reads the same two facts a managed apply reads and writes nothing: whether
-the project is managed is the creation fact in its runs bucket and the
+It reads the same two facts a managed apply reads, and changes no cloud object:
+whether the project is managed is the creation fact in its runs bucket and the
 fugaro_managed label on the project itself, which have to agree, and the trail
 is the records the managed commands file under gs://<runs bucket>/fugaro/managed-audit/.
 
