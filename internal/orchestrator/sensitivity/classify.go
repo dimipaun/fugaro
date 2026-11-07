@@ -88,7 +88,7 @@ func routinePath(p string) bool {
 		return false
 	}
 	for _, e := range sensitiveExceptions {
-		if strings.HasPrefix(p, e.prefix) {
+		if withinTree(p, e.prefix) {
 			return false
 		}
 	}
@@ -98,6 +98,23 @@ func routinePath(p string) bool {
 		}
 	}
 	return false
+}
+
+// withinTree reports whether p names the tree prefix describes or lies inside
+// it. An exception needs the tree's own path and not only the files in it,
+// because an exception subtracts from a rule that has already admitted that
+// path: `docs/` admits `docs/pending-workflows`, so a subtraction matching only
+// paths with a slash would leave that one spelling Routine — the CI tree, the
+// category the routing rule calls security-sensitive, classified as the cheap
+// one. The plan's glob says the same: `docs/pending-workflows/**` matches the
+// tree's own path as readily as the files under it.
+//
+// The routine rules are asked the narrower question on purpose. A prefix of
+// `docs/` matched against the tree's own path would admit a directory, and a
+// directory is not a changed file: the answer there is Sensitive, which is what
+// the bare `docs` in TestUnlistedPathIsSensitive pins.
+func withinTree(p, prefix string) bool {
+	return p == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(p, prefix)
 }
 
 // cleanRelative reports whether p is a repository-relative path that means

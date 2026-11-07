@@ -139,7 +139,10 @@ func TestUnlistedPathIsSensitive(t *testing.T) {
 		"go.mod",
 		// The one tree the allowlist opens and then closes again: a person
 		// copies these files into .github/workflows, and CI is the routing
-		// rule's own category.
+		// rule's own category. The tree's own path is the third case and not a
+		// file in it — `docs/` admits it, so an exception that matched only
+		// paths with a slash would answer Routine for the CI tree itself.
+		"docs/pending-workflows",
 		"docs/pending-workflows/shared-tests.yml",
 		"docs/pending-workflows/README.md",
 		// Not paths a change can carry: absolute, escaping, uncleaned, empty
