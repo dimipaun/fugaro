@@ -158,9 +158,9 @@ func (e *Edge) sanitise() {
 
 // MarshalJSON writes the document with every list as an array: an empty array
 // is a fact ("this scope has no nodes") and a null is not, which is the
-// console's own availability rule (console/docs/json-contract.md). It does not
-// touch the text — Sanitise is that step — so a caller sanitises before it
-// prints.
+// console's own availability rule, as internal/plan's artifact already writes
+// it. It does not touch the text — Sanitise is that step — so a caller
+// sanitises before it prints.
 func (d Document) MarshalJSON() ([]byte, error) {
 	d.normalise() // d is a copy: the receiver is a value
 	type plain Document
