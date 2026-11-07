@@ -276,7 +276,6 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, lc *local
 			continue
 		}
 		on, err := deployedRepoCredentialsService(lc, key)
-		on = true // MUTATION
 		if err != nil {
 			r.warn(fmt.Sprintf("whether %s's repository root carries the credentials service could not be read (%s): its record is left as it is, and a run of it may not be handed the service's address until the next update reads the document", key, oneLineCLI(err.Error())))
 			continue

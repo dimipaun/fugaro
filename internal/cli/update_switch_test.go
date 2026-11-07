@@ -330,10 +330,14 @@ func TestTheInstallationDoorRecordsNoRepositoryItDoesNotApply(t *testing.T) {
 // TestTheSwitchTurnsOnForACascadeRepositoryWithAReadyBundle, and the two doors'
 // readings of the bundle by the tests above.
 //
-// Mutation (verified, run and restored): drop the backfillCredentialsServiceReady
-// call from install() (internal/cli/init.go) and this fails on the first
-// assertion — acme/sandbox left unrecorded, a repository whose job lost its
-// model mounts to an address no launch of it is handed.
+// Two mutations, both verified, run and restored. Drop the
+// backfillCredentialsServiceReady call from install() (internal/cli/init.go)
+// and this fails on the first assertion — acme/sandbox left unrecorded, a
+// repository whose job lost its model mounts to an address no launch of it is
+// handed. Make the backfill a blanket yes (record every entry the config holds,
+// which is what the first draft of this work order did) and it fails on the
+// second — acme/other and acme/third recorded over roots whose jobs kept their
+// mounts.
 func TestAnOptedInInstallationConvergesWithOneUpdate(t *testing.T) {
 	slug, err := task.Slug("bitbucket", "acme/sandbox")
 	if err != nil {
