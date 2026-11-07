@@ -456,8 +456,10 @@ func TestOAuthResponseHeaderTimeoutBoundsTheWait(t *testing.T) {
 //     into a GET at the Location. Nothing but the redirect policy stops them,
 //     so these are the cases that prove the policy is there.
 //   - 307 and 308 are refused by net/http when the request body cannot be
-//     replayed -- and upstreamRequest sets GetBody = nil deliberately ("never
-//     replayed: the gateway never retries"). They are therefore stopped even
+//     replayed -- and upstreamRequest sets GetBody = nil deliberately, so
+//     net/http can never replay the body on its own ("the transport never
+//     replays the body"; the gateway's own one retry builds a new request
+//     instead, forward.go). They are therefore stopped even
 //     by a client with no policy at all, which is exactly why a test of only
 //     these two passes with the policy removed. They are kept because that
 //     guard is a property of the body, not of the credential: a future

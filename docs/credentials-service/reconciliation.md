@@ -43,7 +43,7 @@ Each finding: **class** (Wrong / Exists / Gap / Rule / Open), where in the code,
 | Spec concept | What exists, and under what name | New? |
 |---|---|---|
 | Proxy that swaps a short-lived token for the real key | `internal/gateway` (`Start`, `Server.Token`, `authorized`, `upstreamRequest` in `forward.go`, `Route.attachCredential`): a **loopback, in-runner** proxy; agent gets `ANTHROPIC_BASE_URL` + a random per-run token (`agent.GatewayVars`) | Exists in-process; the out-of-job deployment is new |
-| Streaming forward | `gateway` `pump`, `isSSE`, `sseParser`, `usageTee` ("never buffers a stream, never retries, never logs a header or a body") | Exists |
+| Streaming forward | `gateway` `pump`, `isSSE`, `sseParser`, `usageTee` ("never buffers a stream, never logs a header or a body"; amended 2026-11-07, SC2: a call whose upstream fails before any byte of an answer reaches the agent is sent once more) | Exists |
 | Meter spend against caps | `gateway` `ledger.go` (`reserve`, `settle`), leases (`internal/budget/lease.go` `leaseSource.Grant`), caps (`internal/budget/model.go` `Caps`) | Exists |
 | Short-lived per-job token minted by the launcher | The run's **budget identity**: `token.Mint` (launcher, `cloudEnv.mintBudgetToken` in `internal/cli/launch_budget.go`), claims `fs`/`fr`/`fx`/`fp`/`rb`, uid `r~<slug>~<run>`, 1 h custom token, exchanged by the runner (`takeBudgetToken`, `token.Exchange`) | Exists under another name |
 | Sealing that token against peer runs | `docs/design/budget-token-channel.md` §7.1; runner half = PR #417 (merged into `next-0.9`, 2026-10-17); launcher half = PR #523 (open draft, `next-0.9`); both held for 0.9.0 | Runner half on `next-0.9`; launcher half open; not on `main` |
