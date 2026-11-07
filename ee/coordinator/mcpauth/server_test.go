@@ -81,12 +81,17 @@ func newTestServerClock(t *testing.T, cfg Config, now func() time.Time) *testSer
 // land inside a store operation the server is running can interleave one. Every
 // other test passes nil, and the server's store is the counting store over a
 // plain bucket below it.
-func newTestServerOver(t *testing.T, cfg Config, now func() time.Time, wrap func(objects) objects) *testServer {
+//
+// The options are M7's addition and they are the same list NewServer takes: a
+// server's member lists are an option rather than an argument (WithRoster), so
+// a test of the MCP endpoint has to be able to pass one. No caller here passes
+// any, and a server built without one admits nobody.
+func newTestServerOver(t *testing.T, cfg Config, now func() time.Time, wrap func(objects) objects, opts ...ServerOption) *testServer {
 	t.Helper()
 	fs := newFakeStoreOver(t, wrap)
 	counting := &countingStore{Store: fs.Store, keys: map[string]bool{}}
 	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
-	srv, err := NewServer(cfg, counting, v, WithServerClock(now))
+	srv, err := NewServer(cfg, counting, v, append([]ServerOption{WithServerClock(now)}, opts...)...)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
