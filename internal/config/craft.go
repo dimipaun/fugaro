@@ -248,6 +248,8 @@ func ValidCredentialRef(name string) string {
 // that mounts the coding job's key (reviewAccountNameMessage).
 func credentialNameProblem(name string) string {
 	switch {
+	case name == "":
+		return "name is required: this is the name a craft's access and a pool's members speak, and an entry without one names nothing"
 	case name == CredentialVertex:
 		return `"` + CredentialVertex + `" is the built-in credential: it needs no secret and exists in every installation, so an entry under this name would name a second credential no run could tell apart — pick a different name`
 	case name == AnthropicKeyAccount:
