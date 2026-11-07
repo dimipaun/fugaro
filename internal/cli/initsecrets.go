@@ -372,10 +372,12 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		}
 		// Every named Claude account this repository may choose (beyond the
 		// bare default, which SecretMounts above already asked for when
-		// agent.auth is oauth) gets its own claude setup-token + secrets set
-		// pair, so init prompts for every account the owner has allowed,
-		// not just the one SecretMounts already knows about per workflow
-		// (design docs/design/named-oauth-tokens.md §3 T3, §4).
+		// agent.auth is oauth) gets its own entry, so init asks for every
+		// account the owner has allowed, not just the one SecretMounts
+		// already knows about per workflow; the line it leaves for one of
+		// them is that account's own `fugaro accounts add` command (Left),
+		// not the default's mint-then-store pair (design
+		// docs/design/named-oauth-tokens.md §3 T3, §4).
 		if cfg.Agent.Auth == "oauth" {
 			for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
 				if n == config.DefaultClaudeAccount {
