@@ -101,6 +101,18 @@ const (
 	// stage and skips it — a member holds no grant on the workspace's project
 	// at all — so it is the owner's installation that publishes.
 	Workspace = "workspace"
+	// WorkspaceProject is the workspace's OWN project's root
+	// (internal/cli/workspace_create.go, W3): the workspace's own service
+	// account and the one grant that reaches the workspace's database, in the
+	// project the workspace is named after. It comes after the installation's
+	// own stages — the project, its Firebase and its database are what the
+	// account is created in and what the grant is made on — and BEFORE the
+	// record's publish, which is the other half of the same thing: this stage
+	// builds the identity the workspace's own service runs as, and the record
+	// stage publishes what that service reads. An installation that declares no
+	// workspace registers it and skips it, so a member's project and a plain one
+	// never carry the account.
+	WorkspaceProject = "workspace-project"
 	// Layer is the published project layer and the one local layer file the
 	// owner edits (internal/cli/init_layer_stage.go, D830/D831): the stage
 	// seeds the file from the published object when it is absent, publishes
@@ -193,6 +205,14 @@ var order = []slot{
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
 	{name: Policy, needs: []string{Repository, Rules}},
+	// The workspace's own project's root, before the record it serves: what it
+	// creates is the identity the workspace's own service runs as, and the
+	// record stage publishes the node that service reads. It needs the
+	// installation's own stages (Installation2's rows are what carried the
+	// database and the state bucket it writes its state into), and --yes never
+	// covers it: what it applies is an access GRANT, and the cover admits no
+	// grant (spec §6).
+	{name: WorkspaceProject, needs: []string{Installation2}, noYes: true},
 	// The workspace record is the owner's own declaration, and the mark that
 	// lets this stage write into that database is the installation's
 	// (budgetDBUnadopted): it comes after the installation's own stages, and

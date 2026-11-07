@@ -210,7 +210,7 @@ func childOf(n *node, key string) (*node, bool) {
 // the one command does.
 func CheckWorkspaceRulesMarker(found bool, deployed int) error {
 	if found && deployed > WorkspaceRulesVersion {
-		return fmt.Errorf("the deployed security rules carry workspace generation %d (%s = %d) and this Fugaro's are generation %d: the nodes the workspace's own database runs under came from a newer Fugaro, so this run deploys nothing there — upgrade Fugaro (brew upgrade dimipaun/tap/fugaro, then fugaro update), and run fugaro update again with the newer binary, which is the one that deploys here",
+		return fmt.Errorf("the deployed security rules carry workspace generation %d (%s = %d) and this Fugaro's are generation %d: the workspace nodes this database runs under came from a newer Fugaro, so this binary deploys nothing here — upgrade Fugaro (brew upgrade dimipaun/tap/fugaro, then fugaro update with the newer binary), which is the one that deploys here",
 			deployed, PathWorkspaceRulesMarker(), deployed, WorkspaceRulesVersion)
 	}
 	return nil

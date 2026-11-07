@@ -200,6 +200,22 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary",
 			credsGen, rules.PathCredsRulesMarker(), credsGen, rules.CredsRulesVersion, d.gcpProject, rules.CredsRulesVersion, d.gcpProject)
 	}
+	// The workspace family's generation, read and refused the same way (W3 of the
+	// workspaces plan). It is a marker of its own for the credentials children's
+	// reason: the family's nodes — the record, the admitted-token hashes, the
+	// meter and the rollup — are what a database whose rules carry them runs
+	// under, and this binary's document would take them away again. The nodes
+	// live in the same one document (a Realtime Database carries one rules
+	// document) but count their own changes, so the document generation cannot
+	// answer "does this database run under the workspace family".
+	var wsGen int
+	wsEtag, wsFound, err := d.c.GetETag(ctx, rules.PathWorkspaceRulesMarker(), &wsGen)
+	if err != nil {
+		return nil, nil, dbErr("reading "+rules.PathWorkspaceRulesMarker(), err)
+	}
+	if err := rules.CheckWorkspaceRulesMarker(wsFound, wsGen); err != nil {
+		return nil, nil, userErr("%v; the door for this database is 'fugaro update --firebase-project %s', run with the newer binary", err, d.gcpProject)
+	}
 	d.acts = nil
 	var warnings []string
 	mark := dbMark{By: markBy, Project: d.project, GCPProject: d.gcpProject, Version: markVersion}
@@ -304,6 +320,19 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	if !credsFound || credsGen != rules.CredsRulesVersion {
 		d.put(rules.PathCredsRulesMarker(), credsEtag, rules.CredsRulesVersion,
 			fmt.Sprintf("records the credentials rules generation (%s = %d)", rules.PathCredsRulesMarker(), rules.CredsRulesVersion))
+	}
+	// The workspace family's generation, written beside the other two and for the
+	// same reason (W3): after the deploy above, so a failed deploy leaves no
+	// marker claiming nodes that are not there, and on the no-deploy path when it
+	// is absent — where the deployed rules are byte-for-byte the generated ones
+	// (SameJSON, above), so the workspace nodes this marker names are the ones the
+	// database runs under. The read at the top of this function is where a marker
+	// above this binary's WorkspaceRulesVersion refused the plan; here only the
+	// write is left, and the etag is that read, so a marker changed since is a 412
+	// at Apply.
+	if !wsFound || wsGen != rules.WorkspaceRulesVersion {
+		d.put(rules.PathWorkspaceRulesMarker(), wsEtag, rules.WorkspaceRulesVersion,
+			fmt.Sprintf("records the workspace rules generation (%s = %d)", rules.PathWorkspaceRulesMarker(), rules.WorkspaceRulesVersion))
 	}
 	return d.acts, warnings, nil
 }
