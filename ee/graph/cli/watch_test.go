@@ -696,6 +696,73 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 	})
 }
 
+// TestWatchSanitisesWhatTheTransportSays: a down scope's reason is the
+// transport's own error text, and that text carries the database's response
+// body — a string this CLI never wrote (rtdb's statusErr keeps the server's
+// message). The document is the boundary (H2), so a bidi override, a zero-width
+// formatter and a forged line in that body reach the child's stdout as plain
+// one-line text or not at all: a console renders this reason beside the state,
+// and print it raw and this child is the thing that hands a renderer the text
+// it exists not to trust.
+func TestWatchSanitisesWhatTheTransportSays(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	fast(t, testFloor, testKeep)
+
+	sink := newWatchSink()
+	startWatch(t, sink, "graph", "--watch", "--json")
+	if first := sink.next(t, testPatience); first.Sources[0].State != graph.SourceUp {
+		t.Fatalf("the first document's source is %+v, want it up before the transport fails", first.Sources[0])
+	}
+
+	// What the database answers the reconnect with: the server's own words,
+	// carrying the two kinds of text a document may not print, and a newline
+	// that would read as a line of its own on a terminal.
+	hostile := "the database is down " + string(rune(0x202e)) + "reversed " + string(rune(0x200b)) + "and\nforged line"
+	f.db.Refuse(http.StatusServiceUnavailable, "503", "Service Unavailable", hostile)
+	f.db.DropStreams()
+
+	// The first down document is the transport's own sentence about a closed
+	// connection; the one under test is the document that carries the server's
+	// body, which arrives with the reconnect.
+	var down graph.Document
+	for deadline := time.Now().Add(testPatience); time.Now().Before(deadline); {
+		doc := sink.next(t, testPatience)
+		if len(doc.Sources) > 0 && strings.Contains(doc.Sources[0].Reason, "the database is down") {
+			down = doc
+			break
+		}
+	}
+	if len(down.Sources) == 0 {
+		t.Fatalf("no document carried the transport's own words; the child wrote:\n%s", sink.text())
+	}
+
+	s := down.Sources[0]
+	if s.State != graph.SourceDown {
+		t.Errorf("the source carrying the server's words is %q, want %q", s.State, graph.SourceDown)
+	}
+	// The server's words did arrive — this is not a reason that says nothing —
+	// and they arrived as one plain line: the formatters gone rather than
+	// printed, the newline a space rather than a line break.
+	for _, want := range []string{"the database is down", "reversed and forged line"} {
+		if !strings.Contains(s.Reason, want) {
+			t.Errorf("the down reason %q does not carry %q: the transport's own sentence is what a screen shows beside the state", s.Reason, want)
+		}
+	}
+	for _, bad := range []string{"\n", "\r", "‮", "​"} {
+		if strings.Contains(s.Reason, bad) {
+			t.Errorf("the down reason %q carries %q, which a renderer draws as something other than text", s.Reason, bad)
+		}
+	}
+	// And nothing anywhere on the stream: the guard is the document's, so every
+	// document it writes is held to it, not this one field.
+	for _, bad := range []string{"‮", "​"} {
+		if strings.Contains(sink.text(), bad) {
+			t.Errorf("a document on stdout carries %q raw:\n%s", bad, sink.text())
+		}
+	}
+}
+
 // TestWatchRefusesAProjectWithNoDatabase: the project's config names no
 // Firebase database at all — an installation that never ran `fugaro update
 // --firebase-project` — and there is no connection to subscribe to, so the
