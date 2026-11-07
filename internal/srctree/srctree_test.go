@@ -446,6 +446,12 @@ func TestEveryGitCallIsHardened(t *testing.T) {
 	if err := ChangesSince(context.Background(), o, dir, filepath.Join(t.TempDir(), "changes.md")); err != nil {
 		t.Fatal(err)
 	}
+	// A version that parses asks the remote for its tag before the fetch, so
+	// that call is hardened too.
+	o.Version = "v1.1.0"
+	if err := ChangesSince(context.Background(), o, dir, filepath.Join(t.TempDir(), "changes.md")); err != nil {
+		t.Fatal(err)
+	}
 	all := calls()
 	if len(all) == 0 {
 		t.Fatal("no git call was recorded")
@@ -865,6 +871,9 @@ func TestUnpackRefusesAnUnsafeArchive(t *testing.T) {
 		{"a fifo", 1 << 20, []*tar.Header{{Name: top + "/fifo", Typeflag: tar.TypeFifo}}},
 		{"a hard link", 1 << 20, []*tar.Header{{Name: top + "/hard", Typeflag: tar.TypeLink, Linkname: top + "/VERSION"}}},
 		{"a second top-level directory", 1 << 20, []*tar.Header{{Name: "other/file", Typeflag: tar.TypeReg}}},
+		{"a .git directory", 1 << 20, []*tar.Header{{Name: top + "/.git/config", Typeflag: tar.TypeReg}}},
+		{"a .git file", 1 << 20, []*tar.Header{{Name: top + "/.git", Typeflag: tar.TypeReg}}},
+		{"a .git directory in another case", 1 << 20, []*tar.Header{{Name: top + "/.GIT/config", Typeflag: tar.TypeReg}}},
 		{"an oversize archive", 4, []*tar.Header{{Name: top + "/big", Typeflag: tar.TypeReg, Size: 8}}},
 	}
 	for _, tc := range cases {
@@ -881,12 +890,31 @@ func TestUnpackRefusesAnUnsafeArchive(t *testing.T) {
 	}
 }
 
+// The table above cannot show which check refuses its ".." entry: the archive
+// it writes names the top-level directory first, so a path that steps back over
+// it is already a second top-level directory by the time it is judged. This is
+// the check itself, judged with no top-level directory recorded yet.
+func TestEntryPathRefusesAPathThatClimbs(t *testing.T) {
+	for _, name := range []string{"../evil", "top/../../evil", "a/b/../../../evil"} {
+		t.Run(name, func(t *testing.T) {
+			top := ""
+			if _, err := entryPath(name, &top); err == nil || !strings.Contains(err.Error(), "it contains ..") {
+				t.Fatalf("entryPath(%q) = %v, want a refusal for ..", name, err)
+			}
+		})
+	}
+}
+
 func TestUnpackKeepsTheSource(t *testing.T) {
 	dest := t.TempDir()
 	body := archiveOf(t, "fugaro-abc", map[string]string{"fugaro-abc/VERSION": "v1.0.0\n"}, []*tar.Header{
 		{Name: "fugaro-abc/VERSION", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len("v1.0.0\n"))},
 		{Name: "fugaro-abc/internal/x.go", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1},
 		{Name: "fugaro-abc/run.sh", Typeflag: tar.TypeReg, Mode: 0o755, Size: 1},
+		// The refusal of .git is by the name itself: the repository's own
+		// .gitignore and .github must survive it.
+		{Name: "fugaro-abc/.gitignore", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1},
+		{Name: "fugaro-abc/.github/workflows/ci.yml", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1},
 		// The repository ships links like this one, so the transport that
 		// exists for a machine without git must keep them.
 		{Name: "fugaro-abc/.claude/skills/x", Typeflag: tar.TypeSymlink, Linkname: "../../.agents/skills/x"},
@@ -909,6 +937,11 @@ func TestUnpackKeepsTheSource(t *testing.T) {
 	}
 	if target, err := os.Readlink(filepath.Join(dest, ".claude", "skills", "x")); err != nil || target != "../../.agents/skills/x" {
 		t.Fatalf("link = %q, %v", target, err)
+	}
+	for _, name := range []string{".gitignore", filepath.Join(".github", "workflows", "ci.yml")} {
+		if _, err := os.Stat(filepath.Join(dest, name)); err != nil {
+			t.Fatalf("%s is not in the tree: %v", name, err)
+		}
 	}
 }
 
@@ -964,6 +997,61 @@ func TestChangesSinceWritesNewerReleases(t *testing.T) {
 	}
 	if fi.Mode().Perm()&0o222 != 0 {
 		t.Fatalf(".git/config is writable: %v", fi.Mode())
+	}
+}
+
+// TestChangesSinceOnTheNewestRelease: the release the person installed is the
+// newest one the remote has, and the remote's main is at it -- which is what
+// this repository looks like right after a release. Excluding that tag in the
+// fetch leaves nothing to select, and git fails the whole fetch over it ("no
+// commits selected for shallow requests"), so the answer has to be the empty
+// list rather than no file at all.
+func TestChangesSinceOnTheNewestRelease(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	o := options(t, r, "v1.1.0", r.commit["v1.1.0"])
+	dir, _, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "changes.txt")
+	if err := ChangesSince(context.Background(), o, dir, dest); err != nil {
+		t.Fatalf("the newest release: %v", err)
+	}
+	got := read(t, dest)
+	for _, want := range []string{"after v1.1.0", "No release is newer"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the changes file does not name %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "could not be anchored") {
+		t.Errorf("the newest release is anchored to its own tag:\n%s", got)
+	}
+}
+
+// TestChangesSinceWithoutTheVersionsTag: a version that parses as a release
+// but names a tag the remote does not carry -- a version cut in main between
+// two releases, or one built from a private repository -- must still produce
+// the file. --shallow-exclude names a ref on the remote, and the fetch fails
+// with "ambiguous deepen-not" on one that is not there, which left the
+// diagnosis with no changes file at all rather than with an unanchored one.
+func TestChangesSinceWithoutTheVersionsTag(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+	dir, _, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	since := o
+	since.Version = "1.2.3"
+	dest := filepath.Join(t.TempDir(), "changes.txt")
+	if err := ChangesSince(context.Background(), since, dir, dest); err != nil {
+		t.Fatalf("the version's tag is not on the remote: %v", err)
+	}
+	got := read(t, dest)
+	for _, want := range []string{"after 1.2.3", "could not be anchored", "v1.1.0:", "release v1.1.0"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the changes file does not name %q:\n%s", want, got)
+		}
 	}
 }
 

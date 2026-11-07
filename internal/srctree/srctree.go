@@ -265,7 +265,9 @@ func newestTag(ctx context.Context, o Options) (string, error) {
 // repository's refs and object store — the HEAD of a working copy of the
 // person's, say — while the call looks like a cache being filled. Only a
 // plain directory, of the kind this package's own "git init" makes, answers
-// yes; anything else is a tree to rebuild.
+// yes; anything else is a tree to rebuild. A plain directory there is this
+// package's own: the only other writer of a tree is the tarball transport, and
+// entryPath refuses an archive that names .git at all.
 func isRepository(dir string) bool {
 	at := filepath.Join(dir, ".git")
 	fi, err := os.Lstat(at)
@@ -390,8 +392,10 @@ func tarTree(ctx context.Context, o Options, root string, w want) (string, error
 // leaves the tree — a second top-level directory, an entry that is not a
 // directory, a regular file or such a link, and an archive over max bytes
 // are all refused (F21). So is an entry whose directory is a link an earlier
-// entry planted rather than a directory of the archive's own, and a link that
-// resolves out of the tree once every entry is in place.
+// entry planted rather than a directory of the archive's own, a link that
+// resolves out of the tree once every entry is in place, and any entry named
+// .git: that is where git run in the tree reads a repository's own
+// configuration, and the cache's own repository is the only one there.
 //
 // A link that stays inside the tree is created rather than refused: the
 // repository itself ships links under .claude/skills, and refusing every one
@@ -482,6 +486,14 @@ func entryPath(name string, top *string) (string, error) {
 	for _, p := range parts {
 		if p == ".." {
 			return "", fmt.Errorf("refusing %q: it contains ..", name)
+		}
+		// git run in the tree reads the ".git" at its root, and a .git the
+		// archive wrote is the one place a repository's own configuration can
+		// run a command (a smudge filter on checkout), so the cache's own is
+		// the only one a tree may hold; git refuses to track such a name
+		// whatever its case, which is why this is not an exact comparison.
+		if strings.EqualFold(p, ".git") {
+			return "", fmt.Errorf("refusing %q: it names %s, and the cache's own repository lives under that name", name, p)
 		}
 	}
 	if *top == "" {
@@ -698,8 +710,19 @@ func ChangesSince(ctx context.Context, o Options, dir, dest string) error {
 		return err
 	}
 	defer func() { _ = chmodTree(dir, false) }()
+	// The history since the installed release is fetched by excluding that
+	// release by name on the remote, and that exclusion fails the whole fetch
+	// when the name is not there -- a version cut in main between two
+	// releases, or one built from a private repository -- and when nothing is
+	// left after it, which is a repository right after a release: the tag the
+	// person installed is the newest one, and main is at it. Both would leave
+	// the diagnosis with no changes file at all, so what the remote carries
+	// decides the fetch and, for a version that is not one of its releases,
+	// whether it is anchored to one (D1611).
+	remote := remoteTags(ctx, o, dir)
+	tagged = tagged && slices.Contains(remote, tag)
 	args := []string{"fetch", "--quiet", "--force", "--tags"}
-	if tagged {
+	if tagged && remote[0] != tag {
 		// History from the installed release up, and not below it: what
 		// changed since is exactly the range the log below walks.
 		args = append(args, "--shallow-exclude="+tag)
@@ -745,6 +768,24 @@ func ChangesSince(ctx context.Context, o Options, dir, dest string) error {
 // read.
 func tarballNote(version string) string {
 	return "The source of " + version + " was fetched as a tarball, which carries no history: what changed since it cannot be listed here.\n"
+}
+
+// remoteTags is the release tags the remote the tree fetches from carries,
+// newest first, the way `git tag --list --sort=-v:refname` prints them. A
+// remote that cannot be read gives nothing, and the fetch that follows reports
+// why: this only decides what that fetch asks for.
+func remoteTags(ctx context.Context, o Options, dir string) []string {
+	out, err := o.Run(ctx, dir, gitArgs("ls-remote", "--tags", "--refs", "--sort=-v:refname", "origin", "refs/tags/v*")...)
+	if err != nil {
+		return nil
+	}
+	var tags []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if _, ref, ok := strings.Cut(line, "\t"); ok {
+			tags = append(tags, strings.TrimPrefix(ref, "refs/tags/"))
+		}
+	}
+	return tags
 }
 
 // newerTags is the release tags in a `git tag --list --sort=-v:refname`
