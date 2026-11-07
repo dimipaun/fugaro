@@ -152,6 +152,88 @@ func basicAuth(id, secret string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(id+":"+secret))
 }
 
+// TestNoServerIsBuiltWithoutItsStoreItsVerifierOrAnOrigin is NewServer's three
+// refusals, one per argument it cannot do its work without. Each is a
+// deployment mistake rather than a request's: a server with no store has
+// nowhere to write a client or a code, one with no verifier cannot answer the
+// sign-in step, and one whose issuer is not an origin names endpoints nobody
+// serves in the metadata documents it publishes. Each has to be caught where
+// the server is built, because a server built anyway would report it as a
+// refusal of somebody's request.
+func TestNoServerIsBuiltWithoutItsStoreItsVerifierOrAnOrigin(t *testing.T) {
+	store := newFakeStore(t).Store
+	verifier := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
+
+	for _, tc := range []struct {
+		what     string
+		cfg      Config
+		store    Store
+		verifier *Verifier
+	}{
+		{"no store", testConfig(), nil, verifier},
+		{"no verifier", testConfig(), store, nil},
+		{"an issuer that is not an origin", Config{Issuer: "http://coordinator.example.com"}, store, verifier},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			srv, err := NewServer(tc.cfg, tc.store, tc.verifier)
+			if err == nil {
+				t.Errorf("NewServer with %s = a server; want a refusal", tc.what)
+			}
+			if srv != nil {
+				t.Errorf("NewServer refused %s and handed back a server anyway", tc.what)
+			}
+		})
+	}
+
+	// The same three arguments with nothing missing are built, so the refusals
+	// above are three guards and not a constructor that refuses everything.
+	if srv, err := NewServer(testConfig(), store, verifier); err != nil {
+		t.Fatalf("NewServer with every argument: %v", err)
+	} else if srv == nil {
+		t.Error("NewServer returned no server and no error")
+	}
+}
+
+// TestNoIssuerThatIsNotAnOriginIsAccepted is the guard over the issuer and the
+// audience together, and it is the one that keeps the metadata documents
+// resolvable: the issuer is the authorization server's identifier, the resource
+// every token is minted for, and the origin each endpoint above is appended to.
+// A value carrying a path, a query, a fragment or credentials would produce
+// documents naming URLs nobody serves and an audience a client cannot check; a
+// scheme other than https is refused for the reason D920 requires one, a bearer
+// token over a public endpoint. The accepted values are here beside the refused
+// ones, so a guard that refused everything would fail this test too.
+func TestNoIssuerThatIsNotAnOriginIsAccepted(t *testing.T) {
+	for _, tc := range []struct {
+		what   string
+		issuer string
+		ok     bool
+	}{
+		{"an origin", "https://coordinator.example.com", true},
+		{"an origin on a port", "https://coordinator.example.com:8443", true},
+		{"a scheme that is not https", "http://coordinator.example.com", false},
+		{"a trailing slash", "https://coordinator.example.com/", false},
+		{"a path", "https://coordinator.example.com/oauth", false},
+		{"a query", "https://coordinator.example.com?project=p", false},
+		{"a fragment", "https://coordinator.example.com#fragment", false},
+		{"credentials", "https://person@coordinator.example.com", false},
+		{"no host", "https://", false},
+		{"no scheme", "coordinator.example.com", false},
+		{"an empty string", "", false},
+		{"not a URL at all", "https://coordinator.example.com/\x7f", false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			err := issuerURL(tc.issuer)
+			if tc.ok && err != nil {
+				t.Errorf("issuerURL(%q) = %v; want it accepted", tc.issuer, err)
+			}
+			if !tc.ok && err == nil {
+				t.Errorf("issuerURL(%q) = nil; want it refused", tc.issuer)
+			}
+		})
+	}
+}
+
 // TestNoTokenIsA401NamingTheMetadataURL is M5's red step. A client that reaches
 // the MCP endpoint with no token has to be told where to go next: the answer is
 // 401 with a WWW-Authenticate header naming the protected-resource metadata

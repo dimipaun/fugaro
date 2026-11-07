@@ -327,6 +327,54 @@ func TestAConsumeThatLosesTheRaceIsSpent(t *testing.T) {
 	}
 }
 
+// TestBindCodeFamilyBindsOnlyASpentCode is the guard on the one write this
+// package makes to a record that is already spent. The family a code's first
+// exchange minted is written into the marker the consume left behind, and it is
+// what a replay of that code is read for (D930): a code whose family was bound
+// before an exchange spent it would carry a family no exchange made, so two
+// presentations of one code would be read as one family's rather than as the
+// replay the second one is.
+func TestBindCodeFamilyBindsOnlyASpentCode(t *testing.T) {
+	ctx := context.Background()
+	s := newFakeStore(t)
+
+	codeHash := TokenHash("a-code-this-installation-issued")
+	if err := s.PutCode(ctx, Code{
+		Hash:        codeHash,
+		ClientID:    "client-1",
+		RedirectURI: testClientRedirect,
+		Challenge:   testChallenge(),
+		Identity:    "user:person-1",
+		Scopes:      []string{ScopeTasksRead},
+		ExpiresAt:   testNow.Add(CodeTTL),
+	}); err != nil {
+		t.Fatalf("PutCode: %v", err)
+	}
+
+	if err := s.BindCodeFamily(ctx, codeHash, "family-1"); err == nil {
+		t.Error("BindCodeFamily bound a family to a code no exchange had spent")
+	}
+
+	// A code that has been spent takes the family, which is the write the
+	// exchange makes after it wins the consume.
+	if _, err := s.ConsumeCode(ctx, codeHash); err != nil {
+		t.Fatalf("ConsumeCode: %v", err)
+	}
+	if err := s.BindCodeFamily(ctx, codeHash, "family-1"); err != nil {
+		t.Fatalf("BindCodeFamily of a spent code: %v", err)
+	}
+
+	// Read back the way a replay reads it: the refusal carries the family, and
+	// the bind is where that family comes from.
+	replayed, err := s.ConsumeCode(ctx, codeHash)
+	if !errors.Is(err, ErrCodeUsed) {
+		t.Fatalf("the second ConsumeCode = %v; want ErrCodeUsed", err)
+	}
+	if replayed.FamilyID != "family-1" {
+		t.Errorf("the family a replayed code names = %q; want %q", replayed.FamilyID, "family-1")
+	}
+}
+
 // TestARevokeTheStoreRefusesIsNotARevoke is D930's one unconditional write
 // held to the answer the read path already refuses to fold. gocloud's GCS
 // driver reports an HTTP 403 as NotFound — the fold ReadStrict exists to undo
