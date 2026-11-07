@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -164,7 +165,11 @@ re-created rather than lost, and the output says so.`,
 // order the sequence uses them, so each step reads only what an earlier step
 // has already decided.
 type restoreRun struct {
-	cmd  *cobra.Command
+	cmd *cobra.Command
+	// rep is the run's account and log, opened by restoreSteps before the
+	// preflight and shared with the apply the sequence ends in, so this run
+	// prints one line per unit of work and one closing line (D1352, D1354).
+	rep  *report.Reporter
 	o    restoreOptions
 	sel  localcfg.Selection
 	lc   *localcfg.Config // the installation as it is: the project that was lost
@@ -204,12 +209,16 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	return restoreSteps(cmd, o, newID, rootArg)
 }
 
-// restoreManagedApply is the apply a restore ends in: managedApply, the
-// function `fugaro managed apply` runs, and nothing else (a test pins the
+// restoreManagedApply is the apply a restore ends in: managedApplyWith, the
+// body `fugaro managed apply` runs, and nothing else (a test pins the
 // production value). It is a variable only so that a test can record that
 // the sequence below reaches it, exactly once and with the new project's
 // root.
-var restoreManagedApply = managedApply
+//
+// It is the body rather than the command because a restore's apply is part of
+// the restore's own run: it prints its steps through this run's reporter, in
+// this run's log, under this run's one closing line.
+var restoreManagedApply = managedApplyWith
 
 // restoreInitCmd builds the creating path's command: newSetupCmdWith, the
 // constructor `fugaro setup` itself uses (the door that creates — a restore
@@ -312,10 +321,23 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 // the cloud is not undone (putBack's message lists it).
 func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (err error) {
 	ctx := cmd.Context()
+	// This run's account and its log (D1352): the log is filed under the
+	// command's own name and holds what the run's stages streamed, and the
+	// closing line is this run's whether it finished, failed or left something
+	// for the operator. It is opened before the preflight because a refused
+	// restore keeps its log too — the refusal prints no step, so the closing
+	// line is not printed either — and it is closed on the way out so the log's
+	// last partial line is written.
+	rep, sink := reporterFor(cmd, "restore", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	rr, c, err := restorePreflight(cmd, o, newID, rootArg)
 	if err != nil {
 		return err
 	}
+	rr.rep = rep
 	// The one confirmation, before anything is changed: the local config, the
 	// checkout's file, the project and the apply.
 	if err := rr.confirm(cmd); err != nil {
@@ -337,9 +359,21 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			err = rr.putBack(err)
 		}
 	}()
-	var made initCreation
-	if err := rr.create(ctx, &made); err != nil {
+	// The project step covers the creation and its verification, because to the
+	// person watching they are one unit of work: the creating run's own stages
+	// are its output. Its line in flight comes down for the whole of it (G1):
+	// the child is a run of its own and prints its steps to this same terminal.
+	step := rep.Step("project")
+	fail := func(err error) error {
+		step.Failed(err, nil)
 		return err
+	}
+	var made initCreation
+	rep.Pause()
+	err = rr.create(ctx, &made)
+	rep.Resume()
+	if err != nil {
+		return fail(err)
 	}
 	if err := rr.verifyCreated(ctx, c, made); err != nil {
 		var notOpen *createdNotOpenError
@@ -359,8 +393,8 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			// offers a command that would refuse for the state this command
 			// actually leaves.
 			moved = false
-			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. Otherwise the fact in the runs bucket is what refuses the apply, and what can replace it depends on what it records: a creation fact that records none is what `fugaro managed flag %s --budget N --budget-currency CCC`, run at the owner's own terminal, replaces with the version that records the amount (Task 6.1), while the fact this run's --managed creation writes already records one, and no command of ours rewrites one that does — so for it, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
-				rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID, rr.newID)
+			return fail(restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. Otherwise the fact in the runs bucket is what refuses the apply, and what can replace it depends on what it records: a creation fact that records none is what `fugaro managed flag %s --budget N --budget-currency CCC`, run at the owner's own terminal, replaces with the version that records the amount (Task 6.1), while the fact this run's --managed creation writes already records one, and no command of ours rewrites one that does — so for it, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+				rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID, rr.newID))
 		case errors.As(err, &unmarked):
 			// The creation is this run's and half marked: the fact is in the
 			// runs bucket and the project has no label, so nothing reads it
@@ -372,22 +406,23 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			// refusal names the condition and not the command, because a
 			// refusal is what a coding agent's session reads (Task 3.0 §5).
 			moved = false
-			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/design/managed-projects.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
-				rr.newID, rr.backup, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID, rr.rootArg, rr.newID, rr.newID)
+			return fail(restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/design/managed-projects.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+				rr.newID, rr.backup, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID, rr.rootArg, rr.newID, rr.newID))
 		default:
-			return err
+			return fail(err)
 		}
 	}
 	// The project exists, this run created it and wrote its fact: from here
 	// the config names a project that is the installation's, and it stays.
 	moved = false
+	step.Done(fmt.Sprintf("%s is created and reads as managed", rr.newID))
 	if err := rr.anchor(cmd); err != nil {
 		return restoreWrap(err, "%s was created by this run and is managed, and the project config names it; the checkout's gcp_project: line did not move, so change it to gcp_project: %s yourself, then run fugaro managed apply %s", rr.newID, rr.newID, rr.rootArg)
 	}
 	// The apply: the same function `fugaro managed apply` runs, so the
 	// preflight allowlist, the gate, the plan-hash re-check, the credential
 	// and the confirmation are the same ones and not a second, weaker path.
-	if err := restoreManagedApply(cmd, restoreApplyCloud(o.cloud), rr.root); err != nil {
+	if err := restoreManagedApply(cmd, restoreApplyCloud(o.cloud), rr.root, rep); err != nil {
 		return restoreWrap(err, "%s was created and is managed, and the project config names it; the apply did not finish, so run fugaro managed apply %s to finish it (nothing else is left to do but D66's list below, which a finished restore prints)", rr.newID, rr.rootArg)
 	}
 	return rr.report()
@@ -947,34 +982,48 @@ func (rr *restoreRun) planConfig() error {
 // config names the OLD project (newID == lc.GCPProject is refused before
 // this) and the move writes gcp_project: <newID>, so the two are never equal.
 func (rr *restoreRun) writeConfig() error {
+	step := rr.rep.Step("config")
+	fail := func(err error) error {
+		step.Failed(err, nil)
+		return err
+	}
 	data, err := rr.next.Marshal()
 	if err != nil {
-		return userErr("marshalling the moved project config: %v", err)
+		return fail(userErr("marshalling the moved project config: %v", err))
 	}
 	if _, err := localcfg.Parse(data); err != nil {
-		return userErr("the moved project config: %v", err)
+		return fail(userErr("the moved project config: %v", err))
 	}
-	w := rr.cmd.OutOrStdout()
-	fmt.Fprintf(w, "The project config %s changes:\n%s", rr.path, lineDiff(string(rr.old), string(data)))
+	rr.say("The project config %s changes:\n%s", rr.path, lineDiff(string(rr.old), string(data)))
 	if err := os.MkdirAll(filepath.Dir(rr.path), 0o700); err != nil {
-		return userErr("%v", err)
+		return fail(userErr("%v", err))
 	}
 	if rr.old != nil {
 		backup, err := backupFile(rr.path, rr.old, time.Now())
 		if err != nil {
-			return userErr("backing up the project config: %v", err)
+			return fail(userErr("backing up the project config: %v", err))
 		}
 		rr.backup = backup
-		fmt.Fprintf(w, "backed up the old project config to %s\n", backup)
+		rr.say("backed up the old project config to %s\n", backup)
 	}
 	if err := writeFileAtomic(rr.path, data); err != nil {
-		return userErr("writing the project config: %v", err)
+		return fail(userErr("writing the project config: %v", err))
 	}
-	fmt.Fprintf(w, "wrote %s\n", rr.path)
+	step.Done(fmt.Sprintf("wrote %s", rr.path))
 	for _, l := range rr.left {
-		fmt.Fprintf(w, "note: %s\n", l)
+		rr.say("note: %s\n", l)
 	}
 	return nil
+}
+
+// say prints a block the person is meant to read on lines of its own, with this
+// run's line in flight taken down around it and drawn again after (G1): a
+// step's spinner over the config's diff, the checkout's diff or the list the
+// run ends with would be a block somebody is reading through.
+func (rr *restoreRun) say(format string, args ...any) {
+	rr.rep.Pause()
+	fmt.Fprintf(rr.cmd.OutOrStdout(), format, args...)
+	rr.rep.Resume()
 }
 
 // createArgs is the creating path's flags, and nothing else: `fugaro setup
@@ -1054,36 +1103,47 @@ func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 // add), and a read-back that has to mean what the file meant plus the one
 // value. There is no --yes here: a restore has none.
 func (rr *restoreRun) anchor(cmd *cobra.Command) error {
+	step := rr.rep.Step("checkout")
+	fail := func(err error) error {
+		step.Failed(err, nil)
+		return err
+	}
 	path := filepath.Join(rr.checkout, "fugaro.yaml")
 	old, err := requireFugaroYAML(path)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	out, changed, err := restoreGCPProjectLine(old, rr.lc.GCPProject, rr.newID)
 	if err != nil {
-		return err
+		return fail(err)
 	}
-	w := cmd.OutOrStdout()
 	if !changed {
-		fmt.Fprintf(w, "%s already names gcp_project: %s\n", path, rr.newID)
+		step.Skipped(fmt.Sprintf("%s already names gcp_project: %s", path, rr.newID))
 		return nil
 	}
-	fmt.Fprintf(w, "%s\n%s", path, lineDiff(string(old), string(out)))
+	rr.say("%s\n%s", path, lineDiff(string(old), string(out)))
 	addLine := fmt.Sprintf("to let teammates use this installation without setup, change the gcp_project line of %s yourself: gcp_project: %s\n", path, rr.newID)
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		fmt.Fprint(w, addLine)
+		rr.say("%s", addLine)
+		step.Skipped(fmt.Sprintf("the checkout's gcp_project: line still names %s, and this session has no terminal to ask at", rr.lc.GCPProject))
 		return nil
 	}
-	fmt.Fprintf(w, "Write this to %s? [y/N]: ", path)
+	// The prompt is a question read on a line of its own: the line in flight
+	// comes down for the question and for the answer typed under it (G1).
+	rr.rep.Pause()
+	fmt.Fprintf(cmd.OutOrStdout(), "Write this to %s? [y/N]: ", path)
 	line, _ := readConfirmLine(cmd.InOrStdin()) // an ended input is a no
+	rr.rep.Resume()
 	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
-		fmt.Fprint(w, addLine)
+		rr.say("%s", addLine)
+		step.Skipped(fmt.Sprintf("left as it is on a no: the checkout's gcp_project: line still names %s", rr.lc.GCPProject))
 		return nil
 	}
 	if err := writeFileAtomic(path, out); err != nil {
-		return userErr("writing %s: %v", path, err)
+		return fail(userErr("writing %s: %v", path, err))
 	}
-	fmt.Fprintf(w, "Updated %s with the new gcp_project. Review it with git diff and commit it like any change: every teammate's CLI and every CI job or pin that runs fugaro against the repository reads the shared config from this line.\n", path)
+	step.Done(fmt.Sprintf("moved gcp_project to %s in %s", rr.newID, path))
+	rr.say("Review it with git diff and commit it like any change: every teammate's CLI and every CI job or pin that runs fugaro against the repository reads the shared config from this line.\n")
 	return nil
 }
 
@@ -1273,10 +1333,11 @@ func restoreNotRestored(old *localcfg.Config, newID string) []string {
 
 // report ends the run with D66's list. It is the last thing the command does,
 // after the apply, so a reader takes away what the new project has and what it
-// does not in one place.
+// does not in one place: the step line says the restore finished and names what
+// the list below is, and the list is the lines under it.
 func (rr *restoreRun) report() error {
+	rr.rep.Step("account").Done(fmt.Sprintf("%s is restored into %s. NOT restored:", rr.lc.Name, rr.newID))
 	w := rr.cmd.OutOrStdout()
-	fmt.Fprintf(w, "\n%s is restored into %s. NOT restored:\n", rr.lc.Name, rr.newID)
 	for _, l := range restoreNotRestored(rr.lc, rr.newID) {
 		fmt.Fprintf(w, "  - %s\n", l)
 	}

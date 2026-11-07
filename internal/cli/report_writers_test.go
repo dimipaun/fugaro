@@ -45,10 +45,16 @@ func reported(t *testing.T, out string, steps ...string) {
 // a line, and the newline that separates the step from it is the terminal's
 // own echo — which a test's pipe does not have, so the step line lands at the
 // end of the prompt's line rather than the start of its own.
+//
+// The character after the name is what a result line puts there: a space before
+// a detail, a colon before a failure's or a left-for-you step's text, and the
+// end of the line for a step with neither.
 func stepNamed(out, name string) bool {
 	for _, mark := range []string{markDone, markFailed, markLeft, markSkipped} {
-		if strings.Contains(out, mark+" "+name+" ") {
-			return true
+		for _, tail := range []string{" ", ":", "\n"} {
+			if strings.Contains(out, mark+" "+name+tail) {
+				return true
+			}
 		}
 	}
 	return false
