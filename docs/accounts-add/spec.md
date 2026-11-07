@@ -394,7 +394,16 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    repository whose runs stop at launch, and a read that covered the base alone would score it clean.
    A name at either ref is the warnable reference, and a read that failed at either is an unresolved
    value. A branch of origin that is neither — one a run reaches only with an explicit `--ref` — is
-   not read: what this check answers for is the runs the repository makes by itself. Of the ways the read can come up short,
+   not read: what this check answers for is the runs the repository makes by itself.
+   **In a coding agent's session, a checkout this machine holds is not evidence about origin either.**
+   The ref a read here resolves is one that same checkout holds — `refs/remotes/origin/<ref>` first,
+   else the branch of the same name — and a session owns that checkout: `git commit && git update-ref
+   refs/remotes/origin/<ref> HEAD` moves the remote-tracking ref onto a commit that hides the name, so
+   the clean read and the forged one are the same bytes and the read resolves nothing about what origin
+   carries. A repository whose committed file this machine read is therefore an **unresolved** value in
+   a session — a **refusal** — while the owner's own run keeps the warning and the confirmation: that
+   checkout is the owner's, and its commit is what the runs of the repository resolve their account
+   from. Of the ways the read can come up short,
    a repository this machine has **no checkout of** is a warning, while a checkout whose committed file
    **did not resolve** (a document the strict reader refuses, or a ref this checkout does not hold) is
    a warning for the owner and a **refusal** for a session, because there the answer was asked for and
@@ -413,8 +422,9 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
 wherever no admission covers the removal. In a managed project the gate admits an `rm` whose referrers
 are checked and clean, which is the accounts row of the managed design's §4.2 and its rule for this
 command: no profile names the account, no enrolled repository this machine holds a checkout of names
-it in the committed `agent.oauth_token`, no checkout's file went unread, and the record of the
-checkouts itself was read — a value the gate cannot resolve at plan time is a refusal and never a pass
+it in the committed `agent.oauth_token`, no checkout's file went unread, no read that answered is a
+session's own checkout's word for what origin carries (above), and the record of the checkouts itself
+was read — a value the gate cannot resolve at plan time is a refusal and never a pass
 (that design's §4.1). A repository this machine has
 no checkout of is the one case no read here can close, and it is the warning above rather than a pass:
 what it would break is a run that stops at launch, which the owner reads about on their own run too.

@@ -1072,6 +1072,116 @@ func TestAccountsRmWarnsAboutThePolicyBaseBranch(t *testing.T) {
 	}
 }
 
+// TestAccountsRmManagedRefusesARefTheSessionMoved is the hole every local read
+// leaves open, pinned: the refs a committed read resolves live in the checkout
+// the session owns — refs/remotes/origin/<ref> and the branch of the same name
+// (project_job.go's checkoutFugaroYAMLAtRef) — and a session can point one of
+// them at a commit of its own that does not name the account. The local read
+// then says clean, and while it was evidence the gate admitted the removal and
+// the one-way delete ran, with every run from origin still stopping at launch.
+//
+// Nothing this command can read locally tells origin's copy from a session's
+// forged one, so the read is an unresolved value in a session and the gate
+// refuses it (managed spec §4.1). The move below is byte for byte the one such a
+// session makes: the edit that takes the name out, committed, and the
+// remote-tracking ref moved onto that commit.
+// TestAccountsRmWarnsWhenThePolicyBaseBranchCannotBeRead is the owner's half of
+// that value: the node the project's default would come from is one this machine
+// cannot read, so the refs the committed file has to be read at are unknown. It
+// is the unread warning and not a quiet clean score — an installation whose base
+// branch lives only in the policy would otherwise be judged at main, a branch no
+// run of the repository is cut from, while the file at the branch the policy
+// names still names the account.
+func TestAccountsRmWarnsWhenThePolicyBaseBranchCannotBeRead(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmBreakPolicyBaseBranch(t, r, "release")
+	accountsRmCheckoutBranched(t, "owner/repo-a", accountsRmRepoYAMLWithoutToken, accountsRmRepoYAML)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: this machine could not read the committed fugaro.yaml of owner/repo-a") {
+		t.Errorf("the run does not say that the committed fugaro.yaml could not be read at the base the policy names:\n%s", out)
+	}
+	if strings.Contains(out, "warning: team-a is named by owner/repo-a") {
+		t.Errorf("the run names a referrer it never read a file for:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: a base this machine could not read is a warning on the owner's own path and not a block", got, id)
+	}
+}
+
+func TestAccountsRmManagedRefusesARefTheSessionMoved(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	dir := accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	before := readFileString(t, r.cfg)
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": accountsRmRepoYAMLWithoutToken})
+	testutil.Git(t, dir, "commit", "-qam", "the session's own edit")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran on a ref the session moved to a commit that hides the name (%v):\n%s", got, out)
+	}
+	if err == nil {
+		t.Fatalf("a ref the session moved did not stop the removal:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") || !strings.Contains(err.Error(), "update-ref") {
+		t.Errorf("the refusal does not name the checkout whose read it could not resolve, nor the move that makes that read unprovable: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the gate records are %+v, want the one refusal", recs)
+	}
+}
+
+// TestAccountsRmManagedRefusesAnUnreadablePolicyBaseBranch is the base branch's
+// own unresolved value. The project's default is the policy node's only when
+// neither the installation's config nor the repository's entry names one, and a
+// node this Fugaro could not read used to leave the base at main (basebranch.go's
+// projectBaseBranch): the check then read a branch no run of the repository is
+// cut from, scored it clean and admitted a session to the one-way delete, while
+// the file at the branch the policy names still named the account.
+//
+// A launch may fall back to main — its own policy gate reports a node it has to
+// satisfy, and a base it cannot read is not worth stopping a launch over — but a
+// verdict about a file may not: the refs are unknown, so the repository is unread
+// and the gate refuses (managed spec §4.1).
+func TestAccountsRmManagedRefusesAnUnreadablePolicyBaseBranch(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmBreakPolicyBaseBranch(t, r, "release")
+	accountsRmCheckoutBranched(t, "owner/repo-a", accountsRmRepoYAMLWithoutToken, accountsRmRepoYAML)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran while the base branch the policy names could not be read (%v):\n%s", got, out)
+	}
+	if err == nil {
+		t.Fatalf("a base branch this machine could not resolve did not stop the removal:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") || !strings.Contains(err.Error(), "could not read the committed fugaro.yaml") {
+		t.Errorf("the refusal does not name the checkout whose committed file could not be reached: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+}
+
 // TestAccountsRmManagedRefusesABranchItCannotRead is the other half of that ref,
 // and the same split the base branch already answers: a document that was not
 // read is never scored clean, whichever ref it sits at. The branch this checkout
@@ -1439,6 +1549,19 @@ func accountsRmPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 	t.Helper()
 	node := addPolicyNode()
 	node["base_branch"] = branch
+	r.db.Set(projectpolicy.PathShared(), node)
+}
+
+// accountsRmBreakPolicyBaseBranch publishes branch as the project's base branch
+// beside a key this Fugaro's reader refuses, so the node a launch's layer 3
+// comes from is one this machine cannot read at all: the base branch is then
+// unresolved rather than the default, which is the value a verdict about a file
+// may not resolve (basebranch.go's projectBaseBranchErr).
+func accountsRmBreakPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
+	t.Helper()
+	node := addPolicyNode()
+	node["base_branch"] = branch
+	node["a_key_this_fugaro_does_not_know"] = true
 	r.db.Set(projectpolicy.PathShared(), node)
 }
 
