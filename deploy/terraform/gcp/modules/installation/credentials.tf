@@ -407,10 +407,9 @@ resource "google_cloud_run_v2_service" "credentials" {
       # them; the rest are read as optional values, and — the verifier list
       # alone excepted, which is rendered in every state of its own list
       # (CSR14) — are rendered only when the installation names the accounts
-      # they carry. No
-      # credential is among them: it reads the one bundle secret as
-      # its own account, by the name it derives from FUGARO_PROJECT (the
-      # project-wide container of the logical name "creds-bundle",
+      # they carry. No credential is among them: it reads the one bundle
+      # secret as its own account, by the name it derives from FUGARO_PROJECT
+      # (the project-wide container of the logical name "creds-bundle",
       # internal/backend/gcp's ProjectSecretID — the same value
       # var.credentials_service.bundle_secret carries, which is what the
       # container above is created with), so no secret ID and no secret value
