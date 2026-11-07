@@ -108,7 +108,9 @@ type watcher struct {
 	// down is why the subscription cannot be reached, "" while it is up.
 	down string
 	// dirty is a change that has not been printed yet, either because it has
-	// just arrived or because the floor has not passed since the last document.
+	// just arrived, because the floor has not passed since the last document, or
+	// because the read that would have answered it failed and has to be tried
+	// again.
 	dirty bool
 }
 
