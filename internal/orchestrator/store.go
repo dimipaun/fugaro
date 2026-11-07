@@ -27,12 +27,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// The orchestrator subtree. PathRoot is the prefix O2's rules grant and the
-// name the doctor and the website's reference use, so it is a constant rather
-// than three string literals.
+// The orchestrator subtree. SubtreeRoot is the prefix O2's rules grant and the
+// name a reader looks up, so it is one constant rather than four string
+// literals. It is deliberately not called PathRoot: that name is the
+// coordinator's subtree's (internal/coordpath), and one name for two subtrees
+// is the drift the rules cannot see (TestCoordpathIsTheOnlyCopy).
 const (
-	// PathRoot is the orchestrator's top-level subtree.
-	PathRoot = "orchestrator"
+	// SubtreeRoot is the orchestrator's top-level subtree.
+	SubtreeRoot = "orchestrator"
 	// StateNode, LeaseNode and AuditNode are the three siblings, one of each
 	// per orchestrator id.
 	StateNode = "state"
@@ -293,7 +295,7 @@ func PathNode(agentID string) (string, error) {
 	if err := checkAgentID(agentID); err != nil {
 		return "", err
 	}
-	return PathRoot + "/" + budget.Key(agentID), nil
+	return SubtreeRoot + "/" + budget.Key(agentID), nil
 }
 
 // PathState, PathLease and PathAudit are the three siblings of one
