@@ -157,7 +157,7 @@ func validAccounts(accounts map[string]Account) error {
 		}
 		acct := accounts[name]
 		if len(acct.AllowRepos) == 0 {
-			return fmt.Errorf("%s.allow_repos: an account must name the repositories its token may be used by, and this list is empty (a written null reads the same way): a profile may serve only repositories its accounts cover, so an account list that admits nothing is one no profile can list. Publish derives it from claude_accounts.%s.allow_data_to in the project's local config — which must be non-empty for the account's project-wide copy to exist at all", at, name)
+			return fmt.Errorf("%s.allow_repos: an account must name the repositories its token may be used by, and this list is empty (a written null reads the same way): a profile may serve only repositories its accounts cover, so an account list that admits nothing is one no profile can list. Publish derives it from %s in the project's local config — which must name at least one repository for a profile to be able to serve it", at, accountSourcePhrase(name))
 		}
 		seen := map[string]bool{}
 		for i, repo := range acct.AllowRepos {
@@ -165,7 +165,7 @@ func validAccounts(accounts map[string]Account) error {
 				return fmt.Errorf("%s.allow_repos[%d]: %w", at, i, err)
 			}
 			if strings.Contains(repo, "*") {
-				return fmt.Errorf("%s.allow_repos[%d]: %q carries a wildcard, and an account's list is exact: it is the per-repository decision of which runs may use that token (D3), and a wildcard makes the profile-side subset rule undecidable. Write the repositories themselves, or publish the account's list from claude_accounts.%s.allow_data_to", at, i, repo, name)
+				return fmt.Errorf("%s.allow_repos[%d]: %q carries a wildcard, and an account's list is exact: it is the per-repository decision of which runs may use that token (D3), and a wildcard makes the profile-side subset rule undecidable. Write the repositories themselves, or publish the account's list from %s", at, i, repo, accountSourcePhrase(name))
 			}
 			if seen[repo] {
 				return fmt.Errorf("%s.allow_repos[%d]: %q is listed twice; list each repository once", at, i, repo)
