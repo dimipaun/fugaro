@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -147,12 +148,23 @@ the reason printed first. Nothing is halted and nothing is deleted.`,
 	return cmd
 }
 
-// managedApply is newManagedApplyCmd's body. The order is the whole of the
-// design: the local checks, then the project and its number, then the
-// apply-time budget read and the gate it opens (Task 4.4), then the reads the
-// apply itself trusts, then the apply — and every refusal before the apply is a
-// hard return.
+// managedApply is newManagedApplyCmd's body, and the wrapper that gives it a
+// reporter of its own: the log is filed under this command's name (D1352) and
+// the closing line is this run's. A restore drives the same body with its own
+// run's reporter instead — one run, one log, one closing line — which is why
+// the body is a function of its own.
 func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
+	rep, sink := reporterFor(cmd, "managed-apply", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
+	return managedApplyWith(cmd, o, rootArg, rep)
+}
+
+// managedApplyWith is managedApply's body: the whole sequence, printing its one
+// step through rep.
+func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, rep *report.Reporter) error {
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs, so it cannot be unset in time (refuseHTTP2Debug).
@@ -244,6 +256,10 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		return userErr("fugaro managed apply needs terraform (>= 1.9, < 2) on PATH: %v", err)
 	}
 	imp := deployerImpersonator{self: self, ts: ts, endpoint: impersonationEndpoint, hc: impersonationHTTPClient()}
+	// One step for the whole apply: the plan, the gate, the owner's list, the
+	// credential and the apply itself are one unit of work to the person
+	// watching, and it is opened here so every outcome below ends it.
+	step := rep.Step("apply")
 	res, err := managedmode.Apply(ctx, managedmode.Request{
 		// The gate the budget read above opened, handed over rather than
 		// rebuilt: managed.Apply refuses a closed one as its own first step,
@@ -279,7 +295,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// the saved plan's hash and what it changes. A coding agent's session
 		// is never asked (D55), and a session with no terminal never reaches
 		// this (the rule refuses it first).
-		Ask: managedAsk(cmd, lc),
+		Ask: managedApplyAsk(cmd, lc, rep),
 		// Session is nil, and it is written out rather than left to the zero
 		// value because the field is the assertion: this command registers no
 		// flag and no argument that names an address, so there is no way to
@@ -298,19 +314,49 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// own member: the account is assumed by the identity the grant is
 		// on, and an assumption that cannot be made applies nothing.
 		Impersonator: imp,
-		Out:          cmd.ErrOrStderr(),
+		// The run's own output — the D59 warning this project's inventory
+		// raised, the gate's verdict and terraform's progress — stays on stderr,
+		// which is where it was before this command had a step of its own: the
+		// gate's warning is documented as one every session reads
+		// (Request.confirm), so it reaches the terminal in every session and not
+		// only under --verbose the way Stream does. It is kept in the run's log
+		// beside that (sayThrough): the log is the run's full output and a
+		// failure prints its path, so terraform's progress has to be in it.
+		// Every write takes the line in flight down around it (G1): the apply's
+		// step is open across the whole of it, and a spinner's carriage return
+		// over this output would mangle exactly the sentences an owner reads to
+		// decide whether a project is still managed.
+		Out: sayThrough(rep, cmd.ErrOrStderr()),
 	})
 	if err != nil {
-		return managedApplyErr(lc, rootArg, res, err)
+		// The step is the account of the apply, so a refused or failed one
+		// ends it with a cross and the error under it (G8) rather than
+		// printing a line the run does not stand behind.
+		werr := managedApplyErr(lc, rootArg, res, err)
+		step.Failed(werr, nil)
+		return werr
 	}
-	w := cmd.OutOrStdout()
 	if !res.Changed {
-		fmt.Fprintf(w, "no changes: the plan of %s is empty, so nothing was gated and nothing was applied\n", safetext.Field(rootArg))
+		step.Skipped(fmt.Sprintf("no changes: the plan of %s is empty, so nothing was gated and nothing was applied", safetext.Field(rootArg)))
 		return nil
 	}
-	fmt.Fprintf(w, "applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries\n",
-		safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject)))
+	step.Done(fmt.Sprintf("applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries",
+		safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject))))
 	return nil
+}
+
+// managedApplyAsk is managedAsk with the reporter's line in flight taken down
+// first: a managed apply's question is asked in the middle of the step, after
+// the plan has been gated, and a spinner drawn over the question would be a
+// prompt a person is reading through (G1). Resume draws the line again once
+// it is answered.
+func managedApplyAsk(cmd *cobra.Command, lc *localcfg.Config, rep *report.Reporter) func(string) (bool, error) {
+	ask := managedAsk(cmd, lc)
+	return func(question string) (bool, error) {
+		rep.Pause()
+		defer rep.Resume()
+		return ask(question)
+	}
 }
 
 // managedConditions is what this session says about who is there, and it is

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -30,6 +32,17 @@ var testCacheRoot string
 // comment in TestMain). Also never removed. "" when TestMain could not
 // create it, which TestATestNeverWritesTheDeveloperConfigHome fails on.
 var testConfigRoot string
+
+// testStateRoot is TestMain's own state directory, the third of the
+// developer's fugaro directories: a step-printing command keeps its log under
+// $XDG_STATE_HOME/fugaro/logs (CL3's OpenLog), so without it every test that
+// runs one — and CL7b migrates the project and config writers onto the
+// reporter — would file logs in the developer's own ~/.local/state/fugaro,
+// and the retention sweep (14 days, 50 files per command name) would prune
+// what an operator left there. Never removed, for the same reason the config
+// one is not: TestATestNeverWritesTheDeveloperStateHome reads it afterwards.
+// "" when TestMain could not create it.
+var testStateRoot string
 
 // TestMain closes the ways a test could reach real Google through a
 // gs:// bucket_url or an unfaked client: no application default
@@ -74,6 +87,17 @@ func TestMain(m *testing.M) {
 	if dir, err := os.MkdirTemp("", "fugaro-test-config-"); err == nil {
 		testConfigRoot = dir
 		os.Setenv("XDG_CONFIG_HOME", dir)
+	}
+	// And the state directory, which is where a step-printing command keeps
+	// the log of its run (localcfg.DirState, CL3's OpenLog). It is the same
+	// backstop as the one above and for the same reason: a test that runs one
+	// of those commands without isolating a state home of its own would file
+	// a log in the developer's own ~/.local/state/fugaro/logs, beside an
+	// operator's, and the retention sweep that runs on every open would prune
+	// them.
+	if dir, err := os.MkdirTemp("", "fugaro-test-state-"); err == nil {
+		testStateRoot = dir
+		os.Setenv("XDG_STATE_HOME", dir)
 	}
 	// init refuses to apply anything in a coding agent's session, and the
 	// tests are often run from one: a test that means to be in one sets a
@@ -228,6 +252,36 @@ func TestATestNeverWritesTheDeveloperConfigHome(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("the recording wrote nothing to its own config home: %v", err)
+	}
+}
+
+// TestATestNeverWritesTheDeveloperStateHome is the state directory's half of
+// the rule above. A step-printing command keeps its run's log under
+// $XDG_STATE_HOME/fugaro/logs, and the retention sweep that runs on every
+// open deletes what is older than fourteen days or past fifty files for one
+// command name — so a suite that reached the developer's own state home
+// would not merely litter it, it would prune an operator's logs.
+//
+// Mutation (run, restore): delete the XDG_STATE_HOME block from TestMain and
+// this fails twice over — testStateRoot is empty and XDG_STATE_HOME is the
+// developer's own.
+func TestATestNeverWritesTheDeveloperStateHome(t *testing.T) {
+	if os.Getenv("XDG_STATE_HOME") != testStateRoot || testStateRoot == "" {
+		t.Fatalf("XDG_STATE_HOME = %q, TestMain's own = %q: a test that runs a step-printing command would file its log in the developer's own state home", os.Getenv("XDG_STATE_HOME"), testStateRoot)
+	}
+	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(testStateRoot, home+string(filepath.Separator)) {
+		t.Fatalf("TestMain's state home %q is inside the developer's home %q", testStateRoot, home)
+	}
+	// Opened the way a step-printing command opens its own: what is checked is
+	// the path the sink reports, not the arithmetic of the directory rule, so
+	// a change to either one moves this test's failure with it.
+	sink, err := report.OpenLog("devhome", os.Getenv, runtime.GOOS, time.Now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sink.Close() })
+	if dir, want := filepath.Dir(sink.Path()), filepath.Join(testStateRoot, "fugaro", "logs"); dir != want {
+		t.Fatalf("a run's log is filed under %s, want %s", dir, want)
 	}
 }
 

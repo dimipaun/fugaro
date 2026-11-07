@@ -377,7 +377,12 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 	// already holds: opening a backend it never calls would make the layer
 	// depend on the compute platform being reachable, which the run's own
 	// stages answer for.
-	failed := fanOutLayer(ctx, w, &cloudEnv{lc: p.lc, bucket: b}, p.l, gen)
+	//
+	// The reporter is nil: this stage's own step is the stage, and its fan-out's
+	// lines are the stage's own output — one line per repository through the
+	// run's writer, exactly as they were before the step-printing tasks reached
+	// the door (fanOutLayer, config_publish.go).
+	failed := fanOutLayer(ctx, nil, w, &cloudEnv{lc: p.lc, bucket: b}, p.l, gen)
 	if failed > 0 {
 		return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("published the project layer (generation %d)", gen)},
 			remote(fmt.Errorf("the project layer is published, but %d repository copy(ies) failed (listed above); run %s again", failed, selfCommand()+" update"))
