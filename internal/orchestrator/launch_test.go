@@ -266,6 +266,22 @@ func TestSpawnNeverLeavesTheApprovedItem(t *testing.T) {
 	if got[0].Spec.Repo == got[1].Spec.Repo || got[0].Spec.Brief == got[1].Spec.Brief || got[0].Spec.Title == got[1].Spec.Title {
 		t.Errorf("the two launches carry each other's specs: %+v and %+v", got[0].Spec, got[1].Spec)
 	}
+
+	// A launcher that comes back with a run id of its own is refused: the state
+	// records the id before anything starts, so a second one is a run nothing
+	// here knows the outcome of, and the attempt it was asked for stays the
+	// record the next tick re-issues.
+	forged := newO6Starter(t, s, now, "20261107-120000-aaaa")
+	forged.l.wrongID = "20261107-120000-ffff"
+	if err := forged.run(got[0]); err == nil {
+		t.Fatal("a launcher that started another run id was not refused")
+	}
+	if !slices.Equal(forged.l.started, []string{}) {
+		t.Errorf("the launcher reported starting %v for a launch it answered with another id", forged.l.started)
+	}
+	if len(forged.s.Intents) != 1 || forged.s.Intents[0].RunID != "20261107-120000-aaaa" || forged.s.Intents[0].Outcome != "" {
+		t.Errorf("the refused launch left %+v, and what it committed is the attempt recovery re-issues", forged.s.Intents)
+	}
 }
 
 // TestUnapprovedItemIsNeverLaunched is the other half: nothing but a person's
@@ -365,20 +381,86 @@ func TestRecoveryReissuesUnderTheRecordedRunID(t *testing.T) {
 	}
 
 	// A re-issue is checked against the state in hand rather than trusted, and
-	// a start is the one thing here that cannot be taken back: an action built
-	// on another read of the node, naming a run id no intent records, starts
-	// nothing and leaves the attempt as it was.
-	forged := reissue
-	forged.RunID = "20261107-120000-bbbb"
-	asked := len(o.l.asked)
-	if err := o.run(forged); err == nil {
-		t.Error("the starter re-issued a run id the state does not carry")
+	// a start is the one thing here that cannot be taken back. Every way the
+	// state can stop carrying the attempt is refused, one case each: a run id
+	// no intent records, a digest the intent was not committed for, an item
+	// edited since the intent, an item a person stopped, and an approval the
+	// intent never spent. What a refusal leaves behind is the committed attempt
+	// itself, still waiting for a tick that can re-issue it.
+	edited := o6Edit(t, mid, "wi-1", "A different brief.", now.Add(time.Minute))
+
+	stopped := o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)
+	stopped.Approved = nil
+	stopped.SpentApprovalAt = &approvedAt
+	stopped.RunID = recorded.RunID
+	stopped.Attempts = 1
+	stoppedState := o6Node(t, now, stopped)
+	stoppedState.Intents = []orchestrator.Intent{recorded}
+	moved := orchestrator.PhaseCancelled
+	stoppedState = o6Apply(t, stoppedState, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: "wi-1", Phase: &moved}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now.Add(time.Minute)})
+
+	elsewhere := o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)
+	elsewhere.Brief = "A brief this attempt was never committed for."
+
+	replaced := o6Item("wi-1", orchestrator.PhaseQueued, now.Add(time.Minute))
+	replaced.RunID = recorded.RunID
+	replaced.Attempts = 1
+	replacedState := o6Node(t, now, replaced)
+	replacedState.Intents = []orchestrator.Intent{recorded}
+
+	for _, tc := range []struct {
+		why   string
+		state orchestrator.State
+		forge func(a orchestrator.Action) orchestrator.Action
+	}{
+		{
+			why:   "a run id no intent records",
+			state: mid,
+			forge: func(a orchestrator.Action) orchestrator.Action { a.RunID = "20261107-120000-bbbb"; return a },
+		},
+		{
+			why:   "a digest the intent was not committed for",
+			state: mid,
+			forge: func(a orchestrator.Action) orchestrator.Action {
+				a.Digest = orchestrator.SpecDigest(elsewhere)
+				return a
+			},
+		},
+		{
+			why:   "an item edited since the intent",
+			state: edited,
+		},
+		{
+			why:   "an item a person stopped",
+			state: stoppedState,
+		},
+		{
+			why:   "an approval the intent never spent",
+			state: replacedState,
+		},
+	} {
+		forged := reissue
+		if tc.forge != nil {
+			forged = tc.forge(forged)
+		}
+		c := newO6Starter(t, tc.state, later)
+		if err := c.run(forged); err == nil {
+			t.Errorf("the starter started a run over %s", tc.why)
+		}
+		if len(c.l.asked) != 0 {
+			t.Errorf("the launcher was asked for %v over %s", c.l.asked, tc.why)
+		}
+		if len(c.s.Intents) != 1 || c.s.Intents[0].Outcome != "" {
+			t.Errorf("the refused re-issue over %s left %+v", tc.why, c.s.Intents)
+		}
 	}
-	if len(o.l.asked) != asked {
-		t.Errorf("the launcher was asked for %v, and a start the state does not carry is not one to make", o.l.asked[asked:])
-	}
-	if len(o.s.Intents) != 1 || o.s.Intents[0].Outcome != "" {
-		t.Errorf("the refused re-issue left %+v", o.s.Intents)
+
+	// A starter with no launcher refuses instead of panicking: a re-issue has
+	// no commit behind it to fail on, so the missing piece is the launcher's to
+	// report like every other misconfiguration here.
+	naked := orchestrator.Starter{Commit: o.commit}
+	if _, err := naked.Start(context.Background(), o.s, reissue, later); err == nil {
+		t.Error("a starter with no launcher started a run")
 	}
 }
 
@@ -464,6 +546,40 @@ func TestOneAutomaticRetryUnderTheSameApproval(t *testing.T) {
 	o.s = o6Report(t, o.s, "wi-1", "wi-1:2", orchestrator.OutcomeFailed, orchestrator.PhaseFailed, now.Add(3*time.Minute))
 	if got := orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now.Add(4*time.Minute)); len(got) != 0 {
 		t.Fatalf("the plan after the retry failed is %+v, and the approval is spent", got)
+	}
+
+	// The retry whose intent was committed in a write whose start never
+	// happened: that write spent the approval, so `Approved` is gone and only
+	// the spent marker says the attempt was ever allowed. It is the case that
+	// re-issued "the approval still stands" alone would abandon, and what
+	// recovery does instead is re-issue it under the run id that write
+	// recorded.
+	item, firstAttempt := o6FailedItem("wi-1", approvedAt, now.Add(-30*time.Minute))
+	crash := o6Node(t, now, item)
+	crash.Intents = []orchestrator.Intent{firstAttempt}
+	crashed := newO6Starter(t, crash, now, retry)
+	crashed.l.refuse = errors.New("the platform refused the start")
+	if err := crashed.run(onlyAction(t, orchestrator.Plan(crashed.s, orchestrator.RunView{}, o6Caps(), now.Add(time.Minute)))); err == nil {
+		t.Fatal("the retry the platform refused reported no error")
+	}
+	if w, _ := crashed.s.Item("wi-1"); w.Approved != nil || w.SpentApprovalAt == nil {
+		t.Fatalf("the refused retry left %+v: the write that recorded it spent the approval", w)
+	}
+
+	crashed.l.refuse = nil
+	later := now.Add(orchestrator.ClaimTTL)
+	again := onlyAction(t, orchestrator.Plan(crashed.s, orchestrator.RunView{}, o6Caps(), later))
+	if again.Kind != orchestrator.ActionReissue || again.RunID != retry || again.IntentID != "wi-1:2" {
+		t.Fatalf("recovery planned %+v, and the retry that spent the approval is the one to re-issue", again)
+	}
+	if err := crashed.run(again); err != nil {
+		t.Fatalf("re-issuing the spent retry was refused: %v", err)
+	}
+	if !slices.Equal(crashed.l.asked, []string{retry, retry}) || crashed.m.calls != 1 {
+		t.Errorf("recovery asked for %v and minted %d run ids, and the attempt already had one", crashed.l.asked, crashed.m.calls)
+	}
+	if len(crashed.s.Intents) != 2 || crashed.s.Intents[1].Outcome != "" {
+		t.Errorf("the re-issued retry left %+v: the attempt is open, and no third one was committed", crashed.s.Intents)
 	}
 }
 

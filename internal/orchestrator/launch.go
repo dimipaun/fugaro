@@ -231,6 +231,9 @@ func (d Starter) begin(ctx context.Context, s State, a Action, now time.Time) (S
 // start asks the launcher for one run id and refuses an answer that is not the
 // id the state recorded.
 func (d Starter) start(ctx context.Context, spec Spec, runID string) error {
+	if d.Launcher == nil {
+		return errors.New("orchestrator: the starter carries no launcher, and a start it cannot make is one it must not claim")
+	}
 	got, err := d.Launcher.Launch(ctx, spec, runID)
 	if err != nil {
 		return err

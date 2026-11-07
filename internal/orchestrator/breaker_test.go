@@ -134,4 +134,18 @@ func TestStillInFlightTicksDoNotTripTheBreaker(t *testing.T) {
 	if d.Tripped() {
 		t.Error("a cycle with an unknown outcome tripped the breaker")
 	}
+
+	// One report per streak, even with an unknown outcome after the trip: the
+	// report belongs to the cycle that reached the threshold, and a second one
+	// would ask a question already asked.
+	var e orchestrator.Breaker
+	for range orchestrator.BreakerThreshold {
+		e.Observe(orchestrator.CycleEmpty)
+	}
+	if e.Observe(orchestrator.CycleOutcome("something this release does not know")) {
+		t.Error("a cycle with an unknown outcome reported the trip a second time")
+	}
+	if !e.Tripped() {
+		t.Error("a cycle with an unknown outcome cleared the trip")
+	}
 }

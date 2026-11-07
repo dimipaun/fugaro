@@ -48,7 +48,9 @@ type Breaker struct {
 
 // Observe records how one cycle ended and reports whether this is the cycle
 // that reached the threshold. It is true exactly once per streak: a fourth
-// failure in a row is the same question, already asked.
+// failure in a row is the same question, already asked, and so is a cycle
+// whose outcome this release does not know while the streak stands at the
+// threshold — the report belongs to the cycle that reached it.
 //
 // An outcome this release does not know neither counts nor clears, so the
 // streak stays where it was rather than being read as progress.
@@ -56,13 +58,14 @@ func (b *Breaker) Observe(o CycleOutcome) bool {
 	switch o {
 	case CycleFailed, CycleEmpty:
 		b.consecutive++
+		return b.consecutive == BreakerThreshold
 	case CycleProgress, CycleInFlight:
 		// A run still going is not a failure. Counting the ticks of one long
 		// run would stop a daemon that is working exactly as it should, which
 		// is the opposite of what the breaker is for.
 		b.consecutive = 0
 	}
-	return b.consecutive == BreakerThreshold
+	return false
 }
 
 // Tripped reports whether the streak has reached the threshold: the daemon
