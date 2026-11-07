@@ -236,7 +236,7 @@ rather than its conclusion.
   The document's own description is the rule being followed: members are only ever added within a version
   (D848), and removing or retyping one bumps it. The console pins the version it reads —
   `SETTINGS_VIEW_DOC_VERSION = 1` (`console/src/main/settingsview.ts:42`) refuses any document at another
-  version (`:178`) — so a version 2 would break **every** settings edit the console makes, which is the
+  version (`:181`) — so a version 2 would break **every** settings edit the console makes, which is the
   edit it spawns `settings set … --yes` behind; keeping version 1 and adding optional members is what
   makes "the console keeps working unchanged" true rather than hoped for. An old document that carries
   none of the new members still decodes and still draws. This design edits no console file.
@@ -495,7 +495,7 @@ rather than its conclusion.
   migration: a shape that must change changes directly. The settings-write document is the one shape
   that carries a version at all, and this design **does not move it**: its new members are added as
   optional ones inside version 1 (D1164, D848), because the console pins that version
-  (`console/src/main/settingsview.ts:42`) and refuses any other (`:178`) — a bump is a console release
+  (`console/src/main/settingsview.ts:42`) and refuses any other (`:181`) — a bump is a console release
   the CLI cannot make. No key is re-meant: the owner column's values change (D1178, D1179) and a key's
   own meaning does not.
   Cost of the alternative: a shim for a pre-1.0 CLI with no users is code that will be deleted before it
