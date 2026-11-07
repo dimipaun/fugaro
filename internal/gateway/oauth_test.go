@@ -411,15 +411,19 @@ func TestOAuthRefusesAnEmptyCredential(t *testing.T) {
 // TestOAuthResponseHeaderTimeoutBoundsTheWait: an upstream that never
 // answers is given up on inside the bound (Check 90: the client itself
 // waited 93 s for a delayed answer, so the bound is far above that), and
-// the call is reported as a bad gateway rather than held open.
+// the call is reported as a bad gateway rather than held open. The wait the
+// bound cuts short is a transport error before an answer existed, so the
+// call is held to the same bound twice -- once on the call, once on its one
+// retry (issue #1827, SC2) -- and no more.
 func TestOAuthResponseHeaderTimeoutBoundsTheWait(t *testing.T) {
+	fastRetry(t)
 	old := oauthResponseHeaderTimeout
 	oauthResponseHeaderTimeout = 150 * time.Millisecond
 	t.Cleanup(func() { oauthResponseHeaderTimeout = old })
 
 	rep := anthropicfake.MessageOK(sonnet, smallUsage)
 	rep.Hold = true
-	h := newOAuth(t, oauthToken(t), rep)
+	h := newOAuth(t, oauthToken(t), rep, rep)
 	client := &http.Client{Timeout: 10 * time.Second}
 	start := time.Now()
 	resp, err := client.Do(h.request(context.Background(), "/v1/messages", msg(sonnet, 100)))
@@ -434,8 +438,8 @@ func TestOAuthResponseHeaderTimeoutBoundsTheWait(t *testing.T) {
 	if el := time.Since(start); el > 5*time.Second {
 		t.Errorf("the bound took %v, not the %v it was set to", el, oauthResponseHeaderTimeout)
 	}
-	if h.fake.Count() != 1 {
-		t.Errorf("the upstream saw %d requests, want 1", h.fake.Count())
+	if h.fake.Count() != 2 {
+		t.Errorf("the upstream saw %d requests, want 2: the call and its one retry, each bounded", h.fake.Count())
 	}
 }
 
