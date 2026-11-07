@@ -651,6 +651,100 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 	}
 }
 
+// TestBuildEnvPassesAnImagesVariables: the variables an operator's catalog
+// image declares reach the agent -- issue #1755's own NEXUS_BASEURL, which the
+// image's Maven settings name, and the toolchain hook the trust statement
+// accepts -- which is the whole of what the passthrough is for (docs/image-env,
+// reconciliation D1370, D1374). The caller has already narrowed the set
+// (runner.imageEnv); BuildEnv writes what it is given.
+func TestBuildEnvPassesAnImagesVariables(t *testing.T) {
+	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}
+	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", ImageEnv: map[string]string{
+		"NEXUS_BASEURL": "https://example.invalid/repository/maven-public/",
+		"MAVEN_OPTS":    "-Dmaven.repo.local=/opt/m2",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
+		"MAVEN_OPTS=-Dmaven.repo.local=/opt/m2",
+	} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+}
+
+// TestBuildEnvDropsAReservedImageVariable: the filter's list half is applied
+// inside BuildEnv, next to the allow-list it protects (D1372), so a caller
+// that hands ImageEnv over unnarrowed still cannot have an image shadow the
+// run's own PATH, a loader or runtime hook, a proxy, a Google client or a
+// Fugaro name. The run's own value stands for each of them.
+func TestBuildEnvDropsAReservedImageVariable(t *testing.T) {
+	image := map[string]string{"NEXUS_BASEURL": "https://example.invalid/"}
+	for _, name := range []string{
+		"PATH", "HOME", "ANTHROPIC_BASE_URL", "FUGARO_BUCKET", "LD_PRELOAD",
+		"GOOGLE_APPLICATION_CREDENTIALS", "LC_ALL", "NODE_OPTIONS", "JAVA_TOOL_OPTIONS",
+	} {
+		image[name] = "from-the-image"
+	}
+	env, _, err := BuildEnv([]string{"PATH=/bin", "HOME=/h", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", ImageEnv: image})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envValue(env, "PATH"); got != "/bin" {
+		t.Errorf("PATH = %q, want the runner's own value", got)
+	}
+	if got := envValue(env, "HOME"); got != "/h" {
+		t.Errorf("HOME = %q, want the runner's own value", got)
+	}
+	for _, name := range []string{"ANTHROPIC_BASE_URL", "FUGARO_BUCKET", "LD_PRELOAD", "GOOGLE_APPLICATION_CREDENTIALS", "LC_ALL", "NODE_OPTIONS", "JAVA_TOOL_OPTIONS"} {
+		if got := envValue(env, name); got != "" {
+			t.Errorf("%s = %q reached the agent from the image", name, got)
+		}
+	}
+	if got := envValue(env, "NEXUS_BASEURL"); got != "https://example.invalid/" {
+		t.Errorf("NEXUS_BASEURL = %q, want the image's own value: the filter drops reserved names, not an image's own", got)
+	}
+}
+
+// TestBuildEnvSetsFugarosVariablesLast: the image's values are written before
+// everything Fugaro writes (D1374), so an image that sets a name Fugaro's own
+// set carries loses to it -- here the git credential the run pushes with, which
+// a repository must never be able to replace through an operator's image, and
+// the gateway's routing, which would take the run around the budget.
+func TestBuildEnvSetsFugarosVariablesLast(t *testing.T) {
+	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=placeholder-api-key"}
+	env, _, err := BuildEnv(parent, EnvSpec{
+		Auth:    "api-key",
+		Gateway: &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"},
+		Set:     map[string]string{"GH_TOKEN": "the-runs-own-token-placeholder"},
+		ImageEnv: map[string]string{
+			"GH_TOKEN":           "the-images-token-placeholder",
+			"ANTHROPIC_BASE_URL": "https://elsewhere.invalid",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envValue(env, "GH_TOKEN"); got != "the-runs-own-token-placeholder" {
+		t.Errorf("GH_TOKEN = %q, want the run's own value: the image's must not override spec.Set", got)
+	}
+	if got := envValue(env, "ANTHROPIC_BASE_URL"); got != "http://127.0.0.1:4000" {
+		t.Errorf("ANTHROPIC_BASE_URL = %q, want the gateway's own URL", got)
+	}
+}
+
+func envValue(env []string, key string) string {
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			return v
+		}
+	}
+	return ""
+}
+
 func TestBuildEnvVertexExtras(t *testing.T) {
 	parent := []string{
 		"CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p",
