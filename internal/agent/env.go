@@ -39,6 +39,14 @@ type EnvSpec struct {
 	Secrets     []string          // declared workflow secret variables, passed through
 	Set         map[string]string // variables Fugaro sets, such as FUGARO_STATE_DIR
 	PathPrepend string            // directory put first on PATH
+	// ImageEnv are the variables the operator's own catalog image declares,
+	// already narrowed by the caller (runner.imageEnv): a name here is dropped
+	// if it is reserved, and it is written before everything Fugaro writes, so
+	// nothing an image sets can override the routing, the auth, a declared
+	// secret or a FUGARO_* name (docs/image-env, reconciliation D1370-D1374).
+	// Nil -- the feature off -- for a job whose image the operator's catalog
+	// did not choose, which is every job that carries no stamp.
+	ImageEnv map[string]string
 	// Gateway, when set, points Claude Code at Fugaro's gateway: the agent
 	// gets the gateway's URL and per-run token, never the real model
 	// credential (see GatewayVars). It is an error with auth: oauth.
@@ -102,6 +110,22 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		// in Task 8's config plumbing, so this fails closed until then.
 		if v, ok := p["DOCKER_HOST"]; ok {
 			out["DOCKER_HOST"] = v
+		}
+	}
+	if len(spec.ImageEnv) > 0 {
+		// The variables the operator's own catalog image declares, written
+		// before the auth switch, the declared secrets, spec.Set and the
+		// gateway: nothing an image sets can override the routing, the auth, a
+		// declared secret or a FUGARO_* name (D1374). The caller has already
+		// narrowed the set (runner.imageEnv); the filter is applied again here,
+		// next to the allow-list it protects, so a caller that hands this map
+		// over unnarrowed still cannot reach a reserved name or one a shell
+		// cannot express (D1372).
+		for k, v := range spec.ImageEnv {
+			if config.ReservedEnv(k) || !config.EnvNameRE.MatchString(k) {
+				continue
+			}
+			out[k] = v
 		}
 	}
 	for _, k := range spec.Secrets {

@@ -309,6 +309,11 @@ func Choose(j Job) (Choice, error) {
 // (§3.1 step 3) — which is also what leaves an installation whose catalog is
 // not yet curated exactly as it was (F1).
 //
+// The first of the three is this tree's truth for as long as the two keys are
+// read where a workflow file is parsed: such a repository still runs the image
+// the project builds for it, so routing its job to a catalog entry would drop
+// the image it was written for while the build that makes it still runs.
+//
 // Both halves of a selection ask this: the deploy-time job spec, which fixes
 // the job's image (F7), and the launcher, which judges the image again against
 // the backend it picks (D1149). A workflow one of them judged by the catalog

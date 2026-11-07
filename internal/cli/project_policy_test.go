@@ -3641,7 +3641,7 @@ func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
 	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
 	lc := &localcfg.Config{
 		Budget:           &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
-		VerifierAccounts: []string{"person-1@example.com"},
+		VerifierAccounts: &[]string{"person-1@example.com"},
 	}
 	var got []string
 	for _, d := range policyConfigDrift(lc, node) {
@@ -3653,6 +3653,86 @@ func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
 	lc.VerifierAccounts = nil
 	if got := policyConfigDrift(lc, node); len(got) != 0 {
 		t.Errorf("a config silent about the list drifts on %v, want nothing", got)
+	}
+}
+
+// TestOrchestratorDriftNamesTheMember: the publish's own drift list names the
+// block when the config states one the node does not carry (D854's three-way
+// state, `fugaro update`'s policy stage), because that stage's job is to close
+// exactly that gap — a guardrail written in the file and absent from the node
+// is a daemon running on Fugaro's defaults rather than on the owner's figures.
+//
+// A config silent about the block names nothing (it keeps the node's, the rule
+// below), and neither does one that writes a block setting no key: that is the
+// same statement as the absent key, so an entry for it would report a
+// difference the publish does not close and the stage would ask again forever.
+func TestOrchestratorDriftNamesTheMember(t *testing.T) {
+	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
+	lc := &localcfg.Config{
+		Budget:       &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
+		Orchestrator: &policy.Orchestrator{MaxRunning: 4},
+	}
+	var got []string
+	for _, d := range policyConfigDrift(lc, node) {
+		got = append(got, d.Member)
+	}
+	if want := []string{"orchestrator"}; !slices.Equal(got, want) {
+		t.Errorf("policyConfigDrift = %v, want %v", got, want)
+	}
+	lc.Orchestrator = nil
+	if got := policyConfigDrift(lc, node); len(got) != 0 {
+		t.Errorf("a config silent about the block drifts on %v, want nothing", got)
+	}
+	lc.Orchestrator = &policy.Orchestrator{}
+	if got := policyConfigDrift(lc, node); len(got) != 0 {
+		t.Errorf("a written block that sets no key drifts on %v, want nothing: it is the absent key, and the publish keeps what the node holds", got)
+	}
+	// A node that carries a block and a config that writes another: the member
+	// differs, and the publish replaces the node's with the file's.
+	node.Orchestrator = &policy.Orchestrator{MaxRunning: 9}
+	lc.Orchestrator = &policy.Orchestrator{MaxRunning: 4}
+	got = nil
+	for _, d := range policyConfigDrift(lc, node) {
+		got = append(got, d.Member)
+	}
+	if want := []string{"orchestrator"}; !slices.Equal(got, want) {
+		t.Errorf("policyConfigDrift = %v, want %v", got, want)
+	}
+}
+
+// TestOrchestratorBlockIsKeptWhenTheConfigIsSilent: the block is the owner's
+// policy and the node is where the daemon reads it (D1239, D1234). A machine
+// whose config predates the key — a teammate's, a second laptop, a CI box — must
+// not publish a node without the project's guardrails, which would put every cap
+// back at Fugaro's own figures on a machine nobody meant to change anything on.
+// Unlike the catalog, there is no spelling that clears the block: a guardrail is
+// a ceiling, and the only direction it moves is down, so a written block that
+// sets no key keeps the node's too.
+func TestOrchestratorBlockIsKeptWhenTheConfigIsSilent(t *testing.T) {
+	f := newProjectFixture(t, "orchestrator: {max_running: 4, spawn_per_minute: 1}\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.Orchestrator == nil || p.Orchestrator.MaxRunning != 4 || p.Orchestrator.SpawnPerMinute != 1 {
+		t.Fatalf("Orchestrator = %+v, want the block the config writes", p.Orchestrator)
+	}
+	rewriteProjectConfig(t, f, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.Orchestrator == nil || p.Orchestrator.MaxRunning != 4 {
+		t.Errorf("Orchestrator = %+v, want the published block kept by a config that writes none", p.Orchestrator)
+	}
+	// A config that writes a block replaces the node's with it, the whole of it:
+	// the block is one value and not a member-by-member merge, so the key the new
+	// block leaves out is a key the daemon takes its default for.
+	rewriteProjectConfig(t, f, "orchestrator: {max_running: 2}\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if p.Orchestrator == nil || p.Orchestrator.MaxRunning != 2 || p.Orchestrator.SpawnPerMinute != 0 {
+		t.Errorf("Orchestrator = %+v, want the config's own block (max_running 2, no member of the node's kept)", p.Orchestrator)
 	}
 }
 

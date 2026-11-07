@@ -1879,6 +1879,24 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 			t.Fatalf("Launch with Env %q = %v, want ErrRejected", bad, err)
 		}
 	}
+	// And every name the two backends reserve for the deployment's own — the
+	// platform's five, and the catalog stamp, which this backend refuses
+	// although no Batch job writes it: the entry would land in the task's
+	// variables, which are the run's environment, and the runner reads that
+	// name to decide whether the image's own variables reach the agent, so an
+	// entry naming it would turn the passthrough on for a job whose catalog
+	// chose no image (docs/image-env, D1371). Nothing is sent for any of them,
+	// which is the check Cloud Run's own test makes over its reserved names.
+	for _, name := range append([]string{backend.ImageEntryEnv}, backend.PlatformEnvNames...) {
+		sent := len(bf.Creates())
+		s.Env = []string{name + "=someone-elses-" + strings.ToLower(name)}
+		if _, err := b.Launch(ctx, s); !errors.Is(err, backend.ErrRejected) {
+			t.Fatalf("Launch with Env naming %s = %v, want ErrRejected", name, err)
+		}
+		if got := len(bf.Creates()); got != sent {
+			t.Fatalf("a launch env naming %s was applied: %d job(s) created, want the %d before it", name, got, sent)
+		}
+	}
 	// A Docker run's own socket variable is one of them, because that block
 	// writes it: the launch merge is after it, so the path the installation
 	// configured is the one that stays.

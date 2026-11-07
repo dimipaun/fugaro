@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/failure"
 )
 
 // TestDocsDesignDocPinsTheHostOfThePRStateLookup is the review finding on the
@@ -100,24 +102,10 @@ func docLine(doc, want string) string {
 }
 
 // fcDoc is the failure-class design. Its pin lives in this file rather than in
-// a docs test file of its own because the design ships no code and no schema:
-// it is a document about a field that does not exist yet, and the tree's docs
-// pin census counts the internal/cli/docs_*_test.go files, so a folder of its
-// own would move a number the design argues should not move.
+// a docs test file of its own because the tree's docs pin census counts the
+// internal/cli/docs_*_test.go files, so a folder of its own would move a number
+// the design promises not to move (D1462).
 const fcDoc = "docs/design/failure-classes.md"
-
-// fcClasses is the vocabulary the design proposes, in the order its table
-// lists it. It is written out here, rather than read out of the document it
-// checks, because a list read from the thing under test agrees with any edit to
-// it -- including the edit that adds a class the report, the schema and the
-// runner would then have to agree with.
-var fcClasses = []string{
-	"review_not_converged", "review_unread", "tests_failed", "unverified_final_commit",
-	"no_commits", "halted_budget", "halted_governance", "halted_credential",
-	"halted_kill_switch", "cancelled", "provider_auth_refused", "transport_failed",
-	"stage_error_unexplained", "stage_no_result", "config_invalid", "git_provider_error",
-	"branch_moved", "infra_error", "unclassified",
-}
 
 // fcClassRowRE is one row of the design's vocabulary table: a class name in
 // backticks in the first cell. A snake_case name is the only shape that matches
@@ -125,8 +113,9 @@ var fcClasses = []string{
 // open with a path or a word that is not one.
 var fcClassRowRE = regexp.MustCompile("^\\| `([a-z][a-z_]+)` \\| ")
 
-// TestDocsFailureClassDesignPinsTheVocabulary: the design is a design, its
-// vocabulary is closed at nineteen values, and every claim a reader would act
+// TestDocsFailureClassDesignPinsTheVocabulary: the design says how far its
+// plan has got -- FC1 built, the rest not -- its vocabulary is closed, the
+// count it states is the vocabulary's own, and every claim a reader would act
 // on -- one writer, the source of the table it is built on, the report, the
 // legacy reader, the unchanged version, the census it promises not to move --
 // is in it, in the words this test names.
@@ -140,10 +129,19 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	flat := flattenDoc(doc)
 
 	// The state of the document first: a reader who skims it for a decision
-	// must find that there is none to find.
+	// must find the owner's answer, and a reader arriving after FC1 must find
+	// that the vocabulary it describes is in the tree -- a status line that
+	// reads as an open question while the code is on `main` is the defect
+	// TestDocsProjectWorkflowSecretsSaysTheBuildLanded fails a document for.
 	for _, want := range []string{
-		"**Status: a design; nothing is built; no decision below is answered.**",
-		"the owner rules",
+		"**Status: a design, and its FC1 has shipped; the rest of §10 is not built.**",
+		// The design's own decisions stay the owner's: the plan's decisions being
+		// answered is not the design's D1–D9 and O1–O6 being answered, which is
+		// what README.md's and the plan's own notes about this document say.
+		"the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his",
+		// §10's own status, in the shape the coordinator plan's parts use: a
+		// line above the tasks saying how far the plan has got.
+		"**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC8 are not started.**",
 		"## 9. Open items (the owner's)",
 		"## 11. What this design does not do",
 	} {
@@ -151,32 +149,72 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 			t.Errorf("%s no longer says %q: the document's status, its open items and the line between what it designs and what it does not are what a reader acts on", fcDoc, want)
 		}
 	}
+	// The wording the flip replaced is banned rather than merely absent, as it
+	// is in the design folder it was flipped in: a status line that reads as
+	// an open question is one a reader does not act on, so a revert of the
+	// flip has to fail here rather than read plausibly.
+	for _, gone := range []string{"nothing is built", "no decision below is answered", "no task is approved"} {
+		if strings.Contains(flat, gone) {
+			t.Errorf("%s still says %q: FC1 -- the package, the record's field and the schema's enum -- is on `main`, and the status lines are where a reader checks the document against the build", fcDoc, gone)
+		}
+	}
 
 	// The closed vocabulary: every class is a row of the table, the table holds
-	// exactly the classes, and a name in the table is one of the classes.
-	rows := map[string]bool{}
+	// exactly the classes, in the order the design lists them, and a name in the
+	// table is one of the classes.
+	//
+	// The classes are read from internal/failure rather than written out here: it
+	// is the one slice the schema's enum and the report's table are read from, so
+	// the document is held to the code that implements it -- and a class added to
+	// one of the two alone is a design table, a schema enum and a report that
+	// disagree about a vocabulary they all claim is closed.
+	classes := failure.Classes()
+	if len(classes) == 0 {
+		t.Fatalf("internal/failure's Classes() is empty: the design's vocabulary table would be checked against nothing")
+	}
+	var rows []string
 	for _, line := range strings.Split(doc, "\n") {
 		if m := fcClassRowRE.FindStringSubmatch(line); m != nil {
-			rows[m[1]] = true
+			rows = append(rows, m[1])
 		}
 	}
-	if len(rows) != len(fcClasses) {
-		t.Errorf("%s's vocabulary table holds %d class rows, want %d: the vocabulary is closed, so a row added or lost beside it is a change to the runner, the schema and the report at once", fcDoc, len(rows), len(fcClasses))
+	if len(rows) != len(classes) {
+		t.Errorf("%s's vocabulary table holds %d class rows, want %d: the vocabulary is closed, so a row added or lost beside it is a change to the runner, the schema and the report at once", fcDoc, len(rows), len(classes))
 	}
-	for _, class := range fcClasses {
-		if !rows[class] {
-			t.Errorf("%s's vocabulary table has no row for `%s`: the class is one the runner would have to write and the report would have to print", fcDoc, class)
+	for _, class := range classes {
+		if !slices.ContainsFunc(rows, func(row string) bool { return row == string(class) }) {
+			t.Errorf("%s's vocabulary table has no row for `%s`: the class is one internal/failure's Classes() carries, so the runner would write it and the report would print it", fcDoc, class)
 		}
 	}
-	for name := range rows {
-		if !slices.Contains(fcClasses, name) {
+	for _, name := range rows {
+		if !slices.ContainsFunc(classes, func(c failure.Class) bool { return string(c) == name }) {
 			t.Errorf("%s's vocabulary table holds `%s`, which is not one of the vocabulary's classes: a class the schema's enum does not carry is a value the record cannot hold", fcDoc, name)
 		}
+	}
+	want := make([]string, len(classes))
+	for i, c := range classes {
+		want[i] = string(c)
+	}
+	if !slices.Equal(rows, want) {
+		t.Errorf("%s's vocabulary table lists %v, internal/failure's Classes() lists %v: the order is the document's own -- the report prints the classes in it -- so a class inserted in one list alone is two renderings of one vocabulary", fcDoc, rows, want)
+	}
+	// The count the sentence states is read from the vocabulary, not pinned as a
+	// word of its own: a class added to Classes(), the schema's enum, the
+	// property table and this table leaves the word that counts them behind, and
+	// the sentence would claim a set that no longer exists.
+	counted := fmt.Sprintf("**%s values, and the set is closed in Go, in the schema and in the digest**", fcCountWord(len(classes)))
+	if !strings.Contains(flat, counted) {
+		t.Errorf("%s no longer says %q: the sentence is the design's own count of the vocabulary, and internal/failure's Classes() holds %d", fcDoc, counted, len(classes))
 	}
 
 	// The claims the implementation tasks rest on, each one a thing a reader
 	// would otherwise take from the prose and get wrong.
 	for _, want := range []string{
+		// §3's own name for the slice, in the sentence that calls it the one
+		// place the vocabulary is written: FC1 is what moved the design onto
+		// this name, and a design that went back to naming a symbol the tree
+		// does not carry would be a pin holding a name to nothing.
+		"one slice the tests read (`failure.Classes()`, `internal/failure/failure.go`, built by FC1)",
 		// Where the classes come from: a listing's own row, not a script.
 		"`fugaro runs ls --since 7d --json`",
 		// The field, and the sentence that it is additive.
@@ -220,6 +258,21 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	if !strings.Contains(flat, "internal/cli/docs_pr_state_test.go") || !strings.Contains(flat, "TestDocsRigorModesReconciliationCountsTheConfigManagementPin") {
 		t.Errorf("%s no longer names the file its own pin lives in and the test that holds the docs-pin census it must not move", fcDoc)
 	}
+}
+
+// fcCountWord is how the design's sentence spells a count: capitalised, because
+// the sentence opens with it. The vocabulary is small enough that a table of
+// words says it, and a count past the table falls back to digits -- a spelling
+// the sentence does not use, so a vocabulary that outgrew it fails loudly
+// rather than agreeing with itself.
+func fcCountWord(n int) string {
+	words := []string{"Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+		"Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen",
+		"Eighteen", "Nineteen", "Twenty"}
+	if n >= 0 && n < len(words) {
+		return words[n]
+	}
+	return strconv.Itoa(n)
 }
 
 // fcCensusRE is the backlog index's own census, which the design quotes and

@@ -1096,3 +1096,15 @@ func TestUpgradeSaysTheBaseMustMoveForACopiedEntryAtTheSameVersion(t *testing.T)
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
 }
+
+// TestScalarConfigEnvIgnoresTheImageEntryStamp: the deploy writes the catalog
+// entry's name into the job from the published catalog, which the note's own
+// spec is built without, so the key must not read as drift (it would print a
+// STALE note on every plain update that running `update --repo .` never clears).
+func TestScalarConfigEnvIgnoresTheImageEntryStamp(t *testing.T) {
+	job := map[string]string{infra.ImageEntryEnv: "standard", "FUGARO_BUDGET_MODE": "enforce"}
+	now := map[string]string{infra.ImageEntryEnv: "", "FUGARO_BUDGET_MODE": "enforce"}
+	if got := scalarConfigDiff(job, now); got != "" {
+		t.Fatalf("the image entry stamp read as drift: %q", got)
+	}
+}

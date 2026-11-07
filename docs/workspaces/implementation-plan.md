@@ -2,10 +2,15 @@
 
 **Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
 approved.** The sixteen decisions in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**) are
-**answered**, every one as recommended, so no task below is waiting on a decision any more. **No
-task is approved**: the owner approves each task by name, and one gate is still shut — [spec.md](spec.md)
-§8 is a threat model whose independent SECURITY review is mandatory before this design merges and
-**which the coordinator runs**, not this plan's author and not the runs that implement anything.
+**answered**, every one as recommended, so no task below is waiting on a decision any more. **Two of
+them were amended on 2026-11-04, after the design merged and its security review ran** — D1299,
+D1300 and D1301, marked below [reconciliation.md](reconciliation.md) §4 and §8 — and the tasks they
+bind (W4–W7) carry the amended shape. **No task is approved**: the owner approves each task by name.
+The one gate this file used to hold is open: [spec.md](spec.md) §8's threat model was reviewed
+independently in the post-merge round — the coordinator runs that review, not this plan's author and
+not the runs that implement anything — and the review's **seven findings and the owner's answers to
+all of them are [reconciliation.md](reconciliation.md) §2f's F33**. What is left shut is the owner's
+approval of each task.
 
 Repository names in this file are placeholders (`owner/repo-a`, `owner/repo-b`), a person is
 `person-1`, and a workspace is `workspace-alpha`. No test named here uses a real credential, a real
@@ -28,9 +33,9 @@ asked and what the alternative cost should read [reconciliation.md](reconciliati
 | D1296 | W4 | Hashes only |
 | D1297 | W6 | One workspace bundle, one workspace service |
 | D1298 | W6 | A per-project allow-list, intersected with the member's policy |
-| D1299 | W7 | Enforced at the service, advisory at the member's gateway |
-| D1300 | W7, W9 | The cap bounds the workspace's own credentials' spend |
-| D1301 | W7 | A rollup from each member's ledger, `stale` rather than zero |
+| D1299 | W7 | Enforced at the service, advisory at the member's gateway — **amended 2026-11-04: the headroom comes from the service, and the service holds no write on a member** |
+| D1300 | W7, W9 | The cap bounds the workspace's own credentials' spend — **amended 2026-11-04 only as it depends on D1301** |
+| D1301 | W7 | A rollup from each member's ledger, `stale` rather than zero — **amended 2026-11-04: the cap is metered at the proxy and the rollup becomes a reconciliation alarm** |
 | D1302 | W8 | `fugaro budget kill` gains a workspace scope |
 | D1303 | W1, W8 | Local writes and reads; `update` carries the cloud |
 | D1304 | — | No console or mobile task in this plan |
@@ -38,10 +43,12 @@ asked and what the alternative cost should read [reconciliation.md](reconciliati
 
 **One thing must be read before any task starts:** [spec.md](spec.md) §8 is a threat model, its
 independent SECURITY review is **mandatory before this design merges** by the owner's brief, and
-**the coordinator runs it** — it is not a task of this plan. W4, W5, W6 and W7 each add a surface
-that section describes, and none of them starts before that review has been read and its findings
-answered. (The brief first put the review before the decisions; the owner answered all sixteen on
-2026-11-04, so the gate it holds now is the merge.)
+**the coordinator runs it** — it is not a task of this plan. **That review has run** on the merged
+design and returned **seven findings**, all answered by the owner on 2026-11-04
+([reconciliation.md](reconciliation.md) §2f's **F33**), so its findings are not open; W4, W5, W6 and
+W7 each add a surface that section describes, and each is written to the amended answers in the rows
+above. (The brief first put the review before the decisions; the owner answered all sixteen on
+2026-11-04, and the review ran after the merge.)
 
 ## 2. The order, and what forces it
 
@@ -141,17 +148,25 @@ type Config struct {
     Workspace string `yaml:"workspace,omitempty"`
     // WorkspacePin is the member's own record of which workspace it trusts and
     // which identity acts for it there. Nothing here is read from the workspace's
-    // own record (spec.md §2): a record that could supply any of the three would
-    // aim the member's exchange and the member's grants at a party of its choosing.
+    // own record (spec.md §2): a record that could supply any of the four would
+    // aim the member's exchange and the member's grant at a party of its choosing.
     WorkspacePin WorkspacePin `yaml:"workspace_pin,omitempty"`
 }
 
 type WorkspacePin struct {
     FirebaseProject string `yaml:"firebase_project"` // W4 requires this project as the token's aud
     Issuer          string `yaml:"issuer"`           // W4 requires exactly this issuer
-    ServiceAccount  string `yaml:"service_account"`  // W7 binds the member's two grants to this account
+    AssertionKey    string `yaml:"assertion_key"`    // W4 verifies a member-bound assertion against this
+    ServiceAccount  string `yaml:"service_account"`  // W7 binds the member's grant to this account
 }
 ```
+
+**The fourth value is the assertion-signing key** (finding 1 of the post-merge security review). A
+member does not accept the workspace's Firebase token at all: what it verifies is a **member-bound
+assertion** the workspace's signer endpoint mints, and the key it verifies that against is **its own
+pin** (spec.md §3). It is the member's value, like the other three: the workspace's record names no
+key, so a workspace cannot move a member's trust by publishing a different one,
+`TestWorkspaceAddWritesThePinTheMemberWasGiven` holds all four, and W4 is where the key is used.
 
 **The issuer is checked against the project, not trusted on its own.** The signature is verified
 against **Google's published Firebase signing keys**, which are one global set — `GoogleKeysURL`
@@ -167,12 +182,16 @@ the other for the rest of the installation's life.
 The new `fugaro workspace` family (D1303) with `ls`, `show`, `add`, `rm`, `member add`, `member rm`,
 `cap set` — every write a local config edit through the same check, diff, backup and atomic write
 the `models` commands use, and every one ending with `next: fugaro update`. `workspace add` writes
-the membership key **and the pin** — the three values it is given, which is the one place a member
-decides what it trusts — and `workspace rm` removes both. `workspace member add` is the owner's
-side: it writes the member entry **and the five values the service's per-member table is built from**
-(the member's job accounts, its Firebase project and `fp`, its database URL and its runs bucket,
-spec.md §5), and `member rm` removes the entry. The two commands are the two halves of a
-membership, and neither writes the other's file.
+the membership key **and the pin** — the four values it is given, which is the one place a member
+decides what it trusts — firebase project, issuer, assertion key and service account — and
+`workspace rm` removes both. `workspace member add` is the owner's side: it writes the member entry
+**and the four values the service's per-member table is built from** (the member's **job service
+accounts**, its **Firebase project id and `fp`**, and its **exchange URL**, spec.md §5), and
+`member rm` removes the entry. **The member's database URL is not among them**: it is **derived from
+the Firebase project the verified `iss` names** (finding 6 of the post-merge review), so an owner
+cannot splice member B's accounts onto member A's database, and **the runs bucket is not among them
+either** — O1's answer dropped the bucket grant, and nothing derives it. The two commands are the two
+halves of a membership, and neither writes the other's file.
 
 **`workspace show` reads files and no cloud node**, and the two halves it can therefore see are not
 the same (spec.md §6). The **workspace owner's** machine holds the record it publishes, so its drift
@@ -197,9 +216,12 @@ within it), `TestWorkspaceLsJSONCarriesNoCredentialShapedField` (the `config lis
 of fields, not a marshalled `localcfg.Config`),
 `TestWorkspaceWritesNothingUnderACodingAgentsMarker` (the `models` rule, `--yes` included),
 `TestLocalcfgRefusesASecondWorkspaceKey` (D1291 is a scalar),
-`TestWorkspaceAddWritesThePinTheMemberWasGiven` (spec §2: the project id, the issuer and the service
-account are the member's own values, and no code path reads them from the workspace's record —
-which is the field a later refactor would most plausibly "helpfully" fill in),
+`TestWorkspaceAddWritesThePinTheMemberWasGiven` (spec §2: the project id, the issuer, **the assertion
+key** and the service account are the member's own values, and no code path reads them from the
+workspace's record — which is the field a later refactor would most plausibly "helpfully" fill in),
+`TestMemberAddRefusesToDeclareADatabaseURL` (the member's database is derived from the verified `iss`
+and is not a field the owner may set: a splice is a declaration the command will not write),
+`TestMemberAddWritesNoRunsBucket` (O1 dropped the bucket grant, so the table carries no bucket),
 `TestPinRefusesAnIssuerThatIsNotTheProjectsSecuretokenIssuer` (a pin naming `owner/repo-a`'s project
 with another project's issuer, or with an issuer that is not that project's securetoken one, is
 refused: the pair has to agree, because only the pair tells one project's tokens from another's).
@@ -256,7 +278,12 @@ not exist, and the migration half is the reason it exists — an installation th
 workspace node from an older release must converge, not be asked to publish again.
 
 **Tests.** `TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace`,
-`TestUpdateRefusesToPublishAWorkspaceWithNoMembers`,
+`TestUpdateSkipsAPublishWithNoMembers` (a record that lists no member is a workspace that admits
+nobody, so nothing is published — and the stage is SKIPPED, never an error: a cap-only config is one
+`fugaro workspace cap set` writes and `fugaro workspace member rm` leaves behind, and a Check that
+failed on it would stop the run with every stage after it blocked, which is the HARD RULE's one
+command failing on a config the release reads),
+`TestUpdateWithACapAndNoMemberRunsOn` (the same state through the whole command),
 `TestUpdateNamesTheOneCommandAndNoOther` (no `workspace publish` anywhere in the output),
 `TestUpdateLeavesAMemberWithNoWorkspaceAlone`,
 `TestUpdateOnAMemberNeverWritesTheWorkspaceNode` (the member holds no grant; a stage that tried would
@@ -281,6 +308,18 @@ with it: `workspaces/<name>` is **published by the workspace owner's `fugaro upd
 to every other client. **No member's client reads the workspace's database** (spec.md §2): a member
 holds no grant on the workspace's project at all (§5).
 
+**Creating the project is `fugaro setup` *and* an owner-run step, and the owner settled this on
+2026-11-04.** The project itself and its rules come from the installation path — the owner's
+`fugaro setup` for the workspace root, then `fugaro update` to converge it — but **the workspace's
+Firebase must also carry real sign-in providers**, and `fugaro setup`'s own Identity Platform step
+initializes with **no provider** (`IdentityPlatformStep`,
+`internal/infra/identityplatform.go`:32) because that is right for a member's project and wrong for
+the workspace's. So the provider enablement is a step **the owner runs** (in the Firebase console or
+with `gcloud`), it is listed in the release note's `### For operators` section (W9), and it is the
+check `docs/gcp-live-checklist.md` gains rather than something a hermetic test can hold. A workspace
+whose project is initialized with no provider has no one who can sign in, and **the pinned provider
+set of spec.md §3 is what the step has to produce**: exactly the providers the pin admits.
+
 **Files (8):** `internal/infra/tf/workspace.go`, `internal/infra/tf/workspace_test.go`,
 `internal/budget/rules/workspace.go`, `internal/budget/rules/workspace.json.tmpl`,
 `internal/budget/rules/workspace_test.go`, `internal/cli/workspace_create.go`,
@@ -300,49 +339,68 @@ converges rather than half-applies).
 
 ### W4 — the exchange at a member
 
-**Interface.** A member's authorization server (the MCP design's §3) gains the token-exchange grant:
-it verifies a workspace token's signature against **Google's published Firebase signing keys**
-(`internal/credsvc/auth.go`:1371-1373 — one global set, which is why the pin's project tells tokens
-apart by its `aud`/`iss` pair and not by any per-project keys), then against **the audience rule and
-the issuer that same pin names**, and mints the member's own token. **"Its issuer" means the member's
-pinned issuer and never a value the workspace's record supplies** (spec.md §2): the record carries no
-issuer (W2 publishes none), so the only issuer a member's exchange can be pointed at is the one the
-member wrote down itself. **It depends on the MCP
-design's implementation (its M3)**, and it adds no endpoint to the workspace.
+**Interface.** The **workspace's signer endpoint** mints the **member-bound assertion**, and a
+member's authorization server (the MCP design's §3) accepts it **at `/oauth/authorize`, as the
+sign-in proof** — not as a grant at `/oauth/token` (finding 2 of the post-merge security review), and
+with **no second endpoint of this design's own**. The signer endpoint verifies the workspace's
+Firebase ID token against **Google's published Firebase signing keys** (`internal/credsvc/auth.go`:1371-1373
+— one global set, which is why the pin's project tells tokens apart by its `aud`/`iss` pair and not by
+any per-project keys), against the workspace's own project as `aud` and its securetoken issuer as
+`iss`, against `email_verified`, and against the **pinned `firebase.sign_in_provider` set**; and it
+signs a short-lived JWT whose `aud` is **that member's exchange URL** and whose `jti` is single-use
+(spec.md §3). The member verifies that JWT against **the assertion key its own pin carries** (W1), its
+own exchange URL, its expiry and the `jti` values it has consumed, and it re-checks the provider and
+the verified address itself. **Every one of those is the member's pin and never a value the
+workspace's record supplies** (spec.md §2): the record names no key, no issuer and no project (W2
+publishes none), so a "helpful" refactor that reached for the record would have nothing to read. The
+member keeps the MCP design's PKCE (S256), consent page and paired-device approval (its D923;
+`docs/mobile-auth`'s D221); **it depends on the MCP design's implementation (its M3)**.
 
-**Files (7):** `ee/coordinator/oauth/workspace.go`, `ee/coordinator/oauth/workspace_test.go`,
-`ee/coordinator/oauth/workspace_keys.go`, `ee/coordinator/oauth/workspace_keys_test.go`,
-`internal/cli/workspace_login.go`, `internal/cli/workspace_login_test.go`,
-`schemas/workspace-login.schema.json`.
+**Files (8):** `ee/coordinator/oauth/workspace.go`, `ee/coordinator/oauth/workspace_test.go`,
+`ee/coordinator/oauth/workspace_assertion.go`, `ee/coordinator/oauth/workspace_assertion_test.go`,
+`ee/coordinator/oauth/workspace_signer.go`, `ee/coordinator/oauth/workspace_signer_test.go`,
+`internal/cli/workspace_login.go`, `internal/cli/workspace_login_test.go`.
 
-**Red step.** `TestExchangeRefusesAWorkspaceTokenFromAnotherWorkspace` fails — the grant does not
-exist. It is the test the task exists for: the whole security claim of the SSO half is that a
-workspace token is a bearer for *one* member's exchange and for nothing else, and a grant that
-verified the signature without the issuer and the audience would accept any workspace's token.
+**Red step.** `TestExchangeRefusesAWorkspaceAssertionMintedForAnotherMember` fails — the assertion
+does not exist. It is the test the task exists for: the whole security claim of the SSO half is that
+what a member accepts is bound to **that one member and to one use**, so a verifier that checked the
+signature without the `aud` and the `jti` would honour an assertion minted for another member, or the
+same one twice.
 
-**Tests.** `TestExchangeRefusesAWorkspaceTokenFromAnotherWorkspace`,
-`TestExchangeRefusesAnExpiredWorkspaceToken`, `TestExchangeNeverEchoesTheToken` (the `credsvc`
-rule, applied to the new endpoint),
-`TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords` (a token from a Firebase project other than
-the member's pin — another workspace's — is refused, and no code path reads the record: the record
-names no project at all (W0), so a "helpful" refactor that reached for it would have nothing to read
-and this test would fail first),
+**Tests.** `TestExchangeRefusesAWorkspaceAssertionMintedForAnotherMember` (the `aud` is another
+member's exchange URL — finding 1),
+`TestExchangeRefusesAReplayedAssertion` (a `jti` already consumed at this member is refused, for the
+assertion's lifetime — finding 1's single-use rule),
+`TestExchangeRefusesAnAssertionReplayedAtAnotherMember` (the same assertion presented at a **second**
+member is refused there, because each member's consumed-`jti` set is its own and the `aud` names the
+first — the replay that a per-member set alone would not catch),
+`TestExchangeRefusesAnExpiredAssertion`, `TestExchangeNeverEchoesTheAssertion` (the `credsvc` rule,
+applied to the new endpoint),
+`TestExchangeVerifiesTheMembersPinnedKeyNotTheRecords` (an assertion signed by another workspace's
+key — one the member's pin does not carry — is refused, and no code path reads the record),
+`TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords` (the signer endpoint refuses a Firebase
+token whose `iss` is not the workspace's pinned issuer, and the member refuses an assertion naming a
+project other than its pin),
 `TestExchangeRefusesWhenTheMemberPinsNoWorkspace` (the member's own `workspace rm` has dropped the
-key and the pin: there is no project and no issuer left to verify against, so the exchange refuses
-whatever the workspace's record still says about it — the half of a removal that only the member can
-complete, spec §3),
+key and the pin: there is no key, no project and no issuer left to verify against, so the exchange
+refuses whatever the workspace's record still says about it — the half of a removal that only the
+member can complete, spec §3),
 `TestExchangeRefusalIsIndistinguishableForAnUnknownMember` (spec §8: no member enumeration),
+`TestExchangeAcceptsAProviderThatIsPinnedAndRefusesOneThatIsNot` (finding 7: `google.com` and
+`password` are accepted, `custom` and `anonymous` are refused — the claim is re-checked in the
+assertion and not taken from the signer's word),
 `TestExchangeMintsAMemberTokenWithTheMembersOwnLimits`,
-`TestExchangeStoresOnlyHashes`.
+`TestExchangeStoresOnlyHashes` (the consumed-`jti` set is hashes, in a subtree no client may read).
 
 **SEC:** **yes.** It is the identity surface, and [spec.md](spec.md) §8 is its review brief.
 
 ### W5 — the member's admission, from the member's own lists
 
-**Interface.** The exchange admits the person only when **two** things hold: the workspace token's
-`email_verified` is true, and the member's launchers/operators lists (`fugaro user`) name their
-address, compared with `mobileauth.NormalizeEmail`'s one rule. It reads the lists and never writes
-them. The verified-address half is the credentials service's own rule for every class of caller
+**Interface.** The exchange admits the person only when **three** things hold: the assertion's
+`email_verified` is true, **the provider the assertion names is one of the pinned set** (finding 7 of
+the post-merge review — `google.com` or `password`, and never `custom` or `anonymous`), and the
+member's launchers/operators lists (`fugaro user`) name their address, compared with
+`mobileauth.NormalizeEmail`'s one rule. It reads the lists and never writes them. The verified-address half is the credentials service's own rule for every class of caller
 (`internal/credsvc/auth.go`:1018, `checkCallerToken`), and it is required here for the same reason:
 an unverified address is one nobody proved they own.
 
@@ -359,7 +417,17 @@ make someone a launcher, so a test that only proved the refusal would not be the
 bool is refused, and the refusal names the claim and never the address — the `credsvc` rule at
 `internal/credsvc/auth.go`:1018, applied to the exchange),
 `TestAdmitDoesNotWidenAMembersLists`, `TestAdmitIsCaseFoldedOnTheDomainOnly` (the `mobileauth`
-rule), `TestAdmitRefusesADisplayNameForm` (a name is not an admission).
+rule), `TestAdmitRefusesADisplayNameForm` (a name is not an admission),
+`TestAdmitRefusesACustomTokenProvider` (finding 7: a person who signed in with a **custom token** —
+which anyone holding `signBlob` or `TokenCreator` on any service account of the workspace's project
+can mint, with `email` and `email_verified` set to whatever they like — is refused at the member even
+if the workspace's signer let one through, because the member re-checks the provider in the assertion
+rather than trusting the signer),
+`TestAdmitRefusesAnAnonymousProvider` (the anonymous provider proves no address at all),
+`TestExchangeRefusesAMemberThatCannotReachTheWorkspacesFirebase` (a member whose machine cannot reach
+the workspace's Firebase — no route to the signer endpoint — is **refused**, rather than being
+admitted on a cached assertion or a stale local value; the refusal is the member's and it fails
+closed).
 
 **SEC:** **yes.** It is an authorization decision.
 
@@ -383,13 +451,25 @@ to `verifyRun`'s pinning and not only to the list it looks the account up in, an
 this task that a reader is most likely to miss.
 
 **The account table is the workspace's own per-member table, and the owner's config supplies it.**
-Each entry carries the member's job service accounts, its Firebase project id and `fp`, its database
-URL and its runs bucket, and every one of those values is the **workspace owner's** declaration,
-converged by the workspace owner's `fugaro update` (W2's stage writes the record; this task's service
-and W3's root of the workspace's own project carry the table) — never read from a member's machine
-and never taken from `workspaces/<name>`, which names the members and carries the cap and nothing
-else (spec.md §2, §5). A member the table does not bind is refused at this front door and recorded
-`stale` by the rollup (W7, spec §5): an unbound member is an unreadable one.
+Each entry carries the member's job service accounts, its Firebase project id and `fp`, and its
+**exchange URL** — and **not its database URL**: that is **derived from the Firebase project the
+verified `iss` names** (finding 6 of the post-merge security review), so an owner cannot declare
+member B's accounts against member A's looser database. There is **no runs bucket** in the entry
+either (O1's answer dropped the bucket grant). Every value that *is* there is the **workspace owner's**
+declaration, converged by the workspace owner's `fugaro update` (W2's stage writes the record; this
+task's service and W3's root of the workspace's own project carry the table) — never read from a
+member's machine and never taken from `workspaces/<name>`, which names the members and carries the cap
+and nothing else (spec.md §2, §5). A member the table does not bind is refused at this front door, and
+one the comparison cannot read is reported as an alarm by W7's reconciliation: an unbound member is an
+unreadable one.
+
+**A member's policy and its outcomes are read per member, from the database its own verified `iss`
+names.** `checkLive` (`internal/credsvc/auth.go`:1196) and the outcomes reader it uses
+(`RTDBOutcomes`, `internal/credsvc/auth.go`:217) take the database to read from the call rather than
+from a field the owner set: the member the call resolved to decides it, so two members' accounts can
+never be pointed at one database. The credentials service's own guard that a database URL is
+`<Firebase project>-default-rtdb` (`internal/cli/credentials_serve.go`:494) is the shape the derived
+URL keeps.
 
 **Whose people the person class holds, and what each route admits.** The deployment's person class is
 not the members': it is the **workspace owner's** people, written by the workspace's own `fugaro
@@ -419,6 +499,14 @@ served a credential a member's policy excluded would be a policy bypass.
 `TestWorkspaceServiceRefusesATokenWhoseIssuerAndAccountDisagree` (the account names `owner/repo-a`
 and the token's `aud`/`iss`/`fp` name `owner/repo-b`: the call is refused, because the member is
 the account and the pins have to agree with it),
+`TestWorkspaceServiceReadsAMembersPolicyFromTheDatabaseItsIssNames` (finding 6: the database is
+derived from the verified `iss`, not from anything the owner declared, so an entry whose declared
+value would point at another member's database is not a thing the table can carry),
+`TestWorkspaceServiceRefusesASplicedMemberAccounts` (the splice test: member B's accounts paired with
+member A's database — the shape the owner's declaration used to allow — never reads A's policy or
+outcomes, because the database comes from B's `iss`),
+`TestCredsServiceLiveCheckIsPerMember` (two callers resolving to two members read two databases: the
+outcomes reader is chosen by the member the call resolved to and never by a shared field),
 `TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead` (one member's person asks for the
 workspace's own figures and is refused by the route's class list, and is refused the same way on the
 route that answers about that member: the class holds the workspace owner's people and no member's
@@ -428,45 +516,56 @@ person, which is what stops one member's people seeing every other member's spen
 
 **SEC:** **yes.** It holds and proxies model credentials.
 
-### W7 — the workspace cap: the rollup and the enforcement
+### W7 — the workspace cap: the meter, the alarm and the enforcement
 
-**Interface.** The workspace service recomputes **one** basis for the cap — the rollup (D1301) — from
-each member's own run ledger on the history job's schedule, recording a member it cannot read as
-`stale`, and publishes the advisory headroom to each member's database. The member's gateway reads
-the headroom and stops a run early; it never decides the cap.
+**Interface.** The workspace service **meters each call it pays for**: it **reserves** before the call
+and **settles** on the response's usage, **atomically in the workspace's own database** — one
+transaction that takes the room and one that records what the call cost (D1301, **amended 2026-11-04
+after the post-merge security review**, and [reconciliation.md](reconciliation.md) §8's **O2**). It
+delivers each member's advisory headroom **as a response header on the calls it already proxies**, or
+from a small route answering only the calling member's job service account — **never by writing a node
+into a member's database** (O1). The **rollup becomes a reconciliation alarm**: on the history job's
+schedule the service compares **its own count** against the **member's ledger**, per member, and a
+disagreement beyond a stated bound is **reported**. The member's gateway reads the headroom and stops
+a run early; it never decides the cap.
 
-**One basis, and it is the rollup.** The service keeps no count of its own: the cap is measured
-against the sum of the members' ledgers, and a task that added a second measurement — metering the
-calls the service pays for at its own proxy — would be a change to D1301, which this round did not
-make and [reconciliation.md](reconciliation.md) §8 records as an owner decision. What the service
-enforces at the shared credential's front door is a **refusal** and not a count, and the case that
-matters is the unreadable member: a `stale` member's shared-credential calls are refused, failing
-closed, because a member nobody can read is a member whose spend nobody can bound — the same reason
-the rollup records it as `stale` rather than zero.
+**The basis is the meter, and the ledger keeps its own cap.** The service's reservation-then-settle
+transaction is what the workspace's cap is measured against, so the figure is taken where the money is
+spent rather than reconstructed afterwards — the old rollup basis read the *last good* rollup and
+could be passed in the gap between two of them (finding 4), and its cross-check compared a member's
+ledger with **its own** runs bucket, which the member's operator controls (finding 5). The member's
+ledger stays **authoritative for the member's own caps** — two different quantities, each governing
+its own cap, and neither renamed into the other. The **overshoot bound is stated as a number**: the cap
+can be passed by at most **the reservation in flight**. And **a failed settle refuses**: a call whose
+usage cannot be written back is refused rather than served, because a call whose cost the service
+cannot record is spending against a cap it cannot see.
 
-**The grant it needs, and what that grant also reaches.** The rollup's read of a member's ledger and
-its write of the advisory headroom are one IAM grant on the member's database, and it is the
-credentials service's own custom role: exactly `firebasedatabase.instances.get` and
-`firebasedatabase.instances.update` (`deploy/terraform/gcp/modules/installation/credentials.tf`:242-246).
-The task does not invent a narrower one, because there is no narrower one: Realtime Database has no
-path-level scope, `get` reads **any** node of the database and `update` writes **any** node of it
-(`credentials.tf`:201-210), a condition cannot fence a path (`credentials.tf`:251-253), and IAM is
-what the service account is subject to rather than the rules
-(`deploy/terraform/gcp/modules/firebase/iam.tf`:52). So this task's grant is a whole-database read
-and a whole-database write on every member, and what it buys is bounded by the code that holds it and
-by nothing else — which is why spec §5's rule 1 is a property of the code, and why the service's own
-role never grows to `firebasedatabase.admin` (`credentials.tf`:215-219). Stated here rather than in
-spec §5 alone because it is this task, and not W6, that first needs the write.
+**The grant it needs is one read permission, and the write is gone.** Enforcement, the meter and the
+alarm need exactly `firebasedatabase.instances.get` on each member — the read half of the credentials
+service's own custom role (`deploy/terraform/gcp/modules/installation/credentials.tf`:242-246) — so
+this task binds **a role holding that one permission and no write**, and **`instances.update` is not
+bound at all** (O1's answer). There is no narrower read than the whole database: Realtime Database has
+no path-level scope, `get` reads **any** node of it (`credentials.tf`:201-210), a condition cannot
+fence a path (`credentials.tf`:251-253), and IAM is what the service account is subject to rather than
+the rules (`deploy/terraform/gcp/modules/firebase/iam.tf`:52). So the grant is a whole-database
+**read** on every member, and rule 1's write direction is now a property of **IAM** rather than of the
+service's code, because there is no write permission to enforce against. The service's role never
+grows to `firebasedatabase.admin` either (`credentials.tf`:215-219).
+
+**The bucket read is gone too.** The old rollup's second read was `roles/storage.objectViewer` on each
+member's runs bucket, and the review found that check defeated (a member's operator controls its
+ledger and its bucket alike, finding 5). With the basis metered at the proxy, the comparison that
+matters is the service's own count against the member's ledger, which needs no bucket, so **no bucket
+grant is bound** and the service holds no read of a member's run artifacts or logs at all.
 
 **Who applies it, and to which identity — this task owns that half too.** The grant is applied by the
 **member's own `fugaro update`**, on the member's own installation root, and bound to the workspace
-service account **named in the member's own config**, beside the issuer it pins (spec.md §2, §5;
-W1's interface). The bucket half is the same binding: `roles/storage.objectViewer` on the member's
-runs bucket, applied by the same stage to the same account. The account is never read
-from the workspace's record — §2's record names no service account, for the same reason it names no
-issuer — so a member decides which identity is handed access to its own database and its own bucket.
-The Terraform half belongs to the **member's** root rather than the workspace's, which is why it is
-this task's and not W3's: W3 builds the workspace's project, and this is a binding on a member's.
+service account **named in the member's own config**, beside the issuer, the project and the assertion
+key it pins (spec.md §2, §5; W1's interface). It is **one binding**, on the member's database, and the
+account is never read from the workspace's record — §2's record names no service account, for the same
+reason it names no issuer — so a member decides which identity is handed read access to its own
+database. The Terraform half belongs to the **member's** root rather than the workspace's, which is why
+it is this task's and not W3's: W3 builds the workspace's project, and this is a binding on a member's.
 
 **A managed project's plan gate refuses this binding, and that is the correct answer.** The binding
 grants a role to a principal that is not this installation's own — the workspace's service account,
@@ -483,32 +582,49 @@ this task's binding is exactly that shape.
 
 **Files (11):** `internal/credsvc/workspace_cap.go`, `internal/credsvc/workspace_cap_test.go`,
 `internal/budget/workspace.go`, `internal/budget/workspace_test.go`,
-`internal/budget/workspace_rollup.go`, `internal/budget/workspace_rollup_test.go`,
+`internal/budget/workspace_reconcile.go`, `internal/budget/workspace_reconcile_test.go`,
 `internal/gateway/workspace_headroom.go`, `internal/gateway/workspace_headroom_test.go`,
 `deploy/terraform/gcp/modules/firebase/workspace_access.tf`,
 `internal/infra/tf/workspace_access.go`, `internal/infra/tf/workspace_access_test.go`.
 
-**Red step.** `TestRollupRecordsAnUnreadableMemberAsStaleNotZero` fails. It is the test the task
-exists for: an unreadable member that read as zero would look free, and the workspace would spend
-its whole cap in the member nobody could see.
+**Red step.** `TestWorkspaceCapReservesBeforeTheCallAndSettlesOnItsUsage` fails. It is the test the
+task exists for: with the basis at the proxy, a call served without a reservation taken first is a
+call that can pass the cap, and the reserve/settle pair is the whole of what makes the workspace's
+figure true.
 
-**Tests.** `TestRollupRecordsAnUnreadableMemberAsStaleNotZero`,
-`TestStaleMembersSharedCredentialCallsAreRefused` (the fail-closed half: a member the rollup could
-not read is refused at the front door rather than served and counted, so an unreadable member can
-neither spend the cap nor spend around it),
-`TestRollupRecordsAnUnboundMemberAsStale` (a member the record lists and the per-member table does
-not bind — a job account, a Firebase project, a database URL or a bucket missing — reads `stale`
-rather than zero, and its shared-credential calls are refused: spec §5's rule for the member the
-workspace cannot reach),
+**Tests.** `TestWorkspaceCapReservesBeforeTheCallAndSettlesOnItsUsage`,
+`TestWorkspaceCapReservationIsAtomicWithTheWorkspaceDatabase` (the reserve and the settle are each one
+transaction in the workspace's own database, so two calls at the cap boundary cannot both take the
+last of the room),
+`TestFailedSettleRefusesTheCall` (a usage that cannot be written back refuses the call rather than
+serving it: a call whose cost the service cannot record spends against a cap it cannot see),
+`TestWorkspaceCapOvershootIsBoundedByTheReservationInFlight` (the bound is the reservation, stated as
+a number a test can hold rather than as an adjective),
+`TestReconciliationAlarmReportsAMemberWhoseLedgerDisagrees` (the service's own count against
+the member's ledger, beyond the stated bound: a disagreement is reported, never silently trusted in
+either direction),
+`TestReconciliationAlarmReportsAnUnboundMember` (a member the per-member table does not bind — a job
+account, a Firebase project or an **exchange URL** missing — is reported as an alarm rather than
+counted as zero; **there is no database URL or bucket in the entry to be missing**, because the
+database is derived from the verified `iss` and the bucket is not bound),
+`TestMemberThatCannotBeResolvedIsRefusedAtTheFrontDoor` (an unbound member cannot be resolved as a
+caller at all, so its shared-credential calls are refused rather than served and counted),
 `TestWorkspaceCapRefusesTheCallThatWouldExceedIt`,
 `TestWorkspaceCapIsNotWidenedByAMembersOwnCap` (the merge is min, and the workspace can only
 tighten), `TestHeadroomIsAdvisoryAndTheGatewayNeverDecidesTheCap`,
+`TestHeadroomIsDeliveredByTheServiceAndWrittenNowhere` (the advisory number arrives on the service's
+own response to the member — a header, or a route answering only that member's job service account —
+and **no node of the member's database carries it**: O1's answer, and the property that lets the
+service hold no write),
 `TestWorkspaceCapBoundsOnlyTheCredentialsItPaysFor` (D1300, stated as a test so the docs cannot drift
 from it),
-`TestMemberUpdateBindsTheWorkspaceGrantsToThePinnedAccount` (the member's own `fugaro update` creates
-both bindings — the database role and the bucket read — and binds them to the service account its
-config pins; a config whose pin names no account creates neither, and a record naming a different
-account changes nothing, because the record is not an input here).
+`TestMemberUpdateBindsTheWorkspaceGrantToThePinnedAccount` (the member's own `fugaro update` creates
+**one** binding — the read-only database role — and binds it to the service account its config pins; a
+config whose pin names no account creates none, a record naming a different account changes nothing
+because the record is not an input here, and **no bucket binding is created**),
+`TestMemberUpdateBindsNoWriteOnTheMembersDatabase` (the role it binds holds
+`firebasedatabase.instances.get` and **not** `.update`: rule 1's write direction is IAM's, and a
+later change that added the write back would fail this test first).
 
 **SEC:** **yes.** It is a spend ceiling and a cross-project read (spec §8).
 
@@ -576,7 +692,11 @@ wherever two tasks would edit the same file; the second waits for the first to m
 
 ## 5. The release slot
 
-**Recommended: 0.20.0 or later.** Re-slotted on 2026-11-04: the slot this section used to recommend
+**Recommended: 0.21.0 or later, after the MCP server.** The owner set the floor on 2026-11-04, after
+the security review: the workspace's SSO half cannot ship before the **MCP server's** own code does,
+because W4's exchange *is* that design's authorization server, so the slot is **one release behind
+whichever release carries the MCP server's implementation** — and 0.21.0 is the earliest number that
+can be that. Re-slotted on 2026-11-04: the slot this section used to recommend
 — design in 0.15.0, code in 0.17.0 — has **shipped** (0.15.0, 0.16.0 and 0.17.0 are all released
 files in `docs/releases/`, and 0.17.0 is still the newest CLI release on `origin/main` at
 `c2ca0aee`), so
@@ -586,7 +706,7 @@ release nothing; the code does not belong in the next release either, for the re
 **Why the design can ride any release.** This folder is documentation, the owner asked for a design
 and approved one on 2026-10-31, and it changes no behaviour.
 
-**Why the code is 0.20.0 or later, and not the next release:**
+**Why the code is 0.21.0 or later, and not the next release:**
 
 1. **It is big.** Ten tasks, three of them new deployables (a Firebase project of its own, a second
    credentials service, an exchange endpoint) and two new wire formats with schemas. Nothing on the
@@ -594,14 +714,18 @@ and approved one on 2026-10-31, and it changes no behaviour.
    and W7 is a second spend ceiling beside the project's.
 2. **It is security-heavy.** Five of the ten tasks carry the plan's own **SEC** flag (W3, W4, W5,
    W6 and W7: an identity boundary, an authorization decision, a credential pool and a spend
-   ceiling), and [spec.md](spec.md) §8's threat model needs an independent SECURITY review **before
-   this design merges**, run by the coordinator. Shipping an identity boundary, a cross-project read
-   and a shared credential pool before that review's findings have had a release to settle in would
-   put a security feature on the release's schedule rather than the review's.
-3. **The exchange has no host until the MCP server exists.** W4 is written to the MCP design's
-   authorization server. That design is **on `main`** (merged as #1487 on 2026-11-04) but **none of
-   its code is written** — it is a design folder, and it recommends a slot of its own for its code —
-   so a workspace cannot mint a member token before there is a server that mints member tokens.
+   ceiling). [spec.md](spec.md) §8's threat model needed an independent SECURITY review **before this
+   design merged**, run by the coordinator — **that review has run, and its seven findings are
+   answered** ([reconciliation.md](reconciliation.md) §2f's F33), which is what let the tasks be
+   written to the amended shape above. Shipping an identity boundary, a cross-project read and a
+   shared credential pool in the release immediately after the review's answers would still put a
+   security feature on the release's schedule rather than the review's.
+3. **The exchange has no host until the MCP server exists, and this is the dependency that sets the
+   floor.** W4 is written to the MCP design's authorization server. That design is **on `main`**
+   (merged as #1487 on 2026-11-04) but **none of its code is written** — it is a design folder, and it
+   recommends a slot of its own for its code — so a workspace cannot mint a member token before there
+   is a server that mints member tokens. The owner's 2026-11-04 answer is that the workspace's code
+   therefore lands in **0.21.0 or later, after the MCP server**, and not before it.
 4. **The shared pool has no host until the credentials service's later slice.** The service's Slice 1
    is still its first product slice and the rest are unscheduled
    (`docs/credentials-service/implementation-plan.md`), and W6 is a *second* deployment of it, not a
@@ -612,9 +736,12 @@ and approved one on 2026-10-31, and it changes no behaviour.
    in the MIT core would contradict a standing ruling, so the slot has to be one where the `ee/`
    placement is settled.
 
-**Why not later than the 0.20.0 window:** nothing else the workspace needs is unbuilt by then. The
+**Why not later than the 0.21.0 window:** nothing else the workspace needs is unbuilt by then. The
 `update` stage (W2), the kill scope (W8) and the docs (W9) are ordinary work on surfaces that exist
-today.
+today, and the SSO half's only unbuilt dependency is the MCP server itself, which is what the window
+is timed to. W3's owner-run step — the workspace's Firebase must carry the pinned sign-in providers,
+and `fugaro setup`'s Identity Platform step initializes with none — is an operator step, not
+unbuilt work, and W9 carries it in the release note's `### For operators` line.
 
 **What would move it.** If the owner declines the MCP design, W4 and W5 have no host and the SSO
 half waits for whichever design replaces it — the record, the node, the credentials pool and the cap

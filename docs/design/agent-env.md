@@ -7,7 +7,7 @@ built. Source: the owner's request, after the first live provider-model run
 `context_management` when thinking is on and the gateway refuses it on a
 provider route: the field is not in `routedKeys`, the allow-list of
 top-level fields a provider-routed request may carry
-(`internal/gateway/forward.go:39-49`, checked at `forward.go:102-106` and
+(`internal/gateway/forward.go:40-50`, checked at `forward.go:102-106` and
 enforced only for provider routes at `forward.go:460-461`; the narrower,
 Anthropic-direct `context_management`-edit filter, `contextManagement`,
 `forward.go:224-253`, is a related but separate check — see §0). The

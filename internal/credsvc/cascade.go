@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -33,8 +34,8 @@ import (
 // admission at all (Global Constraint 4's drop, if it had applied).
 //
 // A review caller is the one caller whose candidate list is not this
-// narrowing: the pairing has already resolved the ONE account it may be served
-// by, and the class buys no other (reviewCandidates). It is asked here rather
+// narrowing: the pairing has already resolved the ONE credential it may be
+// served by, and the class buys no other (reviewCandidates). It is asked here rather
 // than after the selector because this function is the one place that decides
 // which credentials a call may be offered — a review caller's list must never
 // contain an entry the cascade could fall to.
@@ -87,16 +88,26 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 }
 
 // reviewCandidates is the candidate list of a review caller: the pairing's ONE
-// account at tier A, and nothing else at all.
+// credential, and nothing else at all.
 //
 // The class buys three routes and no privilege beyond them (spec §2.3), and on
 // the model path that is exactly this list: a review call is served by the
-// account its job is of, never by another tier-A account's entry, and never by
-// a tier B or C one — so a review call has nothing for the cascade's ladder to
-// fall to even where the policy's `fallback` would allow one (spec §10). The
-// account is the one the pairing resolved, and the tier-A credential's name in
-// the bundle is the name the published admissions spell the account with, so
-// the two are the same string by construction and not by a second lookup.
+// credential its job is of, never by another tier-A account's entry, and never
+// by a tier B or C one — so a review call has nothing for the cascade's ladder
+// to fall to even where the policy's `fallback` would allow one (spec §10).
+//
+// The credential is the one the pairing resolved, in one of the axis's two
+// spellings (docs/api-key-review, D1417):
+//
+//   - an account name, which is the name of the tier-A credential in the
+//     bundle: the pairing resolved it from the published admissions, so the two
+//     are the same string by construction and not by a second lookup;
+//   - config.AnthropicKeyAccount, the sentinel that is not an account: it names
+//     the project's own Anthropic API key, which the bundle holds at tier B
+//     under its own secret's name (config.AnthropicSecret), and the entry
+//     offered is that one — matched by name AND tier, so a bundle that grew a
+//     second tier-B credential would never have it offered to a review caller
+//     (the class is served by the key it named and by nothing beside it).
 //
 // Every credential it did not offer is reported as not admitted, which is what
 // that reason means for a caller: this call may not be served by it. A new
@@ -106,13 +117,30 @@ func reviewCandidates(all []creds.Credential, account string) ([]creds.Credentia
 	var out []creds.Credential
 	var skipped []Tried
 	for _, c := range all {
-		if c.Tier == creds.TierA && c.Name == account {
+		if offeredToReview(c, account) {
 			out = append(out, c)
 			continue
 		}
 		skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
 	}
 	return out, skipped
+}
+
+// offeredToReview reports whether one credential is the one a review caller
+// paired with account may be served by, and it is the whole of the rule above.
+//
+// The two spellings cannot overlap: config.AnthropicKeyAccount carries a
+// doubled dash, which config.ClaudeAccountNameRE refuses, so no account name is
+// ever the sentinel and neither arm can answer for the other's value. The
+// sentinel's arm matches the tier as well as the name, so what it offers is the
+// project's key at tier B and never a credential that merely goes by that name
+// — the bundle is free to grow entries, and only this rule knows that a review
+// caller paired with the sentinel is served by the key or by nothing.
+func offeredToReview(c creds.Credential, account string) bool {
+	if account == config.AnthropicKeyAccount {
+		return c.Tier == creds.TierB && c.Name == config.AnthropicSecret
+	}
+	return c.Tier == creds.TierA && c.Name == account
 }
 
 // admittedAccounts is O4's admission, and it is an intersection of three

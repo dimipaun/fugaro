@@ -164,7 +164,7 @@ Left out, each a veto-able decision:
 | Docker CLI | `DOCKER_HOST`, `DOCKER_CONFIG` | `~/.docker/config.json` |
 | mise | `GITHUB_TOKEN` or `MISE_GITHUB_TOKEN` (rate limits) | `/etc/mise/config.toml`, `~/.config/mise/config.toml` |
 
-The agent's environment is an allowlist (`internal/agent/env.go`); none of these is added to it by this design. The selftest's list of credential files that must not be baked into `HOME` grows with this table's credential files (`~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, `~/.local/share/opencode/auth.json`, `~/.config/gcloud/credentials.db`, `~/.config/gcloud/application_default_credentials.json`, `~/.claude/.credentials.json`).
+The agent's environment is an allowlist (`internal/agent/env.go`); none of these is added to it by this design. What an operator's own catalog image does add to it — that image's `ENV`, minus the names Fugaro reserves — is stated where an operator writes those lines, in `docs/base-image.md`'s "Bring your own", with `fugaro doctor --all` as the report of what a job drops. The selftest's list of credential files that must not be baked into `HOME` grows with this table's credential files (`~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, `~/.local/share/opencode/auth.json`, `~/.config/gcloud/credentials.db`, `~/.config/gcloud/application_default_credentials.json`, `~/.claude/.credentials.json`).
 
 **The spec's "git credential helper that consumes runtime-injected credentials"** is already the runner's job: it configures git and gh with the run's token at run time (design v1 §6.2). The base deliberately ships no helper configuration, because `finalize-checkout` and the selftest refuse one in the image.
 

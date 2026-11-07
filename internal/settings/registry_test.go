@@ -215,7 +215,7 @@ func TestRegistryKeysAreUnique(t *testing.T) {
 func TestRegistryOwnerNamesACommand(t *testing.T) {
 	families := []string{
 		"settings set", "models", "rigor", "rigor floor", "accounts", "secrets",
-		"config", "budget", "project", "setup", "update",
+		"config", "budget", "project", "setup", "update", "workspace",
 	}
 	for _, r := range Rows() {
 		ok := false

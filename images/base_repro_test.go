@@ -140,7 +140,7 @@ func TestByproductsScriptNormalizesTheBuildClock(t *testing.T) {
 	// written back in the order the loop names them, whatever order git
 	// happened to write them in. A section that only re-printed what it read
 	// would be a no-op.
-	if i, j := strings.Index(s, "clean smudge process required"), strings.Index(s, "printf '\\t%s = %s\\n'"); i == -1 || j == -1 || i > j {
+	if i, j := strings.Index(s, "clean smudge process required"), strings.Index(s, "printf '\\tclean = %s\\n\\tsmudge = %s\\n\\tprocess = %s\\n\\trequired = %s\\n'"); i == -1 || j == -1 || i > j {
 		t.Error("byproducts.sh does not re-write /etc/gitconfig's filter keys from the values it read, in a fixed order")
 	}
 }

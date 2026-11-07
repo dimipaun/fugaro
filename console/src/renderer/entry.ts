@@ -87,6 +87,7 @@ import {
   decodeCoordinatorIntents,
   decodeCoordinatorPullRequest,
   decodeCoordinatorStatus,
+  decodeGraphDocument,
   decodeModelsList,
   decodePlanStatus,
   decodeRunsSummary,
@@ -96,6 +97,7 @@ import type {
   CoordinatorIntentsView,
   CoordinatorPullRequestDocument,
   CoordinatorStatusView,
+  GraphView,
   ModelsListView,
   PlanStatusView,
   RunsSummaryView,
@@ -216,7 +218,8 @@ import {
 import { refusedState, renderUnavailable } from './screens/degraded'
 import { READING_STILL_MS, renderReading } from './screens/reading'
 import type { ReadingTab } from './screens/reading'
-import { NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
+import { noCheckoutActionKind, NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
+import type { NoCheckoutOptions } from './screens/nocheckout'
 import { renderCheckoutSelect } from './checkout'
 import type { CheckoutChoice } from './checkout'
 import {
@@ -231,14 +234,18 @@ import type { LaunchControl, LaunchFields, LaunchTyped, LaunchView } from './scr
 import {
   GRAPH_PINCH_STEP,
   GRAPH_REFRESH_MS,
+  GRAPH_SCOPE_ALL,
+  GRAPH_SCOPE_CONTROL_CLASS,
+  GRAPH_SCOPE_PLAN,
   GRAPH_ZOOM_STEP,
   SVG_NAMESPACE_URI,
   graphScreen,
   runIdsIn,
+  scopeOf,
   tabKey,
   tabOf,
 } from './screens/graph'
-import type { GraphScreen } from './screens/graph'
+import type { GraphScreen, GraphScope } from './screens/graph'
 import type { GraphTab } from './graph/model'
 import {
   SKEW_HEADLINES,
@@ -467,13 +474,14 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the fifteen reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the sixteen reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
  * Coordinator's jobs-free totals read -- and `listModels`, the Project tab's
  * models panel, and the settings-edit plan's C1 added `readSettings`, the same
- * tab's settings panel), named one by one
+ * tab's settings panel, and the graph plan's CG9a added `graphRead`, the Graph
+ * tab's read of the versioned graph document), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -499,9 +507,10 @@ export interface ReadBridge {
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  graphRead(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the fifteen reads over the structural bridge. A missing
+/** readBridgeFrom is the sixteen reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -539,6 +548,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
     planStatus: (args) => ask('planStatus', args),
+    graphRead: (args) => ask('graphRead', args),
   }
 }
 
@@ -2427,6 +2437,15 @@ export const COORDINATOR_SUMMARY_SINCE = '7d'
  * that is already true. */
 export const GRAPH_BUSY = 'Reading the plan…'
 
+/** GRAPH_SCOPE_BUSY is the same mark's other label: a scope change is a read of
+ * its own (`graph.read`), and the mark says which one is running. The two are
+ * separate sentences because the mark is the only thing on the panel that says
+ * what the console is doing, and "Reading the plan…" over a coordinator read
+ * would name the wrong document -- the owner's rule of 2026-10-31 asks for a
+ * label naming what is being read, and the two scopes read two different
+ * documents. */
+export const GRAPH_SCOPE_BUSY = 'Reading the coordinator…'
+
 /** VIEW_BUTTON_CLASS, VIEW_PANEL_CLASS and VIEW_NAV_CLASS are the console's own
  * names for the three elements the navigation is made of. They are constants
  * because a spec reads them. */
@@ -3490,6 +3509,34 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * in-flight flag: the two are different reads of the same tab, and the
      * decoration must not hold up the plan's cadence. */
     decorating: boolean
+    /** scope is the scope the operator is looking at (CG10). It is the entry's
+     * own memory of a **choice** and not the screen's drawing state: the screen
+     * is put on a scope by the document it is handed (`load` and `loadScope`),
+     * and this is what a cadence, a re-entry or a refusal consults to know which
+     * read to make. */
+    scope: GraphScope
+    /** chosen is whether the operator has picked a scope themselves. The console
+     * opens on the plan scope (the read it has always made) and **falls back to
+     * the coordinator's when the plan scope refuses for want of a checkout**
+     * (H9) -- and this flag is what keeps that fallback from firing again once a
+     * person has chosen: an operator who asks for the plan scope of an
+     * installation that records no checkout is asking for the card, not for the
+     * scope the console would have opened on. */
+    chosen: boolean
+    /** notice is the sentence a chosen scope was refused with, drawn inside the
+     * drawing under the control that chose it (T3), or `null` when the scope in
+     * hand was read. */
+    notice: string | null
+    /** fellBack is whether the console opened on the coordinator scope because
+     * the plan scope refused for want of a checkout (H9). It is what tells the
+     * refusal of that fallback apart from a refusal of a scope a person chose:
+     * the plan scope's card is the drawing for the first (the installation has
+     * one thing to do about it, and the read that was refused was the console's
+     * own idea), and the sentence naming `graph.read` is the answer to the
+     * second, where the operator asked for that scope. A scope the operator
+     * chooses clears it (`chooseScope`), because from then on the read is
+     * theirs. */
+    fellBack: boolean
   } = {
     screen: null,
     readAt: 0,
@@ -3498,6 +3545,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     queuedToken: null,
     runs: [],
     decorating: false,
+    scope: GRAPH_SCOPE_PLAN,
+    chosen: false,
+    notice: null,
+    fellBack: false,
   }
 
   /** GraphHeld is what the Graph's session cache keeps per installation: the
@@ -3578,19 +3629,40 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // of the owner's rule of 2026-10-31. `token` is `null` for a read nobody
     // asked for (the poll's own cadence): a mark for that would flicker over a
     // picture that is already true.
-    if (token !== null) markGraph(token)
+    if (token !== null) markGraph(token, GRAPH_BUSY)
     try {
       const plan = documentOf(await bridge.planStatus({ all: true }))
       // The section's token is settled before the refusal is drawn, for the
       // reason every other screen gives: the mark must come down for the
       // operator's own read, and a read an earlier press started must not take
-      // down the mark a later one put up.
+      // down the mark a later one put up. **It is settled before the fallback
+      // below as well**: the fallback is a different read, with a mark of its
+      // own, and the plan's mark is not the coordinator's to wear.
       if (token !== null && !graphRead.settle(token)) return
       // Before the refusal, not after it: a refusal is a screen of its own, and
       // one drawn for a generation that has passed is the operation cell
       // `plan.status` under a tab that asked for another read.
       if (stale(mine)) return
       if (!plan.ok) {
+        // **H9: the plan scope is the one scope that needs a checkout, and the
+        // console does not open on a card for an installation that has one
+        // scope it can read.** The sentence is the CLI's own precondition for
+        // this one read, and the coordinator scope needs no checkout at all, so
+        // the console opens there instead -- once, and only for the scope it
+        // chose on its own: an operator who has picked a scope is asking for
+        // that scope's answer (the card, with its own door back), and a second
+        // fallback would be the console arguing with the person using it.
+        //
+        // **And not for a card that records the checkout by itself** (H9 too,
+        // and the plan scope's own requirement): see `cardChoosesByItself`. The
+        // fallback replaces a card the operator had nothing to do about; it must
+        // not take the console's own choice of an installation's single checkout
+        // away, which is the write that makes this read succeed at all.
+        if (plan.sentence === NO_CHECKOUT_SENTENCE && !graph.chosen && !cardChoosesByItself()) {
+          graph.fellBack = true
+          await readScope(mine, null)
+          return
+        }
         refuseGraph(plan.sentence)
         return
       }
@@ -3605,10 +3677,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // before it answered at all (the owner's report of 2026-10-31). What this
       // session already read decorates it at once, and the fresh list follows in
       // `decorateRuns` below.
-      const drawn = await graphScreenNow().load(decoded.value, graph.runs)
+      // The notice is the sentence a **chosen** scope was refused with, and it
+      // is drawn into every reading of the scope it was refused for: it says
+      // which read the console cannot make (`graph.read`), and the plan scope's
+      // own figures are what it is drawn over.
+      const drawn = await graphScreenNow().load(decoded.value, graph.runs, graph.notice)
       if (stale(mine) || drawn === null) return
       // A read names no gesture: the keyboard stays where it was, and a reader
       // who is not in the graph is not pulled into it.
+      graph.scope = GRAPH_SCOPE_PLAN
+      graph.fellBack = false
       redraw(drawn, stopNow())
       graphViews.put(graphKey(), { document: decoded.value, runs: graph.runs }, Date.now())
       void decorateRuns(mine, decoded.value)
@@ -3630,6 +3708,141 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
   }
 
+  /**
+   * readScope makes one `graph.read` -- the coordinator's view of the
+   * installation, which needs no checkout at all (H9) -- and draws it.
+   *
+   * **It is a read of the same section and not a second screen.** The Graph is
+   * one tab with two scopes, so a scope read takes the section's own token and
+   * puts the section's own mark up: a scope change is answered in the frame it
+   * happened in, over the figures the last read drew (the owner's rule of
+   * 2026-10-31), and an answer whose token is no longer the newest is dropped --
+   * which is what keeps a slow coordinator read from landing over the plan scope
+   * an operator changed their mind into.
+   *
+   * **It does not take the plan's in-flight flag.** The two reads are two
+   * documents and neither waits for the other: a scope change must be able to
+   * start while a plan read is running (and the other way round), or the
+   * operator's own choice would queue behind a read they did not ask for. What
+   * orders them is the token, and what the flag keeps ordering is the plan's own
+   * reads.
+   *
+   * There is **no cache** for this scope. The plan's cache exists because a plan
+   * is a document of a checkout that changes on the scale of a plan; the
+   * coordinator's view is the installation's whole state -- which is exactly the
+   * thing worth re-reading rather than serving from memory.
+   */
+  const readScope = async (mine: number, token: number | null): Promise<void> => {
+    if (token !== null) markGraph(token, GRAPH_SCOPE_BUSY)
+    // The cadence is kept off this read the same way it is kept off the plan's:
+    // the stamp is taken before the await, so a read that is refused is not
+    // retried on the next tick of the one-second poll.
+    graph.readAt = Date.now()
+    try {
+      const read = documentOf(await bridge.graphRead({ source: GRAPH_SCOPE_ALL }))
+      if (token !== null && !graphRead.settle(token)) return
+      if (stale(mine)) return
+      if (!read.ok) {
+        refuseScope(read.sentence)
+        return
+      }
+      const decoded = decodeGraphDocument(read.data, 'graph.read')
+      if (!decoded.ok) {
+        refuseScope(decoded.skew.because)
+        return
+      }
+      const drawn = graphScreenNow().loadScope(decoded.value, null)
+      if (stale(mine) || drawn === null) return
+      graph.scope = GRAPH_SCOPE_ALL
+      graph.notice = null
+      graph.fellBack = false
+      redraw(drawn, stopNow())
+    } catch {
+      // As `readGraph`: `readBridgeFrom` answers `null` rather than rejecting, so
+      // this is a throw this file did not expect, and the generation is checked
+      // so a refusal is never drawn for a console that has moved on.
+      if (!stale(mine)) refuseScope(READ_UNREADABLE)
+    }
+  }
+
+  /**
+   * refuseScope is what a refused scope read is answered with, and it is T3's
+   * own ruling: **the plan scope is kept and the sentence is drawn in it**.
+   *
+   * A refusal of this read is not a failure of the console or of the CLI -- the
+   * core stub simply has no `graph` command -- and the scope it was refused for
+   * is one of two. A refusal screen would take the scope control away with it,
+   * leaving an operator who cannot choose anything else; so the drawing the
+   * console already has stays, under the sentence naming the read it could not
+   * make, and the control stays with it. Only a console with **no drawing at
+   * all** is answered with the refusal screen, because then there is nothing to
+   * keep and a reader needs to be told what happened.
+   *
+   * The scope the entry remembers is the one the screen is still drawn in, and
+   * never the one that was refused: the two must agree, or the next cadence
+   * would read a document the panel is not showing.
+   *
+   * **A refusal of the console's own fallback is the card, and not a sentence.**
+   * When the plan scope refused for want of a checkout and the scope the console
+   * opened instead refuses as well, there is no drawing to keep and the state the
+   * operator has to do something about is the one the card names: a checkpoint
+   * the Graph needs and the installation has not chosen. The read that was
+   * refused was the console's own idea, nobody asked for its sentence, and the
+   * card's own door is what makes that scope reachable -- pressing it is a
+   * person's choice, and *that* refusal is drawn in the frame it was made in.
+   */
+  const refuseScope = (sentence: string): void => {
+    graph.notice = sentence
+    const screen = graph.screen
+    const kept = screen === null ? null : screen.noticed(sentence)
+    if (kept !== null) {
+      graph.scope = screen?.current.scope ?? GRAPH_SCOPE_PLAN
+      redraw(kept, stopNow())
+      return
+    }
+    graph.scope = GRAPH_SCOPE_PLAN
+    if (graph.fellBack) {
+      // The sentence goes with the read it was about: the card draws the CLI's
+      // own account of the **plan** refusal behind its disclosure, and a sentence
+      // about a read this console made on its own would be drawn over every
+      // later plan read that succeeded.
+      graph.notice = null
+      refuseGraph(NO_CHECKOUT_SENTENCE)
+      return
+    }
+    graphTree = null
+    refuse('graph.read', sentence)
+  }
+
+  /**
+   * chooseScope is the operator's own choice of a scope, from the control in the
+   * toolbar and from the no-checkout card's door back to the coordinator alike.
+   *
+   * **A choice is a read, in the frame the control was used in.** The token is
+   * taken here, before the read is started, because that is what puts the mark
+   * up in this frame and what keeps two quick choices from drawing the earlier
+   * one's answer; `chosen` is what tells the console the fallback of H9 is no
+   * longer its business -- from here on, the scope a reader asks for is the
+   * scope they get, refusals included.
+   *
+   * **The fallback's own flag goes with the choice.** `fellBack` means "this
+   * console opened on the coordinator scope by itself, so a coordinator read that
+   * refuses is the plan scope's card"; once a reader has chosen, the read is
+   * theirs and a refusal is the answer to it. Left set, the card's own door back
+   * to the coordinator -- the one control an installation with no checkout has --
+   * would take the sentence out of the refusal and draw the same card again: a
+   * door that answers with the screen it is on.
+   */
+  const chooseScope = (scope: GraphScope): void => {
+    graph.chosen = true
+    graph.fellBack = false
+    graph.scope = scope
+    graph.notice = null
+    const token = graphRead.start()
+    if (scope === GRAPH_SCOPE_ALL) void readScope(claim(), token)
+    else void readGraph(claim(), token)
+  }
+
   /** graphKey is one installation's Graph entry in the session cache. The cache
    * is per installation like every other one here, and `forgetLive` empties it
    * with the rest: a plan of the old installation is never drawn under the new
@@ -3641,11 +3854,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * one token. It is a no-op when the panel holds no drawing of this Graph: the
    * placeholder is already saying a read is running, and a mark over a refusal
    * would be a mark over a sentence that is an answer. */
-  const markGraph = (token: number): void => {
+  const markGraph = (token: number, label: string): void => {
     const slot = graphSlot()
     const tree = graphTree
     if (slot === null || tree === null) return
-    graphRead.mark(token, tree, slot, GRAPH_BUSY)
+    graphRead.mark(token, tree, slot, label)
   }
 
   /**
@@ -3726,6 +3939,48 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     refuse('plan.status', sentence)
   }
 
+  /** openRow is the rail's open installation, which is the one the Graph reads
+   * for: the card's state is that row's. */
+  const openRow = (): RailRow | undefined => railNow.find((row) => row.open)
+
+  /**
+   * cardOptions is what the no-checkout card is drawn from, and it is built in
+   * one place because the fallback above asks the same question the drawing
+   * answers: an installation's open row, the list this console has read for it,
+   * and whether the card may choose its one checkout by itself.
+   */
+  const cardOptions = (): NoCheckoutOptions => {
+    const open = openRow()
+    return {
+      choices: open?.checkoutChoices ?? [],
+      listed: deps.railListed && open !== undefined,
+      // A project this card has already chosen for is not chosen for again: the
+      // write is the answer to the card, and a plan that still refuses after it
+      // draws the menu rather than a sentence about a read that is not happening.
+      auto: open !== undefined && !autoChosen.has(open.project),
+    }
+  }
+
+  /**
+   * cardChoosesByItself is whether that card would record the installation's one
+   * checkout on its own, and it is what keeps the H9 fallback from undoing the
+   * plan scope's own way out.
+   *
+   * **The fallback answers a card the operator could only be sent somewhere
+   * else from** -- the CLI listed no checkout, the list was never read, or there
+   * are several to choose between. **It does not answer the console's own
+   * choice**: an installation with exactly one usable checkout gets the card
+   * that records it and reads the plan from it, in the frame it always did, and
+   * the coordinator scope is reached by the operator's choice of scope like any
+   * other. Opening on the coordinator scope there would leave the installation's
+   * checkout unchosen and the plan scope unreadable until somebody chose it
+   * back: the state this card exists to end.
+   *
+   * The question is the card's own (`noCheckoutActionKind`, over the options the
+   * drawing is given), so the two cannot disagree about which state this is.
+   */
+  const cardChoosesByItself = (): boolean => noCheckoutActionKind(cardOptions()) === 'auto'
+
   /**
    * drawNoCheckout draws the Graph's no-checkout card and wires its action.
    *
@@ -3742,15 +3997,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * is not a claim it can make.
    */
   const drawNoCheckout = (sentence: string): void => {
-    const open = railNow.find((row) => row.open)
-    const choices = open?.checkoutChoices ?? []
-    const listed = deps.railListed && open !== undefined
-    // A project this card has already chosen for is not chosen for again: the
-    // write is the answer to the card, and a plan that still refuses after it
-    // draws the menu rather than a sentence about a read that is not happening.
-    const auto = open !== undefined && !autoChosen.has(open.project)
-    const drawn = renderNoCheckout(factory, sentence, theme, { choices, listed, auto })
+    const open = openRow()
+    const drawn = renderNoCheckout(factory, sentence, theme, cardOptions())
     replace(drawn.root)
+    // **The card's own door back to the coordinator scope** (CG10). The card is
+    // drawn *instead of* the Graph, so the scope control is gone with it, and the
+    // plan scope is a choice somebody made: this is the one way out for an
+    // installation that records no checkout, and it is wired for every state of
+    // the card -- including the ones whose action is a sentence rather than a
+    // control.
+    surface.nodeOf(drawn.coordinator).addEventListener('click', () => {
+      chooseScope(GRAPH_SCOPE_ALL)
+    })
     const action = drawn.action
     if (action.kind === 'picker') {
       surface.nodeOf(action.button).addEventListener('click', () => {
@@ -3779,7 +4037,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (Date.now() - graph.readAt < GRAPH_REFRESH_MS) return
     // **No token**: the cadence is nobody's press, and a mark put up for it would
     // flicker over a picture the operator is reading.
-    void readGraph(claim(), null)
+    // **The scope in hand is the scope the cadence keeps fresh** (CG10): a
+    // background read of the plan under a coordinator drawing would be a read
+    // nobody can see, made at the cost of the one nobody asked for.
+    if (graph.scope === GRAPH_SCOPE_ALL) void readScope(claim(), null)
+    else void readGraph(claim(), null)
   }
 
   /**
@@ -3799,7 +4061,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const showGraph = async (): Promise<void> => {
     const mine = claim()
     const held = graphViews.get(graphKey())
-    if (held !== null) {
+    // The cache holds the **plan** scope's document, so it is drawn when the plan
+    // scope is the one in hand: a console that comes back to the Graph on the
+    // coordinator scope draws the coordinator reading it already has (below) and
+    // reads that scope again, rather than replacing the operator's choice with
+    // the plan it happened to cache.
+    if (held !== null && graph.scope === GRAPH_SCOPE_PLAN) {
       // **The cached view is drawn before anything is awaited**, which is the
       // whole point of the cache: the plan this session already read, with the
       // run list it was decorated with, laid out again by the engine's own cache
@@ -3820,6 +4087,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // The placeholder is what says a read is running when this console has
     // nothing to redraw, so the read carries no token: a mark over the sentence
     // that already names the tab would be a second answer to the same click.
+    if (graph.scope === GRAPH_SCOPE_ALL) {
+      await readScope(mine, null)
+      return
+    }
     await readGraph(mine, null)
   }
 
@@ -4048,10 +4319,28 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      */
     const chooseTab = (tab: GraphTab): void => {
       const token = graphRead.start()
-      markGraph(token)
+      markGraph(token, GRAPH_BUSY)
       void screen.narrow(tab).then((element) => {
         if (!graphRead.settle(token)) return
         redraw(element, SELECTED_TAB)
+      })
+    }
+
+    /**
+     * chooseScopeControl is the toolbar's own choice of a scope (CG10), and it
+     * is a `change` on the menu rather than a click on a button: what the control
+     * answers with is its **value**, which is why the entry reads it back through
+     * `valueOf` -- the same door the checkout chooser's own control uses.
+     *
+     * The choice goes to `chooseScope` and not to a read here: the two scopes
+     * read two documents (so the entry is what can decide), and the read it
+     * starts carries the section's token, which is what makes the answer land in
+     * the frame the control was used in.
+     */
+    const control = classed(drawn, GRAPH_SCOPE_CONTROL_CLASS)[0]
+    if (control !== undefined) {
+      surface.nodeOf(control).addEventListener('change', () => {
+        chooseScope(scopeOf(valueOf(surface, control)))
       })
     }
 
@@ -4995,15 +5284,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     /**
      * bindSettingsPencils attaches each pencil the settings panel just drew to
-     * the editor, and hands the focus back to the pencil it was pressed on when
-     * the press settles (D1116). The focus is taken on the node the drawing
-     * answered with and not on a re-drawn one, for `redraw`'s reason: a node
-     * this session has taken down is one a real window has detached, and
-     * focusing it would leave the keyboard behind.
+     * the editor, and puts the focus on the pencil it was pressed on as the
+     * editor is drawn, so a press leaves the keyboard on the control that opened
+     * the row's editor rather than dropping it (D1116). The focus is taken on
+     * the node the drawing answered with and not on a re-drawn one, for
+     * `redraw`'s reason: a node this session has taken down is one a real window
+     * has detached, and focusing it would leave the keyboard behind.
      *
-     * The press settles when the whole edit does -- the dry run, the window and,
-     * on a yes, the write -- so a pencil under an open window is a pencil the
-     * keyboard comes back to when that window is answered or closed.
+     * It is put here rather than at the window's answer because
+     * `openSettingsEdit` returns as soon as the editor is drawn: the dry run,
+     * the window and the write are that editor's own flow from there.
+     *
+     * **D1116's other half is not done.** The rule also asks the keyboard back
+     * on the pencil when the confirmation window closes, and nothing moves the
+     * focus after this call: the editor's own box and its submit control take it
+     * as the operator uses them, and the editor goes when the outcome is drawn,
+     * so a real window can end with the keyboard on `<body>`. Closing that is
+     * the editor flow's (C3) and a product question, not a line here.
      */
     const bindSettingsPencils = (host: Drawn): void => {
       for (const pencil of classed(host, SETTINGS_PENCIL_CLASS)) {
@@ -7029,6 +7326,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     graph.screen?.dispose()
     graph.screen = null
     graph.readAt = 0
+    // The scope is the same kind of fact: the plan scope's document belongs to
+    // the installation that is gone, so the next one opens on the scope the
+    // console has always opened on -- and `chosen` goes with it, because the
+    // fallback of H9 is this console's own decision about a scope nobody has
+    // picked yet. A sentence about a read the old installation was refused is
+    // not a sentence about this one.
+    graph.scope = GRAPH_SCOPE_PLAN
+    graph.chosen = false
+    graph.notice = null
+    graph.fellBack = false
     // The plan and the run list the Graph cache holds are this installation's
     // own: a plan of the old one is never drawn under the new one's positions.
     graphViews.clear()

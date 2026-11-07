@@ -229,6 +229,24 @@ export class FakeNode {
     for (const listener of this.listeners.get('click') ?? []) listener(fakeEvent('', '', false, false, target))
   }
 
+  /**
+   * value is what a form control holds, which is the one thing a `<select>`
+   * carries that nothing else in this fake does: the Graph's scope control
+   * (the graph plan's CG10) is read by the entry through the same `value` a real
+   * browser puts on the element after a choice, so a case sets it here and fires
+   * the change itself below.
+   */
+  value = ''
+
+  /**
+   * change fires this node's change listeners, as a real control does once its
+   * `value` has been set: a chooser is not a click (the value is the gesture's
+   * own answer), and a case that could only click could not drive one.
+   */
+  change(target: FakeNode | null = this): void {
+    for (const listener of this.listeners.get('change') ?? []) listener(fakeEvent('', '', false, false, target))
+  }
+
   /** press fires this node's keydown listeners with one key and the modifiers a
    * case holds down, and answers the event, so a case can assert that the
    * console took the key (`defaultPrevented`) rather than leaving it to the

@@ -179,11 +179,13 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	if !found {
 		// #1656: a project that has never published a node is not always a
 		// project with nothing to do. The local config can state something only
-		// the node can carry — an image_catalog, which no job's environment
-		// carries — and a stage that reported done here left the operator's
-		// catalog in a file no run reads, with `fugaro project policy publish`
-		// as the second command `fugaro update`'s one command must not need.
-		if !firstPublishCarriesCatalog(lc) {
+		// the node can carry — an image_catalog or the orchestrator's guardrails,
+		// neither of which any job's environment carries — and a stage that
+		// reported done here left the operator's catalog, or the guardrails they
+		// had just written, in a file no run reads, with
+		// `fugaro project policy publish` as the second command `fugaro update`'s
+		// one command must not need.
+		if !firstPublishCarriesANodeOnlyMember(lc) {
 			return nil, false, nil
 		}
 		return firstPolicyPublish(ctx, db, lc, etag, configPath)
@@ -283,20 +285,40 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	return m, true, nil
 }
 
-// firstPublishCarriesCatalog is whether the local config states an image
-// catalog the node would carry, which is the one member a first publish is made
-// for. ImageCatalogEffective is nil for a config that names none and for one
-// that writes an empty catalog, and an empty catalog publishes no member at all
-// (D1156), so neither is a reason to write a node where none was — the publish
-// would create a policy that admits nothing and carry no catalog with it.
+// firstPublishNodeOnlyMembers names the members only the node can carry that
+// the local config states, in the order the node's own text writes them, so a
+// line about a first publish names what this file holds and not the member it
+// does not.
 //
-// The other members the local config states are not this stage's to publish
-// here: a budget ceiling, a base branch or a model list reaches every run
-// through the job's own environment and the shared config, so a project that has
-// never published a node is a project those are already read for. A catalog is
-// not among them, which is what makes it the whole of this case.
-func firstPublishCarriesCatalog(lc *localcfg.Config) bool {
-	return lc.ImageCatalogEffective(nil) != nil
+// A member written but stating no value is not one of them:
+// ImageCatalogEffective is nil for a config that names no catalog and for one
+// that writes an empty catalog, which publishes no member at all (D1156), and
+// OrchestratorEffective is nil for a block that sets no key (SetsNothing). The
+// publish would create a policy that admits nothing and carry neither with it.
+func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
+	var out []string
+	if lc.ImageCatalogEffective(nil) != nil {
+		out = append(out, "the image_catalog")
+	}
+	if lc.OrchestratorEffective(nil) != nil {
+		out = append(out, "the orchestrator's guardrails")
+	}
+	return out
+}
+
+// firstPublishCarriesANodeOnlyMember is whether the local config states
+// something only the node can carry, which is what a first publish is made for:
+// an image catalog (D1156) and the orchestrator's guardrails (D1239) are read
+// out of the published policy and nowhere else — no job's environment carries
+// either — so a project that has never published a node has left what the
+// operator wrote in a file no run reads.
+//
+// The members that are not node-only are not this stage's to publish here: a
+// budget ceiling, a base branch or a model list reaches every run through the
+// job's own environment and the shared config, so a project that has never
+// published a node is a project those are already read for.
+func firstPublishCarriesANodeOnlyMember(lc *localcfg.Config) bool {
+	return len(firstPublishNodeOnlyMembers(lc)) > 0
 }
 
 // firstPolicyPublish is the publish half of a project that has never published a
@@ -408,7 +430,27 @@ func policyMigrationRefusal(err error) error {
 // The refusals that are not confirmations stay: a run in flight is refused
 // whatever admitted the write, because that refusal is about the runs that read
 // the node and not about who approved this one.
-func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted bool) error {
+//
+// managed is whether the project's marks say it is managed, and it is the
+// reading the rest of init makes for that question (initGate.underway, the same
+// answer askBuild's ConfirmsByGate and the gate's own stages take). It changes
+// two things, both in the owner's own session. The owner's ruling of 2026-11-06
+// is that a managed project's policy write is never refused for the runs in
+// flight, so the in-flight guard's count becomes a note and the write proceeds;
+// and it is that a person at a real terminal is not asked to type the project's
+// name to publish the node, so the typed confirmation below is replaced by a
+// note of what is written — for a node that is there and for a project's first
+// one alike, the empty-allow-list first publish above being the only write that
+// keeps the typed name. The upgrade door has no gate and passes false, so it
+// keeps both refusals exactly as they were.
+//
+// c is the run's own conditions, the reading initRun.conditions hands every
+// other confirmation in this package (the marker and the terminal among them):
+// it is passed rather than read here so that the session the note is scoped to
+// and the session the refusals below are scoped to are one reading and cannot
+// disagree. `fugaro upgrade`, which has no initRun, passes the same two facts
+// its own agent refusal was made from.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool, c initflow.Conditions) error {
 	// The in-flight refusal is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
 	// (confirmReseed writes the re-seeded file and then the migrated node), and a
@@ -416,7 +458,13 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	// file before asking about the run in flight would move that file under a
 	// write this refusal exists to stop — and would ask the operator to confirm
 	// the re-seed of a run that a plain --yes cannot then finish.
-	if err := m.refuseRunsInFlight(ctx, yes); err != nil {
+	//
+	// The marker is read once, in the run's conditions, and used twice: a coding
+	// agent's session is not widened by the managed case, so the note is the
+	// owner's own session's alone — a marker keeps the refusal below exactly as
+	// it was — and the first publish's empty-allow-list confirmation asks for
+	// the same marker further down.
+	if err := m.refuseRunsInFlight(ctx, yes, managed && c.Agent == "", w); err != nil {
 		return err
 	}
 	if m.generations != nil {
@@ -451,9 +499,40 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// in, and a session with no terminal or a coding agent's is refused), and
 		// a document this node's confirmation already covers needs no second
 		// question.
-		if err := confirmEmptyAllowList(cmd, m.lc, agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))); err != nil {
+		if err := confirmEmptyAllowList(cmd, m.lc, c.Agent); err != nil {
 			return err
 		}
+	} else if managed && initflow.PersonAtTheTerminal(c) && !admitted {
+		// The owner's ruling of 2026-11-06: no typed prompt for a person at a
+		// real terminal on a managed project, except data loss and secret
+		// values. Rewriting the node from the person's own local config is
+		// neither, so the person is told what is written and it is written.
+		//
+		// A project's FIRST node is this case too, and deliberately: the
+		// document is entirely the person's own local config, nothing is
+		// replaced and nothing is deleted, and the write is the one the project
+		// needs to have a policy at all — the diff above the note is the first
+		// publish's own (printFirstPublishDiff), naming every member the node is
+		// created with, and the note says the node is the project's first. The
+		// first publish that does keep the typed name is the empty allow-list
+		// one handled above, which is the write that would stop every run of
+		// the project (confirmEmptyAllowList, #1674).
+		//
+		// The condition is the gate's own reading of who is there
+		// (initflow.PersonAtTheTerminal, ConfirmsByGate's condition half): a
+		// real terminal, no marker, and none of --ask, --non-interactive and
+		// --json. The terminal is the load-bearing half, because a pipe and a
+		// coding agent's tool call carry no marker and a managed project is
+		// reached by scripts, cron and ssh without a tty as well as by a
+		// person; --ask is the owner asking for the confirmations back, which
+		// is never a licence to skip one.
+		//
+		// A coding agent's session carries a marker and keeps every
+		// confirmation below; an unmanaged project reads managed false and
+		// keeps them too. The gate's own admission (admitted) is untouched:
+		// where the gate judged and admitted the document, the confirmations
+		// below were already the gate's own and were not asked again.
+		fmt.Fprintf(w, "note: %s\n", what)
 	} else if !admitted {
 		// D846 reaches this door too: a publish that raises a ceiling, removes one
 		// or widens the model list is the widening the settings commands reserve for
@@ -484,13 +563,20 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	return m.recordGeneration(ctx, cmd)
 }
 
-// refuseRunsInFlight is the refusal both doors hold before a node write: a run
+// refuseRunsInFlight is the guard both doors hold before a node write: a run
 // that is mid-flight read the policy this write replaces, so it is refused
 // without --yes, and --yes is the way past it once the operator has read what
 // the write does (the same reading `publish --delete` has). A run that writes no
 // node — D854's re-seed alone, or the generation record alone — asks nothing: no
 // run in flight reads this machine's file.
-func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool) error {
+//
+// A MANAGED project never refuses (the owner's ruling of 2026-11-06): with up to
+// twenty cloud runs in flight the refusal fired nearly every time and left the
+// owner unable to apply a policy at all, so the same count is printed as a note
+// and the write proceeds. note is that case, and the caller asks it because the
+// marks and the session are read there: a coding agent's session is not widened,
+// so a marker passes note=false and gets the refusal it has always had.
+func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes, note bool, w io.Writer) error {
 	if !m.writesNode() {
 		return nil
 	}
@@ -498,7 +584,14 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool) erro
 	if err != nil {
 		return err
 	}
-	if inflight > 0 && !yes {
+	if inflight == 0 {
+		return nil
+	}
+	if note {
+		fmt.Fprintf(w, "%d run(s) are in flight and a run whose model calls go through the credentials service reads the new policy on its next call\n", inflight)
+		return nil
+	}
+	if !yes {
 		return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
 	}
 	return nil
@@ -719,9 +812,9 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
 	// stage can no longer read (C3.9g3, D1075). A config silent about the list
 	// states none — which is the node's own answer, and the node is what is
 	// being migrated — so only a written list is carried.
-	if !carries(verifierAccountsKey) && len(lc.VerifierAccounts) > 0 {
+	if !carries(verifierAccountsKey) && lc.VerifierAccounts != nil && len(*lc.VerifierAccounts) > 0 {
 		var err error
-		if node, err = patchPolicyJSON(node, verifierAccountsKey, lc.VerifierAccounts); err != nil {
+		if node, err = patchPolicyJSON(node, verifierAccountsKey, *lc.VerifierAccounts); err != nil {
 			return raw, userErr("carrying %s's %s verifier list into the policy: %v", lc.Name, verifierAccountsKey, err)
 		}
 	}
@@ -743,7 +836,7 @@ func refuseMigrationUnknownKeys(moved []byte) error {
 		return nil
 	}
 	return userErr("%s carries %d key(s) this Fugaro does not know (%s), and migrating it would write a document whose meaning this binary cannot read: nothing was written; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run %s again",
-		projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys), selfCommand()+" update")
+		projectpolicy.PathShared(), len(p.UnknownKeys), unknownKeysText(p.UnknownKeys), selfCommand()+" update")
 }
 
 // write puts the migrated node back with the ETag it was read at. A concurrent
@@ -893,10 +986,11 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	case !published && m == nil:
 		return initflow.Status{State: initflow.Done, Detail: policyNoneDetail()}, nil
 	case !published:
-		// The project has no node and the local config states a catalog, so the
-		// check is not the no-policy state: it is the first publish this run
-		// would make, and it says so rather than reporting the stage done.
-		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("no policy is published at %s, and the local config states an image_catalog that only the node carries: this run publishes the project's first node, after your confirmation", projectpolicy.PathShared())}, nil
+		// The project has no node and the local config states a member only the
+		// node carries, so the check is not the no-policy state: it is the first
+		// publish this run would make, and it says so, naming the member the
+		// operator's own file states, rather than reporting the stage done.
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("no policy is published at %s, and the local config states %s, which only the node carries: this run publishes the project's first node, after your confirmation", projectpolicy.PathShared(), strings.Join(firstPublishNodeOnlyMembers(s.e.lc), " and "))}, nil
 	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
 	case m.generations != nil:
@@ -949,7 +1043,7 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 func (m *policyMigration) planDetail() string {
 	switch {
 	case m.firstPublish:
-		return "publish the project's first policy node, carrying the image_catalog the local config states, after your confirmation"
+		return fmt.Sprintf("publish the project's first policy node, carrying %s, after your confirmation", strings.Join(firstPublishNodeOnlyMembers(m.lc), " and "))
 	case m.generations != nil:
 		return fmt.Sprintf("re-seed %s from the published policy node, after your confirmation", m.path)
 	case m.record != "":
@@ -969,7 +1063,9 @@ func (m *policyMigration) planDetail() string {
 // confirmation then), and the typed project name. --yes is the way past the
 // in-flight refusal once the operator has read what the migration does, which
 // is what that refusal itself tells them — the same reading
-// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
+// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go) —
+// except in a managed project, where the owner's ruling of 2026-11-06 makes
+// that guard a note and the write proceeds (policyMigrationConfirm).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	// A managed project's gate is asked FIRST, and only this door has one: in a
 	// coding agent's session on a managed project the step that rewrites the
@@ -1008,8 +1104,16 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
 		}
 	}
+	// The diff, the confirmation and every line of the write go through the
+	// run's own writer, and the questions this stage asks are the shared ones
+	// (confirmEmptyAllowList, confirmTypedStrict, confirmRemoval), which hold
+	// the command rather than the run: the whole call is put to the person with
+	// the line in flight down (initRun.asking), so neither the diff nor the
+	// CONFIRM block nor the project's name typed under it is drawn over (G1).
 	cmd := s.e.r.cmd
-	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted); err != nil {
+	if err := s.e.r.asking(func() error {
+		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.conditions())
+	}); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if admitted {

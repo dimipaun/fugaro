@@ -161,11 +161,17 @@ type Spec struct {
 	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
 	// at most config.MaxClaudeAccountNameLen characters, never
 	// config.DefaultClaudeAccount itself — "" means that — and never the name
-	// the bundle reserves, config.ReservedClaudeAccountName) this run's
-	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md). A
-	// runner before namedTokensSince refuses the field, since it is new and
-	// this package's decoder disallows unknown fields; the launching CLI
-	// checks the job's build record first, as it does for ProjectLayer.
+	// the bundle reserves, config.ReservedClaudeAccountName) this run holds
+	// (docs/design/named-oauth-tokens.md): the account an agent.auth: oauth
+	// workflow used, and, for a mixed agent.auth: api-key run, the one Claude
+	// account its review and adversarial stages are served by, beside the
+	// provider key the gateway holds (docs/design/mixed-credentials.md §11).
+	// Both are the account whose job variant the run is on, which is the job
+	// that mounts its token, so a reader outside this binary reads it as the
+	// run's own account either way. A runner before namedTokensSince refuses
+	// the field, since it is new and this package's decoder disallows unknown
+	// fields; the launching CLI checks the job's build record first, as it
+	// does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
 	// CompressionOff, when true, disables agent.compression for this run
 	// only, overriding fugaro.yaml (fugaro run --no-compression;
@@ -347,9 +353,12 @@ type Spec struct {
 	// Claude Code warns and falls back to its default for the flag and
 	// drops the environment variable and the settings key in silence — a
 	// focus over its bound or carrying a control, bidi or other invisible
-	// character, and `none: true` beside another key. The decode above is
-	// strict about it too: DisallowUnknownFields reaches every nested
-	// object, so an unknown key inside a level refuses the whole spec.
+	// character, and the level's own switch — `none: true`, or its model
+	// named none — beside another key. The decode above is strict about it
+	// too: DisallowUnknownFields covers every object around a level, and a
+	// level block checks its own keys (config.LevelSetting.UnmarshalJSON,
+	// which decodes the block itself), so an unknown key inside a level
+	// refuses the whole spec either way.
 	//
 	// A runner before the release that reads this field refuses the whole
 	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates

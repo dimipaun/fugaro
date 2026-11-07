@@ -515,6 +515,67 @@ func Removals(stateAddrs []string, rets []Retirement) []string {
 	return slices.Compact(out)
 }
 
+// repoRootModule is the repository root's own module in every address the
+// repository root's state holds (deploy/terraform/gcp/roots/repo/main.tf:28),
+// and therefore the whole of what a managed project's own retirement may act
+// on: the derived resources of the repository the run was asked for, and
+// nothing of the installation's, of another repository's or of a root this
+// program does not know.
+const repoRootModule = "module.repo"
+
+// RetireStop is one address a managed project's plain `fugaro update` will not
+// retire by itself, with the reason in the words the run prints.
+type RetireStop struct {
+	Address string
+	Why     string
+}
+
+// RetireStops is the rows of rets a managed project's plain `fugaro update`
+// does not retire by itself, each with its reason: an address outside the
+// repository root's own module, one whose row promises something survives it,
+// and — the group the owner's ruling is really about — one whose resource type
+// holds data or belongs to the installation rather than to this repository
+// (tf.RetirableType's decision). A row that is not in this list is derived: a
+// grant, an identity, a job, a schedule.
+//
+// It is an allowlist read as a question about the whole set, not a filter over
+// it, and the caller must treat one row here as a stop for ALL of them: the
+// retirement is one state removal, one plan and one apply, so retiring the
+// derived addresses and leaving the others would abort the plan on a
+// prevent_destroy resource rather than do half the work.
+func RetireStops(rets []Retirement) []RetireStop {
+	var out []RetireStop
+	for _, r := range rets {
+		why, stop := retireStop(r)
+		if stop {
+			out = append(out, RetireStop{Address: r.Address, Why: why})
+		}
+	}
+	return out
+}
+
+// retireStop is that decision for one row, and every direction of it is the
+// refusing one: a row whose Kept text promises that something survives it (a
+// container's value, the images in a registry) is not one an unconfirmed
+// retirement may act on whatever its type, an address outside module.repo is
+// another installation's or another root's, and a type nobody decided is
+// refused by tf.RetirableType's own words.
+func retireStop(r Retirement) (why string, stop bool) {
+	if r.Kept != "" {
+		return r.Kept, true
+	}
+	segs := addressSegments(r.Address)
+	if len(segs) < 4 || segs[0] != "module" || segs[1] != "repo" {
+		return "it is not an address of " + repoRootModule + ", the repository root's own module: a managed update retires the derived resources of the repository it runs for and no other", true
+	}
+	typ, _, _ := resourceOf(segs)
+	retirable, reason := tf.RetirableType(typ)
+	if retirable {
+		return "", false
+	}
+	return typ + ": " + reason, true
+}
+
 // RetireAllowDelete is the guard's allow-list for p: each delete or replace
 // of an address in rets (the retirement set of design §3.1a), and nothing
 // else. A replace is ["delete","create"], so it is a delete of an address in

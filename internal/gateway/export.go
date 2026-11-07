@@ -252,7 +252,7 @@ func IsSSE(h http.Header, requested bool) bool { return isSSE(h, requested) }
 // and it stops when the client goes away (pump, forward.go). It never buffers:
 // the credentials service streams an answer exactly as the gateway does.
 func Pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]byte)) (eof bool) {
-	return pump(w, rc, src, tee)
+	return pump(w, rc, src, tee).eof
 }
 
 // RedactHeaders drops every header value that carries key (redactHeaders,

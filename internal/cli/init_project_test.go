@@ -711,7 +711,7 @@ func TestRefusedBillingLinkPausesWithTheBlock(t *testing.T) {
 	for _, want := range []string{
 		"Fugaro could not link billing account " + billingAcc + " to project " + newProj + ": your account is missing a role the link needs (Billing Account User on the account, and Owner or Project Billing Manager on the project)",
 		"The caller does not have permission",
-		"[billing pending]",
+		markLeft + " " + initflow.Project + ": billing pending",
 		"whoever administers billing in your organization",
 		"gcloud billing projects link " + newProj + " --billing-account=<billing-account-id>",
 		"fugaro setup --name " + initProjectName + " --gcp-project " + newProj,

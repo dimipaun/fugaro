@@ -1088,6 +1088,8 @@ func TestLevelsDecodeStrict(t *testing.T) {
 	for _, tc := range []struct{ name, block, path, want string }{
 		{"an effort outside the closed set", "    l3: { effort: auto }\n", "agent.levels.l3", "effort \"auto\" must be one of low, medium, high, xhigh, max"},
 		{"none beside another key", "    l2: { none: true, model: claude-opus-5-5 }\n", "agent.levels.l2", "none: true beside another key"},
+		{"model: none beside another key", "    l2: { model: none, effort: high }\n", "agent.levels.l2", "model: none beside effort"},
+		{"model: none beside a written none: false", "    l2: { model: none, none: false }\n", "agent.levels.l2", "model: none beside none: false"},
 		{"a focus over the bound", "    l3: { focus: " + strings.Repeat("a", MaxLevelFocusBytes+1) + " }\n", "agent.levels.l3", "focus is longer than 500 bytes"},
 		{"a focus with a control character", "    l1: { focus: \"two\\nlines\" }\n", "agent.levels.l1", "holds a character it may not carry"},
 	} {
@@ -1097,6 +1099,16 @@ func TestLevelsDecodeStrict(t *testing.T) {
 				t.Fatalf("want a problem at %q ~%q, got %v", tc.path, tc.want, problems)
 			}
 		})
+	}
+
+	// `model: none` is the level's switch written the other way: the resolved
+	// configuration carries a level that is skipped, never a model named none.
+	skipped, problems := Parse([]byte(minimalYAML + "agent:\n  levels:\n    l2: { model: none }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("agent.levels.l2: { model: none } was refused: %v", problems)
+	}
+	if l2 := skipped.Agent.Levels.L2; l2 == nil || !l2.Off || l2.Model != "" {
+		t.Errorf("agent.levels.l2 = %+v, want the level folded into its own switch (none: true, no model)", l2)
 	}
 }
 

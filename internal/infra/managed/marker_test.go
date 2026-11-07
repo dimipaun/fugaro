@@ -1854,6 +1854,36 @@ var runAccountGrants = setOf(
 	// the right to send a request to a Cloud Run service — and the target is
 	// the service, not a job and not the runs bucket.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
+	// Reviewed for CSR14 (the verifier account, D1068): the account's whole
+	// reach, and it is these two rows. The first is the job's row above again —
+	// the same role on the same service, to an account THIS module creates on
+	// the service's own switch: roles/run.invoker carries no storage
+	// permission, no permission to grant a role, no actAs and no token minting,
+	// and it is the right to send a request to that one Cloud Run service.
+	// Without it the front end refuses the verifier's ID token before the
+	// container runs, which is the one caller class the verify route exists for.
+	//
+	// The second is the account's other half: the operators may mint an ID token
+	// for it, which is what the owner's live check and the launcher's own mint
+	// (CSR15) call the verify route with. It is the second site of
+	// roles/iam.serviceAccountTokenCreator in the tree, beside D75's one-time
+	// grant on the deployer (deployer.tf), and both guards that refused a second
+	// site were widened to exactly these two on purpose
+	// (deploy/terraform/terraform_test.go's
+	// TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant, and
+	// internal/infra/tf's deployerTokenCreator, which without the widening
+	// refuses the plan that creates the account). It is pinned whole here for
+	// the reason the read mint's row below is: the for_each is a conditional
+	// over var.operators, a set of people this test does not resolve.
+	//
+	// Neither row is a write path to the runs bucket's root for anybody. The
+	// account has no other grant anywhere in the tree (verifier.tf: no secret,
+	// no bucket, no project role, no job), so calling the service as it, or
+	// minting its token, reaches the credentials service and nothing else — and
+	// the operators already hold the runs bucket's own grants, the rows above,
+	// so the impersonation adds nothing to what they can reach.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.fugaro_verifier[0].member | for_each= | perms=`,
+	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for M4 (the coordinator's front door): D920 makes the front
 	// door public, and this is therefore the one grant in the tree whose
 	// member is not an identity at all — everyone on the network, including

@@ -41,6 +41,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -453,7 +454,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// (`fugaro update-skills`) with the checkout's local steps never reached
 	// (TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout). The help has
 	// to say that rather than promise a session a write it may not get to.
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no flag stands in for one. The single one a managed project does not type is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired from this run on: the service's address is recorded in the project's config and put on every per-repository launch, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there rather than in the job. A repository job in another agent.auth mode has no model credential to use and nothing yet to replace it (that half is not in this release), so a project that opts in runs its workflows with agent.auth: cascade; and the bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of the installation can mint. It needs the installation's Firebase rules (fugaro "+d.name+" --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
@@ -465,7 +466,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	if d.takes("forget") {
 		stops = "--forget and --config-only"
 	}
-	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the project's name typed at the review, each step's own, the y/Ns. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never reaches a Typed step (money, permanence, a secret: the owner's own word, which no door relaxes). In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
+	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the project's name typed at the review, each step's own, the y/Ns. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never reaches a Typed step (money, permanence, a secret: the owner's own word, which no flag stands in for). In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With "+stops+" it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
@@ -490,6 +491,18 @@ type initRun struct {
 	o   *initOptions
 	w   io.Writer // the human-readable account: stdout, or stderr with --json
 	in  *bufio.Reader
+	// rep is the run's account when the converge is its shape (CL5b): one line
+	// per stage, the closing line, and the log a failure sends the user to. It
+	// is built for the converge and left nil for the runs that do not go
+	// through the loop (--forget, --config-only, --print-vars), which print as
+	// they always have. repLog is the log it keeps, closed when the run ends.
+	rep    *report.Reporter
+	repLog report.Sink
+	// questions counts the questions in flight (initRun.asking): while one is
+	// open the run's own writer does not put the step's line back between the
+	// lines of the block it prints, so a CONFIRM block and a prompt are shown
+	// as one block rather than one line at a time.
+	questions int
 	// gcpProject is the GCP project ID every Google call uses;
 	// projectName is the project's name, shown and typed to confirm.
 	gcpProject, projectName string
@@ -579,6 +592,18 @@ type initRun struct {
 	// through the operator's own credentials (policyReadOnce.read). Readiness's
 	// D11 gate turns on whether one exists.
 	policy policyReadOnce
+
+	// policyStage is the converge's policy stage, set when this run registered
+	// one (initStages). It is held here as well as on the engine because the
+	// other half of what that stage's plan is made of — this machine's local
+	// config — is written by this struct (writeConfig), from stages that all run
+	// before the policy stage applies.
+	policyStage *policyMigrateStage
+	// workspaceStage is the converge's workspace stage, held for the same reason
+	// and by the same write: the record it publishes names the database this
+	// struct writes into the local config, so a run that first names a backend
+	// gives the stage its database after the stage's read-only pass is over.
+	workspaceStage *workspaceStage
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -587,9 +612,18 @@ type initRun struct {
 	retireSet     []infra.Retirement
 	retireNotes   []infra.Retirement
 	retired       bool     // the flow was entered (a later plan must not re-enter it)
+	retireLooked  bool     // the read saw the state and the labels: an empty set is "nothing to retire" (see readRetirements)
+	retireNone    bool     // the read found nothing to retire: recorded when this run's own plan is through (recordRetiredNothing)
 	retireApplied bool     // it applied: the jobs it removed from state still need deleting
 	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
 	retireClean   bool     // the resume's plan changed nothing: no apply is left, only the API delete
+	// retireAuto is the managed project's own retirement (init_retire.go,
+	// issue #1794): plain `fugaro update` retires the derived addresses the
+	// configuration stopped producing with no confirmation asked at all, and
+	// the flow's two typed confirmations are the gate's admission in their
+	// place. False -- every other case, including every unmanaged project and
+	// every coding agent's session -- is the flow as it has always run.
+	retireAuto bool
 }
 
 // initResult is what --json prints.
@@ -635,11 +669,87 @@ type initResult struct {
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
-	r := &initRun{cmd: cmd, o: o, w: cmd.OutOrStdout(), in: bufio.NewReader(cmd.InOrStdin())}
+	r := &initRun{cmd: cmd, o: o}
+	r.w = runWriter{r: r, out: cmd.OutOrStdout()}
 	if o.asJSON {
-		r.w = cmd.ErrOrStderr()
+		r.w = runWriter{r: r, out: cmd.ErrOrStderr()}
 	}
+	r.in = bufio.NewReader(answerReader{r: r, in: cmd.InOrStdin()})
 	return r
+}
+
+// runWriter is the run's own writer (initRun.w): every line a person has
+// to read goes through it. The reporter's line in flight is taken down before
+// its first byte, because a frame drawn on the line a prompt is written on
+// swallows the prompt and the answer typed under it (G1) — and the rule is
+// the same one for every other line the run prints: nothing is drawn over
+// something the person is meant to read.
+type runWriter struct {
+	r   *initRun
+	out io.Writer
+}
+
+func (w runWriter) Write(p []byte) (int, error) {
+	if w.r.rep != nil {
+		w.r.rep.Pause()
+	}
+	n, err := w.out.Write(p)
+	if w.r.rep != nil && w.r.questions == 0 && endsLine(p) {
+		// A complete line leaves the cursor at the start of the next one, so
+		// the step in flight is put back as soon as the line is out: a stage
+		// that prints its own result lines mid-apply is still one somebody
+		// watches. A write that leaves the cursor mid-line is a prompt, and
+		// the line stays down until the answer is in.
+		w.r.rep.Resume()
+	}
+	return n, err
+}
+
+// endsLine reports whether a write left the cursor at the start of a line.
+func endsLine(p []byte) bool { return len(p) > 0 && p[len(p)-1] == '\n' }
+
+// asking runs a question the run puts through the command rather than through
+// its own writer: a stage's own confirmation, and the hidden prompt a secret's
+// value is typed at. The helpers that ask those hold the command and not the
+// run — they are the same ones the budget and project doors ask with — so the
+// line in flight is taken down around the whole question and drawn again once
+// the answer is in: neither the CONFIRM block, nor the prompt under it, nor
+// the answer typed under that is drawn over (G1), where a stage opened its own
+// step and asks in the middle of its minutes.
+func (r *initRun) asking(f func() error) error {
+	if r.rep == nil {
+		return f()
+	}
+	r.rep.Pause()
+	r.questions++
+	defer func() {
+		r.questions--
+		// Only the last question puts the line back: a question asked inside
+		// another one (a stage that confirms by name and then asks something
+		// else) keeps the screen down to the end of the outer one.
+		if r.questions == 0 {
+			r.rep.Resume()
+		}
+	}()
+	return f()
+}
+
+// answerReader is stdin behind the same rule: the answer to a prompt was
+// typed on a line of its own, and the line in flight comes back the moment it
+// arrives, so a stage that prompts in the middle of its work is still one a
+// person watches to the end. A run with no reporter, and a read that is not a
+// prompt, put back nothing.
+type answerReader struct {
+	r  *initRun
+	in io.Reader
+}
+
+func (a answerReader) Read(p []byte) (int, error) {
+	n, err := a.in.Read(p)
+	if n > 0 && a.r.rep != nil {
+		a.r.rep.Resume()
+	}
+	return n, err
 }
 
 func runInit(r *initRun) error {
@@ -733,7 +843,12 @@ func runInit(r *initRun) error {
 		// about (this path touches no cloud and no Terraform by design).
 		if dir, derr := infra.InstallationWorkdir(os.Getenv, lc.GCPProject); derr == nil {
 			if prev, perr := infra.ReadWorkdirVars(dir, "installation"); perr == nil {
-				if data, err = infra.CarriedCredentialsService(data, prev); err != nil {
+				// As found, verifier_accounts included: this path reads no
+				// cloud, so it has no effective list to write, and the
+				// alternative — the config's own, which is nil whenever the
+				// config is silent — is a nil that DELETES the member and
+				// prints the owner's list away (CarriedCredentialsServiceAsFound).
+				if data, err = infra.CarriedCredentialsServiceAsFound(data, prev); err != nil {
 					return err
 				}
 				if data, err = infra.CarriedManagedDeployerScoped(data, prev); err != nil {
@@ -761,6 +876,16 @@ func runInit(r *initRun) error {
 		// fact before it prints the result (markCreated, called from
 		// outcome), whatever the loop's outcome — which the run still
 		// returns.
+		//
+		// This run's account and log are the converge's (CL5b): the reporter
+		// prints the steps the loop hands it, and every stage's Terraform
+		// progress goes to its Stream — the log always, the terminal under
+		// --verbose. The log is closed here, on the run's way out, so its last
+		// partial line is written.
+		r.rep, r.repLog = reporterFor(cmd, o.doorName(), e.redaction())
+		if r.repLog != nil {
+			defer func() { _ = r.repLog.Close() }()
+		}
 		return e.converge(cmd.Context())
 	}
 
@@ -1141,8 +1266,36 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 		}
 		return nil, nil, userErr("%v", err)
 	}
-	t.Out = r.cmd.ErrOrStderr()
+	t.Out = r.progress()
 	return wd, t, nil
+}
+
+// progress is where a stage's own output goes: Terraform's progress, and the
+// children that print like it. Under the converge it is the reporter's stream —
+// the log always, the terminal under --verbose — so the default view stays one
+// line per stage and the full output is kept (D1352). A run with no reporter
+// (--forget, --config-only, --print-vars) writes to stderr, which is what every
+// run did before CL5b — and so does a converge whose log could not be opened at
+// all (a state directory that is a link, foreign-owned or read-only, G5): the
+// stream goes nowhere else, and the output that explains a failure is the last
+// thing a run may swallow (G8).
+//
+// --plan-only keeps stderr besides the log, which is the path it took before the
+// converge had a reporter: the plan the run prints IS what the command is for,
+// and a plan-only run that succeeds names no log path the way a failure does, so
+// the stream alone would put the one thing somebody asked for out of reach
+// (CL5b: --plan-only takes the path it takes today). The log is written all the
+// same, so a plan-only run that fails still points at a log that holds what it
+// printed.
+func (r *initRun) progress() io.Writer {
+	verbose := boolFlag(r.cmd, verboseFlag)
+	if r.rep != nil && (r.repLog != nil || verbose) {
+		if r.o.planOnly && !verbose {
+			return io.MultiWriter(r.cmd.ErrOrStderr(), r.rep.Stream())
+		}
+		return r.rep.Stream()
+	}
+	return r.cmd.ErrOrStderr()
 }
 
 // gcpOptions are the Google API options of lc's project and endpoints.
@@ -1528,6 +1681,7 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	if o.budget > 0 {
 		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
 	}
+	opts.ReportsPaused, opts.CatalogCheckPaused = jobsPaused(lc)
 	spec, err := infra.Installation(lc, opts)
 	if err != nil {
 		return infra.InstallationSpec{}, initErr(err)
@@ -1542,6 +1696,79 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 		}
 	}
 	return spec, nil
+}
+
+// jobsPaused is the project layer's jobs: block (R13) as the installation's
+// options take it: whether each of the project's two scheduled jobs is stopped.
+// A file this run can read gives both values — the ones the layer states, and
+// paused where it states nothing (config.Jobs' own default) — and a file it
+// cannot read gives none at all, which infra.InstallOptions reads as paused.
+//
+// It reads the LOCAL layer file — the one the owner edits and the run's layer
+// stage publishes — because the installation stage runs before that stage and
+// this is the only copy readable without the runs bucket. Silence is paused
+// along every way of having no value: no file, a file this CLI does not read
+// (a symlink, an oversized one), a file that does not parse. An unreadable
+// file is not silently accepted as an answer — it is not an answer at all, and
+// the layer stage refuses it moments later with the message that names it —
+// while the one thing neither direction may do is start a schedule the owner
+// never asked for.
+//
+// The installation's own apply does not stop at that silence: where this run's
+// layer stage will not leave the local file's bytes in place — the file is not
+// there and is seeded from the published object, or it is stale and is
+// re-seeded from it (D854) — the published object is the project's answer, and
+// publishedJobsPaused takes it, because that stage runs after this one.
+func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
+	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
+	if err != nil {
+		return nil, nil
+	}
+	data, err := readLayerFile(path)
+	if err != nil {
+		return nil, nil
+	}
+	l, ps := projectLayerProblems(data, lc)
+	if len(ps) > 0 || l == nil {
+		return nil, nil
+	}
+	reports, catalog := l.ReportsPaused(), l.CatalogCheckPaused()
+	return &reports, &catalog
+}
+
+// publishedJobsPaused completes the installation's jobs: state from the
+// published project layer, for the runs whose layer stage does not leave the
+// local file's own bytes in place: the stage seeds a file that is not there
+// FROM that object, and re-seeds one the object has moved past (D854's stale
+// state), and it runs after the installation stage. Without this, a `fugaro
+// update` on either machine would apply the silence of a file that is not the
+// project's answer (paused) and stop a schedule the published layer has
+// started, until the next update.
+//
+// Which of the two files this run leaves in place is the layer stage's own
+// decision, so it is the stage's own reading that answers it here (layerPlanFor)
+// rather than a second rule that could drift from it. Every other state — the
+// file is published as it stands, or it already is the published layer —
+// settles the question by itself, whatever it says: silence in the file the
+// stage publishes is its answer, and nothing the published object says may
+// overrule it. A bucket that cannot be read, a layer this CLI does not read and
+// a spec that carries no catalog check all leave the spec exactly as
+// installOptions built it: paused, which is also what the module defaults the
+// value to, and the layer stage names the read that failed a moment later.
+func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec) infra.InstallationSpec {
+	if spec.CatalogCheck == nil {
+		return spec
+	}
+	p, err := layerPlanFor(ctx, lc)
+	if err != nil || p.skip != "" || (p.stale == nil && !p.seed) {
+		return spec
+	}
+	l, ps := projectLayerProblems(p.published, lc)
+	if len(ps) > 0 || l == nil {
+		return spec
+	}
+	spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	return spec
 }
 
 // checkManagedStateBucket refuses a managed creation whose installation state
@@ -1705,6 +1932,20 @@ func (r *initRun) yesRoute() string {
 // that did not answer and a session with no terminal or with --yes reach the
 // lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
+	// The banner and the name typed under it are one question: the line in
+	// flight is down across both (initRun.asking), or the frame drawn when the
+	// banner's own line ends lands between the banner and the prompt (G1).
+	var ok bool
+	err := r.asking(func() error {
+		var err error
+		ok, err = r.askBanner(what)
+		return err
+	})
+	return ok, err
+}
+
+// askBanner is ask's question, asked between the pause and the resume.
+func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
@@ -2050,7 +2291,12 @@ func (r *initRun) managedScope(ctx context.Context, c *infra.Clients) (bool, err
 }
 
 // prepare writes the root's tfvars, imports and backend configuration.
-func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (map[string]string, error) {
+//
+// verifiers is the effective verifier list this run's document must carry
+// (effectiveVerifiers), and it is a parameter rather than something read here
+// because two of the three callers have no client to read the published node
+// with: the rollback passes nil with asFound, so the block is carried exactly as found, and --print-vars passes the config's own answer.
+func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, verifiers []string, asFound bool) (map[string]string, error) {
 	vars, err := infra.InstallationVars(spec)
 	if err != nil {
 		return nil, err
@@ -2085,9 +2331,23 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 		// would lose the key here and plan the service's removal — a plan the
 		// bundle container's prevent_destroy refuses, so every ordinary run of
 		// fugaro update after the opt-in would fail instead of applying. The key
-		// is carried forward exactly as the workdir had it, present or absent.
+		// is carried forward exactly as the workdir had it, present or absent —
+		// except its verifier_accounts member, which is the effective list of
+		// THIS run (CSR14): the member is new, so an installation that opted in
+		// before this release carries a block without it, and one ordinary
+		// `fugaro update` has to leave that block naming the verifier account
+		// the same apply creates — or `[]`, when the owner cleared the list.
+		// asFound is the rollback's: it reads no cloud and has no effective list,
+		// and a nil list here would delete the member, so the module's default
+		// account would replace the owner's list at the live service in a plan
+		// the rollback's own guard lets through.
 		for _, prev := range documents {
-			if vars, err = infra.CarriedCredentialsService(vars, prev); err != nil {
+			if asFound {
+				vars, err = infra.CarriedCredentialsServiceAsFound(vars, prev)
+			} else {
+				vars, err = infra.CarriedCredentialsService(vars, prev, verifiers)
+			}
+			if err != nil {
 				return nil, userErr("reading the installation's tfvars: %v", err)
 			}
 		}
@@ -2143,6 +2403,12 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 // fugaro update --firebase-project runs it twice more, as the first and third of its
 // applies.
 func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (outs infra.InstallationOutputs, stop bool, err error) {
+	// The project's schedules, read before anything of this run is planned or
+	// applied: see publishedJobsPaused, which is the half of the setting the
+	// local layer file cannot answer where this run's layer stage will not keep
+	// its bytes — a file that is not there, or one the published object has
+	// moved past (D854).
+	spec = r.publishedJobsPaused(ctx, lc, spec)
 	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
 		return outs, false, err
 	}
@@ -2184,7 +2450,11 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	for _, n := range im.Notes {
 		r.warn(n)
 	}
-	backend, err := prepare(wd, spec, im)
+	verifiers, err := r.effectiveVerifiers(ctx, lc)
+	if err != nil {
+		return outs, false, err
+	}
+	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err
 	}
@@ -2450,12 +2720,58 @@ func nameFromOutputs(lc *localcfg.Config, outs infra.InstallationOutputs) (*loca
 	return existing, path, old, nil
 }
 
+// effectiveVerifiers is the verifier list this run's installation tfvars must
+// carry (CSR14): the owner's own when the local config states one — an
+// explicit empty list included, which is their clear — the published node's
+// when it does not, and nil when neither names a verifier. nil is not "no
+// verifiers": it is the state the module's own default is for, the address of
+// the verifier account the same apply creates (verifier.tf).
+//
+// The node read is TOLERANT of exactly two states, and that is the whole
+// reason this is not the credentials stage's read. That stage is fail-closed —
+// publishedPolicyOf refuses a node an older Fugaro wrote, and the stage stops
+// rather than writing a tfvars from a value it could not read — while this one
+// runs on every ordinary `fugaro update`, including the one that upgrades an
+// installation whose node predates the key. The two states tolerated are the
+// two in which the node says nothing about a verifier and the config's own
+// list is the whole answer: nothing is published (a config naming no budget
+// backend, which is no error at all), and a node OLDER than this binary, which
+// the same run's policy stage migrates in place (olderPolicyNode). Stopping on
+// the second would be the operator step CLAUDE.md's HARD RULE forbids;
+// answering with the config's own list is what lets that one run write the
+// account's address and migrate the node itself.
+//
+// Every OTHER failure is returned, and that is the same HARD RULE read the
+// other way round. A node a NEWER binary published, a node whose top-level
+// keys this Fugaro does not know, a node that cannot be parsed, one the
+// deployed rules refuse, an outage — none of them says the installation names
+// no verifier, and a read that failed must not be answered as if it had said
+// so. The answer here is not a readonly one: prepare writes the member's
+// value into the installation's tfvars (deleting the owner's list) and
+// writeConfig writes the same address into the local config, which the run's
+// policy stage then publishes over the node — so an error swallowed here
+// replaces the owner's published list, permanently, with the installation's
+// own account, and does it in the run that reports success.
+func (r *initRun) effectiveVerifiers(ctx context.Context, lc *localcfg.Config) ([]string, error) {
+	p, _, err := r.policy.read(ctx, lc)
+	if err != nil {
+		if !olderPolicyNode(err) {
+			return nil, fmt.Errorf("the verifier accounts this installation's document must carry could not be read: %w", policyReadErr(err))
+		}
+		p = nil
+	}
+	if p == nil {
+		return lc.VerifierAccountsEffective(nil), nil
+	}
+	return lc.VerifierAccountsEffective(p.VerifierAccounts), nil
+}
+
 // configOnly writes the local config alone, from the installation's
 // outputs when its state is reachable, else from the flags. The outputs
 // name the project: a config without a name takes theirs, and one with a
 // name must match it.
 func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {
-	outs, err := r.readOutputs(ctx, c, t, wd, spec)
+	outs, err := r.readOutputs(ctx, c, t, wd, lc, spec)
 	switch {
 	case errors.Is(err, errNoState), errors.Is(err, infra.ErrNoOutputs):
 		if lc.Name == "" {
@@ -2500,7 +2816,7 @@ func noInstallationRefusal(stateBucket string) error {
 	return userErr("there is no Terraform state bucket gs://%s, so no installation: run fugaro setup first", stateBucket)
 }
 
-func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.InstallationSpec) (infra.InstallationOutputs, error) {
+func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (infra.InstallationOutputs, error) {
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
 	if err != nil {
 		return infra.InstallationOutputs{}, err
@@ -2508,7 +2824,11 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if !exists {
 		return infra.InstallationOutputs{}, fmt.Errorf("%w gs://%s", errNoState, spec.StateBucket)
 	}
-	backend, err := prepare(wd, spec, infra.Imports{})
+	verifiers, err := r.effectiveVerifiers(ctx, lc)
+	if err != nil {
+		return infra.InstallationOutputs{}, err
+	}
+	backend, err := prepare(wd, spec, infra.Imports{}, verifiers, false)
 	if err != nil {
 		return infra.InstallationOutputs{}, err
 	}
@@ -2587,6 +2907,43 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	if outs.CoordinatorServiceAccount != "" {
 		next.Terraform.Coordinator = true
 	}
+	// The verifier account (CSR14): the address of the account the
+	// installation's own module creates, written here — and not read from an
+	// output — so that the SAME run's policy stage publishes a node that names
+	// it and the credentials stage hands the service a list that admits it. The
+	// address is a fact of the configuration, because the module's account ID
+	// is a literal (infra.VerifierAccountID): that is what lets one ordinary
+	// `fugaro update` create the account, name it for the service and publish
+	// it, with no output to read back and no second run nobody was told to
+	// make (CLAUDE.md's HARD RULE).
+	//
+	// It is written ONLY when nothing anywhere names a verifier — the local
+	// config is silent and the published node names none — which is the state
+	// the module's default is for. A config that states a list keeps it, the
+	// owner's `[]` included (the keep rule, localcfg.VerifierAccountsEffective):
+	// otherwise an update from a machine whose config merely predates the key
+	// would replace the list another machine set, and an owner's clear would be
+	// undone by the next run.
+	//
+	// It is written on EVERY installation, one that never opted into the
+	// credentials service — whose module creates no such account — included,
+	// and that is deliberate. The state this write must serve is the FIRST
+	// opt-in, and its own run cannot be told apart from the others here: the
+	// installation stage writes this config before the credentials stage
+	// applies anything, so a gate on the service (its block, its outputs)
+	// would leave that run's own apply creating the account while the node
+	// still named nobody — the second run nobody was told to make (CLAUDE.md's
+	// HARD RULE). What the unconditional write costs is a name on an
+	// installation that never opts in: no service reads it and no caller can be
+	// admitted by it while the service does not exist, and the first opt-in
+	// turns it into the account it named all along.
+	verifiers, err := r.effectiveVerifiers(ctx, lc)
+	if err != nil {
+		return err
+	}
+	if verifiers == nil {
+		next.VerifierAccounts = &[]string{infra.VerifierAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"}
+	}
 	if r.mutate != nil {
 		r.mutate(&next)
 	}
@@ -2602,6 +2959,35 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	if err := r.writeLocalConfig(&next, path, old, confirmed); err != nil {
 		return err
+	}
+	// The engine's own view of the local config follows the file it just
+	// wrote, the way init_images.go's does after the pin: the stages that run
+	// after this one — the credentials stage, the policy stage, the layer
+	// stage — read this struct, and a value written here that they could not
+	// see would be one the same run contradicted. It is what makes the
+	// verifier account above reach the published node in the run that writes
+	// it (effectiveVerifiers reads this struct through the policy stage's
+	// own read of it).
+	*lc = next
+	// The file just replaced is half of what the policy stage's plan is made of,
+	// and the plan the stage holds was made in the read-only preview pass, before
+	// any of this: the members this write has just moved are not in it. The
+	// verifier account's address (CSR14) is the one that made the difference
+	// visible — it is written here for the first time on an installation whose
+	// config predates the key — and the node a stale plan publishes is one the
+	// stage's own Verify refuses ("the published policy was written but still
+	// does not carry what the local config states"), which is the second run
+	// nobody was told to make. The rules stage drops the same read after its own
+	// deploy, for the same reason (init_rules_stage.go): the stage re-plans at
+	// its own check, which the loop makes right before it applies.
+	if r.policyStage != nil {
+		r.policyStage.forget()
+	}
+	// The workspace stage's plan is made of the same file, and the same write
+	// gives it the database the config did not name a moment ago: its own
+	// comment says the rest (update_workspace.go).
+	if r.workspaceStage != nil {
+		r.workspaceStage.forget()
 	}
 	if !r.o.planOnly {
 		r.publishSharedConfig(ctx, &next)
@@ -2950,7 +3336,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	// reaches this line belongs to a project neither record claims, and its
 	// document (the one prepare rewrites) carries no key for the carry in
 	// prepare to keep.
-	backend, err := prepare(wd, fs, infra.Imports{})
+	backend, err := prepare(wd, fs, infra.Imports{}, nil, true)
 	if err != nil {
 		return err
 	}
@@ -2972,7 +3358,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		return remote(err)
 	}
 	fs.AdoptLegacyRegistry = outs.LegacyRegistry != ""
-	if _, err := prepare(wd, fs, infra.Imports{}); err != nil {
+	if _, err := prepare(wd, fs, infra.Imports{}, nil, true); err != nil {
 		return err
 	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
@@ -3271,6 +3657,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// The governance: block, in either file, is the same kind of break, on
 	// governanceSince.
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
+		return err
+	}
+	// The project layer's jobs: block is the same kind of break on jobsSince,
+	// in the layer alone: no repository's file can carry the key.
+	if err := r.gateJobs(o, repo, lc, cfg); err != nil {
 		return err
 	}
 	// git.author is the same kind of break on gitAuthorSince, in the
@@ -3724,6 +4115,26 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
 }
 
+// gateJobs is fugaro update --repo's gate for jobsSince: refuseJobsSkew, with
+// gateRigor's escapes and for its reason. The key is the project layer's alone
+// — a repository's fugaro.yaml has no jobs: key and refuses an unknown one — so
+// the repository half the other gates carry is absent: what is judged is the
+// layer this repository's configuration resolves over, and the refusal names it.
+//
+// The layer is the one this repository's configuration resolves over — the copy
+// the run will read — and the refusal names it, so the operator is sent to the
+// file and not to their checkout.
+func (r *initRun) gateJobs(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseJobsSkew(repo, cfg.Layer.SetsJobs(), lc.BaseImage(config.BaseKind), w)
+}
+
 // gateGitAuthor is fugaro update --repo's gate for gitAuthorSince:
 // refuseGitAuthorSkew, with gateRigor's escapes and for its reason. The
 // repository's half is the key being written (RepoGitAuthorSet) rather than the
@@ -3968,12 +4379,40 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		if err != nil {
 			return infra.RepoSpec{}, nil, err
 		}
+		if len(rets) == 0 {
+			// Nothing to retire is the run's own settlement, and the record
+			// says so: an empty set replaces a previous update's, so the
+			// console's project screen never draws the older set as the last
+			// update's own. It is written when this run's plan is through and
+			// not here: a run that stops after this line -- a guard refusal, a
+			// confirmation that was not given, a plan that aborted on
+			// prevent_destroy, a failed apply -- has read the same empty set
+			// and settled nothing, and the previous update's rows, which are
+			// kept nowhere else, stand (recordRetiredNothing, recordUpdate).
+			r.retireNone = true
+		}
 		if len(rets) > 0 {
 			r.retired = true
 			if r.o.retire {
 				if err := r.retirePlan(ctx, c, t, wd, ready, rets, opts, im); err != nil {
 					return infra.RepoSpec{}, nil, err
 				}
+				r.recordUpdate(ctx, lc, rets)
+				return ready, missing, nil
+			}
+			// A managed project retires this set by itself (issue #1794): no
+			// prompt, no typed confirmation, no --retire, because the whole
+			// upgrade is the one command the user knows. It answers false for
+			// every set that is not all derived addresses of this repository,
+			// for an unmanaged project and for a session the gate cannot
+			// confirm -- and then the refusal below is what a plain run has
+			// always read.
+			auto, err := r.retireManaged(ctx, c, t, wd, ready, rets, opts, im)
+			if err != nil {
+				return infra.RepoSpec{}, nil, err
+			}
+			if auto {
+				r.recordUpdate(ctx, lc, rets)
 				return ready, missing, nil
 			}
 			// The gate, and it is the two cases the design names and no
@@ -4001,6 +4440,11 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if !changed {
 		r.res.Changes = &infra.PlanCounts{}
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+		// Nothing was applied, so nothing was retired: only a set the read
+		// proved empty is settled by a plan that changed nothing, because a
+		// non-empty one is settled by the apply below, which is what deletes
+		// it (recordUpdate).
+		r.recordRetiredNothing(ctx, lc)
 		return ready, missing, nil
 	}
 	plan, err := t.Show(ctx, infra.PlanFile)
@@ -4047,6 +4491,20 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		return infra.RepoSpec{}, nil, err
 	}
 	r.res.Applied = true
+	// The third way a retirement's address goes away, and the last moment its
+	// record can be written: a set the run left to the ordinary plan is
+	// settled by the apply above, which is what deletes it. rets is non-empty
+	// here exactly for that case -- the two flows that retire by themselves
+	// returned long before this line, and the later plan of a run that built
+	// images has no read of its own -- so the record is written from the same
+	// read (recordUpdate). A run that had nothing to retire is the other half
+	// of the same moment: its plan is through too, and that is what its empty
+	// set was waiting for (recordRetiredNothing).
+	if len(rets) > 0 {
+		r.recordUpdate(ctx, lc, rets)
+	} else {
+		r.recordRetiredNothing(ctx, lc)
+	}
 	return ready, missing, nil
 }
 

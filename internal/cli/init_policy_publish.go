@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/yamledit"
@@ -99,7 +100,7 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// from a node that still carries a list, which is the removal an operator
 	// has to see.
 	if lc.VerifierAccounts != nil {
-		add("verifier_accounts", lc.VerifierAccounts, p.VerifierAccounts, false)
+		add("verifier_accounts", *lc.VerifierAccounts, p.VerifierAccounts, false)
 	}
 	// The same rule for the image catalog (D1140): a config silent about it
 	// keeps the node's, and a config that states one, an empty one included,
@@ -107,6 +108,17 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// the node through `fugaro update` with no second command.
 	if lc.ImageCatalog != nil {
 		add("image_catalog", lc.ImageCatalogEffective(nil), p.ImageCatalog, false)
+	}
+	// The orchestrator block is compared by the publisher's own keep rule
+	// (D1239, D1234): a config that states a block that sets a key differs from
+	// a node carrying another — or none — so a guardrail-only edit reaches the
+	// node through `fugaro update` with no second command. The node's own block
+	// is handed to the rule here, where the catalog's line passes nil: a written
+	// block that sets no key is not a statement but the absent one
+	// (OrchestratorEffective, SetsNothing), so comparing against nil would
+	// report a difference a publish does not close.
+	if lc.Orchestrator != nil {
+		add("orchestrator", lc.OrchestratorEffective(p.Orchestrator), p.Orchestrator, false)
 	}
 	// The members a publish DERIVES from the local config are compared too, by
 	// their own derivation: the accounts block, which is the operator's
@@ -292,19 +304,62 @@ type policyCeiling struct {
 }
 
 // policyCeilingMembers are the published node's ceiling members, in key order:
-// the keys `settings set` compares through settingsLoosens. A node's other
-// members — base_branch, routing, model_prices, the profiles, review_floor —
-// decide where a run goes and what it may do, and none of them is a ceiling a
-// publish raises, so none of them is what the typed name guards here.
-var policyCeilingMembers = []string{"budget.mode", "budget.per_run_usd", "budget.max_run_tokens", "budget.allowed_models"}
+// the keys `settings set` compares through settingsLoosens, and the
+// orchestrator's guardrails (D1239, O4), which are caps of the same rule — what
+// bounds how much work a project's orchestrator sets going at once, which §4.1
+// rule 6 refuses in the words of its own body: "a command that would raise a cap
+// is refused, whichever command it is". A node's other members — base_branch,
+// routing, model_prices, the profiles, review_floor — decide where a run goes
+// and what it may do, and none of them is a ceiling a publish raises, so none of
+// them is what the typed name guards here.
+var policyCeilingMembers = func() []string {
+	out := []string{
+		"budget.mode", "budget.per_run_usd", "budget.max_run_tokens", "budget.allowed_models",
+		"orchestrator.max_running", "orchestrator.batch_size", "orchestrator.spawn_per_minute",
+		"orchestrator.spawn_per_hour", "orchestrator.spawn_per_day",
+	}
+	// The block's model member is one member per class: a class's model is
+	// compared with its own class's and never with the other's, so a class
+	// added to the vocabulary later is a member this list carries as soon as
+	// DecisionClasses names it.
+	for _, class := range policy.DecisionClasses {
+		out = append(out, policyDecisionModelMember(class))
+	}
+	return out
+}()
+
+// policyDecisionModelPrefix is the member name a decision class's model is
+// compared under. It is one prefix because both readers of the member have to
+// recognize it: the list above spells it through policyDecisionModelMember, and
+// settingsLoosens is where its two values are compared.
+const policyDecisionModelPrefix = "orchestrator.decision_model_per_class."
+
+// policyDecisionModelMember is the ceiling member one class's model is compared
+// as. The name is the node's own path to the entry, so a refusal naming it says
+// which class moved.
+func policyDecisionModelMember(class policy.DecisionClass) string {
+	return policyDecisionModelPrefix + string(class)
+}
 
 // policyCeilingValues is a node's ceiling members spelled the way the settings
 // commands spell them, so the one comparison (settingsLoosens) decides both
 // doors and a widening this stage would ask nobody about is a widening
 // `settings set` refuses. The spellings are the ones settings_set.go reads: the
-// mode's own name, a list joined with ",", and a number as the yaml file writes
-// it — where 0 is the value that sets no cap at all, which settingsLoosens
-// already reads as the loosest a ceiling can be written.
+// mode's own name, a list joined with ",", a number as the yaml file writes it —
+// where 0 is the value that sets no cap at all, which settingsLoosens already
+// reads as the loosest a ceiling can be written — and a decision model by its
+// name, compared by its tier rather than parsed as a number.
+//
+// The orchestrator block is spelled with its unset keys filled from the
+// guardrails Fugaro ships (policy.WithDefaults), because that is the ceiling a
+// node that states none is held to: a project with no spawn rate written is a
+// project held to 2 a minute, so a file that starts stating 60 raises that
+// ceiling exactly as one that raises a stated 4 does, and a file that stops
+// stating a rate it did state gives the shipped guardrail back. The running cap
+// is the one key WithDefaults leaves unset with no person to take it from: it is
+// spelled as the node states it, and the empty spelling says the person's own
+// max_parallel is what bounds a run — a value no file of this project's can
+// raise, and so not one this comparison answers for.
 func policyCeilingValues(p *projectpolicy.Policy) map[string]string {
 	out := make(map[string]string, len(policyCeilingMembers))
 	if p == nil {
@@ -314,6 +369,21 @@ func policyCeilingValues(p *projectpolicy.Policy) map[string]string {
 	out["budget.per_run_usd"] = formatFloat(p.Budget.PerRunUSD)
 	out["budget.max_run_tokens"] = strconv.FormatInt(p.Budget.MaxRunTokens, 10)
 	out["budget.allowed_models"] = strings.Join(p.Budget.AllowedModels, ", ")
+	var o policy.Orchestrator
+	if p.Orchestrator != nil {
+		o = *p.Orchestrator
+	}
+	o = o.WithDefaults(0)
+	if o.MaxRunning != 0 {
+		out["orchestrator.max_running"] = strconv.FormatInt(o.MaxRunning, 10)
+	}
+	out["orchestrator.batch_size"] = strconv.FormatInt(o.BatchSize, 10)
+	out["orchestrator.spawn_per_minute"] = strconv.FormatInt(o.SpawnPerMinute, 10)
+	out["orchestrator.spawn_per_hour"] = strconv.FormatInt(o.SpawnPerHour, 10)
+	out["orchestrator.spawn_per_day"] = strconv.FormatInt(o.SpawnPerDay, 10)
+	for class, name := range o.DecisionModelPerClass {
+		out[policyDecisionModelMember(class)] = name
+	}
 	return out
 }
 

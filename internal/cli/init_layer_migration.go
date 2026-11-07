@@ -274,9 +274,9 @@ func (p *layerPlan) objectAt() *layerAt {
 // The generation it lands at is what this run's other halves record, so the
 // write is made before any of them reads it (p.gen is left at the new one).
 func (s *layerStage) migrateObject(ctx context.Context, env initflow.Env, p *layerPlan) error {
-	cmd := s.e.r.cmd
-	printLayerRemoval(cmd.OutOrStdout(), "the published project layer", p.objectRemoval)
-	if err := confirmRemoval(cmd, p.lc, env.Yes, layerMigrateWhat); err != nil {
+	cmd, w := s.e.r.cmd, s.e.r.w
+	printLayerRemoval(w, "the published project layer", p.objectRemoval)
+	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, layerMigrateWhat) }); err != nil {
 		return err
 	}
 	b, err := openRecordBucket(ctx, p.url)
@@ -288,13 +288,13 @@ func (s *layerStage) migrateObject(ctx context.Context, env initflow.Env, p *lay
 	// The record is written by whichever half of this run writes the local
 	// layer file (or by none of them, on a machine with no file), never here:
 	// the generation this run adopts is the one the file ends up written from.
-	gen, err := publishLayer(ctx, cmd.ErrOrStderr(), b, p.objectLayer, false, p.objectAt(), layerRecord{})
+	gen, err := publishLayer(ctx, w, b, p.objectLayer, false, p.objectAt(), layerRecord{})
 	if err != nil {
 		return err
 	}
 	p.gen = gen
-	fmt.Fprintf(cmd.OutOrStdout(), "rewrote the published project layer without them (generation %d -> %d, sha256 %s)\n", old, gen, p.objectLayer.SHA256)
-	failed := fanOutLayer(ctx, cmd.OutOrStdout(), &cloudEnv{lc: p.lc, bucket: b}, p.objectLayer, gen)
+	fmt.Fprintf(w, "rewrote the published project layer without them (generation %d -> %d, sha256 %s)\n", old, gen, p.objectLayer.SHA256)
+	failed := fanOutLayer(ctx, w, &cloudEnv{lc: p.lc, bucket: b}, p.objectLayer, gen)
 	if failed > 0 {
 		return remote(fmt.Errorf("the project layer is rewritten, but %d repository copy(ies) failed (listed above); run %s again", failed, selfCommand()+" update"))
 	}
@@ -336,7 +336,7 @@ func (p *layerPlan) fileRewriteWhat(base string) string {
 // prints what it takes out of the file and keeps a copy of it, the way the
 // re-seed does.
 func (s *layerStage) migrateLocal(p *layerPlan) (initflow.Outcome, error) {
-	out := s.e.r.cmd.OutOrStdout()
+	out := s.e.r.w
 	if p.localRemoval != nil {
 		printLayerRemoval(out, "your local layer file "+p.path, p.localRemoval)
 		if err := rewriteLocal(out, p, p.published); err != nil {

@@ -2555,6 +2555,27 @@ old value and shape come from this document and from nowhere else.
 | `old` | string | never | never | the value the TARGET layer's own file holds for the key before the edit, which is not the value a run gets (the winning layer decides that). Empty when that layer's file holds none |
 | `new` | string | never | never | the value the edit would write. Empty for an unset, which is the fact that makes the pair meaningful: `changed` is the CLI's comparison and not a consumer's reading of these two strings |
 | `refusal` | string | never | never | **empty in every document this CLI prints.** A refusal is the CLI's own sentence with a non-zero exit and **no document at all**, which is what a consumer branches on (D1106, D1112); the member is written out because the shape is the contract, and a consumer reads it by name |
+| `operation` | string | unless the write is one that has a word of its own | never | **which edit this is, where the write has a word of its own for it** — the three the schema's enum carries: `add-entry` (`settingsEntryAdd`) and `remove-entry` (`settingsEntryRemove`) for the entry pair (D1164), and **`remove-secret`** for `fugaro secrets rm NAME` (`secretsRmDryRun`, D1171), which takes away the entry the name has — `project_secrets.NAME` for a reserved name, **`workflow_secrets.NAME` for a workflow secret** (D1260) — *and* the Secret Manager container behind it. It is the write path's own word and a consumer **never re-derives it**: `key`, `old` and `new` alone cannot say which of the three the CLI decided, because a map's removal and an object list's read alike in them. `remove-secret` is the one value §6.20's own pair never writes — that command is `settings set\|unset`, and this section is its dry run — and it is also the value that carries **no** entry member below: what it removes is addressed by `key` alone |
+| `entry_key` | string | unless the write is an entry write | never | **the field the entry is addressed by**, printed through `safetext.Field`: an object list's own key field — `name`, for `workflows.*.secrets`, the pair's only keyed list (`settingsEntryBlocks`) — and the member's own name for a map, whose entry *is* one member. It is an address, not a value a form is drawn from |
+| `entry_value` | string | unless the write is an entry write that carries one — absent for a map's `remove-entry` too | never | that field's value — the key field's value for an object list, the member's value for a map's add — printed through `safetext.Field`. **A map's `remove-entry` leaves it out**: its address is the member's name and nothing else, what the member held is in `old` as its own `field=value` pair, and a document omits a member it has no value for rather than writing an empty one |
+| `entry_fields` | `map[string]string` | unless the write is an object list's `add-entry` | never | the members the entry carries **beside** the field that names it, keyed by member name, both sides printed through `safetext.Field`. **Only an object list's `add-entry` has any**: a map's entry is one member and carries none, and no removal carries any. The table spells it the one way a cell carries an entry — the pairs sorted by field and joined with `, ` (`settingsEntryFieldsString`) — which is the same spelling `old` and `new` carry an entry in |
+
+**Version 1 has grown four optional members, and a scalar write's document is
+the shape it has always had** (D1164, under D848's rule that a version gains
+only members a document may leave out): they are `omitempty`, and the entry pair
+writes them — `settingsEntryAdd` and `settingsEntryRemove` set the three the
+entry carries, `operation` is the fourth, `secretsRmDryRun` writes it alone, and
+it carries none of the other three, because what `remove-secret` takes away is
+addressed by `key`. A map's `add-entry` sets no `entry_fields` either: a map's
+entry *is* the one member `entry_key` names.
+**The console's own row builds no entry write at all** — `settings set KEY
+--layer <L>` carries one key and one value, and `--add-entry`/`--remove-entry`
+are not words of it (design §5.1 rule 6, and no screen control can choose a form
+whose row would have to say a key is map- or list-shaped). A consumer that pins
+this version therefore **ignores these four and reads the ten members it has
+always read**: an entry write's document reaches no window this console draws,
+and a reader that meets one in the CLI's own output finds the entry's address in
+the entry's own terms rather than inferring it from `key`.
 
 **Every string is printed through `safetext.Field`**, for §6.19's reason: a key,
 a path and a value are as much the file's and the command line's as they are the
@@ -2565,17 +2586,337 @@ built.
 one `FIELD`/`VALUE` row per member, in this document's own order, so the two
 shapes cannot drift into two contracts.
 
-**The two phase words are exclusive, and that is the command's own rule.**
-`--json` without `--dry-run` is refused ("`--json` is the dry run's document"),
-and `--dry-run` with `--yes` is refused too ("a dry run says what the edit would
-do and writes nothing, `--yes` answers a write"): a console passes exactly one
-of the two spellings, and the CLI is what makes that a property rather than a
-convention. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+**The phase words are exclusive, and that is the command's own rule**
+(`settingsDryRunFlags`, `askConflict`). `--json` without `--dry-run` is refused
+("`--json` is the dry run's document"), `--dry-run` with `--yes` is refused too
+("a dry run says what the edit would do and writes nothing, `--yes` answers a
+write"), and so is `--dry-run` with **`--ask`**, the slot's third word: `--ask`
+is about the confirmations a write is given, which a dry run has none of and
+asks for none of (a managed project writes on the gate's verdict and asks
+nothing, and `--ask` is the flag that puts those questions back), and `--ask`
+beside `--yes` is refused as well, because the two are the slot's two answers to
+the same question. **A console passes exactly one of the two spellings this
+document is about** — `--dry-run --json` or `--yes` — and the CLI is what makes
+that a property rather than a convention: `--ask` is not a word of the console's
+argv (design §5.1 rule 6), because the questions it restores are asked at a
+terminal and the console's child, whose stdin is ignored, is given `--yes`
+instead. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
 omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
 one `settingsWriteLayers` names, and a layer outside them is a refusal rather
 than a document. The command is the same pair §6.19's paragraph describes, so the
-`--`-terminated value, the two phase words and the layer's provenance are
-written down there and not twice here.
+`--`-terminated value, the two spellings the console passes and the layer's
+provenance are written down there and not twice here.
+
+### 6.21 `fugaro managed status --json` — a managed project's marks and its trail
+
+**Command:** `internal/cli/managed_status.go` `newManagedStatusCmd` /
+`managedStatus`, with the document built as `managedStatusDoc` and its trail
+read by `managedStatusTrail`. Cited by symbol, not by line, for §6.11's reason.
+**It is the read the managed screens are built on**, and it is a command of its
+own rather than two members on doctor's document (the managed-screens plan's
+CM2, D1473): doctor's `--json` is a list of `id`/`ok`/`problem`/`fix` checks
+with no room in it for records, while a screen wants one closed document about
+one project — which is what the coordinator's stored read (§6.13) already is
+for the coordinator. **The console's own rule 6 row for it —
+`managed status --json --project <name> [--config <path>]` — is that plan's
+CM3, and the row is on the table**: the design's §5.1 table carries it, the
+CLI's `consoleReadPaths` carries the command, and the console spawns it as
+`managed.status` (CM4). The shape is written down here because that row and the
+screen built on it (CM5) are what it is read against, and a shape that is not
+written down is a shape that drifts.
+
+**Why the CLI's own facts and never its prose** (D1472). The managed state is
+available today elsewhere only as doctor's `managed-audit` check, whose answer
+is two sentences (`problem` and `fix`); a screen that parsed them would break on
+the next rewording of either, silently, and would draw a *wrong* state rather
+than nothing. So every fact a screen draws is a member below, computed by the
+read that already computes it — `managed.ReadMarkFacts`, the one reader of the
+marker, whose `MarkFacts` carries the version, the reason and the generation
+(D1474) — and by the audit family's one parser, `managed.ListAuditRecords`,
+which is the reader the record's own writer ships. Nothing here is a second
+parse of either.
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `project` | string | never | never | the selected project's name, as the project config spells it |
+| `gcp_project` | string | never | never | the GCP project the marks were read from |
+| `managed` | bool | never | never | the marks' own answer: true only when the creation fact in the runs bucket and the `fugaro_managed` label on the project **agree**, which is the read a managed apply makes too. It is a fact about the project and never about the machine that asked |
+| `reason` | string | never | never | the read's own sentence for a project that is **not** managed, and `""` when it is (D1474). Bounded text, sanitised by the read. A screen shows it beside `managed`, never instead of it |
+| `version` | int | never | never | the creation fact's version (`1`, `2` or `3`), and `0` when the read believed no object. `0` is a fact about the project — an unmanaged one has no creation fact — and not an unknown about the read |
+| `generation` | string | never | never | the creation fact object's own generation, in decimal, and `""` when no object was placed. **A string and not a number**, spelling the record's own `marker_generation`: an object's generations start at `1`, so a `0` here would be read as a generation rather than as the absence of one |
+| `audit` | object | never | **yes** | the bounded subset below — the newest record of the window — and **null** when the window holds no record, or when the project is not managed and the trail was not read at all. Null is not "nothing happened": `audit_state` is what tells a read that did not answer from a day with nothing in it |
+| `audit_day` | string | never | never | the UTC day `audit_count` counts and `audit` belongs to, spelled as the family spells a date directory (`2006-01-02`). **`""` exactly when no record was found in the window**, or when the trail was not read: a day with nothing in it is no day to name |
+| `audit_count` | int | never | never | how many records are filed under `audit_day`, and `0` in both of the cases above |
+| `audit_state` | string | never | never | the sentence for a read that **did not answer**, and `""` for one that did. Bounded text. It is set only for a managed project: a project that is not managed files no record at all (D1025), so there is no trail to read and no state to report about it |
+
+**The `audit` member is the bounded subset, and the bound is the point**
+(D1476):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `at` | string | never | never | when the command ran, in UTC, RFC 3339 to the second. It is the record's own time and never the listing's order |
+| `command` | string | never | never | the command as a person types it (`fugaro config publish`), which is the record's own name for it and not its argv. Bounded text |
+| `verdict` | string | never | never | the gate's own answer about the judged plan: `admitted` or `refused`. **A refusal is a record an owner reads most**, so it is drawn beside an admission and never instead of it |
+| `identity` | string | never | never | the account the write ran as: the deployer account for a managed apply, the operator's own elsewhere. Bounded text |
+| `plan_digest` | string | never | never | the sha256 of the exact document the gate judged, so a reader compares the record against a plan rather than believing a summary of it |
+
+**What is never in it, and it is the whole of the bound: the argv.** The record
+itself carries the argv the write ran as, the rules the gate fired and the marks
+that were in force; none of them reaches this document. The argv is the argv of
+a session — a path, a root name or a title an operator did not mean to publish —
+on a surface anybody at the machine can read, and the five members above are
+also what makes a row stable across CLI versions (D1476).
+
+**Two days, and the day that answered** (D1477). The trail is the newest record
+of the current UTC day, and of the previous day **only when today holds
+nothing**: the shape doctor's check already reads, so a session that ran an
+apply twenty minutes before midnight is still the last one an operator reads
+about. `audit_day` names the day the answer came from — today, yesterday, or
+nothing at all — and `audit_count` counts that day's records, so the two are
+read as a pair. There is no date control and no paging: a date the operator
+picks would be a second word on the spawn row, a new bound on the read and an
+empty state for a day with nothing in it, for a trail the two-day window already
+answers.
+
+**An unread trail is a state, and never an empty day.** A listing that failed —
+a refused grant, an outage, an object the parser refuses — is an unknown, and an
+unknown drawn as `audit_count: 0` is the silent pass: "nothing was recorded" and
+"the records could not be read" look identical in a count, and only the second
+is a reason to look further. So a read that did not answer carries
+`audit_state`, with the five members above empty and **no `audit` at all** — a
+figure beside a state would be read as an answer — while an empty day is
+`audit: null` with `audit_state: ""`. **A read that did not answer is not an
+exit**: the command prints the document and exits zero, because the state is the
+answer. Only a read that could not be made at all — the marks, which are the
+document's whole subject — is a non-zero exit with no document.
+
+**It never says "revoked"** (D1475). A run-time fact of a write gate is
+persisted nowhere, so a project whose marker or label was taken off is *not
+managed*, which is a different claim from a mark that was revoked; a screen that
+drew the second from the first would be showing a state the CLI does not have.
+
+**A project that is not managed is not read for a trail at all.** `audit`,
+`audit_day`, `audit_count` and `audit_state` are null, `""`, `0` and `""`: a
+managed project is the only one that files a record (D1025), so an object left
+in the bucket for a project whose marks do not say so is not a fact about that
+project, and reading it anyway would let a trail outlive the marks that justify
+it.
+
+**Flags** (`newManagedStatusCmd`): `--json`, and the aiming pair `--project
+<name>` and `--config <path>` that every project read carries. `--gcp-project
+<id>` and `--region <r>` come with `addCloudFlags` and are not part of the
+console's row. The command takes no argument, writes no cloud object and keeps
+no cache of its own, and needs no checkout to answer — so it runs anywhere, a
+coding agent's session included.
+
+**It is in the console's read set, and that is one local file.** The command
+resolves the selected project the way every cloud command does: `selectProject`
+resolves the working directory as a checkout on the way to the installation, and
+that resolution remembers the checkout it ran in (`recordCheckout`,
+`internal/cli/project.go`) unless the command's own path stands on the read-only
+list that stops it (`consoleReadPaths`, `internal/cli/project.go`, §6.8).
+`managed status` **is** on that list: CM3 added it in the same change as the
+design's §5.1 rule 6 row for it, because a `consoleReadPaths` entry whose argv
+the design's own table does not allow fails the test that reads that table back
+out of the design. So a console that spawns it — and `managed.status` does
+(CM4) — writes no `$XDG_CONFIG_HOME/fugaro/state/checkouts.json` in an enrolled
+checkout: the state file §6.8's `checkouts` reads keeps the directory a person
+opened, and no cloud object is written either.
+
+### 6.22 `fugaro graph --json` — the dependency graph, and its stream
+
+**Command:** `ee/graph/cli/graph.go`, registered through `RegisterCommand`
+(`ee/register/graph.go`) — the graph plan's CG3. It is a **paid command** like
+the Coordinator tab's, because its `all` scope is the coordinator's stored view
+(D1362, F26); the plan scope the Graph already draws stays where it is.
+**Document:** `graph.Document`, `graph.SourceState`, `graph.Node` and
+`graph.Edge` (`ee/graph/document.go`), with the node key built by
+`graph.NodeKey` and the `--source` value parsed by `graph.ParseScope`
+(`ee/graph/key.go`). Cited by symbol, not by line, for §6.11's reason.
+
+**`fugaro graph --json` has landed; the stream and the console's own read have
+not.** CG1 (the document, the key and the scope pattern) and CG3 (`graph
+--json`, the coordinator scope) are on `main`, so the command, its `--source`
+set and every field below are what the released CLI writes; CG7 (`graph --watch
+--json`) and the console's own read of this document (CG9a, CG9b) are the tasks
+that follow, in that order. The fields are read off `ee/graph/document.go`'s
+struct tags and the rules off the plan's H1 to H5, so a task that finds the code
+disagreeing with this section has found a defect in one of the two.
+
+**The section is numbered §6.22, and that is not a typo.** §6.21 is already
+claimed for another command's document: `docs/console-managed-screens/implementation-plan.md`
+gives it to `fugaro managed status --json` (its CM2 writes it), so the graph's
+takes the next number free rather than the claim written down first.
+
+**It needs no checkout, and that is the point of the read.** `plan status`
+(§6.12) and `plan graph` (§6.9) read the plans of the installation's checkout and
+show a card when there is none (F10); `graph` asks the project's database what
+the coordinator's sweep stored — the read §6.13 already makes, through the
+caller's own credentials (`roles/firebasedatabase.viewer`) — so a scope paints
+with no checkout at all. **The one fact it does take from the local config is
+each repository's provider**, which that repository's slug is keyed by (§6.13's
+`provider` row is the same resolution): a `repos` entry that leaves `provider`
+out has no provider to find unless the working directory *is* that repository's
+checkout, so in a console child it is refused with the sentence that names the
+entry to set — a refusal of the whole read, with no document, which the console
+answers as it answers any other (T3, keep the plan scope and show the sentence),
+and never a `down` or `unreadable` state. Onboarding writes every repository's
+provider, so this is the hand-edited entry and not the ordinary one. **The plan
+scope keeps its checkout and its card**; the new scopes are what the dropdown
+adds beside it (D1356).
+
+**`--source` selects the scope, and the set is closed.** `all` is the default and
+is the union of the scopes that exist — today the coordinator alone —
+`coordinator` is the stored view, and `orchestrator:<id>` and `local:<id>` are
+**refused with "no orchestrator is installed in this build"** until CG4 and CG5
+register their readers: an honest refusal, never an empty graph, because a screen
+must be able to tell "nothing here" from "not asked". The value reaches argv from
+the renderer, so the CLI refuses everything but the closed set below **before it
+reads anything** (H1), and the console sends only a value a previous read listed
+(F21):
+
+| Value | What it names |
+| --- | --- |
+| `all` | every scope that exists: today the coordinator's stored view, and the orchestrator scopes as they are built |
+| `coordinator` | the coordinator's stored view: every repository it has reconciled (§6.13), with no checkout |
+| `orchestrator:<id>` | one orchestrator's node under `orchestrator/` — **refused today**, CG4's reader |
+| `local:<id>` | one local orchestrator, read through its node and its cache file — **refused today**, CG5's reader |
+
+An id is one lower-case letter or digit, then up to 39 more of those or a hyphen,
+and nothing else. So a leading `-` (which would reach argv as a flag), a path
+separator, an uppercase letter, whitespace, a `.`, an `@` and a 41-character id
+are each refused, by `graph.ParseScope`'s anchored pattern.
+
+The document:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's own shape version, `1` today (`graph.DocumentVersion`). **A field's meaning never changes under it** (the rule at the top of this document): adding a field is compatible, removing or retyping one bumps the version, and a field whose meaning must change gets a new name. A reader reads the version first and refuses one it does not know rather than guessing — and the Go side reads the document **strictly**, so an unknown key is an error and never a key quietly dropped (`ParseDocument`) |
+| `stream_id` | string | never | never | the stream this document belongs to. **`""` in a one-shot read** — the value that answers "not a stream" — and a value drawn once per `--watch` child, printed in every document that child writes |
+| `seq` | number | never | never | the document's place in its stream: **`0` in a one-shot read**, and `1`, `2`, … within one `stream_id` in a stream, rising by one per document. It is never compared across `stream_id`s |
+| `generated_at` | string | never | never | RFC 3339; when the document was assembled. A **clock**, not an as-of: what a scope's data is worth is `sources[].as_of`, and a screen that draws an age draws it from that and never from this |
+| `sources` | array | never | never | one entry per scope the document covers, below. `[]` is a fact — the document covers nothing — and never a null: an empty list is written as an array (`MarshalJSON`), and a `null` read back is the empty list it means |
+| `nodes` | array | never | never | the graph's nodes, below. `[]` is a fact — the scope has nothing to draw — and the scope's own state sits beside it in `sources`, so a screen tells "empty" from "down" (H3) |
+| `edges` | array | never | never | the relations between nodes, by `key`, below. **The coordinator's stored view has no edges, so a document drawn from it alone carries `[]`** (F17); the orchestrator scopes' `depends_on` are what fills it (CG5) |
+| `warnings` | array | never | never | what the read could not do, as sentences fit to print; `[]` is the ordinary case. Sanitised with `safetext.Field` like every other string here |
+
+one entry of `sources`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `source` | string | never | never | the source this state is about (`graph.Scope.String`): `coordinator`, `orchestrator:<id>` or `local:<id>`, and **never `all`** — `all` is a selector and not a source, so a read that selected it (`graph --json`'s default) writes one entry per scope that exists, each named for itself, which today is one `coordinator` entry. It is the source half of every `key` that came from it, and a value a console may send back as `--source` |
+| `state` | string | never | never | one of the four words below. **The whole answer**, so a screen draws it as a word and never as a colour alone (H3, H10) |
+| `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good. **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it — it draws one from this field when it is set, and never from `generated_at`. **The coordinator's stored view carries no time of its own** — it is a function of its inputs, which is why the Coordinator screen claims no age for it (CG2) — so a caller that read the views without knowing when the sweep stored them has none to give and prints null, and **`graph --json`, a one-shot read, is that caller**: its coordinator scope has a null `as_of` and is never stale by age. The stream (CG7) is the caller that knows its own read's time and can fill it; the sweep's own marker is a separate fact and not this field |
+| `reason` | string | never | never | why, in words, when the state is not `up`; `""` when it is. The read's own sentence, sanitised like every other string here, and the field a screen shows **beside** the state rather than instead of it |
+
+**The four states, defined.** A scope that is down is a **state and not an
+exit** (H3): the read answered, and this entry is its answer.
+
+- `up` — the source was read and its data is what it is. `reason` is `""`.
+- `down` — the source answered and has nothing stored. **The coordinator's
+  scope is down when the project lists repositories and the sweep has stored a
+  view for none of them** (CG2; `CoordinatorSource.Nodes`): the read succeeded,
+  so this is neither a refusal nor `unreadable`, and what the document still
+  carries is the half that needs no stored view — each repository's runs — so
+  `nodes` is **not** empty and `reason` is the read's own sentence, `the
+  coordinator has no stored view for any of the project's repositories`. A
+  screen draws those nodes with the state beside them, never an empty graph.
+  The other scopes are down when they cannot be reached at all: a withdrawn
+  RTDB stream, a local orchestrator whose node is gone. Either way the state is
+  one scope's: the other scopes keep their figures, and a stream keeps
+  streaming.
+- `stale` — the source answered with data known to be old. The coordinator's
+  scope is stale when the sweep's own marker stands beside a view it could not
+  recompute (CG2's `RepoView.Stale`): that marker is the age fact the stored read
+  carries, and its `reason` is the scope's. The other way is a caller that
+  supplied an `as_of` older than twice the sweep period (the sweep is the
+  15-minute Scheduler job, F16; CG2), and the instant it is old as of is then
+  that `as_of` — which a one-shot read, `graph --json`'s, does not supply, so for
+  it `stale` is the marker alone.
+- `unreadable` — the source answered with something this build cannot read. It
+  is a state of the source, never a refusal of the whole read. The coordinator's
+  scope answers it in two cases, and they are one class: the database holds a
+  view, or a stale marker, that its strict decoding refuses — an unknown field, a
+  value of another shape — or it holds a record whose identity this build cannot
+  carry into a `key`, because sanitising it would rewrite it and a rewritten key
+  is one two things can share (D1356, `Sanitise`); the scope says it cannot read
+  the answer rather than printing a key that could merge two nodes. `reason` is
+  the refusal's own sentence, so a screen says what it could not read rather than
+  showing a graph with records quietly missing. The scope's `nodes` is **empty**
+  in both cases: a screen draws the state and the reason, never a partial graph.
+
+**A refused read is the other case, and it is terminal.** An invalid `--source`
+(H1), or a scope this build does not have (`orchestrator:` and `local:` before
+CG4 and CG5), is an error with a non-zero exit and **no document at all**, naming
+the command — which is what the console reads as "this CLI has no graph" and
+answers by keeping the plan scope and a refusal sentence (T3, CG10). A repository
+whose `repos` entry names no provider is refused the same way (above), and so is
+a database the scope's read could not reach — an IAM refusal, a connection that
+failed: those reads made no answer at all, where `unreadable` is an answer this
+build cannot read and a `down` source is one that answered with nothing stored.
+A refusal and a `down` source are told apart by exactly that: one is a process
+that printed nothing and failed, the other is a document with the state in it.
+
+one entry of `nodes`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `key` | string | never | never | `<source>:<id>`, built by `graph.NodeKey` — the one place the join happens, so a reader that takes a key apart and a writer that builds one cannot drift. **Unique within one source and not across them**: `coordinator:42` and `local:o1:42` are two nodes, and nothing dedupes across sources (D1356). **A reader takes a key apart with the `source` and `id` beside it and never by splitting on the first colon**, because a local scope's own string carries one: the key `local:o1:42` is source `local:o1` and id `42` |
+| `source` | string | never | never | the scope the node came from, as `sources[].source` spells it: the identity half of the node and not prose, refused rather than sanitised for `id`'s reason |
+| `kind` | string | never | never | one of `pull_request`, `run`, `task` (`graph.NodePullRequest`, `NodeRun`, `NodeTask`) — the kinds this document knows today. The coordinator scope produces the first two: its pull requests and the runs joined to them (CG2). `task` is the orchestrator scopes' (CG5) |
+| `id` | string | never | never | the source's own id for the thing: the other half of `key`, and the pull request's number, the run's id or the task's id as that source writes it. **Identity, not prose**: `source` and `id` are the two fields the read refuses rather than sanitises, because `safetext.Field` is lossy and two raw ids that collapse to one string would otherwise share one key (D1356) |
+| `title` | string | never | never | what a person reads. **Untrusted display text**: sanitised with `safetext.Field` on construction, and re-sanitised by the console's own class before a renderer sees it |
+| `repo` | string | never | never | the repository the node belongs to, `owner/name`. **Untrusted display text**: a screen draws it as text and never as a link, a path or an attribute |
+| `state` | string | never | never | the source's own word for the node's state — what a pull request, a run or a task carries in the source it came from, carried through with no translation here, because the document has no vocabulary of its own. `""` is a source with no state to give, not a gap |
+| `release` | string | never | never | the release the node belongs to, as the source spells it — the coordinator's stored records each carry one (`coordinator.Record`) — which is what groups the coordinator scope's nodes. `""` means the node names no release |
+| `updated` | string | never | **yes** | RFC 3339; when the node last changed. **Null when the source does not say**, and null is not "just now" |
+
+one entry of `edges`:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `from` | string | never | never | the `key` of the node the relation starts at |
+| `to` | string | never | never | the `key` of the node it ends at |
+| `kind` | string | never | never | the source's own word for the relation (`depends_on` is the one the orchestrator state carries, F14); the document defines no vocabulary of its own. An edge whose two keys name no node in the same document is drawn as nothing rather than as a node of its own |
+
+**`graph --watch --json`: whole snapshots, one per change.** The stream prints
+whole documents rather than event deltas (D1360, F19). The first snapshot arrives
+within a bounded time, then one document per change, at most one a second
+(`watch --json`'s own floor, `watchJSONGap`), each written **compact, one object
+per line** — so §10's guarantees and the console's reader apply to it unchanged:
+a slow reader makes the child block and never drops a document (§10.3), and a
+closed stdout ends the child on its next write (§10.4). **A lost document needs
+no repair**: the next one is the whole graph. §9 rule 2 counts the
+line-delimited commands of the console's own set, and the graph is not in that
+set yet — the spawn row that puts it there is CG9b's, and that task moves the
+count with its row.
+
+**`stream_id` and `seq`, and why both.** Each child draws a `stream_id` once and
+prints it in every document it writes; `seq` starts at `1` and rises by one per
+document within that child, and it is **not comparable across children** — so the
+console compares a `seq` only inside one `stream_id`, and treats a new
+`stream_id` as a whole new snapshot whatever numbers the two carry (H4, F20). A
+one-shot read carries `stream_id: ""` and `seq: 0`, the two values that answer
+"this is not a stream" without a flag a reader has to be told about.
+
+**A keep-alive, because a quiet graph prints nothing.** A hard-killed console
+(SIGKILL, a crash) leaves a child that exits on its **next stdout write** (§10.4,
+F11), which for a graph that does not change could be minutes: so the stream
+writes a keep-alive document **on a timer — every 30 seconds** — carrying the
+same `stream_id`, the next `seq` and the sources' states (H4, F20). There is no
+`keep_alive` field: the tick is an ordinary document of this shape, and a reader
+applies it like any other. A reconnected RTDB stream prints a **full snapshot**
+and the next `seq` rather than a delta — the client restarts its own subscription
+and each connect begins with a full `put` of the subtree (`rtdb.Client.Stream`)
+— so a reader never has to ask what it missed.
+
+**One subscription per scope.** The child subscribes to **one** `coordinator/`
+subtree per scope it covers, shared across that scope's nodes rather than opened
+once per node (H6, F12): an RTDB stream is a held connection, and the console
+runs this one only while the Graph tab is visible and counts it in
+`MAX_LIVE_FEEDS` (CG9b, CG11).
 
 ## 7. The CLI gaps, settled against the code
 

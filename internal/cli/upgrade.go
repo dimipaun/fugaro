@@ -555,8 +555,14 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepCurrent, reason: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}
 	}
 	// No gate is passed: `fugaro upgrade` is not one of the managed set's
-	// commands, so this step keeps every confirmation it always had.
-	if err := policyMigrationConfirm(ctx, u.cmd, m, u.o.yes, u.w, false); err != nil {
+	// commands, so this step keeps every confirmation it always had — the
+	// in-flight guard included, which is a note only for a managed project and
+	// this door reads no mark (policyMigrationConfirm).
+	// The conditions this door hands it are the two facts its own agent refusal
+	// was made from (u.agent, read the same way at the top of runUpgrade): it
+	// has no initRun, and managed false makes the rest of the reading moot.
+	c := initflow.Conditions{Agent: u.agent, Terminal: stdinIsTerminal(u.cmd.InOrStdin())}
+	if err := policyMigrationConfirm(ctx, u.cmd, m, u.o.yes, u.w, false, false, c); err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	// The line is the write's own (doneDetail): this step migrates an older node,

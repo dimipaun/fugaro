@@ -808,7 +808,7 @@ var inlineAgentSites = []inlineAgentSite{
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
 // drive, with the test that does.
 var propertyAgentSites = map[string]string{
-	"init.go ask":                "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class)",
+	"init.go askBanner":          "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class); ask is its wrapper (the question is asked with the run's line in flight down)",
 	"init.go conditions":         "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
 	"init_stages.go options":     "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker (the stage loop's agent gate)",
 	"init_plugin_stage.go Apply": "TestUpdateManagedPluginWiringAsksNothing (the managed gate's own hand on the wiring's y/N, in the owner's terminal and in a coding agent's session)",
@@ -827,6 +827,16 @@ var propertyAgentSites = map[string]string{
 	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
 }
 
+// The policy tail (init_policy_migrate.go policyMigrationConfirm) is not in
+// propertyAgentSites: it reads no marker of its own, it takes the run's
+// conditions — init.go conditions's read, listed above — and decides on
+// Conditions.Agent, which this scan does not see. Two tests drive its side of
+// that read: TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal (a
+// marker keeps the in-flight refusal that the owner's ruling of 2026-11-06
+// turns into a note in a managed project, and keeps the typed confirmation the
+// ruling spares there) and TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject
+// (the same conditions, marker by marker).
+
 // outsideAgentSites are the agent-marker sites the property does not cover,
 // each with the reason.
 var outsideAgentSites = map[string]string{
@@ -834,14 +844,6 @@ var outsideAgentSites = map[string]string{
 	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
 	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
 	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
-	// The marker only reaches the publisher's own empty-allow-list refusal
-	// (#1656): it is that function's decision, and a session holding it never
-	// reaches this line — the stage's Apply refuses the marker above every
-	// confirm (TestUpdatePolicyMigrationRefusedInAgentSession), and the managed
-	// gate refuses the first publish's strict class before it too
-	// (TestUpdateManagedRefusesTheFirstPolicyPublish). The argument is the
-	// refusal's second lock, so this entry names the line rather than a decision.
-	"init_policy_migrate.go policyMigrationConfirm": "OUTSIDE: the role is confirmEmptyAllowList's, reused by the stage's first publish; a marker session is refused above it and by the gate",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:

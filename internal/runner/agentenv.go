@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -71,6 +72,42 @@ func (r *run) parentEnv() map[string]string {
 		}
 	}
 	return m
+}
+
+// imageEnv is the set of variables this run passes to its agent because the
+// operator's own catalog image declared them (docs/image-env, reconciliation
+// D1370-D1374): the runner's environment minus every name a run drops, which
+// ImageEnvDroppedNames spells once for this and for the report that describes
+// it (D1378). It is nil — the whole feature off — for a job that carries no
+// stamp, so a repository-built image, checkout: clone's base image and a job
+// deployed before the stamp existed all pass nothing whatever their
+// environment holds (D1371's fail-closed).
+//
+// declared is the names this run's own workflow declares: bootstrap's
+// secretEnvs, the same set it hands agent.BuildEnv, so the two read one
+// answer. A mounted secret name the run did not declare must not reach the
+// agent through this arm, because at run time nothing can tell the image's
+// value from the mounted one and the mounted one wins in the merged
+// environment (F8, D1373); a declared one still reaches the agent through the
+// declared-secret path alone.
+//
+// Nothing here registers a value with the redactor (D1376, the owner's O3
+// answer of 2026-11-06): a passed value is not a secret, the doc already
+// forbids a credential in an image, and the agent can read the runner's
+// environment through /proc.
+func (r *run) imageEnv(declared []string) map[string]string {
+	parent := r.parentEnv()
+	if parent[ImageEntryEnv] == "" {
+		return nil
+	}
+	dropped := ImageEnvDroppedNames(parent, declared)
+	out := make(map[string]string, len(parent))
+	for name, value := range parent {
+		if !slices.Contains(dropped, name) {
+			out[name] = value
+		}
+	}
+	return out
 }
 
 // resolveMixedStages answers the run's stage accounts: the stages of the one
@@ -314,7 +351,7 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 	}
 	vars := map[string]string{}
 	if gw != nil && account == "" {
-		gwVars, err := agent.GatewayVars(r.cfg.Agent.Auth, *gw, r.parentEnv())
+		gwVars, err := agent.GatewayVars(r.modelAuth(), *gw, r.parentEnv())
 		if err != nil {
 			return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 		}

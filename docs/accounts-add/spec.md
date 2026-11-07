@@ -365,19 +365,78 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    `claude-oauth-token-<name>` is **deleted** through the store's own `Delete`
    (`internal/backend/gcp/secrets.go`) — the call exists and **no command reaches it today**, so
    `accounts rm` is the first door to it. Leaving a live credential in Secret Manager with only the
-   owner's admins able to read it is not what "remove the account" can mean, and Secret Manager's own
-   delete is reversible within its grace period, which is the recovery an owner actually wants. The
-   secret's ID is named in the confirmation before it goes, and the command **says plainly that
+   owner's admins able to read it is not what "remove the account" can mean, and the delete is
+   one-way: Secret Manager's v1 API has no `undelete` for a secret, so the copy that survives is the
+   **token at the provider**, which is what the sentence below names. The secret's ID is named in the
+   confirmation before it goes, and the command **says plainly that
    deleting the secret does not revoke the token at the provider**: the token stays valid until it
    expires or the owner revokes it in Anthropic's own console, which no command here reaches (D866).
    A repository whose committed `fugaro.yaml`
    still names the account in `agent.oauth_token` is **warned about**, naming the repository and the
    run that will fail at launch — the shape D783 chose for `fugaro models rm`, and for the same reason:
-   the owner's own edit should not be blocked by a file the command cannot see.
+   the owner's own edit should not be blocked by a file the command cannot see. The file judged is the
+   **committed** one, read at the ref a run of that repository checks out (`git cat-file`, the reader
+   the launch itself uses) and **never the working tree**: the commit is what the next run resolves its
+   account from, and a session's uncommitted edit — the state a coding agent leaves a checkout in —
+   would otherwise hide a reference the run still stops on. **No ref the checkout's file picks is
+   read.** That file is layer 1 of a launch's resolution, but it belongs to the session that owns
+   the tree, which can write a `git.base_branch` into it, uncommitted, naming a ref this checkout does
+   not hold; the ref comes from the installation config instead (`repos.<r>.base_branch`, else the
+   project's own default — the installation config's own top-level `base_branch`, else the one the
+   published policy node carries, which are exactly the layers a launch resolves below its file), and
+   **the branch the committed file names as its base is read beside it and never in its place**: a run
+   reads its account out of the file at the ref it checks out (`spec.Ref`) and the name only decides
+   what that run measures its work against, so a file at a ref the runs use that names the account is a
+   reference even when the branch it names is clean — and that branch is a ref of its own, one a run
+   with an explicit `--ref` reads the same key out of, so its file is read too, and the value there is
+   resolved out of the committed bytes as well.
+   **Every ref a run can be cut from is read, and the base branch alone is not all of them.** A launch
+   with no `--ref` from a checkout of a pushed branch is cut from that branch, so when this working
+   directory is on one and origin has it, that ref is read beside the base branch: a repository whose
+   base-branch file is clean while the branch the runs are launched from names the account is still a
+   repository whose runs stop at launch, and a read that covered the base alone would score it clean.
+   A name at either ref is the warnable reference, and a read that failed at either is an unresolved
+   value. A branch of origin that is neither — one a run reaches only with an explicit `--ref` — is
+   not read: what this check answers for is the runs the repository makes by itself.
+   **In a coding agent's session, none of this is evidence, so the removal is refused.** The ref a read
+   here resolves is one that same checkout holds — `refs/remotes/origin/<ref>` first, else the branch of
+   the same name — and a session owns that checkout: `git commit && git update-ref
+   refs/remotes/origin/<ref> HEAD` moves the remote-tracking ref onto a commit that hides the name, so
+   the clean read and the forged one are the same bytes and the read resolves nothing about what origin
+   carries. The other two documents the walk reads are the session's own as well: the **record of which
+   checkouts this machine holds** is a file the session writes, and a *missing* one is read as an empty
+   record rather than refused, so deleting it reports every repository as one this machine has **no
+   checkout of** — which is only a warning — while the committed file that names the account is still
+   on origin; and the **installation's own list of enrolled repositories** is what decides which
+   repositories are asked about at all, so a repository taken off it is never opened. Each of the three
+   was reproduced against the command before the rule was written, so it is written as the class and not
+   one bucket at a time: in a session the `rm` is **refused whatever the walk found** — a value the gate
+   cannot resolve at plan time is a refusal and never a pass (that design's §4.1) — and the refusal
+   names the owner's own terminal window, where the same removal prints every reference it finds and
+   asks to be confirmed. The owner's own run is unchanged: every state below is a warning under the
+   confirmation that already asks about the removal, because that checkout is the owner's and its
+   commit is what the runs of the repository resolve their account from.
+   Of the ways the read can come up short on the owner's path: a repository this machine has **no
+   checkout of** is a warning, while a checkout whose committed file **did not resolve** (a document the
+   strict reader refuses, or a ref this checkout does not hold) is a warning, because the answer was
+   asked for and could not be read — and a document that was not read is never scored clean, whichever
+   file sits in the working tree beside it. The third is the widest, and it is not about a repository at
+   all: the **record of which checkouts this machine holds**, when that document cannot be read. A
+   corrupt one is not an empty one (`localcfg.LoadCheckouts` refuses to read its own file that way, and
+   the sibling read in `settings set` is a hard refusal), and taking it for one would report every
+   enrolled repository as one this machine does not hold — the warning — with the question asked of none
+   of them. In a session all three are the one refusal above.
 3. **Converge.** The same publish and deploy as `add` (§2.5), so the job the account owned is gone from
    the installation.
 
-`rm` is refused in a coding agent's session for the same reason `add` is.
+`rm` is refused in a coding agent's session — never on the strength of a check that session could
+have answered itself (above). In a managed project the gate therefore **refuses an `rm` from a session
+outright**: it builds the plan, judges it, records the refusal with the rule that fired, and that rule
+names the owner's own terminal window as the way to remove the account. That is the accounts row of the
+managed design's handoffs, and it withdraws the session admission that row first described: the evidence
+that admission rested on — a clean read of a checkout this machine holds — is the session's own word for
+what origin carries, which one move takes away, so the removal waits for the owner's own run, where
+every reference is printed and the confirmation is asked.
 
 ## 5. What the existing commands become
 
@@ -629,7 +688,9 @@ allow-list said twice — where it comes from is the next paragraph.
 the flag, the committed `agent.oauth_token`, or the project's `default_claude_account` — leaves the walk
 nothing to choose: `accountWalkApplies` (`internal/runner/accountchoice.go`) is false whenever the task's
 `spec.OAuthToken` names an account, which is how rungs 1, 3 and 4 reach the job, and the walk is an
-`oauth` run's in any case (a mixed `api-key` run names the walk no account at all:
+`oauth` run's in any case (a mixed `api-key` run names it no account the walk could pick: the one
+Claude account such a run holds is the run's own `spec.OAuthToken`, which is the condition above, and
+an `api-key` run is outside the walk whatever it names:
 [mixed-credentials](../design/mixed-credentials.md) §11). So setting `default_claude_account` is also how
 a project turns the walk off for its runs: with that key set, no run of the project reaches rung 5.
 

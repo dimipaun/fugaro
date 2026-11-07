@@ -1735,6 +1735,46 @@ func TestLocalcfgDecodesTheAccountChoiceBlockStrictly(t *testing.T) {
 	}
 }
 
+// TestAccountChoiceKeysRefuseTheProjectsAnthropicKey: the account-choice keys
+// ask a run's stages to choose an account, and the project's own Anthropic API
+// key is not one. config.ValidClaudeAccountRef admits the sentinel, because a
+// profile's claude_accounts entry may name it, and these two keys are the
+// second reader of that value — so without a refusal of its own the key fell
+// through to the defined-account lookup and was refused with "define it as
+// claude_accounts: {anthropic-api-key--project: {allow_data_to: [owner/name]}}",
+// the one entry config.ValidateClaudeAccounts refuses: one refusal naming what
+// the other forbids, and no move the operator can make.
+//
+// What the test pins is the remedy. The sentence names the key the operator
+// edits and tells them to drop it, and it names no claude_accounts entry.
+//
+// Mutation (run, restore): drop the sentinel's arm in choiceRefProblem — both
+// keys go back to the lookup's sentence and both subtests go red.
+func TestAccountChoiceKeysRefuseTheProjectsAnthropicKey(t *testing.T) {
+	for _, tc := range []struct{ name, yaml, key string }{
+		{"the project default", "default_claude_account: " + config.AnthropicKeyAccount + "\n", "default_claude_account"},
+		{"a stage's own", "stages:\n  review:\n    claude_account: " + config.AnthropicKeyAccount + "\n", "stages.review.claude_account"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(sample + tc.yaml))
+			if err == nil {
+				t.Fatalf("a config naming %s for %s was accepted: no job mounts the project's own key as a Claude account", config.AnthropicKeyAccount, tc.key)
+			}
+			for _, banned := range []string{"claude_accounts", "allow_data_to"} {
+				if strings.Contains(err.Error(), banned) {
+					t.Errorf("the refusal names %q: %v — the account lookup's sentence prescribes claude_accounts: {%s: {allow_data_to: [owner/name]}}, an entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err, config.AnthropicKeyAccount)
+				}
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Errorf("the refusal does not name the key the operator edits (%s): %v", tc.key, err)
+			}
+			if !strings.Contains(err.Error(), "drop the key") {
+				t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
+			}
+		})
+	}
+}
+
 // TestVerifierAccountsDecode is the member's own shape: the operator's list of
 // the addresses that may ask the credentials service's verify route, written
 // where the policy node is built from and never in a reviewed repository's
@@ -1747,8 +1787,8 @@ func TestVerifierAccountsDecode(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
-	if !slices.Equal(c.VerifierAccounts, want) {
-		t.Errorf("VerifierAccounts = %v, want %v", c.VerifierAccounts, want)
+	if c.VerifierAccounts == nil || !slices.Equal(*c.VerifierAccounts, want) {
+		t.Errorf("VerifierAccounts = %v, want %v", verifiersOf(c), want)
 	}
 	// The key absent is not the same value as the key written empty: the first
 	// keeps what the node publishes, the second clears it (the rule below).
@@ -1763,8 +1803,8 @@ func TestVerifierAccountsDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty.VerifierAccounts == nil || len(empty.VerifierAccounts) != 0 {
-		t.Errorf("VerifierAccounts = %v, want a written empty list", empty.VerifierAccounts)
+	if empty.VerifierAccounts == nil || len(*empty.VerifierAccounts) != 0 {
+		t.Errorf("VerifierAccounts = %v, want a written empty list", verifiersOf(empty))
 	}
 	for _, body := range []string{
 		"verifier_accounts: [serviceAccount:person-1@example.com]\n",
@@ -1833,9 +1873,19 @@ func TestVerifierAccountsNotInShared(t *testing.T) {
 			t.Errorf("%s: output carries verifier_accounts:\n%s", name, out)
 		}
 	}
-	if len(c.VerifierAccounts) != 1 {
+	if len(verifiersOf(c)) != 1 {
 		t.Error("Shared/MergeShared cleared the local list")
 	}
+}
+
+// verifiersOf reads the verifier list out of a config for an assertion: the
+// field is a pointer so that the owner's empty list survives a write, and a
+// bare %v on the pointer would print its address instead of the list.
+func verifiersOf(c *Config) []string {
+	if c.VerifierAccounts == nil {
+		return nil
+	}
+	return *c.VerifierAccounts
 }
 
 // catalogYAML is an operator's image catalog in the shape the spec writes one:
@@ -2016,5 +2066,191 @@ func TestClaudeAccountStageSegmentMustBeARunStage(t *testing.T) {
 				t.Errorf("the refusal does not name the segment and the vocabulary: %v", err)
 			}
 		})
+	}
+}
+
+// workspaceSample is `sample` with a whole membership: the membership key, the
+// pin beside it, and the workspace owner's own two blocks. It is the base every
+// workspace validation case below edits one value of.
+const workspaceSample = sample + `workspace: workspace-alpha
+workspace_pin:
+  firebase_project: project-ws
+  issuer: https://securetoken.google.com/project-ws
+  assertion_key: marker-assertion-key
+  service_account: marker-workspace@project-ws.iam.gserviceaccount.com
+`
+
+// TestLocalcfgRefusesASecondWorkspaceKey: the membership is a SCALAR (D1291).
+// A project is in at most one workspace -- the cap and the credential pool both
+// need a unique owner for a project, and "which of N workspaces' headroom
+// applies" has no answer a reader can act on -- so a list is refused by the
+// decode rather than read as a project in two of them.
+func TestLocalcfgRefusesASecondWorkspaceKey(t *testing.T) {
+	if _, err := Parse([]byte(sample + "workspace: [workspace-alpha, workspace-beta]\n")); err == nil {
+		t.Fatal("a list of workspaces was accepted")
+	}
+	if _, err := Parse([]byte(workspaceSample)); err != nil {
+		t.Fatalf("one workspace was refused: %v", err)
+	}
+}
+
+// TestPinRefusesAnIssuerThatIsNotTheProjectsSecuretokenIssuer: the signature is
+// verified against Google's one published set of Firebase signing keys, the
+// same document for every project, so "the keys the pinned project publishes"
+// is not a thing that exists. What tells one project's tokens from another's is
+// the pair aud/iss, and a pin whose two halves disagree is a typo the load
+// refuses rather than a member that trusts something narrower.
+func TestPinRefusesAnIssuerThatIsNotTheProjectsSecuretokenIssuer(t *testing.T) {
+	for name, tc := range map[string]struct{ issuer, msg string }{
+		"another project": {"https://securetoken.google.com/other-project", "must be \"https://securetoken.google.com/project-ws\""},
+		"no scheme":       {"securetoken.google.com/project-ws", "must be"},
+		"google":          {"https://accounts.google.com", "must be"},
+		"empty":           {"", "workspace_pin must carry"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			yaml := strings.Replace(workspaceSample, "  issuer: https://securetoken.google.com/project-ws\n", "  issuer: "+tc.issuer+"\n", 1)
+			if _, err := Parse([]byte(yaml)); err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want ~%q", err, tc.msg)
+			}
+		})
+	}
+	// The one issuer the project does mint is accepted, which is what makes the
+	// four cases above about the pair and not about the key.
+	if _, err := Parse([]byte(workspaceSample)); err != nil {
+		t.Fatalf("the project's own issuer was refused: %v", err)
+	}
+}
+
+// TestWorkspacePinAndMembershipAreOneStatement: the key and the pin are written
+// together by `workspace add` and read together here. A pin with no membership
+// is a trust nothing acts on, and a membership with half a pin is a member
+// whose admission depends on which half is absent -- both are refused rather
+// than read as a member that trusts less than the file says.
+func TestWorkspacePinAndMembershipAreOneStatement(t *testing.T) {
+	pinOnly := strings.Replace(workspaceSample, "workspace: workspace-alpha\n", "", 1)
+	if _, err := Parse([]byte(pinOnly)); err == nil || !strings.Contains(err.Error(), "workspace_pin is set and workspace names no workspace") {
+		t.Fatalf("a pin with no membership: %v", err)
+	}
+	for _, key := range []string{
+		"  firebase_project: project-ws\n",
+		"  issuer: https://securetoken.google.com/project-ws\n",
+		"  assertion_key: marker-assertion-key\n",
+		"  service_account: marker-workspace@project-ws.iam.gserviceaccount.com\n",
+	} {
+		yaml := strings.Replace(workspaceSample, key, "", 1)
+		if _, err := Parse([]byte(yaml)); err == nil || !strings.Contains(err.Error(), "workspace_pin must carry firebase_project, issuer, assertion_key and service_account together") {
+			t.Errorf("a pin without %q: %v", strings.TrimSpace(key), err)
+		}
+	}
+	// The four values are held to their own shapes: a Firebase project is a GCP
+	// project ID and the service account is an IAM address.
+	for name, tc := range map[string]struct{ yaml, msg string }{
+		"bad firebase project": {strings.Replace(workspaceSample, "firebase_project: project-ws", "firebase_project: Project_WS", 1), "is not a GCP project ID"},
+		"bad service account":  {strings.Replace(workspaceSample, "service_account: marker-workspace@project-ws.iam.gserviceaccount.com", "service_account: marker-workspace", 1), "is not a service account address"},
+		"bad workspace name":   {strings.Replace(workspaceSample, "workspace: workspace-alpha", "workspace: Workspace_Alpha", 1), "is not a project name"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want ~%q", err, tc.msg)
+			}
+		})
+	}
+}
+
+// TestWorkspaceMemberEntryValidation: one entry per member, keyed by the
+// member's Fugaro project name, and each value held to the shape the
+// workspace's own service resolves a caller by.
+func TestWorkspaceMemberEntryValidation(t *testing.T) {
+	entry := func(fields string) string {
+		return sample + "workspace_members:\n  aurora:\n" + fields
+	}
+	whole := entry("    job_service_accounts: [\"marker-job@aurora-gcp.iam.gserviceaccount.com\"]\n    firebase_project: aurora-fb\n    fp: aurora\n    exchange_url: https://exchange.example.com/v1\n")
+	if _, err := Parse([]byte(whole)); err != nil {
+		t.Fatalf("a whole entry was refused: %v", err)
+	}
+	for name, tc := range map[string]struct{ yaml, msg string }{
+		"nothing at all":       {entry(""), "declares nothing"},
+		"a list twice":         {entry("    repos: [owner/repo-a, owner/repo-a]\n"), "lists owner/repo-a twice"},
+		"a bad repo":           {entry("    repos: [nope]\n"), "must look like owner/name"},
+		"a bad account":        {entry("    job_service_accounts: [marker-job]\n"), "is not a service account address"},
+		"an account twice":     {entry("    job_service_accounts: [\"a@b.iam.gserviceaccount.com\", \"a@b.iam.gserviceaccount.com\"]\n"), "lists a@b.iam.gserviceaccount.com twice"},
+		"a bad firebase":       {entry("    firebase_project: Aurora_FB\n"), "is not a GCP project ID"},
+		"a GCP project as fp":  {entry("    fp: aurora-gcp\n"), ""},
+		"a bad fp":             {entry("    fp: Aurora\n"), "is not a project name"},
+		"a plain http url":     {entry("    exchange_url: http://exchange.example.com/v1\n"), "must be an https URL"},
+		"a url with userinfo":  {entry("    exchange_url: https://person-1@exchange.example.com/v1\n"), "must be an https URL"},
+		"a url with no host":   {entry("    exchange_url: https:///v1\n"), "must be an https URL"},
+		"a bad member name":    {sample + "workspace_members:\n  Aurora:\n    fp: aurora\n", "is not a project name"},
+		"a localhost exchange": {entry("    exchange_url: https://localhost:8080/v1\n"), ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.yaml))
+			if tc.msg == "" {
+				if err != nil {
+					t.Fatalf("a value the loader accepts was refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want ~%q", err, tc.msg)
+			}
+		})
+	}
+}
+
+// TestWorkspaceCapRefusesAnAmountTheFileCannotState: the block's presence is
+// the claim that there is a ceiling, so a block that states one states an
+// amount the workspace's credentials can actually spend against. The unit below
+// the file is the integer micro-dollar the budget database stores, so the
+// smallest cap the file can state is 0.000001.
+func TestWorkspaceCapRefusesAnAmountTheFileCannotState(t *testing.T) {
+	for name, tc := range map[string]struct{ amount, msg string }{
+		"zero":        {"0", "less than one micro-dollar"},
+		"negative":    {"-1", "must be a number from 0 to 100000"},
+		"too large":   {"100001", "must be a number from 0 to 100000"},
+		"a sub-micro": {"0.0000001", "less than one micro-dollar"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			yaml := sample + "workspace_cap:\n  monthly: " + tc.amount + "\n"
+			if _, err := Parse([]byte(yaml)); err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want ~%q", err, tc.msg)
+			}
+		})
+	}
+	// The block states its amount: a block with no monthly key is not a cap of
+	// nothing, it is a shape the file does not have.
+	if _, err := Parse([]byte(sample + "workspace_cap: {}\n")); err == nil {
+		t.Fatal("a cap block with no amount was accepted")
+	}
+	c, err := Parse([]byte(sample + "workspace_cap:\n  monthly: 0.000001\n"))
+	if err != nil {
+		t.Fatalf("the smallest cap the file can state was refused: %v", err)
+	}
+	if c.WorkspaceCap == nil || c.WorkspaceCap.Monthly != 0.000001 {
+		t.Fatalf("cap = %+v", c.WorkspaceCap)
+	}
+}
+
+// TestWorkspaceKeysAreLocalOnly: the membership, the pin, the member table and
+// the cap are this machine's own -- a launcher who could write one into the
+// runs bucket's shared file would be choosing which workspace reaches this
+// project's runs, and aiming this project's exchange -- so Shared drops all
+// four and a published file that carries one is refused.
+func TestWorkspaceKeysAreLocalOnly(t *testing.T) {
+	lc, err := Parse([]byte(workspaceSample + "workspace_members:\n  aurora:\n    fp: aurora\nworkspace_cap:\n  monthly: 50\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := lc.Shared().Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"workspace:", "workspace_pin", "workspace_members", "workspace_cap", "marker-assertion-key", "project-ws"} {
+		if strings.Contains(string(out), forbidden) {
+			t.Errorf("the published file carries %q:\n%s", forbidden, out)
+		}
+	}
+	if _, err := Parse(out); err != nil {
+		t.Errorf("the published file does not read back: %v", err)
 	}
 }

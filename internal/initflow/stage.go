@@ -95,6 +95,17 @@ const (
 	// runs are admitted by, and it is the one stage whose change is a
 	// document rather than an installation.
 	Policy = "policy"
+	// Workspace is the workspace OWNER's published record
+	// (internal/cli/update_workspace.go, D1292): `workspaces/<name>` in the
+	// workspace's own database, built from the record this installation
+	// declares (workspace_members and workspace_cap) and migrated in place
+	// when an older release wrote the node. It comes after the policy stage
+	// and before the layer's: the two are the run's published documents, and
+	// this one decides who is in the group the workspace's own service rolls
+	// up and admits against. A MEMBER's run of the same command registers the
+	// stage and skips it — a member holds no grant on the workspace's project
+	// at all — so it is the owner's installation that publishes.
+	Workspace = "workspace"
 	// Layer is the published project layer and the one local layer file the
 	// owner edits (internal/cli/init_layer_stage.go, D830/D831): the stage
 	// seeds the file from the published object when it is absent, publishes
@@ -162,6 +173,12 @@ var order = []slot{
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
 	{name: Policy, needs: []string{Repository, Rules}},
+	// The workspace record is the owner's own declaration, and the mark that
+	// lets this stage write into that database is the installation's
+	// (budgetDBUnadopted): it comes after the installation's own stages, and
+	// after the policy one because the two are the run's published documents
+	// and the policy node is what every run of the project is admitted by.
+	{name: Workspace, needs: []string{Installation2, Policy}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a
@@ -812,13 +829,31 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 	return ConfirmsByGate(class, c, m)
 }
 
+// PersonAtTheTerminal reports whether the conditions put a person at the
+// project's own terminal, there to read a document and answer for it: the
+// owner's own session (no marker), a real terminal, and none of the three
+// things that say nobody can answer a prompt — --ask (the owner asking to be
+// asked again is a question to put, never a licence to skip one),
+// --non-interactive and --json.
+//
+// It is ConfirmsByGate's condition half, named once so that a caller asking
+// the same question about a document the gate's verdict does not cover — the
+// policy node a managed project rewrites, whose loosening takes the Typed
+// class and is admitted by no plan gate — asks it the same way. The terminal
+// is the load-bearing half and the one a caller writing this out again would
+// drop: a pipe carries no marker, so a session nobody is at reads exactly like
+// the owner's own.
+func PersonAtTheTerminal(c Conditions) bool {
+	return !c.Ask && c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
+}
+
 // ConfirmsByGate reports whether the gate's verdict IS the confirmation for a
 // step of the class under the conditions: the owner at their own real
 // terminal, on a managed project, for a document the gate admitted. It is the
 // branch CanConfirmManaged decides on, named so that a caller which is about
 // to show a prompt asks the same question the rule asks rather than writing
 // the conditions out again — a caller that re-derived them is a caller that
-// could drop one, and the one it would drop is the terminal.
+// could drop one, and the one it would drop is the terminal (PersonAtTheTerminal).
 //
 // A coding agent's session is not this case, and deliberately: what replaces
 // the confirmation there is CanConfirmManaged's first branch (Removes), whose
@@ -826,7 +861,7 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 // The two are told apart by the marker, because this branch is about who is
 // there to read the document the gate read.
 func ConfirmsByGate(class ConfirmClass, c Conditions, m Managed) bool {
-	return !c.Ask && c.Agent == "" && m.Removes(class) && c.Terminal && !c.NonInteractive && !c.JSON
+	return PersonAtTheTerminal(c) && m.Removes(class)
 }
 
 // CanConfirm reports whether a step of the class can be confirmed under the

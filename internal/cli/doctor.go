@@ -462,6 +462,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, *c)
 	}
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
+	// What a run drops of a job's own environment, per job (docs/image-env,
+	// reconciliation D1377): a measurement, so the default screen is untouched
+	// and --all and --json carry it.
+	o.Checks = append(o.Checks, doctorImageEnvChecks(ctx, lc)...)
 	// The secrets-brokering checks that read the installation rather than this
 	// checkout (plan B1.9): the credentials service and its callers' invoker
 	// grants, the age of the stored credentials, and — behind
@@ -516,6 +520,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
 	if co != nil {
+		// This checkout's own report folder, read before anything that needs
+		// the installation: the reviews-due line is offline, and the checkout
+		// standing in front of the reader is what it is about (R2).
+		if c := doctorReviewsCheck(co.Root, budgetNow()); c != nil {
+			o.Checks = append(o.Checks, *c)
+		}
 		if fyCheck != nil {
 			o.Checks = append(o.Checks, *fyCheck)
 			o.FugaroYAML = fy

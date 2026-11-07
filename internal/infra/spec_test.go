@@ -238,9 +238,13 @@ func TestSpecMatchesM4JobSpec(t *testing.T) {
 	if ws.ServiceAccount.DisplayName != gcp.JobSADisplayName(ws.Slug, "web") || ws.ServiceAccount.DisplayName == str("service_account_display_name") {
 		t.Errorf("display name = %q; the new mark is JobSADisplayName, the M4 one only its legacy form", ws.ServiceAccount.DisplayName)
 	}
+	// The M4 fixture predates the image's origin stamp, which every workflow
+	// job now carries (empty when the catalog chose no image): compare the rest.
+	m4Env := maps.Clone(ws.Env)
+	delete(m4Env, ImageEntryEnv)
 	for name, c := range map[string]struct{ got, want map[string]string }{
-		"env":          {ws.Env, anyMap(golden["env"].(map[string]any))},
-		"env row":      {ws.Env, pairs(t, strings.TrimPrefix(rows["env"], "^;^"), ";", "")},
+		"env":          {m4Env, anyMap(golden["env"].(map[string]any))},
+		"env row":      {m4Env, pairs(t, strings.TrimPrefix(rows["env"], "^;^"), ";", "")},
 		"secrets":      {envSecretIDs(ws), anyMap(golden["secrets"].(map[string]any))},
 		"secrets row":  {envSecretIDs(ws), pairs(t, rows["secrets"], ",", ":latest")},
 		"secret-names": {ws.SecretIDs, pairs(t, rows["secret-names"], ";", "")},
@@ -675,6 +679,104 @@ func TestSpecCloneSetsRemoteEnv(t *testing.T) {
 	}
 	if _, ok := rs.Workflows["api"].Env[RemoteEnv]; ok {
 		t.Errorf("api (baked) carries %s = %q, want no such key", RemoteEnv, rs.Workflows["api"].Env[RemoteEnv])
+	}
+}
+
+// TestSpecStampsTheCatalogEntryOnTheJob: a job whose image the project's
+// image_catalog chose carries the entry's own name in FUGARO_IMAGE_ENTRY
+// (runner.ImageEntryEnv), which is the one fact that tells a run its image is
+// an operator's and not a repository's (docs/image-env, reconciliation F5/F6,
+// D1371). It is written for a built entry and a prebuilt one alike:
+// CatalogImageEntry reads the entry back out of a prebuilt reference, so both
+// are the catalog's and both stamp. The value is a name — the text
+// config.ValidateCatalog checked — and never the reference the job's Image
+// holds, which is what a report prints and a reader recognises.
+//
+// Mutation (run, restore): write ws.Image in place of entry.Name in
+// workflow() — this test then fails on a reference where the entry's name is
+// wanted.
+func TestSpecStampsTheCatalogEntryOnTheJob(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		spec  func(t *testing.T) RepoSpec
+		entry string
+	}{
+		{"built", func(t *testing.T) RepoSpec {
+			_, spec := catalogSpec(t)
+			return spec
+		}, "base"},
+		{"prebuilt", func(t *testing.T) RepoSpec {
+			spec, err := Repo(budgetInputs(t, prebuiltCatalogBlock))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return spec
+		}, "team"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			spec := c.spec(t)
+			if len(spec.Workflows) == 0 {
+				t.Fatal("fixture bug: no workflows")
+			}
+			for name, ws := range spec.Workflows {
+				if ws.CatalogEntry != c.entry {
+					t.Fatalf("fixture bug: workflow %s runs entry %q, want %q", name, ws.CatalogEntry, c.entry)
+				}
+				if got := ws.Env[ImageEntryEnv]; got != c.entry {
+					t.Errorf("workflow %s: %s = %q, want the entry's own name %q", name, ImageEntryEnv, got, c.entry)
+				}
+			}
+		})
+	}
+}
+
+// TestSpecStampsNoEntryOnAJobWithNoCatalogEntry: a job whose image the catalog
+// did not choose carries no stamp at all — the key is absent, not empty — so a
+// run on it passes none of its image's own variables. That is D1371's
+// fail-closed direction, and it is what makes the scope D1370 rules
+// enforceable: a repository-authored Dockerfile is repository text, and the
+// repository's own image is the one a run must not take its variables from.
+//
+// Mutation (run, restore): write the key outside the `entry.Name != ""` guard
+// in workflow() — this test then fails: every job carries it, empty where the
+// catalog chose nothing, and an empty stamp is a job a run would treat as
+// stamped.
+func TestSpecStampsNoEntryOnAJobWithNoCatalogEntry(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		spec func(t *testing.T) RepoSpec
+	}{
+		{"a repository-built job", func(t *testing.T) RepoSpec {
+			spec, err := Repo(webappInputs(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return spec
+		}},
+		{"a checkout: clone job", func(t *testing.T) RepoSpec {
+			spec, err := Repo(cloneInputs(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return spec
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			spec := c.spec(t)
+			if len(spec.Workflows) == 0 {
+				t.Fatal("fixture bug: no workflows")
+			}
+			for name, ws := range spec.Workflows {
+				if ws.CatalogEntry != "" {
+					t.Fatalf("fixture bug: workflow %s runs entry %q, want none", name, ws.CatalogEntry)
+				}
+				// Present and empty: a key the job sets overrides an
+				// image's own ENV of the same name, an absent one does not.
+				if got, ok := ws.Env[ImageEntryEnv]; !ok || got != "" {
+					t.Errorf("workflow %s carries %s = %q (set: %v), want the key present and empty", name, ImageEntryEnv, got, ok)
+				}
+			}
+		})
 	}
 }
 
@@ -3507,39 +3609,18 @@ func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
 	}
 }
 
-// TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv (#1752): a prebuilt entry's
-// image is the operator's own reference, shared by every repository that
-// names the entry, so it can bake no checkout of this repository: the run has
-// to clone one and the job must say from where. FUGARO_REMOTE is the
-// repository's own credential-free clone URL, exactly as on a clone or shared
-// job.
-//
-// FUGARO_CHECKOUT stays off that job: the entry's image holds the tools its
-// own build installed, so the run must not take the clone kind's path (a
-// blobless clone and a mise install), and the whole clone it makes instead is
-// what a follow-up and merge-base need.
-//
-// Mutation (run, restore): drop `|| ws.CatalogPrebuilt` from the remote's
-// condition in workflow() — this test then fails: the job carries no
-// FUGARO_REMOTE, and a run of it dies in bootstrap with "no git checkout and
-// no remote to clone".
-func TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv(t *testing.T) {
-	rs, err := Repo(catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, ws := range rs.Workflows {
-		if !ws.CatalogPrebuilt {
-			t.Fatalf("workflow %s runs %q, not a prebuilt entry: this test would prove nothing", name, ws.Image)
-		}
-		if got := ws.Env[RemoteEnv]; got != "https://github.com/acme/webapp.git" {
-			t.Errorf("%s's %s = %q, want the repository's clone URL: a prebuilt entry's image bakes no checkout, so the run clones one", name, RemoteEnv, got)
-		}
-		if got, ok := ws.Env[CheckoutEnv]; ok {
-			t.Errorf("%s carries %s = %q, want no such key: a prebuilt entry's image installed its own tools, so the run is no clone kind", name, CheckoutEnv, got)
-		}
-	}
-}
+// A prebuilt catalog entry used to reach a job here, and #1752's two tests —
+// TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv and
+// TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree — pinned the clone shape
+// that job carried (FUGARO_REMOTE and no FUGARO_CHECKOUT). R1 (#1698, D1191)
+// refuses a prebuilt entry on a baked workflow where the spec is built, and
+// the only two checkout kinds that leave the catalog inert — clone and shared
+// — make catalog.Applies false, so catalogJobImage returns an empty entry for
+// them and WorkflowSpec.CatalogPrebuilt is never set from this path: the
+// remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
+// configuration exercises it. The behaviour those tests were about — the
+// remote on a job whose image holds no checkout, credential-free — stays
+// covered by TestSpecCloneSetsRemoteEnv and TestSpecSharedRemoteIsCredentialFree.
 
 // TestSpecBuiltCatalogEntryCarriesNoRemoteEnv (#1752): the remote is for a job
 // whose image bakes no checkout, and a built entry's image is this
@@ -3562,33 +3643,6 @@ func TestSpecBuiltCatalogEntryCarriesNoRemoteEnv(t *testing.T) {
 		if got, ok := ws.Env[RemoteEnv]; ok {
 			t.Errorf("%s runs a built entry and carries %s = %q, want no such key: its image bakes the repository", name, RemoteEnv, got)
 		}
-	}
-}
-
-// TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree (#1752, security): the
-// remote a prebuilt entry's job clones from is the repository's own https,
-// credential-free clone URL, because it is written by the same repoURL-checked
-// value a clone job's is, and a URL carrying credentials is refused outright,
-// before any job spec exists. No token reaches that job's environment: the
-// clone's credential is the run's own git auth, the way it is for every other
-// job.
-func TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree(t *testing.T) {
-	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
-	in.RepoURL = "https://person-1:token-shaped@github.com/acme/webapp.git"
-	if _, err := Repo(in); err == nil {
-		t.Fatal("Repo accepted a clone URL carrying credentials for a prebuilt catalog entry's job")
-	}
-
-	rs, err := Repo(catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	remote := rs.Workflows["web"].Env[RemoteEnv]
-	if !strings.HasPrefix(remote, "https://") {
-		t.Errorf("web's %s = %q, want an https URL", RemoteEnv, remote)
-	}
-	if strings.Contains(remote, "@") || strings.Contains(remote, "person-1") {
-		t.Errorf("web's %s = %q, want the repository's own URL with no credential in it", RemoteEnv, remote)
 	}
 }
 
@@ -3621,20 +3675,21 @@ func TestSpecRefusesAJobNoCatalogEntryCovers(t *testing.T) {
 
 // TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne is D1140's keep
 // rule at this seam: a local config that writes a catalog is what the specs
-// are computed from, and the published node is not consulted for it. An entry
-// whose source is a prebuilt image is used exactly as it is written.
+// are computed from, and the published node is not consulted for it. Both
+// entries of the local catalog are built ones, because a prebuilt entry could
+// not reach a baked workflow's job at all (D1191).
 func TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne(t *testing.T) {
 	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
 	in.LC.ImageCatalog = &config.Catalog{Entries: []config.Entry{
 		{Name: "minimal", Tags: []string{"postgres", "redis"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "minimal/Dockerfile"}},
-		{Name: "local-default", Default: true, Tags: []string{"node", "postgres", "redis", "firebase-emulator"}, Source: config.Source{Kind: config.SourceImage, Image: "ghcr.io/acme/local:1"}},
+		{Name: "local-default", Default: true, Tags: []string{"node", "postgres", "redis", "firebase-emulator"}, Source: config.Source{Kind: config.SourceInline, Inline: "FROM scratch\n"}},
 	}}
 	rs, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	shared := in.Installation.RegistryHost + "/" + gcp.SharedRegistryRepoID()
-	if got, want := rs.Workflows["bare"].Image, "ghcr.io/acme/local:1"; got != want {
+	if got, want := rs.Workflows["bare"].Image, shared+"/catalog-local-default:latest"; got != want {
 		t.Errorf("bare's image = %q, want %q: the local config's catalog is the effective one (D1140)", got, want)
 	}
 	if got, want := rs.Workflows["api"].Image, shared+"/catalog-minimal:latest"; got != want {
@@ -3643,8 +3698,9 @@ func TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne(t *testing.T) {
 }
 
 // prebuiltCatalogEntries are the same three entries with a prebuilt image
-// source: nothing in Fugaro builds them, so the daily check has nothing of
-// theirs to rebuild.
+// source: nothing in Fugaro builds them, so a baked workflow whose image one
+// of them would be is refused (D1191) and there is nothing of theirs for a
+// check to rebuild either.
 func prebuiltCatalogEntries() []config.Entry {
 	return []config.Entry{
 		{Name: "minimal", Tags: []string{"postgres", "redis"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-minimal:1"}},
@@ -3655,30 +3711,23 @@ func prebuiltCatalogEntries() []config.Entry {
 
 // TestSpecCatalogOnlyRepoNeedsNoBaseImage: the daily check rebuilds the
 // repository's own derived image, and a workflow a catalog entry gives its
-// image to never runs one — a prebuilt entry's image is pushed by the
-// operator, and a built one is the catalog's own project-level check's to
-// rebuild (D1148), never this repository's. Such a workflow is therefore
-// never checked here, so a repository whose every workflow runs a catalog
-// entry needs no base_images entry at all and fugaro update --repo must not
-// refuse it for one (issue 1661 item 3). Both entry sources are covered
-// because the reason is the same for both: what the check rebuilds is not
-// what the job runs.
+// image to never runs one — a built entry's image is the catalog's own
+// project-level check's to rebuild (D1148), never this repository's. Such a
+// workflow is therefore never checked here, so a repository whose every
+// workflow runs a catalog entry needs no base_images entry at all and
+// fugaro update --repo must not refuse it for one (issue 1661 item 3).
+//
+// The entries are built ones only: a prebuilt entry on a baked workflow is
+// refused before any of this is computed (D1191).
 func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
-	for name, entries := range map[string][]config.Entry{
-		"prebuilt":          prebuiltCatalogEntries(),
-		"built from a repo": catalogEntries(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			in := catalogInputs(t, &config.Catalog{Entries: entries})
-			delete(in.LC.BaseImages, config.BaseKind)
-			rs, err := Repo(in)
-			if err != nil {
-				t.Fatalf("Repo = %v, want no error: no workflow of this repository runs a per-repository image", err)
-			}
-			if rs.Check != nil {
-				t.Errorf("the repository has a daily image check job %s, want none: every workflow runs a catalog entry", rs.Check.Job)
-			}
-		})
+	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
+	delete(in.LC.BaseImages, config.BaseKind)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatalf("Repo = %v, want no error: no workflow of this repository runs a per-repository image", err)
+	}
+	if rs.Check != nil {
+		t.Errorf("the repository has a daily image check job %s, want none: every workflow runs a catalog entry", rs.Check.Job)
 	}
 }
 
@@ -3686,8 +3735,12 @@ func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
 // workflow, not per repository. A workflow that keeps its own image
 // definition is not the catalog's (catalog.Applies), so the repository keeps
 // its daily check and the check covers that workflow alone.
+//
+// Every entry here is one Fugaro builds, so that the one workflow the check
+// covers is not the catalog's for the reason this test is about: a prebuilt
+// entry on a baked workflow is refused before any of this is computed (D1191).
 func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
-	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
 	w := in.Cfg.Workflows["api"]
 	w.Needs = nil
 	w.Image = config.Image{Tools: config.MiseTools{"node": "24"}}
@@ -3698,6 +3751,128 @@ func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
 	}
 	if rs.Check == nil || !slices.Equal(rs.Check.Workflows, []string{"api"}) {
 		t.Fatalf("the daily check covers %v, want only the workflow that builds an image of its own", rs.Check)
+	}
+}
+
+// TestBakedWorkflowRefusesAPrebuiltCatalogEntry: a checkout: baked job's image
+// has to hold this repository's checkout, and a prebuilt catalog entry is the
+// one source kind nothing guarantees that of (D1191). The refusal belongs where
+// the spec is built, because the entry is chosen and the image written there
+// (F7, F14): the job a repository without it gets holds no checkout and no
+// remote and fails at bootstrap, with nothing naming the entry it runs
+// (unbuiltOnBaked's own comment).
+//
+// The three shapes are the three ways an entry reaches a workflow's job — a
+// pin, the tag-cover rule and the project's default — because the refusal reads
+// the entry the selection chose and not the key the workflow wrote: an entry
+// the catalog gains after this refusal was written is refused by it too.
+//
+// The fourth states the checkout kind as the empty value, which is the reading
+// the refusal has to take: every workflow a config file produces carries
+// baked, clone or shared by the time it is validated (applyDefaults writes
+// baked for an empty one), so the empty value is what a config that never met
+// the loader's defaults carries — and it is a job the runner provisions as
+// baked, which is why a guard asking equality with baked would deploy the very
+// job this rule exists to stop.
+func TestBakedWorkflowRefusesAPrebuiltCatalogEntry(t *testing.T) {
+	for _, tt := range []struct{ name, workflow, entry, checkout string }{
+		{"a pinned entry", "pinned", "minimal", config.CheckoutBaked},
+		{"an entry the tags chose", "api", "minimal", config.CheckoutBaked},
+		{"the project's default", "bare", "standard", config.CheckoutBaked},
+		{"a checkout the loader's defaults never filled in", "bare", "standard", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+			w := in.Cfg.Workflows[tt.workflow]
+			w.Checkout = tt.checkout
+			in.Cfg.Workflows = map[string]config.Workflow{tt.workflow: w}
+			_, err := Repo(in)
+			if err == nil {
+				t.Fatalf("the workflow %s runs the prebuilt entry %s and was accepted, so its job would deploy on an image that holds no checkout", tt.workflow, tt.entry)
+			}
+			var ue *UserError
+			if !errors.As(err, &ue) {
+				t.Fatalf("err = %v, want a UserError: the fix is the project's catalog", err)
+			}
+			for _, want := range []string{
+				"workflow " + tt.workflow,
+				"the catalog entry " + tt.entry,
+				"source kind image",
+				"checkout: clone",
+				// The clone half has to name the keys it costs: a workflow the
+				// refusal sends to clone may be carrying image_name: or needs:,
+				// and checkout: clone refuses both, so a refusal that did not
+				// say so would send its reader to a config validate: refuses
+				// next.
+				"image_name: or needs:",
+				"a catalog entry Fugaro builds",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q does not carry %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+// TestCloneWorkflowAcceptsAPrebuiltCatalogEntry is the control for the refusal
+// above, and the reason it is not "prebuilt entries are refused": what the
+// refusal is about is the baked checkout kind. The workflow is `bare` — one
+// that names no entry and needs nothing — because checkout: clone and a catalog
+// reference are refused together (internal/config), so a control built on the
+// pinned or tag-covering workflow the refusal above covers would be refused
+// before the catalog was asked. The check below holds that: the configuration
+// this control runs on is one a repository can write, and the same one with a
+// reference added is not. Its job runs the installation's base image and the
+// catalog does not speak for it at all (catalog.Applies), so the entry the test
+// above refuses is inert here and the spec is built.
+func TestCloneWorkflowAcceptsAPrebuiltCatalogEntry(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	w := in.Cfg.Workflows["bare"]
+	w.Checkout = config.CheckoutClone
+	in.Cfg.Workflows = map[string]config.Workflow{"bare": w}
+	if ps := config.Validate(in.Cfg); len(ps) > 0 {
+		t.Fatalf("the control's own configuration is refused before it reaches the catalog, so it proves nothing about a clone job: %v", ps)
+	}
+	refused := *in.Cfg
+	withRef := refused.Workflows["bare"]
+	withRef.Needs = []string{"jvm"}
+	refused.Workflows = map[string]config.Workflow{"bare": withRef}
+	if ps := config.Validate(&refused); len(ps) == 0 {
+		t.Fatal("checkout: clone alongside needs: is accepted, so the check above cannot tell a clone shape from one a repository cannot write")
+	}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatalf("Repo = %v, want no error: the refusal is a baked workflow's (D1191)", err)
+	}
+	if got, want := rs.Workflows["bare"].Image, in.LC.BaseImage(config.BaseKind); got != want {
+		t.Errorf("the clone workflow's image = %q, want the installation's base image %q", got, want)
+	}
+	if got := rs.Workflows["bare"].CatalogEntry; got != "" {
+		t.Errorf("the clone workflow runs catalog entry %q, want none: the catalog does not speak for a clone workflow", got)
+	}
+}
+
+// TestBuiltSourceKindsClassifyEveryCatalogSourceKind holds the fail-closed
+// half of D1191's rule to the kinds that exist: builtSourceKinds is what a
+// build writes rather than what it does not, which is only safe while every
+// kind the catalog offers is decided somewhere, so a kind added to
+// config.SourceKinds has to be classified here in the same change. Without
+// this, the new kind would be refused as prebuilt on every baked workflow —
+// a false refusal of a configuration the rest of the tree builds — until
+// somebody noticed.
+func TestBuiltSourceKindsClassifyEveryCatalogSourceKind(t *testing.T) {
+	for _, k := range config.SourceKinds {
+		kind := config.SourceKind(k)
+		built := slices.Contains(builtSourceKinds, kind)
+		if want := kind != config.SourceImage; built != want {
+			t.Errorf("builtSourceKinds holds %s = %v, want %v: a kind the catalog gains is classified as built or as prebuilt in the same change, or every baked workflow on an entry of that kind is refused (D1191)", k, built, want)
+		}
+	}
+	for _, kind := range builtSourceKinds {
+		if !slices.ContainsFunc(config.SourceKinds, func(k string) bool { return config.SourceKind(k) == kind }) {
+			t.Errorf("builtSourceKinds holds %q, which is no kind of config.SourceKinds: the list is read as a classification of the kinds the catalog has", kind)
+		}
 	}
 }
 

@@ -339,7 +339,7 @@ func (s *layerStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan,
 		return initflow.Plan{NothingToDo: true, Detail: p.skip}, nil
 	}
 	if p.stale != nil && (env.Interactive || env.Yes) {
-		p.printReseedState(s.e.r.cmd.OutOrStdout())
+		p.printReseedState(s.e.r.w)
 	}
 	return initflow.Plan{Detail: p.planDetail()}, nil
 }
@@ -397,7 +397,7 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 	case p.migrate:
 		return s.migrateLocal(p)
 	case p.recordGen:
-		if err := layerGenerationRecord(s.e.r.cmd.OutOrStdout(), p.configPath, p.lc, p.gen); err != nil {
+		if err := layerGenerationRecord(s.e.r.w, p.configPath, p.lc, p.gen); err != nil {
 			return initflow.Outcome{}, err
 		}
 		return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("recorded the published project layer's generation (%d) in %s", p.gen, p.configPath)}, nil
@@ -409,8 +409,8 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 // what makes the file usable on an installation that has never had one. It
 // writes only this machine's file: the object is left exactly as it is.
 func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
-	cmd := s.e.r.cmd
-	if err := confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerSeedWhat)); err != nil {
+	cmd, w := s.e.r.cmd, s.e.r.w
+	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerSeedWhat)) }); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
@@ -419,10 +419,10 @@ func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, err
 	if err := writeFileAtomic(p.path, p.published); err != nil {
 		return initflow.Outcome{}, userErr("seeding %s: %v", p.path, err)
 	}
-	if err := layerGenerationRecord(cmd.OutOrStdout(), p.configPath, p.lc, p.gen); err != nil {
+	if err := layerGenerationRecord(w, p.configPath, p.lc, p.gen); err != nil {
 		return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("seeded %s from the published project layer", p.path)}, err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "seeded %s from the published project layer (generation %d, sha256 %s): edit it and run %s to publish it\n",
+	fmt.Fprintf(w, "seeded %s from the published project layer (generation %d, sha256 %s): edit it and run %s to publish it\n",
 		p.path, p.gen, config.LayerSum(p.published), selfCommand()+" update")
 	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("seeded %s from the published project layer (generation %d)", p.path, p.gen)}, nil
 }
@@ -437,8 +437,8 @@ func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, err
 // write the operator did not agree to — which publishLayer's own executable-key
 // gate still withholds afterwards, with the banner that names the keys.
 func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
-	cmd := s.e.r.cmd
-	if err := confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerPublishWhat)); err != nil {
+	cmd, w := s.e.r.cmd, s.e.r.w
+	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerPublishWhat)) }); err != nil {
 		return initflow.Outcome{}, err
 	}
 	b, err := openRecordBucket(ctx, p.url)
@@ -447,26 +447,26 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 	}
 	defer b.Close()
 	rec := layerRecord{path: p.configPath, lc: p.lc}
-	gen, err := publishLayer(ctx, cmd.ErrOrStderr(), b, p.l, false, p.objectAt(), rec)
+	gen, err := publishLayer(ctx, w, b, p.l, false, p.objectAt(), rec)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "published the project layer of %s (generation %d, sha256 %s) from %s\n", p.lc.Name, gen, p.l.SHA256, p.path)
+	fmt.Fprintf(w, "published the project layer of %s (generation %d, sha256 %s) from %s\n", p.lc.Name, gen, p.l.SHA256, p.path)
 	if p.adopted {
 		// D854's first-run answer: an installation that records no generation
 		// has no baseline to compare against, so this run records the one it
 		// publishes as the generation the file is written from — and says so,
 		// because the record that appears in the owner's config afterwards is
 		// what their next edit is read against.
-		fmt.Fprintf(cmd.OutOrStdout(), "this machine's config records no generation for its layer file, so this run adopts the one it publishes (%d) as the generation the file is written from\n", gen)
+		fmt.Fprintf(w, "this machine's config records no generation for its layer file, so this run adopts the one it publishes (%d) as the generation the file is written from\n", gen)
 	}
 	// The file this publish was made from is the object's own layer now, so a
 	// file still holding the removed keys is rewritten from the bytes that were
 	// just written: leaving it would make every later run report it as a local
 	// edit and publish it again.
 	if p.localRemoval != nil {
-		printLayerRemoval(cmd.OutOrStdout(), "your local layer file "+p.path, p.localRemoval)
-		if err := rewriteLocal(cmd.OutOrStdout(), p, p.l.Raw); err != nil {
+		printLayerRemoval(w, "your local layer file "+p.path, p.localRemoval)
+		if err := rewriteLocal(w, p, p.l.Raw); err != nil {
 			return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("published the project layer from %s (generation %d)", p.path, gen)}, err
 		}
 	}
@@ -474,7 +474,7 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 	// already holds: opening a backend it never calls would make the layer
 	// depend on the compute platform being reachable, which the run's own
 	// stages answer for.
-	failed := fanOutLayer(ctx, cmd.OutOrStdout(), &cloudEnv{lc: p.lc, bucket: b}, p.l, gen)
+	failed := fanOutLayer(ctx, w, &cloudEnv{lc: p.lc, bucket: b}, p.l, gen)
 	if failed > 0 {
 		return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("published the project layer (generation %d)", gen)},
 			remote(fmt.Errorf("the project layer is published, but %d repository copy(ies) failed (listed above); run %s again", failed, selfCommand()+" update"))
@@ -497,10 +497,9 @@ func (p *layerPlan) printReseedState(w interface{ Write([]byte) (int, error) }) 
 // object — backed up first — instead of the object being overwritten with what
 // the older file says.
 func (s *layerStage) reseed(env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
-	cmd := s.e.r.cmd
-	out := cmd.OutOrStdout()
+	cmd, out := s.e.r.cmd, s.e.r.w
 	p.printReseedState(out)
-	if err := confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerReseedWhat)); err != nil {
+	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerReseedWhat)) }); err != nil {
 		return initflow.Outcome{}, err
 	}
 	backup, err := backupFile(p.path, p.localRaw, time.Now())

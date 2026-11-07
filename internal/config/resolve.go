@@ -120,6 +120,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoRigorSet = setsRigor(tree)
 		repo.RepoGovernanceSet = setsGovernance(tree)
 		repo.RepoGitAuthorSet = setsGitAuthor(tree)
+		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -166,6 +167,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoRigorSet = setsRigor(tree)
 	c.RepoGovernanceSet = setsGovernance(tree)
 	c.RepoGitAuthorSet = setsGitAuthor(tree)
+	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -332,16 +334,21 @@ func isLevelPath(path string) bool {
 // mergeLevel merges the review-level block sm into dm, the level at path. It
 // is not the key-by-key merge of every other block, because a level that is
 // off has no other keys: LevelSetting.validate refuses `none: true` beside
-// one, in a single file. A layer writing none: true is therefore saying the
-// level does not run, and the model, effort and focus the layer below gives
-// it are dropped rather than merged into a level that would carry both and be
-// refused for it; a layer writing any other key is turning the level back on,
-// so an inherited none: true is cleared instead of merged into the level it
-// contradicts. Both directions are one rule — none is the level's own switch,
-// not one of its settings — and they are what lets a repository turn off a
-// level the project set, and turn one the project turned off back on.
+// one, in a single file, and the literal model name none — the same switch
+// written the other way (NoneModel) — beside one too. A layer saying the level
+// does not run, in either spelling, is therefore saying the level does not
+// run, and the model, effort and focus the layer below gives it are dropped
+// rather than merged into a level that would carry both and be refused for it;
+// a layer writing any other key is turning the level back on, so an inherited
+// switch is cleared instead of merged into the level it contradicts. Both
+// directions are one rule — the switch is the level's own, not one of its
+// settings — and they are what lets a repository turn off a level the project
+// set, and turn one the project turned off back on.
 func mergeLevel(dm, sm map[string]any, path string, source string, sources map[string]string) {
 	off, wrote := levelNone(sm)
+	if levelModelNone(sm) {
+		off, wrote = true, true
+	}
 	switch {
 	case off:
 		clear(dm)
@@ -349,6 +356,10 @@ func mergeLevel(dm, sm map[string]any, path string, source string, sources map[s
 	case wrote || writesAKey(sm):
 		delete(dm, "none")
 		delete(sources, path+".none")
+		if levelModelNone(dm) {
+			delete(dm, "model")
+			delete(sources, path+".model")
+		}
 	}
 	overlay(dm, sm, path, source, sources)
 }
@@ -365,6 +376,19 @@ func levelNone(m map[string]any) (off, wrote bool) {
 	}
 	var b bool
 	return n.Decode(&b) == nil && b, true
+}
+
+// levelModelNone is whether a level block's model is the literal none, which
+// is the level's own switch written the other way (NoneModel). The node is
+// read the way levelNone reads the `none` key, so a value the config would
+// refuse to decode as a string is not read as one here either.
+func levelModelNone(m map[string]any) bool {
+	n, ok := m["model"].(*yaml.Node)
+	if !ok {
+		return false
+	}
+	var s string
+	return n.Decode(&s) == nil && s == NoneModel
 }
 
 // writesAKey is whether a level block sets one of the level's own keys, which
@@ -441,6 +465,40 @@ func setsGitAuthor(tree map[string]any) bool {
 	}
 	_, ok = git["author"]
 	return ok
+}
+
+// setsLevelsNoneModel is ProjectLayer.SetsLevelsNoneModel for a repository
+// file's own tree: whether the text names a level's model with the literal
+// none. It reads the tree and not the resolved agent.levels for the reason
+// setsRigor states — LevelSetting.validate folds the literal into the level's
+// switch, so the resolved block reads the same as one that wrote `none: true`
+// and cannot say which spelling the file used, while the gate needs it: a
+// runner older than noneModelSince reads the literal as a model ID. Its answer
+// becomes Config.RepoLevelsNoneModelSet.
+func setsLevelsNoneModel(tree map[string]any) bool {
+	return levelsNoneModel(tree["agent"])
+}
+
+// levelsNoneModel reports whether an agent block names a level's model with
+// the literal none, which both trees — the repository file's and the project
+// layer's defaults — read the same way: the level's own mapping, with a model
+// leaf that decodes to NoneModel. A level the block writes as something other
+// than a mapping is refused by the block's own decode, so it is not one.
+func levelsNoneModel(agent any) bool {
+	a, ok := agent.(map[string]any)
+	if !ok {
+		return false
+	}
+	levels, ok := a["levels"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, lv := range levels {
+		if m, ok := lv.(map[string]any); ok && levelModelNone(m) {
+			return true
+		}
+	}
+	return false
 }
 
 // docTree is a YAML document as Resolve merges it (nodeTree).

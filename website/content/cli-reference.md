@@ -4,9 +4,9 @@
 
 Every command and flag `fugaro` ships, generated from the command tree
 (`internal/cli.NewRootCmd`) by `go run ./ee/clidoc`. Cobra's own `help`
-and `completion` commands, the root's `-v, --version` flag, and the
-`-h, --help` flag of every command, are part of what `fugaro --help` lists,
-so they are here too. Commands the CLI
+and `completion` commands, the root's `-v, --verbose` and `--version`
+flags, and the `-h, --help` flag of every command, are part of what
+`fugaro --help` lists, so they are here too. Commands the CLI
 hides are not listed: they are internal, and a hidden command is not user
 documentation.
 
@@ -21,7 +21,8 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for fugaro |
-| `-v`, `--version` | bool | `false` | no | version for fugaro |
+| `-v`, `--verbose` | bool | `false` | no | print the run's full output as it goes, not one line per step |
+| `--version` | bool | `false` | no | version for fugaro |
 
 Subcommands:
 
@@ -38,6 +39,7 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro logs` -- Print a run's logs from Cloud Logging
@@ -65,6 +67,7 @@ Subcommands:
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
 - `fugaro watch` -- Watch the project's spend, repositories and running agents live
+- `fugaro workspace` -- Join this project to a workspace, or declare one
 
 ## `fugaro accounts`
 
@@ -83,6 +86,7 @@ Subcommands:
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+- `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
 
 ## `fugaro accounts add`
 
@@ -250,6 +254,63 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name (default: this checkout's origin) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts rm`
+
+Remove a named Claude account, its secret and the job that served it
+
+Remove a named Claude OAuth account from this project and converge the
+installation on its absence.
+
+The account is removed in the order that cannot strand a running job. While a
+profile still lists it, the command refuses — naming each profile — because a
+profile's claude_accounts is a job this installation has deployed, and removing
+the account under a live job leaves a job the policy cannot describe:
+fugaro accounts rm NAME --profile PROFILE takes the name out of that profile's
+list alone, and this command removes the declaration, the secret and the job
+once no profile lists it.
+
+If a repository's committed fugaro.yaml still names the account in
+agent.oauth_token, the command warns instead, naming the repository and the run
+that stops at launch: that file belongs to the repository and not to this
+installation, so your own edit is not blocked by one this command cannot write.
+
+Removing the declaration also deletes the secret claude-oauth-token-<name>
+through Secret Manager's own delete. That delete cannot be undone — Secret
+Manager keeps no grace period for a secret — and the copy of the credential
+left behind is the token at the provider. The secret's ID is named in the
+confirmation before it goes, and the command says plainly that deleting the
+secret does not revoke the token at the provider: it stays valid until it
+expires or you revoke it in Anthropic's own console, which no command here
+reaches.
+
+Then it converges, in the same command and behind the same confirmation: the
+policy node the account was published in, the job set and this checkout's
+repository root, through the stages fugaro update runs.
+
+If the delete fails after the config was written, the config is put back the
+way it was and the command stops: an account whose declaration is gone while
+its secret is still there is the one state this command may not leave behind.
+
+Run it at your own terminal: this command deletes a credential, so a coding
+agent's session is refused, --yes included — a managed project's gate refuses
+the removal too, because the refs and the checkouts record its referrer check
+reads are documents the session writes, so no read here answers for what origin
+carries.
+
+Usage: `fugaro accounts rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--profile` | string | "" | no | the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time) |
+| `--yes` | bool | `false` | no | confirm the removal without a prompt |
 
 Subcommands:
 
@@ -1890,6 +1951,62 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro graph`
+
+Print the project's dependency graph
+
+Print the project's dependency graph as one versioned document.
+Every scope is read from the project's database through the caller's own
+credential: the coordinator's stored view is what the coordinator's sweep
+already wrote, so this command opens no host and works in a directory that
+is not a checkout. The one fact it needs is each repository's git
+provider, which the project config's repos entries carry and which the
+repository's slug is keyed by: a repository whose entry leaves provider
+out is refused with the sentence that says where to set it, rather than
+graphed from a guess.
+
+--source selects the scope, and the set is closed: all (the default) is
+every scope that exists, which today is the coordinator's stored view;
+coordinator is that view alone; orchestrator:<id> and local:<id> name scopes
+this build has no reader for yet and are refused rather than answered with an
+empty graph. An id is one lower-case letter or digit, then up to 39 more of
+those or a hyphen, and nothing else: anything that does not match is refused
+before anything is read.
+
+The coordinator's scope is every repository the local config lists, and a
+repository the sweep has never reconciled is read as its runs alone — the
+half of the view that needs no credential — rather than dropped. Which
+half it is is a fact about the repository and not about the scope: the
+scope's state is down when the project lists repositories and the sweep
+has stored a view for none of them, and up once it has stored one, beside
+records that may still be the runs half.
+
+With --json the document is printed as the console reads it: its version,
+when it was assembled, one entry per scope in sources, the nodes, the edges
+(the coordinator's view has none) and the warnings. Without it, a short
+table: each scope's state, then its nodes grouped by release.
+
+Exit codes: 1 for a refused scope or a project with no database, 2 for a
+failure of the database or the runs bucket.
+
+Usage: `fugaro graph`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for graph |
+| `--json` | bool | `false` | no | print the graph document as JSON |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--source` | string | `all` | no | the scope to read: all, coordinator, orchestrator:<id> or local:<id> |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro help`
 
 Help about any command
@@ -2002,7 +2119,12 @@ the checkout's fugaro.yaml and origin say what to build.
 
 A Cloud Build is billable, so it asks for the project's name typed at a real
 terminal: --json, a pipe and a coding agent's session never confirm it (it
-prints the one line to run in your own terminal window and exits 1).
+prints the one line to run in your own terminal window and exits 1). One
+exception: building a catalog entry in a project whose marks say it is
+managed asks a person at a real terminal nothing, because the managed gate
+judges that build against the project's own bound on billable builds and
+records it. A derived image (--workflow, or a checkout with no catalog) is
+not that row and keeps the typed name.
 --local builds with your own Docker and costs nothing in the cloud.
 
 Usage: `fugaro image build [name]`
@@ -2343,6 +2465,7 @@ Subcommands:
 
 - `fugaro managed apply` -- Apply the agent-authored Terraform root of a managed project, as the deployer account
 - `fugaro managed flag` -- Flag an existing GCP project as managed (the project's owner)
+- `fugaro managed status` -- Print a managed project's marks and its newest audit record
 - `fugaro managed unflag` -- Remove both marks that make a GCP project managed (the project's owner)
 
 ## `fugaro managed apply`
@@ -2478,6 +2601,58 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for flag |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro managed status`
+
+Print a managed project's marks and its newest audit record
+
+Print whether the selected project is managed, and what its audit trail
+records.
+
+This is the read a screen of a managed project is built on: one closed document
+about one project, holding the two marks' own answer and the bounded subset of
+the newest audit record — never a sentence to be parsed, whose next rewording
+would change what a screen draws.
+
+It reads the same two facts a managed apply reads, and changes no cloud object:
+whether the project is managed is the creation fact in its runs bucket and the
+fugaro_managed label on the project itself, which have to agree, and the trail
+is the records the managed commands file under gs://<runs bucket>/fugaro/managed-audit/.
+
+The trail is the newest record of the current UTC day, and of the previous day
+when today holds nothing, with the day and that day's count beside it. A day
+whose records could not be read is said rather than shown as an empty one: the
+two are different facts and only one of them is a reason to look further. A
+project that is not managed files no record at all, so its trail is not read and
+nothing is reported about it — and a project whose marker or label was removed
+is "not managed", never "revoked", which is a run-time decision of the gate and
+is recorded nowhere.
+
+What it prints is bounded on purpose: the record's time, its command, the gate's
+verdict, the account the write ran as and the plan digest. The record's argv is
+never printed, by this command or by anything that reads this document: it holds
+paths and titles an operator did not mean to publish.
+
+--json prints the document, which the desktop console reads as bytes: see the
+desktop console's JSON contract, section 6.21, for every member and what its
+emptiness means.
+
+Usage: `fugaro managed status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -3365,7 +3540,7 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--verbose` | bool | `false` | no | also print each recipe's use_when and steps |
+| `-v`, `--verbose` | bool | `false` | no | also print each recipe's use_when and steps |
 
 Subcommands:
 
@@ -3811,6 +3986,15 @@ ones up rather than reading records.
 block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
 writes a file, so a caller can read a report before committing it.
 
+--due is the cadence's own reading: it names the periods that have closed with no
+report under --dir, newest first -- the period that ended most recently is the
+first line, and of two that ended on the same day the longer one comes first --
+and how old the newest report it found is. It reads that folder and nothing else --
+no project, no credential, no bucket -- so it answers in a checkout that has never
+been set up, and it writes nothing: --period, --date, --repo, --stdout and
+--submit-draft have nothing to act on beside it and are refused by name. --json
+prints it as {version, dir, due[], newest}.
+
 --submit-draft prints neither: it prints a redacted learning draft a person can
 file as a "Skill learning" issue, and it sends nothing. The draft leaves the
 repository, so it carries no repository name and no run ID -- a period other
@@ -3832,6 +4016,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--date` | string | "" | no | any day inside the period (YYYY-MM-DD); default: the most recent closed period |
 | `--dir` | string | `docs/fugaro-reviews` | no | the folder the reports live in, relative to the working directory |
+| `--due` | bool | `false` | no | print the closed periods this checkout has no report for; reads the folder and nothing else |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for digest |
 | `--json` | bool | `false` | no | print the summary block and the patterns as JSON |
@@ -4834,7 +5019,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node: each of those is typed at a real terminal, and no flag stands in for one. The single one a managed project does not type is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 
@@ -4980,7 +5165,7 @@ Flags:
 | `--allow-fork` | bool | `false` | no | let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a terminal asks) |
-| `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the project's name typed at the review, each step's own, the y/Ns. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never reaches a Typed step (money, permanence, a secret: the owner's own word, which no door relaxes). In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
+| `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the project's name typed at the review, each step's own, the y/Ns. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never reaches a Typed step (money, permanence, a secret: the owner's own word, which no flag stands in for). In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
 | `--billing-account` | string | "" | no | the billing account the budget is on |
@@ -5020,7 +5205,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node: each of those is typed at a real terminal, and no flag stands in for one. The single one a managed project does not type is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 
@@ -5435,6 +5620,333 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace`
+
+Join this project to a workspace, or declare one
+
+A workspace is a grouping of Fugaro projects. It holds a model spend its own
+credentials pay for, and it admits its members' calls to them.
+
+A membership has two halves, written on two machines. A member's own config
+carries the membership key and its pin: the workspace's Firebase project, the
+issuer its exchange requires, the key it verifies a member-bound assertion
+against, and the workspace service account its own fugaro update binds its grant
+to. The workspace owner's config carries the other half: the member table, which
+is how the workspace reaches each member. This family writes the half that
+belongs to the machine it runs on.
+
+The reads are offline: ls and show read this machine's own project configs, no
+bucket and no cloud node, so they work anywhere, a coding agent's session
+included. The writes are local config edits — the diff, the backup and the
+atomic write the fugaro models commands make — and each ends by naming the one
+command that converges the installation: fugaro update.
+
+Usage: `fugaro workspace`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for workspace |
+
+Subcommands:
+
+- `fugaro workspace add` -- Join the selected project to a workspace, and pin what it trusts
+- `fugaro workspace cap` -- The workspace's own spend ceiling
+- `fugaro workspace ls` -- List the workspaces this machine's project configs name
+- `fugaro workspace member` -- Declare how the workspace reaches one of its members
+- `fugaro workspace rm` -- Leave a workspace: drop this project's membership key and its pin
+- `fugaro workspace show` -- Show one workspace from this machine's own files
+
+## `fugaro workspace add`
+
+Join the selected project to a workspace, and pin what it trusts
+
+Write the membership key and its pin into the selected project's own config.
+
+The four pin values are this project's own. It pins the workspace's Firebase
+project id, the issuer its exchange requires, the key it verifies a member-bound
+assertion against, and the workspace service account its own fugaro update binds
+its read-only database grant to. No code path reads one of them from the
+workspace's record, which carries none of them: a record that could supply them
+would aim this project's exchange and this project's database grant at a party
+of its choosing.
+
+The issuer must be exactly https://securetoken.google.com/<firebase-project>.
+The signature is verified against Google's one published set of Firebase signing
+keys, the same document for every project, so the aud/iss pair is the whole of
+what tells one project's tokens from another's; a mistyped half is refused here
+and refused again at the load.
+
+Only the keys it writes are rewritten: every comment and every other key of the
+file is kept. The write is local, and it reaches the installation through
+fugaro update.
+
+Usage: `fugaro workspace add <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--assertion-key` | string | "" | no | the key this project verifies a member-bound assertion against |
+| `--firebase-project` | string | "" | no | the workspace's Firebase project ID, which the token's aud must be |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--issuer` | string | "" | no | the issuer the exchange requires; must be https://securetoken.google.com/<firebase-project> |
+| `--service-account` | string | "" | no | the workspace service account this project's grant binds to |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace cap`
+
+The workspace's own spend ceiling
+
+The cap bounds the spend of the workspace's own credentials, and nothing else
+(D1300): it is not a bound on a member's total spend, and no member's own cap is
+widened by it. A member that routes every model call through the workspace is
+bounded by it as a consequence of how that member is configured, which is not
+the same thing as the cap being a bound on the member.
+
+It is never spelled globally: a cap belongs to one workspace, and the workspace
+is named by --workspace (F10).
+
+Usage: `fugaro workspace cap`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for cap |
+
+Subcommands:
+
+- `fugaro workspace cap set` -- Record the workspace's own cap in the local config
+
+## `fugaro workspace cap set`
+
+Record the workspace's own cap in the local config
+
+Write the workspace's own cap into the config of the workspace's own project.
+
+The amount is US dollars per month, and it is what the workspace's credentials
+may spend: fugaro update publishes it with the record, and the workspace's own
+service meters and enforces it there. It is more than zero — the smallest cap
+this file can state is 0.000001 — and at most 100000.
+
+Only the key it writes is rewritten: every comment and every other key of the
+file is kept.
+
+Usage: `fugaro workspace cap set --workspace <name> --monthly <amount>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--monthly` | float64 | `0` | no | the cap in US dollars per month, more than zero |
+| `--workspace` | string | "" | no | the workspace whose cap this is (required: a cap is never spelled globally) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace ls`
+
+List the workspaces this machine's project configs name
+
+List, offline, every workspace this machine's own files name.
+
+Two kinds of config name one. A config that carries the membership key names the
+workspace it belongs to, with the pin it trusts; a config that carries a member
+table or a cap is the workspace's own project, named after the workspace. The
+listing says which of the two each workspace is here, how many members this
+machine can see for it, and how many of this machine's configs name it.
+
+A config that could not be read is reported rather than skipped, and so is a
+half-done membership: a project the table lists that names no workspace, and one
+that names the workspace whose table here does not list it. Nothing here opens a
+bucket, calls an API or needs a credential.
+
+Usage: `fugaro workspace ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace member`
+
+Declare how the workspace reaches one of its members
+
+The owner's side of a membership.
+
+The workspace's own config holds one entry per member: the member's job service
+accounts, its Firebase project and fp, and its exchange URL, which is what the
+workspace's own service resolves a caller by (spec §5). The member's database
+URL is not among them: it is derived from the Firebase project the verified iss
+names, so an owner cannot pair one member's accounts with another's database.
+Neither is the runs bucket: the workspace holds no read of a member's runs.
+
+A member is in the workspace when the owner's table lists it AND the member's
+own config names the workspace. These commands write the owner's half, in the
+config of the project the workspace is named after.
+
+Usage: `fugaro workspace member`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for member |
+
+Subcommands:
+
+- `fugaro workspace member add` -- Declare a member: how the workspace reaches it
+- `fugaro workspace member rm` -- Stop declaring a member: drop its entry from the workspace's table
+
+## `fugaro workspace member add`
+
+Declare a member: how the workspace reaches it
+
+Write one member entry into the workspace's own project config.
+
+The four values are the workspace owner's declaration, made once per member: the
+member's job service accounts (the identities the workspace's service resolves a
+caller by), its Firebase project and fp (the project the caller's token is
+issued under, and the Fugaro project the token's fp claim must name), and its
+exchange URL (where the workspace's signer mints a member-bound assertion for).
+--repo names a repository the member contributes to the workspace, and is
+repeatable.
+
+A member the table already declares is replaced whole: the entry ends up
+holding the four values given and the repositories named, and nothing else. A
+re-declaration is therefore how a retired or compromised job service account
+leaves the table, and it asks for the workspace's own project name because what
+it removes is what the workspace trusted. Use fugaro workspace member rm to drop
+the entry altogether.
+
+Only the keys it writes are rewritten: every comment and every other key of the
+file is kept, except inside the entry it replaces, which is written fresh. The
+write is local; the owner's fugaro update publishes the record the table
+builds.
+
+Usage: `fugaro workspace member add <workspace> <project>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--exchange-url` | string | "" | no | the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for |
+| `--firebase-project` | string | "" | no | the member's Firebase project ID, which the caller's token is issued under |
+| `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--job-service-account` | stringArray | `[]` | no | a job service account of the member, which the workspace's service resolves a caller by (repeatable) |
+| `--repo` | stringArray | `[]` | no | a repository the member contributes to the workspace, as owner/name (repeatable) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace member rm`
+
+Stop declaring a member: drop its entry from the workspace's table
+
+Remove one member entry from the workspace's own project config.
+
+The workspace's service can no longer resolve that project as a caller, so its
+shared-credential calls are refused at the front door until it is declared
+again. The member's own config is not this command's to change: a member leaves
+by running its own fugaro workspace rm, and until it does the membership is
+half-done — which is what fugaro workspace show reports.
+
+Only the entry it removes is rewritten: every comment and every other key of the
+file is kept. The owner's fugaro update publishes the record the table builds.
+
+Usage: `fugaro workspace member rm <workspace> <project>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace rm`
+
+Leave a workspace: drop this project's membership key and its pin
+
+Remove the membership key and the pin from the selected project's own config.
+
+The project stops being a member of the workspace on this side. The workspace's
+own record is the owner's to change, and its member table is the owner's config:
+nothing here reaches either, and the owner's next fugaro update publishes the
+record its own table builds.
+
+Only the keys it removes are rewritten: every comment and every other key of the
+file is kept. The removal reaches the installation through fugaro update.
+
+Usage: `fugaro workspace rm <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace show`
+
+Show one workspace from this machine's own files
+
+Show one workspace, offline, from what this machine holds.
+
+This machine's half of a membership is the membership key and the pin, in the
+config of each project that names the workspace. The workspace owner's half is
+the member table and the cap, in the config of the project the workspace is
+named after. Which of the two this machine holds decides what there is to show,
+and the command says which it is rather than printing an empty member list:
+
+  - the workspace's own config here: the member table, the cap, and the drift
+    between the table and the configs that name the workspace;
+  - no such config here: the memberships this machine names, each with the pin
+    it carries, and the statement that the group's own record cannot be read
+    from here — a member holds no grant on the workspace's project at all, so no
+    command of this family reads one.
+
+The pin's assertion key is never printed: the command says it is set. Nothing
+here opens a bucket, calls an API or needs a credential.
+
+Usage: `fugaro workspace show <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
 

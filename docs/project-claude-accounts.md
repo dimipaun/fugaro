@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.19.0, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.20.3, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -34,8 +34,8 @@ the project job, where the credential is a fact of the **job** and not of the ru
 
 A named account is:
 
-- **a name**, `claude_accounts.<name>` in the project's local config, which decides the
-  repositories that may use its token (`allow_data_to`). The reserved name `default` is the
+- **a name**, `claude_accounts.<name>` in the project's local config (§2 writes it), which decides
+  the repositories that may use its token (`allow_data_to`). The reserved name `default` is the
   unsuffixed `claude-oauth-token` every repository already used, and it is defined by the
   `project_secrets` entry alone.
 - **a secret**, `claude-oauth-token-<name>`, **stored project-wide** — one copy for the whole
@@ -62,72 +62,103 @@ A named account is:
 Which credential a run holds is therefore decided **before** it starts, by which job it is launched
 onto. A repository that must run as another account belongs on a profile that serves it.
 
-## 2. Mint the tokens and store them project-wide
+## 2. Add an account: one command
 
-`claude setup-token` is Anthropic's own command and the only way to mint a token; Fugaro never
-mints one, never prints one and never takes one as an argument.
+**Per installation**, in your own terminal — in a checkout or not:
 
-1. **Mint — per installation machine, in your own terminal window.**
+```bash
+fugaro accounts add <name>
+```
 
-   ```bash
-   claude setup-token
-   ```
+That one command is the whole of it, and it is the path this page is about. It writes both
+declarations of §3 — the account's `claude_accounts.<name>.allow_data_to` and the name in one
+profile's `claude_accounts` — and does the rest in the same run: the token is stored **project-wide**
+as a new version of `claude-oauth-token-<name>`, and the installation is converged on the account —
+the policy node published, the account's job deployed, this checkout's repository root moved —
+through the stages `fugaro update` runs, behind one confirmation. Its last line says what is left,
+which is a `fugaro run` and never an update.
 
-   Run it as the person or team whose subscription the token belongs to. One token per account:
-   mint a separate token for each name you are about to declare, signing in to the account that name
-   is for. What Claude Code does when a machine already holds a token for another account (whether
-   it logs out first, takes a flag, or wants a separate profile) is not verified by Fugaro — no live
-   check has been run ([design/named-oauth-tokens.md](design/named-oauth-tokens.md) §7, U2) — and
-   `claude setup-token --help` in
-   your own install is the authority. Nothing in Fugaro depends on the answer: what it stores is
-   whatever value you paste.
+`--repos owner/a,owner/b` names the repositories the token may be sent to (the default is this
+checkout's origin), and `--profile NAME` names the profile whose jobs serve the account (the default
+is the only profile, when the config holds exactly one). The rules §4 states are applied to the
+config this would write, before anything is written.
 
-2. **Store — per installation, in your own terminal window, in a checkout or not.** The value goes
-   in on stdin or at a hidden prompt, never on the command line:
+**The token is read from stdin or at one hidden prompt, and neither is an argument, a flag or an
+environment variable:** the same read `fugaro secrets set` performs — the echo-free prompt on a
+terminal, and stdin when there is none, so a script pipes the value rather than passing it — held in
+memory, cleared after the store, and never written to a file, a log, a message, an argument or an
+environment variable.
 
-   ```bash
-   fugaro secrets set claude-oauth-token-<name>
-   ```
+`--claude` (`fugaro accounts add acme-team --claude`) runs Anthropic's own login first, on that same
+terminal — two acts: the login, resolved on your `PATH` and run directly with your own stdin, stdout
+and stderr, which answers you and not Fugaro (what it prints and asks is its own, and none of it is
+read), and then the one paste at the hidden prompt above, which is the only token ever stored — so a
+login you cancelled or that failed costs one paste rather than the command. `--claude` needs a
+terminal, and its refusal for one that is not names the same command without the flag; it also stops
+before running anything when `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` is exported, because
+either one decides which account a login lands on, and a login that lands on the wrong account is a
+token you did not mean to store.
 
-   With neither flag, a named account's token is stored **project-wide** — the project's own Secret
-   Manager, the only scope a shared job can mount — and `fugaro secrets set claude-oauth-token-<name>
-   --project-wide` says the same thing explicitly. It is accepted only when
-   `claude_accounts.<name>.allow_data_to` in the project's local config lists at least one
-   repository (§4); otherwise the command is refused and names that field, because a token whose
-   repositories are undecidable is one no policy can bound.
+Without `--claude` it is the same command for an owner who already has a token or would rather mint
+it elsewhere, and it is not a lesser path. `claude setup-token` is Anthropic's own command and the
+only way to mint a token: Fugaro never mints one, never prints one and never takes one as an
+argument. Run it as the person or team whose subscription the token belongs to — one token per
+account, signing in to the account that name is for. What Claude Code does when a machine already
+holds a token for another account (whether it logs out first, takes a flag, or wants a separate
+profile) is not verified by Fugaro, no live check having been run
+([design/named-oauth-tokens.md](design/named-oauth-tokens.md) §7, U2): `claude setup-token --help` in
+your own install is the authority, and nothing here depends on the answer, because what is stored is
+whatever value you paste.
 
-   **Every command on this page carries placeholders, never a value:** `<name>` is the account's
-   name and `<token>` is the value you paste, so `fugaro secrets set claude-oauth-token-<name>` is
-   a command you run as written with the value arriving at the prompt.
+**Every command on this page carries placeholders, never a value:** `<name>` is the account's name
+and `<token>` is the value you paste. `fugaro secrets set` reads a value only from stdin or a hidden
+prompt, never from an argument, a flag or the environment.
 
-   The **default** account's token is the unsuffixed `claude-oauth-token`, and it is stored
-   project-wide only when `project_secrets` lists it:
+**What the command does not do:**
 
-   ```bash
-   fugaro secrets set claude-oauth-token --project-wide
-   ```
+- **The `default` account's token**, which the unsuffixed name carries and `accounts add` will not
+  define — `default` is a legal reference for a profile and an illegal definition — so it is stored
+  by hand, project-wide, and `project_secrets` is what says which repositories it is for:
 
-   Without a `project_secrets.claude-oauth-token` entry with a non-empty `allow_data_to`, that
-   command is refused — the name has a project-wide meaning only when the project states which
-   repositories it is for.
+  ```bash
+  fugaro secrets set claude-oauth-token --project-wide
+  ```
 
-   **A repository copy does not reach a project job.** `fugaro secrets set claude-oauth-token-<name>
-   --repo acme/webapp` (per installation, naming the repository; or per repository checkout without a
-   value, which uses this checkout's origin) stores the repository's own copy, which overrides the
-   project copy for that repository's *per-repository* jobs. An account job mounts the project-wide
-   copy by its static `secret_env` entry, so the repository copy is not what its runs hold —
-   `fugaro doctor` says exactly this when a token is missing (§9).
+  Without a `project_secrets.claude-oauth-token` entry with a non-empty `allow_data_to`, that
+  command is refused: the name has a project-wide meaning only when the project states which
+  repositories it is for.
+- **A named account's token, stored by hand.** `fugaro secrets set claude-oauth-token-<name>` is
+  what `accounts add` runs for you, and on its own — as §8's rotation does — it is accepted only
+  when `claude_accounts.<name>.allow_data_to` lists at least one repository (§4). Otherwise it is
+  refused and names that field, because a token whose repositories are undecidable is one no policy
+  can bound.
+- **A repository copy.** `fugaro secrets set claude-oauth-token-<name> --repo acme/webapp` (per
+  installation, naming the repository; or per repository checkout without a value, which uses this
+  checkout's origin) stores the repository's own copy, which overrides the project copy for that
+  repository's *per-repository* jobs. **A repository copy does not reach a project job.** An account
+  job mounts the project-wide copy by its static `secret_env` entry, so the repository copy is not
+  what its runs hold — `fugaro doctor` says exactly this when a token is missing (§9).
+- **Reading the names back** — per installation, names only, never a value:
 
-3. **Confirm — per installation.** Names only, never a value:
+  ```bash
+  fugaro secrets ls --project-wide
+  ```
+- **Removing an account.** `fugaro accounts rm <name>` is the inverse and converges the same way: it
+  refuses while a profile still lists the account — `fugaro accounts rm <name> --profile PROFILE`
+  takes the name out of one profile's list alone — and once no profile lists it, the declaration,
+  the secret and the job go together. A committed `fugaro.yaml` that still names the account in
+  `agent.oauth_token` is warned about rather than edited — that file belongs to the repository, not
+  to this installation.
 
-   ```bash
-   fugaro secrets ls --project-wide
-   ```
+## 3. What the command writes
 
-## 3. Declare the account in the project policy
-
-Two edits, both in the operator's local config — `~/.config/fugaro/projects/<project>.yaml`, per
+Both blocks live in the operator's local config — `~/.config/fugaro/projects/<project>.yaml`, per
 installation, operator-only, never published to the runs bucket.
+
+`fugaro accounts add` writes two keys in them: the account's `allow_data_to` and the name in one
+profile's `claude_accounts`. The rest is written by hand — the `project_secrets` entry the `default`
+account's token is declared by (§2), and the profile's own `allow_repos`, which the command requires
+to be there but never writes — and §4's rules hold either way.
 
 **The account**, next to `providers` and `project_secrets`:
 
@@ -203,10 +234,10 @@ they are about to deploy against the same block. The rules, and what a refusal s
   account's key in the credentials bundle resolves back to the bare account name; and that bare name
   is what the policy's blocks and every audit line speak a credential by — so an account taking it
   would leave one name meaning two credentials. The bundle refuses that account's key outright
-  (`internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`), and `fugaro validate` and
-  `fugaro project policy publish` refuse the account name itself, so the clash is met where the
-  account is written rather than at `fugaro creds set` or at the service. **Fix:** rename the
-  account in `claude_accounts` and store its token under the new name. Every *other* name a
+  (`internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`), and `fugaro accounts add`,
+  `fugaro validate` and `fugaro project policy publish` refuse the account name itself, so the clash
+  is met where the account is written rather than at `fugaro creds set` or at the service. **Fix:**
+  rename the account in `claude_accounts` and store its token under the new name. Every *other* name a
   credential of the platform goes by stays an account name — `github-app-key` and
   `anthropic-api-key` among them, since the bundle finds the App key by its kind rather than in the
   index of names, and refuses the paid key only where one document carries both it and an account of
@@ -242,8 +273,10 @@ is the last segment of the job's name (`gcp.ProjectJobName`), and the job's serv
 `secretAccessor` on its own account's secret and on no other account's — that is the whole of who
 can read a value. A profile that lists no accounts deploys exactly what it deployed before.
 
-The published policy carries the account axis in a node the previous release cannot read, so
-**0.9.0's accounts need all four of these**, in this order:
+**The rest of this section is history:** a 0.8.x installation moving onto 0.9.0, or one that has just
+done so, was the case this rollout was written for, and an installation already past it has nothing
+here to re-run. The published policy carries the account axis in a node the previous release cannot
+read, so **0.9.0's accounts need all four of these**, in this order:
 
 1. **Upgrade the CLI, per installation machine:**
 
@@ -458,8 +491,9 @@ Per repository checkout, `fugaro doctor` carries three checks for this feature:
 
 - **`project-account-stored`** — every account job the installation serves has a stored project-wide
   version of its token. A missing one is a failing check naming the job, the profile, the account
-  and the token, with the fix on the line:
-  `claude setup-token; fugaro secrets set claude-oauth-token-<name> --project-wide`. The OK line
+  and the token, with the fix on the line: the account's token, stored project-wide — which §2's one
+  command does, and which `fugaro secrets set claude-oauth-token-<name> --project-wide` does on its
+  own. The OK line
   lists each account job with the repositories its token may be used by, and says that the mount is
   static — so the container holds the *project-wide* copy, and a repository copy does not reach it.
   It prints **no line at all** when the installation serves no account job — there is nothing to

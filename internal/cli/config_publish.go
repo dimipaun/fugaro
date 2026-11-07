@@ -127,8 +127,12 @@ func newConfigPublishCmd() *cobra.Command {
 				// to write, before anything else of the body: a document they
 				// refuse is refused with the gate's sentence and its record,
 				// whatever the rest of this command would have said about it.
+				// The marker is the gate's own fact about the session
+				// (managedGateFacts.AgentMarker), read by the same command that
+				// read it, so the direction rules the gate applies and the
+				// record's agent_marker are one value.
 				var conv managedmode.Converge
-				conv, at = configPublishConverge(ctx, env, data, rec.lc != nil)
+				conv, at = configPublishConverge(ctx, env, data, rec.lc != nil, gate.facts.AgentMarker)
 				m, aerr := gate.admit(ctx, initflow.YesOrTyped, conv)
 				if aerr != nil {
 					return aerr

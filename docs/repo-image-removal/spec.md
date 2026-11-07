@@ -333,7 +333,7 @@ rows.
 
 ---
 
-## 7. The safeguard: the owner-run live check that gates the 0.19.0 tag
+## 7. The safeguard: the owner-run live check that gates the 0.20.0 tag
 
 **The owner runs it, and the tag waits for it.** It builds a catalog entry on the sandbox, launches a
 run on it, and confirms the run — which is the one thing no unit test can show, because it is the

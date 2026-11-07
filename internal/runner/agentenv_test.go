@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -475,5 +476,49 @@ func TestStaleManagedTmpFileIgnoredOtherEntriesRefused(t *testing.T) {
 	}
 	if rec, err := h2.run(t); err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, ".other.tmp") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// TestBootstrapPassesACatalogImagesVariablesToTheAgent is issue #1755 end to
+// end, and the one wiring the two unit tests either side of it cannot see:
+// agent.BuildEnv takes the set and runner.imageEnv builds it, and only
+// bootstrap joins them. A job whose image the operator's catalog chose — the
+// deploy's FUGARO_IMAGE_ENTRY stamp — hands the image's own variables to every
+// stage's agent; a job the catalog did not choose (an empty stamp) hands none
+// of them, whatever its environment holds. The job mounts a secret name its
+// workflow does not declare beside one it does: only the declared one arrives.
+func TestBootstrapPassesACatalogImagesVariablesToTheAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		stamp string
+		want  bool
+	}{
+		{"a catalog image's job", "base", true},
+		{"a job the catalog did not choose", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "", nil)
+			h.deps.Env = append(h.deps.Env,
+				runner.ImageEntryEnv+"="+tc.stamp,
+				runner.SecretEnvsVar+"=FIXTURE_FAILS_FILE,DEPLOY_KEY",
+				"DEPLOY_KEY=deploy-key-placeholder",
+				"NEXUS_BASEURL=https://example.invalid/repository/maven-public/")
+			if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
+				t.Fatal(err)
+			}
+			if len(h.agent.calls) == 0 {
+				t.Fatal("no stage ran")
+			}
+			env := h.agent.calls[0].Env
+			if got, want := envValue(env, "NEXUS_BASEURL"), "https://example.invalid/repository/maven-public/"; (got == want) != tc.want {
+				t.Errorf("NEXUS_BASEURL = %q in the agent's environment, want present = %v: the image's own variables follow the stamp", got, tc.want)
+			}
+			if got := envValue(env, "DEPLOY_KEY"); got != "" {
+				t.Errorf("DEPLOY_KEY = %q reached the agent: a name the run's workflow did not declare never arrives through the image arm", got)
+			}
+			if got, want := envValue(env, "FIXTURE_FAILS_FILE"), h.failsFile; got != want {
+				t.Errorf("FIXTURE_FAILS_FILE = %q, want the declared secret's value %q: a declared secret still reaches the agent through the declared-secret path", got, want)
+			}
+		})
 	}
 }

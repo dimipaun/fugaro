@@ -580,7 +580,16 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// never a lesser one. The check is the whole resolver's
 	// (claudeAccountFor), so a follow-up launch is refused a mix its config
 	// may not declare exactly as a fresh one is.
-	if _, err := claudeAccountFor(ctx, env, repo, account, "", c.Ref, checkout()); err != nil {
+	//
+	// What the walk resolves is what the follow-up launches as, the inherited
+	// name included: a mixed run starts on the job that mounts its account's
+	// token (claudeAccountFor's mixedRunAccount), and a follow-up of one has
+	// to land there too — its previous run's task may name no account at all
+	// (one stored before the mix reached the launch, or launched when this
+	// repository mixed nothing), and the name the run's review stages will be
+	// served by is still the config's.
+	resolved, err := claudeAccountFor(ctx, env, repo, account, "", c.Ref, checkout())
+	if err != nil {
 		return nil, err
 	}
 	if o.token != "" && account != cmp.Or(c.OAuthToken, config.DefaultClaudeAccount) {
@@ -677,8 +686,8 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
-	if account != config.DefaultClaudeAccount {
-		spec.OAuthToken = account
+	if resolved != config.DefaultClaudeAccount {
+		spec.OAuthToken = resolved
 	}
 	if err := spec.Validate(); err != nil {
 		return nil, userErr("%v", err)

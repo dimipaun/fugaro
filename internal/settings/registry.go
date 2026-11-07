@@ -346,6 +346,22 @@ const (
 	docModels = "docs/multi-model.md"
 	docRigor  = "docs/rigor-modes/spec.md"
 	docImages = "docs/project-image-catalog/spec.md"
+	// docOrchestrator is the document that states the orchestrator daemon's
+	// guardrails. It is the work's plan rather than a spec because the guardrail
+	// keys are stated there and nowhere else yet (D1239, D1234): a spec of the
+	// daemon's own would be the document that takes the row over.
+	docOrchestrator = "docs/stateless-orchestrator/implementation-plan.md"
+	// The workspace keys' document: the design that decides the membership
+	// key, the pin and the owner's member table (docs/workspaces/spec.md §2,
+	// §5 and §6). The folder's own README, reconciliation and plan are not the
+	// document a key's meaning is stated in, so the row points at the spec.
+	docWorkspace = "docs/workspaces/spec.md"
+	// docPeriodicReviews is the document that states the project's jobs:
+	// block (R13). It is the work's plan rather than a spec, for
+	// docOrchestrator's reason: the two keys and the default that turns a
+	// schedule on are stated there and nowhere else yet, and a spec of the
+	// installation's own would be the document that takes the rows over.
+	docPeriodicReviews = "docs/periodic-reviews/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -361,6 +377,17 @@ func layerRow(key, def, owner, doc string) Row {
 	}
 }
 
+// layerValueRow is layerRow for a layer key whose default is a value the layer
+// reader leaves in place rather than an "unset means" sentence: the two jobs:
+// keys default to paused, and true is what a layer that states nothing has to
+// be read as. TestRegistryDefaultsMatchApplyDefaults then pins the value
+// against the reader itself, which is the point of writing it as one.
+func layerValueRow(key, v, owner, doc string) Row {
+	r := layerRow(key, "", owner, doc)
+	r.Default = value(v, "")
+	return r
+}
+
 // loc is a row of the local config. The local file is its only store, and
 // `shared` stands in for a key the shared config also carries (spec §2.2).
 func loc(key, def, owner, doc string) Row {
@@ -372,6 +399,17 @@ func loc(key, def, owner, doc string) Row {
 		Owner:   owner,
 		Doc:     doc,
 	}
+}
+
+// locTighten is loc for a key whose layers combine by the ceiling rule rather
+// than by replace: the smaller figure wins whatever layer wrote it, so a key
+// written in two of them is the stricter of the two and not the narrower one
+// (policy.Merge). The orchestrator's guardrails are the keys of this kind
+// (D1239): every layer under the ceiling may lower a cap and none may raise it.
+func locTighten(key, def, owner, doc string) Row {
+	r := loc(key, def, owner, doc)
+	r.Merge = Tighten
+	return r
 }
 
 // locLocal is loc for a key the local config alone holds: no `shared`
@@ -493,6 +531,16 @@ var layerRows = []Row{
 	layerRow("ab.challengers", "none", "models", docModels),
 	layerRow("ab.judge_model", "the A/B design's own judge", "models", docModels),
 	layerRow("ab.exchange_rate", "the A/B design's own rate", "models", docModels),
+
+	// The two schedules (R13). They are the installation's only keys in this
+	// table whose loosening direction starts something: paused: false is what
+	// makes a job run, and it is the operator's alone — a repository writes no
+	// jobs: key at all, and the generic path writes its allowlist, which
+	// carries neither of these. Owner update is the command that reads the
+	// layer file and applies the value into the installation; `fugaro settings
+	// set` refuses both keys, which is the state R13 ships.
+	layerValueRow("jobs.reports.paused", "true", "update", docPeriodicReviews),
+	layerValueRow("jobs.catalog_check.paused", "true", "update", docPeriodicReviews),
 }
 
 // LocalPrefix marks a local row whose bare name a fugaro.yaml key already
@@ -663,7 +711,12 @@ var localRows = []Row{
 
 	loc("review_floor", "none: no floor is added", "rigor floor", docRigor),
 
-	loc("verifier_accounts", "none: nobody may ask the credentials service to verify a signature", "secrets", docSetup),
+	// Unset is not "nobody" on an installation that has opted into the
+	// credentials service: the module answers an absent list with its own
+	// verifier account, the identity the installation's runs verify as (CSR14,
+	// verifier.tf), so the row says both states rather than the one that is
+	// only true while the service is off.
+	loc("verifier_accounts", "nobody may ask the credentials service to verify a signature, except on an installation whose credentials service is deployed, where the installation's own verifier account may", "secrets", docSetup),
 
 	// The image catalog decides which image a run's job executes in, so it is
 	// the operator's own list in the local file like the verifier list above,
@@ -680,11 +733,53 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.description", "none", "project", docImages),
 	loc("image_catalog.entries.*.default", "false", "project", docImages),
 
+	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
+	// policy like the catalog above, and one row per member for the catalog's
+	// reason. They carry Tighten rather than the ordinary Replace: the smaller
+	// cap wins whatever layer it was written in (policy.Merge), so a person or
+	// a project may lower one and never raise it, and the model a decision
+	// class runs on moves up the tier order or not at all. The default of each
+	// count is the figure policy.WithDefaults fills the ceiling layer with,
+	// named by the constant that holds it — the effective cap is the person's
+	// own max_parallel, which is why the sentence names that key rather than a
+	// number.
+	locTighten("orchestrator.max_running", "the person's max_parallel", "config", docOrchestrator),
+	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "config", docOrchestrator),
+	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "config", docOrchestrator),
+	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "config", docOrchestrator),
+	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "config", docOrchestrator),
+	// The one key of the block that is not a count: a class the map does not
+	// carry is at its floor, which is the bottom of the order for a routine
+	// decision and the top for a security-sensitive one (policy.ValidOrchestrator
+	// refuses a name outside the order and a model under the class's floor, so
+	// the classes' two ends are the two answers an absent key can take).
+	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "config", docOrchestrator),
+
 	loc("repos.*.provider", "none", "project", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "project", docSetup),
 	loc("repos.*.workflows", "every workflow the repository defines", "project", docSetup),
 	loc("repos.*.github_app_id", "none", "project", docSetup),
 	loc("repos.*.vertex", "false", "project", docSetup),
+
+	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
+	// them local-only: the pin is the member's own trust and the member table
+	// is the workspace owner's own declaration, and a launcher who could write
+	// either into the shared file could aim this project's exchange and this
+	// project's database grant (internal/cli/sharedcfg.go's sharedForbidden).
+	// Their owner is the `fugaro workspace` family, so the generic writer
+	// refuses them (D853) — a member entry and a pin are written whole by the
+	// commands that know what the four values have to agree about.
+	locLocal("workspace", "this project is a member of no workspace", "workspace", docWorkspace),
+	locLocal("workspace_pin.firebase_project", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.issuer", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.assertion_key", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.service_account", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_members.*.repos", "the member contributes no repository", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.firebase_project", "none", "workspace", docWorkspace),
+	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
+	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
+	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in

@@ -2292,8 +2292,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
-		Gateway: r.gateway(), Compression: r.compression,
+		Auth: r.modelAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		// The operator's own catalog image's variables, for a job whose image
+		// the catalog chose (agentenv.go's imageEnv): nil for every other job,
+		// whatever its environment holds.
+		ImageEnv: r.imageEnv(secretEnvs),
+		Gateway:  r.gateway(), Compression: r.compression,
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
 		// for `docker: true` (the workflow field and the runner's copy of it
@@ -3132,6 +3136,18 @@ type skippedError struct{ err error }
 func (e skippedError) Error() string { return e.err.Error() }
 func (e skippedError) Unwrap() error { return e.err }
 
+// transientError is a stage attempt that ended on the model's stream being
+// closed before its response finished (transientStageError), which stage's
+// own loop answers by running the stage once more. The attempt it describes
+// failed and nothing is recorded about it: no failure reason, no log tail.
+// Its message is the runner's own sentence about the stream, which names no
+// stage and quotes nothing the agent or an upstream wrote, because the only
+// reader it ever has is a log line or a test.
+type transientError struct{ err error }
+
+func (e *transientError) Error() string { return e.err.Error() }
+func (e *transientError) Unwrap() error { return e.err }
+
 // stageOpts adjust how stage treats the agent's error.
 type stageOpts struct {
 	// Skippable marks a stage the run does without: when the agent fails
@@ -3143,7 +3159,29 @@ type stageOpts struct {
 	// itself: stage records nothing about them (no failure reason, no
 	// log tail) and returns them.
 	Recoverable func(error) bool
+	// RetryTransient, when set, lets stageOnce answer an attempt that ended
+	// on a closed model stream with a transientError instead of a failure,
+	// so stage's own loop can run the stage once more (transientStageError).
+	// The caller — stage, and only stage — owns whether a retry is still
+	// available at all: the failure and its log tail are recorded by the
+	// attempt that has none left, which is why this is a flag the caller
+	// sets per attempt and not a decision stageOnce makes on its own.
+	RetryTransient bool
 }
+
+// transientRetries is the run's own bound on the retry a closed model stream
+// earns (issue #1827), with the retry a stage's loop gives itself
+// (stage's own `retried`). One, in both scopes: a stage is never run a third
+// time, and the run as a whole retries one stage attempt and no more.
+//
+// One is the whole point of the bound rather than a budget: a stream closed
+// before its response finished is a fault somewhere between the run and the
+// model, and a run that has already seen one, and sees another, is a run
+// whose connection is broken — running every stage twice would double what
+// the run costs and how long it takes, under caps that were sized for one
+// pass. The reported cases (issue #1827) are each a single stage lost at the
+// end of a run, which one retry saves.
+const transientRetries = 1
 
 // stage runs one agent stage and reports whether the loop may continue,
 // with the agent's error. The error is only for the caller to inspect: a
@@ -3167,12 +3205,54 @@ type stageOpts struct {
 // reset that has already passed resumes the stage at once, and a service
 // that kept answering that way would run the stage again and again with no
 // wait between. The bound ends the run named (HaltNoCredential) instead.
+//
+// The loop's third reason is a model stream closed before its response
+// finished (issue #1827, transientStageError): the attempt failed on the
+// connection and not on the work, so the stage is run once more, on the
+// session it already had, and everything it committed in the checkout is
+// kept. It is bounded on both sides — one retry a stage, one a run
+// (transientRetries) — and the attempt that finds the bound spent is the one
+// that records the failure, with the agent's own words for it.
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	// resumes is how many times this stage has already been resumed on an
 	// exhausted answer, this one included.
 	resumes := 0
+	// retried is whether this stage has already spent its one retry of a
+	// transient stream failure (transientStageError). It is the loop's own
+	// counter and not a field on the run: the bound is one per stage, and a
+	// stage that is re-entered later — a second fix round, an adversarial
+	// round of its own — is a stage of its own with its own one retry, under
+	// the run's own ceiling the same way.
+	retried := false
 	for {
-		res, ok, err := r.stageOnce(ctx, name, req, opts)
+		once := opts
+		once.RetryTransient = !retried && r.transientRetryLeft()
+		res, ok, err := r.stageOnce(ctx, name, req, once)
+		// The model's stream ended before it finished, and nothing about
+		// the work did: the stage is run once more, in the session it
+		// already had, so the conversation and everything it committed are
+		// kept. The retry is a whole stage — its own session turn, its own
+		// gateway stage, its own place under the run's caps and deadlines —
+		// and the attempt that just ended is charged for what it spent like
+		// any other: the gateway settles its calls and the time budget it
+		// ran inside does not come back.
+		var tr *transientError
+		if errors.As(err, &tr) {
+			retried = true
+			// The ended attempt's tokens go on the run's total here, before
+			// the retry: the caller's own countTokens only ever sees the
+			// last attempt of this stage (countTokens, halt.go), so without
+			// this a run could spend two attempts a stage and count one
+			// against its token cap.
+			r.countTokens(res)
+			r.noteTransientRetry(ctx, name)
+			session := res.SessionID
+			if !agent.ValidSessionID(session) {
+				session = req.SessionID
+			}
+			req.SessionID, req.Resume = session, true
+			continue
+		}
 		// The account's own subscription allowance ended this attempt (A7b,
 		// spec §11.3). Nothing is waited for -- no service answered, and the
 		// allowance's own reset is hours away -- so the stage's next attempt
@@ -3679,6 +3759,33 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	case err != nil && opts.Skippable && r.skippable(ctx, stageCtx):
 		r.save(ctx)
 		return res, false, skippedError{err}
+	// The model's stream was closed before its response finished (issue
+	// #1827): the attempt failed on the connection and not on the work, so
+	// with a retry still available it is not a failed stage -- it is an
+	// attempt stage's own loop runs again on the session it had, and nothing
+	// is recorded about it: no failure reason, and no log tail, which would
+	// otherwise be the tail of the one stage in this run that failed for a
+	// reason that is not about the run.
+	//
+	// It comes after the two cases above, so an error the caller recovers
+	// itself is still its own and a stage the run may do without is still
+	// skipped when the agent failed outright; and before the ordinary failure
+	// below, which is where an attempt with no retry left ends -- the second
+	// closed stream in a row for one stage, or the first one in a run that
+	// already spent its retry (transientRetries). That attempt records the
+	// failure exactly as this stage always did, quoting the agent's own words
+	// for it, so the reason a run ends on is unchanged.
+	//
+	// It is asked only of an attempt nothing else ended (stageCtx.Err, the
+	// test the Recoverable case above makes): a stage its own clock stopped --
+	// the run's timeouts.stage, or the run's own deadline under it -- is the
+	// failure that clock is there to produce, whatever a stream did earlier in
+	// the attempt. Retrying it would spend a second model call and a fresh
+	// stage window on a run that is out of time, and would spend the run's one
+	// retry so that a later, genuine cut stream is not retried at all. A
+	// cancel reads the same way: the stage ends as the cancellation does.
+	case opts.RetryTransient && stageCtx.Err() == nil && (err != nil || res.IsError) && r.transientStageError(res, err):
+		return res, false, &transientError{errors.New("the model's stream was closed before the stage finished; the stage is run once more")}
 	case err != nil:
 		reason := r.stageReason(ctx, name, StageError(name, stageCtx, r.budget, err))
 		if w := r.lastWaited(); w > 0 && r.gw != nil {
@@ -3814,6 +3921,114 @@ func subscriptionUsageLimit(auth, text string) bool {
 		}
 	}
 	return false
+}
+
+// transientStagePhrases are what a model stream closed before its response
+// finished is reported as, each matched as the shape it is rather than as
+// English: Claude Code's own sentence when the stream it was reading ended
+// without the response's terminal event (issue #1827).
+//
+// The list is closed and deliberately has one member. A retry throws away a
+// whole stage attempt -- its spend, and the minutes it took -- so the one
+// thing it may be spent on is a failure that is not about the work at all: a
+// text that says the connection ended, which the runner can neither fix nor
+// attribute to what the agent did. Everything else a stage can end on is a
+// reason to stop and not to re-run, whether it is about the work (a failed
+// test, a refused edit), about the run's own money (a budget refusal, a run
+// cap), about the credential (an OAuth allowance, an auth failure), or about
+// the clock (a stage or run timeout). All of those fail the stage exactly as
+// they did before this existed.
+//
+// The match is a substring of the lowercased text, as oauthLimitPhrases'
+// is, and it is read from the agent's own result text and from the runner's
+// error for it, so a stage that said this in either place is read the same.
+var transientStagePhrases = []string{"stream closed before completion"}
+
+// transientStageError reports whether an attempt ended on a model stream
+// closed before its response finished. Two things, either of which is enough:
+// the agent's own result text says so (or the runner's error for the attempt),
+// or the attempt left no result text at all and the gateway recorded a
+// streamed call of this stage whose response ended before its terminal event
+// (gateway.StageReport.StreamsCut, issue #1827's diagnostics).
+//
+// The gateway's witness is the second half of the issue's own evidence: the
+// stream closed between the provider and the gateway, and what the agent was
+// told depends on where in the response it happened -- an agent whose stream
+// ends before any text arrives may report an error with no words in it at
+// all, and the only thing left to read is the exit that killed its process.
+// It is asked only for a stage the gateway served: a stage the run's
+// stage-scoped Claude OAuth account serves (docs/design/mixed-credentials.md)
+// forwards its calls itself, so there is no gateway to witness anything for
+// it, and such a stage is retried on its text alone -- or not at all. That is
+// the whole of the mixed-credential case here: no report of its own, no
+// change to how its calls are made.
+//
+// The gateway's count is a fact about the stage, though, and the words are
+// the attempt's own: a stage can lose one call's stream and still go on to
+// fail for a reason of its own -- an auth error, a refused edit, a sub-agent's
+// failing test -- and then the attempt's text is what ended it, so the count
+// is not read at all. Reading it for any failed attempt that had a cut call
+// anywhere in it would retry stages that failed for reasons about the work,
+// which is the set this one member list exists to bound.
+//
+// It is only ever asked about an attempt that failed (stageOnce's transient
+// case): a stage whose own result was a success is not retried because a
+// sub-agent's call lost its stream, which is a fact the stage already
+// handled.
+func (r *run) transientStageError(res agent.Result, err error) bool {
+	lower := strings.ToLower(res.Text)
+	if err != nil {
+		lower += "\n" + strings.ToLower(err.Error())
+	}
+	for _, p := range transientStagePhrases {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return res.Text == "" && r.stageStreamsCut() > 0
+}
+
+// stageStreamsCut is how many streamed calls of the gateway stage that just
+// ended reached the agent without their terminal event, with the upstream's
+// own end as the one that cut them: a stream the gateway cancelled or the
+// agent stopped reading is not a lost answer. It is 0 for a run with no
+// gateway, for a stage the gateway did not serve, and for every stage before
+// this one -- the report it reads is the stage's own, replaced as each stage
+// begins.
+func (r *run) stageStreamsCut() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lastStage == nil {
+		return 0
+	}
+	return r.lastStage.StreamsCut
+}
+
+// transientRetryLeft reports whether the run may still spend its retry of a
+// closed model stream (transientRetries). The record's own count is the
+// run's: it is what makes the bound survive a stage that is re-entered later,
+// and it is what the run reports as what it spent.
+func (r *run) transientRetryLeft() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rec.Retries < transientRetries
+}
+
+// noteTransientRetry records and logs the one retry a stage gets for a
+// closed model stream, before the attempt that spends it starts: the record's
+// count is written and saved here, so a run that dies during the retry still
+// reports having spent it, and the log line is what an operator reads to tell
+// this apart from the stage failing on the work. It carries the stage's name
+// and the run's count and nothing else -- no text from the agent, no model,
+// no prompt, no credential.
+func (r *run) noteTransientRetry(ctx context.Context, stage string) {
+	r.mu.Lock()
+	r.rec.Retries++
+	n := r.rec.Retries
+	r.mu.Unlock()
+	r.d.Log.Warn("the model's stream was closed before the stage finished; running the stage once more in the session it already had",
+		"stage", stage, "retries", n)
+	r.save(ctx)
 }
 
 // skippable reports whether a failed Skippable stage may be skipped: the run

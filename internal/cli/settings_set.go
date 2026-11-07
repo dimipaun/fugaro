@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/yamledit"
@@ -47,6 +49,7 @@ var settingsFamilyCommands = map[string]string{
 	"accounts":    "fugaro accounts",
 	"secrets":     "fugaro secrets",
 	"project":     "fugaro project",
+	"workspace":   "fugaro workspace",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
@@ -405,7 +408,7 @@ func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
 	}
 	if family, ok := settingsFamilyCommands[row.Owner]; ok {
-		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential or clone URL", key, family)
+		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL or workspace key", key, family)
 	}
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
@@ -545,7 +548,10 @@ func settingsDefaultLayer(row settings.Row) string {
 	return ""
 }
 
-// settingsSelection selects this machine's project, the way the read does.
+// settingsSelection selects this machine's project, the way the read does: the
+// checkout's fugaro.yaml names it (localcfg.Select's step 3) where nothing
+// before that does, so a machine with several project configs needs no
+// --project inside a checkout.
 func settingsSelection() (localcfg.Selection, *localcfg.Config, error) {
 	return settingsAimedSelection(settingsWriteOptions{})
 }
@@ -554,8 +560,9 @@ func settingsSelection() (localcfg.Selection, *localcfg.Config, error) {
 // selection themselves: --config and --project are localcfg.Select's steps 1 and
 // 2, so a write aimed at an installation lands in that installation's file
 // rather than in whichever one the machine's environment would have picked. The
-// families that call settingsSelection (models, accounts) take neither flag and
-// resolve exactly as before.
+// families that call settingsSelection (models, accounts, secrets) take neither
+// flag, and resolve as before except that, where several project configs leave
+// the choice open, they too read the checkout (selectSettingsProject).
 func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localcfg.Config, error) {
 	in := localcfg.SelectInput{
 		Config:     o.config,
@@ -564,7 +571,7 @@ func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localc
 		EnvConfig:  os.Getenv("FUGARO_CONFIG"),
 		Getenv:     os.Getenv,
 	}
-	sel, lc, err := localcfg.Select(in)
+	sel, lc, err := selectSettingsProject(context.Background(), in)
 	if err != nil {
 		return sel, nil, userErr("%w", err)
 	}
@@ -572,6 +579,27 @@ func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localc
 		return sel, lc, userErr("no project is selected: set $FUGARO_PROJECT or $FUGARO_CONFIG, or run fugaro setup")
 	}
 	return sel, lc, nil
+}
+
+// selectSettingsProject is localcfg.Select, and, where several project configs
+// leave the choice open, Select again with the checkout the command runs in:
+// its fugaro.yaml names its project (step 3), which is what the refusal
+// "several project configs and nothing selects one" tells a person to do. The
+// checkout is not asked first, so a checkout of another project still resolves
+// to the machine's only project config as these commands always did.
+func selectSettingsProject(ctx context.Context, in localcfg.SelectInput) (localcfg.Selection, *localcfg.Config, error) {
+	sel, lc, err := localcfg.Select(in)
+	var se *localcfg.SelectError
+	if err == nil || !errors.As(err, &se) || len(se.Projects) < 2 {
+		return sel, lc, err
+	}
+	co, cerr := resolveCheckout(ctx, "")
+	if cerr != nil || co == nil {
+		return sel, lc, err
+	}
+	in.Checkout = co
+	in.Origin = func() (string, string) { return checkoutOriginAt("") }
+	return localcfg.Select(in)
 }
 
 // settingsResolveTarget turns a key and a layer into the file to edit.
@@ -1089,6 +1117,27 @@ func settingsModeRank(mode string) int {
 	}
 }
 
+// settingsDecisionModelRank orders a decision model by the tier order the
+// orchestrator's block is written in (policy.DecisionModels, least capable
+// first), and -1 for a name the order does not hold. The block's own writers
+// refuse a name outside the order (policy.ValidOrchestrator), so one can only
+// come from a node written by hand, and -1 sits below every tier rather than at
+// the cheapest one — the two sides of settingsLoosens' comparison then read it
+// as D846's asymmetry asks. A new value outside the order is looser than any
+// name inside it, so an edit that writes one takes the typed name even though
+// nobody can prove it tightens; an old value outside the order is lower than
+// every tier, so a node repaired by naming a model the order holds is not a
+// loosening. Two values outside the order compare equal, the one pair nothing
+// is proven about either way.
+//
+// The write path never reaches this — the allowlist refuses the block's keys —
+// but the publish door does: policyCeilingMembers names a member per class, so
+// a node republished with a class moved down the order is a loosening there and
+// one moved up is not (D1234, G6).
+func settingsDecisionModelRank(name string) int {
+	return slices.Index(policy.DecisionModels, name)
+}
+
 // settingsCeilingBase is the value a ceiling write is compared against (D846):
 // the tighter of what the file holds and what a run gets today, which the
 // read's own resolver answers — the shared or published node, the project
@@ -1178,9 +1227,10 @@ func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 }
 
 // settingsLoosens reports whether newValue is looser than oldValue for a
-// ceiling key: a larger cap, a cap removed, a weaker mode, or a wider model
-// list. A key no layer sets has nothing to loosen, so a first write of a cap
-// is never the typed form — a first write of 0 is, because 0 is not a cap.
+// ceiling key: a larger cap, a cap removed, a weaker mode, a wider model list,
+// or a decision model moved down the tier order. A key no layer sets has
+// nothing to loosen, so a first write of a cap is never the typed form — a
+// first write of 0 is, because 0 is not a cap.
 func settingsLoosens(key, oldValue, newValue string) bool {
 	if key == "budget.mode" {
 		if oldValue == "" {
@@ -1193,6 +1243,9 @@ func settingsLoosens(key, oldValue, newValue string) bool {
 			return false
 		}
 		return !settingsListSubset(newValue, oldValue)
+	}
+	if strings.HasPrefix(key, policyDecisionModelPrefix) {
+		return settingsDecisionModelRank(newValue) < settingsDecisionModelRank(oldValue)
 	}
 	oldN, oldErr := strconv.ParseFloat(oldValue, 64)
 	newN, newErr := strconv.ParseFloat(newValue, 64)

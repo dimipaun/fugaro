@@ -565,6 +565,10 @@ export class FixtureSource implements FugaroSource {
     return this.#document('plan.status', args)
   }
 
+  graphRead(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('graph.read', args)
+  }
+
   coordinatorStatus(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('coordinator.status', args)
   }
@@ -575,6 +579,14 @@ export class FixtureSource implements FugaroSource {
 
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('coordinator.intents', args)
+  }
+
+  managedStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('managed.status', args)
+  }
+
+  policyShow(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('policy.show', args)
   }
 
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {

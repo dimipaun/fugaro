@@ -386,12 +386,13 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 	}
 	// The attribute values the checks expect are the modules' literals.
 	pins := map[string][]string{
-		"modules/installation/history.tf": {`"/usr/local/bin/fugaro"`, `["budget", "history", "--sweep"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`, `service_account_email = google_service_account.scheduler.email`},
-		"modules/repo/check.tf":           {`command = ["fugaro"]`, `["image", "check", "--job"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`},
-		"modules/installation/logging.tf": {`destination            = "logging.googleapis.com/${local.log_bucket_path}"`, `projects/${var.project}/`},
-		"modules/installation/bucket.tf":  {`uniform_bucket_level_access = true`, `public_access_prevention    = "enforced"`},
-		"modules/firebase/firebase.tf":    {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
-		"modules/installation/budget.tf":  {`billing_account = var.budget.billing_account`},
+		"modules/installation/history.tf":      {`"/usr/local/bin/fugaro"`, `["budget", "history", "--sweep"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`, `service_account_email = google_service_account.scheduler.email`},
+		"modules/installation/catalogcheck.tf": {`command = ["fugaro"]`, `["image", "check", "--job", "--catalog"]`},
+		"modules/repo/check.tf":                {`command = ["fugaro"]`, `["image", "check", "--job"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`},
+		"modules/installation/logging.tf":      {`destination            = "logging.googleapis.com/${local.log_bucket_path}"`, `projects/${var.project}/`},
+		"modules/installation/bucket.tf":       {`uniform_bucket_level_access = true`, `public_access_prevention    = "enforced"`},
+		"modules/firebase/firebase.tf":         {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
+		"modules/installation/budget.tf":       {`billing_account = var.budget.billing_account`},
 		// The credentials service's own literals, which its case in cover.go
 		// reads: the IAM setting it requires and the seven environment
 		// variables credentialsServiceEnv allows — the service's whole
@@ -527,6 +528,212 @@ func TestCoverCheckSpecEveryEntry(t *testing.T) {
 	cs["env"] = append(cs["env"].([]any), map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"evil.example/x"}`})
 	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}, nil); len(got) == 0 {
 		t.Fatal("a second, foreign FUGARO_CHECK_SPEC is covered")
+	}
+}
+
+// The catalog check job runs `fugaro image check --job --catalog` with its own
+// FUGARO_CATALOG_CHECK_SPEC: the plan the installation module writes is
+// covered, and a spec that points its builds at another registry or another
+// account is not.
+func TestCoverCatalogCheckJob(t *testing.T) {
+	const reg = "us-east5-docker.pkg.dev/proj-1/"
+	base := reg + "fugaro-base/x:1"
+	job := func(spec string, args ...string) ResourceChange {
+		a := make([]any, len(args))
+		for i, x := range args {
+			a[i] = x
+		}
+		env := []any{map[string]any{"name": "FUGARO_CATALOG_CHECK_SPEC", "value": spec}}
+		c := map[string]any{"image": base, "command": []any{"fugaro"}, "args": a, "env": env}
+		return rc("google_cloud_run_v2_job", map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{c}}}}}},
+			map[string]any{}, "create")
+	}
+	spec := func(baseRef, account string) string {
+		out, _ := json.Marshal(map[string]any{"version": 1, "base_images": map[string]string{"base": baseRef},
+			"repositories": []any{map[string]any{"build_service_account": account}}})
+		return string(out)
+	}
+	cmd := []string{"image", "check", "--job", "--catalog"}
+	for name, tc := range map[string]struct {
+		job     ResourceChange
+		covered bool
+	}{
+		"as the module writes it":       {job(spec(base, okBuild), cmd...), true},
+		"a foreign base image":          {job(spec("evil.example/base:1", okBuild), cmd...), false},
+		"a foreign build account":       {job(spec(base, "attacker@evil.iam.gserviceaccount.com"), cmd...), false},
+		"a spec that is not JSON":       {job("registry="+reg, cmd...), false},
+		"the command with another flag": {job(spec(base, okBuild), "image", "check", "--job", "--other"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{tc.job}}, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+}
+
+// A covered job's runs bucket is one of this run's, under either name it
+// reaches the job as. infra's platformEnvFor writes the one bucket as
+// FUGARO_BUCKET for the repository check job, the catalog check job and a
+// workflow job alike, so a plan that points any of them at another bucket sends
+// the run's records there, under init's one confirmation — and a rule that
+// fired on the check jobs alone would leave the same variable, from the same
+// writer, unchecked on a workflow job. The installation's own history and
+// coordinator sweeps read the runs' result.json objects by FUGARO_RUNS_BUCKET
+// instead, and are covered jobs too (their commands are in knownCommands), so a
+// plan pointing either at another bucket feeds forged records into the
+// Firestore history and the coordinator's reconciliation under that same one
+// confirmation. The rows below pair each variable with each job that carries
+// it and with the value a plan can give it: the module's own literal, another
+// bucket (a lookalike included), the form the other variable uses, and the
+// value Terraform computes at apply.
+//
+// Mutation (run, restore): delete the bucketEnv branch from checkSpecs — every
+// "another bucket" row below is covered, which is the hole this closes. Delete
+// runsBucketEnv from the branch's condition and every FUGARO_RUNS_BUCKET row
+// below is covered; drop the bare form from bucketValue and the "as a URL" row
+// is covered.
+func TestCoverJobBucketEnv(t *testing.T) {
+	const reg = "us-east5-docker.pkg.dev/proj-1/"
+	// bucketEntry is how the plan writes the container's bucket entry: value is
+	// its literal (nil for one the plan computes after apply), src puts a
+	// secret_key_ref beside it or instead of it, and srcUnk leaves that source
+	// block to apply — the shape after_unknown marks and after does not, with an
+	// empty list. value_source: [] is what every plan of the modules carries on
+	// a plain entry.
+	type bucketEntry struct {
+		value  any
+		src    bool
+		srcUnk bool
+	}
+	// jobWithVar is a covered job's container: one other env entry (which job it
+	// is decides which), the bucket variable varName written as b, the job's
+	// image, and the command cmd/args, which a workflow job does not set.
+	jobWithVar := func(varName string, cmd, args []any, specName, spec string, b bucketEntry) ResourceChange {
+		entry := map[string]any{"name": varName, "value_source": []any{}}
+		if b.value != nil {
+			entry["value"] = b.value
+		}
+		if b.src {
+			entry["value_source"] = []any{map[string]any{"secret_key_ref": []any{
+				map[string]any{"secret": "a-bucket-name-in-a-secret", "version": "latest"}}}}
+		}
+		env := []any{map[string]any{"name": specName, "value": spec}, entry}
+		unk := map[string]any{}
+		switch {
+		case b.srcUnk:
+			unk["env"] = []any{map[string]any{}, map[string]any{"value_source": true}}
+		case b.value == nil:
+			unk["env"] = []any{map[string]any{}, map[string]any{"value": true}}
+		}
+		c := map[string]any{"image": reg + "fugaro-base/x:1", "env": env}
+		if cmd != nil {
+			c["command"], c["args"] = cmd, args
+		}
+		return rc("google_cloud_run_v2_job", map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{c}}}}}},
+			map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{unk}}}}}}, "create")
+	}
+	// jobWithBucket is jobWithVar for FUGARO_BUCKET, the variable most rows use.
+	jobWithBucket := func(cmd, args []any, specName, spec string, b bucketEntry) ResourceChange {
+		return jobWithVar(bucketEnv, cmd, args, specName, spec, b)
+	}
+	repoSpec := `{"build_service_account":"` + okBuild + `","registry":"` + reg + `r"}`
+	catalogSpec := `{"version":1,"base_images":{"base":"` + reg + `fugaro-base/x:1"},"repositories":[{"build_service_account":"` + okBuild + `"}]}`
+	checkCmd := []any{"fugaro"}
+	checkArgs := []any{"image", "check", "--job"}
+	catalogArgs := []any{"image", "check", "--job", "--catalog"}
+	// The installation's two sweeps: the job command the module gives each
+	// (history.tf, coordinator.tf) and an entry of the other variables it
+	// carries, so the container is one checkSpecs walks past to the bucket.
+	sweepCmd := []any{"/usr/local/bin/fugaro"}
+	for name, tc := range map[string]struct {
+		job     ResourceChange
+		covered bool
+		// env is the variable the row writes the bucket under: the refusal has
+		// to name that one, so a row cannot pass by being refused over another.
+		env string
+	}{
+		"the repository check job, this run's bucket": {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, bucketEntry{value: "gs://fugaro-runs-proj-1"}), true, bucketEnv},
+		"the repository check job, another bucket":    {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, bucketEntry{value: "gs://someone-elses-bucket"}), false, bucketEnv},
+		"the catalog check job, this run's bucket":    {jobWithBucket(checkCmd, catalogArgs, "FUGARO_CATALOG_CHECK_SPEC", catalogSpec, bucketEntry{value: "gs://fugaro-runs-proj-1"}), true, bucketEnv},
+		"the catalog check job, another bucket":       {jobWithBucket(checkCmd, catalogArgs, "FUGARO_CATALOG_CHECK_SPEC", catalogSpec, bucketEntry{value: "gs://someone-elses-bucket"}), false, bucketEnv},
+		"a workflow job, this run's bucket":           {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", bucketEntry{value: "gs://fugaro-runs-proj-1"}), true, bucketEnv},
+		"a workflow job, another bucket":              {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", bucketEntry{value: "gs://someone-elses-bucket"}), false, bucketEnv},
+		"a bucket whose name starts with this run's":  {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, bucketEntry{value: "gs://fugaro-runs-proj-12"}), false, bucketEnv},
+		"the bucket name without the gs:// scheme":    {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, bucketEntry{value: "fugaro-runs-proj-1"}), false, bucketEnv},
+		"the value computed after apply":              {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, bucketEntry{}), false, bucketEnv},
+		"the value computed after apply, a workflow":  {jobWithBucket(nil, nil, "FUGARO_PROJECT", "aurora", bucketEntry{}), false, bucketEnv},
+		// The module's literal with a secret beside it: the container's value
+		// is the secret's, so the row must be refused even though the literal
+		// this check reads is the run's own bucket. The Cloud Run API may
+		// refuse the pair itself, but the cover is what a hand-edited plan
+		// meets first, and it holds the job's bucket by the entry's value.
+		"this run's bucket and a secret beside it": {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, bucketEntry{value: "gs://fugaro-runs-proj-1", src: true}), false, bucketEnv},
+		// The other half of that shape: a source with no literal at all, which
+		// the module never writes and a plan would have to add. Either rule
+		// refuses it (the source, and the empty value), so this row pins that
+		// the shape is refused rather than that this branch is what refuses it.
+		"a value that is only a secret": {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, bucketEntry{value: "", src: true}), false, bucketEnv},
+		// The source the plan leaves to apply, beside the run's own literal:
+		// after_unknown marks the block and after carries the empty list a plan
+		// writes for every unset one, so a check that read only the rendered
+		// block would cover this and the apply would take the source's value.
+		// The credentials service's case refuses this shape as not known.
+		"a source the plan leaves to apply": {jobWithBucket(checkCmd, checkArgs, "FUGARO_CHECK_SPEC", repoSpec, bucketEntry{value: "gs://fugaro-runs-proj-1", srcUnk: true}), false, bucketEnv},
+		// The installation's history sweep. It carries this run's bucket as the
+		// bare name its writer passes var.runs_bucket in, so the covering value
+		// is the name alone and the URL form the other variable uses is refused.
+		"the history sweep, this run's bucket": {jobWithVar(runsBucketEnv, sweepCmd, []any{"budget", "history", "--sweep"}, "FUGARO_PROJECT", "aurora", bucketEntry{value: "fugaro-runs-proj-1"}), true, runsBucketEnv},
+		"the history sweep, another bucket":    {jobWithVar(runsBucketEnv, sweepCmd, []any{"budget", "history", "--sweep"}, "FUGARO_PROJECT", "aurora", bucketEntry{value: "someone-elses-bucket"}), false, runsBucketEnv},
+		"the history sweep, the bucket as a URL": {jobWithVar(runsBucketEnv, sweepCmd, []any{"budget", "history", "--sweep"}, "FUGARO_PROJECT", "aurora",
+			bucketEntry{value: "gs://fugaro-runs-proj-1"}), false, runsBucketEnv},
+		// The coordinator's sweep, which reads the same objects to reconcile the
+		// registry with them.
+		"the coordinator sweep, this run's bucket": {jobWithVar(runsBucketEnv, sweepCmd, []any{"coordinator", "sweep"}, "FUGARO_PROJECT", "aurora", bucketEntry{value: "fugaro-runs-proj-1"}), true, runsBucketEnv},
+		"the coordinator sweep, another bucket":    {jobWithVar(runsBucketEnv, sweepCmd, []any{"coordinator", "sweep"}, "FUGARO_PROJECT", "aurora", bucketEntry{value: "someone-elses-bucket"}), false, runsBucketEnv},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{tc.job}}, nil)
+			if (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+			// Every row here is refused over the bucket, and the refusal has to
+			// say which variable it is about: this is the one check that reads
+			// a job's environment beyond the check specs.
+			for _, why := range got {
+				if !strings.Contains(why, tc.env) {
+					t.Errorf("refused for %q, which does not name %s", why, tc.env)
+				}
+			}
+		})
+	}
+}
+
+// The names cover.go reads the bucket variables by are their writers' own: this
+// package cannot import internal/infra or internal/cli (both import it), so
+// each literal is written twice, and a rename on the writer's side would leave
+// checkSpecs matching no entry at all — a plan pointing a job at another bucket
+// would pass, and the golden plans would pass with it, because every one of
+// their entries would be skipped the same way. The pins are on the writers,
+// which is where a rename would start: the container's variable is declared as
+// infra.BucketEnv, and the sweeps' is declared by the package that reads it out
+// of their environment (internal/cli's envRunsBucket, the constant history.go
+// opens the runs bucket by).
+func TestCoverBucketEnvIsTheWritersName(t *testing.T) {
+	for _, tc := range []struct {
+		path, where, name string
+	}{
+		{filepath.Join("..", "spec.go"), "internal/infra/spec.go", bucketEnv},
+		{filepath.Join("..", "..", "cli", "history.go"), "internal/cli/history.go", runsBucketEnv},
+	} {
+		b, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := regexp.MustCompile(`(?m)^\s*\w+\s+=\s+"` + tc.name + `"$`)
+		if !want.Match(b) {
+			t.Errorf("%s declares no constant = %q, which tf/cover.go holds a covered job's variable by: update tf/cover.go's literal with it", tc.where, tc.name)
+		}
 	}
 }
 
@@ -2602,6 +2809,60 @@ func TestDeployerDesignDirectionalReferencesPointTheRightWay(t *testing.T) {
 		}
 		if dir != want {
 			t.Errorf("line %d of the design says \"%s\", and %s is defined at line %d: the reference points a reader the wrong way, into material that does not hold it", line(m[0]), doc[m[0]:m[1]], what, defLine)
+		}
+	}
+}
+
+// The verifier service account (CSR14, D1068) is the SECOND site of D75's
+// impersonation grant, and this is the test that makes one `fugaro update`
+// able to create it: the operators hold roles/iam.serviceAccountTokenCreator
+// on the account the installation's own apply creates, so the plan that
+// creates it grants that role on an account that is not the deployer's — which
+// is exactly what deployerTokenCreator refused while it was the only site.
+//
+// The account ID is a LITERAL here on purpose: it is the module's own
+// account_id (verifier.tf) and the Go side's spelling of it
+// (internal/infra.VerifierAccountID), and the whole point of the design is
+// that the address is computable from the configuration rather than read from
+// the apply.
+//
+// Both halves are asserted: the second site is covered, and the fence is
+// NARROWED to two accounts rather than opened. A token-creator grant on a
+// third account is still refused, and so is one whose account is not this
+// run's — the verifier account is the installation's own, in the installation
+// project, and a lookalike address or another project's account is not it.
+func TestVerifierTokenCreatorIsCoveredByOneUpdate(t *testing.T) {
+	const verifier = "fugaro-verifier@proj-1.iam.gserviceaccount.com"
+	// The module's own grant (iam.tf): the operators, and nobody else, may
+	// assume the verifier account — the impersonation the owner's own
+	// `gcloud auth print-identity-token --impersonate-service-account=…` and
+	// the launcher's own mint both stand on.
+	ch := grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole,
+		"projects/proj-1/serviceAccounts/"+verifier)
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 0 {
+		t.Errorf("the operators' %s grant on the verifier account is not covered by one update: %q — the update that creates the account would refuse its own plan and the account would never exist", DeployerTokenCreatorRole, got)
+	}
+
+	// The deployer's own site is unchanged by this widening.
+	ch = grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole,
+		"projects/proj-1/serviceAccounts/"+DeployerAccount("proj-1"))
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 0 {
+		t.Errorf("the operators' %s grant on the deployer account is not covered: %q", DeployerTokenCreatorRole, got)
+	}
+
+	for _, account := range []string{
+		// A third account of this project.
+		"projects/proj-1/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com",
+		// The verifier account's name in another project: the account is the
+		// installation's own (the module creates it in var.project), and the
+		// role's project does not move it.
+		"projects/fp-2/serviceAccounts/" + verifier,
+		// A lookalike: a job account whose name starts with the verifier's.
+		"projects/proj-1/serviceAccounts/fugaro-verifier-0123abcd@proj-1.iam.gserviceaccount.com",
+	} {
+		ch := grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole, account)
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s: the %s grant is covered: the impersonation is on the deployer account and the verifier account of this installation, and on nothing else", account, DeployerTokenCreatorRole)
 		}
 	}
 }
