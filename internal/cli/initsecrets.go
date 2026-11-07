@@ -603,7 +603,18 @@ func (s *secretsStage) Left() initflow.Left {
 			// account both halves are `accounts add`'s own. "default" is
 			// reserved, so the command below is the only spelling and the
 			// default account has none.
-			cmds = append(cmds, selfCommand()+" accounts add "+quoteWord(strings.TrimPrefix(name, config.ClaudeOAuthTokenPrefix)))
+			account := strings.TrimPrefix(name, config.ClaudeOAuthTokenPrefix)
+			add := selfCommand() + " accounts add " + quoteWord(account)
+			// The profile whose claude_accounts already lists the account, for
+			// the reason doctor's own account fixes carry it: without --profile
+			// the command stops in a project with several profiles
+			// (accountsAddProfile), and it would otherwise take the only one
+			// there is — serving the account from a profile that did not, and
+			// deploying a job — where storing the token was the whole step.
+			if profile := config.ClaudeAccountProfile(s.e.lc.Profiles, account); profile != "" {
+				add += " --profile " + quoteWord(profile)
+			}
+			cmds = append(cmds, add)
 		case name == multilineSecret:
 			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:

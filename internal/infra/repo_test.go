@@ -454,6 +454,25 @@ func TestSecretCommands(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands for a named account:\n%+v\nwant:\n%+v", got, want)
 	}
+
+	// A project with more than one profile refuses a bare `fugaro accounts
+	// add` for itself (accountsAddProfile), and one with a single profile that
+	// does not serve the account would have the command add the account to
+	// that profile and deploy a job. The step therefore names the profile
+	// whose claude_accounts already lists it, which leaves that half of the
+	// command a no-op (code review, medium).
+	served, err := Repo(sandboxInputs(t, m5Additions+
+		"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"+
+		"profiles:\n  alpha: { provider: bitbucket }\n  zeta: { provider: bitbucket, claude_accounts: [acme-personal] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = SecretCommands(served, stored, "fugaro", func(s string) string { return s })
+	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: served.Secrets["claude-oauth-token-acme-personal"],
+		Commands: []string{"fugaro accounts add acme-personal --profile zeta"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands for a served named account:\n%+v\nwant:\n%+v", got, want)
+	}
 }
 
 func TestRepoStateObjects(t *testing.T) {

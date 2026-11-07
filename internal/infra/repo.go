@@ -305,7 +305,10 @@ func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) st
 // project-wide, the repository's for the rest. A named Claude account's
 // step is neither of those commands: `fugaro accounts add <name>` declares
 // the account, stores its token where the shared job mounts it and
-// converges the installation, so the scope is the command's own.
+// converges the installation, so the scope is the command's own. It carries
+// --profile when the project has one for that account (spec.AccountProfiles),
+// since the command must name the profile whose claude_accounts gains the name,
+// or refuse.
 func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote func(string) string) []SecretStep {
 	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
@@ -328,7 +331,17 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote f
 			// §8). "default" is reserved (config.ValidateClaudeAccounts), so
 			// `accounts add` has no form for the default account above, and
 			// every other name in this namespace is one it owns end to end.
-			st.Commands = []string{bin + " accounts add " + quote(strings.TrimPrefix(logical, config.ClaudeOAuthTokenPrefix))}
+			account := strings.TrimPrefix(logical, config.ClaudeOAuthTokenPrefix)
+			add := bin + " accounts add " + quote(account)
+			// The profile whose claude_accounts already lists the account: the
+			// command refuses to pick one in a project with several
+			// (accountsAddProfile), and with exactly one it would add the
+			// account to that profile and deploy a job, where storing the token
+			// was the whole step (spec.AccountProfiles).
+			if profile := spec.AccountProfiles[account]; profile != "" {
+				add += " --profile " + quote(profile)
+			}
+			st.Commands = []string{add}
 		default:
 			st.Commands = []string{set + " < PATH-TO-THE-VALUE-FILE"}
 		}

@@ -590,6 +590,36 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 	}
 }
 
+// TestInitSecretsNamesTheProfileThatServesTheAccount: the one command init
+// hands the operator for a named account's token carries the profile whose
+// claude_accounts already lists it. A project with several profiles refuses a
+// bare `fugaro accounts add` (accountsAddProfile), and a project with one that
+// does not serve the account would have that command add the account to it and
+// deploy a job — neither of which the store-the-token step it replaced ever
+// did (code review, medium).
+func TestInitSecretsNamesTheProfileThatServesTheAccount(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app"}},
+	}
+	// Two profiles, only the second of which serves the account.
+	r.e.lc.Profiles = map[string]config.JobProfile{
+		"alpha": {},
+		"zeta":  {ClaudeAccounts: []string{"acme-personal"}},
+	}
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if !strings.Contains(cmds, "fugaro accounts add acme-personal --profile zeta") {
+		t.Errorf("the account's command does not name the profile that already serves it: %q", cmds)
+	}
+	if strings.Contains(cmds, "--profile alpha") {
+		t.Errorf("a profile that does not serve the account was named: %q", cmds)
+	}
+}
+
 // TestInitSecretsSkipsNamedAccountsForApiKeyAuth: the named-account prompts
 // are gated on agent.auth: oauth exactly like the bare default secret is —
 // api-key auth means no Claude OAuth secret is relevant at all, allowed

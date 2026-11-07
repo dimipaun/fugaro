@@ -179,6 +179,26 @@ func ClaudeAccountBySecret(accounts map[string]ClaudeAccount, secret string) (na
 	return "", false
 }
 
+// ClaudeAccountProfile is the profile whose claude_accounts already lists
+// account: the first in name order when several do, and "" when none does.
+//
+// The profile is what `fugaro accounts add` serves an account through
+// (accountsAddProfile): it adds the name to one profile's list, or — in a
+// project with several profiles — refuses, because picking one would be that
+// command choosing which jobs may serve a credential. So a message that hands
+// an owner `accounts add` for an account the project already serves has to name
+// the profile, and naming one whose list already holds the account leaves that
+// half of the command a no-op: the account is declared, the token is stored,
+// and no profile and no job of the job set changes.
+func ClaudeAccountProfile(profiles map[string]JobProfile, account string) string {
+	for _, name := range profileNames(profiles) {
+		if slices.Contains(profiles[name].ClaudeAccounts, account) {
+			return name
+		}
+	}
+	return ""
+}
+
 // AllowedClaudeAccounts are the names repo may choose among: "default"
 // always, plus every configured name whose allow_data_to lists repo,
 // sorted. This is the one place that decides the question in design §6a;

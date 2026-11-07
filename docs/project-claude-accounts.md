@@ -458,8 +458,11 @@ Per repository checkout, `fugaro doctor` carries three checks for this feature:
 
 - **`project-account-stored`** — every account job the installation serves has a stored project-wide
   version of its token. A missing one is a failing check naming the job, the profile, the account
-  and the token, with the fix on the line:
-  `claude setup-token; fugaro secrets set claude-oauth-token-<name> --project-wide`. The OK line
+  and the token, with the fix on the line `fugaro accounts add <name> --repos <owner/name> --profile <profile>` for a
+  named account — the account's own `allow_data_to` and the profile that already serves it, so
+  pasting it neither widens the account with the checkout it happens to run in nor picks a profile
+  for itself — and `claude setup-token; fugaro secrets set claude-oauth-token --project-wide` for
+  the default account, whose name is reserved and which no `accounts add` form takes. The OK line
   lists each account job with the repositories its token may be used by, and says that the mount is
   static — so the container holds the *project-wide* copy, and a repository copy does not reach it.
   It prints **no line at all** when the installation serves no account job — there is nothing to
