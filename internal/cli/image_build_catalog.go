@@ -255,20 +255,29 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	case !exists:
 		return userErr("project %s has no shared image registry %s, where a catalog image is pushed. fugaro update creates it: run that from this checkout first", lc.GCPProject, registry)
 	}
-	// The plan the whole command is judged and confirmed by, in one value: every
-	// entry this invocation builds is named in it, so one confirmation, one
-	// verdict and one record cover the builds that follow (image_build_managed.go).
+	// The plan this command is about, in one value: every entry this invocation
+	// builds is named in it, so what the person is shown (the typed name's own
+	// banner, or the note the gate prints) and what each build's document
+	// carries are one plan (image_build_managed.go).
 	entryNames := make([]string, len(entries))
 	for i, e := range entries {
 		entryNames[i] = e.Name
 	}
-	m := openBuildManaged(ctx, env, conds)
-	if err := m.confirm(ctx, cmd, conds, buildPlan{
+	plan := buildPlan{
 		Repo: repo, Origin: origin, Entries: entryNames, Kind: kind, Base: base,
 		Account: rs.BuildServiceAccountEmail, Registry: registry, Machine: lc.Build.MachineType,
 		What: catalogBuildBanner(entries, lc.Build.MachineType, rs.BuildServiceAccountEmail, registry),
-	}); err != nil {
-		return err
+	}
+	// The typed name, once, for every entry this command builds: it is what an
+	// unmanaged project is asked and what a session the gate does not stand in
+	// for has always been asked. A managed project's own terminal reads nothing
+	// here — each build is judged and noted on its own below, with D1013's
+	// bound and the kill switch re-read immediately before it.
+	m := openBuildManaged(ctx, env, conds)
+	if !m.standsIn(conds) {
+		if err := confirmBuild(cmd, lc.Name, lc.GCPProject, plan.What); err != nil {
+			return err
+		}
 	}
 	// The copies are written only now, after the confirmation (typed, or the
 	// gate's own in a managed project): like the layer copy the per-workflow
@@ -294,6 +303,14 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		return userErr("%v", err)
 	}
 	for _, e := range entries {
+		// The gate's own answer about THIS entry, read and judged here rather
+		// than once per command (D1013, D1024): the bound and the kill switch
+		// are read before this build, and the verdict is spent by the record
+		// this build writes after its submission. It comes before the copy so
+		// that an entry the gate refused leaves no trace in the bucket.
+		if err := m.admitEntry(ctx, cmd, conds, cat, e, rs.Slug, plan); err != nil {
+			return err
+		}
 		key, err := config.CatalogDockerfileKey(e.Name)
 		if err != nil {
 			return userErr("%v", err)
@@ -330,12 +347,11 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		case err != nil:
 			return remote(err)
 		}
-		// The submission IS the write this command's record is about: once it is
+		// The submission IS the write this build's record is about: once it is
 		// out the build happened and keeps billing, so the record is written
 		// whatever the wait after it did (D1014 on a write that cannot leave a
-		// trail). The verdict is spent by the first call, so the entries after
-		// this one submit under the admission this one recorded: one plan, one
-		// record, however many builds it named.
+		// trail). The count moves with it, so the entry after this one is
+		// judged against the bound with this build in it.
 		if err := m.recorded(ctx); err != nil {
 			return err
 		}

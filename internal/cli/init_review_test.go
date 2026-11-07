@@ -890,11 +890,8 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 	}
 	// Review fix: prepareLayerCopy writes builds/<slug>/project-layer.yaml
 	// (billable confirmation aside, a mutation of its own), so
-	// runImageBuildCloud must not reach it before the confirmation, or a
-	// declined build would still publish the copy. The confirmation is the
-	// gate-aware door's now (m.confirm), which is the typed prompt itself for
-	// every session that is not a person at a terminal in a managed project
-	// (image_build_managed.go).
+	// runImageBuildCloud must not reach it before confirmBuild, or a
+	// declined build would still publish the copy.
 	imgSrc := string(img)
 	rb := func(sig string) string {
 		i := strings.Index(imgSrc, sig)
@@ -908,7 +905,7 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 		return body
 	}
 	ib := rb("func runImageBuildCloud(")
-	if cf, pc := strings.Index(ib, "m.confirm("), strings.Index(ib, "prepareLayerCopy("); cf < 0 || pc < 0 || cf > pc {
+	if cf, pc := strings.Index(ib, "confirmBuild("), strings.Index(ib, "prepareLayerCopy("); cf < 0 || pc < 0 || cf > pc {
 		t.Errorf("runImageBuildCloud must confirm (at %d) before prepareLayerCopy (at %d)", cf, pc)
 	}
 

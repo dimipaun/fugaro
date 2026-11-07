@@ -2061,10 +2061,12 @@ the checkout's fugaro.yaml and origin say what to build.
 
 A Cloud Build is billable, so it asks for the project's name typed at a real
 terminal: --json, a pipe and a coding agent's session never confirm it (it
-prints the one line to run in your own terminal window and exits 1). In a
-project whose marks say it is managed a person at a real terminal is asked
-nothing: the printed plan, the managed gate's verdict on it and the build's
-record in the project's managed audit are the confirmation.
+prints the one line to run in your own terminal window and exits 1). One
+exception: building a catalog entry in a project whose marks say it is
+managed asks a person at a real terminal nothing, because the managed gate
+judges that build against the project's own bound on billable builds and
+records it. A derived image (--workflow, or a checkout with no catalog) is
+not that row and keeps the typed name.
 --local builds with your own Docker and costs nothing in the cloud.
 
 Usage: `fugaro image build [name]`

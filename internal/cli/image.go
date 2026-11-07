@@ -98,10 +98,12 @@ func newImageBuildCmd() *cobra.Command {
 			"the checkout's fugaro.yaml and origin say what to build.\n\n" +
 			"A Cloud Build is billable, so it asks for the project's name typed at a real\n" +
 			"terminal: --json, a pipe and a coding agent's session never confirm it (it\n" +
-			"prints the one line to run in your own terminal window and exits 1). In a\n" +
-			"project whose marks say it is managed a person at a real terminal is asked\n" +
-			"nothing: the printed plan, the managed gate's verdict on it and the build's\n" +
-			"record in the project's managed audit are the confirmation.\n" +
+			"prints the one line to run in your own terminal window and exits 1). One\n" +
+			"exception: building a catalog entry in a project whose marks say it is\n" +
+			"managed asks a person at a real terminal nothing, because the managed gate\n" +
+			"judges that build against the project's own bound on billable builds and\n" +
+			"records it. A derived image (--workflow, or a checkout with no catalog) is\n" +
+			"not that row and keeps the typed name.\n" +
 			"--local builds with your own Docker and costs nothing in the cloud.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -322,21 +324,13 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	case !exists:
 		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro update --repo creates it: run that from this checkout first", lc.GCPProject, rs.RegistryPath, repo)
 	}
-	// The plan this build is judged and confirmed by, in one value: the sentence
-	// the confirmation prints is the document the gate read (image_build_managed.go),
-	// so what the person is shown and what a rule refused cannot be two plans.
-	m := openBuildManaged(ctx, env, conds)
-	if err := m.confirm(ctx, cmd, conds, buildPlan{
-		Repo: repo, Origin: origin, Workflow: name, Kind: kind, Base: base,
-		Account: rs.BuildServiceAccountEmail, Registry: rs.RegistryPath, Machine: lc.Build.MachineType,
-		What: cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath),
-	}); err != nil {
+	if err := confirmBuild(cmd, lc.Name, lc.GCPProject, cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath)); err != nil {
 		return err
 	}
 	// Writes the repository's copy of the project layer only now, after the
-	// confirmation above (typed, or the gate's own in a managed project): like
-	// the converge's own buildImages/submitAndWait, a declined (or unconfirmable)
-	// build must leave no trace in the bucket.
+	// typed confirmation above: like the converge's own buildImages/
+	// submitAndWait, a declined (or unconfirmable) build must leave no
+	// trace in the bucket.
 	if cfg.Layer != nil {
 		rb, err := env.recordBucket(ctx)
 		if err != nil {
@@ -352,11 +346,6 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		return userErr("%v", err)
 	case err != nil:
 		return remote(err)
-	}
-	if err := m.recorded(ctx); err != nil {
-		// The build is submitted and keeps billing; what failed is the record
-		// of it, which is the command's own failure (D1014).
-		return err
 	}
 	if !o.noWait {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
