@@ -17,6 +17,7 @@ package initflow
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -128,6 +129,29 @@ type slot struct {
 	// billing linkage (own flags and typed confirmations) and a secret (a
 	// hidden prompt, never a flag).
 	noYes bool
+	// pastStops names the stages whose needs-you stop this stage still runs
+	// past (RunsPastStop): the stages that stopped with something only the
+	// user can give, and only over a subject this stage does not read at
+	// all. Nothing else is one of them — a failure left a state nothing is
+	// known about, and a block a stage's own Check reported is not the
+	// user's to clear.
+	pastStops []string
+}
+
+// RunsPastStop reports whether the stage name still runs when the stage
+// stopped stopped with a step only the user can give (NeedsYou) and the loop
+// has nothing else to go on. It is the one place that answers it: a stage
+// with work to do on files or installations the stopped one never read may
+// not be taken with it, because the user's own fix can be weeks away and the
+// door the run's lines name is `fugaro update` (the owner's rule of
+// 2026-10-30: one fugaro update is the whole upgrade).
+func RunsPastStop(name, stopped string) bool {
+	for _, s := range order {
+		if s.name == name {
+			return slices.Contains(s.pastStops, stopped)
+		}
+	}
+	return false
 }
 
 // Gating is linear: a stage runs only when every registered stage before it
@@ -157,22 +181,47 @@ var order = []slot{
 	// holds the publisher's gate, which refuses a node under rules that
 	// predate the policy model, and a run whose rules are stale would refuse
 	// its own migration and leave the upgrade unfinished.
-	{name: Rules, needs: []string{Repository}},
+	//
+	// pastStops: the generation is the installation's, deployed into its own
+	// Firebase database from the local config. The checkout's fugaro.yaml is
+	// not read for it, so a repository stage that stopped over that file —
+	// the user's to fix, with `fugaro validate` — may not take the deploy
+	// with it.
+	{name: Rules, needs: []string{Repository}, pastStops: []string{Repository}},
 	// The policy node is what every run of the project is admitted by, and
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
-	{name: Policy, needs: []string{Repository, Rules}},
+	//
+	// pastStops, as Rules': the node is the installation's, read from the
+	// local config and the published object. The rules stage in front of it
+	// is one it does wait for — that stage deploys the marker this write is
+	// gated on, and it is not a needs-you stop.
+	{name: Policy, needs: []string{Repository, Rules}, pastStops: []string{Repository}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a
 	// layer published after it would leave the run building from the one the
 	// owner just replaced.
-	{name: Layer, needs: []string{Repository}},
+	//
+	// pastStops, as Rules': the published project layer is the
+	// installation's, seeded from and published to its own bucket, and the
+	// checkout's file is not read to publish it.
+	{name: Layer, needs: []string{Repository}, pastStops: []string{Repository}},
 	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
 	// run after the repository stage: the images the cloud step refreshes are
 	// that repository's, and the onboarding the repository stage does is what
 	// the refresh builds for.
-	{name: Checkout, needs: []string{Repository, Layer}},
+	//
+	// pastStops: the two local steps — the pin in the checkout's settings and
+	// the plugin in the user's own Claude Code — read no repository
+	// fugaro.yaml, and the plugin is what clears the staleness line every
+	// command prints ("run fugaro update"). A repository stage that stopped
+	// needs-you over the checkout's own file may not take them with it, or
+	// the door that line names is the one door that cannot clear it (#1836).
+	// The cloud step does need the repository, and keeps every refusal of its
+	// own: it is the step that skips itself where the checkout's file is not
+	// this run's to build for.
+	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.

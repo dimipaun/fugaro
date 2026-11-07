@@ -355,6 +355,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 				r.res.Error = err.Error()
 				_ = r.printResult()
 			}
+			// The staleness line waits for the run that clears it (fugaro
+			// update, skillwarn.go): said here, after the pin and the plugin
+			// have moved, it reports only what is still stale, and a door that
+			// is itself the remedy never sends the reader to itself over work
+			// it is about to do. Every other door prints it before it runs,
+			// which this call leaves alone.
+			warnStaleSkillsAfter(cmd)
 			return err
 		},
 	}

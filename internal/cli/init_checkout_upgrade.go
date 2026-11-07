@@ -97,17 +97,18 @@ type plannedStep struct {
 }
 
 // planFor is the steps this checkout's run has, and the steps it does not:
-// three reasons drop the cloud step, and none of them is a skip over a
+// four reasons drop the cloud step, and none of them is a skip over a
 // failure. A coding agent's session leaves the cloud out (U7: the pin and the
 // plugin move there, the images do not — what fugaro upgrade --local does in
 // the same session), the step never having been reached to say it itself
 // because the loop applied this stage for its local half. That drop is the one
-// of the three that is parked and not skipped: the step is the user's, in the
+// of the four that is parked and not skipped: the step is the user's, in the
 // terminal where it can run, and the stage reports it every run. A checkout
 // with no origin remote has no repository for the refresh to resolve — a skip,
 // not the failure fugaro upgrade makes of that read, because there the user
 // asked for the refresh by name and here the step is one of a run. A checkout
-// whose fugaro.yaml names another project is not this run's to touch.
+// whose fugaro.yaml names another project is not this run's to touch, and
+// neither is one whose fugaro.yaml does not resolve at all (yamlNotValid).
 //
 // Everything else is the steps' own: every other reason the refresh skips (no
 // fugaro.yaml, a teammate checkout, one not onboarded, a development build, a
@@ -125,6 +126,14 @@ func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc plugi
 	case u.agent != "":
 		cloudSkip, cloudParked = cloudAgentRefusal(u), true
 	default:
+		why, err := s.yamlNotValid(ctx, loc)
+		if err != nil {
+			return nil, err
+		}
+		if why != "" {
+			cloudSkip = why
+			break
+		}
 		origin, err := hasOriginRemote(ctx, loc.Root)
 		if err != nil {
 			return nil, fmt.Errorf("reading the checkout's remotes: %w", err)
@@ -162,6 +171,32 @@ func (s *checkoutStage) namesAnotherProject(loc pluginwire.Location) (string, er
 		}
 	case !errors.Is(err, os.ErrNotExist):
 		return "", fmt.Errorf("this checkout's fugaro.yaml cannot be read, so which project it names is unknown and its plugin pin and its job images are not moved: %s", oneLine(err.Error()))
+	}
+	return "", nil
+}
+
+// yamlNotValid is why this checkout's fugaro.yaml is not one the cloud step
+// may build for: the file is there and names this project (so
+// namesAnotherProject let it through), and resolving it the way the repository
+// stage resolves it does not. It is the same file and the same verdict, which
+// is the point: the repository stage stopped needs-you over it with
+// `fugaro validate` as the fix, and this stage's own step would otherwise turn
+// the user's file into a failure of the run — the cloud step's verdict on a
+// local-file error is a failure in every mode (upgrade.go's policyStep),
+// because there the user asked for the refresh by name and here the step is
+// one of a run.
+//
+// Only the cloud step is dropped for it: the pin and the plugin read the
+// checkout's settings and Claude Code, never the file, and they are what
+// clears the staleness line that names `fugaro update` — the one door that
+// would otherwise not be able to clear it (#1836).
+func (s *checkoutStage) yamlNotValid(ctx context.Context, loc pluginwire.Location) (string, error) {
+	data, err := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml"))
+	if err != nil {
+		return "", err
+	}
+	if _, problems := parseCheckoutFugaroYAML(ctx, data, s.e.lc); len(problems) > 0 {
+		return "this checkout's fugaro.yaml does not resolve (" + layerProblemsText(problems) + "), so its job images are not refreshed here: fix what fugaro validate says, then rerun " + s.e.r.o.doorProgram(), nil
 	}
 	return "", nil
 }

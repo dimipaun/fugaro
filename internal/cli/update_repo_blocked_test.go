@@ -37,13 +37,16 @@ const convergeLegacyYAML = "version: 1\nproject: aurora\ngit: { provider: github
 func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 	r := newConvergeRigYAML(t, v4Node(), convergeLegacyYAML)
 	currentRelease(t)
+	// The line is once per process and this test is about the process's only
+	// one: an earlier test's run may have spent it.
+	skillWarned.Store(false)
+	t.Cleanup(func() { skillWarned.Store(false) })
 
-	// The fixture is the issue's state: the installed plugin is the previous
-	// release's while the pin is this one's, which is the line doctor and every
-	// command warn about.
-	installed := installedVersion(t, r)
-	if installed != convergePrev {
-		t.Fatalf("the fixture's installed plugin is %q, want %q", installed, convergePrev)
+	// The fixture is the issue's state: Claude Code holds the previous
+	// release's plugin while the checkout pins this one's, which is the line
+	// doctor and every command warn about.
+	if got := claudeListVersion(t, r); got != convergePrev {
+		t.Fatalf("the fixture's installed plugin is %q, want %q", got, convergePrev)
 	}
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
@@ -51,7 +54,7 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 		t.Fatalf("the run reported success while the checkout's own fugaro.yaml is invalid:\n%s", out)
 	}
 	var res convergeJSON
-	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
+	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
 		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
 	}
 
@@ -77,21 +80,100 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 		}
 	}
 
-	// The plugin install ran, and the installed copy is this release's: the
-	// warning the user could not clear is cleared.
-	if got := installedVersion(t, r); got != convergeRelease {
-		t.Errorf("the installed Claude Code plugin is %q after fugaro update, want %q: the checkout stage never installed it\n%s", got, convergeRelease, out)
-	}
+	// The plugin install ran — the step the HARD RULE is about — and Claude
+	// Code's own list is this release's afterwards.
 	if calls := r.claude.Changes(t); len(calls) == 0 {
 		t.Errorf("the run never ran claude to install the plugin:\n%s", out)
 	}
-
-	// The run does not print the staleness line it exists to clear: not before
-	// it runs (the door that fixes it pointing at itself), and not after it
-	// either, because the plugin is current by then.
-	if line := staleWarnings(errOut + out); line != "" {
-		t.Errorf("fugaro update printed the staleness line it is the fix for: %q\n%s", line, out)
+	if got := claudeListVersion(t, r); got != convergeRelease {
+		t.Errorf("Claude Code lists the plugin as %q after fugaro update, want %q: the checkout stage never installed it\n%s", got, convergeRelease, out)
 	}
+
+	// And the line the user is stuck on is said after the run, never before it.
+	staleLineWaitsForTheRun(t, errOut)
+}
+
+// TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind (#1836c): the
+// staleness line and the plugin stage's line are about the two halves of the
+// plugin — the copy Claude Code holds and the pin in .claude/settings.json —
+// and on a checkout whose pin is already this release's they used to read one
+// current and the other stale on the same run: the stage said "No changes: ...
+// pins the plugin to vX" while every command warned that the installed copy
+// was the release behind. The pin's half is not the whole truth, and the line
+// now carries the half that is behind and the step that installs it.
+func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T) {
+	r := newConvergeRigYAML(t, v4Node(), convergeLegacyYAML)
+	currentRelease(t)
+	skillWarned.Store(false)
+	t.Cleanup(func() { skillWarned.Store(false) })
+	// A previous run moved the pin; the install it asked for did not happen
+	// (the state pluginFirstRun warns about), which the fake's claude keeps in
+	// the list the checkout's plugin step reads.
+	checkoutFile(t, r.settings, wiredAt("v"+convergeRelease))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err == nil {
+		t.Fatalf("the run reported success while the checkout's own fugaro.yaml is invalid:\n%s", out)
+	}
+	var res convergeJSON
+	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
+		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
+	}
+	if got := res.state(initflow.Plugin); got != "done" {
+		t.Fatalf("the plugin stage is %q, want done: the pin is already this release's\n%s", got, out)
+	}
+
+	d := res.stageDetail(t, initflow.Plugin)
+	if !strings.Contains(d, convergePrev) {
+		t.Errorf("the plugin stage's line reads as current while Claude Code still has %s installed: %q\n%s", convergePrev, d, out)
+	}
+	if !strings.Contains(d, convergeRelease) {
+		t.Errorf("the plugin stage's line does not name the version the checkout stage installs: %q\n%s", d, out)
+	}
+
+	// The other half of #1836c: the two lines agree now, and the run that the
+	// line points at still did the install.
+	if got := claudeListVersion(t, r); got != convergeRelease {
+		t.Errorf("Claude Code lists the plugin as %q after the run, want %q\n%s", got, convergeRelease, out)
+	}
+	staleLineWaitsForTheRun(t, errOut)
+}
+
+// staleLineWaitsForTheRun is #1836b: the staleness line, when the run prints
+// one at all, comes after the run's own account of the plugin and never before
+// it. Printed first it is the door that clears the staleness sending the
+// reader to itself over a step of its own that has not run yet, and it is the
+// one line a run could not clear however often it was run. The fixture's fake
+// claude leaves Claude Code's own record alone, so what is left to say at the
+// end is still said: the point of the assertion is when.
+func staleLineWaitsForTheRun(t *testing.T, errOut string) {
+	t.Helper()
+	line := staleWarnings(errOut)
+	if line == "" {
+		return
+	}
+	install := strings.Index(errOut, "installed "+convergeRelease)
+	if install < 0 {
+		t.Fatalf("the run never said it installed the plugin:\n%s", errOut)
+	}
+	if i := strings.Index(errOut, line); i < install {
+		t.Errorf("fugaro update printed the staleness line before the run that clears it: %q\n%s", line, errOut)
+	}
+}
+
+// runJSONObject is the run's own --json object out of a command's stdout. It is
+// not the whole of it: the policy stage's confirm and the line recording the
+// generation it wrote go to the command's stdout rather than to the run's
+// writer (budget.go's confirmTyped, init_policy_migrate.go's record), so a run
+// that publishes a node prints them ahead of the object. The object is the
+// last document on the stream, and it is the one this asks for.
+func runJSONObject(t *testing.T, out string) string {
+	t.Helper()
+	i := strings.Index(out, "{\n")
+	if i < 0 {
+		t.Fatalf("no JSON object on the run's stdout:\n%s", out)
+	}
+	return out[i:]
 }
 
 // staleWarnings is every staleness line in a run's output, "" when there is
@@ -107,26 +189,26 @@ func staleWarnings(out string) string {
 	return ""
 }
 
-// installedVersion is the version Claude Code's own record gives for the
-// Fugaro plugin, read the way the CLI reads it (installedPlugins).
-func installedVersion(t *testing.T, r *convergeRig) string {
+// claudeListVersion is what the fake claude answers `plugin list --json` with:
+// Claude Code's own record of the installed Fugaro plugin, which is what the
+// checkout stage's plugin step reads to decide whether the install is behind
+// and rewrites when it installs one.
+func claudeListVersion(t *testing.T, r *convergeRig) string {
 	t.Helper()
-	path := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Join(r.claude.Dir, "plugins.json"))
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	var doc struct {
-		Plugins map[string][]struct {
-			Version string `json:"version"`
-		} `json:"plugins"`
+	var list []struct {
+		ID      string `json:"id"`
+		Version string `json:"version"`
 	}
-	if err := json.Unmarshal(data, &doc); err != nil {
+	if err := json.Unmarshal(data, &list); err != nil {
 		t.Fatalf("%v: %s", err, data)
 	}
-	for _, in := range doc.Plugins[pluginwire.PluginID] {
-		if in.Version != "" {
-			return in.Version
+	for _, p := range list {
+		if p.ID == pluginwire.PluginID {
+			return p.Version
 		}
 	}
 	return ""
