@@ -1219,8 +1219,8 @@ func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
 // recordUpdate writes this run's retirement into the machine's own record of
 // the last update (localcfg's update.json, in the state directory the
 // remembered checkouts live in): the console's Project tab draws what the last
-// plain `fugaro update` retired, and of how many runs were in flight while it
-// did, and nothing else on this machine keeps either (F20, F21, D1484, D1485).
+// plain `fugaro update` retired, and how many runs were in flight while it did,
+// and nothing else on this machine keeps either (F20, F21, D1484, D1485).
 //
 // It is called where the run's retirement is settled and nowhere else, once
 // per run:
@@ -1275,7 +1275,8 @@ func (r *initRun) recordUpdate(ctx context.Context, lc *localcfg.Config, rets []
 		}
 	}
 	if err := localcfg.RecordUpdate(os.Getenv, r.projectName, up); err != nil {
-		r.warn(fmt.Sprintf("the retirement of this update was not recorded (%v): the console's project screen reads that record, so it keeps drawing whatever the previous update left there. Run fugaro update again where the state directory can be written", err))
+		path, _ := localcfg.UpdateRecordPath(os.Getenv)
+		r.warn(fmt.Sprintf("this update's retirement was not recorded in %s (%v): the console's project screen reads that record, so it keeps drawing whatever the previous update left there. The next update writes it again, once that directory can be written", path, err))
 	}
 }
 
