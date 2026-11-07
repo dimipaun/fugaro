@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
@@ -635,5 +636,176 @@ func TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied(t *testing.T) {
 	// nothing is ready for byte for byte what it was before the release.
 	if raw := readFileString(t, r.cfg); strings.Contains(raw, "credentials_service_ready") {
 		t.Errorf("the local config still carries the key after the record went false:\n%s", raw)
+	}
+}
+
+// markSwitchRepoReady writes the record a person's OWN run leaves on a
+// repository's entry: it read a bundle that held a model credential, so the
+// entry the next run reads already answers the switch.
+func markSwitchRepoReady(t *testing.T, r *initRig, name string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := "  " + name + ": {"
+	if !strings.Contains(string(b), entry) {
+		t.Fatalf("the rig's local config holds no entry for %s:\n%s", name, b)
+	}
+	ready := strings.Replace(string(b), entry, entry+" credentials_service_ready: true,", 1)
+	if err := os.WriteFile(r.cfg, []byte(ready), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if lc, err := localcfg.Load(r.cfg); err != nil || !lc.Repos[name].CredentialsServiceReady {
+		t.Fatalf("the record the helper wrote does not read back (err %v): the fixture is not the state this test starts from", err)
+	}
+}
+
+// TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess is the fence the
+// record's writer needed and did not have: EVERY command that touches this
+// installation's secrets refuses a coding agent's session and a run's own
+// process before its first call (`fugaro creds ls/set`, credsOwnerOnly), and
+// the bundle credentialBundleReady reads is the widest of them — the one
+// document holding every model credential the service issues.
+//
+// The run is the whole repository door, `fugaro update --repo --plan-only`,
+// which is how the hole was found: with CLAUDECODE set it read the bundle,
+// answered from it and recorded the answer, so an agent's session could switch
+// a repository off — or on — for a credential it may not read, and could do it
+// to an installation whose bundle it had just opened. The two doors are one
+// fence: the repository door (recordCredentialsServiceReady, whose reading is
+// what the spec below it is built from) and the installation door's backfill
+// (backfillCredentialsServiceReady) read through the same function.
+//
+// Every marker is looped over, the agent-set ones and the IDE extension's
+// alike, and so is every marker a Fugaro run's own process carries, because the
+// sentence a refusal prints and the variable it names are read by a person: a
+// fence that moved off one of them fails here.
+//
+// The fixture is chosen so the two answers are far apart. The bundle holds a
+// git credential and no model one, and the fake is NOT allowed to serve its
+// payload (r.sm.Seed without AllowAccess): a run that reads the document fails
+// the test twice over, once by opening the version list and once at the access
+// call. The entry carries the record a person's own run wrote — the bundle DID
+// hold a model credential then — so the pre-fix answer was a false written over
+// a true record, a repository switched off, and its root planned held off, on
+// the word of a session that never read the bundle.
+//
+// Mutation (verified, run and restored): drop the two marker checks from
+// credentialsBundleReady (internal/cli/init_credentials.go) and this fails with
+// the record cleared, the key absent from the root's tfvars and the bundle's
+// version list served.
+func TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	markers := append(append([]string{}, agentenv.Markers...), managedFlagRunMarkers...)
+	for _, marker := range markers {
+		t.Run(marker, func(t *testing.T) {
+			r := credentialsRig(t)
+			r.repoReady(t)
+			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+			credentialsOutputs(t, r)
+			markSwitchRepoReady(t, r.initRig, "acme/sandbox")
+			bundle := credsvc.BundleSecretID(initProjectName)
+			r.sm.Seed(bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue},
+				[]byte(config.BitbucketSecret+": "+credsValue(t, "git")+"\n"))
+			read, listed := r.sm.Accessed(), r.sm.VersionsListedFor(bundle)
+
+			t.Setenv(marker, "1")
+			t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "cascade", "aurora", "")))
+			out, errOut, err := executeStdin(t, "", "update", "--repo", "--plan-only")
+			if err != nil {
+				t.Fatalf("the run failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+			}
+
+			if got := r.sm.Accessed(); len(got) != len(read) {
+				t.Errorf("the run read %v, and the bundle's own document is the one secret a coding agent's session and a run's process may not read (credsOwnerOnly, internal/cli/creds.go): the bundle holds every model credential the service issues\nstdout:\n%s", got[len(read):], out)
+			}
+			if got := r.sm.VersionsListedFor(bundle); got != listed {
+				t.Errorf("the run listed the bundle's %d version(s) where it listed %d before, and that list is the first call a store over the container makes: nothing under this marker may open the bundle's store at all, whatever it would find there\nstdout:\n%s", got, listed, out)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatalf("the local config does not parse: %v", err)
+			}
+			if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
+				t.Errorf("the record a person's own run wrote was overwritten by a session that read no bundle: the switch is a value only a reading may move, in either direction — a false written here switches a repository off on the word of a process that may not look at the credential it is judging, and the person's next run has nothing to correct it from\n%s", readFileString(t, r.cfg))
+			}
+			if _, present := repoCredentialsServiceFact(t, slug); !present {
+				t.Errorf("the repository root was planned held off, though the entry's record says the service is ready and this run read no bundle that could have said otherwise: the plan has to be the one the record already answers, or this run's apply takes the repository's model mounts away and grants it nothing in their place\nstdout:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess is the same fence
+// at the installation door, which is the other reader of the bundle: the
+// ordinary `fugaro update`, whose backfill
+// (backfillCredentialsServiceReady, internal/cli/init_credentials.go) is what
+// converges an installation that took the service before this release
+// (TestAnOptedInInstallationConvergesWithOneUpdate is that path in full).
+//
+// The state is the one the backfill exists for: the repository root's own
+// tfvars say the service is on, the entry carries no record, and the bundle
+// holds a model credential — so the run that may read it records the entry, and
+// the run under a marker leaves it exactly as it found it. The fake is not
+// allowed to serve the payload here either, so a run that reached the document
+// fails this test twice over.
+//
+// The markers are the RUN ones alone, and that is the reachable set at this
+// door: an agent's session never gets here, because the installation step
+// refuses to apply in one before this door runs at all (initflow's AgentError,
+// "a coding agent's session is present…, so nothing is applied"), so the run
+// that can read this bundle with the installation door's identity is a Fugaro
+// run's own process. The agent markers are pinned where an agent CAN drive this
+// code — the repository door above, whose plan reads the bundle before its
+// apply is ever reached.
+//
+// Left unrecorded is the correct answer and not a lost convergence: the record
+// is the person's, the entry carries none, and the person's own next `fugaro
+// update` writes it — the upgrade still takes one command, and not one an agent
+// has to run.
+//
+// Mutation (verified, run and restored): drop the two marker checks from
+// credentialsBundleReady and this fails with the entry recorded and the
+// bundle's payload read.
+func TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range managedFlagRunMarkers {
+		t.Run(marker, func(t *testing.T) {
+			r := credentialsRig(t)
+			r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+			credentialsOutputs(t, r)
+			bundle := credsvc.BundleSecretID(initProjectName)
+			r.sm.Seed(bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue},
+				[]byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+			seedRepoRootCredentialsService(t, slug)
+
+			t.Setenv(marker, "1")
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("the run failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+			}
+
+			if got := r.sm.Accessed(); len(got) != 0 {
+				t.Errorf("the run read %v, and the backfill's bundle holds every model credential the service issues: an agent's session reads it the way credsOwnerOnly refuses to (`fugaro creds ls`, internal/cli/creds.go)\nstdout:\n%s", got, out)
+			}
+			if got := r.sm.VersionsListedFor(bundle); got != 0 {
+				t.Errorf("the run listed the bundle's versions %d time(s), which is the first call a store over the container makes: the backfill reads the bundle to answer the switch, and no answer under this marker may be written down\nstdout:\n%s", got, out)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatalf("the local config does not parse: %v", err)
+			}
+			if lc.Repos["acme/sandbox"].CredentialsServiceReady {
+				t.Errorf("the backfill wrote the switch's record for acme/sandbox from a bundle this run may not read: the entry keeps the record the person's own run left on it, which here is none — and the person's next `fugaro update` is what converges it, so nothing is lost by this run leaving it alone\n%s", readFileString(t, r.cfg))
+			}
+		})
 	}
 }
