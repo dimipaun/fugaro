@@ -24,6 +24,10 @@ import (
 	"strings"
 )
 
+// redacted is what every pass substitutes; none of them drops the text
+// around a match, so a reader can still see that something was there.
+const redacted = "[REDACTED]"
+
 // Redactor replaces secret values with [REDACTED], line by line, before
 // writing to w. Call Flush after the last Write.
 type Redactor struct {
@@ -86,12 +90,8 @@ func Text(s string, exact []string) string {
 func Report(s string) string {
 	s = patternPass(s)
 	s = email.ReplaceAllString(s, redacted)
-	return homePath.ReplaceAllString(s, redacted)
+	return homePath.ReplaceAllString(s, "$1"+redacted)
 }
-
-// redacted is what both passes substitute; they never drop the text around a
-// match, so a reader can still see that something was there.
-const redacted = "[REDACTED]"
 
 // patternPass is the credentials a value list cannot name, because Fugaro
 // never held them: a bearer token a failing cloud call printed, a signed URL,
@@ -115,18 +115,24 @@ func patternPass(s string) string {
 var (
 	// authHeader is a header whose value is a credential whatever it is: the
 	// whole value goes, scheme word (Bearer, Basic) included, and the header
-	// name stays so the line still reads as what it was.
-	authHeader = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)\s*:\s*[^\r\n]*`)
+	// name stays so the line still reads as what it was. The name may carry
+	// the closing quote of a JSON key, because a structured log is where a
+	// Terraform or gcloud error body often prints one.
+	authHeader = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*[^\r\n]*`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The
-	// value has to be long enough that the word after "bearer" in a sentence
-	// is not mistaken for one.
+	// floor on the value's length is what keeps a sentence's "basic
+	// requirement" out of it, so a short bare credential is caught only when
+	// a header name introduces it (above).
 	authScheme = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}`)
 
-	// signedParam is the query parameter of a signed URL: the signature and
-	// the credential it was made with are the secret part, and everything
-	// else in the URL (the bucket, the object, the expiry) stays readable.
+	// signedParam is the query parameter of a signed URL — the one place
+	// these names are known to carry a credential. The signature and the
+	// credential it was made with are the secret part; the rest of the URL
+	// (the bucket, the object, the expiry) stays readable. An assignment
+	// elsewhere, such as `CLIENT_SECRET=...` in an environment dump, is not
+	// one of the shapes this pass claims.
 	signedParam = regexp.MustCompile(`(?i)([?&])(x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|googleaccessid|awsaccesskeyid|signature|sig|access_token|id_token|refresh_token|api_key|apikey|client_secret|password|token)=([^&\s"'<>]*)`)
 
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
@@ -153,8 +159,14 @@ var (
 	// email and homePath are what only the report has to lose: the report is
 	// posted in public, and an address or a path under a home directory names
 	// the person filing it.
+	//
+	// homePath's leading delimiter is captured rather than looked behind (Go
+	// has no lookaround): without it a URL path such as
+	// `example.com/home/page` would be redacted, and with it only a path that
+	// starts a word goes. A Windows path may carry one backslash or, as it
+	// arrives inside JSON, two.
 	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+`)
-	homePath = regexp.MustCompile(`(?:/(?:root|home|Users)\b|[A-Za-z]:\\Users\b)(?:[/\\][^\s"'<>]*)?`)
+	homePath = regexp.MustCompile(`(?m)(^|[^\w/])(?:/(?:root|home|Users)\b|[A-Za-z]:\\{1,2}Users\b)(?:[/\\][^\s"'<>]*)?`)
 )
 
 // Forms returns the strings to redact for secrets, longest first so a secret
@@ -258,10 +270,11 @@ func wrappedForms(s string) []string {
 	return slices.DeleteFunc(forms, func(f string) bool { return len(f) < encodedMin })
 }
 
-// ReplaceAll replaces every form in forms with [REDACTED].
+// ReplaceAll is the exact pass's substitution step: every form in forms goes,
+// and the caller keeps the text around it.
 func ReplaceAll(s string, forms []string) string {
 	for _, f := range forms {
-		s = strings.ReplaceAll(s, f, "[REDACTED]")
+		s = strings.ReplaceAll(s, f, redacted)
 	}
 	return s
 }
