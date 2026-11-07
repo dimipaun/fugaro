@@ -1,0 +1,767 @@
+#!/usr/bin/env bash
+# Tests for scripts/live-checks/check340.sh, against a fake gcloud on PATH:
+# nothing here reaches the network, there is no cloud project and no bucket, and
+# no credential is read, made or printed.
+#
+# The fake models the one thing this check is about. It holds a bucket with the
+# objects the run seeds, IAM bindings whose conditions it really evaluates, and a
+# service account that really exists and really goes away when it is deleted — so
+# a listing is allowed or refused by the clause the run's own condition carries,
+# against the attribute form the case says the bucket carries (relative, full
+# path, or neither). Everything is recorded, including the condition text the
+# script wrote into the JSON it hands to `--condition-from-file`, which is what
+# pins the two clauses of R12 and their `||`.
+#
+# Usage: bash scripts/live-checks/check340_test.sh
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+script=$here/check340.sh
+work=$(cd "$(mktemp -d)" && pwd -P)
+cleanup_all() {
+  if [ -n "${CHECK340_TEST_KEEP:-}" ]; then
+    echo "kept: $work" >&2
+  else
+    rm -rf "$work"
+  fi
+}
+trap cleanup_all EXIT
+
+failures=0
+fail() {
+  echo "FAIL: $*" >&2
+  failures=$((failures + 1))
+}
+expect_contains() { # haystack needle what
+  case "$1" in
+  *"$2"*) ;;
+  *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c 900)" ;;
+  esac
+}
+expect_absent() { # haystack needle what
+  case "$1" in
+  *"$2"*) fail "$3: found '$2' where it must never appear" ;;
+  esac
+}
+expect_status() { # status want what
+  [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1$(printf '%s\n' "${out:-}" | grep -E '^FACT (aborted|list-prefix|restore):' | sed 's/^/ ... last run: /')"
+}
+
+# The bucket and project a case runs against. Neither names `belong`, which is
+# the installation this check must never touch.
+PROJECT=prj-sandbox-a
+BUCKET=bkt-sandbox-a
+
+# Every fact key the run's block carries, whatever it measured.
+BLOCK_KEYS=(project bucket belong bucket-reachable account seed
+  relative-lists-runs relative-lists-reports relative-reads-runs
+  relative-root-refused relative-tokens-read-refused
+  relative-tokens-list-refused relative-cache-list-refused
+  full-lists-runs full-lists-reports full-reads-runs
+  full-root-refused full-tokens-read-refused
+  full-tokens-list-refused full-cache-list-refused
+  list-prefix restore)
+
+# --------------------------------------------------------------------- fakes
+write_fakes() { # dir
+  mkdir -p "$1/bin" "$1/state/objects"
+  cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
+#!/usr/bin/env bash
+# A fake gcloud for check340.sh's test.
+#
+# It models what the check reads and writes and nothing else:
+#   * a bucket with the objects the run seeds (cp writes them, rm -r removes
+#     them, ls lists them and refuses a prefix that holds none);
+#   * bucket bindings whose conditions it REALLY evaluates, against the form of
+#     the objectListPrefix attribute that $FAKE340_DIR/form names (relative, full
+#     or none) — so a listing is allowed only when a granted clause the run wrote
+#     itself covers it, and a read only when a granted resource.name clause
+#     does;
+#   * a service account that exists once the run creates it and is gone once it
+#     deletes it.
+# The owner's own identity (no --impersonate-service-account) is allowed
+# everything unless FAKE340_UNREACHABLE is set. Every call is recorded on the
+# first line, before anything else, so a dry run that made no call at all is
+# provable rather than argued.
+set -euo pipefail
+dir=${FAKE340_DIR:?FAKE340_DIR is not set}
+printf 'gcloud %s\n' "$*" >>"$dir/calls"
+
+# The whole command line, kept: the loop below takes the arguments apart, and
+# the dispatch after it reads the verbs out of this instead.
+argv=("$@")
+account=${FAKE340_ACCOUNT:-owner@sandbox-a.example}
+
+unknown() {
+  printf 'fake gcloud: unexpected call: %s\n' "$*" >&2
+  exit 64
+}
+deny() { # permission
+  printf 'ERROR: (gcloud.storage) HTTPError 403: %s does not have %s access to the Google Cloud Storage object.\n' "$impersonate" "$1" >&2
+  exit 1
+}
+
+impersonate=""
+condition_file=""
+member=""
+role=""
+urls=()
+# The verb words come first and are not arguments: `storage ls URL` has two,
+# `storage buckets add-iam-policy-binding URL` and `iam service-accounts create
+# ID` three. Everything after them is either a flag or a positional.
+case "${argv[1]:-}" in
+buckets | service-accounts) verbs=3 ;;
+*) verbs=2 ;;
+esac
+seen=0
+while [ $# -gt 0 ]; do
+  seen=$((seen + 1))
+  if [ "$seen" -le "$verbs" ]; then
+    shift
+    continue
+  fi
+  case "$1" in
+  --impersonate-service-account=*) impersonate=${1#*=} ;;
+  --condition-from-file=*) condition_file=${1#*=} ;;
+  --member=*) member=${1#*=} ;;
+  --role=*) role=${1#*=} ;;
+  -*) : ;;
+  *) urls+=("$1") ;;
+  esac
+  shift
+done
+
+# The two clause kinds, as R12 writes them: the listing half's value out of
+# api.getAttribute('storage.googleapis.com/objectListPrefix', '') and the read
+# half's out of resource.name. A clause of the other kind is absent from the
+# expression and extracts as the empty string, which is what makes a binding that
+# carries only one of the two a denial for the other request.
+list_clause() { printf '%s' "$1" | sed -n 's/.*objectListPrefix[^"]*startsWith("\([^"]*\)").*/\1/p'; }
+read_clause() { printf '%s' "$1" | sed -n 's/.*resource\.name\.startsWith("\([^"]*\)").*/\1/p'; }
+
+allowed_list() { # ATTR
+  local attr=$1 bmember brole bexpr btitle candidate
+  while IFS=$'\t' read -r bmember brole bexpr btitle; do
+    [ -n "$bexpr" ] || continue
+    candidate=$(list_clause "$bexpr")
+    [ -n "$candidate" ] || continue
+    case "$attr" in "$candidate"*) return 0 ;; esac
+  done <"$dir/bindings"
+  return 1
+}
+allowed_read() { # OBJECT
+  local object=$1 bmember brole bexpr btitle candidate
+  while IFS=$'\t' read -r bmember brole bexpr btitle; do
+    [ -n "$bexpr" ] || continue
+    candidate=$(read_clause "$bexpr")
+    [ -n "$candidate" ] || continue
+    case "$object" in "$candidate"*) return 0 ;; esac
+  done <"$dir/bindings"
+  return 1
+}
+
+case "${argv[0]:-}" in
+auth)
+  case "${argv[1]:-}" in
+  list) printf '%s\n' "$account" ;;
+  *) unknown "${argv[@]}" ;;
+  esac
+  ;;
+storage)
+  case "${argv[1]:-}" in
+  ls)
+    url=${urls[0]:-}
+    [ -n "$url" ] || unknown "${argv[@]}"
+    bare=${url#gs://}
+    bucket=${bare%%/*}
+    case "$bare" in
+    */*) prefix=${bare#*/} ;;
+    *) prefix="" ;;
+    esac
+    if [ -n "$impersonate" ] && [ -n "${FAKE340_FLAKY:-}" ]; then
+      # A grant that has not taken effect yet: the first FAKE340_FLAKY listings
+      # are refused whatever the condition says, which is what a real fresh
+      # binding does and what the check's retry exists for.
+      attempts=$(cat "$dir/flaky" 2>/dev/null || echo 0)
+      attempts=$((attempts + 1))
+      printf '%s\n' "$attempts" >"$dir/flaky"
+      if [ "$attempts" -le "$FAKE340_FLAKY" ]; then
+        deny storage.objects.list
+      fi
+    fi
+    if [ -n "$impersonate" ]; then
+      # FAKE340_ROOT_OK and FAKE340_WIDE are the two ways a grant can be wider
+      # than R12's: the first lets the root listing through alone, the second
+      # lets the account list anywhere, which is what an unconditioned binding
+      # would do.
+      if [ -z "$prefix" ] && [ -n "${FAKE340_ROOT_OK:-}" ]; then
+        :
+      elif [ -n "${FAKE340_WIDE:-}" ]; then
+        :
+      else
+        case "$(cat "$dir/form" 2>/dev/null || echo none)" in
+        relative) attr=$prefix ;;
+        full) attr="projects/_/buckets/$bucket/objects/$prefix" ;;
+        *) attr='__no-form-carries-this__' ;;
+        esac
+        allowed_list "$attr" || deny storage.objects.list
+      fi
+    elif [ -n "${FAKE340_UNREACHABLE:-}" ]; then
+      deny storage.objects.list
+    fi
+    found=0
+    while IFS= read -r f; do
+      rel=${f#"$dir/objects/"}
+      case "$rel" in
+      "$prefix"*) found=1; printf 'gs://%s/%s\n' "$bucket" "$rel" ;;
+      esac
+    done < <(find "$dir/objects" -type f | sort)
+    # An empty bucket answers an empty listing; a prefix that holds nothing is
+    # an error, which is how a real `ls` reads and what the Restore's read-back
+    # counts on.
+    if [ "$found" -eq 0 ] && [ -n "$prefix" ]; then
+      printf 'ERROR: (gcloud.storage.ls) One or more URLs matched no objects.\n' >&2
+      exit 1
+    fi
+    ;;
+  cat)
+    url=${urls[0]:-}
+    [ -n "$url" ] || unknown "${argv[@]}"
+    bare=${url#gs://}
+    bucket=${bare%%/*}
+    path=${bare#*/}
+    if [ -n "$impersonate" ]; then
+      allowed_read "projects/_/buckets/$bucket/objects/$path" || deny storage.objects.get
+    fi
+    if [ ! -f "$dir/objects/$path" ]; then
+      printf 'ERROR: (gcloud.storage.cat) HTTPError 404: No such object: %s\n' "$url" >&2
+      exit 1
+    fi
+    cat "$dir/objects/$path"
+    ;;
+  cp)
+    src=${urls[0]:-}
+    dst=${urls[1]:-}
+    [ -n "$src" ] && [ -n "$dst" ] || unknown "${argv[@]}"
+    bare=${dst#gs://}
+    path=${bare#*/}
+    mkdir -p "$dir/objects/$(dirname "$path")"
+    cp "$src" "$dir/objects/$path"
+    ;;
+  rm)
+    if [ ${#urls[@]} -gt 0 ]; then
+      for url in "${urls[@]}"; do
+        if [ -n "${FAKE340_STUCK:-}" ]; then
+          continue
+        fi
+        bare=${url#gs://}
+        prefix=${bare#*/}
+        while IFS= read -r f; do
+          rel=${f#"$dir/objects/"}
+          case "$rel" in
+          "$prefix"*) rm -f "$f" ;;
+          esac
+        done < <(find "$dir/objects" -type f | sort)
+      done
+    fi
+    ;;
+  buckets)
+    case "${argv[2]:-}" in
+    add-iam-policy-binding)
+      [ -n "$condition_file" ] || unknown "${argv[@]}"
+      # python3's json, so a condition file the script escaped wrongly fails
+      # here rather than passing a fake that skimmed it.
+      expression=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["expression"])' "$condition_file")
+      title=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["title"])' "$condition_file")
+      printf '%s\t%s\t%s\t%s\n' "$member" "$role" "$expression" "$title" >>"$dir/bindings"
+      # Kept as well as bound: a binding goes away again (between the two forms,
+      # and in the Restore), and what this check GRANTED is what a test asserts
+      # on -- R12's two clauses and their || -- so the text has to survive the
+      # run that wrote it.
+      printf '%s\t%s\t%s\t%s\n' "$member" "$role" "$expression" "$title" >>"$dir/grants"
+      printf 'bindings:\n'
+      ;;
+    remove-iam-policy-binding)
+      # --all: the member's binding goes whatever condition it carries, which is
+      # what lets a Restore that does not know which form was granted clean up.
+      tmp=$dir/bindings.$$
+      : >"$tmp"
+      while IFS=$'\t' read -r bmember brole bexpr btitle; do
+        [ -n "$bmember" ] || continue
+        if [ "$bmember" = "$member" ] && [ "$brole" = "$role" ]; then continue; fi
+        printf '%s\t%s\t%s\t%s\n' "$bmember" "$brole" "$bexpr" "$btitle" >>"$tmp"
+      done <"$dir/bindings"
+      mv "$tmp" "$dir/bindings"
+      ;;
+    get-iam-policy)
+      printf 'bindings:\n'
+      while IFS=$'\t' read -r bmember brole bexpr btitle; do
+        [ -n "$bmember" ] || continue
+        printf -- '- members:\n  - %s\n  role: %s\n' "$bmember" "$brole"
+      done <"$dir/bindings"
+      ;;
+    *) unknown "${argv[@]}" ;;
+    esac
+    ;;
+  *) unknown "${argv[@]}" ;;
+  esac
+  ;;
+iam)
+  case "${argv[1]:-}" in
+  service-accounts)
+    email=${urls[0]:-}
+    case "${argv[2]:-}" in
+    create)
+      id=${urls[0]:-}
+      [ -n "$id" ] || unknown "${argv[@]}"
+      if [ -f "$dir/accounts/$id" ]; then
+        printf 'ERROR: (gcloud.iam.service-accounts.create) AlreadyExists: service account %s already exists\n' "$id" >&2
+        exit 1
+      fi
+      mkdir -p "$dir/accounts"
+      : >"$dir/accounts/$id"
+      printf 'Created service account [%s].\n' "$id"
+      ;;
+    describe)
+      id=${email%%@*}
+      if [ -n "${FAKE340_SA_EXISTS:-}" ] || [ -f "$dir/accounts/$id" ]; then
+        printf 'displayName: Check 340 throwaway\nemail: %s\n' "$email"
+      else
+        printf 'ERROR: (gcloud.iam.service-accounts.describe) NOT_FOUND: Service account %s not found\n' "$email" >&2
+        exit 1
+      fi
+      ;;
+    delete)
+      id=${email%%@*}
+      if [ -f "$dir/accounts/$id" ]; then
+        rm -f "$dir/accounts/$id"
+        printf 'deleted service account [%s]\n' "$email"
+      else
+        printf 'ERROR: (gcloud.iam.service-accounts.delete) NOT_FOUND: Service account %s not found\n' "$email" >&2
+        exit 1
+      fi
+      ;;
+    add-iam-policy-binding)
+      printf '%s|%s\n' "$member" "$role" >>"$dir/sa-grants"
+      ;;
+    remove-iam-policy-binding)
+      tmp=$dir/sa-grants.$$
+      : >"$tmp"
+      while IFS='|' read -r gmember grole; do
+        [ -n "$gmember" ] || continue
+        if [ "$gmember" = "$member" ] && [ "$grole" = "$role" ]; then continue; fi
+        printf '%s|%s\n' "$gmember" "$grole" >>"$tmp"
+      done <"$dir/sa-grants"
+      mv "$tmp" "$dir/sa-grants"
+      ;;
+    *) unknown "${argv[@]}" ;;
+    esac
+    ;;
+  *) unknown "${argv[@]}" ;;
+  esac
+  ;;
+*) unknown "${argv[@]}" ;;
+esac
+GCLOUD_EOF
+  chmod +x "$1/bin/gcloud"
+}
+
+# ------------------------------------------------------------------- the cases
+# setup_case NAME FORM — a fresh case: the fakes, an empty bucket, no bindings
+# and no account, and the form of the objectListPrefix attribute the bucket
+# carries (relative, full, or none for neither, which is what a wrong form
+# reads as).
+setup_case() {
+  dir=$work/$1
+  mkdir -p "$dir/bin" "$dir/state/objects" "$dir/state/accounts" "$dir/tmp"
+  write_fakes "$dir"
+  : >"$dir/state/calls"
+  printf '%s\n' "$2" >"$dir/state/form"
+  : >"$dir/state/bindings"
+  : >"$dir/state/grants"
+  : >"$dir/state/sa-grants"
+  status=0
+  out=""
+  RUN340_ARGS=()
+  RUN340_ENV=()
+}
+
+# run340 [ARGS...] — runs the check on the case at hand. RUN340_ARGS adds
+# arguments, RUN340_ENV names environment variables (NAME=value), and the
+# propagation wait is a second by default so a case about a listing that must
+# fail does not sit through the real 150s one.
+run340() {
+  status=0
+  out=$(env TMPDIR="$dir/tmp" FAKE340_DIR="$dir/state" \
+    CHECK340_PROPAGATION_SECONDS="${PROPAGATION:-1}" CHECK340_POLL_SECONDS=0 \
+    PATH="$dir/bin:$PATH" \
+    ${RUN340_ENV[@]+"${RUN340_ENV[@]}"} \
+    bash "$script" ${RUN340_ARGS[@]+"${RUN340_ARGS[@]}"} "$@" 2>"$dir/err") || status=$?
+  RUN340_ARGS=()
+  RUN340_ENV=()
+  PROPAGATION=1
+}
+run340_default() { run340 --project "$PROJECT" --bucket "$BUCKET" "$@"; }
+
+expect_block_keys() { # what
+  local key
+  expect_contains "$out" "CHECK 340 RESULT" "$1: the block"
+  for key in "${BLOCK_KEYS[@]}"; do
+    expect_contains "$out" "FACT $key:" "$1: the $key row"
+  done
+}
+
+expect_no_calls() { # what
+  if [ -s "$dir/state/calls" ]; then
+    fail "$1: a gcloud call was made: $(tr '\n' ';' <"$dir/state/calls")"
+  fi
+}
+
+# expect_bucket_clean WHAT — the Restore really did take everything this run
+# made away: no seeded object, no binding, no impersonation grant and no account.
+expect_bucket_clean() {
+  local what=$1 left
+  left=$(find "$dir/state/objects" -type f | tr '\n' ' ')
+  [ -z "$left" ] || fail "$what: seeded objects were left in the bucket: $left"
+  [ ! -s "$dir/state/bindings" ] || fail "$what: the bucket still holds a binding: $(tr '\n' ';' <"$dir/state/bindings")"
+  [ ! -s "$dir/state/sa-grants" ] || fail "$what: the impersonation grant is still there: $(cat "$dir/state/sa-grants")"
+  left=$(find "$dir/state/accounts" -type f | tr '\n' ' ')
+  [ -z "$left" ] || fail "$what: the service account was left behind: $left"
+}
+
+# expect_granted WHAT NEEDLE — the condition text the run handed to
+# --condition-from-file, as the run wrote it. This is what R12's Terraform has to
+# reproduce, so it is asserted rather than inferred from a listing that passed.
+expect_granted() { # what needle
+  expect_contains "$(cat "$dir/state/grants")" "$2" "$1"
+}
+expect_not_granted() { # what needle
+  expect_absent "$(cat "$dir/state/grants")" "$2" "$1"
+}
+
+scratch_of() { # dir
+  sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$1/err" | head -n 1
+}
+
+expect_scratch_gone() { # what
+  local scratch
+  scratch=$(scratch_of "$dir")
+  if [ -z "$scratch" ]; then
+    fail "$1: the script did not say where its scratch directory is"
+    return 0
+  fi
+  [ -d "$scratch" ] && fail "$1: the scratch directory $scratch survived the run"
+  [ -z "$(find "$dir/tmp" -mindepth 1 2>/dev/null)" ] || fail "$1: files were left in TMPDIR: $(find "$dir/tmp" -mindepth 1)"
+  return 0
+}
+
+# ------------------------------------------------------------------- the tests
+# The answer R12 waits for, on the form the design expects to be the one: the
+# attribute carries the request's own prefix.
+test_the_relative_form_passes() {
+  setup_case relative relative
+  run340_default
+  expect_status "$status" 0 "relative form"
+  expect_block_keys "relative form"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 0)" "relative form: the end line"
+  expect_contains "$out" "FACT belong: PASS — " "relative form: the belong guard"
+  expect_contains "$out" "FACT bucket-reachable: PASS — " "relative form: the bucket was reached"
+  expect_contains "$out" "FACT account: PASS — " "relative form: the account is this run's own"
+  expect_contains "$out" "FACT seed: PASS — " "relative form: the four objects"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "relative form: the runs listing"
+  expect_contains "$out" "FACT relative-lists-reports: PASS — " "relative form: the reports listing"
+  expect_contains "$out" "FACT relative-reads-runs: PASS — " "relative form: the runs read"
+  expect_contains "$out" "FACT relative-root-refused: PASS — " "relative form: the root listing is refused"
+  expect_contains "$out" "FACT relative-tokens-read-refused: PASS — " "relative form: tokens/ cannot be read"
+  expect_contains "$out" "FACT relative-tokens-list-refused: PASS — " "relative form: tokens/ cannot be listed"
+  expect_contains "$out" "FACT relative-cache-list-refused: PASS — " "relative form: cache/ cannot be listed"
+  expect_contains "$out" "FACT full-lists-runs: INFO — not tried" "relative form: the form that was not reached"
+  expect_contains "$out" "FACT list-prefix: PASS — " "relative form: the answer"
+  expect_contains "$out" "the RELATIVE form passed all seven criteria" "relative form: which form the answer is"
+  expect_contains "$out" "THE LIST PREFIX R12 MUST USE: runs/ on the runs binding" "relative form: the line to copy back"
+  expect_contains "$out" "FACT restore: PASS — " "relative form: the Restore"
+  # R12's two clauses, in one expression, and never joined by &&.
+  expect_granted "relative form: the runs binding's two clauses" 'resource.name.startsWith("projects/_/buckets/bkt-sandbox-a/objects/runs/")'
+  expect_granted "relative form: the listing half is the request's own prefix" "objectListPrefix', '').startsWith(\"runs/\")"
+  expect_granted "relative form: the reports binding" "objectListPrefix', '').startsWith(\"reports/\")"
+  expect_granted "relative form: the two clause kinds are joined by ||" ' || '
+  expect_not_granted "relative form: nothing is joined by &&" ' && '
+  expect_contains "$(cat "$dir/state/grants")" "roles/storage.objectViewer" "relative form: the runs binding's role"
+  expect_contains "$(cat "$dir/state/grants")" "roles/storage.objectUser" "relative form: the reports binding's role"
+  # The account and the impersonation grant come back off the account itself.
+  expect_contains "$(cat "$dir/state/calls")" "gcloud iam service-accounts delete" "relative form: the account is deleted"
+  expect_contains "$(cat "$dir/state/calls")" "roles/iam.serviceAccountTokenCreator" "relative form: the impersonation grant is made and removed"
+  expect_bucket_clean "relative form"
+  expect_scratch_gone "relative form"
+}
+
+# The other answer: the attribute carries the bucket's object path. R12's
+# builder has to write the full string then, and the check says which.
+test_the_full_path_form_passes() {
+  setup_case full full
+  run340_default
+  expect_status "$status" 0 "full path form"
+  expect_block_keys "full path form"
+  expect_contains "$out" "FACT relative-lists-runs: FAIL — " "full path form: the relative form does not list"
+  expect_contains "$out" "FACT relative-lists-reports: FAIL — " "full path form: nor the reports listing"
+  expect_contains "$out" "FACT full-lists-runs: PASS — " "full path form: the full path form lists"
+  expect_contains "$out" "FACT full-lists-reports: PASS — " "full path form: the reports listing"
+  expect_contains "$out" "FACT full-reads-runs: PASS — " "full path form: the runs read"
+  expect_contains "$out" "FACT full-root-refused: PASS — " "full path form: the root listing is refused"
+  expect_contains "$out" "FACT full-tokens-list-refused: PASS — " "full path form: tokens/ cannot be listed"
+  expect_contains "$out" "FACT list-prefix: PASS — " "full path form: the answer"
+  expect_contains "$out" "the FULL PATH form passed all seven criteria" "full path form: which form the answer is"
+  expect_contains "$out" "THE LIST PREFIX R12 MUST USE: projects/_/buckets/bkt-sandbox-a/objects/runs/" \
+    "full path form: the line to copy back"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 0)" "full path form: the end line"
+  expect_granted "full path form: the granted listing clause" '.startsWith("projects/_/buckets/bkt-sandbox-a/objects/reports/")'
+  expect_bucket_clean "full path form"
+  expect_scratch_gone "full path form"
+}
+
+# Neither form lists: the one reading that must stop R12's Terraform. The exit
+# is 1 and not 2 — the check DID measure, and the answer is no — and the Restore
+# still has to run.
+test_neither_form_listing_is_a_fail() {
+  setup_case none none
+  run340_default
+  expect_status "$status" 1 "neither form"
+  expect_block_keys "neither form"
+  expect_contains "$out" "FACT relative-lists-runs: FAIL — " "neither form: the relative form"
+  expect_contains "$out" "FACT full-lists-runs: FAIL — " "neither form: the full path form"
+  expect_contains "$out" "FACT list-prefix: FAIL — " "neither form: the answer"
+  expect_contains "$out" "NEITHER form listed" "neither form: the row says which reading it is"
+  expect_contains "$out" "must NOT land" "neither form: it says what R12 has to do"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 1)" "neither form: the end line"
+  expect_contains "$out" "FACT restore: PASS — " "neither form: the Restore still ran"
+  expect_bucket_clean "neither form"
+  expect_scratch_gone "neither form"
+}
+
+# A grant wider than R12's two prefixes: the account can list anywhere. Every
+# refusal criterion is the failure then, and no form may be reported as the
+# answer — the whole point of the two narrow prefixes is that tokens/ and cache/
+# stay out of reach.
+test_a_grant_wider_than_the_two_prefixes_is_a_fail() {
+  setup_case wide relative
+  RUN340_ENV=(FAKE340_WIDE=yes)
+  run340_default
+  expect_status "$status" 1 "wide grant"
+  expect_contains "$out" "FACT relative-root-refused: FAIL — " "wide grant: the root listing was allowed"
+  expect_contains "$out" "FACT relative-tokens-list-refused: FAIL — " "wide grant: tokens/ could be listed"
+  expect_contains "$out" "FACT relative-cache-list-refused: FAIL — " "wide grant: cache/ could be listed"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "wide grant: the listing the grant was for still worked"
+  expect_contains "$out" "FACT list-prefix: FAIL — " "wide grant: no form is the answer"
+  expect_contains "$out" "wider than R12's" "wide grant: the row says what the failure is"
+  expect_bucket_clean "wide grant"
+}
+
+# The root listing on its own: the criterion the other six cannot see. A form
+# that lists runs/ and reports/ but opens the bucket root is still wrong.
+test_a_root_listing_that_is_allowed_is_a_fail() {
+  setup_case root relative
+  RUN340_ENV=(FAKE340_ROOT_OK=yes)
+  run340_default
+  expect_status "$status" 1 "root listing allowed"
+  expect_contains "$out" "FACT relative-root-refused: FAIL — " "root listing allowed: the root row fails"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "root listing allowed: the other rows still passed"
+  expect_contains "$out" "FACT list-prefix: FAIL — " "root listing allowed: no form is the answer"
+  expect_bucket_clean "root listing allowed"
+}
+
+# The teardown is not conditional on the answer: a run whose criteria FAILed has
+# deleted the account, the bindings and the objects all the same. This case also
+# pins the verdict logic — the form itself passed, and the run still exits 1,
+# because a Restore that did not finish is not a pass.
+test_a_restore_that_could_not_delete_is_a_fail() {
+  setup_case stuck relative
+  RUN340_ENV=(FAKE340_STUCK=yes)
+  run340_default
+  expect_status "$status" 1 "stuck Restore"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "stuck Restore: the form itself passed"
+  expect_contains "$out" "FACT list-prefix: PASS — " "stuck Restore: and the answer was reached"
+  expect_contains "$out" "FACT restore: FAIL — " "stuck Restore: the Restore row fails"
+  expect_contains "$out" "could not delete" "stuck Restore: the row says what is still there"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 1)" "stuck Restore: the block does not read as a pass"
+  [ -n "$(find "$dir/state/objects" -type f)" ] || fail "stuck Restore: the case did not leave the seeded objects behind"
+  expect_contains "$out" "the slug " "stuck Restore: the row names what to delete by hand"
+}
+
+# A grant that takes effect late must not be read as a refusal: this is the one
+# reading that would pick the WRONG form, so a listing that must succeed is
+# retried. The fake refuses the first two attempts.
+test_a_grant_that_arrives_late_is_not_a_refusal() {
+  setup_case late relative
+  PROPAGATION=10
+  RUN340_ENV=(FAKE340_FLAKY=2)
+  run340_default
+  expect_status "$status" 0 "late grant"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "late grant: the listing was waited for"
+  expect_contains "$out" "FACT list-prefix: PASS — " "late grant: the answer is the relative form"
+  expect_bucket_clean "late grant"
+}
+
+# The owner's own installation, refused by name in the project and in the
+# bucket — before a single call, so nothing is created and nothing is read.
+test_belong_is_refused_in_both_places() {
+  setup_case belong-project relative
+  run340 --project belong-sandbox --bucket "$BUCKET"
+  expect_status "$status" 2 "belong project"
+  expect_contains "$out" "FACT belong: FAIL — " "belong project: the row fails"
+  expect_contains "$(cat "$dir/err")" "belong" "belong project: the guard names it"
+  expect_no_calls "belong project"
+  expect_bucket_clean "belong project"
+
+  setup_case belong-bucket relative
+  run340 --project "$PROJECT" --bucket gs://belong-runs
+  expect_status "$status" 2 "belong bucket"
+  expect_contains "$out" "FACT belong: FAIL — " "belong bucket: the row fails"
+  expect_contains "$(cat "$dir/err")" "belong" "belong bucket: the guard names it"
+  expect_no_calls "belong bucket"
+  expect_bucket_clean "belong bucket"
+}
+
+# The dry run: every command a real run would make, and not one call. It is not
+# a verdict, so its block carries only what it settled — the two arguments, the
+# belong guard and itself — and it claims no list prefix.
+test_a_dry_run_prints_the_plan_and_makes_no_call() {
+  setup_case dry relative
+  run340_default --dry-run
+  expect_status "$status" 0 "dry run"
+  expect_no_calls "dry run"
+  expect_contains "$out" "FACT dry-run: PASS — " "dry run: the row"
+  expect_contains "$out" "FACT project: PASS — " "dry run: the project"
+  expect_contains "$out" "FACT bucket: PASS — " "dry run: the bucket"
+  expect_contains "$out" "FACT belong: PASS — " "dry run: the belong guard still runs"
+  expect_absent "$out" "FACT list-prefix:" "dry run: no answer is claimed"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "dry run: and none is printed"
+  expect_contains "$(cat "$dir/err")" "dry run: NOTHING below was run" "dry run: it says so"
+  expect_contains "$(cat "$dir/err")" "add-iam-policy-binding" "dry run: the plan carries the bindings"
+  expect_contains "$(cat "$dir/err")" "--condition-from-file" "dry run: and the condition file"
+  expect_contains "$(cat "$dir/err")" "storage cp" "dry run: and the seeded objects"
+  expect_contains "$(cat "$dir/err")" "remove-iam-policy-binding" "dry run: and the Restore's removes"
+  expect_bucket_clean "dry run"
+  expect_scratch_gone "dry run"
+}
+
+# A dry run refuses `belong` too: the guard is not something a flag turns off.
+test_a_dry_run_still_refuses_belong() {
+  setup_case drybelong relative
+  run340 --project "$PROJECT" --bucket belong --dry-run
+  expect_status "$status" 2 "dry run belong"
+  expect_contains "$out" "FACT belong: FAIL — " "dry run belong: the row fails"
+  expect_no_calls "dry run belong"
+}
+
+# A bucket that cannot be reached is a stop, not a verdict: every reading below
+# would be a refusal, and neither of the two forms would be the reason.
+test_a_bucket_that_cannot_be_reached_stops() {
+  setup_case unreachable relative
+  RUN340_ENV=(FAKE340_UNREACHABLE=yes)
+  run340_default
+  expect_status "$status" 2 "unreachable bucket"
+  expect_contains "$out" "FACT bucket-reachable: FAIL — " "unreachable bucket: the row fails"
+  expect_contains "$out" "FACT aborted: FAIL — " "unreachable bucket: the stop is recorded"
+  expect_contains "$out" "FACT relative-lists-runs: FAIL — not reached" "unreachable bucket: nothing was measured"
+  expect_contains "$out" "FACT list-prefix: FAIL — not reached" "unreachable bucket: no answer is given"
+  # The guard's own read of the bucket is the one call a run that stops here
+  # makes; nothing was created or written anywhere.
+  expect_absent "$(cat "$dir/state/calls")" "service-accounts create" "unreachable bucket: no account was made"
+  expect_absent "$(cat "$dir/state/calls")" "add-iam-policy-binding" "unreachable bucket: no binding was granted"
+  expect_absent "$(cat "$dir/state/calls")" "storage cp" "unreachable bucket: no object was seeded"
+  expect_contains "$(cat "$dir/state/calls")" "storage ls --project=prj-sandbox-a gs://bkt-sandbox-a/" "unreachable bucket: the bucket was read once"
+  expect_bucket_clean "unreachable bucket"
+}
+
+# An account of the check's own name that is already there: the check never
+# adopts it, and it stops before creating anything.
+test_an_account_that_already_exists_stops() {
+  setup_case existing relative
+  RUN340_ENV=(FAKE340_SA_EXISTS=yes)
+  run340_default
+  expect_status "$status" 2 "account already there"
+  expect_contains "$out" "FACT account: FAIL — " "account already there: the row fails"
+  expect_contains "$out" "already exists" "account already there: the row says why it stops"
+  expect_absent "$(cat "$dir/state/calls")" "service-accounts create" "account already there: nothing was created"
+  expect_bucket_clean "account already there"
+}
+
+# The arguments: both are required, an unknown one is refused, and --help prints
+# the usage without touching anything.
+test_usage_and_arguments() {
+  setup_case usage relative
+  run340
+  expect_status "$status" 2 "no arguments"
+  expect_contains "$(cat "$dir/err")" "required" "no arguments: an argument is required"
+  expect_no_calls "no arguments"
+
+  run340 --bucket "$BUCKET"
+  expect_status "$status" 2 "no --project"
+  expect_contains "$(cat "$dir/err")" "--project is required" "no --project: the refusal"
+  expect_no_calls "no --project"
+
+  run340 --project "$PROJECT"
+  expect_status "$status" 2 "no --bucket"
+  expect_contains "$(cat "$dir/err")" "--bucket is required" "no --bucket: the refusal"
+  expect_contains "$(cat "$dir/err")" "SANDBOX" "no --bucket: it says which bucket it has to be"
+  expect_no_calls "no --bucket"
+
+  run340 --project "$PROJECT" --bucket "$BUCKET" --bucket-name x
+  expect_status "$status" 2 "an unknown argument"
+  expect_contains "$(cat "$dir/err")" "unknown argument" "an unknown argument: the refusal"
+  expect_no_calls "an unknown argument"
+
+  run340 --help
+  expect_status "$status" 0 "--help"
+  expect_contains "$out" "--project" "--help: the usage names the flags"
+  expect_contains "$out" "--bucket" "--help: and the bucket"
+  expect_absent "$out" "CHECK 340 RESULT" "--help: no block is printed"
+  expect_no_calls "--help"
+}
+
+# A bucket named with its gs:// prefix and a trailing slash is the same bucket:
+# the two arguments are the ones a person types.
+test_a_gs_prefix_and_a_trailing_slash_are_accepted() {
+  setup_case typed relative
+  run340 --project "$PROJECT" --bucket "gs://$BUCKET/"
+  expect_status "$status" 0 "gs:// and a trailing slash"
+  expect_contains "$out" "FACT bucket: PASS — $BUCKET " "gs:// and a trailing slash: the bucket is normalized"
+  expect_contains "$out" "FACT list-prefix: PASS — " "gs:// and a trailing slash: the run still answers"
+  expect_bucket_clean "gs:// and a trailing slash"
+}
+
+# Sharding, so the package's Go test can run the tests of this file side by
+# side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i, and
+# CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t test_the_relative_form_passes
+t test_the_full_path_form_passes
+t test_neither_form_listing_is_a_fail
+t test_a_grant_wider_than_the_two_prefixes_is_a_fail
+t test_a_root_listing_that_is_allowed_is_a_fail
+t test_a_restore_that_could_not_delete_is_a_fail
+t test_a_grant_that_arrives_late_is_not_a_refusal
+t test_belong_is_refused_in_both_places
+t test_a_dry_run_prints_the_plan_and_makes_no_call
+t test_a_dry_run_still_refuses_belong
+t test_a_bucket_that_cannot_be_reached_stops
+t test_an_account_that_already_exists_stops
+t test_usage_and_arguments
+t test_a_gs_prefix_and_a_trailing_slash_are_accepted
+
+if [ "$failures" -ne 0 ]; then
+  echo "check340_test: $failures failure(s)" >&2
+  exit 1
+fi
+echo "check340_test: all tests passed" >&2
