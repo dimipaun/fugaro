@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -239,5 +240,32 @@ func TestDoctorImageEnvUnreadNamesTheJobItCouldNotRead(t *testing.T) {
 	}
 	if _, found := doctorCheckByID(o.Checks, "image-env-fugaro-acme-app-web"); found {
 		t.Error("a job whose read failed carries a per-job report anyway: it would have to invent the names it drops")
+	}
+}
+
+// A test configuration (no_auth with no run endpoint) reads no Cloud Run job's
+// environment either, as it reads no bucket and no IAM policy: without the skip
+// doctor would send this listing to the real https://run.googleapis.com from a
+// configuration whose whole point is that every read a test makes lands on a
+// fake, and the answer no rig gives would surface as a warning about a read
+// that failed — a network call dressed as a measurement.
+//
+// Mutation (verified, run and restored): remove the guard, so
+// doctorImageEnvChecks runs under this configuration — this test fails on the
+// check the unguarded read leaves.
+func TestDoctorImageEnvSkippedWithoutARunEndpoint(t *testing.T) {
+	r := newDoctorRig(t)
+	r.envJob(t, "fugaro-acme-app-web", map[string]string{"FUGARO_IMAGE_ENTRY": "acme-base"})
+	cfg := strings.Replace(r.cfg, ", run: "+r.run.URL+"/", "", 1)
+	if cfg == r.cfg {
+		t.Fatal("the rig's config does not name the run endpoint")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range r.runDoctorJSON(t).Checks {
+		if strings.HasPrefix(c.ID, "image-env") {
+			t.Fatalf("read a Cloud Run job's environment under a test configuration: %+v", c)
+		}
 	}
 }
