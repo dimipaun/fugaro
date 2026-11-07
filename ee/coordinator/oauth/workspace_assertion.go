@@ -203,15 +203,31 @@ func verifyAssertion(key *rsa.PublicKey, raw string) (assertion, error) {
 	if alg, _ := head["alg"].(string); alg != assertionAlg {
 		return assertion{}, refusef("the assertion is not signed with %s", assertionAlg)
 	}
-	sum := sha256.Sum256([]byte(raw[:len(raw)-len(sig)-1]))
-	decoded, err := base64.RawURLEncoding.DecodeString(sig)
-	if err != nil {
-		return assertion{}, refusef("the signature is not base64url")
-	}
-	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], decoded); err != nil {
+	if err := verifyRS256(key, raw, sig); err != nil {
 		return assertion{}, refusef("the signature does not verify against the key this member pins")
 	}
 	return readAssertionClaims(claims)
+}
+
+// verifyRS256 checks a compact JWT's RS256 signature against key. The signing
+// input is the token up to its signature segment — the header and the payload
+// as they arrived — so a payload edited after signing is a signature that does
+// not verify, which is the whole of what makes the claims readable.
+//
+// It is shared by the two uses in this package and they are deliberately one
+// function: the member verifies a workspace's assertion with it, and the
+// workspace's signer verifies a Firebase ID token with it. The rule is the same
+// rule in both places, and a copy of it is how one of the two ends up weaker.
+func verifyRS256(key *rsa.PublicKey, raw, sig string) error {
+	if key == nil {
+		return errors.New("oauth: no key")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(sig)
+	if err != nil {
+		return errors.New("oauth: the signature is not base64url")
+	}
+	sum := sha256.Sum256([]byte(raw[:len(raw)-len(sig)-1]))
+	return rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], decoded)
 }
 
 // splitAssertion breaks a compact JWT into its header, its claims and its
@@ -284,37 +300,6 @@ func readAssertionClaims(claims map[string]any) (assertion, error) {
 // repeats the assertion's bytes.
 func refusef(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrUnverifiedAssertion, fmt.Sprintf(format, args...))
-}
-
-// splitSignInProvider reads `firebase.sign_in_provider` out of a Firebase ID
-// token, and the ID token itself is not verified here.
-//
-// It is called with the bytes mcpauth's Verifier has JUST admitted
-// (workspace_signer.go), and it is sound for exactly that reason: an RS256
-// signature covers the header and the payload, so a token that verifier
-// admitted has an authentic payload, and this decode is the same strict one
-// that verifier used — base64url, exactly one JSON object and nothing after it
-// — so it cannot read a claim the verifier did not read. A caller that reached
-// here with unverified bytes would be reading a stranger's text, which is why
-// this function's only caller verifies first and says so.
-//
-// The nested object is required: a token whose `firebase` claim is missing or
-// is not an object is one this code will not read a provider out of. A
-// `sign_in_provider` that is absent, empty or not a string answers the empty
-// provider and no error, because the pinned set is what refuses it — and one
-// refusal an operator can act on ("this sign-in's provider is not pinned") is
-// better than three that name the shape of a claim.
-func splitSignInProvider(idToken string) (string, error) {
-	_, claims, _, err := splitAssertion(idToken)
-	if err != nil {
-		return "", err
-	}
-	fb, ok := claims["firebase"].(map[string]any)
-	if !ok {
-		return "", errors.New("oauth: the ID token carries no firebase claim")
-	}
-	provider, _ := fb["sign_in_provider"].(string)
-	return provider, nil
 }
 
 // parseAssertionKey reads the public key a member pins. What a pin carries is

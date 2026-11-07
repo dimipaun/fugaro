@@ -24,18 +24,19 @@ import (
 // testKid is the key id the fake published set holds the ID-token key under.
 // Google's real set has many; this one has exactly one, because what is under
 // test is what the signer does with a verified token rather than the key set's
-// own reading (mcpauth's own tests carry that).
+// own reading (the drift test at the end of this file is what holds it to the
+// front door's).
 const testKid = "kid-1"
 
 // fakeKeys is the published key set the ID tokens are verified against, as a
-// test's own: the signer reads the same mcpauth.KeySource interface Google's
-// JWKS does.
+// test's own: the signer reads a KeySource the way the published JWKS is read,
+// and the concrete one is handed in by whatever wires the signer.
 type fakeKeys map[string]*rsa.PublicKey
 
 func (f fakeKeys) Key(_ context.Context, kid string) (*rsa.PublicKey, error) {
 	key, ok := f[kid]
 	if !ok {
-		return nil, mcpauth.ErrUnknownKeyID
+		return nil, ErrUnknownKeyID
 	}
 	return key, nil
 }
@@ -186,8 +187,10 @@ func TestSignerMintsOneAssertionPerSignIn(t *testing.T) {
 
 // TestSignerRefusesAnIDTokenOfAnotherProject is the signer's own audience and
 // issuer check, both against the workspace's project and neither against
-// anything a caller sent — the token is verified with mcpauth's Verifier, whose
-// audience is the bare project id and whose issuer is built from it.
+// anything a caller sent — the token is verified against the workspace's own
+// project, whose audience is the bare project id and whose issuer is built from
+// it — and the drift test at the end of this file holds that reading to the
+// front door's verifier.
 func TestSignerRefusesAnIDTokenOfAnotherProject(t *testing.T) {
 	signer := newTestSigner(t, testProject)
 	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &signer.ascKey.PublicKey))
@@ -212,7 +215,7 @@ func TestSignerRefusesAnIDTokenOfAnotherProject(t *testing.T) {
 	for what, fields := range cases {
 		t.Run(what, func(t *testing.T) {
 			raw, err := signer.Mint(context.Background(), firebaseIDToken(t, signer.idKey, fields), member.url)
-			if !errors.Is(err, mcpauth.ErrUnverifiedIDToken) {
+			if !errors.Is(err, ErrUnverifiedIDToken) {
 				t.Fatalf("Mint answered %q and %v for %s, and it must refuse it as an unverified ID token", raw, err, what)
 			}
 		})
@@ -273,8 +276,8 @@ func TestSignerRefusesAnExchangeURLOfNoMember(t *testing.T) {
 
 	for _, url := range []string{
 		"",
-		"http://" + testMemberA + mcpauth.AuthorizePath,
-		"https://person-1@" + testMemberA + mcpauth.AuthorizePath,
+		"http://" + testMemberA + AuthorizePath,
+		"https://person-1@" + testMemberA + AuthorizePath,
 		"not a url",
 		"/oauth/authorize",
 	} {
@@ -311,5 +314,120 @@ func TestSignerNeverEchoesTheIDToken(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), testAssertionMarker) {
 		t.Fatalf("the refusal repeats the presented value: %q", err)
+	}
+}
+
+// frontDoorKeys is the same published set as fakeKeys, read through the front
+// door's own interface: each package reads a kid through its own, and the drift
+// test below needs one of each.
+type frontDoorKeys map[string]*rsa.PublicKey
+
+func (f frontDoorKeys) Key(_ context.Context, kid string) (*rsa.PublicKey, error) {
+	key, ok := f[kid]
+	if !ok {
+		return nil, mcpauth.ErrUnknownKeyID
+	}
+	return key, nil
+}
+
+// TestSignerVerifiesWhatTheFrontDoorVerifies is what holds this package's second
+// copy of the Firebase ID token rules to the first. The front door's verifier
+// (ee/coordinator/mcpauth, M6) and this signer's are handed the SAME tokens and
+// must answer the same verdict for every one of them, so a rule that moves on
+// one side fails here rather than at somebody's sign-in.
+//
+// A _test.go file may name the front door where a non-test one may not: the
+// guard that refuses the name is about what a binary links, and no test file is
+// linked into one.
+//
+// One difference is deliberate, is not a drift, and is why the verdicts are
+// compared rather than the answers: the ADDRESS rule. The front door folds a
+// printable ASCII address to lower case; this package reads the address through
+// mobileauth.NormalizeEmail, the member's own one rule for addresses (W5's lists
+// are written and compared with it), which folds the domain and leaves the local
+// part as the person wrote it. Both refuse an address neither can read, both
+// admit every address below, and the address the assertion carries is normalized
+// again by the member before any comparison — so the two readings answer the
+// same verdict on every token, which is what a member's trust rests on.
+func TestSignerVerifiesWhatTheFrontDoorVerifies(t *testing.T) {
+	signer := newTestSigner(t, testProject)
+	idKey := signer.idKey
+	front, err := mcpauth.NewVerifier(testProject, frontDoorKeys{testKid: &idKey.PublicKey})
+	if err != nil {
+		t.Fatalf("building the front door's verifier: %v", err)
+	}
+
+	honest := firebaseIDToken(t, idKey, defaultIDToken(testProject))
+	// One base64url character of the signature changed for another: the payload is
+	// untouched, so the only thing that can refuse this token is the signature.
+	last := honest[len(honest)-1]
+	swapped := byte('A')
+	if last == swapped {
+		swapped = 'B'
+	}
+	tampered := honest[:len(honest)-1] + string(swapped)
+
+	cases := map[string]struct {
+		token     string
+		admitted  bool
+		sameEmail bool
+	}{}
+	add := func(what string, f idTokenFields) {
+		cases[what] = struct {
+			token     string
+			admitted  bool
+			sameEmail bool
+		}{firebaseIDToken(t, idKey, f), true, true}
+	}
+	add("the token this project's Firebase mints", defaultIDToken(testProject))
+
+	for what, edit := range map[string]func(*idTokenFields){
+		"another project's audience": func(f *idTokenFields) { f.Audience = testProject2 },
+		"another project's issuer":   func(f *idTokenFields) { f.Issuer = WorkspaceIssuer(testProject2) },
+		"an expired token":           func(f *idTokenFields) { f.ExpiresAt = time.Now().UTC().Add(-time.Minute) },
+		"a token from the future":    func(f *idTokenFields) { f.IssuedAt = time.Now().UTC().Add(time.Hour) },
+		"an unverified address":      func(f *idTokenFields) { f.EmailVerified = false },
+		"no verified claim at all":   func(f *idTokenFields) { f.EmailVerified = nil },
+		"no uid":                     func(f *idTokenFields) { f.Subject = "" },
+		"an address nobody can read": func(f *idTokenFields) { f.Email = "not an address" },
+		"an unpublished key id":      func(f *idTokenFields) { f.KeyID = "kid-2" },
+	} {
+		f := defaultIDToken(testProject)
+		edit(&f)
+		cases[what] = struct {
+			token     string
+			admitted  bool
+			sameEmail bool
+		}{firebaseIDToken(t, idKey, f), false, false}
+	}
+	cases["a signature that was edited"] = struct {
+		token     string
+		admitted  bool
+		sameEmail bool
+	}{tampered, false, false}
+
+	for what, c := range cases {
+		t.Run(what, func(t *testing.T) {
+			mine, errMine := signer.verifyIDToken(context.Background(), c.token)
+			theirs, errTheirs := front.VerifyIDToken(context.Background(), c.token)
+			if (errMine == nil) != (errTheirs == nil) {
+				t.Fatalf("this signer answered %v and the front door answered %v for %s: the two readings of one token disagree", errMine, errTheirs, what)
+			}
+			if c.admitted && errMine != nil {
+				t.Fatalf("both verifiers refused %s: %v", what, errMine)
+			}
+			if !c.admitted {
+				if !errors.Is(errMine, ErrUnverifiedIDToken) {
+					t.Fatalf("the refusal of %s is %v, and every one of them is ErrUnverifiedIDToken", what, errMine)
+				}
+				return
+			}
+			if c.sameEmail && mine.Email != theirs.Email {
+				t.Fatalf("this signer reads the address as %q and the front door as %q", mine.Email, theirs.Email)
+			}
+			if mine.Provider != "google.com" {
+				t.Fatalf("this signer read the provider as %q, and the token names google.com", mine.Provider)
+			}
+		})
 	}
 }

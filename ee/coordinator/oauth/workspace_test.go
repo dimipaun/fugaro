@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -39,9 +40,9 @@ const (
 // memberLimits is a member's OWN limits, the ones its token is minted with:
 // a spend cap, a scope and nothing else. Every test that reads a Session reads
 // this value back, which is how "the assertion supplied no limit" is checked.
-var memberLimits = mcpauth.Limits{
+var memberLimits = Limits{
 	SpendUSD: 12,
-	Scopes:   []string{mcpauth.ScopeTasksRead},
+	Scopes:   []string{"tasks:read"},
 }
 
 // testKey is a fresh RSA key per test: a fixture written down would be key
@@ -102,7 +103,7 @@ func newTestMember(t *testing.T, host string, pin Pin, opts ...ExchangeOption) *
 	}
 	return &testMember{
 		name:     host,
-		url:      "https://" + host + mcpauth.AuthorizePath,
+		url:      "https://" + host + AuthorizePath,
 		consumed: consumed,
 		ex:       ex,
 	}
@@ -168,7 +169,7 @@ func TestExchangeRefusesAWorkspaceAssertionMintedForAnotherMember(t *testing.T) 
 
 	// The same workspace, the same signer key, the same person — and an
 	// audience that is the member next door's exchange URL.
-	raw := assertionFor(t, key, testProject, "https://"+testMemberB+mcpauth.AuthorizePath, nil)
+	raw := assertionFor(t, key, testProject, "https://"+testMemberB+AuthorizePath, nil)
 
 	sess, err := memberA.ex.Admit(context.Background(), raw)
 	if err == nil {
@@ -258,7 +259,7 @@ func TestExchangeNeverEchoesTheAssertion(t *testing.T) {
 	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
 
 	cases := map[string]string{
-		"an assertion for another member":   assertionFor(t, key, testProject, "https://"+testMemberB+mcpauth.AuthorizePath, nil),
+		"an assertion for another member":   assertionFor(t, key, testProject, "https://"+testMemberB+AuthorizePath, nil),
 		"a marker that is not an assertion": testAssertionMarker,
 		"an expired assertion": assertionFor(t, key, testProject, member.url, func(a *assertion) {
 			now := time.Now().UTC()
@@ -298,7 +299,7 @@ func TestExchangeVerifiesTheMembersPinnedKeyNotTheRecords(t *testing.T) {
 
 	signer := newTestSigner(t, testProject)
 	token := firebaseIDToken(t, signer.idKey, defaultIDToken(testProject2))
-	if _, err := signer.Mint(context.Background(), token, member.url); !errors.Is(err, mcpauth.ErrUnverifiedIDToken) {
+	if _, err := signer.Mint(context.Background(), token, member.url); !errors.Is(err, ErrUnverifiedIDToken) {
 		t.Fatalf("the signer answered %v for a token of another project, and it must refuse it as an unverified ID token", err)
 	}
 
@@ -329,7 +330,7 @@ func TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords(t *testing.T) {
 	signer := newTestSigner(t, testProject)
 	fields := defaultIDToken(testProject)
 	fields.Issuer = WorkspaceIssuer(testProject2)
-	if _, err := signer.Mint(context.Background(), firebaseIDToken(t, signer.idKey, fields), member.url); !errors.Is(err, mcpauth.ErrUnverifiedIDToken) {
+	if _, err := signer.Mint(context.Background(), firebaseIDToken(t, signer.idKey, fields), member.url); !errors.Is(err, ErrUnverifiedIDToken) {
 		t.Fatalf("the signer answered %v for a token whose iss is another project's, and it must refuse it as an unverified ID token", err)
 	}
 }
@@ -369,8 +370,8 @@ func TestExchangeRefusalIsIndistinguishableForAnUnknownMember(t *testing.T) {
 	key := testKey(t)
 	memberA := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
 
-	nextDoor := "https://" + testMemberB + mcpauth.AuthorizePath
-	unknown := "https://" + testMemberA + "-that-is-not-there.example.com" + mcpauth.AuthorizePath
+	nextDoor := "https://" + testMemberB + AuthorizePath
+	unknown := "https://" + testMemberA + "-that-is-not-there.example.com" + AuthorizePath
 	errNext := mustErr(memberA.ex.Admit(context.Background(), assertionFor(t, key, testProject, nextDoor, nil)))
 	errNone := mustErr(memberA.ex.Admit(context.Background(), assertionFor(t, key, testProject, unknown, nil)))
 	if errNext == nil || errNone == nil {
@@ -442,7 +443,7 @@ func TestExchangeMintsAMemberTokenWithTheMembersOwnLimits(t *testing.T) {
 	token := mcpauth.Token{
 		Identity:  "user:" + sess.Identity.Email,
 		ClientID:  "client-1",
-		Limits:    sess.Limits,
+		Limits:    mcpauth.Limits(sess.Limits),
 		ExpiresAt: time.Now().UTC().Add(mcpauth.AccessTokenTTL),
 	}
 	if err := token.Validate(); err != nil {
@@ -471,7 +472,7 @@ func TestExchangeStoresOnlyHashes(t *testing.T) {
 	if len(spent) != 1 {
 		t.Fatalf("the store holds %d entries, and one assertion is one spent id", len(spent))
 	}
-	if spent[0] != mcpauth.TokenHash("jti-single-use") {
+	if spent[0] != TokenHash("jti-single-use") {
 		t.Fatalf("the store holds %q, and a spent id is kept as its hash", spent[0])
 	}
 	if spent[0] == "jti-single-use" {
@@ -479,5 +480,37 @@ func TestExchangeStoresOnlyHashes(t *testing.T) {
 	}
 	if !strings.HasPrefix(PathConsumedJTI(spent[0]), ConsumedJTIPrefix) || strings.Contains(PathConsumedJTI(spent[0]), "jti-single-use") {
 		t.Fatalf("PathConsumedJTI(%q) = %q, and the path carries the hash rather than the id", spent[0], PathConsumedJTI(spent[0]))
+	}
+}
+
+// TestExchangeTakesTheFrontDoorsShapes is half of the guard that keeps the
+// second implementation honest (workspace_signer.go's file comment says why
+// there is one). Three things this package shares a MEANING with the member's
+// front door — the authorize path an assertion's audience ends in, the hash a
+// spent id is kept as, and the limits the member's own token is minted with —
+// and each is spelled here rather than imported, because no non-test file of
+// this package may name that package at all. They are held to each other here:
+// a rename or a retype on either side fails this test, and a test file may name
+// the front door because the guard is about what a binary links.
+//
+// The limits comparison is field by field rather than a conversion, because a
+// conversion is exactly what the wiring does (mcpauth.Limits(session.Limits)) and
+// a struct literal that compiled but dropped a field is the failure this has to
+// catch.
+func TestExchangeTakesTheFrontDoorsShapes(t *testing.T) {
+	if AuthorizePath != mcpauth.AuthorizePath {
+		t.Errorf("this package's authorize path is %q and the front door's is %q: an assertion's audience ends in one of them, and two spellings of one endpoint refuse every sign-in", AuthorizePath, mcpauth.AuthorizePath)
+	}
+	if got, want := TokenHash("marker-assertion-id"), mcpauth.TokenHash("marker-assertion-id"); got != want {
+		t.Errorf("a spent id is kept as %q here and as %q by the front door, and the two sit in the same project's database", got, want)
+	}
+	mine, theirs := reflect.TypeOf(Limits{}), reflect.TypeOf(mcpauth.Limits{})
+	if mine.NumField() != theirs.NumField() {
+		t.Fatalf("this package's limits carry %d fields and the front door's carry %d, so the member's own mint would read one the exchange never wrote", mine.NumField(), theirs.NumField())
+	}
+	for i := 0; i < mine.NumField(); i++ {
+		if mine.Field(i).Name != theirs.Field(i).Name || mine.Field(i).Type != theirs.Field(i).Type {
+			t.Errorf("limits field %d is %s %s here and %s %s at the front door", i, mine.Field(i).Name, mine.Field(i).Type, theirs.Field(i).Name, theirs.Field(i).Type)
+		}
 	}
 }

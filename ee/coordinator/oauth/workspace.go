@@ -42,6 +42,8 @@ package oauth
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -50,9 +52,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
 	"github.com/dimipaun/fugaro/internal/mobileauth"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
+
+// AuthorizePath is where the member's authorization server takes the sign-in
+// proof: the MCP design's own authorize path (its §3), which is the endpoint
+// the member's front door already serves. It is spelled here rather than read
+// from that front door's package because no non-test file of this package may
+// name it — see the note on Limits — and the two spellings are held to each
+// other by a test in this package (TestExchangeTakesTheFrontDoorsShapes), which
+// is allowed to name it.
+const AuthorizePath = "/oauth/authorize"
 
 // The pinned `firebase.sign_in_provider` set (finding 7, spec.md §3's "provider
 // pin"): the two providers the workspace's own Firebase carries. `custom` and
@@ -141,7 +152,7 @@ type ConsumedJTI interface {
 // that runs in the member's project is the same interface over the member's own
 // database or bucket, in the subtree ConsumedJTIPrefix names, and it is mounted
 // with the wiring that puts this exchange behind the member's `/oauth/authorize`
-// — the same place the MCP front door's own Store is opened (mcpauth.OpenStore).
+// — the same place the MCP front door's own store is opened.
 // Nothing in this file assumes the memory one.
 type MemoryConsumedJTI struct {
 	mu      sync.Mutex
@@ -182,9 +193,46 @@ func (m *MemoryConsumedJTI) Consume(_ context.Context, hash string, expiresAt ti
 
 // PathConsumedJTI is where one spent jti lives in the member's own store: the
 // subtree's own prefix and the hash, and never the jti or the assertion. The
-// caller passes a hash (mcpauth.TokenHash of the jti), which is what the store
-// is written with.
+// caller passes a hash (TokenHash of the jti), which is what the store is
+// written with.
 func PathConsumedJTI(hash string) string { return ConsumedJTIPrefix + hash }
+
+// TokenHash is sha256 of a value, hex: the one thing about a jti that is ever
+// written anywhere (D1296). It is mcpauth.TokenHash's rule restated, and a test
+// in this package holds the two to each other: the hashes this exchange writes
+// sit in the same project's database as the front door's, and one hash function
+// is what keeps a reader from being able to tell which wrote a row.
+func TokenHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+// Limits are the member's own limits: what this member's own front door puts in
+// the token it mints for the person an assertion attests (spec.md §6, D924-D927).
+//
+// **They are the member's own configuration and never a value from an
+// assertion.** The assertion carries no scope and no limit at all, and a payload
+// that tried to carry one is refused by the closed claim set before it is read,
+// so nothing a workspace sends can widen or narrow what its people may do here.
+//
+// **The shape is the member's front door's, field for field**, and a test in
+// this package holds the two to each other (TestExchangeTakesTheFrontDoorsShapes). It is
+// a type of this package's rather than an alias of that one for one reason: no
+// non-test file here may name the MCP front door's package. That package mounts
+// an open registration endpoint with neither of spec.md §8's two bounds built
+// yet, so it ships with a guard — its own TestNoBinaryLinksTheFrontDoorYet —
+// that refuses ANY file a binary links which names it, and a library that merely
+// borrowed its types would look exactly like a front door being wired. W4 wires
+// nothing (the owner's ruling of 2026-11-07), so the borrowing is at the test
+// level, and the conversion between this type and that one is the wiring's: one
+// struct literal, in the task that deletes the guard.
+type Limits struct {
+	MinRigor rigor.Mode
+	MaxRigor rigor.Mode
+	Hotfix   bool
+	SpendUSD float64
+	Scopes   []string
+}
 
 // Pin is the member's own record of the workspace it trusts: W1's
 // localcfg.WorkspacePin, in the values this exchange verifies against, and
@@ -265,7 +313,7 @@ type VerifiedIdentity struct {
 // do at this member by anything it puts in an assertion.
 type Session struct {
 	Identity VerifiedIdentity
-	Limits   mcpauth.Limits
+	Limits   Limits
 }
 
 // ExchangeConfig is what this member's own configuration gives the exchange.
@@ -284,7 +332,7 @@ type ExchangeConfig struct {
 	CoordinatorIssuer string
 	// Limits are this member's own limits. They are the ones the member's token
 	// is minted with and they are never read from an assertion.
-	Limits mcpauth.Limits
+	Limits Limits
 	// Consumed is the member's own spent-jti set. A nil one is refused: an
 	// exchange with nowhere to record a spent jti would admit every assertion
 	// twice, which is the replay finding 1 exists to refuse.
@@ -297,7 +345,7 @@ type Exchange struct {
 	pin         Pin
 	key         *rsa.PublicKey
 	exchangeURL string
-	limits      mcpauth.Limits
+	limits      Limits
 	consumed    ConsumedJTI
 	providers   []string
 	now         func() time.Time
@@ -380,7 +428,7 @@ func ExchangeURL(coordinatorIssuer string) (string, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("%w: it must be the https origin this member's coordinator answers on, with no path, query or fragment", ErrUnusableExchangeURL)
 	}
-	return raw + mcpauth.AuthorizePath, nil
+	return raw + AuthorizePath, nil
 }
 
 // exchangeURLOK holds a member's exchange URL to the shape an assertion's
@@ -468,7 +516,7 @@ func (e *Exchange) Admit(ctx context.Context, raw string) (Session, error) {
 	// spending it later would leave the window between the check and the
 	// answer. What the store is handed is the HASH (D1296): it never sees the
 	// jti, so nothing at rest can be presented.
-	already, err := e.consumed.Consume(ctx, mcpauth.TokenHash(a.JTI), time.Unix(a.ExpiresAt, 0))
+	already, err := e.consumed.Consume(ctx, TokenHash(a.JTI), time.Unix(a.ExpiresAt, 0))
 	if err != nil {
 		return Session{}, fmt.Errorf("oauth: recording a spent assertion id: %w", err)
 	}
