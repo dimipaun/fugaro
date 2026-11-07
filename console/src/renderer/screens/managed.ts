@@ -119,6 +119,13 @@ export const MANAGED_VERDICT_TERM = 'verdict'
 export const MANAGED_IDENTITY_TERM = 'identity'
 export const MANAGED_DIGEST_TERM = 'plan digest'
 
+/** MANAGED_DIGEST_NOTE is what the digest row says in its `title` about a cell
+ * that draws a marker instead of the digest. It is the console's own sentence
+ * and it carries no value: it explains a redaction the operator can see, which
+ * is the one thing a screen drawing a marker owes the person reading it. */
+export const MANAGED_DIGEST_NOTE =
+  'the plan digest is a 64-character hex run, and this console reads a run like that as a credential, so it draws its marker here'
+
 /** The class hooks this section draws with. CM11 writes the rules that select
  * them and the document that licenses them; a class the stylesheet lacks
  * renders as plain markup, which is the state the golden frames are recorded
@@ -451,16 +458,28 @@ function trailBlock(factory: ScreenFactory, trail: ManagedTrail): ScreenElement 
     // that is not a login at all is refused rather than half-drawn.
     term(list, factory, MANAGED_IDENTITY_TERM)
     textCell(list, factory, 'dd', record.identity, 'person', 'identity', MANAGED_VALUE_CLASS)
-    // The plan digest is a 40-character hex run, and the free-text rules take a
-    // long hex run for a credential -- which is the same answer the recorder
-    // makes for the same value (`src/source/redact.ts` names the keys whose
-    // digests it keeps, and `plan_digest` is not one of them), so the console
-    // draws the marker and the reason stands in the title. That is the honest
-    // answer at this layer: the console has no class that draws a digest, and
-    // giving it one is a change to `sanitize.ts` and the class table, which is
-    // not this section's to make.
+    // The plan digest is a 64-character hex run, and the free-text rules take a
+    // long hex run for a credential, so this cell draws the marker rather than
+    // the digest -- the same answer the recorder makes for the same value
+    // (`src/source/redact.ts` names the keys whose digests it keeps, and
+    // `plan_digest` is not one of them). `putText`'s ok path writes text and no
+    // title, so the marker would stand alone and unexplained; the note goes on
+    // the cell **before** the write, so a document that carried no digest at
+    // all keeps `putText`'s own reason for the `n/a` in its place.
+    //
+    // Drawing the digest itself would take a class this console does not have:
+    // the recorder has a `digest` class that keeps a hex value as written
+    // (`redact.ts`'s `HEX_RE`), and this layer's class list has no member for
+    // one, so the field contract section 6.21 carries for comparing a record
+    // against a plan is drawn by `fugaro managed status` itself and not here.
+    // Adding that class is a decision about the sanitizer rather than about this
+    // drawing -- the same call `docs/design/console-styling.md` section 2.5
+    // makes for a coordinator id -- and it is reported rather than made in this
+    // section.
     term(list, factory, MANAGED_DIGEST_TERM)
-    textCell(list, factory, 'dd', record.planDigest, 'label', 'plan_digest', MANAGED_VALUE_CLASS)
+    const digest = cell(list, factory, 'dd', MANAGED_VALUE_CLASS)
+    digest.setAttribute('title', MANAGED_DIGEST_NOTE)
+    putText(digest, record.planDigest, 'label', 'plan_digest')
   }
   return element
 }

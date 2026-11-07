@@ -34,7 +34,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { UNAVAILABLE_MARK, measured } from '../../src/shared/availability'
-import { ADDRESS_PLACEHOLDER, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
+import {
+  ADDRESS_PLACEHOLDER,
+  MAX_TEXT_INPUT_LENGTH,
+  TOKEN_PLACEHOLDER,
+} from '../../src/shared/sanitize'
+import { REFUSAL_UNREADABLE } from '../../src/renderer/screens/degraded'
 import {
   BUSY_ATTRIBUTE,
   BUSY_BUSY_ATTRIBUTE,
@@ -50,6 +55,7 @@ import {
   MANAGED_COMMAND_TERM,
   MANAGED_COUNT_TERM,
   MANAGED_DAY_TERM,
+  MANAGED_DIGEST_NOTE,
   MANAGED_DIGEST_TERM,
   MANAGED_GENERATION_TERM,
   MANAGED_IDENTITY_TERM,
@@ -73,7 +79,7 @@ import {
   renderManagedFrame,
 } from '../../src/renderer/screens/managed'
 import type { ScreenElement, ScreenFactory } from '../../src/renderer/screens/managed'
-import { hexDigest } from '../support/fakeSecrets'
+import { githubToken, hexDigest } from '../support/fakeSecrets'
 
 // ---------------------------------------------------------------------------
 // The harness: a fake element that refuses what a screen may not do.
@@ -173,6 +179,20 @@ function fact(list: ScreenElement, term: string): string | null {
     if (cells[index]?.textContent === term) return cells[index + 1]?.textContent ?? null
   }
   return null
+}
+
+/** valueCell is the `dd` node `fact` read the value off, so a test can look at
+ * what else the cell carries -- the `title` an explained marker goes in. */
+function valueCell(list: ScreenElement, term: string): FakeScreen {
+  const cells = (list as FakeScreen).childNodes()
+  for (let index = 0; index + 1 < cells.length; index += 2) {
+    if (cells[index]?.textContent === term) {
+      const value = cells[index + 1]
+      if (value === undefined) break
+      return value as FakeScreen
+    }
+  }
+  throw new Error(`no row for the term ${term}`)
 }
 
 /** clearSection is `entry.ts`'s own, in this file's words: empty a section back
@@ -315,15 +335,31 @@ describe('buildManagedModel', () => {
     expect(fact(list, MANAGED_COUNT_TERM)).toBe('4')
     // The record's five members, each drawn through the class its key declares.
     // `identity` is a person -- the recorder's own class for the account a write
-    // ran as -- so an address loses its local part; `plan_digest` is a digest,
-    // and the free-text rules take a long hex run as a credential, which is the
-    // marker the recorder writes for the same value, so the two layers agree
-    // about what a digest is worth drawing.
+    // ran as -- so an address loses its local part.
     expect(fact(list, MANAGED_AT_TERM)).toBe(RECORD.at)
     expect(fact(list, MANAGED_COMMAND_TERM)).toBe(RECORD.command)
     expect(fact(list, MANAGED_VERDICT_TERM)).toBe(RECORD.verdict)
     expect(fact(list, MANAGED_IDENTITY_TERM)).toBe(ADDRESS_PLACEHOLDER)
+    // `plan_digest` is a digest, and the free-text rules take a long hex run as
+    // a credential -- which is the marker the recorder writes for the same
+    // value, so the two layers agree about what a digest is worth drawing. The
+    // console has no class that keeps a digest, so the cell explains itself in
+    // its `title` instead of drawing the value (this is the half review found
+    // missing: a marker with no reason drawn anywhere).
     expect(fact(list, MANAGED_DIGEST_TERM)).toBe(TOKEN_PLACEHOLDER)
+    expect(valueCell(list, MANAGED_DIGEST_TERM).getAttribute('title')).toBe(MANAGED_DIGEST_NOTE)
+    expect(drawn(root)).not.toContain(RECORD.plan_digest)
+
+    // The note is not a mask: a document that carried no digest at all draws
+    // `putText`'s own mark, and `putText`'s own reason replaces the note rather
+    // than standing beside it, so the cell never explains a redaction it did not
+    // make.
+    const missing = buildManagedModel({
+      raw: { ...MANAGED, audit: { ...RECORD, plan_digest: null } },
+    })
+    const missingList = one(one(renderManaged(factory, missing), MANAGED_TRAIL_CLASS), MANAGED_TRAIL_LIST_CLASS)
+    expect(fact(missingList, MANAGED_DIGEST_TERM)).toBe(UNAVAILABLE_MARK)
+    expect(valueCell(missingList, MANAGED_DIGEST_TERM).getAttribute('title')).not.toBe(MANAGED_DIGEST_NOTE)
   })
 
   it('never draws the record’s argv', () => {
@@ -373,6 +409,33 @@ describe('buildManagedModel', () => {
     })
     expect(drawn(renderManaged(factory, refused))).toContain('roles/datastore.viewer')
     expect(drawn(renderManaged(factory, refused))).not.toContain('no document arrived for')
+  })
+
+  it('puts the CLI’s refusal through the refusal door, both ways', () => {
+    // `drawnRefusal` is the section's one path where text a child wrote is
+    // drawn without `putText`, so both halves of the door are pinned here and
+    // not just the one that keeps the remedy (`projects.test.ts` has the same
+    // pair, from review round 5 of PR 478: the two screens drew one channel two
+    // ways). The first half is the redaction -- a token a child echoed into its
+    // stderr never reaches the Project tab -- and reducing the door to
+    // `return because` must fail this case and not only the model shape.
+    const token = githubToken()
+    const echoed = buildManagedModel({
+      raw: null,
+      because: `the read was refused: ${token} is not accepted`,
+    })
+    const text = drawn(renderManaged(factory, echoed))
+    expect(text).not.toContain(token)
+    expect(text).toContain(TOKEN_PLACEHOLDER)
+
+    // The second half is the fallback: a sentence `sanitizeRefusal` refuses --
+    // here one longer than the console reads -- is the console's own sentence
+    // naming what happened, never the raw text and never an empty section.
+    const tooLong = buildManagedModel({
+      raw: null,
+      because: 'x'.repeat(MAX_TEXT_INPUT_LENGTH + 1),
+    })
+    expect(drawn(renderManaged(factory, tooLong))).toContain(REFUSAL_UNREADABLE)
   })
 
   it('withholds a document whose marks are not a boolean', () => {
