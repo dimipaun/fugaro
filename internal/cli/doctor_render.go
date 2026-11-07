@@ -195,6 +195,14 @@ var doctorDecisionIDs = map[string]bool{
 // signer that is not the installation's own account, a bucket grant whose
 // shape is not the one this Fugaro writes — and the severity guard in
 // doctorClassOf is what keeps those in the default view.
+//
+// token-signers-managed is the one ID in the list with no warning variant of
+// its own: it names the managed deployment's own grants (the deployer
+// account's conditioned roles, fenced to the managed prefix, and the operators
+// the installation names impersonating that account), which Fugaro's own
+// Terraform makes on purpose and which reach no service account outside the
+// fence — so it is a measurement, and every other principal on that account
+// still comes through token-signers-<n> as a warning.
 var doctorMeasureIDs = map[string]bool{
 	// The update lookup did not answer. Nothing about this installation is
 	// wrong, and the newer-release case is the warning variant of the same ID.
@@ -224,17 +232,11 @@ var doctorMeasureIDs = map[string]bool{
 	// every checkout whose jobs mount any secret, offers no choice (its one
 	// line names the command that lists them again), and the "to decide" block
 	// is for checks the owner chooses between.
-	"secret-scope":                true,
-	"launcher-jobs":               true,
-	"token-signers":               true,
-	"token-signers-owners":        true,
-	"token-signers-google-agents": true,
-	// The managed deployment's own grants: the deployer account's conditioned
-	// roles, fenced to the managed prefix, and the operators' impersonation of
-	// that account. The design makes both on purpose and neither reaches the
-	// signer, so the line is a measurement — the installation the owner ran
-	// `fugaro update` on is clean, and the two grants that made it read as a
-	// warning are named under --security and --all instead.
+	"secret-scope":                  true,
+	"launcher-jobs":                 true,
+	"token-signers":                 true,
+	"token-signers-owners":          true,
+	"token-signers-google-agents":   true,
 	"token-signers-managed":         true,
 	"secret-readers-unexpected":     true,
 	"credentials-service-deployers": true,

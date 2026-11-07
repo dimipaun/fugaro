@@ -51,11 +51,11 @@ const (
 	// root: owners can always create keys or grant themselves anything.
 	SignerOwner
 	// SignerManaged: the managed deployment's own grant, which Fugaro's own
-	// Terraform makes on purpose (managedDeployment): the deployer account
-	// holding one of the seven conditioned custom roles under the module's own
-	// fence, or an operator the installation names holding the token-creator
-	// role on the deployer account. Neither reaches the signer, and neither is
-	// removable without breaking `fugaro update`.
+	// Terraform makes on purpose (managedGrant): the deployer account holding
+	// one of the seven conditioned custom roles under the module's own fence,
+	// or an operator the installation names holding the token-creator role on
+	// the deployer account. Neither reaches the signer, and removing either
+	// breaks the managed replacement `fugaro update` runs.
 	SignerManaged
 )
 
