@@ -809,6 +809,7 @@ probe account carries predefined grants only).
 | 145 | The Bitbucket read consumer's facts ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 145, task T2.8 and the script T2.7 writes; the reconciliation's U1–U5, U8, U11, U12, U14 and U15): the sandbox consumer read from a file **you** name and never printed — the token's lifetime (U1); whether the `client_credentials` grant returns a refresh token and whether a single minted token can be revoked (U2); whether the token reaches a second workspace you belong to (U3); whether the sandbox's plan admits consumers (U4); the workspace's seat count before and after (U5); whether IP allowlisting applies to OAuth tokens, and U8 stays **UNVERIFIED** if the plan offers none (U8); whether the token response lists the granted scopes (U11); whether two grants return distinct tokens (U12); whether creating a consumer needs workspace-admin rights and whether the token then reaches admin endpoints (U14); and whether the consumer must be marked private (U15). **It gates the read mint (O4):** tasks T2.3 and T3.1 do not merge before this check passes, and if U3 shows reach beyond the workspace, D360 and D361 go back to the owner before T2.3 merges. It also shows that a write with the read token is refused | See "Check 145" below; **you** run it at your own terminal, on sandbox workspaces only, never `belong`, with the consumer file you name and the script never printing it, and **no agent runs any step of it**. The script lands with task **T2.7**; this section is task **T0.2**'s and carries no steps of its own until then | A sandbox workspace and a second one you belong to, one read consumer created as the installing person, and two `client_credentials` grants; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 149 | The console shows the stored view on the owner's own machine ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 149 and task T1.3; D364, and U9 end to end): `fugaro coordinator status --from-store --all --json --project <name>` reads the stored view as the signed-in person with **no key**, and the console's project view renders it — the read the console could not make while it had to run `coordinator status` itself | See "Check 149" below; **you** run it at your own terminal, on your own machine, read-only, and **no agent runs any step of it** | Nothing: two reads and one window. No project is written, no run is launched and no credential is minted. **USER-RUN, NOT RUN.** |
+| 180 | One Bitbucket project or workspace access token serving many repositories, live ([`docs/bitbucket-workspace-token/`](bitbucket-workspace-token/implementation-plan.md), its Check 180, written by task **T1.3** and run by you in task **T1.4**; the reconciliation's **U1**–**U7**, **F3**, and D468 = no): on a sandbox installation and a **Premium** sandbox workspace, a **project access token** with `repository:write` and `pullrequest:write` is allow-listed for two sandbox repositories and stored project-wide, each repository's `fugaro update --repo` **asks nothing**, and one run per repository is recorded — a clone and a push the token authenticates, the pull request it opens and that pull request's author, `TestLiveBitbucket` and `GET /2.0/user`, whether **approve and merge** work with those scopes, and whether a repository **added to the Bitbucket project afterwards** is reachable; then the token is rotated and **the next run uses the new version**, and a second machine without the entry records what `fugaro update --repo <path> --plan-only` plans. It is the only place this path is ever measured with such a token: nothing offline can say what a Bitbucket token authenticates | See "Check 180" below; **you** run it, on a sandbox installation and a **Premium** sandbox workspace only, **never `belong`**, with the token file you name and the script never printing it: `scripts/live-checks/check180.sh --installation <sandbox>`. Its dry driver is `scripts/live-checks/check180_test.sh`, and **no agent runs any step of it** | A Premium sandbox workspace, one project access token created there with the two write scopes, two sandbox repositories in one Bitbucket project, one run per repository, one rotation and one approve-and-merge; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 190 | git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy ([`docs/secrets-brokering/`](secrets-brokering/implementation-plan.md), its task **B0.4** and its "Checks 190–192"; the reconciliation's **F13**, **F14**, **U2**, **U7** and **U8**): against a sandbox Bitbucket repository, through a Cloud Run service deployed **with IAM required and no public invoker** — a **full clone** and a **blobless clone** (request count, bytes and time each), a **push above 32 MiB** on HTTP/1.1 (chunked) and what the front end answers, a **small push**, the **cold start** of the first git request after 35 idle minutes (D501: the service keeps scaling to zero), and what the front end does with a push held open past the service's **3600 s** timeout. It is the measurement S1's proxy is designed against: a large push that passes on HTTP/1.1 is what S1 is built on, and one that does not is what makes B1.5 serve h2c end to end | See "Check 190" below; **you** run it, on installation `fugaro` only (project `fugaro-dev`, region `us-east5`, hard-coded — the check refuses another installation), against a sandbox repository only, never `belong`, with the token file at mode `0600` that [secrets-brokering/check190-steps.md](secrets-brokering/check190-steps.md) writes; the script is `scripts/live-checks/check190.sh`, its own test `scripts/live-checks/check190_test.sh`, and **no agent runs any step of it** | One throwaway Cloud Run service with IAM required and no public invoker, the Artifact Registry repository and the image it is built into, the Secret Manager container that holds the sandbox repository's token for the proxy, its own staging bucket for the build's source, two grants to the installation's build account on those two only (registry writer, bucket object viewer), and one branch on the sandbox repository — every one of them deleted by the Restore, which asserts four counts read `0` and reads the bucket back; the installation's own `gs://fugaro-dev_cloudbuild` is not touched. **Wall clock, not money: about two hours at the terminal**, one build and one idle instance billed to the project while it runs. **USER-RUN, NOT RUN.** |
 | 290 | The mixed-credentials run on a real installation (design [`docs/design/mixed-credentials.md`](design/mixed-credentials.md) §5 and §11, the tasks **B1–B6**; the owner's ruling **B0**, 2026-11-04; [`docs/multi-model.md`](multi-model.md) §3): an `api-key` run of the sandbox repository whose **coder** stays on its provider route — a DeepSeek model priced through the budget gateway — while its **senior review** runs inside the same loop, direct to Anthropic on ONE stage-scoped Claude OAuth account and on an **Opus** model. It is the only place the mix meets a real run, and it reads back the seven facts the rule stands on: `stage_accounts.review` naming the account; the `review` stage's `credential: oauth`, its model an Opus one, and no `model call` line for it in the log; the verdict `ship`; no `Invalid API key` anywhere; the account's dollars inside `cost.model_usd` and outside `cost.total_usd`; the coder's stage carrying the gateway's routing and its call count; and the coder's own stage environment holding no token. It is what `docs/multi-model.md` and the design's §9 name as the evidence still missing | See "Check 290" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, with `budget.mode: enforce` (the gateway caps the coder; nobody caps the account's own subscription dollars), and **no agent runs any step of it** | One run of the sandbox repository on a task that changes one line: the coder's gateway-priced calls, one review round on the account, and the run's own report. The run commits that line, pushes its `fugaro/<id>` branch and opens a pull request — a task that changes nothing is no cleaner, since a run whose agent makes no commit is failed, given an empty commit and still pushed and opened as a draft (`internal/runner/runner.go`) — so the Restore closes the pull request, deletes the branch, takes the file back and republishes the policy. **USER-RUN, NOT RUN.** |
 | 291 | What a catalog image's `ENV` does in a run ([`docs/image-env/`](image-env/implementation-plan.md) §6, that work's task **IE4** and its live check; **D1381**; issue #1755; `docs/base-image.md`'s "Bring your own" is the rule it reads back): one catalog entry published on the sandbox whose Dockerfile sets an ordinary marker (`ENV NEXUS_BASEURL=https://example.invalid/repository/maven-public/`) and one reserved name (`ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null`) — **no credential and no secret-shaped value on the image**, which is the point — then `fugaro update --repo` so the job carries the stamp, and `fugaro doctor --all` read for that job's line: it names the catalog entry and the names the job itself sets that a run drops, with **no value printed** — and since an image's own `ENV` lives in the image and no read of a job can list it, the line says so, and the reservation appears in the report only once one reserved name is set on the job by hand (`--update-env-vars`, converged away again in the same step); then one trivial run on the entry's image, from whose transcript the marker is present in the environment of a command the run ran through `fugaro verify`, `GOOGLE_APPLICATION_CREDENTIALS` is absent, and the image's value appears nowhere; and the **refutation step** — the same workflow on a **repository-built** image (`dockerfile:` in the sandbox's `fugaro.yaml`) setting the same marker, whose variable must be **absent** from the run and whose `doctor --all` line must read not catalog-stamped — that is D1370's scope, and the half a code review cannot settle | See "Check 291" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | One catalog entry published and built, one repository-image rebuild, two `fugaro update --repo` runs and two trivial sandbox runs, and the pull requests they open — closed and their branches deleted by the Restore. **USER-RUN, NOT RUN.** |
@@ -11159,6 +11160,100 @@ machine.
 **Restore.** Nothing is created, so there is nothing to undo: two reads and one window. No project
 is written, no run is launched, no credential is minted, and the check holds no secret to paste
 back. **No agent runs any step of it.**
+
+## Check 180: one Bitbucket project or workspace access token serving many repositories (installation `<sandbox>` only, sandbox workspace only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T1.3** of the Bitbucket workspace-token plan
+([bitbucket-workspace-token/implementation-plan.md](bitbucket-workspace-token/implementation-plan.md), its
+"Checks this plan takes (Checks 180–189)"), and **run by the owner** in task **T1.4**. It is the only
+check of that block written: **181–189 stay unwritten** until the shared-project-job work claims them.
+Nothing here has been run, and today **no Premium sandbox workspace is known** (U6): the check needs a
+workspace whose plan admits project and workspace access tokens, and that is why D468 = no put the
+whole path in 0.13.0 with no claim that it works. The owner types one command:
+
+```bash
+scripts/live-checks/check180.sh --installation <sandbox>
+```
+
+The script plans first (`--dry-run` prints the plan and touches nothing), refuses any installation but
+the sandbox one, and refuses `belong` at every step. Its driver is
+`scripts/live-checks/check180_test.sh`, which runs offline — fake `fugaro`, `gcloud`, `go` and `git`
+on `PATH` and a fake Bitbucket Cloud on a loopback port — inside `go test ./scripts`. **No agent runs
+any step of this check**, only that test; and no step types, prints or pastes a token or a key value:
+the token is read from the file the owner names and handed to the CLI on stdin.
+
+**What the check settles** (the reconciliation's **U1**–**U5** and **U7**, and **F3**): the reading the
+whole Bitbucket workspace-token path rests on and that no offline test can produce — what a **project
+access token** with `repository:write` and `pullrequest:write` actually authenticates against
+Bitbucket Cloud, which is exactly what D468 = no leaves open. It is also where D490's sentence is
+seen: the token reaches the job itself, and a proxy that keeps it out of the job is designed in
+[secrets-brokering](secrets-brokering/README.md) and not built. The run's agent and every
+launcher of an allow-listed repository hold the token's value (F7), which is why this check runs on a
+**Premium** sandbox workspace and nowhere else.
+
+**What you do** (task T1.4; every step on the sandbox installation and a sandbox workspace, never
+`belong`):
+
+1. **Create the token** (U7). In the sandbox workspace create a **project access token** with
+   `repository:write` and `pullrequest:write` — the minimum a run needs, no admin, webhook, pipeline
+   or project-admin scope — and give it a name you want on every pull request, since the name cannot
+   be edited later. Record the exact scope names Bitbucket's own page shows (U7), and have the two
+   sandbox repositories of one Bitbucket project ready.
+2. **Allow-list and store the token.** Write the `project_secrets.bitbucket-token.allow_data_to`
+   entry naming the two repositories, run `fugaro update` so the project container exists, and store
+   it project-wide with
+   `fugaro secrets set bitbucket-token --project-wide < <token-file>`, which reads the value from
+   stdin. The store's acceptance is the reading: the entry has to name the repositories the token is
+   meant for, or the store refuses.
+3. **`fugaro update --repo <path>` on each repository, and record that it asks nothing.** The name is
+   covered by the allow-list, so the prompt does not appear. This is the reading the second half of
+   D462 turns on: one token for many repositories, with no per-repository copy typed anywhere.
+4. **One run per repository.** Launch a run on each and record three things from it: the clone and the
+   push, which authenticate as `x-token-auth` with the token's value (U1); the pull request it opens,
+   and the author's **name**, which is the token's (U2, D472 — every enrolled repository's pull
+   requests carry that one author); and the run's own `fugaro runs ls --repo <owner/name> --json` row,
+   where `pushed`, `branch` and `pr` say the push and the pull request happened.
+5. **`TestLiveBitbucket` with the token**, and **`GET /2.0/user`** (U2, U7). The live test
+   (`internal/gitprov/bitbucket/live_test.go`, build tag `live`) is the harness for the API itself:
+   `FUGARO_LIVE_REPO` and `FUGARO_BITBUCKET_TOKEN` set, then
+   `go test -tags live -run 'TestLive' ./internal/gitprov/bitbucket/`. Its answer, and what
+   `GET /2.0/user` answers about the token's own identity — whether the token even has a user — are
+   the two readings U2 is open on.
+6. **Approve and merge** (U4). Peer review is out of reach for the token's own account, so this is
+   the reading that says whether **approve and merge** are admitted with `repository:write` and
+   `pullrequest:write` alone: on the sandbox repository approve the run's pull request and merge it,
+   and record what each call answered. A merge cannot be undone; on a sandbox repository that is the
+   point, and no step of this check touches `belong`.
+7. **A repository added to the Bitbucket project afterwards** (U3, D464). Create one more sandbox
+   repository in the same Bitbucket project and check that the allow-listed token reaches it with no
+   new local-config entry. U3 is the reading D464's wildcard rests on: **added to the Bitbucket
+   project afterwards** is what a project-scoped token does rather than what a list of names does.
+8. **Rotate the token** (F3). Store the new token as a new version of the same secret
+   (`fugaro secrets set bitbucket-token --project-wide < <new-token-file>`), wait for the running
+   executions to end, then revoke the old token in the Bitbucket UI, and record that **the next run
+   uses the new version**: a run launched after the rotation clones, pushes and opens its pull request
+   as before, while the revoked value is refused. The secret's version list is what the script reads
+   back here, with `gcloud secrets list --filter` to find the container (the name carries a hash
+   suffix) and `gcloud secrets versions list` for the versions.
+9. **A second operator's machine** (U5, D467). On a machine seeded from the shared config with
+   `fugaro update --gcp-project <id> --region <region> --name <name> --config-only`, run
+   `fugaro update --repo <path> --plan-only` **without** copying the `project_secrets` entry, and
+   record what it plans: a per-repository token, because the entry is operator-local by design and
+   the shared config never carries it.
+
+**What the check does not settle.** D474's API-root lock is 0.13.0's and this check does not read it;
+a workspace access token reaches the whole workspace rather than one project (the pair is one
+credential with two reaches, and this check runs the project token because it is the narrower one);
+and no part of the path is kept out of the job — see D490 above.
+
+**Restore.** The script leaves the sandbox workspace as it found it: it removes the branch it pushes
+if the owner asks it to, it writes nothing to the allow-listed repository's base branch, and it names
+every object it created and what removing it takes. What a person has to undo by hand is what the
+check exists to make: the one extra sandbox repository created in step 7, the merged pull request of
+step 6 (which cannot be unmerged), the rotated and revoked token pair of step 8 (the new version is
+the live one from then on), and the project-wide secret, which
+`fugaro secrets delete bitbucket-token --project-wide` removes once no repository needs it. **Never
+run any step against `belong`**, and **no agent runs any step of it**.
 
 ## Check 190: git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy (installation `fugaro` only, sandbox repository only, never `belong`; run by you; NOT RUN)
 

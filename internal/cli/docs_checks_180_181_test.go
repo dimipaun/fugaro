@@ -39,11 +39,14 @@ import (
 // block is owed.
 var bitbucketWorkspaceRegisterChecks = []string{"180"}
 
-// bitbucketWorkspaceCheckRowRE matches a register summary row's first cell: the
-// number between two pipes, alone. It is anchored on the closing `|`, so a
-// number cited inside another row's prose is not a row of its own.
+// bitbucketWorkspaceCheckRowRE matches a whole register summary row: the line
+// whose first cell is the number between two pipes, alone. The `|` after the
+// number is what anchors it, so a number cited inside another row's prose is not
+// a row of its own. The rest of the line comes with it, because the row is the
+// half a reader scans: a check whose script is named only in the section below
+// is one a reader has to scroll to find.
 func bitbucketWorkspaceCheckRowRE(number string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^\|\s*` + number + `\s*\|`)
+	return regexp.MustCompile(`(?m)^\|\s*` + number + `\s*\|.*$`)
 }
 
 // TestDocsChecks180181AreRegistered: Check 180 has both halves of its
