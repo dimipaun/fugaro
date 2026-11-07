@@ -109,21 +109,31 @@ type Edge struct {
 }
 
 // Sanitise makes every text field of d fit to print: each one passes
-// safetext.Field, and each node's Key is rebuilt from its sanitised Source and
-// ID so the key and the fields it names cannot disagree. It is idempotent, and
-// a document built from trusted text comes back unchanged.
+// safetext.Field, and each node's Key is rebuilt from its Source and ID so the
+// key and the fields it names cannot disagree. It is idempotent, and a document
+// built from trusted text comes back unchanged.
 //
 // Every string here — a title, a repo, a branch, a note, a scope name — comes
 // from a document someone else wrote, so a source that fills a document
 // sanitises it before the document is printed, and no untrusted text reaches
 // the console's renderer (H2).
-func (d *Document) Sanitise() {
+//
+// A node's Source and ID are the exception: they are its identity, not prose.
+// safetext.Field is lossy — it drops controls and format characters, folds
+// whitespace and cuts at FieldMax — so rewriting an identifier would let two
+// distinct raw ids share one key, and keys are unique within one source
+// (D1356). An identifier Field would change is therefore refused, and the
+// caller reports the refusal rather than printing a document whose keys are
+// wrong.
+func (d *Document) Sanitise() error {
 	d.StreamID = safetext.Field(d.StreamID)
 	for i := range d.Sources {
 		d.Sources[i].sanitise()
 	}
 	for i := range d.Nodes {
-		d.Nodes[i].sanitise()
+		if err := d.Nodes[i].sanitise(); err != nil {
+			return err
+		}
 	}
 	for i := range d.Edges {
 		d.Edges[i].sanitise()
@@ -131,6 +141,7 @@ func (d *Document) Sanitise() {
 	for i := range d.Warnings {
 		d.Warnings[i] = safetext.Field(d.Warnings[i])
 	}
+	return nil
 }
 
 func (s *SourceState) sanitise() {
@@ -139,15 +150,20 @@ func (s *SourceState) sanitise() {
 	s.Reason = safetext.Field(s.Reason)
 }
 
-func (n *Node) sanitise() {
-	n.Source = safetext.Field(n.Source)
+func (n *Node) sanitise() error {
+	if clean := safetext.Field(n.Source); clean != n.Source {
+		return fmt.Errorf("graph: node source %q is not a clean identifier: sanitising it would merge two sources", clean)
+	}
+	if clean := safetext.Field(n.ID); clean != n.ID {
+		return fmt.Errorf("graph: node %s has an id %q that is not a clean identifier: sanitising it would merge it with another node", n.Source, clean)
+	}
 	n.Kind = safetext.Field(n.Kind)
-	n.ID = safetext.Field(n.ID)
 	n.Title = safetext.Field(n.Title)
 	n.Repo = safetext.Field(n.Repo)
 	n.State = safetext.Field(n.State)
 	n.Release = safetext.Field(n.Release)
 	n.Key = NodeKey(n.Source, n.ID)
+	return nil
 }
 
 func (e *Edge) sanitise() {

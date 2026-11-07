@@ -9,17 +9,32 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
-// TestDocumentTextIsSanitised: every string a node, a source or an edge
-// carries is untrusted text — a title, a repo, a branch, a note, a scope name
-// out of a document someone else wrote — and Sanitise makes each one fit to
-// print with safetext.Field, rebuilding each node's key from its sanitised
-// source and id so the key and the fields it names cannot disagree (H2).
+// assertClean fails if s still carries a character a terminal would obey or a
+// reader could be fooled by: a C0 or C1 control, DEL, or a format character
+// such as a bidi override.
+func assertClean(t *testing.T, what, s string) {
+	t.Helper()
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || unicode.Is(unicode.Cf, r) {
+			t.Errorf("%s = %q still carries %U", what, s, r)
+		}
+	}
+}
+
+// TestDocumentTextIsSanitised: every string a node, a source, an edge or a
+// warning carries is untrusted text — a title, a repo, a release, a state, a
+// kind, a note, a scope name out of a document someone else wrote — and
+// Sanitise makes each one fit to print with safetext.Field, rebuilding each
+// node's key from its source and id so the key and the fields it names cannot
+// disagree (H2). Every field below is fed hostile text and asserted clean, so
+// dropping the safetext.Field call on any one of them fails here.
 //
 // Hand mutation this fails on: dropping the safetext.Field call on any one
-// field (the escape sequence or the bidi override survives), or not rebuilding
-// Key from Source and ID.
+// field (its escape sequence, bidi override or bell survives into the
+// assertion), or not rebuilding Key from Source and ID.
 func TestDocumentTextIsSanitised(t *testing.T) {
 	const (
 		esc  = "\x1b[31m" // an SGR colour an attacker would rather the terminal ran
@@ -31,65 +46,105 @@ func TestDocumentTextIsSanitised(t *testing.T) {
 		StreamID: "s" + bell + "1",
 		Sources: []SourceState{{
 			Source: "coordinator" + esc,
-			State:  SourceUp,
-			Reason: "ok" + bidi + "ay",
+			State:  SourceUp + bidi,
+			Reason: "ok" + esc + "ay",
 		}},
 		Nodes: []Node{{
 			Key:     "stale:key", // Sanitise must rebuild this, not trust it
 			Source:  "coordinator",
-			Kind:    NodePullRequest,
-			ID:      "1" + bell,
+			Kind:    NodePullRequest + bell,
+			ID:      "1",
 			Title:   esc + "Fix the thing",
 			Repo:    "owner/repo" + bidi,
-			State:   "open",
+			State:   "open" + bell,
 			Release: "0.113" + esc,
 		}},
-		Edges:    []Edge{{From: "coordinator:1" + esc, To: "coordinator:2", Kind: "depends_on"}},
+		Edges: []Edge{{
+			From: "coordinator:1" + esc,
+			To:   "coordinator:2" + bidi,
+			Kind: "depends_on" + bell,
+		}},
 		Warnings: []string{"a" + esc + "b"},
 	}
-	d.Sanitise()
-
-	if got, want := d.StreamID, "s1"; got != want {
-		t.Errorf("StreamID = %q, want %q", got, want)
-	}
-	if got, want := d.Sources[0].Source, "coordinator"; got != want {
-		t.Errorf("Sources[0].Source = %q, want %q", got, want)
-	}
-	if got, want := d.Sources[0].Reason, "okay"; got != want {
-		t.Errorf("Sources[0].Reason = %q, want %q", got, want)
-	}
-	n := d.Nodes[0]
-	if got, want := n.Key, "coordinator:1"; got != want {
-		t.Errorf("Nodes[0].Key = %q, want %q (rebuilt from Source and ID)", got, want)
-	}
-	if got, want := n.ID, "1"; got != want {
-		t.Errorf("Nodes[0].ID = %q, want %q", got, want)
-	}
-	if got, want := n.Title, "Fix the thing"; got != want {
-		t.Errorf("Nodes[0].Title = %q, want %q", got, want)
-	}
-	if got, want := n.Repo, "owner/repo"; got != want {
-		t.Errorf("Nodes[0].Repo = %q, want %q", got, want)
-	}
-	if got, want := n.Release, "0.113"; got != want {
-		t.Errorf("Nodes[0].Release = %q, want %q", got, want)
-	}
-	if got, want := d.Edges[0].From, "coordinator:1"; got != want {
-		t.Errorf("Edges[0].From = %q, want %q", got, want)
-	}
-	if got, want := d.Warnings[0], "ab"; got != want {
-		t.Errorf("Warnings[0] = %q, want %q", got, want)
+	if err := d.Sanitise(); err != nil {
+		t.Fatalf("Sanitise: %v", err)
 	}
 
-	// Nothing a terminal would obey may survive anywhere in the document.
-	data, err := json.Marshal(d)
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct{ what, got, want string }{
+		{"StreamID", d.StreamID, "s1"},
+		{"Sources[0].Source", d.Sources[0].Source, "coordinator"},
+		{"Sources[0].State", d.Sources[0].State, SourceUp},
+		{"Sources[0].Reason", d.Sources[0].Reason, "okay"},
+		{"Nodes[0].Key", d.Nodes[0].Key, "coordinator:1"},
+		{"Nodes[0].Kind", d.Nodes[0].Kind, NodePullRequest},
+		{"Nodes[0].ID", d.Nodes[0].ID, "1"},
+		{"Nodes[0].Title", d.Nodes[0].Title, "Fix the thing"},
+		{"Nodes[0].Repo", d.Nodes[0].Repo, "owner/repo"},
+		{"Nodes[0].State", d.Nodes[0].State, "open"},
+		{"Nodes[0].Release", d.Nodes[0].Release, "0.113"},
+		{"Edges[0].From", d.Edges[0].From, "coordinator:1"},
+		{"Edges[0].To", d.Edges[0].To, "coordinator:2"},
+		{"Edges[0].Kind", d.Edges[0].Kind, "depends_on"},
+		{"Warnings[0]", d.Warnings[0], "ab"},
 	}
-	for _, bad := range []string{esc, bidi, bell, "\u009b"} {
-		if strings.Contains(string(data), bad) {
-			t.Errorf("the sanitised document still carries %q: %s", bad, data)
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.what, c.got, c.want)
 		}
+		assertClean(t, c.what, c.got)
+	}
+}
+
+// TestNodeIdentifierIsRefusedWhenSanitisingWouldMergeIt: a node's Source and ID
+// are its identity, not prose, so Sanitise refuses one that safetext.Field would
+// change rather than rewriting it. Field is lossy — it drops controls and format
+// characters, folds whitespace and cuts at FieldMax — so two distinct raw ids
+// ("42" and "42\x07", or two long ids sharing their first 511 characters) would
+// otherwise share one key, and keys are unique within one source (D1356).
+//
+// Hand mutation this fails on: sanitising the id into the key instead of
+// refusing it, which makes the pairs below pass with one key each.
+func TestNodeIdentifierIsRefusedWhenSanitisingWouldMergeIt(t *testing.T) {
+	for _, id := range []string{"42\x07", "42\n", "42‮", " 42", "42 ", "a\tb", strings.Repeat("a", 513)} {
+		d := Document{Version: DocumentVersion, Nodes: []Node{{Source: "coordinator", ID: id, Kind: NodeRun}}}
+		if err := d.Sanitise(); err == nil {
+			t.Errorf("Sanitise accepted id %q, which safetext.Field would change", id)
+		}
+	}
+	for _, source := range []string{"coordinator\x07", " coordinator", "coordinator "} {
+		d := Document{Version: DocumentVersion, Nodes: []Node{{Source: source, ID: "1", Kind: NodeRun}}}
+		if err := d.Sanitise(); err == nil {
+			t.Errorf("Sanitise accepted source %q, which safetext.Field would change", source)
+		}
+	}
+
+	// Two raw ids that differ only past Field's cut, and two that differ only in
+	// a character Field drops, name two nodes; the document refuses to give them
+	// one key.
+	long := strings.Repeat("a", 600)
+	for _, pair := range [][2]string{
+		{"42", "42\x07"},
+		{long + "x", long + "y"},
+	} {
+		d := Document{Version: DocumentVersion, Nodes: []Node{
+			{Source: "coordinator", ID: pair[0], Kind: NodeRun},
+			{Source: "coordinator", ID: pair[1], Kind: NodeRun},
+		}}
+		if err := d.Sanitise(); err == nil {
+			t.Errorf("Sanitise gave %q and %q one key", pair[0], pair[1])
+		}
+	}
+
+	// A clean pair keeps its two distinct keys.
+	d := Document{Version: DocumentVersion, Nodes: []Node{
+		{Source: "coordinator", ID: "42", Kind: NodePullRequest},
+		{Source: "local:o1", ID: "42", Kind: NodeTask},
+	}}
+	if err := d.Sanitise(); err != nil {
+		t.Fatalf("Sanitise: %v", err)
+	}
+	if d.Nodes[0].Key == d.Nodes[1].Key {
+		t.Errorf("distinct nodes share one key: %q", d.Nodes[0].Key)
 	}
 }
 
@@ -117,7 +172,9 @@ func TestDocumentRoundTripsAndIsStrict(t *testing.T) {
 		Edges:    []Edge{{From: NodeKey("coordinator", "1"), To: NodeKey("coordinator", "2"), Kind: "depends_on"}},
 		Warnings: []string{"a source was stale"},
 	}
-	d.Sanitise()
+	if err := d.Sanitise(); err != nil {
+		t.Fatalf("Sanitise: %v", err)
+	}
 
 	data, err := json.Marshal(d)
 	if err != nil {
@@ -187,7 +244,9 @@ func TestNoCrossSourceDedupe(t *testing.T) {
 			{Key: NodeKey("local:o1", "42"), Source: "local:o1", Kind: NodeTask, ID: "42"},
 		},
 	}
-	d.Sanitise()
+	if err := d.Sanitise(); err != nil {
+		t.Fatalf("Sanitise: %v", err)
+	}
 	if len(d.Nodes) != 2 {
 		t.Fatalf("the document dropped a node with a repeated id: %d nodes", len(d.Nodes))
 	}
