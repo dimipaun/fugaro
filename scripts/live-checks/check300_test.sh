@@ -568,11 +568,40 @@ case_restore_failed() {
   expect_contains "$out" "delete it yourself" "restore-failed: the row says what to do"
 }
 
-for case in healthy settled skip_update stale_marker absent_marker subtree_absent subtree_widened \
-  subtree_child world_writable update_failed belong name_mismatch doctor_refused token_missing \
-  no_config no_installation_arg missing_tools xtrace restore_failed; do
-  "case_$case"
-done
+# Sharding, so the package's Go test can run the cases of this file side by
+# side: CHECK_TEST_SHARD="i/n" runs every n-th case starting at i, and
+# CHECK_TEST_ONLY=name runs that one case alone. Neither set: all run.
+case_index=0
+t() {
+  local i=$case_index
+  case_index=$((case_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t case_healthy
+t case_settled
+t case_skip_update
+t case_stale_marker
+t case_absent_marker
+t case_subtree_absent
+t case_subtree_widened
+t case_subtree_child
+t case_world_writable
+t case_update_failed
+t case_belong
+t case_name_mismatch
+t case_doctor_refused
+t case_token_missing
+t case_no_config
+t case_no_installation_arg
+t case_missing_tools
+t case_xtrace
+t case_restore_failed
 
 if [ "$failures" -ne 0 ]; then
   echo "check300_test: $failures failure(s)" >&2

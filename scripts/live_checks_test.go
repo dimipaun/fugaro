@@ -20,7 +20,8 @@ import (
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
 // Check 91, fake `gcloud`, `git`, `curl` and `fugaro` for Check 190, fake
 // `gcloud` and `fugaro` for Check 146, and a fake `gcloud` that evaluates the
-// conditions of Check 340's own IAM bindings for Check 340 -- or, for Check
+// conditions of Check 340's own IAM bindings for Check 340, and fake `gcloud`,
+// `fugaro` and a fake RTDB behind a fake `curl` for Check 300 -- or, for Check
 // 145, against a fake Bitbucket Cloud on a loopback port, so no network, no
 // cloud project and no credential is touched here, and no live step of any of
 // them is run by an agent. Check 130's fake is a fake `curl` alone, answering
@@ -37,6 +38,7 @@ var liveCheckScripts = []struct {
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
 	{"check190.sh", "check190_test.sh"},
+	{"check300.sh", "check300_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 }
 
