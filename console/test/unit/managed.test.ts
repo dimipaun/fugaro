@@ -350,10 +350,25 @@ describe('buildManagedModel', () => {
     expect(valueCell(list, MANAGED_DIGEST_TERM).getAttribute('title')).toBe(MANAGED_DIGEST_NOTE)
     expect(drawn(root)).not.toContain(RECORD.plan_digest)
 
-    // The note is not a mask: a document that carried no digest at all draws
-    // `putText`'s own mark, and `putText`'s own reason replaces the note rather
-    // than standing beside it, so the cell never explains a redaction it did not
-    // make.
+    // The note explains a marker, so it is drawn only when the marker is what
+    // the cell shows. `putText`'s ok path keeps a value the free-text rules do
+    // not read as a credential, and the cell then draws that value as itself
+    // with no note: a cell claiming a redaction it did not make is worse than an
+    // unexplained one.
+    for (const [what, planDigest] of [
+      ['a short run the rules keep', 'abc123'],
+      ['the empty string a document with no digest spells', ''],
+    ] as const) {
+      const kept = buildManagedModel({
+        raw: { ...MANAGED, audit: { ...RECORD, plan_digest: planDigest } },
+      })
+      const keptList = one(one(renderManaged(factory, kept), MANAGED_TRAIL_CLASS), MANAGED_TRAIL_LIST_CLASS)
+      expect(fact(keptList, MANAGED_DIGEST_TERM), what).toBe(planDigest)
+      expect(valueCell(keptList, MANAGED_DIGEST_TERM).getAttribute('title'), what).toBeNull()
+    }
+
+    // And a document that carried no digest at all draws `putText`'s own mark,
+    // whose own reason stands in the attribute instead.
     const missing = buildManagedModel({
       raw: { ...MANAGED, audit: { ...RECORD, plan_digest: null } },
     })

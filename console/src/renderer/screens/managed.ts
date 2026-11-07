@@ -40,7 +40,7 @@
 
 import { readNumber } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
-import { sanitizeRefusal } from '../../shared/sanitize'
+import { TOKEN_PLACEHOLDER, sanitizeRefusal } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -122,7 +122,8 @@ export const MANAGED_DIGEST_TERM = 'plan digest'
 /** MANAGED_DIGEST_NOTE is what the digest row says in its `title` about a cell
  * that draws a marker instead of the digest. It is the console's own sentence
  * and it carries no value: it explains a redaction the operator can see, which
- * is the one thing a screen drawing a marker owes the person reading it. */
+ * is the one thing a screen drawing a marker owes the person reading it. The
+ * row draws it only when the marker is what the cell shows. */
 export const MANAGED_DIGEST_NOTE =
   'the plan digest is a 64-character hex run, and this console reads a run like that as a credential, so it draws its marker here'
 
@@ -463,9 +464,13 @@ function trailBlock(factory: ScreenFactory, trail: ManagedTrail): ScreenElement 
     // the digest -- the same answer the recorder makes for the same value
     // (`src/source/redact.ts` names the keys whose digests it keeps, and
     // `plan_digest` is not one of them). `putText`'s ok path writes text and no
-    // title, so the marker would stand alone and unexplained; the note goes on
-    // the cell **before** the write, so a document that carried no digest at
-    // all keeps `putText`'s own reason for the `n/a` in its place.
+    // title, so the marker would stand alone and unexplained; the note is added
+    // **after** the write and only when the marker is what the cell shows, so a
+    // value the rules keep (a short run, the empty string a document that
+    // carried no digest spells) is drawn as itself with no note, and a document
+    // that carried no digest at all keeps `putText`'s own reason for the `n/a`.
+    // A cell claiming a redaction it did not make is worse than an unexplained
+    // one.
     //
     // Drawing the digest itself would take a class this console does not have:
     // the recorder has a `digest` class that keeps a hex value as written
@@ -478,8 +483,8 @@ function trailBlock(factory: ScreenFactory, trail: ManagedTrail): ScreenElement 
     // section.
     term(list, factory, MANAGED_DIGEST_TERM)
     const digest = cell(list, factory, 'dd', MANAGED_VALUE_CLASS)
-    digest.setAttribute('title', MANAGED_DIGEST_NOTE)
     putText(digest, record.planDigest, 'label', 'plan_digest')
+    if (digest.textContent === TOKEN_PLACEHOLDER) digest.setAttribute('title', MANAGED_DIGEST_NOTE)
   }
   return element
 }
