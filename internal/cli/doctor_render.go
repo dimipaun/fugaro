@@ -826,7 +826,15 @@ var doctorShorts = map[string]doctorShort{
 	// only state is information (bundle-bitbucket-token with nothing proxied,
 	// bitbucket-direct before the flip) are counted rather than printed, so
 	// their entries are here for the warning state beside them.
-	"credentials-service-deployed": {"the credentials service's callers could not be checked, or a job account it should admit cannot invoke it.", ""},
+	//
+	// credentials-service-deployed is the one whose read failures are the audit
+	// class, so they never reach this sentence: what reaches it is the four
+	// states a run cannot work around, and the sentence is true of each of them
+	// — the service not deployed, a job account it does not admit, and the two
+	// halves of having nothing to serve (an empty bundle, a newest version
+	// Secret Manager will not serve). The fix beneath it is the check's own, so
+	// the one screen's two lines never name different problems.
+	"credentials-service-deployed": {"the credentials service is not deployed, does not admit a job account, or has nothing in its bundle to serve a run.", ""},
 	"secret-rotation-age":          {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
 	"bundle-bitbucket-token":       {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
 	"bitbucket-token-valid":        {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},

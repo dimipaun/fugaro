@@ -809,23 +809,37 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
 
 **Decisions:** the ruling of 2026-11-05. **Verification:** `internal/cli`.
 
-- **Files:** `internal/cli/doctor_brokering.go`, `internal/cli/doctor_brokering_test.go`. **2 files.**
-  **`internal/cli/doctor.go` is deliberately NOT this task's** — its two flag-naming strings (`:693`,
-  `:696`) are DON4's, so that no level holds two writers of one file (§4).
+- **Files:** `internal/cli/doctor_brokering.go`, `internal/cli/doctor_brokering_test.go`, and the one
+  short form the default view needs in `internal/cli/doctor_render.go` (`:829`, the sentence the
+  one screen prints for this ID). **3 files.** **`internal/cli/doctor.go` is deliberately NOT this
+  task's** — its two flag-naming strings (`:693`, `:696`) are DON4's, so that no level holds two
+  writers of one file (§4); `doctor_render.go` is no task's in §4's table, and the entry is the one
+  this check's line cannot be correct without.
 - **Interfaces:** `doctorCredentialsServiceDeployed` (`internal/cli/doctor_brokering.go:102`) stops
   returning `nil` for an installation with no `credentials_service` block — that early return
   (`if lc.CredentialsService == nil { return nil }`) is exactly the sentence the ruling makes false: an
-  installation that has not converged is now a state worth reporting rather than one worth staying
-  silent about. It produces **one line**, in the shape the other checks already use (an `ID`, a
-  `Severity`, a `Problem`, a `Fix`), that says the service is **deployed and serving and admitting
-  nobody**, and names **which** half is missing:
+  installation that has not taken the opt-in is now a state worth reporting rather than one worth
+  staying silent about. It produces **one line**, in the shape the other checks already use (an `ID`, a
+  `Severity`, a `Problem`, a `Fix`) that names **which** half is missing. **What the one screen prints
+  is the ID's short form and not the state's** (`doctor_render.go:829`): the lookup has the ID and
+  nothing else, so that sentence has to be true of every state this check reports as a **warning** —
+  the service not deployed, a job account it does not admit, an empty bundle, a newest version Secret
+  Manager will not serve — while the state's own `Fix` stays the line under it. A short form that named
+  one state's problem (the callers, the invoker grant) put a sentence and a command about two different
+  things on one screen for the two bundle states. The line for an installation
+  that never opted in says that state and not one of being behind: **on this release the flag is the
+  opt-in**, what it changes is the installation's own workflows, and a doctor line is read as a step to
+  take, so that line says what the opt-in asks for and does rather than presenting a run that re-writes
+  every repository root as routine (DON1 rewrites it when the flag goes, and then the state is
+  genuinely "update and the service is there"):
 
   | state | the line |
   |---|---|
-  | no block in the local config | the installation has not converged on the service; `fugaro update` deploys it |
-  | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update` re-applies the root |
-  | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer |
-  | deployed, no `verifier_accounts` | deployed and admitting nobody on the verify route: the verifier account is not named |
+  | no block in the local config | the installation has not opted into the service: this release deploys it only behind `fugaro update --provision-credentials` (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it), and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind. Taking the opt-in is what moves the credential out of the jobs: every repository root re-applied after it drops its jobs' model credential in **every** `agent.auth` mode (which is why a project that takes it runs its workflows with `agent.auth: cascade`), the stage asks for its own **typed confirmation** (a `--yes` run does not cover it), and a GitHub run of it refuses to mint until the bundle holds the App's key (`fugaro creds set github-app-key`) |
+  | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update --provision-credentials` re-applies the root (the same flag as the row above, for the same reason) |
+  | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer. **Warning**: the loader fails closed, so every model call of a run against it is refused |
+  | deployed, the bundle's newest version is not `ENABLED` | deployed and admitting nobody: the version and its document are there and Secret Manager will not serve them, so the loader's read fails closed — the same refused model call as the row above, so the same **warning**. The line names the version and its state; `DISABLED` is the one an operator's incident disable leaves, and the fix names the enable (`gcloud secrets versions enable <version> --secret=<id>`) because `creds set` refuses while the newest version is disabled |
+  | deployed, `verifier_accounts` written **empty** | deployed and admitting nobody on the verify route: a list written empty names no verifier account. The list is the one the service is deployed with (`localcfg.VerifierAccountsEffective`): this checkout's `verifier_accounts` when it states one, the published policy node's otherwise, and the line names which of the two holds the empty list. An absent key is NOT this state — it leaves the module's own account admitted |
   | deployed, a job account missing `roles/run.invoker` | the existing half of the check, unchanged |
 
   **And, because the answer made the switch a state of its own, one line per repository — the "why
@@ -846,11 +860,22 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   second answer to "is this repository switched on", and the first time the two disagreed `doctor`
   would be the one lying.
 
-  The severity stays **warning**, for the reason the check's own comment gives (an installation mid-
-  convergence is a legitimate state) and one more this ruling adds: **an installation that has not run
-  `update` yet is not broken**, it is behind — and **a repository held off is not broken either, it is
-  the answer's own state.** `--strict` is where that becomes a failure, as it already is.
-- **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the five service states, each producing
+  **The severity is the state's own, and it is the state's own for the one reason doctor's classes
+  exist: whether a run can work around it.** The four states a run cannot work around keep the
+  **warning** the check already has — the block written and no service behind it, a job account the
+  service does not admit, and the two where the service is deployed and has nothing to serve with (a
+  bundle holding no version, a newest version Secret Manager will not serve) — for the reason the
+  classes exist: they print in the default view, and `--strict` is where they become a failure. A
+  measurement there would print "everything checked is ok" and exit 0 under `--strict` for an
+  installation whose every model call is refused. The two that are states rather than faults are `OK`
+  with severity **info**, doctor's measurement class: **an installation that has not taken the opt-in
+  is not broken** (on this release it is running the way it did before the service existed, and DON1
+  makes it an installation that has not run `update` yet), and **a verify route emptied on purpose is
+  not broken either, it is the answer's own state** — so neither may be an item of doctor's one screen,
+  and a clean installation would print an item for merely being behind the release. They are the answer
+  §1.4 asks for under `--all` and in `--json`, where a reader who wants the service *used* reads which
+  half is missing, and neither of them fails `--strict`.
+- **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the six service states, each producing
   exactly one check with the expected `ID` and severity), `TestDoctorNamesTheMissingHalfNotNotConfigured`
   (the line never reads "not configured": it names the App key, the verifier account, the bundle or the
   invoker grant), `TestDoctorSaysWhyARepositoryIsHeldOff` (the three held-off rows, each naming its own
