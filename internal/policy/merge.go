@@ -426,6 +426,16 @@ func (o Orchestrator) WithDefaults(personMaxRunning int64) Orchestrator {
 	return o
 }
 
+// SetsNothing reports whether the block writes no key at all. An absent block
+// and a written empty one are the same document, so the two readers that store
+// one — the published policy node's decoder and the local config's loader —
+// keep nil for both, and the writer of a block that sets nothing writes no
+// member at all (the same rule an empty image_catalog is normalized by).
+func (o Orchestrator) SetsNothing() bool {
+	return o.MaxRunning == 0 && o.BatchSize == 0 && o.SpawnPerMinute == 0 &&
+		o.SpawnPerHour == 0 && o.SpawnPerDay == 0 && len(o.DecisionModelPerClass) == 0
+}
+
 // ValidOrchestrator holds a written block to its rules. It is the one door for
 // both writers — the published policy node's decoder and the local config's
 // loader — so the two cannot disagree about what a block may say, the way
