@@ -1,6 +1,6 @@
 # Reconciliation — `fugaro setup` and `fugaro update`
 
-**Status: approved to build; implementation in progress.**
+**Status (2026-11-07): the plan this reconciles is built except for four tasks — [status-2026-11-07.md](status-2026-11-07.md) is the census.**
 
 Oct 20, 2026 · @Dimi
 
