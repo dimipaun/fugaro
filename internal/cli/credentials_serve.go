@@ -174,13 +174,15 @@ const (
 	// the variant a `fugaro review` runs on (CSR7) -- as
 	// {"profile","provider","account"} objects, one per job whose service
 	// account may call the service as a review caller (C3.9a's class,
-	// internal/credsvc's ClassReview). It is FUGARO_JOB_ACCOUNTS's own shape
-	// over the variant's axis: the accounts are DERIVED from the triples too
+	// internal/credsvc's ClassReview). It is a document of the kind
+	// FUGARO_JOB_ACCOUNTS is -- rows the service derives each account from --
+	// over the variant's own axis: the accounts are DERIVED from the triples
 	// (credsvc.ReviewJobAccountFor), because the variant's service account is
-	// the same hash of the profile, the provider and the account, and a table
-	// of emails here would be a second derivation that can drift from the
-	// accounts the deployer created (internal/infra/projectjobs.go's
-	// reviewVariant derives them with the same two functions).
+	// derived from the profile, the provider and the account by the same
+	// function the deployer used, and a table of emails here would be a second
+	// derivation that can drift from the accounts the deployer created
+	// (internal/infra/projectjobs.go's reviewVariant derives them with the same
+	// two functions).
 	//
 	// The three fields are the ones the variant's names are built from and not
 	// a repository: a review job names no repository (a profile serves every
@@ -341,10 +343,11 @@ var credentialsTest *credentialsWiring
 //
 // The review-only variant's accounts (AuthConfig.ReviewJobAccounts and
 // Config.ReviewAccounts, which are the same list) come from the deployment
-// instead: FUGARO_REVIEW_JOB_ACCOUNTS, the eighth name above, whose rows are
-// the (profile, provider, account) triples the variant's jobs were deployed
-// over, and credsvc.ReviewJobAccountFor derives the one service account each of
-// them runs as — the same derivation the policy read would make
+// instead: FUGARO_REVIEW_JOB_ACCOUNTS, the class's own variable beside the
+// seven, whose rows are the (profile, provider, account) triples the variant's
+// jobs were deployed over, and credsvc.ReviewJobAccountFor derives the one
+// service account each of them runs as — the same derivation the policy read
+// would make
 // (credsvc.ReviewJobAccountsFor), which is why this command still reads no
 // policy: it builds its configuration from its own environment and never
 // touches the database, the property that keeps the service's start-up
@@ -416,7 +419,8 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	// refuses every caller of the class rather than refusing to bind a port
 	// (`envReviewJobAccounts` states the direction and why it matters). The
 	// derived accounts are the rows the deployer created, and nothing here is
-	// invented: a row that cannot be derived is a deployment that is wrong.
+	// invented: a row whose provider is not a provider kind is refused rather
+	// than derived into an account nobody deployed.
 	reviewAccounts, err := credentialsServiceReviewJobAccounts(getenv(envReviewJobAccounts), env[envGCPProject])
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
@@ -787,9 +791,9 @@ func credentialsServiceReviewJobAccounts(raw, gcpProject string) ([]credsvc.Revi
 	out := make([]credsvc.ReviewJobAccount, 0, len(rows))
 	for i, r := range rows {
 		if r.Profile == "" || r.Provider == "" {
-			// The index and the field names, not the entry (the no-echo rule):
-			// the account is the row's one value an operator would not want in
-			// a log, and the refusal has to be actionable without it.
+			// The index and the field names, not the entry: a row is a value
+			// of this environment, and the refusal has to be actionable
+			// without it.
 			return nil, fmt.Errorf("%s: entry %d has no profile or no provider (both are required: the review job's service account is derived from the profile, the provider and the account, and a row without them names an account nobody deployed)", envReviewJobAccounts, i)
 		}
 		if !task.ValidProvider(r.Provider) {
