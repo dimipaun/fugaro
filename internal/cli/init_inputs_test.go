@@ -728,12 +728,12 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 // confirmation read like the region question, moves this file.
 func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	// The wizard's first run chdirs into a temporary directory, so the
-	// golden's path is taken first (as init_retire_test.go's does).
+	// golden's path is taken first — the same reason init_retire_test.go takes
+	// its own before its rig runs.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstRunEnv(t)
 	regionRun, out := wizardRun(t, "\n", &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}})
 	if err := regionRun.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -773,9 +773,10 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	}
 }
 
-// promptLine is the prompt itself: the label, the suggestion in brackets, and
-// the colon the prompt stops at. A run goes on writing on the same line (the
-// billing note, here), and a golden holds the question rather than that.
+// promptLine is the prompt itself: the label, the suggestion in brackets and
+// the colon it stops at. The run goes on writing on that same line (the
+// billing note, here), and a golden holds the question rather than what
+// follows it.
 func promptLine(t *testing.T, out, label string) string {
 	t.Helper()
 	i := strings.Index(out, label)
