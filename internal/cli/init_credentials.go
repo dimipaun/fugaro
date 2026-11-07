@@ -23,13 +23,12 @@ import (
 // repository with the operator's own reader grant on it. What comes out is the
 // reference the tfvars carry, digest-pinned; a tag is never returned.
 //
-// It takes the run's engine rather than the stage because two paths pin
-// through it and both must pin the same way: the credentials stage, when an
-// owner turns the service on, and the ordinary `fugaro update`, which re-pins
-// this release's image on an installation that opted in under an earlier one
-// (init_stages.go's pinCredentialsImage). Neither writes a digest this did not
-// return: the release's own signed "-pinned" image, read back through the
-// remote repository the job pulls by.
+// It takes the run's engine rather than a stage because two paths pin through
+// it and both must pin the same way: the deploy that gives an installation its
+// first block, and the carry that moves an installation's recorded image
+// forward to this release's (init_stages.go's pinCredentialsImage). Neither
+// writes a digest this did not return: the release's own signed "-pinned"
+// image, read back through the remote repository the job pulls by.
 func resolveCredentialsImage(ctx context.Context, e *initEngine) (string, error) {
 	ver := releaseVersion()
 	if ver == "" {

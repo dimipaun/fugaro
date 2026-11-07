@@ -191,11 +191,12 @@ type InstallationSpec struct {
 	// (InstallOptions.ManagedDeployerScoped).
 	ManagedDeployerScoped bool `json:"managed_deployer_scoped,omitempty"`
 	// CredentialsService is the installation's credentials service (D146,
-	// D147), left out until an owner runs init's credentials stage (C1.20) —
-	// which is the only writer, and the only thing that can set it. Left out
-	// rather than written as null, so an installation that has not opted in
-	// writes exactly the tfvars it wrote before the variable existed, and the
-	// module creates nothing for an absent one.
+	// D147), left out until `fugaro update` deploys it (DON1, the owner's
+	// ruling of 2026-11-05) — which every run does for every installation that
+	// can carry the service at all. Left out rather than written as null, so an
+	// installation that cannot carry one (no Firebase backend to read, no
+	// repository job to admit) writes exactly the tfvars it wrote before the
+	// variable existed, and the module creates nothing for an absent one.
 	CredentialsService *CredentialsServiceSpec `json:"credentials_service,omitempty"`
 	// CatalogCheck is the project's catalog check job (D1148), left out on an
 	// installation whose project publishes no catalog and on one whose catalog
@@ -250,9 +251,9 @@ type CredentialsServiceSpec struct {
 	// verifier account when nobody names one, and the owner's list when they
 	// do. The value is the published policy node's list, not this machine's
 	// opinion of it: the owner writes it in the local config, `fugaro update`'s
-	// policy stage publishes it, and the same run's credentials stage reads it
-	// back and hands it here (localcfg's keep rule is what makes a config that
-	// states none keep the node's).
+	// policy stage publishes it, and the same run's prepare reads it back and
+	// hands it here (localcfg's keep rule is what makes a config that states
+	// none keep the node's).
 	//
 	// It is THREE-STATE, and a pointer is the only spelling of it, because
 	// `omitempty` on a slice cannot tell two of the three apart:
@@ -558,13 +559,12 @@ func SetCredentialsServiceURL(vars []byte, url string) ([]byte, error) {
 
 // CredentialsServiceImageOf returns the image the installation root's tfvars
 // carry for the credentials service, and false when they carry no service at
-// all (the installation has not opted in, D147) or one with no image.
+// all (D147) or one with no image.
 //
-// It is the read an ordinary `fugaro update` makes to learn that this
-// installation runs the service: the credentials stage is registered only
-// under --provision-credentials and every other run rewrites these tfvars from
-// a spec that never carries the key (init.go's prepare), so the document is
-// the only thing in the run that knows. An entry with no image answers false
+// It is the read an ordinary `fugaro update` makes to learn what this
+// installation's service is: every run rewrites these tfvars from a spec that
+// never carries the key (init.go's prepare) and carries the entry forward from
+// this document, so the document is the only thing in the run that knows. An entry with no image answers false
 // rather than pinning onto it: the module refuses a reference that is not
 // digest-pinned, so the plan is already the refusal, and writing an image into
 // an entry whose other facts are missing would describe half a service.
@@ -640,8 +640,8 @@ func CredentialsServiceImageRelease(image string) string {
 // every other entry byte-for-byte what it was.
 //
 // It is a read-modify-write of the ONE key and never a rebuild of the
-// document, because the tfvars that are on disk when the credentials stage
-// runs are not what InstallationVars(spec) would produce: the run that wrote
+// document, because the tfvars that are on disk when the deploy runs are not
+// what InstallationVars(spec) would produce: the run that wrote
 // them had run discovery, so they carry the module's project_secrets (the
 // live project-wide containers), adopt_legacy_registry and the run's imports
 // — values only that run's discovery knew. Rewriting the document from the
@@ -664,10 +664,11 @@ func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, err
 // workdir held none. It is handed over as bytes rather than read from a path
 // here on purpose: the caller's workdir has already been prepared, so the file
 // is gone, and a read at this point would answer "nothing to carry" for an
-// installation that has opted in (the bug C1.20's review found).
+// installation that has the service (the bug C1.20's review found).
 //
-// The variable is the credentials stage's alone (C1.20), and every ordinary
-// run of init rewrites the tfvars from its spec — which never sets the key.
+// The variable is the deploy's own (init_stages.go's pinCredentialsImage), and
+// every run of init rewrites the tfvars from its spec — which never sets the
+// key.
 // Carried forward exactly as it was, present or absent, an installation that
 // has opted in keeps the service across an ordinary run's rewrite; without
 // that, the next plain `fugaro update` would plan the service, its account and
@@ -969,9 +970,9 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, err
 	}
 	s.CatalogCheck = cc
-	// CredentialsService is deliberately NOT set from the options: the opt-in
-	// is the credentials stage's alone (C1.20), and that stage never comes
-	// through here — it read-modify-writes the one key of the document the
+	// CredentialsService is deliberately NOT set from the options: the block
+	// is the deploy's own (init_stages.go's pinCredentialsImage), and the
+	// deploy never comes through here — it read-modify-writes the one key of the document the
 	// installation stage wrote (infra.SetCredentialsService), because a
 	// document rebuilt from a spec would drop the discovery's project_secrets
 	// and plan their destruction.
