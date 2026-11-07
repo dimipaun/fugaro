@@ -216,7 +216,7 @@ func TestAccountsAddManagedFilesTheAdmissionOnlyAfterTheWrite(t *testing.T) {
 	doc := []byte("version: 1\n")
 	t.Setenv(accountsAddAgent, "1")
 
-	m, gate, err := accountsAddGate(t.Context(), lc, accountsAddOptions{yes: true}, "team-a", "standard", nil, doc)
+	m, gate, err := accountsAddGate(t.Context(), gateCmd(), lc, accountsAddOptions{yes: true}, "team-a", "standard", nil, doc)
 	if err != nil {
 		t.Fatalf("a bounded declaration was refused: %v", err)
 	}
@@ -436,13 +436,11 @@ func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 	}
 }
 
-// The other half of "the gate is consulted only in a coding agent's session":
-// an owner at their own terminal pays no read at all. Nothing asks for the
-// creation fact object, so a project whose marks are stale, unreadable or on
-// another machine cannot slow down or stop the person's own command (D1015's
-// per-command read is for the session that may skip a confirmation, and a
-// person's own terminal skips none).
-func TestAccountsAddOwnerTerminalReadsNoMark(t *testing.T) {
+// A run that asks nothing pays nothing: --yes answers the declaration itself,
+// so the helper reads no mark at all. Nothing asks for the creation fact
+// object, and a project whose marks are stale, unreadable or on another machine
+// cannot slow down or stop a run that was never going to be asked.
+func TestAccountsAddYesReadsNoMark(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 	lc := r.addLocal(t)
 
@@ -452,30 +450,78 @@ func TestAccountsAddOwnerTerminalReadsNoMark(t *testing.T) {
 	// stage's and not this gate's — so a count of the whole command's calls
 	// could not tell the two apart. What is this row's to hold is that the gate
 	// itself asks nothing here, and that is a count of the calls the helper made.
-	m, gate, err := accountsAddGate(t.Context(), lc, accountsAddOptions{yes: true}, "team-a", "standard", []string{"acme/other"}, []byte("version: 1\n"))
+	m, gate, err := accountsAddGate(t.Context(), gateCmd(), lc, accountsAddOptions{yes: true}, "team-a", "standard", []string{"acme/other"}, []byte("version: 1\n"))
 	if err != nil {
-		t.Fatalf("a person's own terminal was refused by the gate: %v", err)
+		t.Fatalf("a run with --yes was refused by the gate: %v", err)
 	}
 	if m != (initflow.Managed{}) {
-		t.Errorf("a person's own terminal was answered %+v, want the zero value every fence reads exactly as it did before this row", m)
+		t.Errorf("a run with --yes was answered %+v, want the zero value every fence reads exactly as it did before this row", m)
 	}
 	if err := gate.recorded(t.Context()); err != nil {
 		t.Fatalf("recording an admission nobody read: %v", err)
 	}
 	if reqs := r.gcs.Requests(); len(reqs) != 0 {
-		t.Errorf("a person's own terminal paid %d calls to read marks it skips no confirmation by:\n%v", len(reqs), reqs)
+		t.Errorf("a run with --yes paid %d calls to read marks it skips no confirmation by:\n%v", len(reqs), reqs)
 	}
 	if recs := r.audits(t); len(recs) != 0 {
-		t.Errorf("a person's own terminal filed %+v", recs)
+		t.Errorf("a run with --yes filed %+v", recs)
 	}
 
-	// And the command at that same terminal: it converges, and it leaves no
+	// And the command with that same flag: it converges, and it leaves no
 	// record — the half of D1025 an owner can check in their own bucket.
 	out, _ := r.add(t, "team-a", "--repos", "owner/repo-a")
 	if !strings.Contains(out, "Nothing else to run") {
 		t.Errorf("the owner's own run did not converge:\n%s", out)
 	}
 	if recs := r.audits(t); len(recs) != 0 {
-		t.Errorf("a person's own terminal filed %+v", recs)
+		t.Errorf("a run with --yes filed %+v", recs)
+	}
+}
+
+// The owner's own terminal in a managed project is the second session this
+// command reads the gate for (the ruling of 2026-11-01): the declaration's y/N
+// is a question the gate can answer, so the marks are read exactly where that
+// question would be asked — a real terminal, without --yes — and the gate's
+// verdict on the document replaces it (applySettingsEdit's own gate arm).
+//
+// The control is the same call, the same terminal and a project the marks do
+// not prove is managed: the read is made and answers nothing, the answer is the
+// zero value, and the y/N is asked exactly as it always was. The mutation
+// caught: Managed.Removes answering true for every project.
+func TestAccountsAddManagedOwnerTerminalReadsTheGate(t *testing.T) {
+	for _, tc := range []struct {
+		what    string
+		marks   managedAddMarks
+		managed bool
+	}{
+		{"the project is managed", addMarksManaged, true},
+		{"the project is unproven", addMarksUnlabelled, false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newManagedAddRig(t, addRigLocal, tc.marks)
+			lc := r.addLocal(t)
+			noAgentSession(t)
+			fakeTerminal(t)
+
+			m, _, err := accountsAddGate(t.Context(), gateCmd(), lc, accountsAddOptions{}, "team-a", "standard", nil, []byte("version: 1\n"))
+			if err != nil {
+				t.Fatalf("a person's own terminal was refused by the gate: %v", err)
+			}
+			if tc.managed {
+				if !m.Managed || !m.Admitted {
+					t.Errorf("a managed project's own terminal was answered %+v, want the admission that stands in for the y/N", m)
+				}
+				if len(r.gcs.Requests()) == 0 {
+					t.Error("a managed project's own terminal was not read for at all, so the y/N below is still asked")
+				}
+				return
+			}
+			if m != (initflow.Managed{}) {
+				t.Errorf("a project the marks do not prove is managed was answered %+v, want the zero value that keeps the y/N", m)
+			}
+			if recs := r.audits(t); len(recs) != 0 {
+				t.Errorf("a project that is not managed filed %+v", recs)
+			}
+		})
 	}
 }

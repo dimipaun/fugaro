@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
@@ -71,8 +72,11 @@ import (
 //
 // What this gate admits is an ALLOWLIST and not a list of things to refuse
 // (settingsManagedKeys, the owner decision D1027). The rules below judge what
-// the allowlist names; every other key is refused by settingsAdmittedRefusal,
-// whether it is in the registry today or is added to it by a later release.
+// the allowlist names; in a coding agent's session every other key is refused
+// by settingsAdmittedRefusal, whether it is in the registry today or is added
+// to it by a later release. A person at a real terminal is not held to the
+// allowlist (the owner's ruling of 2026-11-06): the other rules still judge
+// that person's write.
 // The direction is the design's own (§4.1 rule 2, and D1021's "a caller that
 // reads nothing refuses"): a key nobody decided about is refused rather than
 // admitted by an omission, and the two keys on the list are the ones whose
@@ -98,26 +102,48 @@ import (
 // `Typed` on its own (D1026's rule is asked there and is not restated here).
 // No Typed edit can therefore be admitted by any path.
 //
-// Why a repository-scoped ordinary write reads nothing at all. Today's fence
-// does not apply inside a repository (`--layer repo` writes a file an agent
-// could edit anyway, unless the edit is the typed one), so there is no refusal
-// for the gate to stand in for and no mark is read: the ordinary repository
-// edit keeps exactly the behaviour it has, pays for nothing, and cannot be
-// turned into a refusal by a transient Storage or Resource Manager failure
-// (M6's review of 2026-11-03, item 2). The aim is the fence's own condition,
-// asked once, in settingsGateApplies.
+// Why a repository-scoped ordinary write reads nothing in a coding agent's
+// session. Today's fence does not apply inside a repository (`--layer repo`
+// writes a file an agent could edit anyway, unless the edit is the typed one),
+// so there is no refusal for the gate to stand in for and no mark is read: the
+// ordinary repository edit keeps exactly the behaviour it has, pays for
+// nothing, and cannot be turned into a refusal by a transient Storage or
+// Resource Manager failure (M6's review of 2026-11-03, item 2).
+//
+// Why the OWNER's own terminal reads now, where it read nothing before. The
+// gate's second job is the owner's ruling of 2026-11-01 — a managed project
+// takes no confirmation prompt, which is the whole point of a managed project —
+// and at a terminal the thing it stands in for is this command's own y/N. So
+// the marks are read exactly where that question would be asked: a real
+// terminal, without --yes (settingsAsk). A run that asks nothing reads nothing:
+// --yes answers the edit itself, and a run with no terminal is refused before
+// the file is touched, so neither has a question for the gate to answer and
+// neither pays for the read. The aim is the question's own condition, asked
+// once, in settingsGateAsks.
 
 // settingsGateMarker is the coding agent's session this command was run in, ""
 // for a person at a terminal. It is read once per command, here, so the two
 // places that ask "is the gate this command's business" cannot disagree.
-func settingsGateMarker() string { return agentMarker(os.Getenv) }
+func settingsGateMarker(terminal bool) string { return agentMarker(os.Getenv, terminal) }
 
-// settingsGateApplies reports whether one edit is one today's coding-agent
-// refusal would stop: applySettingsEdit reads exactly this condition, and a
-// gate consulted anywhere else would be reading marks for a write that was
-// never refused (D1025).
-func settingsGateApplies(marker string, kind settingsDocKind, typed bool) bool {
-	return marker != "" && (kind != settingsDocRepo || typed)
+// settingsAsk is the caller's half of whether this command would ask: a real
+// terminal and no --yes. It is what the gate is read for in a session that is
+// not a coding agent's, and it is read from the command the caller is already
+// holding (its own stdin), so the two answers cannot disagree.
+func settingsAsk(cmd *cobra.Command, yes bool) bool {
+	return !yes && stdinIsTerminal(cmd.InOrStdin())
+}
+
+// settingsGateAsks reports whether one edit is one this command would ask a
+// confirmation for — the coding agent's refusal SD9 makes, or the y/N a person
+// at a terminal is asked. applySettingsEdit reads exactly this condition, and a
+// gate consulted anywhere else would be reading marks for a write nobody would
+// have been asked about (D1025).
+func settingsGateAsks(marker string, asks bool, kind settingsDocKind, typed bool) bool {
+	if marker != "" {
+		return kind != settingsDocRepo || typed
+	}
+	return asks
 }
 
 // settingsConfigIsTheProjects reports whether one settings write's selected
@@ -226,12 +252,13 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 //
 // It is `accounts add`'s accountsAddGate in this command's own terms, and the
 // three answers are the same three for the same reasons. What differs is when
-// it is asked at all (settingsGateApplies, read once here), which document
-// it judges, and that it admits nothing unless `selPath` is the selected
-// project's own config file (settingsConfigIsTheProjects).
-func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath string, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string) (initflow.Managed, managedGate, error) {
-	marker := settingsGateMarker()
-	if lc == nil || !settingsGateApplies(marker, target.kind, typed) {
+// it is asked at all (settingsGateAsks, read once here, over the caller's own
+// settingsAsk), which document it judges, and that it admits nothing unless
+// `selPath` is the selected project's own config file
+// (settingsConfigIsTheProjects).
+func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath string, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string, asks bool) (initflow.Managed, managedGate, error) {
+	marker := settingsGateMarker(processTerminal())
+	if lc == nil || !settingsGateAsks(marker, asks, target.kind, typed) {
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	if !settingsConfigIsTheProjects(selPath, lc.Name) {
@@ -250,7 +277,7 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath strin
 		// recorded.
 		return initflow.Managed{}, managedGate{}, nil
 	}
-	conv := settingsManagedVerdict(ctx, &gate, target, key, typed, why, old, newData)
+	conv := settingsManagedVerdict(ctx, &gate, marker, target, key, typed, why, old, newData)
 	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
 	if err == nil {
 		return m, gate, nil
@@ -279,7 +306,7 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath strin
 // refuses to write unless it is still byte for byte what the caller read here,
 // so the document judged and the document applied are one artifact rather than
 // two that happened to agree at different moments (M6's review, item 3).
-func settingsManagedVerdict(ctx context.Context, g *managedGate, target settingsTarget, key string, typed bool, why string, old, newData []byte) managedmode.Converge {
+func settingsManagedVerdict(ctx context.Context, g *managedGate, marker string, target settingsTarget, key string, typed bool, why string, old, newData []byte) managedmode.Converge {
 	var applied, refused []string
 	judge := func(rule, refusal string) {
 		if refusal == "" {
@@ -290,14 +317,26 @@ func settingsManagedVerdict(ctx context.Context, g *managedGate, target settings
 	}
 	judge(settingsRegistryRule, "")
 	judge(settingsLayerRule, "")
-	judge(settingsAdmittedRule, settingsAdmittedRefusal(key))
+	if marker != "" {
+		// The allowlist limits what a coding agent's session writes on its own
+		// (D1027). A person at a real terminal (no marker: agentMarker) is the
+		// project's owner, whom the 2026-11-01 ruling says a managed project
+		// does not make hand-edit what a command can write; the rules below
+		// still apply to that person's write.
+		judge(settingsAdmittedRule, settingsAdmittedRefusal(key))
+	}
 	if target.kind == settingsDocLayer {
 		// The two rules below are the project layer's own: `layer.profiles.*`
 		// and the two floor keys are rows whose only store is that file. Judged
 		// anywhere else they would name a check that never ran, for the reason
 		// the stale rule is written into the record only where it ran.
 		judge(settingsProfilesRule, settingsProfilesRefusal(key))
-		judge(settingsFloorRule, settingsFloorRefusal(key, old, newData, target.keyPath))
+		if marker != "" {
+			// The floors bind a coding agent's session, which only raises
+			// them; a person at a real terminal may lower them (the owner's
+			// ruling of 2026-11-06, the same one as the allowlist above).
+			judge(settingsFloorRule, settingsFloorRefusal(key, old, newData, target.keyPath))
+		}
 	}
 	judge(settingsReservedRule, settingsReservedRefusal(key))
 	judge(settingsOwnerOnlyRule, settingsOwnerOnlyRefusal(typed, why))
@@ -334,7 +373,8 @@ const (
 	settingsLayerRule    = "the key may be set at the layer this write lands in (the registry's Layers, spec §4.2 step 2)"
 	// settingsAdmittedRule is the allowlist itself (D1027): the write's key is
 	// one the gate decided about, in settingsManagedKeys. It is asked of every
-	// write this gate judges, at every layer, because "this key is not one a
+	// write a coding agent's session makes through this gate, at every layer,
+	// because "this key is not one a
 	// coding agent's session writes" is the answer for a key nobody decided
 	// about however the command line spelled it.
 	settingsAdmittedRule = "the key is one the gate's allowlist admits for a coding agent's session (D1027)"
@@ -487,16 +527,36 @@ func settingsRounds(raw string) (float64, bool) {
 	return n, err == nil
 }
 
-// settingsFloorBase is the number of rounds a run can spend today for the key
-// at keyPath: the layer's own value where it sets one, else the STRICTEST
-// mode's row. A layer value pins the count, but with none set every run takes
-// its rounds from the mode it resolves, and that mode is not this layer's to
-// know: `--rigor critical`, an area match, a reached rigor (D22) and a
-// repository's own `rigor.default` all resolve higher than the layer's mode,
-// and the checkouts are not part of this write. So the base is the highest
-// row, and a session that writes a lower number into a layer that sets none is
-// refused. The text beside it is what the refusal names.
+// settingsFloorBase is the number of rounds a run can spend today for the
+// senior-review key at keyPath: the layer's own value where it sets one, else
+// the strictest mode's senior row. See settingsFloorBaseRow for the rule and
+// why the fallback is the highest row.
 func settingsFloorBase(old []byte, keyPath []string) (float64, string) {
+	return settingsFloorBaseRow(old, keyPath, rigor.DefaultRounds(rigor.Critical).Senior)
+}
+
+// settingsFloorBaseRow is the number of rounds a run can spend today for the
+// key at keyPath: the layer's own value where it sets one, else the STRICTEST
+// mode's row for the loop that key counts. A layer value pins the count, but
+// with none set every run takes its rounds from the mode it resolves, and that
+// mode is not this layer's to know: `--rigor critical`, an area match, a
+// reached rigor (D22) and a repository's own `rigor.default` all resolve higher
+// than the layer's mode, and the checkouts are not part of this write. So the
+// base is the highest row, and a session that writes a lower number into a
+// layer that sets none is refused. The text beside it is what the refusal
+// names.
+//
+// The row is the caller's, because a mode's row counts two loops and they are
+// not the same number: the senior review runs rigor.Rounds.Senior times where
+// the first-line review runs .Inner (critical is 3 and 5). The settings door
+// reads the two keys its allowlist admits, both senior loops, and passes the
+// senior row; the publish door judges defaults.agent.first_line_rounds beside
+// them and passes that loop's own row, which a base taken from the wrong one
+// would judge against a number no run spends. One function decides the base for
+// both doors on purpose: "the layer's own value where it sets a positive
+// number, else the row" is one rule, and two copies of it would be two answers
+// to what a run spends today.
+func settingsFloorBaseRow(old []byte, keyPath []string, row int) (float64, string) {
 	if raw := settingsValueIn(old, keyPath); raw != "" {
 		// Zero is no number here: the layer's own reader treats a 0 round count
 		// as unset and lets the mode's row decide (config's validator fires only
@@ -506,8 +566,7 @@ func settingsFloorBase(old []byte, keyPath []string) (float64, string) {
 			return n, raw
 		}
 	}
-	n := rigor.DefaultRounds(rigor.Critical).Senior
-	return float64(n), fmt.Sprintf("%d (the strictest mode's row)", n)
+	return float64(row), fmt.Sprintf("%d (the strictest mode's row)", row)
 }
 
 // settingsReservedRefusal is the reserved run a written key hits, or "".

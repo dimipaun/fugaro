@@ -563,6 +563,25 @@ func noTerminal(t *testing.T) {
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
+// The two helpers above are what every terminal-dependent test says with, and
+// processTerminal is the one reader that asks with no command in hand (init's
+// own flag validation, before a run exists). It asks by CALLING
+// stdinIsTerminal with os.Stdin, so a test's replacement — which answers
+// whatever it is given — decides for it too. Pinned because the other spelling
+// is the trap: reading term.IsTerminal(int(os.Stdin.Fd())) there would make
+// those sites follow the real process's stdin, green on a developer's terminal
+// and red in CI, with nothing failing to say so.
+func TestProcessTerminalFollowsTheReplacedStdinIsTerminal(t *testing.T) {
+	noTerminal(t)
+	if processTerminal() {
+		t.Error("processTerminal reads a terminal where the test said there is none")
+	}
+	fakeTerminal(t)
+	if !processTerminal() {
+		t.Error("processTerminal reads no terminal where the test said there is one")
+	}
+}
+
 // typedThroughYes lets a test that is about something else answer a typed-only
 // confirmation (the Firestore location, a billable build, replacing a tag) from
 // its stdin while it passes --yes, which the real rule never allows (its own
@@ -959,6 +978,38 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
 	if _, _, err := executeStdin(t, "", "update", "--forget", "--yes"); ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a create: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// TestInitForgetCarriesTheVerifierListAsFound: the rollback reads no cloud and
+// has no effective verifier list, and a nil list would delete the carried
+// member, so the module's default account would replace the owner's clear at
+// the live service in a plan the rollback's own guard lets through. The block
+// is carried exactly as found.
+//
+// Mutation (run, restored): pass false for asFound at the rollback's two
+// prepare calls and the member is gone from the rewritten tfvars.
+func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.setPlan(t, forgetPlan()...)
+	if err := os.MkdirAll(r.root(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prev := `{"credentials_service":{"image":"us-docker.pkg.dev/proj-1234/fugaro/credentials:1","verifier_accounts":[]}}`
+	if err := os.WriteFile(filepath.Join(r.root(), infra.VarsFile), []byte(prev), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "", "update", "--forget", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	svc, ok := r.tfvars(t)["credentials_service"].(map[string]any)
+	if !ok {
+		t.Fatalf("the rollback's tfvars lost the credentials_service block: %v", r.tfvars(t))
+	}
+	got, ok := svc["verifier_accounts"].([]any)
+	if !ok || len(got) != 0 {
+		t.Errorf("credentials_service.verifier_accounts = %v after the rollback, want [] exactly as found: an absent member is the module's default account", svc["verifier_accounts"])
 	}
 }
 

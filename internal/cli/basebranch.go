@@ -120,6 +120,31 @@ func (e *cloudEnv) layersBaseBranchErr(ctx context.Context, repo string) (string
 	return b, nil
 }
 
+// baseBranchFugaroYAML reports whether the base branch a per-repository image
+// build clones holds a fugaro.yaml, and whether this checkout can answer at
+// all. The build reads the file from the branch it clones — its render step
+// has no working tree of the repository to fall back on, and neither has any
+// run of the repository's jobs — so a fugaro.yaml that exists only in the
+// checkout fails the build after it was billed. ok is false when the checkout
+// holds no remote-tracking ref of the branch (nothing fetched, or a branch it
+// never saw): then there is no answer here to refuse on, and the build goes
+// ahead and finds the file, or fails with the build's own words. A
+// remote-tracking ref that is merely stale reads as "no file", which is the
+// same assumption the repository stage's own read of the branch makes
+// (resolveRepoTarget), and the refusal names the base branch so the user can
+// check it. No fetch is attempted here: this check is local by design.
+func baseBranchFugaroYAML(ctx context.Context, root, base string) (has, ok bool) {
+	if root == "" || base == "" {
+		return false, false
+	}
+	ref := "refs/remotes/origin/" + base
+	if _, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+		return false, false
+	}
+	_, err := gitRead(ctx, root, "cat-file", "blob", ref+":fugaro.yaml")
+	return err == nil, true
+}
+
 // fileSetsBaseBranch is whether a resolved file writes git.base_branch
 // itself: the question config.EffectiveBaseBranch's fileSets argument asks,
 // and the one infra.Inputs carries for the same reason (its doc comment has

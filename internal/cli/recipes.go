@@ -280,7 +280,11 @@ func newRecipesLsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "also print each recipe's use_when and steps")
+	// The shorthand is what keeps this flag from taking the root's persistent
+	// --verbose with it: a local flag of the same name shadows the persistent
+	// one whole, shorthand included, so without `v` here `recipes ls -v` would
+	// be an unknown shorthand rather than this flag (D1353).
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "also print each recipe's use_when and steps")
 	addCloudFlags(cmd, &o)
 	return cmd
 }
@@ -329,7 +333,7 @@ func newRecipesPublishCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if m := agentMarker(os.Getenv); m != "" {
+			if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 				return userErr("nothing was published: fugaro recipes publish writes to the cloud and changes the loop of every run of the project that names this recipe: %s", initflow.AgentRefusal(m))
 			}
 			data, err := readRecipeFile(args[0])

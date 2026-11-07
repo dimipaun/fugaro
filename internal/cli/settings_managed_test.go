@@ -450,15 +450,62 @@ func TestSettingsManagedVerdictRefusesAnUnjudgedMember(t *testing.T) {
 	judged := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
 	elsewhere := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6, auth: vertex }\n")
 
-	if err := settingsManagedVerdict(context.Background(), g, target, settingsManagedLayerKey, false, "", old, judged).Refuse(); err != nil {
+	if err := settingsManagedVerdict(context.Background(), g, "claude-code", target, settingsManagedLayerKey, false, "", old, judged).Refuse(); err != nil {
 		t.Fatalf("the judged key alone was refused: %v", err)
 	}
-	err := settingsManagedVerdict(context.Background(), g, target, settingsManagedLayerKey, false, "", old, elsewhere).Refuse()
+	err := settingsManagedVerdict(context.Background(), g, "claude-code", target, settingsManagedLayerKey, false, "", old, elsewhere).Refuse()
 	if err == nil {
 		t.Fatal("a member no rule of this gate reads changed and the verdict admitted it")
 	}
 	if !strings.Contains(err.Error(), "no rule of this gate judges is unchanged") {
 		t.Errorf("the refusal is not the fail-closed rule over the unjudged members: %v", err)
+	}
+}
+
+// The allowlist (D1027) limits a coding agent's session, not the project's
+// owner: a key off it is refused with an agent marker and admitted for a person
+// at a real terminal (no marker), where every other rule of the verdict still
+// applies. On a managed project the owner at a terminal otherwise could not
+// write an account key that the registry names settings set as the writer of.
+func TestSettingsManagedAllowlistBindsTheSessionAndNotThePerson(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	g := &managedGate{env: managedGateEnv{lc: r.managedLocal(t)}}
+	target := settingsManagedLayerTarget(settingsManagedLayerFile(t, minimalAnchored))
+	old := []byte(minimalAnchored)
+	judged := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
+	const offList = "stages.review.claude_account"
+
+	err := settingsManagedVerdict(context.Background(), g, "claude-code", target, offList, false, "", old, judged).Refuse()
+	if err == nil || !strings.Contains(err.Error(), "not a key a coding agent's session writes") {
+		t.Fatalf("a coding agent's session was not refused a key off the allowlist: %v", err)
+	}
+	if err := settingsManagedVerdict(context.Background(), g, "", target, offList, false, "", old, judged).Refuse(); err != nil {
+		t.Fatalf("a person at a terminal was refused a key off the allowlist: %v", err)
+	}
+	// The person's write is still held to the other rules: a member no rule
+	// reads changed alongside is refused for a person too.
+	elsewhere := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6, auth: vertex }\n")
+	if err := settingsManagedVerdict(context.Background(), g, "", target, offList, false, "", old, elsewhere).Refuse(); err == nil {
+		t.Fatal("a person's write that changed an unjudged member was admitted")
+	}
+}
+
+// The floors (review_rounds, adversarial_rounds) bind a coding agent's session,
+// which only raises them: the same document that lowers one is refused with an
+// agent marker and admitted for a person at a real terminal.
+func TestSettingsManagedFloorBindsTheSessionAndNotThePerson(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	g := &managedGate{env: managedGateEnv{lc: r.managedLocal(t)}}
+	target := settingsManagedLayerTarget(settingsManagedLayerFile(t, minimalAnchored))
+	old := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
+	lowered := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 4 }\n")
+
+	err := settingsManagedVerdict(context.Background(), g, "claude-code", target, settingsManagedLayerKey, false, "", old, lowered).Refuse()
+	if err == nil || !strings.Contains(err.Error(), "never lowers") {
+		t.Fatalf("a coding agent's session lowered a floor: %v", err)
+	}
+	if err := settingsManagedVerdict(context.Background(), g, "", target, settingsManagedLayerKey, false, "", old, lowered).Refuse(); err != nil {
+		t.Fatalf("a person at a terminal was refused lowering a floor: %v", err)
 	}
 }
 
@@ -475,7 +522,7 @@ func TestSettingsManagedFilesTheAdmissionOnlyAfterTheWrite(t *testing.T) {
 	old := []byte(minimalAnchored)
 	doc := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
 
-	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set")
+	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set", false)
 	if err != nil {
 		t.Fatalf("a registry key was refused: %v", err)
 	}
@@ -599,20 +646,19 @@ func TestSettingsSetManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 	}
 }
 
-// The other half of "the gate is consulted only in a coding agent's session":
-// an owner at their own terminal pays no mark read at all, whatever the project
-// is. The person's own command is not the one the gate stands in for, so a
-// stale, unreadable or far-away mark cannot slow it down or stop it — and the
-// run leaves no record, which is the half of D1025 an owner can check in their
-// own bucket.
-func TestSettingsSetOwnerTerminalReadsNoMark(t *testing.T) {
+// A run that asks nothing pays nothing: --yes answers the edit itself, and a
+// run with no terminal is refused before the file is touched, so neither has a
+// question for the gate to answer and neither pays for the read. That is what
+// keeps a stale, unreadable or far-away mark from slowing down or stopping a
+// command that was never going to be asked.
+func TestSettingsSetYesReadsNoMark(t *testing.T) {
 	r := newSettingsManagedRig(t, settingsMarksManaged)
 	path := settingsManagedLayerFile(t, minimalAnchored)
 	target := settingsManagedLayerTarget(path)
 	old := []byte(minimalAnchored)
 	doc := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
 
-	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set")
+	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set", false)
 	if err != nil {
 		t.Fatalf("a person's own terminal was refused by the gate: %v", err)
 	}
@@ -623,10 +669,10 @@ func TestSettingsSetOwnerTerminalReadsNoMark(t *testing.T) {
 		t.Fatalf("recording an admission nobody read: %v", err)
 	}
 	if reqs := r.gcs.Requests(); len(reqs) != 0 {
-		t.Errorf("a person's own terminal paid %d calls to read marks it skips no confirmation by:\n%v", len(reqs), reqs)
+		t.Errorf("a run with --yes paid %d calls to read marks it skips no confirmation by:\n%v", len(reqs), reqs)
 	}
 	if recs := r.audits(t); len(recs) != 0 {
-		t.Errorf("a person's own terminal filed %+v", recs)
+		t.Errorf("a run with --yes filed %+v", recs)
 	}
 
 	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
@@ -637,7 +683,138 @@ func TestSettingsSetOwnerTerminalReadsNoMark(t *testing.T) {
 		t.Error("the owner's own run did not write")
 	}
 	if recs := r.audits(t); len(recs) != 0 {
-		t.Errorf("a person's own terminal filed %+v", recs)
+		t.Errorf("a run with --yes filed %+v", recs)
+	}
+}
+
+// The owner's own terminal in a managed project takes no confirmation either
+// (the ruling of 2026-11-01: the gate manages the project on the owner's
+// behalf, without the prompts). The marks are read because this is exactly the
+// run the y/N would have been asked at, the gate judges the document the edit
+// would write, and its verdict replaces the question — the diff above it is the
+// whole of what the owner reads, and the admission is in their own bucket.
+//
+// The control is the same edit, the same terminal and a project the marks do
+// not prove is managed: the question is asked, and a terminal with nothing
+// typed writes nothing. The mutation caught: Managed.Removes answering true for
+// every project, which leaves the control's question unasked and the edit
+// written.
+func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
+	for _, tc := range []struct {
+		what    string
+		marks   settingsManagedMarks
+		managed bool
+	}{
+		{"the project is managed", settingsMarksManaged, true},
+		{"the project is unproven", settingsMarksUnlabelled, false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newSettingsManagedRig(t, tc.marks)
+			r.managedRunsBucket(t)
+			path := settingsManagedLayerFile(t, minimalAnchored)
+			before := readFileString(t, path)
+			noAgentSession(t)
+			fakeTerminal(t)
+
+			out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
+			after := readFileString(t, path)
+			recs := r.audits(t)
+			if !tc.managed {
+				if err == nil || !strings.Contains(err.Error(), "not confirmed; nothing was written") {
+					t.Fatalf("a project the marks do not prove is managed was not asked: %v\n%s", err, out)
+				}
+				if !strings.Contains(out, "Write this to "+path+"? [y/N]") {
+					t.Errorf("the y/N this command has always asked was not printed:\n%s", out)
+				}
+				if after != before {
+					t.Error("a question nobody answered wrote the file anyway")
+				}
+				if len(recs) != 0 {
+					t.Errorf("a project that is not managed filed %+v", recs)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a managed project's own terminal was refused: %v\n%s", err, out)
+			}
+			if !strings.Contains(after, "review_rounds: 6") {
+				t.Errorf("the write did not land:\n%s", after)
+			}
+			if strings.Contains(out, "? [y/N]") {
+				t.Errorf("a managed project's own terminal was asked anyway:\n%s", out)
+			}
+			// The owner's own terminal reads the sentence that says where the
+			// verdict was taken, not GateOrdinary's — this step's diff IS the
+			// document the gate judged and the record above names its digest,
+			// which is not a step no rule read anything about.
+			if !strings.Contains(out, initflow.GateProceeded()) {
+				t.Errorf("the run does not say what decided the step:\n%s", out)
+			}
+			if strings.Contains(out, initflow.GateOrdinary()) {
+				t.Errorf("the step says no rule read anything, and the gate read this edit's document:\n%s", out)
+			}
+			if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
+				t.Errorf("the day holds %+v, want the one admission of this write", recs)
+			}
+		})
+	}
+}
+
+// And the sentence a step prints where its confirmation would have been is the
+// session's own: the same admitted edit in a coding agent's session reads
+// AgentProceeded, which names the marker the step proceeds under, and never the
+// line addressed to the person at the terminal — GateProceeded's, which says a
+// verdict was read where this reader has no terminal, or GateOrdinary's, which
+// says a step was announced and no rule read anything.
+//
+// The control is the same session and a project the marks do not prove is
+// managed: the refusal this command has always given, and nothing written.
+//
+// The mutation caught: one sentence printed for every session (the arm reading
+// GateOrdinary or GateProceeded with no look at conds.Agent), which hands a
+// coding agent's session the owner's own line.
+func TestSettingsSetManagedAgentSessionReadsTheAgentsOwnSentence(t *testing.T) {
+	for _, tc := range []struct {
+		what    string
+		marks   settingsManagedMarks
+		managed bool
+	}{
+		{"the project is managed", settingsMarksManaged, true},
+		{"the project is unproven", settingsMarksUnlabelled, false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newSettingsManagedRig(t, tc.marks)
+			r.managedRunsBucket(t)
+			path := settingsManagedLayerFile(t, minimalAnchored)
+			before := readFileString(t, path)
+			agentSession(t)
+
+			out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
+			after := readFileString(t, path)
+			if !tc.managed {
+				if err == nil || !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
+					t.Fatalf("a project the marks do not prove is managed was not refused: %v\n%s", err, out)
+				}
+				if after != before {
+					t.Error("the refusal wrote the file anyway")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a managed project's coding agent session was refused: %v\n%s", err, out)
+			}
+			if !strings.Contains(after, "review_rounds: 6") {
+				t.Errorf("the write did not land:\n%s", after)
+			}
+			if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+				t.Errorf("the session does not read the sentence for its own case:\n%s", out)
+			}
+			for _, owner := range []string{initflow.GateProceeded(), initflow.GateOrdinary()} {
+				if strings.Contains(out, owner) {
+					t.Errorf("a coding agent's session reads the line meant for the owner at a terminal:\n%s", out)
+				}
+			}
+		})
 	}
 }
 

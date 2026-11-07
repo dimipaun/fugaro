@@ -489,6 +489,128 @@ func AgentProceeded(marker string) string {
 	return "a coding agent's session is present (" + marker + " is set), and this step proceeds: the project is managed and the plan passed the deterministic gate, which is what replaces the confirmation here (not a person's approval, and not a flag to pass)"
 }
 
+// GateProceeded is the sentence for the same step in the OWNER'S OWN session: a
+// managed project, a document the gate admitted, and no confirmation asked for
+// (the ruling of 2026-11-01). It is a second sentence rather than
+// AgentProceeded's with an empty marker, because the two are addressed to two
+// readers: this one is read by the person the prompt would have asked, and the
+// one thing it has to say to them is why nothing is being asked.
+//
+// It follows AgentProceeded's own rule about what it may name — no flag, no
+// variable, no marker a reader could set to reach past the gate — and it names
+// where the verdict was written instead, because an owner who wants to check
+// afterwards is not trying to get past anything.
+func GateProceeded() string {
+	return "this project is managed, and the plan passed the deterministic gate: the verdict is the confirmation here, so nothing is asked and nothing is typed (the project's own record of it is written after the step)"
+}
+
+// GateOrdinary is the sentence for an ordinary step of the same run that the
+// gate does NOT judge document by document — the Terraform state bucket, an
+// image copy that only adds a tag, the local config — and which the run's own
+// review announced instead. It says what is true of it and no more: the plan
+// the step prints is the plan it applies, a person is at the terminal, and the
+// confirmation a managed project does not ask for is the one they asked not to
+// see. Saying GateProceeded's words here would claim a verdict for a document
+// no rule read, which is the direction every other sentence in this file
+// refuses to take.
+func GateOrdinary() string {
+	return "this project is managed, so this step takes no confirmation: the marks were read, the step is one the run announced, and what it changes is printed above (the owner's ruling of 2026-11-01)"
+}
+
+// AskRestored is the line a managed project's own terminal reads when --ask
+// was given: the flag's whole promise, said once, at the point where the gate
+// would otherwise have taken the confirmations away. It says the two things a
+// reader has to be able to check — the prompts are asked here, and the gate's
+// own judgement is not weakened by asking for them (a step whose document the
+// gate refuses is still refused, and a Typed step is still the owner's own
+// word) — because the one mistake this flag could be read as is "the gate is
+// off for this run".
+func AskRestored() string {
+	return "--ask: this project is managed, and its gate's verdict would have replaced the confirmations of this run: they are asked here instead, one step at a time. The gate itself is unchanged — every document it judges is still judged, a step it refuses is still refused before any prompt, and a step only the owner's own word may confirm is still theirs"
+}
+
+// AskUnmanaged is the one line --ask prints where the marks did not answer
+// "managed" — a project that is not managed, and a read that could not be made
+// or did not answer (the two are one answer to every caller, which is
+// Managed's own contract). It says why the flag does nothing here and that it
+// is not an error, because the alternative a caller might reach for — refusing
+// the flag — would fail a command that behaves exactly as it always has.
+func AskUnmanaged() string {
+	return "--ask: the marks of this project did not answer \"managed\", so there is nothing for the flag to restore here: every confirmation this run gives is the one it always gives, and asking for them is not an error"
+}
+
+// AskNoGate is the line --ask prints in a run the managed gate never covers:
+// --plan-only applies nothing by its own definition, and a run whose own
+// arguments shape the installation is one the gate must never judge (the
+// confirmations it keeps are whole). Neither has a step whose confirmation the
+// gate stands in for, so there is nothing for --ask to restore and no mark is
+// read for it.
+func AskNoGate() string {
+	return "--ask: this run applies nothing the managed gate stands in for (--plan-only, or a run whose own arguments shape the installation), so no confirmation was replaced and there is nothing for the flag to restore here"
+}
+
+// AskRefusal is the refusal of --ask where there is no prompt to answer it: a
+// coding agent's session, --non-interactive, --json, or stdin that is not a
+// terminal. A prompt nobody can answer is a refusal and never a silent
+// proceed, and the run stops before it writes anything rather than falling
+// back to the gate's verdict — which is the one thing the flag could not mean,
+// since the verdict is exactly what the owner asked to be asked instead.
+//
+// It names no flag, no variable and no marker a reader could set to reach the
+// step (the rule AgentRefusal and AgentProceeded follow), and here that rule
+// has teeth: the move it must not name is "drop the flag that asked for these
+// confirmations", which would hand the step back to the gate's verdict — the
+// write the owner asked to be asked about, made without them. So the sentence
+// says what was asked for and who is not there, and not how to get past it.
+// The marker's own value is the one name it carries, because it is the session
+// the reader is in and not a thing to set (AgentRefusal's rule).
+func AskRefusal(c Conditions) string {
+	return "the confirmations of this managed project were asked for and " + askNobody(c) + ": a confirmation nobody can answer is a refusal here and never a silent proceed, so nothing is applied and the step is not taken on the gate's verdict instead — " + AgentAdvice
+}
+
+// askNobody names why no confirmation can be answered in this session.
+func askNobody(c Conditions) string {
+	switch {
+	case c.Agent != "":
+		return "a coding agent's session is present (" + c.Agent + " is set)"
+	case c.NonInteractive:
+		return "--non-interactive never prompts"
+	case c.JSON:
+		return "--json never prompts"
+	default:
+		return "this run has no terminal on its input"
+	}
+}
+
+// AskAndYes is the refusal of --ask together with --yes: the two flags say
+// opposite things about the same confirmations, and a run that honoured one
+// silently would be a run whose owner cannot tell which. It is a usage
+// refusal and not a decision about a project, so it is made before any mark is
+// read.
+func AskAndYes() string {
+	return "--ask and --yes contradict each other: --ask asks for the confirmations a managed project's gate would have stood in for, and --yes gives them away. Pass one of them, or neither, and rerun"
+}
+
+// AskDecision is the whole of what --ask does once the marks have been read,
+// as one rule rather than a copy per command: the line the run prints, or the
+// refusal. managed is what the read answered (both marks there and readable,
+// the same value every caller decides a step under).
+//
+// An empty line and an empty refusal is "the flag was not passed". Exactly one
+// of the two is answered otherwise, and the order is the rule's: a project the
+// marks did not answer "managed" for is the no-op line whatever the session is
+// (there is nothing to restore, so there is nothing to refuse either), and a
+// managed project refuses wherever no prompt can be answered.
+func AskDecision(c Conditions, managed bool) (line, refusal string) {
+	if !managed {
+		return AskUnmanaged(), ""
+	}
+	if c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
+		return "", AskRefusal(c)
+	}
+	return AskRestored(), ""
+}
+
 // ConfirmClass is who may confirm a step.
 //
 // The zero value is Typed, the strictest class, and that is deliberate: a
@@ -507,7 +629,8 @@ const (
 	// person types the confirmation at a real terminal; --yes,
 	// --non-interactive, --json, a pipe and a coding agent never give it.
 	Typed ConfirmClass = iota
-	// YesOrTyped steps take --yes, or the typed confirmation at a terminal:
+	// YesOrTyped steps take --yes, or the typed confirmation at a terminal,
+	// and in a managed project a plan gate's admission stands in for both:
 	// the Terraform applies, the plugin wiring, a known repository.
 	YesOrTyped
 )
@@ -516,6 +639,18 @@ const (
 type Conditions struct {
 	Yes, NonInteractive, JSON, Terminal bool
 	Agent                               string // a coding agent's environment marker, "" for none
+	// Ask is the owner's --ask in a project the marks say is managed: the
+	// prompts the gate would have stood in for are asked here instead. It is
+	// the symmetric half of --yes (--yes in a project that is not managed,
+	// --ask in one that is), and it never widens anything: the gate's own
+	// admission is decided before this field is read and is unchanged by it
+	// (GateConfirms answers false under it, so a step falls back to exactly
+	// the confirmation the run would have had if the project were not
+	// managed), and a Typed step keeps the owner's own word as it always does.
+	// A caller that could not prompt at all never sets it: --ask is refused
+	// there (AskRefusal), because a prompt nobody can answer is a refusal and
+	// never a silent proceed.
+	Ask bool
 }
 
 // Managed is the managed-project state a step's confirmation is decided
@@ -526,7 +661,7 @@ type Conditions struct {
 // passes the zero value and keeps today's behaviour exactly.
 //
 // It is not a field of Conditions, and that is deliberate: Conditions is what
-// a RUN says about who is there — its five fields are enumerated exactly by
+// a RUN says about who is there — its six fields are enumerated exactly by
 // internal/cli's completeness test, and the property test runs over the whole
 // product of them — while these two facts are about a plan ONE step is about
 // to apply. A run has one Conditions, and one Managed per applying step.
@@ -575,39 +710,141 @@ type Managed struct {
 // assert coverage could assert it for a secret.
 func (m Managed) Covers(class ConfirmClass) bool { return class == YesOrTyped }
 
-// Removes reports whether the managed case removes the coding-agent refusal
-// for a step of the class: every condition, held at once — the project is
-// managed, the gate admitted this step's plan, the class is one the gate
-// judges, and the whole-project inventory did not fall back. Any other
-// combination keeps today's AgentRefusal exactly, which is the direction D59
-// and D55 both end in: the confirmation a coding agent's session cannot give
-// is kept wherever the inventory could not clear the project.
+// Removes reports whether the managed case removes the confirmation for a step
+// of the class: every condition, held at once — the project is managed, the
+// gate admitted this step's plan, the class is one the gate judges, and the
+// whole-project inventory did not fall back. Any other combination keeps
+// today's confirmation exactly, which is the direction D59 and D55 both end
+// in: the confirmation a coding agent's session cannot give is kept wherever
+// the inventory could not clear the project. It is the whole of what the
+// terminal case adds a condition to (CanConfirmManaged), and it says nothing
+// about WHO is at the session: Removes may be true in a run nobody is at,
+// which is why the terminal branch asks for a terminal beside it and a
+// refusal is the answer everywhere else.
 func (m Managed) Removes(class ConfirmClass) bool {
 	return m.Managed && m.Admitted && m.Covers(class) && !m.Fallback
 }
 
 // CanConfirmManaged is the whole of the confirmation rule: CanConfirm is this
-// function with a zero Managed, and the managed case is the branch below
-// rather than a rule of its own. A step of a class the gate covers, in a
-// project the marker read says is managed, whose plan the gate admitted, whose
-// whole-project inventory did not fall back — proceeds under a coding agent's
-// marker, and every other combination refuses, which is the direction the
+// function with a zero Managed, and the managed case is the first two branches
+// below rather than rules of their own. A step of a class the gate covers, in
+// a project the marker read says is managed, whose plan the gate admitted,
+// whose whole-project inventory did not fall back — proceeds under a coding
+// agent's marker AND without a confirmation from the owner at their own
+// terminal, and every other combination refuses, which is the direction the
 // mistake has to fall in.
+//
+// The owner's terminal is the second branch and not a widening of the first
+// (the owner's ruling of 2026-11-01: THE WHOLE POINT OF A MANAGED PROJECT IS
+// THAT YOU MANAGE IT ON MY BEHALF WITHOUT ALL THESE PROMPTS). It is the same
+// four facts Removes holds — managed, admitted, covered, no fallback — and it
+// adds the one condition that says a PERSON is there and this session is not
+// the owner's answer: a real terminal. A pipe, `--json`, `--non-interactive`
+// and a run whose own arguments shaped the installation (which the caller
+// answers by passing a zero Managed) keep every prompt they had, because the
+// gate replacing a confirmation is a statement about a document a person could
+// have read, and a run nobody is watching has no reader. --yes is not asked
+// for and does not decide here: it already confirms a YesOrTyped step below,
+// and a managed project must not need a flag the owner has to remember.
+//
+// What the gate is NOT is a widening of the class rule: Typed steps — money
+// and permanence, and no plan for any of them — take the third branch whatever
+// the verdict was (D1026). And what the terminal branch is NOT is a fallback:
+// a step the gate did not admit gets no prompt instead of its confirmation, so
+// the refusal is the answer (a caller passes the gate's own sentence on), and
+// nothing a session can type reaches past an unadmitted plan.
+//
+// --ask is the owner's own reversal of the branches above, for one run at a
+// time (Conditions.Ask): the prompts this project's gate stands in for are
+// asked here instead. It is read by GateConfirms, which answers false under it
+// whatever the verdict was, so this function falls through to the two branches
+// below — the class rule, which is exactly the confirmation the run would have
+// had if the project were not managed. It narrows and never widens: what it
+// takes off the table is the branch that admits WITHOUT a prompt, and the
+// branches left refuse everything they refused before (a coding agent's session
+// and a Typed step among them).
 //
 // Everything else is unchanged, and that is the property the tests hold: for
 // every Conditions, a zero Managed decides what CanConfirm decided before the
 // managed case existed.
 func CanConfirmManaged(class ConfirmClass, c Conditions, m Managed) bool {
 	switch {
+	case GateConfirms(class, c, m):
+		return true
 	case c.Agent != "":
 		// A coding agent's environment confirms nothing (AgentAdvice): it is
 		// a mitigation against the accident, not a barrier against the
 		// adversary, and the managed case does not claim to be one either.
-		return m.Removes(class)
+		return false
 	case class == Typed:
 		return c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON
 	}
 	return c.Yes || (c.Terminal && !c.NonInteractive)
+}
+
+// GateConfirms is the whole of "the gate replaces this step's confirmation",
+// in both sessions the gate is asked in: Removes under a coding agent's marker,
+// and ConfirmsByGate for the owner at their own terminal. It is what a caller
+// asks when it is about to decide whether to show a prompt — the step's own
+// class rule is CanConfirmManaged's business, and a caller that asked IT here
+// would be asking whether a person may type something, which is true for a
+// Typed step at a terminal and is not the question.
+//
+// The order is the rule's: a session with a marker is the agent's case whatever
+// else is true of it, and the terminal case cannot have a marker (ConfirmsByGate
+// says so itself). --ask is asked FIRST, because it is the owner taking this
+// question off the table: the gate still judges the document — that is the
+// caller's own admit, made before this predicate is reached, and this predicate
+// changes nothing about it — and what the flag restores is the confirmation the
+// verdict would have replaced.
+func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
+	if c.Ask {
+		// The owner asked for the prompts back: whatever the verdict was, this
+		// step's confirmation is the one it would have had in a project that
+		// is not managed. The class rule below refuses exactly what it refuses
+		// there (a coding agent's session, a pipe, --json: CanConfirmManaged's
+		// own branches), so this can only ever ask more, never admit more.
+		return false
+	}
+	if c.Agent != "" {
+		return m.Removes(class)
+	}
+	return ConfirmsByGate(class, c, m)
+}
+
+// PersonAtTheTerminal reports whether the conditions put a person at the
+// project's own terminal, there to read a document and answer for it: the
+// owner's own session (no marker), a real terminal, and none of the three
+// things that say nobody can answer a prompt — --ask (the owner asking to be
+// asked again is a question to put, never a licence to skip one),
+// --non-interactive and --json.
+//
+// It is ConfirmsByGate's condition half, named once so that a caller asking
+// the same question about a document the gate's verdict does not cover — the
+// policy node a managed project rewrites, whose loosening takes the Typed
+// class and is admitted by no plan gate — asks it the same way. The terminal
+// is the load-bearing half and the one a caller writing this out again would
+// drop: a pipe carries no marker, so a session nobody is at reads exactly like
+// the owner's own.
+func PersonAtTheTerminal(c Conditions) bool {
+	return !c.Ask && c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
+}
+
+// ConfirmsByGate reports whether the gate's verdict IS the confirmation for a
+// step of the class under the conditions: the owner at their own real
+// terminal, on a managed project, for a document the gate admitted. It is the
+// branch CanConfirmManaged decides on, named so that a caller which is about
+// to show a prompt asks the same question the rule asks rather than writing
+// the conditions out again — a caller that re-derived them is a caller that
+// could drop one, and the one it would drop is the terminal (PersonAtTheTerminal).
+//
+// A coding agent's session is not this case, and deliberately: what replaces
+// the confirmation there is CanConfirmManaged's first branch (Removes), whose
+// sentence is AgentProceeded's and whose reason is the gate's, not a person's.
+// The two are told apart by the marker, because this branch is about who is
+// there to read the document the gate read.
+func ConfirmsByGate(class ConfirmClass, c Conditions, m Managed) bool {
+	return PersonAtTheTerminal(c) && m.Removes(class)
 }
 
 // CanConfirm reports whether a step of the class can be confirmed under the

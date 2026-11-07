@@ -1267,10 +1267,11 @@ describe('the spawn table and the argv it builds', () => {
   })
 
   it('has exactly one settings row for each question, and no `settings` verb on the never table', () => {
-    // The group's other verbs are not on this table at all: `settings get`,
-    // `settings layers` and the rest are reads the console does not make, and
-    // the only two `settings` rows are the read and the edit above -- so a third
-    // one is a test failure rather than a review finding.
+    // The group's other words are not on this table at all: `settings get` is a
+    // read the console does not make, and the group's flags, positional keys and
+    // globs are not words of either row -- so the only two `settings` rows are
+    // the read and the edit above, and a third one is a test failure rather than
+    // a review finding.
     expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'settings').map((row) => row.operation)).toEqual([
       'settings.read',
       'settings.edit',

@@ -161,11 +161,17 @@ type Spec struct {
 	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
 	// at most config.MaxClaudeAccountNameLen characters, never
 	// config.DefaultClaudeAccount itself — "" means that — and never the name
-	// the bundle reserves, config.ReservedClaudeAccountName) this run's
-	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md). A
-	// runner before namedTokensSince refuses the field, since it is new and
-	// this package's decoder disallows unknown fields; the launching CLI
-	// checks the job's build record first, as it does for ProjectLayer.
+	// the bundle reserves, config.ReservedClaudeAccountName) this run holds
+	// (docs/design/named-oauth-tokens.md): the account an agent.auth: oauth
+	// workflow used, and, for a mixed agent.auth: api-key run, the one Claude
+	// account its review and adversarial stages are served by, beside the
+	// provider key the gateway holds (docs/design/mixed-credentials.md §11).
+	// Both are the account whose job variant the run is on, which is the job
+	// that mounts its token, so a reader outside this binary reads it as the
+	// run's own account either way. A runner before namedTokensSince refuses
+	// the field, since it is new and this package's decoder disallows unknown
+	// fields; the launching CLI checks the job's build record first, as it
+	// does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
 	// CompressionOff, when true, disables agent.compression for this run
 	// only, overriding fugaro.yaml (fugaro run --no-compression;

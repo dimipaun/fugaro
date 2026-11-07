@@ -210,11 +210,18 @@ a provider's own, takes the typed owner/name whatever the run was given. What
 the Firestore database's permanent location, this door's first-time question.
 With --yes, --non-interactive, --json or a pipe each of those is left for you,
 with the one line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
-CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
+CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing, --yes included, and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup
 --anchor (with --yes), which edits only the checkout's fugaro.yaml. That is a mitigation,
-not a barrier: an agent can unset its own environment. A run that writes this
+not a barrier: an agent can unset its own environment. CLAUDE_CODE_SSE_PORT is
+read the same way and is the one case that is not an agent's: the Claude Code
+IDE extension sets it in a person's own terminal too, so on its own it counts
+as a coding agent's session only where standard input is not a real terminal,
+and with a real terminal it types the same confirmations as any other — one
+line says the confirmation was accepted from an IDE terminal. Set beside any
+of the markers above it is an agent's session like theirs, and a pipe, --json,
+--non-interactive and --yes behave exactly as they did. A run that writes this
 machine's local config from an installation that already exists (fugaro
 update on a new machine) changes nothing in the cloud in the same run (the
 local config and, in a checkout, the plugin wiring in .claude/settings.json
@@ -228,9 +235,11 @@ prompts only in your own terminal: never with --yes, --non-interactive or
 --json (--json never prompts; the stage then exits 1 with the one-line
 fugaro secrets set commands), never when stdin, stdout or stderr is not a
 terminal (a pipe is never read), and never when a coding agent's variable is set (CLAUDECODE
-and the like; CLAUDE_CODE_SSE_PORT is also set by the Claude Code IDE
-extension in VS Code and JetBrains terminals, so a person's own IDE terminal
-can be refused: its refusal tells you what to do about it). A pasted private key may have at most 120 lines. It creates each
+and the like). CLAUDE_CODE_SSE_PORT is set by the Claude Code IDE extension in
+VS Code and JetBrains terminals as well, so it alone is not a coding agent when
+standard input is a real terminal: a person's own IDE terminal prompts exactly
+as any other terminal does, and no stored secret is read back to it; with
+another marker beside it, or no terminal, it is refused like any other. A pasted private key may have at most 120 lines. It creates each
 secret's container, before the repository stage, with the labels
 setup --repo's Terraform imports (fugaro, fugaro_repo, fugaro_secret).
 
@@ -298,6 +307,10 @@ var setupDoor = convergeDoor{
 		name:  "forget",
 		owner: "fugaro update",
 		hint:  "it unwinds a converge that has already run, and a first run has nothing to unwind",
+	}, {
+		name:  "ask",
+		owner: "fugaro update",
+		hint:  "it asks for the confirmations a managed project's gate stands in for, and only fugaro update opens that gate: fugaro setup asks every one of its own confirmations already, whatever the project's marks say",
 	}},
 }
 

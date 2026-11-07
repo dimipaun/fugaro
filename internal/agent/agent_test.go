@@ -181,6 +181,34 @@ func TestClaudeRunNonZeroExitWithResult(t *testing.T) {
 	}
 }
 
+// TestClaudeRunAccountRefusalIsReadFromTheResultEvent is the shape the runner's
+// account failover reads its one signal off (A7b of accounts-add, spec §11.3):
+// an OAuth run has no gateway, so no credentials service answers, and the
+// account's own refusal exists only in the stage's output. What the runner
+// depends on is pinned here: the refusal arrives as a result event with the
+// error flag set and its own words in the text, the process still exits
+// non-zero, and Run reports no error at all -- procgroup reports a status
+// through the exit code, and a result event was emitted. A refusal that reached
+// the runner as an err instead would be an ordinary failed stage to every
+// reader of its endings, and the account's allowance would never be seen.
+func TestClaudeRunAccountRefusalIsReadFromTheResultEvent(t *testing.T) {
+	const refusal = `API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}`
+	script, err := json.Marshal(map[string]any{"calls": []any{
+		map[string]any{"text": refusal, "is_error": true, "exit": 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := testutil.FakeClaude(t, string(script))
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the refusal is the stage's own output, not a failed process", err)
+	}
+	if !res.IsError || res.Text != refusal || res.ExitCode != 1 {
+		t.Fatalf("result = %+v, want the error flag, the event's own text and the exit status", res)
+	}
+}
+
 func TestClaudeRunStructuredPassesThrough(t *testing.T) {
 	bin := testutil.FakeClaude(t, `{"calls":[{"text":"ok","structured":{"verdict":"ship","score":3}}]}`)
 	res, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
@@ -356,6 +384,67 @@ func TestBuildEnvOAuthNeverFallsBackToTheAPIKey(t *testing.T) {
 	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=" + key}, EnvSpec{Auth: "oauth"}); err == nil ||
 		!strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
 		t.Fatalf("a run with auth: oauth and no token was admitted with an API key in the environment: err = %v", err)
+	}
+}
+
+// A stage that runs on a Claude OAuth credential of its own runs on that
+// account and not on the run's gateway: the environment it gets is the run's
+// own with the gateway's routing dropped — the address its calls would go to
+// and the per-run token they would present there, both of which the managed
+// settings file writes too — and the account's token set in their place
+// (docs/design/mixed-credentials.md §11, the owner's B0 ruling). Everything
+// else about the run's environment is the stage's: the base variables, the
+// declared secrets and the directory variables, which are what the stage's
+// own tools need and none of which is a credential.
+//
+// Mutation (run, restored): return runEnv with the token appended and the
+// gateway's variables left in place. The first loop fails: the stage's calls
+// would go to Fugaro's gateway on a token the gateway issued, and the
+// account's own credential would never be presented.
+func TestOAuthStageEnvDropsTheGatewayAndSetsTheToken(t *testing.T) {
+	runEnv, _, err := BuildEnv([]string{"PATH=/bin", "HOME=/h", "NPM_TOKEN=npm-456", "ANTHROPIC_API_KEY=key-123"},
+		EnvSpec{Auth: "api-key", Secrets: []string{"NPM_TOKEN"},
+			Gateway: &Gateway{BaseURL: "http://127.0.0.1:1", Token: "gw-token-abcdef"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A run environment that already carries an entry under the token's name
+	// — whatever put it there — ends with the account's token and that one
+	// entry: two would leave which credential the stage presents to the order
+	// a reader happens to take them in.
+	runEnv = append(runEnv, "CLAUDE_CODE_OAUTH_TOKEN=stale-token-abcdef")
+	env, err := OAuthStageEnv(runEnv, "oauth-token-abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_BASE_URL=") || strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+			t.Errorf("a stage on its own account still carries the gateway's routing: %q", kv)
+		}
+		if strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") {
+			tokens++
+			if kv != "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef" {
+				t.Errorf("the stage presents %q, not the account's token", kv)
+			}
+		}
+	}
+	if tokens != 1 {
+		t.Errorf("the stage's environment carries %d entries for the token, want 1: %v", tokens, env)
+	}
+	for _, want := range []string{"CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef", "PATH=/bin", "HOME=/h", "NPM_TOKEN=npm-456"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+
+	// A token this build could not redact is refused rather than used: the
+	// stage would otherwise run on whatever the environment falls back to.
+	if _, err := OAuthStageEnv(runEnv, ""); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("no token: err = %v, want a refusal naming CLAUDE_CODE_OAUTH_TOKEN", err)
+	}
+	if _, err := OAuthStageEnv(runEnv, "abc"); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("short token: err = %v, want a refusal naming CLAUDE_CODE_OAUTH_TOKEN", err)
 	}
 }
 
@@ -560,6 +649,100 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 	if !slices.Contains(dockerEnv, "DOCKER_HOST=unix:///var/run/docker.sock") {
 		t.Errorf("a run that asked for Docker lacks DOCKER_HOST: %v", dockerEnv)
 	}
+}
+
+// TestBuildEnvPassesAnImagesVariables: the variables an operator's catalog
+// image declares reach the agent -- issue #1755's own NEXUS_BASEURL, which the
+// image's Maven settings name, and the toolchain hook the trust statement
+// accepts -- which is the whole of what the passthrough is for (docs/image-env,
+// reconciliation D1370, D1374). The caller has already narrowed the set
+// (runner.imageEnv); BuildEnv writes what it is given.
+func TestBuildEnvPassesAnImagesVariables(t *testing.T) {
+	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}
+	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", ImageEnv: map[string]string{
+		"NEXUS_BASEURL": "https://example.invalid/repository/maven-public/",
+		"MAVEN_OPTS":    "-Dmaven.repo.local=/opt/m2",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
+		"MAVEN_OPTS=-Dmaven.repo.local=/opt/m2",
+	} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+}
+
+// TestBuildEnvDropsAReservedImageVariable: the filter's list half is applied
+// inside BuildEnv, next to the allow-list it protects (D1372), so a caller
+// that hands ImageEnv over unnarrowed still cannot have an image shadow the
+// run's own PATH, a loader or runtime hook, a proxy, a Google client or a
+// Fugaro name. The run's own value stands for each of them.
+func TestBuildEnvDropsAReservedImageVariable(t *testing.T) {
+	image := map[string]string{"NEXUS_BASEURL": "https://example.invalid/"}
+	for _, name := range []string{
+		"PATH", "HOME", "ANTHROPIC_BASE_URL", "FUGARO_BUCKET", "LD_PRELOAD",
+		"GOOGLE_APPLICATION_CREDENTIALS", "LC_ALL", "NODE_OPTIONS", "JAVA_TOOL_OPTIONS",
+	} {
+		image[name] = "from-the-image"
+	}
+	env, _, err := BuildEnv([]string{"PATH=/bin", "HOME=/h", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", ImageEnv: image})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envValue(env, "PATH"); got != "/bin" {
+		t.Errorf("PATH = %q, want the runner's own value", got)
+	}
+	if got := envValue(env, "HOME"); got != "/h" {
+		t.Errorf("HOME = %q, want the runner's own value", got)
+	}
+	for _, name := range []string{"ANTHROPIC_BASE_URL", "FUGARO_BUCKET", "LD_PRELOAD", "GOOGLE_APPLICATION_CREDENTIALS", "LC_ALL", "NODE_OPTIONS", "JAVA_TOOL_OPTIONS"} {
+		if got := envValue(env, name); got != "" {
+			t.Errorf("%s = %q reached the agent from the image", name, got)
+		}
+	}
+	if got := envValue(env, "NEXUS_BASEURL"); got != "https://example.invalid/" {
+		t.Errorf("NEXUS_BASEURL = %q, want the image's own value: the filter drops reserved names, not an image's own", got)
+	}
+}
+
+// TestBuildEnvSetsFugarosVariablesLast: the image's values are written before
+// everything Fugaro writes (D1374), so an image that sets a name Fugaro's own
+// set carries loses to it -- here the git credential the run pushes with, which
+// a repository must never be able to replace through an operator's image, and
+// the gateway's routing, which would take the run around the budget.
+func TestBuildEnvSetsFugarosVariablesLast(t *testing.T) {
+	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=placeholder-api-key"}
+	env, _, err := BuildEnv(parent, EnvSpec{
+		Auth:    "api-key",
+		Gateway: &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"},
+		Set:     map[string]string{"GH_TOKEN": "the-runs-own-token-placeholder"},
+		ImageEnv: map[string]string{
+			"GH_TOKEN":           "the-images-token-placeholder",
+			"ANTHROPIC_BASE_URL": "https://elsewhere.invalid",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envValue(env, "GH_TOKEN"); got != "the-runs-own-token-placeholder" {
+		t.Errorf("GH_TOKEN = %q, want the run's own value: the image's must not override spec.Set", got)
+	}
+	if got := envValue(env, "ANTHROPIC_BASE_URL"); got != "http://127.0.0.1:4000" {
+		t.Errorf("ANTHROPIC_BASE_URL = %q, want the gateway's own URL", got)
+	}
+}
+
+func envValue(env []string, key string) string {
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			return v
+		}
+	}
+	return ""
 }
 
 func TestBuildEnvVertexExtras(t *testing.T) {

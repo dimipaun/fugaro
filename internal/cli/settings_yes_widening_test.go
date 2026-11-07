@@ -74,6 +74,7 @@ func TestSettingsSetWideningWithoutYesAsksTheTypedName(t *testing.T) {
 func TestSettingsSetAgentSessionWithYesIsRefused(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
+			noTerminal(t) // every one of the six is an agent's session with no terminal
 			settingsWriteHome(t)
 			path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 			before := readFileString(t, path)
@@ -172,6 +173,7 @@ func TestSettingsSetARowTypedKeyWithYesWrites(t *testing.T) {
 func TestSettingsUnsetAgentSessionWithYesIsRefused(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
+			noTerminal(t) // every one of the six is an agent's session with no terminal
 			settingsWriteHome(t)
 			path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 			before := readFileString(t, path)

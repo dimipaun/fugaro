@@ -1918,3 +1918,69 @@ func TestRetireSetNeverCountsANote(t *testing.T) {
 		}
 	}
 }
+
+// --- The mix's own convergence (B2)
+
+// An installation at the release before the mix converges in one `fugaro
+// update`: the repository that now names a stage account gains that account's
+// job, its accessor on the account's token and the container the token lives
+// in, and the update retires nothing at all. Nothing the installation already
+// manages leaves the state, so there is no job for the Cloud Run API to
+// delete, no container to re-adopt and no operator step: the previous
+// release's configuration and this one's differ by additions, and the one
+// confirmation covers them.
+//
+// The types are the second half of the claim. Every address the update adds
+// is of a type the previous plan already declared -- the variant is the same
+// module instantiation the oauth account variants have used since
+// docs/design/named-oauth-tokens.md -- so the update asks for no new row in
+// the cover tables, which is what "no more than the grants the design lists"
+// means for one confirmation.
+func TestInstallationAtThePreviousVersionConvergesToTheMix(t *testing.T) {
+	beforeIn := repoRootInputs(t, `agent: { auth: api-key }`)
+	beforeIn.LC = parseLC(t, repoRootAPIKeyLC)
+	before, err := Repo(beforeIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := repoRootFixtureSpec(t, "repo_root_mixed")
+	if got, want := slices.Sorted(maps.Keys(before.Workflows)), []string{"web"}; !slices.Equal(got, want) {
+		t.Fatalf("the previous version's spec has jobs %v, want %v", got, want)
+	}
+
+	if rets := Retirements(before.Addresses(), after); len(rets) != 0 {
+		t.Errorf("the update retires %d addresses of the installation it upgrades: %+v", len(rets), rets)
+	}
+	added := missingFrom(after.Addresses(), before.Addresses())
+	if len(added) == 0 {
+		t.Fatal("the update adds nothing: the fixture no longer exercises the mix")
+	}
+	const (
+		variant   = "web_bmb"
+		container = "claude-oauth-token-bmb"
+	)
+	types := func(addrs []string) map[string]bool {
+		out := map[string]bool{}
+		for _, a := range addrs {
+			segs := addressSegments(a)
+			if len(segs) < 2 {
+				continue
+			}
+			typ, _, _ := resourceOf(segs)
+			out[typ] = true
+		}
+		return out
+	}
+	known := types(before.Addresses())
+	for _, a := range added {
+		if !strings.Contains(a, variant) && !strings.Contains(a, container) {
+			t.Errorf("the update adds %s, which belongs to neither the account's variant nor its token", a)
+			continue
+		}
+		segs := addressSegments(a)
+		typ, _, _ := resourceOf(segs)
+		if !known[typ] {
+			t.Errorf("the update adds %s of type %s, which the previous plan never declared: the cover tables would need a row for it", a, typ)
+		}
+	}
+}

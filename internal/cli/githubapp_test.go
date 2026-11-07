@@ -372,6 +372,7 @@ func TestInitPreCheckWithoutFlagReadsNothing(t *testing.T) {
 func TestCheckGitHubAppRefusedInAgentSession(t *testing.T) {
 	for _, marker := range agentMarkers {
 		t.Run(marker, func(t *testing.T) {
+			noTerminal(t) // every one of the six is an agent's session with no terminal
 			g := newGitHubRig(t)
 			t.Setenv(marker, "1")
 			for _, args := range [][]string{{"setup", "--check-github-app", "--plan-only"}, {"setup", "--repo", "--check-github-app", "--plan-only"}, {"doctor", "--check-github-app", "--json"}} {

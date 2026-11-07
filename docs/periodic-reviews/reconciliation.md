@@ -1,17 +1,21 @@
 # Periodic run reviews: reconciliation against the code
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.**
+**Status: design answered by the owner 2026-11-04 and ruled on again 2026-11-05; plan only; nothing
+implemented; no task approved.**
 
 Read against `origin/main` at `b41709ea` on 2026-11-04, and **refreshed against that tree** the same
 day: line numbers are that commit's, and §4 lists what `main` has overtaken since the design was
-first written. The 2026-11-01 reading this file first carried — the block census taken from the 23
-pull requests open then — is kept only where it is still checkable. Each finding is **Exists**,
-**Missing** or **Conflicts**, with its consequence for the spec or the plan.
+first written. **§5 is the second refresh: the owner's rulings of 2026-11-05, which amend D321, D322
+and G2 of the 2026-11-04 reconciliation and move the reports out of the repositories and into the
+project's runs bucket.** Where §5 disagrees with §1, §2, §3 or [spec.md](spec.md), §5 wins. The
+2026-11-01 reading this file first carried — the block census taken from the 23 pull requests open
+then — is kept only where it is still checkable. Each finding is **Exists**, **Missing** or
+**Conflicts**, with its consequence for the spec or the plan.
 
 The headline: **the loop the owner asked for on 2026-10-25 was designed the next day (D320–D328,
 `docs/task-governance`) and has shipped**, through 0.13.0's recipe and digest step, carried by every
-release since (0.17.0 is the current one). What this design owns is the part that makes a user who is
+release since (**0.20.3** is the current one at §6's 2026-11-07 reading — F32). What this design owns
+is the part that makes a user who is
 not asking keep the cadence, and four smaller gaps. Every finding below is therefore about a claim of
 the request, not about the request's core.
 
@@ -104,7 +108,7 @@ rules (D326), the redacted draft and the issue form (D327), and the maintainer's
 new number (F21, F23).
 
 **F13: Exists. The register's half of the live check.** Check 136 — a report run's pull request — has
-its row (`docs/gcp-live-checklist.md:764`) and its section (`:10621`), pinned as a pair by
+its row (`docs/gcp-live-checklist.md:785`) and its section (`:10643`), pinned as a pair by
 `internal/cli/docs_task_governance_checks_test.go:75`. The row and the section both say it is
 **NOT RUN** and is the owner's, and no agent runs any step of it. *Consequence:* this design takes
 **no check number** (README, "Numbers this work holds"); what it wants from the owner is that check,
@@ -197,6 +201,14 @@ the one thing it decides is the opposite temptation — that the **committed** r
 and the report is the repository's own document. §4, M3: the person-class reads have since landed,
 so this boundary now has live surfaces on the other side of it.
 
+**The rulings of 2026-11-05 (§5) re-read six of these findings.** F2 gains a writer and keeps its
+rule (the same layout writes every report: the job, a person's `--dir` write and the report run, and
+the commit copies bytes rather than rendering them); F5 is unchanged in itself and is joined by the
+job (E4); F10 gains the `reports/` prefix's own lifecycle (E3) while `runs/` keeps its 90 days; F14
+is where the owner's own reports now arrive (the job writes them, the opt-in commit lands them, E5);
+F15 is answered by the opt-in commit run rather than by a flag on the CLI, which keeps D964's answer
+(E5); and F16's due signal keeps its command while its source is re-opened (E8, Open items).
+
 ## 3. Decisions D960–D971, and the owner's answers of 2026-11-04
 
 **The owner answered the design on 2026-11-04.** Three decisions were named in words — **D965**,
@@ -216,17 +228,20 @@ for each of them, which is what the plan is written to. **The three answers, eac
   flagged row by running `fugaro diagnose RUN`, while the draft's reader is a public issue that needs
   the figures and none of the identifiers.
 
-The recommendation comes first in the table, with the cost of the alternative.
+The recommendation comes first in the table, with the cost of the alternative. **Five rows are read
+through §5 from 2026-11-05 on: D960, D961, D962, D964 and D966, each marked at its own row.** The
+rows after them (D967–D971) are unchanged by the rulings; **D965 is unchanged too, and §5 says why
+the one schedule the rulings add is not the one it refuses.**
 
 | D | Question | Recommendation | The alternative, and its cost |
 | --- | --- | --- | --- |
-| **D960** | Where do a user's reports live? | **In the repository they report, at `docs/fugaro-reviews/<YYYY>/<key>.md` with the generated index beside them** (D321/D324 stand, F2). Reviewable in a pull request, greppable by the next agent, and the one place the figures are not a second copy. | A central store, or an orphan `fugaro-reviews` branch: unreviewed, invisible to an agent reading the default branch, and a copy that can disagree with the tree the runs came from |
-| **D961** | Do Fugaro's own reports land in this public repository? | **Yes, as D324 answered, and the first ones are written by the owner's own report run** (F14). The dogfooding is the product's best example, and it is what makes `typical-costs.yaml`'s provenance a committed report rather than a hand measurement. | Keep them out: the feature's own example stays invisible, the website's figures keep a provenance no reader can check, and D324's rationale stays untrue |
-| **D962** | What tells a user a report is due? | **`fugaro runs digest --due [--json]`: read-only, offline, no cloud, reading the committed folder in the checkout** (F16), with the due computation moved into `internal/digest` so the CLI and a report run cannot disagree (F17). | Nothing, and the cadence stays honour-system prose: a user who is not asking never learns the reports exist, which is exactly the gap the owner's request is about. **Or** a cloud-side read of the runs bucket: it would make the signal need credentials, a project and a network, and it would fail in the one place the skill runs it — an agent's session in a checkout |
+| **D960** | Where do a user's reports live? | **In the repository they report, at `docs/fugaro-reviews/<YYYY>/<key>.md` with the generated index beside them** (D321/D324 stand, F2). Reviewable in a pull request, greppable by the next agent, and the one place the figures are not a second copy. **Amended after the owner's ruling, 2026-11-05 (§5, E1) — not the recommendation:** the reports are generated into the project's runs bucket under `reports/`, and committing one anywhere is a separate opt-in run to the project's designated repository or folder. The answer above stands as the 2026-11-04 record. | A central store, or an orphan `fugaro-reviews` branch: unreviewed, invisible to an agent reading the default branch, and a copy that can disagree with the tree the runs came from |
+| **D961** | Do Fugaro's own reports land in this public repository? | **Yes, as D324 answered, and the first ones are written by the owner's own report run** (F14). The dogfooding is the product's best example, and it is what makes `typical-costs.yaml`'s provenance a committed report rather than a hand measurement. **Amended after the owner's ruling, 2026-11-05 (§5, E1/E5):** the reports are written into this installation's `reports/` prefix by the reports job, and landing them in this public repository is the opt-in commit run — which needs this repository to be the project's designated one (E6, Open items). | Keep them out: the feature's own example stays invisible, the website's figures keep a provenance no reader can check, and D324's rationale stays untrue |
+| **D962** | What tells a user a report is due? | **`fugaro runs digest --due [--json]`: read-only, offline, no cloud, reading the committed folder in the checkout** (F16), with the due computation moved into `internal/digest` so the CLI and a report run cannot disagree (F17). **The command keeps its answer and its offline reading; the source is re-opened** after the owner's ruling of 2026-11-05 (§5, E8 and Open items): the reports sit in the bucket by default now, and whether the signal reads the bucket, the checkout's folder or both is not decided here. | Nothing, and the cadence stays honour-system prose: a user who is not asking never learns the reports exist, which is exactly the gap the owner's request is about. **Or** a cloud-side read of the runs bucket: it would make the signal need credentials, a project and a network, and it would fail in the one place the skill runs it — an agent's session in a checkout |
 | **D963** | Does the installation report it too? | **Yes: one `doctor` line, `reviews-due`, from the same reading** — an info line when the newest report is more than a period old, a warning line when a closed period has no report at all (F18). Offline, like the other checkout checks. | A separate command only: a user runs `doctor` far more often than they think about reviews, and the nudge is worth one line. A `--security`-style gate instead: it would hide a finding that is not a security one |
-| **D964** | Does the CLI commit, push or open the pull request? | **No. It writes the tree and prints the paths; the commit is the person's or their automation's** (F15). The report run already commits and opens the pull request for a user who wants that (F5). | `--commit`/`--pr` on the CLI: a second identity that pushes to the user's repository, on whatever branch they happen to be on, with a message the tool chose; and a second implementation of what the runner's digest step already does correctly, including its finalize guard |
+| **D964** | Does the CLI commit, push or open the pull request? | **No. It writes the tree and prints the paths; the commit is the person's or their automation's** (F15). The report run already commits and opens the pull request for a user who wants that (F5). **Unchanged by the 2026-11-05 rulings, and they are its test:** the committing path is a run (§5, E5), not a flag, so `fugaro runs digest` still never commits, pushes or opens a pull request. | `--commit`/`--pr` on the CLI: a second identity that pushes to the user's repository, on whatever branch they happen to be on, with a message the tool chose; and a second implementation of what the runner's digest step already does correctly, including its finalize guard |
 | **D965** *(answered 2026-11-04, as recommended)* | Who installs the cadence? | **The user, with the setup skill printing the three ways and the exact command for each, once, and writing nothing without their word** (F18). Fugaro schedules nothing for a repository it does not own. | Fugaro writes a workflow or a crontab: a file that commits into the user's repository under their identity, unasked, which no skill may do; and it would need repository write credentials in a place that has none |
-| **D966** | Is there a trend file? | **No. The committed period reports are the history and the index's table is the trend view** (F2, F19). One document fewer, one generator fewer, and no question of which of two files to grep. | A generated `trends.md` or a `docs/fugaro-reviews/trends.json`: a second copy of figures that are already in the reports and the index, regenerated byte for byte by both writers, and a reader who finds the two disagreeing has no way to know which is current |
+| **D966** | Is there a trend file? | **No. The committed period reports are the history and the index's table is the trend view** (F2, F19). One document fewer, one generator fewer, and no question of which of two files to grep. **Amended after the owner's ruling, 2026-11-05 (§5, E1):** the history is the stored reports under `reports/`, the index stays the trend view wherever they are committed, and the answer above is unchanged — there is still no second trend document. | A generated `trends.md` or a `docs/fugaro-reviews/trends.json`: a second copy of figures that are already in the reports and the index, regenerated byte for byte by both writers, and a reader who finds the two disagreeing has no way to know which is current |
 | **D967** | Do the patterns' thresholds move into config? | **No: they stay constants in `internal/digest`** (F20). A threshold is not a limit that only tightening can merge safely, and a repository that lowered one would be silencing a signal about its own cost. | `fugaro.yaml` keys, or a project-layer override: a repository can raise a threshold until its own recurring problem stops being reported, and "the report says nothing" reads as "nothing is wrong" |
 | **D968** *(answered 2026-11-04, as recommended)* | Do the rules gain a longer window? | **Yes, one: `cost_per_run_rising` — the billed cost per run rising five months running** (F19), beside the four, with the same shape (period keys read, one figure per period) and no verdict. | Keep the four windows: a user who reviews daily for a quarter still gets no rule that spans the quarter, and the monthly reports — the only documents that outlive the 90-day retention (F10) — are read by two rules that each compare one month with the one before it |
 | **D969** *(answered 2026-11-04, as recommended)* | What does a **committed** report carry, and what does the draft redact? | **The committed report keeps its run IDs, stage names, recipes and figures, and carries no person, address, task text or log line; the draft that leaves renumbers the runs and drops the repository name** (F24). | Redact the run IDs in the committed report too: the report's whole purpose is to send the reader to `fugaro diagnose RUN` and `fugaro logs RUN` for the flagged runs, and a report whose rows cannot be looked up is a table of numbers nobody can act on |
@@ -287,9 +302,12 @@ refuses to commit an untracked file that is not text (`internal/runner/stray.go:
 nothing else, so the finalize guard's reading — the diff against the base is exactly the generated
 files — is unchanged. No task changes.
 
-**M8: 0.15.0, 0.16.0 and 0.17.0 have all shipped, so every release slot in this design moved.**
-*Consequence:* the plan's slot is re-cut to **0.19.0** ([implementation-plan.md](implementation-plan.md),
-"Release slot"); nothing else in the plan names a version.
+**M8: 0.15.0, 0.16.0, 0.17.0, 0.18.0 and 0.19.0 have all shipped, so every release slot in this
+design moved — twice.** *Consequence:* the plan's slot is re-cut to **0.20.0**
+([implementation-plan.md](implementation-plan.md), "Release slot"): the earlier cut named 0.19.0, and
+that release shipped on `main` while this plan was open and without any of this work
+(`docs/releases/v0.19.0.md`, whose own `### Known limits` put the config-management tasks that remain
+in 0.20.0 beside it — two works may ride one release). Nothing else in the plan names a version.
 
 **M9: `doctor` classifies its checks now, and an unclassified check is not printed.** The classes
 are `actionable`, `update`, `decision`, `measure`, `audit` and `security`
@@ -301,3 +319,450 @@ counted in the pointer and never shown, which is the exact failure the task exis
 warning — a closed period with no report — is `doctorClassActionable`; the info line — the newest
 report is more than a period old — is `doctorClassDecision`, since the state is valid and the line
 names the command for each choice. R2 says so.
+
+## 5. The owner's rulings of 2026-11-05
+
+**The owner ruled again on 2026-11-05, and the rulings amend D321, D322 and G2 of the 2026-11-04
+reconciliation** (`docs/task-governance/`): a report is no longer written into the repository it
+reports. Every report — each repository's, and a project-level aggregate across all the project's
+repositories — is generated into the project's runs bucket under a `reports/` prefix by one
+project-level scheduled job, and committing one anywhere is a separate opt-in run aimed at the
+project's designated repository or folder.
+
+**Two of the amendments are not the recommendation, and the original answers stay beside them.**
+D321's row and D960 recommended the repository's own docs tree; D322's own row — and G2's hard line
+with it — kept a committed report to one repository. The rulings replace both, and the rows in §3
+that carry the old answers are marked at the row. **E2's amendment is the smaller of the two**: D322
+already read "by default … with an explicit flag", so what actually moves is G2's absolute rule
+(E2 below).
+
+**And the rulings were read against the code again on 2026-11-05, after the plan's own review.** Four
+things the ruling's sentences left implicit were put to the owner and **answered the same day, each
+as recommended**, and each is written where the task meets it:
+the job's listing is a **prefix-limited grant on `runs/`, proven by an owner-run check before its
+Terraform lands** (E4); **`reports/` has one writer, the job, and launchers read it** — no launcher
+write grant, and no job account but the reports job (E4, E5); enabling a job is **a setting `fugaro
+update` writes** for both the reports job and the 0.18.0 catalog check (E4); and the `reports/`
+lifecycle rule is the bucket's **fifth**, not its fourth (E3). **The answers are dated 2026-11-05 and
+marked "as recommended" where they sit** (E4's three bullets, E5's credential paragraph). Two
+questions they leave open are **Open items**: E8's bucket default has no writer a launcher may use
+(E8 below), and whether `fugaro settings set` may write `jobs.*.paused` (E4 below).
+
+**This run does not rewrite [spec.md](spec.md).** The README's file table reads spec.md below this
+file ("Where it disagrees with `spec.md`, it wins"), and spec §3, §5 and §6 keep the 2026-11-04 text
+they were written with: they are read through E1, E7 and E8 here. What the plan is written to is this
+section.
+
+**Nothing here reopens D965, D967, D968, D969, D970 or D971.** The rulings add a writer, a place, a
+retention rule and a reading; they move no threshold, redact nothing further, keep the fifth rule and
+leave the learning channel where it is. D968's rule reads a different source from E7 on, and that is
+the whole of its change.
+
+### E1. Reports are not committed per repository (amends D321 and D960; **not the recommendation**)
+
+**The original answers.** D321: `docs/fugaro-reviews/<YYYY>/<key>.md`, one file per period, plus the
+generated index `docs/fugaro-reviews/README.md`, and D960: "in the repository they report … because
+that is where the next agent and the next reviewer read it" (§3's table, F2).
+
+**The ruling.** All reports are generated into the project's runs bucket under a `reports/` prefix. A
+report may be committed afterwards, but **only to the project's designated repository or folder**
+(E6), if the project has one — **never into a code repository's own docs tree by default**. Reports
+are small; the prefix carries its own retention (E3).
+
+*Why:* the writer is one project-level job that reports every repository at once (E4), whose account
+holds no git credential, and a per-repository commit would decide a branch, an identity and a
+message inside a repository that job does not own — the exact cost D964 refuses for the CLI.
+
+**Not settled here:** the shipped `run-digest` recipe writes into the repository it was launched in
+(F5), and the rulings do not name it; whether it is rerouted through the bucket is an **Open item**,
+not decided by this section.
+
+### E2. D322 is restated and G2's absolute rule is relaxed (amends G2; **not the recommendation**)
+
+**The original answers.** D322 (F12): one repository per report **by default**, with an explicit way
+to commit a project-wide report into a repository the person names — which is what the aggregate is.
+G2 (`docs/task-governance/`,
+implementation-plan.md): "**One repository per report.** The digest reads only the repository it is
+pointed at. On a per-repository job the grant also enforces it (Check 135); on a project job … the
+runner's own slug check is the only guard."
+
+**The ruling, and what it actually moves.** It **mostly restates D322**: a committed report names no
+other repository **by default**, and the person may commit the project-wide report into a repository
+they named — D322's own row already reads that way ("That repository's runs only, **by default** … a
+project-wide report … is printed, or committed only with an explicit flag into a repository the
+person names", `docs/task-governance/reconciliation.md:298`). What it **amends is G2's absolute
+rule**, the shipped digest's own hard line ("**One repository per report.** The digest reads only the
+repository it is pointed at", `docs/task-governance/implementation-plan.md`): the aggregate names
+every repository, and it may be committed into a repository the user chose. Whether that repository
+is public or private is theirs to weigh.
+
+*Why:* the aggregate is the one document that answers what the project spent; the owner who picks the
+target is the person who can weigh what naming the other repositories costs there.
+
+**What does not change:** a per-repository report still names no other repository, and the digest
+still reads only the repository it is pointed at — on a project job the IAM's reach is still wider
+than that rule and the record is still untrusted input, which E4's grants keep as narrow as they can.
+
+### E3. Retention: the `reports/` prefix has its own 18 months (amends F10's consequence)
+
+**The original finding.** F10: the runs bucket's lifecycle is 90 days
+(`deploy/terraform/gcp/modules/installation/variables.tf:112`, `runs_days = 90`), which is why a
+yearly report rolls the monthly reports up instead of reading records.
+
+**The ruling.** The `reports/` prefix gets its own bucket lifecycle rule, **18 months**. **Run
+records keep 90 days (F24) and that is not touched** — `runs/` keeps the rule it has, and this is the
+**fifth** rule beside the four the bucket carries today (`deploy/terraform/gcp/modules/installation/
+bucket.tf`: `runs/`'s age, `cache/`'s custom-time and age rules, and the sealed token's).
+
+*Why:* a yearly report rolls the twelve stored monthly reports up, so the reports must outlive the
+90-day records by more than a year — and a report is a few kilobytes, so the storage is not what
+decides it.
+
+### E4. One project-level writer, and no per-orchestrator scheduler (ruling 3)
+
+**The ruling.** There are many orchestrators and developers; the writer is **one project-level
+scheduled Cloud Run job** in the project's GCP, **on the 0.18.0 catalog check job's pattern**
+(`deploy/terraform/gcp/modules/installation/catalogcheck.tf`, `internal/infra/catalogcheck.go`): its
+own narrowly granted service account, **ships paused until the owner enables it**, and **`fugaro
+update` plans it**. Its service account has **read on the run records and write on `reports/`
+only: no git credential, no model credential, no secret**. For each closed period it loops over the
+project's repositories, writes each repository's report and then the project aggregate — built from
+the repositories' summary blocks and the budget database's figures, as `fugaro runs summary` already
+reads them — into the bucket. **A report key is the period**; a rerun overwrites with the same
+content or skips.
+
+**What the owner settled about that account on 2026-11-05, after the review of the plan (answered
+2026-11-05, as recommended).** Three things the ruling's own sentence left to the code, and each is
+now decided:
+
+- **The listing half, the full condition it needs, and the check that proves it.** Reading the run
+  records is not one grant: a condition on `resource.name` **grants no listing**
+  (`docs/design/bucket-iam.md` §2.3, live check 7's 403 on listing `runs/`;
+  `docs/task-governance/reconciliation.md` already flags the same doubt), so the account needs
+  `objectViewer` on `runs/` **through the prefix-limited listing mechanism**
+  (`storage.googleapis.com/objectListPrefix`, unverified — bucket-iam §4, V7). **And the reverse
+  holds too, which the plan states in full:** a condition carrying only `objectListPrefix` **cannot
+  read an object**, so **both** grants carry **both** clause halves for their own prefix —
+  `objectViewer` on `runs/` and `objectUser` on `reports/` — and **the halves are joined by `||`,
+  never by `&&`**: the shape is the one `gcp.ProjectBucketCondition` already builds, per-prefix
+  clauses joined with `" || "` (`internal/backend/gcp/names.go:537`), each grant reading
+
+  ```
+  resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/") ||
+  api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<list prefix>")
+  ```
+
+  A conjunction is the shape a reader reaches for first and it matches nothing — a `get` carries no
+  `objectListPrefix`, a `list` names no object — and a single half is a job that fails on its first
+  run: the `resource.name` half grants no listing, and the listing half cannot read an object.
+  **`<list prefix>` is left to the check, not decided here:** the attribute's value form — the
+  request's own prefix (`runs/`) or the full `projects/_/buckets/<b>/objects/runs/` path — is
+  unverified offline, and no code in this repo reads the attribute today. The listing half is not a
+  `runs/` speciality either: R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader
+  lists a checkout's folder twice over, so `reports/`'s grant needs its listing clause as well. Its
+  scope is the prefix and not one repository: the job summarises every repository, so it lists under
+  `runs/` and `reports/` and no wider — the root listing is refused. The owner ruled that **an
+  owner-run live check proves it before the job's Terraform lands**: a service account
+  holding both conditioned grants lists `runs/<slug>/` and `reports/`, reads one object under `runs/`,
+  and is refused the **root listing** (`gs://<bucket>/`), reading a `tokens/` object and listing
+  `tokens/` or `cache/`. **If it fails, the plan stops and asks** — the bucket-wide viewer a listing
+  otherwise needs is not planned as a fallback, because it would read `tokens/` and `cache/` too.
+- **`reports/` has one writer, the job, and launchers read it.** The job holds
+  `roles/storage.objectUser` on `reports/`; a person holds **read only** — which their existing
+  unconditioned bucket-wide `objectViewer` already gives, so nothing new is granted to a person and
+  **no launcher write grant on `reports/` is added** — the launcher's write condition
+  (`gcp.LauncherBucketCondition`) covers `runs/` and `tokens/` as it is (`docs/design/bucket-iam.md`
+  §4, H5), and `reports/` does not join it (a second writer is what this ruling refuses).
+  **No other job account gets `reports/` either**: job accounts reach `runs/`, `cache/` and `locks/`,
+  so the opt-in commit run (E5) reads the stored reports **under the starting person's launcher
+  account**, not the run's.
+- **Enabling it is a setting `fugaro update` writes, not a `gcloud` command.** The project layer gains
+  `jobs.reports.paused` (and `jobs.catalog_check.paused`), each defaulting to `true`;
+  `gcloud scheduler jobs resume` is undone by the next update, because the module always applies
+  `paused`. **The 0.18.0 catalog check has the same gap from the other side** — its `paused` is a
+  Terraform variable with no field in `CatalogCheckSpec` — and the task that adds the reports job's
+  field adds the catalog check's with it, with the HARD RULE's convergence test, which asserts both
+  jobs are kept rather than replaced and stay paused across two updates until the setting says
+  otherwise. The key is written by hand in the project layer: whether the generic `fugaro settings
+  set` may write it is **Open item 6**, not decided here.
+
+*Why:* a scheduler per orchestrator would write the same report many times, and each copy would need
+a credential; one job holds one narrow account and one schedule.
+
+**D965 keeps its answer, and this is not the schedule it refuses.** D965 refused a workflow or a
+crontab Fugaro would write **into a repository it does not own, under the user's identity**, for a
+repository's own reports; the user still installs that cadence. What the ruling adds is the one
+schedule Fugaro does own — a job in the project Fugaro already manages, with no git credential, no
+model call and nothing to commit, which ships paused so the owner turns it on.
+
+**One question the ruling's own words raise, and this section does not decide:** the aggregate reads
+the budget database's day nodes (`fugaro runs summary`'s own source), and the ruling's IAM sentence
+names "read on the run records and write on `reports/` only". A third narrow read grant and an
+aggregate built from the summary blocks alone are the two readings; **Open items** carries them.
+
+### E5. Committing is opt-in and separate (ruling 4)
+
+**The original finding.** F15: nothing commits what the CLI writes; only a report run commits (F5).
+
+**The ruling.** **One normal Fugaro run** — the push path and the identity runs already have — pulls
+the stored reports into the designated project repository or folder (per-repository reports under
+per-repository subfolders, the aggregate beside them) and opens a pull request. **Nothing else needs
+a git credential**, and no code repository gets a report committed unless it is itself the designated
+project repo.
+
+**Whose credentials read the source (answered 2026-11-05, as recommended).** Not the run's: a job account reaches
+`runs/`, `cache/` and `locks/` only, and E4's answer gives `reports/` to **no** job account. The read
+is the **starting person's launcher account**, whose bucket-wide `objectViewer` covers the prefix, and
+how the bytes reach the run is the designated-repo design item's to settle (E6).
+
+*Why:* the job's account holds no git credential (E4) and a commit is a reviewed change to a
+repository; the run that makes it is the one path that already has the credential, the identity and
+the pull request.
+
+**D964 is unchanged and this is its shape:** `fugaro runs digest` still writes and never commits; the
+committing path is a run. The report's own pull request check (**Check 136**, F13) stays the owner's
+and is not replaced by this run's.
+
+### E6. The designated project repo or folder is a separate design item (ruling 5)
+
+**The ruling.** It is **not decided here**. It is the place the owner said the project may name for
+project-level material — the cross-repo backlog filing design already speaks of a designated
+repository (`docs/backlog/20261021-01-cross-repo-backlog-filing.md`, D29). It is listed under **Open
+items** in [implementation-plan.md](implementation-plan.md), **no config key is invented for it**,
+and **the committing task (R9) depends on it**.
+
+*Why:* the target is a project-level policy decision with its own questions (which repository, which
+folder, who may change it), and the reports design is not where those are settled.
+
+### E7. The pattern rules read the stored reports (amends D326's reading)
+
+**The original finding.** F4 and spec §5: the detector "reads the summaries of the reports **already
+committed** beside this one" (`internal/digest/patterns.go:91`), which is also what
+`plugin/skills/working/reference/periodic-reviews.md` §3 and the README's "What it is" describe.
+
+**The ruling.** The pattern rules **read the stored reports in the bucket, and the committed ones if
+they are there**, so the patterns work whether or not anything is committed. **A project-level
+aggregate has no pattern rules in the first slice.**
+
+*Why:* the default place is the bucket now (E1), so a rule that read only a committed folder would
+find nothing in a project that commits nothing — and the patterns are the reason the reports are read
+over time at all.
+
+**The pinned sentences this changes** (each keeps its fact and changes its wording, in both places):
+[spec.md](spec.md) §5's "the reports **already committed** beside this one" and §3's three-writers
+list; this file's F4 and F2; the README's "What it is" ("the fixed pattern rules read the committed
+reports over time") and its file table; `plugin/skills/working/reference/periodic-reviews.md` §3's
+opening sentence; the comment at `internal/digest/patterns.go:91` — a code change, and R4's and R11's
+task, not this run's. Spec §5 is read through this section, not rewritten (see §5's opening).
+
+### E8. `fugaro runs digest` generates to the bucket (ruling 7)
+
+**The original answers.** F1: `--dir` defaults to `digest.Dir`, `docs/fugaro-reviews` in the
+checkout, and the command writes "into the repository's own docs tree" — its `Short`, its `Long` and
+its own file's header comment all say so.
+
+**The ruling.** The default changes: **`fugaro runs digest` generates to the bucket**; **`--dir`
+still writes locally**, for a person who wants the files in a checkout.
+
+**What the first slice changes:** the command's default target, its `Short`/`Long` and the comment
+that states the old default, and the sentence in `docs/recipes.md` that describes where the report
+lands. **What it leaves:** the report's content and the layout (`internal/digest`), the four periods
+and the closed-period refusal, `--stdout`, `--json` and `--submit-draft`, the byte-identical rule
+between writers (F2), and the pattern reading — which E7 moves for every writer at once. Whether
+`--due` follows the reports into the bucket is **Open items**.
+
+**And the write this ruling leaves without a writer (Open items).** The owner's answer of
+2026-11-05 makes the job the **only** writer of `reports/` and gives launchers **read only**, so the
+default this ruling sets — the command writing a report into the bucket — cannot be done with the
+caller's own launcher credentials: they hold `runs/` and `tokens/` for writes and nothing else
+(`gcp.LauncherBucketCondition`, bucket-iam §4). The plan carries the readings under **Open items**;
+what does not change either way is `--dir`, which writes into the caller's own checkout, and the
+stored **read** the owner also ruled in — a person reading a stored report back with the same
+command.
+
+*Why:* the product's default place is the bucket (E1); a checkout is still a legitimate place for a
+person who wants the files, which is why `--dir` survives rather than being replaced.
+
+### What the rulings take, and what they leave
+
+- **They take no decision number.** An answer that amends a decision rather than allocating one takes
+  none — the shape `docs/cloud-senior-review/README.md:67` records for its own O1–O7 rulings — so
+  **D960–D979 stay as they are: D960–D971 written, D972–D979 reserved and unused.**
+- **They leave D964 (the CLI commits nothing), D965 (the user installs their repository's cadence),
+  D967 (no threshold key), D968 (the fifth rule, its source excepted by E7), D969 (what a report
+  carries), D970, D971 (the learning's two ends) and the whole of the learning channel.**
+- **They leave Check 136 where it is** (F13): a report run's own pull request is still the owner's
+  registered check. The **two** live checks the rulings add — the owner proving the prefix-limited
+  listing grant (`objectListPrefix`) lists `runs/<slug>/` **and `reports/`** while refusing the root
+  listing and `tokens/` and `cache/`, and the owner enabling the
+  reports job by the setting and reading its first stored report — are **named and not numbered**;
+  the folder holds no check block, so the task that writes each takes the number free at its merge,
+  under the register's own rule for a work that reserved none
+  (`docs/gcp-live-checklist.md:586`; `docs/run-limit-carry-over/README.md:55` and
+  `docs/project-image-catalog/README.md:132` are the same
+  shape). The register is still not touched by this design.
+
+## 6. The 2026-11-07 reconciliation: the reports job and the failures report
+
+### 6.1 The reading
+
+**The owner put this folder's work in 0.22.0 on 2026-11-07**, and asked for the release plan as a
+docs-only change: reconcile this folder's spec and the rulings of 2026-11-05 (§5, E1–E8) against the
+code on `main` **together with the failures report's own design**, and write the order the two works
+take together. **The tree read is `main` at `56c91f66`**, on 2026-11-07, with the open pull requests
+the launcher names read only for the numbers they claim (§6.3).
+
+**This section is a third refresh and it changes nothing in §1–§5.** What it adds is the union:
+[implementation-plan.md](implementation-plan.md) Part II is the plan, and this section is what it
+was reconciled against. **[spec.md](spec.md) is not rewritten** — the 2026-11-05 rulings already
+left it as the recorded request, and this round does the same.
+
+### 6.2 Findings F25–F34
+
+**F25. Exists: the failures report is designed and cut, in a document of its own.**
+`docs/design/failure-classes.md` carries the nineteen-value vocabulary (§3), the one writer (§4.1),
+the phrase table (§4.3), the legacy reader (§5), the report (§6), its decisions D1–D9 (§8), its open
+items O1–O6 (§9) and its tasks FC1–FC8 with levels, critical path and shared-files table (§10), and
+`internal/cli/docs_pr_state_test.go` pins the vocabulary, the census and the citations
+(`TestDocsFailureClassDesignPinsTheVocabulary`, `TestDocsFailureClassCensusMatchesTheRunner`,
+`TestDocsFailureClassDesignCitationsResolve`). *Consequence:* the plan adopts FC1–FC8 and re-cuts
+nothing (Part II §P1); the two documents are read together and neither is edited by this round.
+
+**F26. Exists: the two works meet first in the rules' own list.**
+`internal/digest/patterns.go`'s `RuleNames` is `[]string{RuleFlagRecurs, RuleReviewShare,
+RuleRecipeMedian, RuleHaltsHigh}` at `:37`; R4 adds a fifth, FC7 adds `failure_class_high` and
+`failure_class_new`, and R11 changes what the rules read. The reader's copy of that list is §3 of
+`plugin/skills/working/reference/periodic-reviews.md`. *Consequence:* one Go file and one skill file
+each carry three writers over three levels, and the union's ordering is what keeps them apart
+(Part II §P4).
+
+**F27. Wrong: three of the generated CLI reference's four writers do not name it in their file
+lists.** `website/content/cli-reference.md` is generated (`go run ./ee/clidoc`, the file's own
+header) and `ee/clidoc/cliref_test.go`'s `TestCliReferenceIsCurrent` requires the committed file to
+match the command tree, so **every task that adds a command, a flag or a command's own text writes
+it**. Four do: **R1** (`--due` becomes a row in `runs digest`'s flags table), **R11** (`fugaro runs
+reports`), **FC6** (`runs ls --group-by`, which the design's own list does name) and **R10** (`runs
+digest`'s `Short`/`Long`, its stored read's flag and its new default target). **The four are four
+levels apart — 1, 3, 4 and 5 — so no level holds two writers, but R1's, R11's and R10's lists do not
+name the file**, and `TestCliReferenceIsCurrent` is red from the first of those merges until the next
+regeneration. *Consequence:* three file lists each gain one file, and the file is regenerated in each
+of the four commits (Part II §P4, §P5, §P10).
+
+**F28. Exists: the two works interleave into one leveling with no task moved.**
+Part I's levels are 0: R0, R12, R13 — 1: R1, R7 — 2: R2, R4 — 3: R3, R11 — 4: R6, R8, R9 — 5: R10;
+the design's are L0: FC1 — L1: FC2 — L2: FC3 — L3: FC4, FC5 — L4: FC6, FC7 — L5: FC8. Every file the
+two share already had a level of its own in one work or the other, so the union is the two tables
+read side by side. *Consequence:* the union's leveling (Part II §P3) needs no re-leveling, and the
+only cross-work edge is R11 (3) → FC7 (4).
+
+**F29. Exists: the stored summary's shape is one writer's, and a glob in the design hides it.**
+The design's §10.2 row `internal/digest/*.go` (FC7, L4) resolves to FC7's own six files
+(`digest.go`, `render.go`, `patterns.go`, `digest_test.go`, `patterns_test.go`, `testdata`) and not
+to `internal/digest/store.go`, which R11 creates at 3 and R8 and R10 write at 4 and 5. *Consequence:*
+the union's shared-files table states which reading holds, because the glob read literally would put
+R8 and FC7 in one level on one file (Part II §P4).
+
+**F30. Exists: the reports job's writer is the one writer of the new prefix, and the class reaches a
+stored report through it.** R11's stored reader and R10's write path both go through
+`internal/digest`'s own writer, and the report's cells are a closed vocabulary. *Consequence:* the
+Failures table reaches the job's stored reports with no task of its own, and the job needs no new
+rule (Part II §P4).
+
+**F31. Exists: the 90-day record retention is what makes the legacy reader load-bearing for the job's
+first stored reports.** `deploy/terraform/gcp/modules/installation/variables.tf:112` sets
+`runs_days = 90` (F24), and `reports/` gets 18 months (E3). The job writes reports for closed periods
+over records at most 90 days old, and on the day the field ships most of those records carry none.
+*Consequence:* FC5 is not optional for the job's first stored reports (D1436).
+
+**F32. Exists: the release slot moved twice more since Part I was written.** Part I's "Release slot"
+says 0.20.0, which has shipped; `docs/release-streams.yaml` has the CLI stream's `current` at
+`0.20.3` and its `next` at `Rhino`, so 0.21.0 is Rhino's and 0.22.0 is Sloth's. The owner decided
+0.22.0 on 2026-11-07. *Consequence:* Part II §P7 states the slot, the operator entry and why the
+class field owes no migration.
+
+**F33. Exists: `fugaro runs digest` and the job write through one writer, and the class's two rules
+read a stored series.** FC7's `failure_class_new` reads a four-week window of summaries, so a stored
+report written before the field existed carries no block and is not read by it. *Consequence:* the
+rules' behaviour over the field's first weeks is a decision (D1431), and the yearly roll-up is a
+shape rather than a task (D1443).
+
+**F34. Exists: the census the plan's numbers rest on.** The decisions' highest written number on
+`main` is **D1409** and the register's highest written `## Check` section is **290**, both **at this
+reading** — §6.3 records the two works that were in flight with this one and have merged since.
+*Consequence:* §6.3's claims.
+
+### 6.3 The numbers this round takes
+
+**Decisions D1430–D1449.** `git grep -E 'D14(3|4)[0-9]'` over `main` at `56c91f66` and over the open
+pull request heads this checkout carries: **nothing writes D1430–D1449 anywhere.** The positive
+controls are that the same grep finds **D1409** written (`docs/catalog-build-context/`, the highest
+on `main` **at this reading**) and **D1410–D1429** written by `docs/api-key-review`, read as an open
+head at commit `c3562215` — the commit that also records the census below — and **merged to `main`
+since, as `0dd2b5f2` (#1819)**. **The other work in flight beside this one has landed too, and it
+does not move the reading:** the highest number written on `main` now is **D1489**
+(`docs/console-managed-screens`, merged as `7d617d27` (#1830), which holds D1470–D1489 and reserves
+D1490–D1499), and **the one occurrence of any `D143x`/`D144x` on `main` is that document's own §8
+sentence** — "The block is taken **above D1429 rather than at D1430** so that two works in flight
+cannot claim adjacent numbers and collide at their merge" — which **names** D1430 rather than writing
+a decision there, and is the deliberate boundary this block's D1430–D1449 is the other half of. So
+this block is free above every number written, and it is still the block it was read as. Above this
+folder's own **D960–D979** — which stay written and reserved exactly as the README records — the
+block **D1310–D1409** is taken by the plans that merged there, the highest being
+`docs/catalog-build-context`'s D1390–D1409.
+
+**Checks 340–349.** The register's highest written `## Check` section is **290**
+(`docs/gcp-live-checklist.md`, the mixed-credentials run). Claimed above it: **291**
+(`docs/image-env`), **292** (`docs/catalog-build-context`), **300–309**
+(`docs/stateless-orchestrator`), **310–314** (`docs/cli-output-console-graph`) and **330**
+(`docs/api-key-review`, read as an open head at `c3562215` and on `main` since as `0dd2b5f2`).
+**Nothing writes 315–329, 331–339 or 343–349**, and the one claim above this block is **360**
+(`docs/console-managed-screens`, which was in flight with this one and has merged to `main` since as
+`7d617d27` (#1830), taking its block above 340–349 rather than inside it). This round takes
+**340–342** (Part II §P8) and reserves **343–349**.
+**The register is
+still not touched**: `docs/gcp-live-checklist.md` is another work stream's file, and the task that
+implements each check writes its row and its section under the number free at that merge — the
+register's own rule for a work that reserved none (`docs/gcp-live-checklist.md:586`, the same rule
+`docs/run-limit-carry-over/README.md:55` reads from a work that took none).
+
+### 6.4 Decisions D1430–D1449
+
+**None of these is answered.** Each row carries the recommendation, the alternative with its cost,
+and an **empty owner's-answer cell** — the plan is written to the recommendation until the owner
+says otherwise, and nothing here is approved.
+
+| # | Question | Recommendation, and why | Alternative, and its cost | Owner's answer |
+| --- | --- | --- | --- | --- |
+| **D1430** | Does a stored report carry the Failures table in this release? | **Yes, in the same release as the field.** The job writes through `internal/digest`'s own writer, so the table reaches a stored report the moment FC7 lands; a release that stored reports without it writes a year of tables-less reports under an 18-month retention | The job's first stored reports carry no table, and the class reaches them a release later | |
+| **D1431** | What do the two class rules read in a stored report written before the field existed? | **Nothing — a summary without the block is not read**, which is the design's own rule, so the first weeks raise neither rule | Treat an absent block as "read the records instead" | |
+| **D1432** | Does the project aggregate carry a Failures table across the repositories? | **Yes — the table, and no rules**, which is E7's own split (the aggregate has no rules in the first slice) | Figures only, no table | |
+| **D1433** | Does the reports job's own run carry a class, and does the aggregate count it? | **The job's run is a run like any other and carries a class like any other** (FC2 writes it); **the aggregate counts the repositories' runs and not the job's own** | Exclude the job's runs from the record's vocabulary | |
+| **D1434** | Which is the reader of record when a stored report and `runs ls --group-by` disagree? | **Neither is**: the report is the period's frozen figures, the listing is the window's live ones, and the report's header names the period it closed | The listing refuses to print a class the stored reports disagree with | |
+| **D1435** | What does a class this build does not know print as, in a stored report? | **`unclassified`** — the digest's own closed-cell rule (FC5's last bullet) | The value is echoed | |
+| **D1436** | Is the legacy reader load-bearing for the job's first stored reports? | **Yes** (F31): most records a first report reads predate the field | Store the first reports with the field only | |
+| **D1437** | Does the job's release wait for the whole failures report, or only the field and the table? | **The whole of it, FC1–FC8.** The union's leveling costs neither work a re-cut (§P3), and shipping the job without the rules would put an 18-month retention over a series nothing reads | The job in 0.22.0 and the class in 0.23.0 | |
+| **D1438** | `website/content/cli-reference.md` is generated and both works change it: how many regenerations? | **One per writer, each in its own commit and its own level — four** (R1 at 1, R11 at 3, FC6 at 4, R10 at 5) — F27 | One task regenerates it last, and the reference is stale between the others | |
+| **D1439** | Does the console ride this release? | **No.** The contract's two rows are FC8's; a console column or chip is named and left to its own task (the design's §6.3) | The console task rides this release | |
+| **D1440** | Does the stored read of `fugaro runs digest` print the Failures table? | **Yes — the stored read prints what `--stdout` prints**, and after FC7 that includes the table | The stored read prints the report exactly as it was stored, byte for byte | |
+| **D1441** | Does the opt-in commit carry the class into a repository? | **Yes — it commits the stored reports as they are, table and all.** The committed report's reader is the repository's own agent and reviewer (D969), and the table is figures and a closed vocabulary | The committed copy drops the table | |
+| **D1442** | May a *stored* report name run ids (the design's O4, read through E1)? | **Yes.** The stored report is the same document as the committed one, and the id is what makes a flagged row actionable with `fugaro diagnose RUN`; what E1 changed is where it lives, not what it carries (D969 stands) | The stored copy renumbers its runs the way the outgoing draft does | |
+| **D1443** | A yearly report rolls twelve stored monthly reports up: does the class table roll up with them? | **Yes — the twelve months' counts summed**, read from the stored summaries' blocks, which is the shape the yearly report already uses for its figures | The yearly report re-derives from the records | |
+| **D1444** | Does `--due` gain a line for the class? | **No.** `--due` says a period has no report (D962, R1); the class is a reading of a report that exists | A due line for "the period's failures are unread" | |
+| **D1445** | Does the shipped `run-digest` recipe's report carry the table (Open item 4)? | **Yes, and it is the same writer** — the recipe is the per-repository path the rulings did not name, and a table it omitted would be a second report shape | Reroute the recipe through the bucket in this release | |
+| **D1446** | Do the two class rules' thresholds differ for a stored series and a committed one? | **No — one constants block in `internal/digest`** (D7), read by both | A project-level override of a rule's threshold | |
+| **D1447** | Does the stored report's table obey `runs ls --group-by`'s refusals (no page, no window)? | **The table is a total by construction** — a period is closed — so the refusals are the listing's own and the report needs none | The report prints the table's share against a window it names | |
+| **D1448** | Does the aggregate count the reports job's own runs? | **No** (D1433's other half): the aggregate is about the project's work, and the job's runs are the machinery that reports it | Count them | |
+| **D1449** | Where does the rules' document live — FC8's own either/or? | **This folder's reconciliation keeps the prose and `plugin/skills/working/reference/periodic-reviews.md` §3 keeps the reader's list**, so FC8 writes **`docs/periodic-reviews/reconciliation.md`** and the skill file, and neither `docs/task-governance/reconciliation.md` nor this folder's README | The rules' documents stay split between the two designs' folders | |
+
+**Two of the twenty are the plan's own structure rather than a product question** — D1437 (the two
+works ship in one release) and D1438 (the generated file is regenerated once per writer) — and both
+are listed because the plan acts on them. **One is the only place the union's file table depends on an open
+answer**, and it has three candidates rather than two: FC8's own file list says "the periodic-reviews
+folder's own document — the one that owns the rule list, whichever the tree says by then", which can
+be read as **`docs/periodic-reviews/reconciliation.md`** (what the recommendation names),
+**`docs/task-governance/reconciliation.md`**, or **`docs/periodic-reviews/README.md`**. **The first
+two are free and the third is not**: this folder's reconciliation is written by no task of the
+release and neither is the task-governance folder's document, so either of those holds the leveling —
+while this folder's **README is R6's at level 4**, so the answer that sends FC8 there adds a second
+writer to a file, one level above R6, and Part II §P4 lists that as a conditional row rather than
+leaving it implicit.

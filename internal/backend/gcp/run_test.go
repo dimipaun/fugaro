@@ -115,14 +115,18 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	// already holds: the installation's own five (backend.PlatformEnvNames —
 	// the bucket, the backend, the project name, the project ID and the
 	// region, which internal/infra's platformEnv writes into the deployed
-	// job) and the two Cloud Run fills in itself, which the codec reads back
-	// to say which job and execution this is (internal/backend's codec.go).
-	// The override is merged into that environment rather than replacing it,
-	// so each of these was applied over the value the run reads its own
-	// identity and configuration from — the reservation the seam documents,
-	// which Batch asks for the same list (backend.ReservedEnvNames) and this
-	// backend made for FUGARO_RUN alone (the review finding on this change).
-	for _, name := range append([]string{"CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION"}, backend.PlatformEnvNames...) {
+	// job), the two Cloud Run fills in itself, which the codec reads back
+	// to say which job and execution this is (internal/backend's codec.go),
+	// and FUGARO_IMAGE_ENTRY, the stamp that says the operator's catalog chose
+	// this image and that the runner gates the image's own variables on
+	// (docs/image-env, D1371) — a launcher entry naming it would hand an image
+	// a stamp its catalog never gave it. The override is merged into that
+	// environment rather than replacing it, so each of these was applied over
+	// the value the run reads its own identity and configuration from — the
+	// reservation the seam documents, which Batch asks for the same list
+	// (backend.ReservedEnvNames) and this backend made for FUGARO_RUN alone
+	// (the review finding on this change).
+	for _, name := range append([]string{"CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION", backend.ImageEntryEnv}, backend.PlatformEnvNames...) {
 		before := len(fr.Requests())
 		spec.Env = []string{name + "=someone-elses-" + strings.ToLower(name)}
 		if _, err := b.Launch(ctx, spec); !errors.Is(err, backend.ErrRejected) {

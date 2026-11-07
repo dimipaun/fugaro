@@ -600,7 +600,25 @@ type StageTiming struct {
 	// one stage of a cascade run can hold both, so Cost.ModelNotionalUSD
 	// says how much of the run's figure was notional and this says where.
 	ModelNotionalUSD float64 `json:"model_notional_usd,omitempty"`
+	// Credential names the credential that served this stage when it was not
+	// the run's own: CredentialOAuth for a stage a stage-scoped Claude OAuth
+	// account served, which is the one stage of a mixed run whose calls went
+	// straight to Anthropic instead of through the gateway
+	// (docs/design/mixed-credentials.md §5, §11). It is what makes this
+	// stage's ModelUSD readable: the figure is Claude Code's own, not the
+	// gateway's ledger, which is why the stage has no Calls either, and why
+	// ModelNotionalUSD equals ModelUSD for it. Empty for every stage the
+	// run's own credential served -- which is every stage of every run but a
+	// mixed one's two -- so a reader must not read the empty value as "no
+	// credential".
+	Credential string `json:"credential,omitempty"`
 }
+
+// CredentialOAuth is StageTiming.Credential for a stage the run's stage-scoped
+// Claude OAuth account served (docs/design/mixed-credentials.md §5): the one
+// value the field carries today, and the word the design's record contract
+// names it by.
+const CredentialOAuth = "oauth"
 
 // Switch is one entry of a run's switch log (D140, C1.16): the run's cascade
 // moved its calls from one credential to another, and the credentials
@@ -649,9 +667,11 @@ type Record struct {
 	// it — the runner's stage-start resolution: the account a
 	// stages.<stage>.claude_account override or default_claude_account names,
 	// and the one a failover took over with — so that writer needs no version
-	// move of its own. Nothing writes the field and nothing reads it: a map of
-	// account names is a new shape, and putting it on a screen goes through
-	// the console's redactor, which is a task of its own. Additive:
+	// move of its own. The runner writes it as each stage is given its
+	// environment (recordStageAccount, internal/runner/accountchoice.go), and
+	// nothing reads it yet: a map of account names is a new shape, and putting
+	// it on a screen goes through the console's redactor, which is a task of
+	// its own. Additive:
 	// OAuthAccount keeps the meaning it has (the account the run used last), a
 	// record written before this field decodes unchanged, and the format's
 	// version does not move (schemas/result.schema.json declares the

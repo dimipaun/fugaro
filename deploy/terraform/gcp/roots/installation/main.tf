@@ -47,6 +47,7 @@ module "installation" {
   enable_budget             = var.enable_budget
   history                   = var.history
   coordinator               = var.coordinator
+  mcp_server                = var.mcp_server
   catalog_check             = var.catalog_check
   credentials_service       = var.credentials_service
   project_secrets           = var.project_secrets
@@ -83,5 +84,43 @@ module "project" {
   # bucket grant created before it would fail with a 404, so this module
   # waits for the installation that creates it (internal/cli's init note:
   # "the apply may just have created the runs bucket").
+  depends_on = [module.installation]
+}
+
+# The review-only variants of those jobs (design docs/cloud-senior-review,
+# CSR7): one job and one job service account per (profile, provider, account)
+# the coding set deploys, named with credsvc's review suffix. They are the
+# containers the project's own senior review runs on, so they hold no
+# credential of the installation's: their secret_env is empty and the
+# installation's secret containers are deliberately NOT handed to this module
+# (`secrets = {}` below), which is the O1 ruling of 2026-11-01 as a plan-level
+# fact — a variant offered no container cannot be granted one, whatever a later
+# edit writes into project_review_jobs. What such a job is given instead is the
+# credentials service's address in its own environment (internal/infra's
+# ProjectReviewJobs), from which it fetches the run's read-only installation
+# token by name.
+#
+# A module instance of its own rather than entries in the coding set: the
+# coding set is the account axis every consumer computes the job set with, and
+# the credentials service's admitted accounts are derived from that axis rather
+# than from a second job set (credsvc.ReviewJobAccountsFor). ProjectJobs and
+# ProjectReviewJobs are both computed by fugaro update, and nothing here derives
+# a name, an env or a condition.
+module "project_review" {
+  source   = "../../modules/project"
+  for_each = var.project_review_jobs
+
+  project         = var.project
+  fugaro_project  = var.fugaro_project
+  region          = var.region
+  job             = each.value
+  runs_bucket     = var.runs_bucket
+  secrets         = {}
+  job_runner_role = module.installation.role_ids.job_runner
+  launchers       = var.launchers
+  operators       = var.operators
+
+  # As module.project above: the bucket grant waits for the installation that
+  # creates the bucket it names.
   depends_on = [module.installation]
 }

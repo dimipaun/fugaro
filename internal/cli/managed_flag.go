@@ -191,7 +191,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// operator's credentials and could run this command itself, so this is a
 	// mitigation and not a barrier (AgentAdvice) — but it is the property
 	// D58's answer is built on, and it carries a test.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was written: fugaro managed flag records the owner's own decision about a GCP project with the operator's credentials, so it is run by a person: %s", initflow.AgentRefusal(m))
 	}
 	// And a run's own process, whatever its agent's markers: the plan refuses
@@ -400,6 +400,7 @@ func confirmTypedGCPProject(cmd *cobra.Command, gcpProject string) error {
 	if strings.TrimSpace(line) != gcpProject {
 		return userErr("not confirmed (the GCP project ID was not typed exactly); nothing was written")
 	}
+	noteIDETerminalCmd(cmd, cmd.OutOrStdout())
 	return nil
 }
 

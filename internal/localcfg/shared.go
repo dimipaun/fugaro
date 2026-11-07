@@ -24,7 +24,11 @@ const SharedMaxBytes = 64 << 10
 // trust anchor (design docs/design/named-oauth-tokens.md §3: never
 // published, never settable from fugaro.yaml or the project layer, so it
 // must not round-trip through the runs bucket either, which any launcher
-// with objectAdmin on it can write), secret_rotation_days and secret_expires
+// with objectAdmin on it can write) and the account-choice keys
+// (default_claude_account:, stages: and claude_account_auto:, local-only for
+// claude_accounts' own reason — a key that could name an account, or turn on
+// Fugaro's own choice of one, would be a way around that allow-list — and
+// published to the policy node instead), secret_rotation_days and secret_expires
 // (the same reasoning again: they are the operator's own record of when the
 // credentials they hold are rotated and when they expire, which no launcher
 // should be able to write for everyone), update_check (same reasoning: a
@@ -77,6 +81,7 @@ func (c *Config) Shared() *Config {
 	s.Routing = nil
 	s.ClaudeAccounts = nil
 	s.ProjectSecrets = nil
+	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same
 	// way ProjectSecrets does: `fugaro project policy publish` copies it into
 	// the policy node, which the runner reads and fails closed on. A launcher
@@ -125,6 +130,29 @@ func (c *Config) Shared() *Config {
 	// on, and ParseShared refuses the key besides — a shared config carrying
 	// it was not written by the converge.
 	s.ImageCatalog = nil
+	// The account-choice keys are local-only for claude_accounts' own reason
+	// (docs/accounts-add/spec.md §11.1): a published layer that could name an
+	// account would be a way around that account's allow_data_to, which is the
+	// operator-only trust anchor T1 makes it. They travel to a run through the
+	// policy node instead — the owner writes it and the runner fails closed on
+	// it — and ParseShared refuses the keys besides, because a shared config
+	// carrying one was not written by the converge.
+	s.DefaultClaudeAccount = ""
+	s.ClaudeAccountStages = nil
+	s.ClaudeAccountAuto = false
+	// The workspace keys are local-only, and the pin is the sharpest of them:
+	// the shared file is written into the runs bucket, which any launcher of
+	// the project can write, so a launcher who could put a workspace_pin there
+	// would be aiming this project's exchange — and the assertion key it
+	// verifies against — at a party of its choosing. The membership key and
+	// the owner's member table are dropped with it: a shared file that could
+	// name a workspace would be one that could join this project to a group
+	// nobody here chose, and ParseShared refuses all four keys besides,
+	// because a shared config carrying one was not written by the converge.
+	s.Workspace = ""
+	s.WorkspacePin = WorkspacePin{}
+	s.WorkspaceMembers = nil
+	s.WorkspaceCap = nil
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }

@@ -144,7 +144,7 @@ func newCoreRoot() *cobra.Command {
 		Short:         "Fleeting cloud workers for coding agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// Version is what makes cobra add the root's `-v, --version` flag and
+		// Version is what makes cobra add the root's `--version` flag and
 		// answer it, with the template below. Cobra answers it inside execute,
 		// after the flag parse and before PersistentPreRun, so `fugaro
 		// --version` prints the version and exits 0 without running anything:
@@ -157,9 +157,10 @@ func newCoreRoot() *cobra.Command {
 		// --version run` would resolve `run` and run it. NormalizeVersionArgs
 		// is what closes that gap, at the argv boundary.
 		//
-		// The shorthand `-v` is free: cobra only takes it when the root's own
-		// flag set does not already, and no command in this tree defines a `v`
-		// shorthand (the only shorthand anywhere is `-f` on `logs --follow`).
+		// The flag carries no `-v` shorthand: the persistent --verbose below
+		// takes it, and cobra gives its version flag a shorthand only when one
+		// is free. A leading `fugaro -v` is the version all the same, because
+		// NormalizeVersionArgs rewrites it before cobra parses anything.
 		Version: Version,
 		// The plugin staleness line (design 4.5) and the update-check kickoff
 		// (docs/gcp-setup.md "Staying up to date"). No command defines its own
@@ -186,9 +187,22 @@ func newCoreRoot() *cobra.Command {
 		},
 	}
 	root.SetVersionTemplate(versionTemplate)
+	// The persistent --verbose (-v) every subcommand takes (D1353): the
+	// documented form is `fugaro update -v`. It is declared here, before
+	// cobra's own initializers run inside Execute, so the root's version flag
+	// does not claim `-v` first -- and a leading `fugaro -v` is still the
+	// version, because NormalizeVersionArgs rewrites it at the argv boundary.
+	root.PersistentFlags().BoolP(verboseFlag, "v", false, "print the run's full output as it goes, not one line per step")
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newPairCmd(), newUserCmd(), newModelsCmd(),
+		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newPairCmd(), newUserCmd(), newModelsCmd(), newWorkspaceCmd(),
+		// The independent review's own command. It is registered like any other
+		// core command, and its launch stays refused until the credentials
+		// service admits a review caller (internal/cli/review.go's
+		// checkReviewJobAdmitted): a name that answers and then refuses is a
+		// sentence a person can read, and a name the tree does not hold is a
+		// command nobody can type.
+		newReviewCmd(),
 		// The credentials service's own entry point: hidden, and the only
 		// thing the service's image runs (credentials_serve.go, plan task
 		// C1.14). It is registered like every other command so `fugaro

@@ -39,6 +39,14 @@ type EnvSpec struct {
 	Secrets     []string          // declared workflow secret variables, passed through
 	Set         map[string]string // variables Fugaro sets, such as FUGARO_STATE_DIR
 	PathPrepend string            // directory put first on PATH
+	// ImageEnv are the variables the operator's own catalog image declares,
+	// already narrowed by the caller (runner.imageEnv): a name here is dropped
+	// if it is reserved, and it is written before everything Fugaro writes, so
+	// nothing an image sets can override the routing, the auth, a declared
+	// secret or a FUGARO_* name (docs/image-env, reconciliation D1370-D1374).
+	// Nil -- the feature off -- for a job whose image the operator's catalog
+	// did not choose, which is every job that carries no stamp.
+	ImageEnv map[string]string
 	// Gateway, when set, points Claude Code at Fugaro's gateway: the agent
 	// gets the gateway's URL and per-run token, never the real model
 	// credential (see GatewayVars). It is an error with auth: oauth.
@@ -68,6 +76,13 @@ type EnvSpec struct {
 // BuildEnv builds the agent's environment from the runner's (parent), keeping
 // only allowlisted variables, the auth variables and declared secrets. It
 // returns the secret values so transcripts can be redacted.
+//
+// What it builds is the environment of the run's own stages. A stage that runs
+// on a stage-scoped Claude OAuth account instead gets one built from this one
+// (OAuthStageEnv), which is what keeps the coder's own environment an
+// allow-list: the account's token is in no environment this function returns,
+// whatever the runner's own environment holds
+// (docs/design/mixed-credentials.md §11).
 func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err error) {
 	p := map[string]string{}
 	for _, kv := range parent {
@@ -95,6 +110,22 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		// in Task 8's config plumbing, so this fails closed until then.
 		if v, ok := p["DOCKER_HOST"]; ok {
 			out["DOCKER_HOST"] = v
+		}
+	}
+	if len(spec.ImageEnv) > 0 {
+		// The variables the operator's own catalog image declares, written
+		// before the auth switch, the declared secrets, spec.Set and the
+		// gateway: nothing an image sets can override the routing, the auth, a
+		// declared secret or a FUGARO_* name (D1374). The caller has already
+		// narrowed the set (runner.imageEnv); the filter is applied again here,
+		// next to the allow-list it protects, so a caller that hands this map
+		// over unnarrowed still cannot reach a reserved name or one a shell
+		// cannot express (D1372).
+		for k, v := range spec.ImageEnv {
+			if config.ReservedEnv(k) || !config.EnvNameRE.MatchString(k) {
+				continue
+			}
+			out[k] = v
 		}
 	}
 	for _, k := range spec.Secrets {
@@ -232,6 +263,50 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		env = append(env, k+"="+out[k])
 	}
 	return env, secretValues, nil
+}
+
+// gatewayRouteVars are the variables GatewayVars routes Claude Code at the
+// gateway with: the address its calls go to and the credential it presents
+// there. A stage that runs on a Claude OAuth credential of its own carries
+// none of them (OAuthStageEnv), and its calls go to Anthropic's own endpoint.
+var gatewayRouteVars = []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"}
+
+// OAuthStageEnv returns the environment of a stage that runs on a Claude
+// OAuth credential of its own rather than on the run's gateway
+// (docs/design/mixed-credentials.md §11, the owner's B0 ruling): runEnv, the
+// environment BuildEnv built for the run's own stages, with the gateway's
+// routing dropped, any credential under the token's own name dropped with it,
+// and the account's token set. What is left is the stage's
+// whole environment — the base variables, the declared secrets and the
+// directory variables are the run's, and the model the stage runs reaches
+// Claude Code as the --model flag (Args), never as a routing variable. The
+// caller registers the token for redaction for the whole run, not here.
+//
+// A token this build could not redact is refused rather than used, the way
+// BuildEnv refuses one: the alternative would be a stage that runs without the
+// credential its configuration gave it, which is the one thing the ruling
+// says a review stage must never do.
+func OAuthStageEnv(runEnv []string, token string) ([]string, error) {
+	switch {
+	case token == "":
+		return nil, fmt.Errorf("a stage that runs on a Claude OAuth account needs CLAUDE_CODE_OAUTH_TOKEN in the runner's environment, and this run holds none: the account's token is mounted into the runner's job — or, for a local run, put in the environment the runner was started with — before the run begins, and this run was given no token to run the stage on")
+	case len(token) < 4:
+		return nil, fmt.Errorf("CLAUDE_CODE_OAUTH_TOKEN is shorter than 4 bytes, so it cannot be redacted safely")
+	}
+	out := make([]string, 0, len(runEnv)+1)
+	for _, kv := range runEnv {
+		switch k, _, ok := strings.Cut(kv, "="); {
+		case !ok:
+		case slices.Contains(gatewayRouteVars, k), k == "CLAUDE_CODE_OAUTH_TOKEN":
+			// Appended below, once: what this stage presents is the account's
+			// token, and a second entry under the same name is an answer to
+			// which credential it presents that no reader agrees on (a
+			// getenv takes the first match, a map the last).
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "CLAUDE_CODE_OAUTH_TOKEN="+token), nil
 }
 
 // Gateway is where Claude Code sends its model calls instead of the

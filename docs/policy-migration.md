@@ -47,13 +47,27 @@ deleting it:
    it read, after the project's name is typed at a real terminal (or `--yes`
    where a confirmation is enough for the operator; a run that is still in
    flight stops the write unless `--yes` is passed, exactly as `publish
-   --delete` does with it). The one write `fugaro update`'s `--yes` never
+   --delete` does with it — except in a **managed** project, where the runs in
+   flight are printed as a note and the write proceeds, and in a coding agent's
+   session, which keeps the refusal). The one write `fugaro update`'s `--yes` never
    confirms is the one that leaves the node **looser** than the node it replaces
    — a ceiling raised or removed, a wider `budget.allowed_models` — because that
    is the node every run of the project is admitted by: the stage asks for the
    project's name typed at a real terminal, names the member that loosens, and
    refuses a script or a coding agent's session with the command to run at a
-   terminal instead (`fugaro update`). The comparison `settings set` makes
+   terminal instead (`fugaro update`). **In a managed project a person at a real
+   terminal is not asked for it**: the stage prints one line saying what the
+   write does and the member that loosens is read in the diff above it, because
+   the project manages itself without these prompts — the owner's ruling of
+   2026-11-06. A project's **first** node is that case too: the write replaces
+   and deletes nothing, its document is entirely the person's own local config,
+   and the diff above the note is the first publish's own, naming every member
+   the node is created with. The first publish that keeps the typed name is the
+   one whose allow-list admits no repository, because that node stops every run
+   of the project from the moment it lands. Every other session keeps the typed
+   name as well: `--ask` (the flag that puts the prompts back) and a coding
+   agent's session among them, an unmanaged project, and a run with no terminal,
+   which is refused as it always was. The comparison `settings set` makes
    decides it, so a ceiling raised is asked about the same way whichever of the
    two doors writes it — and `settings set|unset` themselves take `--yes` for
    that widening outside a coding agent's session, the owner's ruling of

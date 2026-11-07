@@ -320,7 +320,7 @@ func (s *computeStage) prepare(ctx context.Context) error {
 	}
 	// The installation must exist and be readable: its outputs are this
 	// root's inputs, and its state bucket is where this root's state goes.
-	outs, err := e.r.readOutputs(ctx, e.c, e.t, e.wd, e.spec)
+	outs, err := e.r.readOutputs(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 	if err != nil {
 		return err
 	}

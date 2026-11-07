@@ -357,6 +357,11 @@ const (
 	docModels = "docs/multi-model.md"
 	docRigor  = "docs/rigor-modes/spec.md"
 	docImages = "docs/project-image-catalog/spec.md"
+	// The workspace keys' document: the design that decides the membership
+	// key, the pin and the owner's member table (docs/workspaces/spec.md §2,
+	// §5 and §6). The folder's own README, reconciliation and plan are not the
+	// document a key's meaning is stated in, so the row points at the spec.
+	docWorkspace = "docs/workspaces/spec.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -645,6 +650,7 @@ var localRows = []Row{
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
 
 	loc("workflow_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
+	loc("workflow_secrets.*.proxy", "none: refused, D1275", "secrets", docSetup),
 
 	loc("job_profiles.*.provider", "none", "project", docSetup),
 	loc("job_profiles.*.cpu", "the workflow's own", "project", docSetup),
@@ -683,7 +689,12 @@ var localRows = []Row{
 
 	loc("review_floor", "none: no floor is added", "rigor floor", docRigor),
 
-	loc("verifier_accounts", "none: nobody may ask the credentials service to verify a signature", "secrets", docSetup),
+	// Unset is not "nobody" on an installation that has opted into the
+	// credentials service: the module answers an absent list with its own
+	// verifier account, the identity the installation's runs verify as (CSR14,
+	// verifier.tf), so the row says both states rather than the one that is
+	// only true while the service is off.
+	loc("verifier_accounts", "nobody may ask the credentials service to verify a signature, except on an installation whose credentials service is deployed, where the installation's own verifier account may", "secrets", docSetup),
 
 	// The image catalog decides which image a run's job executes in, so it is
 	// the operator's own list in the local file like the verifier list above,
@@ -705,6 +716,26 @@ var localRows = []Row{
 	loc("repos.*.workflows", "every workflow the repository defines", "project", docSetup),
 	loc("repos.*.github_app_id", "none", "project", docSetup),
 	loc("repos.*.vertex", "false", "project", docSetup),
+
+	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
+	// them local-only: the pin is the member's own trust and the member table
+	// is the workspace owner's own declaration, and a launcher who could write
+	// either into the shared file could aim this project's exchange and this
+	// project's database grant (internal/cli/sharedcfg.go's sharedForbidden).
+	// Their owner is the `fugaro workspace` family, so the generic writer
+	// refuses them (D853) — a member entry and a pin are written whole by the
+	// commands that know what the four values have to agree about.
+	locLocal("workspace", "this project is a member of no workspace", "workspace", docWorkspace),
+	locLocal("workspace_pin.firebase_project", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.issuer", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.assertion_key", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.service_account", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_members.*.repos", "the member contributes no repository", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.firebase_project", "none", "workspace", docWorkspace),
+	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
+	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
+	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in

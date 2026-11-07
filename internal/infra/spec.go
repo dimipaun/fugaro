@@ -77,13 +77,26 @@ const (
 	// so the constant lives there (runner.CheckoutEnv), the same way the
 	// budget variables do.
 	CheckoutEnv = runner.CheckoutEnv
-	// RemoteEnv, set to the repository's credential-free clone URL on a
-	// checkout: clone or checkout: shared workflow's job (and on no other):
-	// the job's image carries no checkout, so fugaro exec clones one from
-	// this URL — its --remote flag defaults to it (runner.RemoteEnv).
-	// Without it the clone job would have no remote to clone at all (review
-	// C1).
+	// RemoteEnv, set to the repository's credential-free clone URL on a job
+	// whose image carries no checkout of this repository: a checkout: clone
+	// or checkout: shared workflow's job, and a job whose image is a
+	// prebuilt catalog entry. fugaro exec clones one from this URL — its
+	// --remote flag defaults to it (runner.RemoteEnv) — and without it such
+	// a job has no remote to clone at all: a clone job fails bootstrap with
+	// "this job has no repository to clone", a prebuilt entry's with "no git
+	// checkout and no remote to clone" (#1752, review C1).
 	RemoteEnv = runner.RemoteEnv
+	// ImageEntryEnv, set to the name of the project image_catalog entry a
+	// job's image was deployed from, on a job whose image the catalog chose
+	// — prebuilt and built alike — and on no other (docs/image-env,
+	// reconciliation F5/F6, D1371). It is the fact that says where the run's
+	// image came from: a catalog entry built from a Dockerfile is
+	// indistinguishable from a repository's own derived image, so the
+	// deploy's knowledge of the entry (WorkflowSpec.CatalogEntry, which is
+	// json:"-" and stays in this process) has to travel into the container
+	// for the runner to have it. The runner reads it, so the constant lives
+	// there (runner.ImageEntryEnv), the way CheckoutEnv and RemoteEnv do.
+	ImageEntryEnv = runner.ImageEntryEnv
 )
 
 // The installation-identity env vars platformEnv and the vertex branch of
@@ -819,12 +832,13 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 // instead of being refused, and the two refusals of §3.3 are conditions of
 // the project's configuration rather than of one run.
 //
-// The repository's own image: or dockerfile: block is the override and never
-// reaches the catalog (D1155 item 1): its job runs the per-repository image
-// this spec builds, exactly as it did before the catalog existed, which is
-// what catalog.Applies decides for it — and what the same predicate decides
-// for the launcher, so the two cannot disagree about which jobs are the
-// catalog's.
+// Which workflows reach this at all is catalog.Applies, the same predicate the
+// launcher judges the deployed job's image by, so the two cannot disagree about
+// which jobs are the catalog's.
+//
+// The entry the rule chose is then held to D1191: a baked job's image has to
+// hold this repository's checkout, which only an entry a Fugaro build writes
+// can promise, so a prebuilt one is refused here rather than deployed.
 //
 // The backend is the installation's own, read from the config and not written
 // as a constant: the docker rule is a rule about the backend the job will run
@@ -844,11 +858,58 @@ func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry,
 	if err != nil {
 		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
 	}
+	// Which jobs carry a baked checkout is asked as the pair's complement and
+	// not as equality with baked: clone and shared are the two kinds whose
+	// image holds no repository source — the same pair the clone shape's own
+	// writer asks below — and every other value, the empty one a config that
+	// never met the loader's defaults carries included, is a job the runner
+	// provisions as baked. Asking it as equality would leave that value
+	// unjudged here and deploy the job this rule exists to stop.
+	bakedCheckout := w.Checkout != config.CheckoutClone && w.Checkout != config.CheckoutShared
+	if bakedCheckout && !slices.Contains(builtSourceKinds, choice.Entry.Source.Kind) {
+		return config.Entry{}, nil, false, unbuiltOnBaked(name, choice.Entry)
+	}
 	var warnings []string
 	if choice.Warn != "" {
 		warnings = append(warnings, choice.Warn)
 	}
 	return choice.Entry, warnings, true, nil
+}
+
+// builtSourceKinds are the catalog source kinds a Fugaro build writes an image
+// from (PIC4): a Dockerfile at a repository or inline in the catalog. The list
+// is what is built rather than what is not, so a kind added to the catalog
+// later is refused by D1191's rule until someone states that a build writes it.
+// That is the direction the failure is safe in: the list lagging behind a kind
+// the catalog gains refuses a configuration by name, and the sentence names
+// both ways out, where the opposite list would hold a kind to be built that no
+// build in this installation writes — the shape D1191 refuses.
+var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.SourceInline}
+
+// unbuiltOnBaked is D1191's refusal, raised where the job spec is built and not
+// by the job (F14). It names the entry, what it is built from and the two ways
+// out, because that is the choice the person reading it is making: run a
+// clone-shaped job, which clones the repository at launch instead of carrying
+// it, or give the workflow an entry this installation can build. The clone half
+// says which keys it costs — a clone workflow may carry neither image_name: nor
+// needs: (internal/config's own refusal) — and the entry half says the workflow
+// has to be pointed at the entry, because a pin or the project's default would
+// keep choosing the one being refused.
+//
+// The refusal is the design's premise (reconciliation §D1191), and not a claim
+// about one job: what such a job does is decided by the same writer that marks
+// its checkout kind, and this tree's writer gives the remote to clone and shared
+// only, so a baked job whose entry is prebuilt holds no checkout and no remote
+// and its first minute fails at bootstrap (gitops.OpenOrClone: "has no git
+// checkout and no remote to clone"). A tree that also writes the remote for a
+// prebuilt entry makes the same shape run by cloning at launch. Either way what
+// the refusal costs is not that job's: fugaro setup and fugaro update --repo
+// build the repository's job specs through this path, so a repository whose
+// workflows carry such a pin meets this sentence there and edits the workflow or
+// the catalog.
+func unbuiltOnBaked(workflow string, e config.Entry) error {
+	return userErr("workflow %s: the catalog entry %s has source kind %s, which Fugaro builds no image from, so its image holds no checkout of this repository — and a checkout: %s job runs an image that holds one; use checkout: %s, which cannot carry image_name: or needs:, or point the workflow at a catalog entry Fugaro builds (fugaro image add <name> --dockerfile <owner/name:path> --tags <tags>)",
+		workflow, e.Name, e.Source.Kind, config.CheckoutBaked, config.CheckoutClone)
 }
 
 // Workflow is the spec of one workflow of the repository, its default
@@ -902,12 +963,12 @@ type SecretMount struct{ Logical, Env string }
 
 // SecretMounts is what the job of workflow name, for Claude account token
 // (w) mounts, in order: the git provider's credential (gitSecret), the one
-// Claude credential agent.auth names (none for vertex; token's own derived
-// secret, config.ClaudeAccountSecret, for oauth), the keys of the model
+// Claude credential agent.auth names — none for vertex, token's own derived
+// secret (config.ClaudeAccountSecret) for oauth, and for an api-key job the
+// stage account's token when a stage key named one — the keys of the model
 // providers the owner's local config allows repo to send code to (only with
-// api-key: a run does not mix credentials), and the workflow's own secrets.
-// It is the one place that decides it, for the job's spec and for the
-// secrets init asks for.
+// api-key), and the workflow's own secrets. It is the one place that decides
+// it, for the job's spec and for the secrets init asks for.
 //
 // A provider's key is the runner's, for its gateway, and only a repository
 // the owner allowed to send code there gets it, as a variable the agent's
@@ -942,6 +1003,11 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 				out = append(out, SecretMount{p.Secret, p.SecretEnv()})
 			}
 		}
+		// The one mix the owner's B0 ruling admits: the stage account's own
+		// job mounts its token (mixedStageAccounts).
+		if slices.Contains(mixedStageAccounts(cfg, lc, repo), token) {
+			out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
+		}
 	}
 	for _, s := range w.Secrets {
 		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
@@ -970,12 +1036,22 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 
 // WorkflowAccounts are the Claude accounts each of repo's workflows gets a
 // job for: under oauth every account config.AllowedClaudeAccounts allows repo
-// (the default first), and the default alone under every other auth. RepoSpec
+// (the default first), and mixedStageAccounts' accounts beside the default
+// under api-key, and the default alone under every other auth. RepoSpec
 // deploys one job per (workflow, account) from it, and RequiredSecrets reads
 // the same list, so the two cannot disagree about which tokens are mounted.
 func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
-	if cfg.Agent.Auth == "oauth" {
+	switch cfg.Agent.Auth {
+	case "oauth":
 		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	case "api-key":
+		out := []string{config.DefaultClaudeAccount}
+		for _, name := range mixedStageAccounts(cfg, lc, repo) {
+			if !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+		return out
 	}
 	return []string{config.DefaultClaudeAccount}
 }
@@ -1089,13 +1165,43 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
 	}
+	// The image's origin, written for the run on EVERY workflow job: the
+	// catalog entry this job's image came from, and empty on a job the
+	// catalog did not choose (a repository-built image, a checkout: clone or
+	// shared job, whose entry is empty, catalog.Applies refusing both). The
+	// key is written even when empty because the runner reads os.Environ,
+	// which includes a derived image's own ENV: a repository Dockerfile that
+	// sets FUGARO_IMAGE_ENTRY would otherwise run with a stamp the deploy
+	// never wrote, whereas a key the job sets overrides whatever the image
+	// holds. A run reads an empty stamp as "no entry" and passes none of its
+	// image's own variables, which is the fail-closed direction; a job
+	// deployed before this variable existed behaves as it did, and stays open
+	// to that forgery, until its next `fugaro update --repo .` redeploys it:
+	// the repository stage, which a plain `fugaro update` does not run
+	// (docs/image-env, reconciliation D1371).
+	ws.Env[ImageEntryEnv] = entry.Name
 	// One writer for the job's clone shape: a job whose image holds no
-	// repository's source — clone, which runs the installation's base image,
-	// and shared, which runs the dependency layer alone — carries the two
-	// markers the run needs to fetch the source itself, and the value is the
-	// workflow's own kind, which is what the runner switches on.
+	// checkout of this repository carries the markers the run needs to fetch
+	// the source itself, and the value of the kind marker is the workflow's
+	// own kind, which is what the runner switches on.
+	//
+	// The two markers are not one set. FUGARO_CHECKOUT goes on the two kinds
+	// whose image is not built from this repository at all — clone, which
+	// runs the installation's base image, and shared, which runs the
+	// dependency layer alone — and on no other, because it is what makes the
+	// run install the checkout's own mise tools and clone blobless.
+	// FUGARO_REMOTE goes on those two and on a job whose image is a prebuilt
+	// catalog entry, which is a baked workflow: its image is the operator's
+	// own reference, shared by every repository that names the entry, so it
+	// can carry no repository's checkout and the run has to clone one (#1752).
+	// It is not a clone kind: the entry's image holds the tools it was built
+	// with, so the run leaves the checkout kind alone and makes a whole
+	// clone — the history a follow-up and merge-base need — through
+	// gitops.OpenOrClone.
 	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
 		ws.Env[CheckoutEnv] = w.Checkout
+	}
+	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared || ws.CatalogPrebuilt {
 		// Where the run clones from: the repository's own URL, which
 		// c.repoURL already checked is https, credential-free and this
 		// repository's (see repoURL).
@@ -1298,8 +1404,10 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// config.AllowedClaudeAccounts is the one place that decides the
 		// set, so a name not on it never gets a key here at all (the hard
 		// backstop of the allow-list, design §6b.3). Every other auth kind
-		// has exactly the default account, unchanged from before this field
-		// existed.
+		// has exactly the default account, except an api-key repository whose
+		// stage keys, or whose project default, declare the one mix the
+		// ruling admits: that repository gets the account's own variant
+		// beside the default, and nothing else changes (WorkflowAccounts).
 		// catalogImage is what catalogJobImage answered for the workflow's
 		// job, read back from the spec it built rather than asked again:
 		// the check below and the job's own image must never disagree about
@@ -1378,15 +1486,19 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // account's own derived secret whose account lists repo, or a model
 // provider's own key whose provider lists repo -- AllowsData uniformly
 // across the last three, so §3a's no-list/["*"]-means-any-repository rule
-// applies to a provider's key exactly as it does everywhere else. ok is
-// false, id "" otherwise. It is exported because fugaro update's
-// secrets stage (before any RepoSpec exists) needs the identical answer.
+// applies to a provider's key exactly as it does everywhere else -- or,
+// last, an entry of workflow_secrets that lists repo, the one source with no
+// default at all (D1262). ok is false, id "" otherwise. It is exported
+// because fugaro update's secrets stage (before any RepoSpec exists) needs
+// the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {
 		return "", false
 	}
 	eligible := config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)
-	if !eligible && config.ProjectScopeByDefault(logical) {
+	_, listed := lc.ProjectSecrets[logical]
+	swept := config.ProjectScopeByDefault(logical)
+	if !eligible && swept {
 		// D2 (plan Task 2.1 step 2, finding 13): a reserved name the platform
 		// itself mounts is eligible project-wide with no per-name list, which
 		// is the case this function refused before -- only an entry of
@@ -1396,24 +1508,32 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 		// Without one, the sweep applies, and every repository may read it --
 		// the same reach the CLI's default store announces, which is what
 		// makes "stored project-wide" mean what a person reads it to mean.
-		if _, listed := lc.ProjectSecrets[logical]; !listed {
+		if !listed {
 			eligible = true
 		}
 	}
-	if !eligible {
-		// ClaudeAccountBySecret always resolves the bare claude-oauth-token
-		// to DefaultClaudeAccount, which is never a key of the map
-		// (ValidateClaudeAccounts refuses it), so the default account's own
-		// secret is eligible only through project_secrets above -- the
-		// documented shape (design §3).
-		if name, found := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); found {
-			eligible = lc.ClaudeAccounts[name].AllowsData(repo)
-		}
+	// ClaudeAccountBySecret always resolves the bare claude-oauth-token
+	// to DefaultClaudeAccount, which is never a key of the map
+	// (ValidateClaudeAccounts refuses it), so the default account's own
+	// secret is eligible only through project_secrets above -- the
+	// documented shape (design §3).
+	account, namedAccount := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical)
+	if !eligible && namedAccount {
+		eligible = lc.ClaudeAccounts[account].AllowsData(repo)
 	}
-	if !eligible {
-		if name, found := config.ProviderBySecret(lc.Providers, logical); found {
-			eligible = lc.Providers[name].AllowsData(repo)
-		}
+	provider, namedProvider := config.ProviderBySecret(lc.Providers, logical)
+	if !eligible && namedProvider {
+		eligible = lc.Providers[provider].AllowsData(repo)
+	}
+	claimed := listed || swept || namedAccount || namedProvider
+	if !eligible && !claimed {
+		// workflow_secrets is the fourth and last source, asked only for a
+		// name none of the others claims -- the order is the gate, so a
+		// hand-written entry cannot widen a name the sweep, an account or a
+		// provider already answers for (D1262). Unlike the sweep this block
+		// has no default: an entry is the whole gate, so a name with none
+		// mounts nowhere.
+		eligible = config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)
 	}
 	if !eligible {
 		return "", false
@@ -1744,4 +1864,107 @@ func Schedule(slug string) string {
 	sum := sha256.Sum256([]byte(slug))
 	n := binary.BigEndian.Uint16(sum[:2]) % 120
 	return fmt.Sprintf("%d %d * * *", n%60, 5+n/60)
+}
+
+// mixedStageAccounts are the Claude accounts an api-key repository's runs mix
+// with their provider key, held to config.AllowedClaudeAccounts the way every
+// other account name is, deduplicated and in the stages' own order: the
+// account each of config.MixedAccountStages' stage keys names, and the
+// project's default_claude_account where that key is what asks for the mix
+// (mixedDefaultAccount). The review and the adversarial review may name one
+// account and no other stage may name any
+// (docs/design/mixed-credentials.md §11): that is the one mix the owner's B0
+// ruling admits, the coder's own stages keeping the provider key the gateway
+// holds.
+//
+// An account is a job of its own (gcp.WorkflowVariant), so an api-key
+// repository that mixes nothing keeps the single job it had: the run that
+// holds a Claude account is the run whose stage keys, or whose project
+// default, asked for one, and its review is the stage that goes direct to
+// Anthropic. The default account's own spelling is the one name that is not a
+// job of its own: its variant is the base job, which is why a stage key naming
+// it adds nothing here.
+//
+// The allow-list is what keeps the mount to what the owner admitted: a token's
+// mount is this repository's runs reading that account's credential, and only
+// the account's own allow_data_to says whether this repository may put its
+// code where that token is. An account the list does not carry is not an entry
+// here — `fugaro validate` and the launch refuse the key — so the operator
+// hears about it rather than a job quietly appearing without the token.
+func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
+	if lc == nil {
+		return nil
+	}
+	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	var out []string
+	for _, stage := range config.MixedAccountStages {
+		name := lc.ClaudeAccountStages[stage].ClaudeAccount
+		if name == "" || !slices.Contains(allowed, name) || slices.Contains(out, name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	if def := mixedDefaultAccount(cfg, lc, allowed); def != "" && !slices.Contains(out, def) {
+		out = append(out, def)
+	}
+	return out
+}
+
+// mixedDefaultAccount is rung 4's account for an api-key repository: the
+// project's default_claude_account where the owner's ruling of 2026-11-05
+// admits it as one of this repository's mixed accounts, "" otherwise
+// (docs/design/mixed-credentials.md §11). It is the job set's half of the rung
+// the launch (mixedStageAccount, internal/cli/run.go) and the run
+// (r.mixedDefaultAccount, internal/runner) resolve, so a run that may hold the
+// account's token is a run a job exists for — and a repository the ruling
+// refuses gets neither, rather than a job whose token no run may read.
+//
+// The ruling's conditions, as the job set can read them:
+//
+//   - the key names an account of its own: "" and the unsuffixed-default
+//     sentinel (config.DefaultClaudeAccount) are the same answer, because an
+//     api-key job's base variant carries no OAuth token of its own;
+//   - the name is one this repository may use (config.AllowedClaudeAccounts):
+//     the mount is this repository's runs reading that account's credential,
+//     and the published policy carries no allow-list for a run to check, so
+//     the filter here is the only place it is applied;
+//   - no stage key of the mix names a *different* account: the run holds one
+//     Claude account and no second (config.CheckStageAccountMix, which the
+//     launch and `fugaro validate` apply), so where a stage key names another
+//     account the default is not an account of this repository's mix and no
+//     job is built for it;
+//   - one of the two stages runs an Anthropic model (config.MixedStageModel,
+//     config.IsClaudeModel): a project that sets the key and reviews on
+//     another vendor has asked for no mix, and its key keeps the other meaning
+//     it has — the account an oauth run gives to every stage.
+//
+// The coder's provider route and the budget mode are deliberately not read
+// here. They are conditions of the run, not of the job set: they decide
+// whether a run of this repository may hold the token at all, and they change
+// with a branch's fugaro.yaml or a task's override that no deploy can see.
+// Reading them here would refuse a job for a configuration the next commit
+// makes admissible, and build one the current branch cannot use; the run
+// refuses it where it resolves (r.mixedDefaultAccount) with the reason.
+func mixedDefaultAccount(cfg *config.Config, lc *localcfg.Config, allowed []string) string {
+	if cfg == nil {
+		return ""
+	}
+	def := lc.DefaultClaudeAccount
+	if def == "" || def == config.DefaultClaudeAccount || !slices.Contains(allowed, def) {
+		return ""
+	}
+	for _, stage := range config.MixedAccountStages {
+		if name := lc.ClaudeAccountStages[stage].ClaudeAccount; name != "" && name != def {
+			return ""
+		}
+	}
+	for _, stage := range config.MixedAccountStages {
+		if lc.ClaudeAccountStages[stage].ClaudeAccount != "" {
+			continue
+		}
+		if config.IsClaudeModel(config.MixedStageModel(cfg.Agent, stage)) {
+			return def
+		}
+	}
+	return ""
 }

@@ -207,6 +207,26 @@ variable "coordinator" {
   default = null
 }
 
+variable "mcp_server" {
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+  })
+  # The coordinator's front door (D920, D934), OFF by default and separate from
+  # each of the coordinator's own opt-ins: null creates nothing, so an
+  # installation that never asked plans exactly what it planned before, and one
+  # that opted into the coordinator for its read-only view keeps its private
+  # aggregation job and acquires no public endpoint. account_id is the front
+  # door's own account — not the coordinator's, whose sweep holds the App key
+  # and the whole database — service is the Cloud Run service's name and image
+  # is the coordinator's image, one CLI binary serving the sweep and the front
+  # door; all three are computed by internal/infra.MCPServer (the module's type
+  # is the same object, and its validations are the ones that hold them to
+  # their shape).
+  default = null
+}
+
 variable "credentials_service" {
   type = object({
     account_id       = string
@@ -257,6 +277,37 @@ variable "project_secrets" {
 
 variable "project_jobs" {
   description = "The shared project jobs (design project-centric §4.1), by Cloud Run job name: one entry per (profile, provider, account), each the module's own object type. fugaro update writes it from the local config's profiles; empty for an installation that names none, which creates no project job at all."
+  type = map(object({
+    profile  = string
+    provider = string
+    account  = string
+    job      = string
+    service_account = object({
+      account_id   = string
+      display_name = string
+    })
+    image          = string
+    cpu            = string
+    memory         = string
+    task_timeout_s = number
+    env            = map(string)
+    secret_env     = map(string)
+    bucket_condition = object({
+      title      = string
+      expression = string
+    })
+    token_condition = object({
+      title      = string
+      expression = string
+    })
+    vertex = bool
+  }))
+  default  = {}
+  nullable = false
+}
+
+variable "project_review_jobs" {
+  description = "The review-only variants of those jobs (design docs/cloud-senior-review, CSR7), by Cloud Run job name: one entry per (profile, provider, account), the module's own object type, with an empty secret_env. Deployed as a module instance of its own, with no secret container handed in. fugaro update writes it from the same profiles; empty for an installation that names none."
   type = map(object({
     profile  = string
     provider = string

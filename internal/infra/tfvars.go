@@ -89,6 +89,20 @@ type InstallOptions struct {
 	// or a local config that records the opt-in sets it, so an installation
 	// that never asked plans exactly what it planned before the job existed.
 	Coordinator bool
+	// MCPServer is the owner's SECOND opt-in, and the one that makes the
+	// installation reachable from the network (D920, D934): the coordinator's
+	// front door, its own service account, its uploaded image and D920's
+	// public invoker binding. It needs Coordinator beside it — the front door
+	// is the coordinator's own service and serves the state the coordinator
+	// writes, so an installation that has not declared the coordinator has no
+	// state for one to answer about. Nothing in the CLI sets this yet: fugaro
+	// update carries no --mcp-server flag, so the field is reachable only from
+	// a caller that builds the options itself, and the release that turns the
+	// front door on adds the flag. An installation that never asked writes no
+	// mcp_server key at all, so its plan is exactly what it planned before the
+	// front door existed — including the installation that opted into the
+	// coordinator for its read-only view alone.
+	MCPServer bool
 	// ImageBuilds is M5's managed bound on image builds (the runs-bucket
 	// marker's max_image_builds), which the catalog check job's spec carries
 	// as one run's build cap: one setting, so a project that bounds a managed
@@ -143,6 +157,12 @@ type InstallationSpec struct {
 	EnableBudget bool             `json:"enable_budget,omitempty"`
 	History      *HistorySpec     `json:"history,omitempty"`
 	Coordinator  *CoordinatorSpec `json:"coordinator,omitempty"`
+	// MCPServer is the coordinator's front door (D920, D934), left out of an
+	// installation the owner has not turned it on for: the module creates the
+	// account, the service and the public invoker binding only for a variable
+	// that is there, so leaving it out plans exactly the installation that
+	// existed before the front door did (InstallOptions.MCPServer).
+	MCPServer *MCPServerSpec `json:"mcp_server,omitempty"`
 	// ProjectSecrets are the installation module's project-wide secret
 	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
@@ -157,6 +177,13 @@ type InstallationSpec struct {
 	// an installation whose local config names no profile, so the plan of
 	// one that had none is unchanged (infra.ProjectJobs).
 	ProjectJobs map[string]ProjectJob `json:"project_jobs,omitempty"`
+	// ProjectReviewJobs are the review-only variants of those jobs, by job
+	// name: one per (profile, provider, account) the coding set deploys, with
+	// an empty secret_env, deployed by the root as a module instance of its own
+	// with no secrets handed in (design docs/cloud-senior-review, CSR7). Left
+	// out — like ProjectJobs, and for the same reason — of an installation
+	// whose local config names no profile.
+	ProjectReviewJobs map[string]ProjectJob `json:"project_review_jobs,omitempty"`
 	// ManagedDeployerScoped is the module's managed_deployer_scoped: left out
 	// unless set, so an installation that does not opt in writes the same
 	// tfvars as before the variable existed and plans without the seven
@@ -219,21 +246,27 @@ type CredentialsServiceSpec struct {
 	// accounts the deployer creates.
 	JobAccounts []CredentialsJob `json:"job_accounts"`
 	// VerifierAccounts are the identities that may ask the service whether a
-	// verdict's signature is its own (C3.9g1, D1068): the coordinator's
-	// account once it exists, and the owner's for a manual check. The module
-	// renders them as the ONE environment variable it sets only when this
-	// field is set — an installation that names no verifier starts the same
-	// service with the same seven names, and the process reads the eighth as
-	// an optional value whose absence is an empty list, which is a route that
-	// refuses every caller rather than a service that will not start.
-	//
-	// The value is the published policy node's list, not this machine's
+	// verdict's signature is its own (C3.9g1, D1068): the installation's own
+	// verifier account when nobody names one, and the owner's list when they
+	// do. The value is the published policy node's list, not this machine's
 	// opinion of it: the owner writes it in the local config, `fugaro update`'s
 	// policy stage publishes it, and the same run's credentials stage reads it
 	// back and hands it here (localcfg's keep rule is what makes a config that
-	// states none keep the node's). Omitted when empty, so an installation
-	// that names no verifier renders exactly the seven names it always did.
-	VerifierAccounts []string `json:"verifier_accounts,omitempty"`
+	// states none keep the node's).
+	//
+	// It is THREE-STATE, and a pointer is the only spelling of it, because
+	// `omitempty` on a slice cannot tell two of the three apart:
+	//
+	//   - nil: the key is omitted, which is the state the module's default is
+	//     for — it renders the address of the verifier account the same apply
+	//     creates (CSR14, verifier.tf) — and an installation that names no
+	//     verifier anywhere gets that account without typing anything.
+	//   - a pointer to an empty list: `[]` is written, the owner switching the
+	//     route off. Omitted instead, the module's default would be admitted
+	//     on a route the owner cleared, which is the one thing `[]` is for.
+	//   - a pointer to the owner's list: written as it is. The account is never
+	//     ADDED to it: a union would admit an identity `[]` cannot remove.
+	VerifierAccounts *[]string `json:"verifier_accounts,omitempty"`
 	// URL is the service's OWN URL, the audience its callers' Google ID
 	// tokens are minted for. It is empty on the apply that CREATES the
 	// service: Cloud Run assigns the URL, nothing in the module may read the
@@ -265,6 +298,23 @@ type CredentialsJob struct {
 // repository roots' CredentialsService output carry.
 const (
 	CredentialsAccountID = "fugaro-credentials"
+	// VerifierAccountID is the verifier service account (CSR14, D1068): the
+	// installation's own caller of the credentials service's verify route,
+	// created by the same apply that turns the service on
+	// (modules/installation/verifier.tf, whose account_id is this literal) and
+	// granted nothing of a run's — no bucket, no secret, no project role. Its
+	// whole reach is the invoker bit on that one service, and the operators'
+	// impersonation of it.
+	//
+	// It is a constant here because the module's account ID is a LITERAL, which
+	// is what makes the address a fact of the configuration rather than of the
+	// apply: `<id>@<project>.iam.gserviceaccount.com`, computable before
+	// anything is planned. That is what lets ONE `fugaro update` write the
+	// address into the owner's local config — and so into the published policy
+	// node — and have the same apply's service admit it, with no output to read
+	// back and no second run (CLAUDE.md's HARD RULE). internal/infra/tf's
+	// VerifierAccountID is the same literal on the cover's side.
+	VerifierAccountID = "fugaro-verifier"
 	// CredentialsServiceName is the Cloud Run service's name. It may start
 	// with fugaro-: that prefix is reserved by the *job* listings (HistoryJob),
 	// and a Cloud Run service is not one of them.
@@ -348,10 +398,27 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 		FirebaseProject: b.FirebaseProject,
 		RTDBURL:         b.RTDBURL,
 		JobAccounts:     jobs,
-		// The one rule, applied here as the publisher applies it: an explicit
-		// empty list clears the route and is written as no entry at all.
-		VerifierAccounts: lc.VerifierAccountsEffective(publishedVerifiers),
+		// The one rule, applied here as the publisher applies it: the owner's
+		// list when the config states one — an explicit empty list included,
+		// which clears the route — and the node's otherwise. The pointer is
+		// what keeps a written `[]` from being read as "nobody said" (the
+		// field's own comment): nil here is the state the module's default is
+		// for, and the account it creates is admitted.
+		VerifierAccounts: verifierAccountsField(lc.VerifierAccountsEffective(publishedVerifiers)),
 	}, nil
+}
+
+// verifierAccountsField spells an effective verifier list as the three-state
+// field CredentialsServiceSpec.VerifierAccounts. A nil list stays nil: nobody
+// anywhere names a verifier, so the key is omitted and the module's own
+// account is the default. Any list that was WRITTEN becomes a pointer to it,
+// an empty one included, so `[]` reaches the module as `[]` and the owner's
+// clear is never read as their silence.
+func verifierAccountsField(effective []string) *[]string {
+	if effective == nil {
+		return nil
+	}
+	return &effective
 }
 
 // CredentialsJobAccounts is every job of the installation that may call the
@@ -582,7 +649,58 @@ func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, err
 // opted in carries no key and is unchanged, and the runbook's opt-out — the
 // owner deleting the key by hand — is respected for the same reason: the
 // entry is taken as it is found.
-func CarriedCredentialsService(vars, prev []byte) ([]byte, error) {
+//
+// The one member this does NOT take as it is found is verifier_accounts, which
+// the block of an installation that opted in before this release does not
+// carry at all (CSR14). verifiers is the effective list (localcfg's keep rule:
+// the config's own when it states one, the published node's otherwise) and it
+// is written into the block — `[]` included — or, when it is nil, deleted from
+// it, which leaves the module's own verifier account as the default. Every
+// other member is carried byte for byte, because a rebuild from this side
+// knows nothing about a service the owner opted into.
+//
+// It has to be this way round for CLAUDE.md's HARD RULE. The stage that writes
+// the block runs only when the owner asks for the service, and an installation
+// at the previous version already has it: one ordinary `fugaro update` carries
+// the block and creates the account, so the block has to carry the account's
+// address in the same run or the account is admitted for nobody — and an owner
+// who cleared the list has to get `[]`, not the default, or the service admits
+// a caller the published node does not name.
+func CarriedCredentialsService(vars, prev []byte, verifiers []string) ([]byte, error) {
+	return carriedCredentialsService(vars, prev, func(block map[string]any) {
+		if verifiers == nil {
+			delete(block, "verifier_accounts")
+			return
+		}
+		block["verifier_accounts"] = verifiers
+	})
+}
+
+// CarriedCredentialsServiceAsFound is CarriedCredentialsService with the block
+// taken exactly as it is found — verifier_accounts included — for the one
+// caller that has no effective list to write: `fugaro setup --print-vars`
+// (init.go), which prints the variables this machine's workdir holds and
+// deliberately reads no cloud, so it cannot know whether the published node
+// names a verifier. It must not pass nil to CarriedCredentialsService
+// instead: on a config that is silent about the list — the ordinary state, and
+// the only one this path can detect — a nil third argument DELETES the member,
+// so the printed document dropped the owner's list the workdir carries while
+// the same machine's `fugaro update` writes it into the block. What the
+// member means to a reader is that the service admits those callers, so a
+// deleted member reads as "the module's default" and the print disagrees with
+// the installation it stands for.
+//
+// The two functions share one body so they cannot drift in what they do to
+// every other member of the block.
+func CarriedCredentialsServiceAsFound(vars, prev []byte) ([]byte, error) {
+	return carriedCredentialsService(vars, prev, nil)
+}
+
+// carriedCredentialsService is the carry the two exported functions are:
+// the previous document's credentials_service entry, taken as it is found,
+// handed to rewrite for the members a caller knows better. rewrite is nil when
+// the caller knows none (CarriedCredentialsServiceAsFound).
+func carriedCredentialsService(vars, prev []byte, rewrite func(block map[string]any)) ([]byte, error) {
 	if prev == nil {
 		return vars, nil // no workdir held one: nothing to carry
 	}
@@ -595,6 +713,9 @@ func CarriedCredentialsService(vars, prev []byte) ([]byte, error) {
 	svc, ok := previous["credentials_service"]
 	if !ok || svc == nil {
 		return vars, nil
+	}
+	if block, ok := svc.(map[string]any); ok && rewrite != nil {
+		rewrite(block)
 	}
 	doc, err := varsDoc(vars)
 	if err != nil {
@@ -810,6 +931,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, err
 	}
 	s.ProjectJobs = jobs
+	review, err := ProjectReviewJobs(lc, bucket, s.EnableVertex)
+	if err != nil {
+		return InstallationSpec{}, err
+	}
+	s.ProjectReviewJobs = review
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
 	cc, err := CatalogCheck(lc, bucket, o.ImageBuilds)
 	if err != nil {
@@ -839,6 +965,21 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			s.Coordinator = &c
 		}
 	}
+	// The front door's opt-in is refused rather than resolved when the
+	// coordinator's is missing, and refused here — before a tfvars exists —
+	// rather than left to the module's own validation, which says the same
+	// thing in the plan: a flag that planned nothing would be read by its
+	// owner as a front door that exists.
+	if o.MCPServer {
+		if !o.BudgetBackend || !o.Coordinator {
+			return InstallationSpec{}, userErr("--mcp-server needs the coordinator's own opt-in: the front door is the coordinator's own service and serves the state the coordinator writes, and the coordinator itself is planned only on an installation that has the budget backend, which --firebase-project declares; so run fugaro update --firebase-project <gcp-project-id> --coordinator --mcp-server")
+		}
+		m, err := MCPServer(lc)
+		if err != nil {
+			return InstallationSpec{}, err
+		}
+		s.MCPServer = &m
+	}
 	if e := firstOf(o.AlertEmail, lc.Terraform.AlertEmail); e != "" {
 		s.AlertEmail = &e
 	}
@@ -864,7 +1005,8 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 // key unconditionally (§3a: a provider's key is eligible for project storage
 // whether or not its allow_data_to list exists, and an absent list is a
 // valid "every repository" state, not a reason to leave the container out),
-// and every named Claude account with a non-empty allow_data_to. A reserved
+// every named Claude account with a non-empty allow_data_to, and every
+// workflow_secrets entry with a non-empty allow_data_to (D1263). A reserved
 // name with no project_secrets entry has no container at all.
 //
 // This is only the config half: DiscoverInstallation unions the live
@@ -885,6 +1027,11 @@ func projectSecretContainers(lc *localcfg.Config) map[string]string {
 		if len(lc.ClaudeAccounts[name].AllowDataTo) > 0 {
 			s := config.ClaudeAccountSecret(name)
 			out[s] = gcp.ProjectSecretID(lc.Name, s)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(lc.WorkflowSecrets)) {
+		if len(lc.WorkflowSecrets[name].AllowDataTo) > 0 {
+			out[name] = gcp.ProjectSecretID(lc.Name, name)
 		}
 	}
 	return out

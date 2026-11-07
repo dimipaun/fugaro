@@ -112,7 +112,7 @@ a managed project, is refused by the gate because a `Typed` step is never admitt
 write's members as optional ones.** The document's version is its own contract (**D848**,
 `schemas/settings-write.schema.json:20`, whose version is `1` today), and **the console pins that
 number**: `SETTINGS_VIEW_DOC_VERSION = 1` (`console/src/main/settingsview.ts:42`) refuses a document at
-any other version (`:178`), so a version 2 would break **every** settings edit the console makes — the
+any other version (`:181`), so a version 2 would break **every** settings edit the console makes — the
 edit it draws its confirmation for and then spawns `settings set … --yes` behind
 ([docs/console-settings-edit](../console-settings-edit/README.md)). An entry write's document needs
 members the version-1 shape does not carry — the operation (`add-entry`, `remove-entry`, `add`,

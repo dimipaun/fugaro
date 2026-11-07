@@ -64,6 +64,13 @@ const (
 	// LabelProject names the Fugaro project on the runs bucket (a label
 	// value is a valid project name).
 	LabelProject = "fugaro_project"
+	// LabelProfile marks a shared project job, the one job of a (profile,
+	// provider, account) triple (design §4.1): the project module writes it
+	// beside the profile's provider and account labels. A job a run lands on
+	// wears LabelWorkflow or this one; the installation's own support jobs —
+	// the reaper, the coordinator, the history and catalog checks, a
+	// repository's image check — wear LabelRole instead.
+	LabelProfile = "fugaro_profile"
 	RoleCheck    = "check"
 )
 

@@ -1084,7 +1084,7 @@
           "default": "unset = none"
         },
         "verifier_accounts": {
-          "default": "unset = none: nobody may ask the credentials service to verify a signature"
+          "default": "unset = nobody may ask the credentials service to verify a signature, except on an installation whose credentials service is deployed, where the installation's own verifier account may"
         },
         "version": {
           "default": "unset = the file is refused (version: 1 is required)"
@@ -1094,6 +1094,9 @@
         },
         "workflow_secrets.*.allow_data_to": {
           "default": "unset = nobody"
+        },
+        "workflow_secrets.*.proxy": {
+          "default": "unset = none: refused, D1275"
         },
         "workflows.*.base": {
           "default": "unset = none; the key was removed in 0.7.0"
@@ -1209,6 +1212,39 @@
         },
         "workflows.*.timeouts.verify": {
           "default": "unset = 30m, or the total when it is shorter"
+        },
+        "workspace": {
+          "default": "unset = this project is a member of no workspace"
+        },
+        "workspace_cap.monthly": {
+          "default": "unset = the workspace states no cap"
+        },
+        "workspace_members.*.exchange_url": {
+          "default": "unset = none"
+        },
+        "workspace_members.*.firebase_project": {
+          "default": "unset = none"
+        },
+        "workspace_members.*.fp": {
+          "default": "unset = none"
+        },
+        "workspace_members.*.job_service_accounts": {
+          "default": "unset = no job service account is declared for the member"
+        },
+        "workspace_members.*.repos": {
+          "default": "unset = the member contributes no repository"
+        },
+        "workspace_pin.assertion_key": {
+          "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.firebase_project": {
+          "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.issuer": {
+          "default": "unset = no workspace is pinned"
+        },
+        "workspace_pin.service_account": {
+          "default": "unset = no workspace is pinned"
         }
       }
     }

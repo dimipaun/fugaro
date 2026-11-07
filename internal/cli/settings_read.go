@@ -161,7 +161,7 @@ func readSettings(ctx context.Context, o settingsOptions, now time.Time) (*setti
 		Getenv:     os.Getenv,
 	}
 	t := settingsNow()
-	sel, lc, err := localcfg.Select(in)
+	sel, lc, err := selectSettingsProject(ctx, in)
 	r.localMS = readMS(settingsNow().Sub(t))
 	if err != nil {
 		return nil, userErr("%w", err)

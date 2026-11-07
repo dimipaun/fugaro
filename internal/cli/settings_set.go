@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -47,6 +48,7 @@ var settingsFamilyCommands = map[string]string{
 	"accounts":    "fugaro accounts",
 	"secrets":     "fugaro secrets",
 	"project":     "fugaro project",
+	"workspace":   "fugaro workspace",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
@@ -218,8 +220,15 @@ type settingsWriteOptions struct {
 	layer   string
 	repo    string
 	yes     bool
-	add     string
-	remove  string
+	// ask is --ask, the symmetric half of --yes (the owner's rule of
+	// 2026-11-04): in a project whose marks say it is managed, where this
+	// command would ask nothing, it asks the write's own confirmation —
+	// ordinary or typed — instead. Unmanaged, it says so and changes nothing;
+	// with no terminal, in a managed project, it refuses rather than proceeds
+	// (managed_ask.go is the whole of it). It is refused beside --yes.
+	ask    bool
+	add    string
+	remove string
 	// addEntry and removeEntry are the entry pair (D1162). Each --add-entry
 	// occurrence is one `field=value` of the one entry the command writes, and
 	// --remove-entry takes the one value that addresses the entry: a map
@@ -332,6 +341,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this write would otherwise get (the y/N, or the typed project name for a widening direction) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
 	f.StringVar(&o.add, "add", "", "add an item to a string-list key")
 	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
 	f.StringArrayVar(&o.addEntry, "add-entry", nil, "add one entry to a map or an object list (field=value, once per member the entry has)")
@@ -377,6 +387,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
 	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	return cmd
@@ -416,7 +427,7 @@ func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
 	}
 	if family, ok := settingsFamilyCommands[row.Owner]; ok {
-		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential or clone URL", key, family)
+		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL or workspace key", key, family)
 	}
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
@@ -556,7 +567,10 @@ func settingsDefaultLayer(row settings.Row) string {
 	return ""
 }
 
-// settingsSelection selects this machine's project, the way the read does.
+// settingsSelection selects this machine's project, the way the read does: the
+// checkout's fugaro.yaml names it (localcfg.Select's step 3) where nothing
+// before that does, so a machine with several project configs needs no
+// --project inside a checkout.
 func settingsSelection() (localcfg.Selection, *localcfg.Config, error) {
 	return settingsAimedSelection(settingsWriteOptions{})
 }
@@ -565,8 +579,9 @@ func settingsSelection() (localcfg.Selection, *localcfg.Config, error) {
 // selection themselves: --config and --project are localcfg.Select's steps 1 and
 // 2, so a write aimed at an installation lands in that installation's file
 // rather than in whichever one the machine's environment would have picked. The
-// families that call settingsSelection (models, accounts) take neither flag and
-// resolve exactly as before.
+// families that call settingsSelection (models, accounts, secrets) take neither
+// flag, and resolve as before except that, where several project configs leave
+// the choice open, they too read the checkout (selectSettingsProject).
 func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localcfg.Config, error) {
 	in := localcfg.SelectInput{
 		Config:     o.config,
@@ -575,7 +590,7 @@ func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localc
 		EnvConfig:  os.Getenv("FUGARO_CONFIG"),
 		Getenv:     os.Getenv,
 	}
-	sel, lc, err := localcfg.Select(in)
+	sel, lc, err := selectSettingsProject(context.Background(), in)
 	if err != nil {
 		return sel, nil, userErr("%w", err)
 	}
@@ -583,6 +598,27 @@ func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localc
 		return sel, lc, userErr("no project is selected: set $FUGARO_PROJECT or $FUGARO_CONFIG, or run fugaro setup")
 	}
 	return sel, lc, nil
+}
+
+// selectSettingsProject is localcfg.Select, and, where several project configs
+// leave the choice open, Select again with the checkout the command runs in:
+// its fugaro.yaml names its project (step 3), which is what the refusal
+// "several project configs and nothing selects one" tells a person to do. The
+// checkout is not asked first, so a checkout of another project still resolves
+// to the machine's only project config as these commands always did.
+func selectSettingsProject(ctx context.Context, in localcfg.SelectInput) (localcfg.Selection, *localcfg.Config, error) {
+	sel, lc, err := localcfg.Select(in)
+	var se *localcfg.SelectError
+	if err == nil || !errors.As(err, &se) || len(se.Projects) < 2 {
+		return sel, lc, err
+	}
+	co, cerr := resolveCheckout(ctx, "")
+	if cerr != nil || co == nil {
+		return sel, lc, err
+	}
+	in.Checkout = co
+	in.Origin = func() (string, string) { return checkoutOriginAt("") }
+	return localcfg.Select(in)
 }
 
 // settingsResolveTarget turns a key and a layer into the file to edit.
@@ -1349,6 +1385,9 @@ func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer s
 // runSettingsSet is `settings set`: find the row, find the layer, check the
 // value, then the shared write path (spec §4.2).
 func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
+	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
+		return err
+	}
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
@@ -1500,6 +1539,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		Kind:     target.kind,
 		Command:  settingsWriteCommand("set", key, value, o, target.layer),
 		Yes:      o.yes,
+		Ask:      o.ask,
 	}
 	if o.dryRun {
 		dry := &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: newValue, jsonOut: o.jsonOut}
@@ -1509,8 +1549,19 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		}
 		edit.DryRun = dry
 	}
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set")
+	// The gate is read where this command would ask, and --ask is one more
+	// place: the flag has to speak about the marks — a refusal in a managed
+	// project's session with no terminal, a sentence anywhere else — so the
+	// read it needs is made even where the edit itself would have asked
+	// nothing (--yes, or no terminal at all).
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsAsk(cmd, o.yes) || o.ask)
 	if err != nil {
+		return err
+	}
+	// --ask, once the marks are read: the sentence it prints, or the refusal
+	// that stops the run before a byte is written (managed_ask.go). It is
+	// after the gate's own admit and never instead of it.
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed
@@ -1533,6 +1584,9 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 // runSettingsUnset is `settings unset`: remove the key from one layer so the
 // layer below decides again, never writing a default in its place (spec §4.3).
 func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
+	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
+		return err
+	}
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
@@ -1587,12 +1641,18 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		Kind:     target.kind,
 		Command:  settingsWriteCommand("unset", key, "", o, target.layer),
 		Yes:      o.yes,
+		Ask:      o.ask,
 	}
 	if o.dryRun {
 		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
 	}
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset")
+	// The read and the flag's own sentence: the same pair, in the same order,
+	// as the set path above.
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsAsk(cmd, o.yes) || o.ask)
 	if err != nil {
+		return err
+	}
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed
@@ -1618,6 +1678,9 @@ func settingsDryRunFlags(o settingsWriteOptions) error {
 	if o.dryRun {
 		if o.yes {
 			return userErr("--dry-run and --yes answer different questions: a dry run says what the edit would do and writes nothing, --yes answers a write; name one")
+		}
+		if o.ask {
+			return userErr("--dry-run and --ask answer different questions: a dry run confirms nothing and writes nothing, --ask is about the confirmations a write is given; name one")
 		}
 		return nil
 	}

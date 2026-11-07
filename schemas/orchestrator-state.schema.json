@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/orchestrator-state.schema.json",
+  "title": "Fugaro orchestrator state",
+  "description": "One orchestrator's state document, the `state` child of `orchestrator/<id>` in the project's Realtime Database (docs/stateless-orchestrator/spec.md). It is written by the person's own credential through the CLI and read by every session of that orchestrator; nothing else writes it, and the rules refuse a token writer outright, so the shape check here is a description of the document a release writes rather than the thing that keeps a hostile one out (that is the region's rules). Unlike the documents a newer CLI hands an older reader, this one is closed: `schema_version` is bumped whenever a field is added, removed or re-meant, and the daemon's decoder refuses a field it does not model, so `additionalProperties` is false everywhere. A reader that finds `schema_version` above what it writes must stop rather than guess. Go: internal/orchestrator/state.go.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rev",
+    "agent_id",
+    "role",
+    "goal",
+    "work_items",
+    "decisions",
+    "facts",
+    "archived",
+    "intents",
+    "counters"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "$comment": "orchestrator.SchemaVersion. Migrate raises a document written by the release before this one (0) to this value."
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The revision every patch names as its base. A patch built from another revision is refused rather than applied on top of a change its author did not see."
+    },
+    "agent_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+      "description": "The orchestrator this document belongs to, which is also its node's id."
+    },
+    "role": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$",
+      "description": "The loop this orchestrator runs: the orchestrator role dispatches the work, the coordinator role keeps a goal's work items in order (orchestrator.RoleOrchestrator, RoleCoordinator)."
+    },
+    "goal": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "The standing instruction, set by a person alone. Empty until one is given, and never set by a session or the daemon."
+    },
+    "work_items": {
+      "type": "array",
+      "maxItems": 100,
+      "description": "The work this orchestrator knows about, live items only: an item moved to archived is no longer here.",
+      "items": { "$ref": "#/$defs/work_item" }
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 100,
+      "description": "The questions raised, open and closed. Each names the class that has to answer it, and the class is checked when it is closed.",
+      "items": { "$ref": "#/$defs/decision" }
+    },
+    "facts": {
+      "type": "object",
+      "maxProperties": 64,
+      "description": "What the loop has learned and wants to keep across sessions, keyed by a name. The key is a fact's only identity: setting one that is there replaces it.",
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+      "additionalProperties": { "$ref": "#/$defs/fact" }
+    },
+    "archived": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "Work items that left the work list, with how they ended. A dependency of a live item is never archived while that item is live.",
+      "items": { "$ref": "#/$defs/archived" }
+    },
+    "intents": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "One entry per attempt a launch was declared for. The declaration is written before the run starts, so a daemon that dies before the start re-issues the same launch instead of minting a second one, and it is the only record of which approval an attempt spent.",
+      "items": { "$ref": "#/$defs/intent" }
+    },
+    "counters": {
+      "$ref": "#/$defs/counters",
+      "description": "How many decision-agent calls were made this hour and this UTC day, derived from the decisions list at each write (orchestrator.DecisionCalls) and never incremented by hand."
+    }
+  },
+  "$defs": {
+    "work_item": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "repo",
+        "recipe",
+        "rigor_tier",
+        "brief",
+        "depends_on",
+        "phase",
+        "attempts"
+      ],
+      "additionalProperties": false,
+      "not": {
+        "required": ["approved", "spent_approval_at"],
+        "description": "A standing approval and a spent-approval marker at once: the marker names the approval a retry spent, and the write that spends it clears the approval in the same one, so the two are never both there. Go: ValidateState refuses the pair."
+      },
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "The item's name, unique among the live items. It carries no colon: an intent's id is \"<item>:<attempt>\"."
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$",
+          "description": "The repository the run works in, canonical owner/name (task.CanonicalRepo)."
+        },
+        "recipe": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "description": "The recipe the run uses, a name from the repository's own fugaro.yaml (recipe.NameRE)."
+        },
+        "rigor_tier": {
+          "enum": ["trivial", "small", "medium", "large"],
+          "description": "The expectation tier (internal/tier). An expectation, never a cap."
+        },
+        "brief": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "What the work is. It is one of the fields a person approves, so an edit to it revokes a standing approval."
+        },
+        "depends_on": {
+          "type": "array",
+          "maxItems": 32,
+          "description": "Work items that have to be done before this one starts. Each names a live item, and an item that something live depends on cannot be archived.",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+        },
+        "phase": {
+          "enum": ["queued", "running", "review", "done", "failed", "blocked", "cancelled"],
+          "description": "Where the item is. There was no `status` field: the run record and the task both use that name for other things, and one name must not carry two meanings across the documents a person reads together (orchestrator.Phase)."
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "The run this item's attempt is running, set with the intent. Empty for an item that is not running."
+        },
+        "approved": {
+          "$ref": "#/$defs/approval",
+          "description": "The standing approval, if one is. Absent unless a person approved the item at its current spec digest, and cleared by any edit to the item, by an archive, and by the attempt that spends it."
+        },
+        "spent_approval_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The `at` of the approval the item's last covered attempt spent, which is what stops a second failure from starting a third attempt without a person. Kept so that a summary can say why the next attempt needs a new approval."
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The number of the last attempt committed for this item, counting every approval it has had: attempt numbers run on across approvals, because an intent's id is the item and the attempt and stays unique for the item's life. What an approval covers is counted off the intents stamped with its own `at` (orchestrator.AttemptsUnder), not off this number."
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "A line the daemon keeps for whoever reads the item next. It is not part of the spec, so writing one revokes no approval."
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "required": ["by", "at", "spec_digest", "attempts"],
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Who approved it."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When, on the server clock. An intent carries this same value, and it is how an attempt is counted against the approval it spends."
+        },
+        "spec_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "The digest of the spec the person read (orchestrator.SpecDigest). A launch whose spec does not digest to it is refused, so a session that can read the item cannot approve it by proxy."
+        },
+        "attempts": {
+          "const": 2,
+          "$comment": "orchestrator.ApprovalAttempts: the approved attempt and one automatic retry."
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["id", "question", "waiting_on", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "question": { "type": "string", "minLength": 1, "maxLength": 600 },
+        "waiting_on": {
+          "enum": ["person", "session", "daemon"],
+          "description": "The class that may close it. A person may close any of the three: the others' answers are a person's to overrule."
+        },
+        "at": { "type": "string", "format": "date-time", "description": "When it was raised, which is what the hour and day counters count." },
+        "answer": { "type": "string", "maxLength": 600, "description": "What was decided. Absent while the question is open." },
+        "by": { "enum": ["person", "session", "daemon", "decision-agent"], "description": "The class that closed it, which is the actor and not a field of the op that closed it." },
+        "resolved_at": { "type": "string", "format": "date-time", "description": "When it was closed. Its presence is what makes the decision closed." }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "required": ["value", "by"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "string", "minLength": 1, "maxLength": 300, "description": "One line: a fact that needs paragraphs is a decision or a work item." },
+        "by": { "enum": ["person", "session", "daemon", "decision-agent"], "description": "The class that wrote it, which is the actor and never a field of the op." }
+      }
+    },
+    "archived": {
+      "type": "object",
+      "required": ["id", "outcome", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "outcome": { "type": "string", "minLength": 1, "maxLength": 80, "description": "How it ended, in a line." },
+        "at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "intent": {
+      "type": "object",
+      "required": ["id", "run_id", "spec_digest", "approval_at", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]+$",
+          "description": "The work item and the attempt, so that one attempt cannot be declared twice and a daemon that dies before the start re-issues the same launch."
+        },
+        "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$", "description": "Minted before the launch and committed with the declaration." },
+        "spec_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "description": "The digest of the spec being launched: the approval's and the item's, at the moment it was declared." },
+        "approval_at": { "type": "string", "format": "date-time", "description": "The `at` of the approval this attempt spends." },
+        "at": { "type": "string", "format": "date-time", "description": "When the declaration was written, on the server clock." },
+        "outcome": {
+          "enum": ["succeeded", "failed", "refused", "cancelled", "abandoned"],
+          "description": "How the attempt ended, written by the fold that reads the run record. Absent while the attempt is in flight."
+        }
+      }
+    },
+    "counters": {
+      "type": "object",
+      "required": ["decisions_hour", "decisions_day"],
+      "additionalProperties": false,
+      "properties": {
+        "decisions_hour": { "type": "integer", "minimum": 0 },
+        "decisions_day": { "type": "integer", "minimum": 0, "description": "At least decisions_hour, since a day contains the hour." }
+      }
+    }
+  }
+}

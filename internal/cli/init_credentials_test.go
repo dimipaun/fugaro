@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -92,6 +93,15 @@ func oldCredentialsRef(version string) string {
 // credentials stage writes (infra.Credentials).
 func seedCredentialsService(t *testing.T, r *imagesRig, image string) {
 	t.Helper()
+	seedCredentialsServiceWithVerifiers(t, r, image, nil)
+}
+
+// seedCredentialsServiceWithVerifiers is seedCredentialsService for an
+// installation whose block already carries a verifier list (CSR14) — the state
+// a run of this release leaves behind, and the one a machine whose config is
+// silent about the key reads its list from.
+func seedCredentialsServiceWithVerifiers(t *testing.T, r *imagesRig, image string, verifiers []string) {
+	t.Helper()
 	doc := map[string]any{"credentials_service": map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -103,6 +113,9 @@ func seedCredentialsService(t *testing.T, r *imagesRig, image string) {
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
 		"url": credentialsServiceURL,
 	}}
+	if verifiers != nil {
+		doc["credentials_service"].(map[string]any)["verifier_accounts"] = verifiers
+	}
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -916,12 +929,24 @@ func TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService(t *testing.T) {
 // account.
 var verifierAccountsEnv = []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
 
+// publishedPolicyForTest writes a policy node at the path the published policy
+// lives at, with the generation marker of the deployed rules beside it: a node
+// exists only under rules that carry it (projectpolicy.Read answers "no policy
+// published" below PolicyRulesVersion, and the rules deploy writes the
+// marker), so a rig that seeded one without the other would be an installation
+// that cannot be.
+func publishedPolicyForTest(t *testing.T, r *imagesRig, node map[string]any) {
+	t.Helper()
+	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	r.db.Set(projectpolicy.PathShared(), node)
+}
+
 // publishedVerifiersForTest writes a policy node carrying the verifier list at
 // the path the published policy lives at, which is what a previous `fugaro
 // update` left there.
 func publishedVerifiersForTest(t *testing.T, r *imagesRig) {
 	t.Helper()
-	r.db.Set(projectpolicy.PathShared(), map[string]any{
+	publishedPolicyForTest(t, r, map[string]any{
 		"version":           projectpolicy.Version,
 		"verifier_accounts": verifierAccountsEnv,
 	})
@@ -961,10 +986,14 @@ func TestCredentialsServiceKeepsThePublishedVerifierList(t *testing.T) {
 // TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne: writing an empty
 // list is how the owner clears the route, and it is the only spelling that
 // does — deleting the key keeps the node's list, which the stage above pins.
-// The entry is then absent from the tfvars altogether rather than written as
-// an empty array, so the module's variable is null again and the service
-// starts with the empty verifier list the verify route refuses every caller
-// with (C3.9g1's conditional entry).
+//
+// The entry is written as an empty ARRAY and never dropped, and that is the
+// whole difference between the owner's clear and the module's default: an
+// absent member is the module's variable null, which is the state the default
+// — the verifier account this installation creates — is for (verifier.tftest
+// .hcl pins null → the account alone). A clear that dropped the key would
+// therefore hand the service exactly the caller the owner switched off
+// (CSR14).
 func TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne(t *testing.T) {
 	r := credentialsStageRig(t)
 	r.setPlanAt(t, "installation")
@@ -977,8 +1006,12 @@ func TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne(t *testing.T) {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
 	svc, _ := r.tfvars(t)["credentials_service"].(map[string]any)
-	if _, ok := svc["verifier_accounts"]; ok {
-		t.Errorf("credentials_service.verifier_accounts = %v on a written empty list, want no entry at all (the module renders the variable only when the field is set)", svc["verifier_accounts"])
+	got, ok := svc["verifier_accounts"]
+	if !ok {
+		t.Fatalf("credentials_service.verifier_accounts is absent on a written empty list, want []: an absent member is the module's variable null, which is the state the module's default (the verifier account this installation creates) is for, so the clear would admit the caller the owner switched off")
+	}
+	if arr, ok := got.([]any); !ok || len(arr) != 0 {
+		t.Errorf("credentials_service.verifier_accounts = %v on a written empty list, want [] (nobody)", got)
 	}
 }
 
@@ -1606,4 +1639,411 @@ func credentialsVarsOnDisk(t *testing.T, r *imagesRig) map[string]any {
 		t.Fatalf("the workdir's %s is not a document: %v\n%s", infra.VarsFile, err, b)
 	}
 	return doc
+}
+
+// TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun is the convergence test
+// CLAUDE.md's HARD RULE requires (CSR14): an installation at the PREVIOUS
+// version, with the credentials service already on, takes ONE ordinary
+// `fugaro update` — the one documented command, with no flag — to the state
+// this release ships, and both halves have to hold at the end of that run.
+//
+// The installation is seeded the way an earlier release left it: the block is
+// in the tfvars and carries no verifier_accounts member at all (the member is
+// this release's), the local config states no verifier and the published node
+// names none. On the tree this test was written against, one ordinary update
+// creates the verifier account and admits it for NOBODY: the module renders
+// the variable null (today's expression is `null ? [] : [...]`), and the
+// policy node the same run publishes names no verifier either — so the
+// launcher's verify call and the owner's own check are both refused until a
+// second run nobody was told to make.
+//
+// Half one is the service's own list, and it is asserted as the state the
+// module's default is FOR: the block the run leaves carries no member, which
+// is what makes the module render the account this same apply creates
+// (verifier.tftest.hcl pins null → the account alone). Half two is the node
+// the same run published, which is what CSR15's reader and the owner's doctor
+// read.
+//
+// Half two is the half that needs the run's ORDER to be right, and this test
+// holds it: the policy stage's plan is made in the read-only preview pass —
+// before any stage applies — while the address reaches this machine's config
+// from the installation stage's own write, so a stage that kept that plan would
+// publish the node the config stated BEFORE it named the verifier and refuse
+// its own write one line later ("the published policy was written but still
+// does not carry what the local config states"). The rules are seeded CURRENT
+// for exactly this reason: a rules stage that deploys drops the stale read on
+// its own (init_rules_stage.go), and an installation at the previous version
+// whose release changed no rule deploys nothing, so the seeding is what makes
+// this a test of the run's order rather than of the rules stage's forget.
+// Mutation (verified, run and restored): drop the forget the local-config write
+// makes (init.go's writeConfig) and this test fails with that sentence.
+func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	// The database is this installation's, marked (the ownership check every
+	// policy write is behind), and it holds the node the PREVIOUS release
+	// published — a node with no verifier member, which is the state this
+	// installation is in: nothing anywhere names a verifier, so the module's
+	// own account is the default and this run's publish is what names it.
+	r.db.Set(budget.PathMark, auroraMark())
+	r.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
+	// The rules this installation is already read under: the generation this
+	// binary deploys AND the document it generates, which is what a project at
+	// the previous version holds when the release between them changed no rule.
+	// Both halves are seeded, and not the marker alone, because the difference
+	// is the whole point of this test: a rules stage that deploys is a stage
+	// that drops the policy stage's cached read (init_rules_stage.go), and a
+	// run whose rules are current deploys nothing — so the publish below is the
+	// policy stage's own read of the config THIS run wrote, made after the
+	// installation stage wrote it, and not a plan the rules stage happened to
+	// re-make.
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.db.SetRules(gen)
+	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	seedCredentialsService(t, r, r.credentialsRef())
+	// The literal, as the module writes it (verifier.tf's account_id) and as
+	// internal/infra spells it (VerifierAccountID): the address is a fact of the
+	// configuration and not of the apply, which is the whole reason one run can
+	// both create the account and name it.
+	want := "fugaro-verifier@" + initProject + ".iam.gserviceaccount.com"
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one ordinary update from the previous release failed: %v\n%s", err, s)
+	}
+
+	svc := credentialsServiceEntry(t, r)
+	if got, ok := svc["verifier_accounts"]; ok {
+		t.Errorf("credentials_service.verifier_accounts = %v after one ordinary update, want no member at all: the member's absence is the state the module's default is for, and the default is the account this apply creates\n%s", got, s)
+	}
+
+	node, _ := r.db.Value(projectpolicy.PathShared()).(map[string]any)
+	got, _ := node["verifier_accounts"].([]any)
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("the published policy node names verifier_accounts = %v, want [%s]: the service admits the account and the node every reader sees has to name it in the same run, or the launcher's verify call is refused until a second update nobody was told to make\n%s", node["verifier_accounts"], want, s)
+	}
+}
+
+// TestOrdinaryInitAfterTheOptInNamesTheVerifierAccount is the config writer's
+// half of the HARD RULE, and the reason the address is COMPUTED rather than
+// read back from an output.
+//
+// The installation has opted in — the block is in the tfvars, seeded the way
+// an earlier release left it, which is the state every opted-in installation
+// is in — while the local config is silent about the list and the published
+// node names none. The effective list is nil, and that nil is the gate: it is
+// the one state the module's default is for (the account this apply creates),
+// so it is the one state in which a run writes a name.
+//
+// The address is a fact of the configuration and not of the apply (the
+// module's account_id is a literal, infra.VerifierAccountID), and that is what
+// lets ONE ordinary update both create the account and name it: the
+// installation's outputs carry no credentials service at all here, so nothing
+// in them could name a verifier, and the config is named anyway.
+//
+// Mutation (verified, run and restored): write the address from a flag or a
+// config value — nothing in either names it in this rig — and this test fails;
+// take it from the module's output and it fails on the rig whose outputs carry
+// no service.
+func TestOrdinaryInitAfterTheOptInNamesTheVerifierAccount(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	seedCredentialsService(t, r, r.credentialsRef())
+	// The node a previous release published names no verifier: the key is this
+	// release's, so every opted-in installation is in this state.
+	publishedPolicyForTest(t, r, map[string]any{"version": projectpolicy.Version})
+	if got := verifierListOf(localConfigOf(t, r)); got != nil {
+		t.Fatalf("the rig's local config already names a verifier (%v): the gate fires only while nothing anywhere names one", got)
+	}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, nil)}
+	r.save(t)
+	want := "fugaro-verifier@" + initProject + ".iam.gserviceaccount.com"
+
+	out, errOut, err := executeStdin(t, "", "setup", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary init of an opted-in installation failed: %v\n%s", err, s)
+	}
+	got := verifierListOf(localConfigOf(t, r))
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("the local config names verifier_accounts = %v after one ordinary update, want [%s]: the account is the default an opted-in installation gets without typing anything, and a run that does not name it leaves the service admitting nobody the module's default is for\n%s", got, want, s)
+	}
+}
+
+// TestCredentialsServiceKeepsTheOwnersVerifierList is the keep rule at the
+// writer that can lose the list: the update's own config write, where the
+// tree's sibling TestCredentialsServiceKeepsThePublishedVerifierList holds the
+// credentials stage's.
+//
+// Both directions are here because either one alone is a bug. A config that
+// WRITES a list keeps it — the owner's `[]` included, which is their clear —
+// and a config that is SILENT while the published node holds the owner's list
+// writes nothing, so an update on a second operator's machine leaves that
+// node's list as it was.
+//
+// Mutation (verified, run and restored): gate the write on the local field
+// instead of the effective list (localcfg.VerifierAccountsEffective) and the
+// silent row fails — a machine whose config merely predates the key replaces
+// the owner's list with the default, and the service then refuses the verifier
+// the owner named.
+func TestCredentialsServiceKeepsTheOwnersVerifierList(t *testing.T) {
+	owner := "person-1@example.com"
+	rows := []struct {
+		name     string
+		config   string   // the line the local config states, "" for silent
+		node     []string // the list the published node holds, nil for none
+		want     []string // the config's list after the run, nil for none
+		wantNode []string // the node's list after the run, nil for nobody
+	}{
+		{
+			name:     "a written list is kept",
+			config:   "verifier_accounts: [" + owner + "]\n",
+			want:     []string{owner},
+			wantNode: []string{owner},
+		},
+		{
+			name:     "a written empty list is the owner's clear",
+			config:   "verifier_accounts: []\n",
+			want:     []string{},
+			wantNode: nil,
+		},
+		{
+			name:     "a silent config keeps the node's list",
+			node:     verifierAccountsEnv,
+			want:     nil,
+			wantNode: verifierAccountsEnv,
+		},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			r := credentialsStageRig(t)
+			r.setPlanAt(t, "installation")
+			credentialsOutputs(t, r)
+			// The database is this installation's, marked (the ownership
+			// check every policy write is behind), and the node is the one a
+			// previous release published.
+			r.db.Set(budget.PathMark, auroraMark())
+			node := map[string]any{"version": projectpolicy.Version}
+			if row.node != nil {
+				node["verifier_accounts"] = row.node
+			}
+			publishedPolicyForTest(t, r, node)
+			if row.config != "" {
+				r.appendConfig(t, row.config)
+			}
+			typedThroughYes(t)
+			fakeTerminal(t)
+			if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
+				t.Fatalf("%v\n%s%s", err, out, errOut)
+			}
+			lc := localConfigOf(t, r)
+			if !sameList(verifierListOf(lc), row.want) {
+				t.Errorf("the local config names verifier_accounts = %v, want %v: the file's list wins when it states one (the owner's clear included), and a file that states none keeps the node's\n%s", verifierListOf(lc), row.want, readFileString(t, r.cfg))
+			}
+			if got := nodeVerifiers(t, r); !sameList(got, row.wantNode) {
+				t.Errorf("the published node names verifier_accounts = %v, want %v: the list the service is handed and the list every reader of the node sees are the same one\n%s", got, row.wantNode, readFileString(t, r.cfg))
+			}
+		})
+	}
+}
+
+// TestOrdinaryUpdateCarriesTheOwnersClearIntoTheBlock is the carried-block
+// direction of the same rule: an installation whose local config writes
+// `verifier_accounts: []` and whose carried block has no such member — the
+// state every opted-in installation is in, because the member is new — takes
+// ONE ordinary `fugaro update` to a block whose member is `[]` and a node that
+// names nobody, so the service admits nobody and the node every reader sees
+// agrees with it.
+//
+// On the tree this test was written against the member stays absent, and an
+// absent member is the module's variable null: the module's default — the
+// verifier account this installation creates — is then admitted on a route the
+// owner switched off.
+//
+// Mutation (verified, run and restored): carry the block verbatim and leave
+// the member absent, and this test fails on the block's member.
+func TestOrdinaryUpdateCarriesTheOwnersClearIntoTheBlock(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	// The node the owner's clear is about: it holds a list, which the clear
+	// has to reach — a node that kept it would leave the reader and the
+	// service disagreeing about who may verify.
+	r.db.Set(budget.PathMark, auroraMark())
+	publishedPolicyForTest(t, r, map[string]any{
+		"version":           projectpolicy.Version,
+		"verifier_accounts": []any{"person-1@example.com"},
+	})
+	seedCredentialsService(t, r, r.credentialsRef())
+	r.appendConfig(t, "verifier_accounts: []\n")
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation whose owner cleared the list failed: %v\n%s", err, s)
+	}
+	svc := credentialsServiceEntry(t, r)
+	got, ok := svc["verifier_accounts"]
+	if !ok {
+		t.Fatalf("the carried block has no verifier_accounts member, want []: an absent member is the module's variable null, which is the state the module's default is for, so the service would admit the verifier account the owner cleared\n%s", s)
+	}
+	if arr, ok := got.([]any); !ok || len(arr) != 0 {
+		t.Errorf("credentials_service.verifier_accounts = %v after one ordinary update, want [] (nobody): the carried block has to carry the owner's clear, or the service admits a caller the node does not name\n%s", got, s)
+	}
+	if got := nodeVerifiers(t, r); got != nil {
+		t.Errorf("the published node names verifier_accounts = %v after the owner's clear, want nobody: the node is where CSR15's reader and the credentials service's own list come from, and the two have to agree\n%s", got, s)
+	}
+}
+
+// localConfigOf is the project config the rig's runs wrote, parsed: the file
+// these tests assert on, and the one the update's write is about.
+func localConfigOf(t *testing.T, r *imagesRig) *localcfg.Config {
+	t.Helper()
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the project config does not parse: %v", err)
+	}
+	return lc
+}
+
+// nodeVerifiers is the verifier list the published policy node holds, nil for
+// the member that names nobody: an absent member and an empty list are one
+// thing there (policyConfigDrift's jsonText folds them), and nil is how both
+// are read here.
+func nodeVerifiers(t *testing.T, r *imagesRig) []string {
+	t.Helper()
+	node, _ := r.db.Value(projectpolicy.PathShared()).(map[string]any)
+	raw, _ := node["verifier_accounts"].([]any)
+	var out []string
+	for _, v := range raw {
+		s, _ := v.(string)
+		out = append(out, s)
+	}
+	return out
+}
+
+// verifierListOf reads the verifier list out of a config the rig wrote: the
+// field is a pointer so that the owner's written empty list survives the write
+// (omitempty would drop it), and the deref is what tells the two apart — nil is
+// a file that says nothing about the list, an empty slice is the clear.
+func verifierListOf(c *localcfg.Config) []string {
+	if c.VerifierAccounts == nil {
+		return nil
+	}
+	return *c.VerifierAccounts
+}
+
+// sameList compares two verifier lists the way these tests need: nil is
+// "names nobody", and it is NOT the same as a present empty list — that
+// distinction is the whole of the owner's clear, because an absent member is
+// the module's variable null, which is the state the module's default is for.
+func sameList(got, want []string) bool {
+	if (got == nil) != (want == nil) {
+		return false
+	}
+	return slices.Equal(got, want)
+}
+
+// TestPrintVarsKeepsTheCarriedVerifierList is --print-vars on an installation
+// whose workdir carries a verifier list and whose local config says nothing
+// about the key: the printed document has to carry the list. It is a
+// read-only look at the installation as it STANDS, so the alternative is not
+// a cloud read (this path makes none by design, which is why it cannot answer
+// with the effective list) but the config's own, which is nil here — and a
+// nil third argument to infra.CarriedCredentialsService DELETES the member,
+// so the printed document named nobody while the same machine's `fugaro
+// update` writes the owner's list into the same block.
+//
+// Mutation (verified, run and restored): pass lc.VerifierAccountsEffective(nil)
+// to CarriedCredentialsService instead of the as-found carry
+// (CarriedCredentialsServiceAsFound): this test fails, the member gone from
+// the printed document.
+func TestPrintVarsKeepsTheCarriedVerifierList(t *testing.T) {
+	owner := "person-1@example.com"
+	r := credentialsStageRig(t)
+	seedCredentialsServiceWithVerifiers(t, r, r.credentialsRef(), []string{owner})
+	if got := verifierListOf(localConfigOf(t, r)); got != nil {
+		t.Fatalf("the rig's local config already names a verifier (%v): this test is about the machine whose config is silent", got)
+	}
+	r.save(t)
+	out, errOut, err := executeStdin(t, "", "setup", "--print-vars")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("--print-vars did not print one JSON object: %v\n%s", err, out)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		t.Fatalf("--print-vars dropped the opt-in the workdir carries:\n%s", out)
+	}
+	raw, ok := svc["verifier_accounts"].([]any)
+	if !ok {
+		t.Fatalf("--print-vars printed no verifier_accounts member (credentials_service = %v), want [%s]: an absent member is the module's variable null, so the printed document admits the module's default where the installation names the owner's list\n%s", svc, owner, out)
+	}
+	var got []string
+	for _, v := range raw {
+		s, _ := v.(string)
+		got = append(got, s)
+	}
+	if !sameList(got, []string{owner}) {
+		t.Errorf("--print-vars printed verifier_accounts = %v, want [%s]: the printed variables are the installation as it stands, and the list the block carries is the one its service is admitted by\n%s", got, owner, out)
+	}
+}
+
+// TestAFailedPolicyReadKeepsTheVerifierList is the read that must NOT be
+// swallowed. The published node is one this Fugaro cannot read at all — a
+// version a NEWER binary published, the one skew no stage of this run repairs
+// — and the installation's block carries the owner's list, with the machine's
+// own config silent about the key.
+//
+// Answering that read with "nothing anywhere names a verifier" is not the
+// tolerant path this run needs; it is a WRITE. prepare deletes the block's
+// member (the module's default then admits the installation's own
+// account) and writeConfig writes that address into the local config, which
+// the same run's policy stage publishes over the owner's list: an installation
+// whose node is merely newer than this CLI ends up with its published verifier
+// replaced, permanently, by the installation's own account.
+//
+// So the run stops, and it stops at the read: the sentence names the verifier
+// list it could not read, and the config it would have written is untouched.
+//
+// Mutation (verified, run and restored): swallow the error the way the
+// original tolerance did (`if err != nil || p == nil { return the config's own }`)
+// and this test fails on both assertions — the run goes on to write the
+// address into the local config, and what stops it afterwards is the
+// repository stage's own refusal, which names the node and not the list it
+// silently replaced.
+func TestAFailedPolicyReadKeepsTheVerifierList(t *testing.T) {
+	owner := "person-1@example.com"
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	// The node a NEWER Fugaro published: this binary reads the document, sees a
+	// version above its own, and has no sentence for its members.
+	r.db.Set(budget.PathMark, auroraMark())
+	publishedPolicyForTest(t, r, map[string]any{
+		"version":           projectpolicy.Version + 1,
+		"verifier_accounts": []any{owner},
+	})
+	seedCredentialsServiceWithVerifiers(t, r, r.credentialsRef(), []string{owner})
+	r.save(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("an update whose policy node is newer than this binary succeeded, want the read refused: the run cannot tell what the node names, so it must not answer for it\n%s", s)
+	}
+	if !strings.Contains(s, "the verifier accounts this installation's document must carry could not be read") {
+		t.Errorf("the run stopped, but not at the verifier read: want a refusal naming the verifier accounts it could not read\n%s", s)
+	}
+	if got := verifierListOf(localConfigOf(t, r)); got != nil {
+		t.Errorf("the local config names verifier_accounts = %v after a run whose policy read failed, want the file as it was (silent): writing the installation's own address here publishes it over the owner's list\n%s", got, readFileString(t, r.cfg))
+	}
 }

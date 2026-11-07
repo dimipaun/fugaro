@@ -90,6 +90,16 @@ var allowedTypes = map[string]bool{
 // else, and as one of FugaroAccounts every toAccounts row would have accepted
 // it. TestCoordinatorAccountIsItsOwnPrincipalKind holds that.
 //
+// Verifier is the verifier service account (CSR14, D1068), the installation's
+// own caller of the credentials service's verify route, and it is its own kind
+// for the coordinator's reason and one more of its own: the one grant it holds
+// is the invoker bit on that service, and the ONE grant it RECEIVES is the
+// operators' impersonation (deployerTokenCreator accepts this account beside
+// the deployer's). As one of FugaroAccounts a plan could have added any
+// toAccounts row's role to an identity an operator can become — and the whole
+// point of the account is that it reaches the one route and nothing else
+// (TestVerifierTokenCreatorIsCoveredByOneUpdate reads both halves).
+//
 // CatalogCheck is the project's catalog check job account (D1148 task (ii)),
 // its own kind for the same reason and one more: its grants are things no job
 // account holds — actAs on EVERY repository's build account, a read of every
@@ -109,6 +119,7 @@ const (
 	toDeployer
 	toCredentials
 	toCoordinator
+	toVerifier
 	toCatalogCheck
 )
 
@@ -241,8 +252,16 @@ var grantRules = map[string]map[string]who{
 	// and the role is the front end's invoker bit on the one service the sweep
 	// reads Bitbucket through. Nothing wider comes with it: no actAs, no
 	// project role, and no second resource type.
+	//
+	// toVerifier is CSR14's widening of the same row for the same reason: the
+	// installation's verifier service account (google_service_account.
+	// fugaro_verifier, whose address the module hands the service as
+	// FUGARO_VERIFIER_ACCOUNTS) is the verify route's one caller class, and
+	// without the invoker bit the front end refuses it before the container
+	// runs. It is Fugaro's own account, on the same switch as the service, and
+	// it comes with nothing wider.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople | toCoordinator,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -336,6 +355,20 @@ const (
 // account's reason: it holds roles/firebasedatabase.admin on the Firebase
 // project and nothing else, so it is its own kind (toCoordinator).
 const CoordinatorAccountID = "fugaro-coordinator"
+
+// VerifierAccountID is the verifier service account (internal/infra's
+// VerifierAccountID; CSR14, D1068), the one
+// caller of the credentials service's verify route, created in the
+// installation's project by the same module and the same apply that turns the
+// service on. It is NOT among FugaroAccounts, for the credentials and
+// coordinator accounts' reason: its whole reach is the invoker bit on that one
+// service, so it is its own kind (toVerifier) and no toAccounts row accepts it.
+//
+// The ID is a LITERAL in the module (verifier.tf's account_id) and a constant
+// here (internal/infra.VerifierAccountID), which is what makes the address a
+// fact of the configuration rather than of the apply: the same run can both
+// create the account and write its address into the owner's published policy.
+const VerifierAccountID = "fugaro-verifier"
 
 // CatalogCheckAccountID is the project's catalog check job account (D1148
 // task (ii)), the one modules/installation/catalogcheck.tf creates in the
@@ -682,6 +715,17 @@ func (c Cover) isCoordinatorMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+CoordinatorAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isVerifierMember is whether m is exactly the verifier account as an IAM
+// member, in the installation's project: the account verifier.tf creates
+// (var.project). It is a class of its own and not a spelling of the
+// deployer's: the operators hold the token-creator grant on it, and that
+// grant is the one place a plan is refused unless the table knows the
+// principal (deployerTokenCreator).
+func (c Cover) isVerifierMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+VerifierAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // isCatalogCheckMember is whether m is exactly the project's catalog check job
 // account as an IAM member, in the installation's project: the account
 // catalogcheck.tf creates (var.project).
@@ -818,12 +862,14 @@ var RolePermissions = map[string][]string{
 // knownCommands are the container command and args the modules set: none for a
 // workflow's job and for the credentials service (whose image's own entrypoint
 // is the service, credentials.tf), the history sweep, the coordinator's
-// aggregation sweep and the image check.
+// aggregation sweep, the image check and the project catalog's check
+// (catalogcheck.tf).
 var knownCommands = [][2][]string{
 	{nil, nil},
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
 	{{"/usr/local/bin/fugaro"}, {"coordinator", "sweep"}},
 	{{"fugaro"}, {"image", "check", "--job"}},
+	{{"fugaro"}, {"image", "check", "--job", "--catalog"}},
 }
 
 // credentialsServiceEnv are the only environment variables the credentials
@@ -1275,6 +1321,15 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// The coordinator's writer likewise: its one row is the FP's
 			// database admin.
 			kind = toCoordinator
+		case c.isVerifierMember(m):
+			// The verifier account likewise (CSR14): its own kind, whose one
+			// row is the credentials service's invoker, and whose
+			// token-creator grant on it is checked by account in
+			// deployerTokenCreator. Read here, before the review screen's
+			// list, for the deployer's reason: a plan that listed its address
+			// would otherwise be able to grant it a launcher's or an
+			// operator's role.
+			kind = toVerifier
 		case c.isCatalogCheckMember(m):
 			// ... and the project's catalog check job (D1148): its own kind,
 			// which no row accepts, so every one of its grants — and every
@@ -1545,16 +1600,25 @@ func (c Cover) onDeployer(ch Change, createsDeployer bool) string {
 // deployerTokenCreator says why a token-creator grant is not the operators'
 // one-time impersonation setup (Task 1.5 step 2), "" when it is and "" for
 // every other grant on that type. The role is granted on the deployer account
-// and on nothing else; grantRules has already checked that the member is a
-// person on the review screen, so what is left is which account.
+// and, since CSR14, on the installation's own verifier account, and on nothing
+// else; grantRules has already checked that the member is a person on the
+// review screen, so what is left is which account.
 //
-// The account has to be named, and named as this run's deployer account — the
-// one in the installation's project (Projects[0]), never in a verified
-// Firebase project the installation module is not applied to: a
-// plan that says "an account, decided during apply" is a plan whose account
-// nobody can check, and the account this grant is on is the difference between
-// an operator who can assume the deployer and one who can mint a token for the
-// scheduler (which can reach the budget backend) or for any other identity.
+// The account has to be named, and named as one of those two, in this run's
+// installation project (Projects[0]), never in a verified Firebase project the
+// installation module is not applied to: a plan that says "an account, decided
+// during apply" is a plan whose account nobody can check, and the account this
+// grant is on is the difference between an operator who can assume the deployer
+// and one who can mint a token for the scheduler (which can reach the budget
+// backend) or for any other identity.
+//
+// The verifier account is the second account deliberately, in CSR14: it is a
+// literal ID in the module (verifier.tf) and its whole reach is the
+// credentials service's verify route, so the token an operator mints for it is
+// the one caller that route admits. Without the second site here the plan that
+// creates the account — the same `fugaro update` that turns the service on —
+// would be refused, which is the non-converging update CLAUDE.md's HARD RULE
+// is about.
 func (c Cover) deployerTokenCreator(ch Change) string {
 	if str(ch.After["role"]) != DeployerTokenCreatorRole {
 		return ""
@@ -1568,14 +1632,14 @@ func (c Cover) deployerTokenCreator(ch Change) string {
 	}
 	m := saName.FindStringSubmatch(id)
 	dp := c.deployerProject()
-	if m != nil && dp != "" && m[1] == dp && m[3] == dp && m[2] == DeployerAccountID {
+	if m != nil && dp != "" && m[1] == dp && m[3] == dp && (m[2] == DeployerAccountID || m[2] == VerifierAccountID) {
 		return ""
 	}
 	want := "the deployer account of this run"
 	if dp != "" {
-		want = DeployerAccount(dp)
+		want = DeployerAccount(dp) + " or the verifier account " + VerifierAccountID + "@" + dp + ".iam.gserviceaccount.com"
 	}
-	return fmt.Sprintf("grants %s on %s, which is not %s: D75's impersonation grant is on that account alone", DeployerTokenCreatorRole, id, want)
+	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those two accounts alone", DeployerTokenCreatorRole, id, want)
 }
 
 // accountClause is one clause of a job or build account's bucket condition,
@@ -1720,7 +1784,18 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 // jobAccount's shape too (fugaro-<readable slug>-<workflow>-<8 hex>), so a
 // repository whose slug begins with "p" gets an ID of the project job's own
 // shape, and the widened condition would then be accepted for it.
-var projectModule = regexp.MustCompile(`^module\.project\["[^"]+"\]$`)
+//
+// The review-only variants (design docs/cloud-senior-review, CSR7) are a
+// second instance of the same module, "project_review"
+// (roots/installation/main.tf), and their grants are these same two widened
+// conditions for the account their own instance creates: reading them here is
+// what lets the one plan fugaro update writes be covered at all, and it widens
+// nothing — the second instance is the same module source, with its own
+// accounts, so the account rule below still binds every grant to the account
+// its own instance holds or creates. What the variant is NOT covered for is
+// anything a job account may not have: it holds no secret accessor, because
+// the root hands that instance no secret container.
+var projectModule = regexp.MustCompile(`^module\.project(?:_review)?\["[^"]+"\]$`)
 
 // projectJobCondition reports whether a bucket grant is a project job's
 // widened one (plan task 3.2 step 2, gcp.ProjectBucketCondition), for the
@@ -2206,6 +2281,52 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 	return ""
 }
 
+// The two environment variables a runs bucket reaches a job as, each in the
+// form its writer gives it: FUGARO_BUCKET, which infra's BucketEnv names and
+// platformEnvFor writes for the check jobs (repo and catalog) and the workflow
+// jobs alike, and FUGARO_RUNS_BUCKET, which the installation's history and
+// coordinator sweeps read the runs' result.json objects through. This package
+// cannot import either writer (infra and cli both import it), so the names are
+// literals here as FUGARO_CHECK_SPEC's is, and cover_test.go pins each to its
+// writer's own declaration.
+const (
+	bucketEnv     = "FUGARO_BUCKET"
+	runsBucketEnv = "FUGARO_RUNS_BUCKET"
+)
+
+// bucketValue is what the variable env carries for one of this run's buckets:
+// the whole object URL for FUGARO_BUCKET's writer, and the bare name for
+// FUGARO_RUNS_BUCKET's, which history.tf and coordinator.tf pass
+// var.runs_bucket in.
+func bucketValue(env, bucket string) string {
+	if env == runsBucketEnv {
+		return bucket
+	}
+	return "gs://" + bucket
+}
+
+// bucketEnvOK reports whether v is one of this run's buckets in the form env
+// carries it: the literal bucketValue(env, bucket). A value that is not known is
+// refused by the caller, as checkSpecs refuses the check specs' unknown values.
+func (c Cover) bucketEnvOK(env, v string) bool {
+	for _, b := range c.Buckets {
+		if v == bucketValue(env, b) {
+			return true
+		}
+	}
+	return false
+}
+
+// bucketValues is this run's buckets in that same form, joined, for a refusal
+// that says what it wanted.
+func (c Cover) bucketValues(env string) string {
+	out := make([]string, 0, len(c.Buckets))
+	for _, b := range c.Buckets {
+		out = append(out, bucketValue(env, b))
+	}
+	return strings.Join(out, ", ")
+}
+
 // checkSpec is the part of the check job's FUGARO_CHECK_SPEC that points at
 // registries; it decodes as fugaro image check --job does (infra.CheckJobSpec
 // with the same tags: encoding/json's case-insensitive keys and last
@@ -2214,6 +2335,38 @@ type checkSpec struct {
 	Registry            string            `json:"registry"`
 	BuildServiceAccount string            `json:"build_service_account"`
 	BaseImages          map[string]string `json:"base_images"`
+}
+
+// catalogCheckSpec is the part of the catalog check job's
+// FUGARO_CATALOG_CHECK_SPEC that points at registries and accounts: the base
+// images its builds start FROM and the account each repository's build runs
+// as. It decodes as the job does (internal/cli's catalogCheckSpec reader; infra.CatalogCheckJobSpec is the writer, with the same tags).
+type catalogCheckSpec struct {
+	BaseImages   map[string]string `json:"base_images"`
+	Repositories []struct {
+		BuildServiceAccount string `json:"build_service_account"`
+	} `json:"repositories"`
+}
+
+// checkCatalogSpec holds the catalog check job's document to what
+// checkSpecs holds a repository check's: every base image in this run's
+// registry and every build account one of this run's Fugaro accounts.
+func (c Cover) checkCatalogSpec(value, proj, prefix string) string {
+	var s catalogCheckSpec
+	if err := json.Unmarshal([]byte(value), &s); err != nil {
+		return "a catalog check spec that is not the JSON the catalog check job reads"
+	}
+	for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
+		if ref := s.BaseImages[k]; !c.baseImageOK(ref, proj) {
+			return fmt.Sprintf("a catalog check spec whose base image %s is %q, outside this run's %s", k, ref, prefix)
+		}
+	}
+	for _, r := range s.Repositories {
+		if !c.buildAccount(r.BuildServiceAccount) {
+			return fmt.Sprintf("a catalog check spec whose build service account is %q, not a Fugaro service account of this run", r.BuildServiceAccount)
+		}
+	}
+	return ""
 }
 
 // refChars are the characters an image reference may hold here: the spec's
@@ -2382,6 +2535,27 @@ func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creds crede
 // registry and each base image it builds FROM must be in this run's registry,
 // so a job that the covered plan creates can never build from or push to
 // anything else. An environment that is not fully known is not covered.
+//
+// It holds the job's FUGARO_BUCKET there too, and on EVERY job rather than on
+// the check jobs alone: infra's platformEnvFor writes the one runs bucket for
+// the check jobs and the workflow jobs alike, so a rule that fired on the
+// check job's copy would leave the same variable unchecked on the workflow
+// job's, which a hand-edited plan turns into a run whose records land in
+// another bucket — the same hole one job over, and under init's one
+// confirmation. The value must be the module's own literal, gs://<one of this
+// run's buckets>: a computed one is refused as the specs' unknown values are,
+// and so is an entry that takes its value from a secret, which carries the
+// variable's name and a value the module never set.
+//
+// FUGARO_RUNS_BUCKET is held with it, in the bare form its writers give it.
+// The installation's history and coordinator sweeps are covered jobs (their
+// commands are in knownCommands) and carry this run's runs bucket under that
+// name: the history job rolls each run's result.json into the Firestore
+// history and the coordinator reconciles the registry from the same objects,
+// so a plan that pointed either at another bucket would feed forged records
+// into both — and, like the workflow job's copy, under the one confirmation
+// that covered the plan. The rule is the same one, on the form the variable's
+// own writer uses.
 func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string) string {
 	if unknownAt(unk, envPath...) {
 		return "an environment that is not known"
@@ -2393,11 +2567,40 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		if unknownAt(unk, append(slices.Clone(ep), "name")...) {
 			return "an environment variable whose name is not known"
 		}
-		if e["name"] != "FUGARO_CHECK_SPEC" {
+		name := str(e["name"])
+		if name == bucketEnv || name == runsBucketEnv {
+			// A value that comes from a source (a secret_key_ref) is not the
+			// module's literal even when the entry carries one too: the
+			// credentials service's case refuses the same shape on its
+			// container for the same reason, a value the module never set, and
+			// a plan that kept this run's bucket here and added a source would
+			// point the job's records wherever the secret says while this check
+			// read the literal. The source block is read as the literal is: one
+			// the plan leaves to apply is a value this run cannot show either,
+			// and after carries an empty list for it, so it is the unknown path
+			// and not the non-empty one that refuses it.
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "a " + name + " whose value comes from a secret rather than the module"
+			}
+			if unknownAt(unk, append(slices.Clone(ep), "value")...) || unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
+				return "a " + name + " that is not known"
+			}
+			if v := str(e["value"]); !c.bucketEnvOK(name, v) {
+				return fmt.Sprintf("a %s of %q, which is not this run's runs bucket (%s)", name, v, c.bucketValues(name))
+			}
+			continue
+		}
+		if name != "FUGARO_CHECK_SPEC" && name != "FUGARO_CATALOG_CHECK_SPEC" {
 			continue
 		}
 		if unknownAt(unk, append(slices.Clone(ep), "value")...) {
 			return "a check spec that is not known"
+		}
+		if name == "FUGARO_CATALOG_CHECK_SPEC" {
+			if why := c.checkCatalogSpec(str(e["value"]), proj, prefix); why != "" {
+				return why
+			}
+			continue
 		}
 		var s checkSpec
 		if err := json.Unmarshal([]byte(str(e["value"])), &s); err != nil {
