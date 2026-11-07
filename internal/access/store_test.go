@@ -16,8 +16,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -244,13 +248,223 @@ func TestAccessNodeWriteRefusesWhatDecodeWouldRefuse(t *testing.T) {
 	}
 }
 
-// TestAccessNodeSchemaAgreesWithTheClosedSet: the JSON Schema in schemas/ is
-// the authoring aid a reader validates a hand-written node against, and the Go
-// reader is the authority. The two cannot drift: the schema's role enum is the
-// closed set, its count cap is MaxGrants, and both levels refuse an unknown
-// field, which is what makes the schema's field set the shape rather than a
-// suggestion.
-func TestAccessNodeSchemaAgreesWithTheClosedSet(t *testing.T) {
+// TestAccessNodeWriteStoresTheCanonicalSpelling: the node holds one spelling of
+// a scope, whatever the caller held. A Scope built by hand rather than by
+// ParseScope can carry a variant Valid accepts — an upper-case pattern, a
+// trailing ".git" — and writing it as written would put a second spelling of one
+// scope in the node, so a read would hand back a Scope the caller did not write
+// and `fugaro user ls` could print two names for one repository. The write
+// canonicalises: both spellings here are one scope, and the node holds it once.
+func TestAccessNodeWriteStoresTheCanonicalSpelling(t *testing.T) {
+	ctx := context.Background()
+	f, db := accessDB(t)
+
+	hand := Grant{
+		User:  alice,
+		Role:  RoleViewer,
+		Scope: Scope{Kind: ScopeRepos, Repos: []string{"GitHub/ACME/APP", "github/acme/app.git"}},
+	}
+	if !hand.Scope.Valid() {
+		t.Fatalf("%+v is not a scope Valid accepts, so it does not test the write", hand.Scope)
+	}
+	absent, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteIfMatch(ctx, db, []Grant{hand}, absent.ETag); err != nil {
+		t.Fatalf("WriteIfMatch: %v", err)
+	}
+
+	stored, err := json.Marshal(f.Value(PathNode))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(stored, []byte("ACME")) || bytes.Contains(stored, []byte(".git")) {
+		t.Errorf("the node holds %s: the write stored the caller's spelling rather than the canonical one", stored)
+	}
+	got, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Grants) != 1 || !slices.Equal(got.Grants[0].Scope.Repos, []string{"github/acme/app"}) {
+		t.Errorf("Read = %+v, want the one canonical pattern the two spellings name", got.Grants)
+	}
+}
+
+// nodeSchema compiles schemas/access.schema.json under its own $id, the way a
+// person validating a hand-written node would.
+func nodeSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "access.schema.json"))
+	if err != nil {
+		t.Fatalf("reading the node's schema: %v", err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("the node's schema is not JSON: %v", err)
+	}
+	id, _ := doc.(map[string]any)["$id"].(string)
+	if id == "" {
+		t.Fatal("the node's schema carries no $id, so nothing can compile it")
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, doc); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatalf("compiling the node's schema: %v", err)
+	}
+	return sch
+}
+
+// schemaAccepts reports whether the schema accepts one document. A document
+// that is not JSON at all is one the schema cannot accept, which is what Decode
+// says of it too.
+func schemaAccepts(t *testing.T, sch *jsonschema.Schema, doc string) bool {
+	t.Helper()
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(doc))
+	if err != nil {
+		return false
+	}
+	return sch.Validate(inst) == nil
+}
+
+// readerAccepts reports whether the node's reader accepts one document.
+func readerAccepts(doc string) bool {
+	_, err := Decode([]byte(doc))
+	return err == nil
+}
+
+// TestAccessNodeSchemaAndReaderAgree: the schema in schemas/ is the aid a person
+// validates a hand-written node against, and internal/access.Decode is the
+// authority that reads it. The two are held together here in the one direction
+// that matters — every document the schema accepts must be one the reader
+// accepts — because the other way round is how a node that passes the schema
+// goes on to halt every CLI read of it (the review finding on this change).
+//
+// The schema is deliberately stricter than the reader in the spelling it
+// requires: it spells the canonical form Encode stores, while Decode folds a
+// variant rather than refusing it. The strictness is pinned here rather than
+// left implicit, and the other half of the agreement — that everything the
+// writer writes validates — is pinned with it, so a schema no installation
+// could satisfy fails as loudly as a schema that lets a bad node through.
+func TestAccessNodeSchemaAndReaderAgree(t *testing.T) {
+	sch := nodeSchema(t)
+
+	// Documents both accept: an empty node, one grant of each role and scope
+	// kind, a list of two patterns, a nested repository path, a wildcard, and
+	// the four-wildcard cap itself.
+	for _, doc := range []string{
+		`{"grants":[]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"project"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"operator","scope":"all-repos"}]}`,
+		`{"grants":[{"user":"user:Alice@example.com","role":"admin","scope":"github/acme/api-*"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/app,bitbucket/other/thing"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/group/nested"}]}`,
+		`{"grants":[{"user":"user:a.b+tag@example.com","role":"viewer","scope":"github/*/app"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/*/*/*/*"}]}`,
+	} {
+		if !readerAccepts(doc) {
+			t.Errorf("Decode refused %s: the corpus of documents both accept is wrong", doc)
+		}
+		if !schemaAccepts(t, sch, doc) {
+			t.Errorf("the schema refused %s, a document the reader accepts and the writer can write", doc)
+		}
+	}
+
+	// Documents the schema must refuse, every one of them a document Decode
+	// refuses too. This is the finding's own list — a member that is not the
+	// canonical user, a control byte, a scope of "*", "nonsense" or
+	// "project,all-repos" — plus the rest of the grammar a hand-written node
+	// gets wrong: an unknown field, a role outside the closed set, an empty or
+	// missing scope, a pattern that names no provider, a doubled star, a fifth
+	// wildcard and a "." or ".." segment.
+	for _, doc := range []string{
+		`{}`,
+		`{"grants":null}`,
+		`[]`,
+		`"grants"`,
+		`{"grants":[]}{"grants":[]}`,
+		`{"grants":[],"operators":["user:alice@example.com"]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"project","extra":1}]}`,
+		`{"grants":["user:alice@example.com"]}`,
+		`{"grants":[{"user":"group:eng@example.com","role":"viewer","scope":"project"}]}`,
+		`{"grants":[{"user":"alice@example.com","role":"viewer","scope":"project"}]}`,
+		`{"grants":[{"user":"user:alice@EXAMPLE.com","role":"viewer","scope":"project"}]}`,
+		`{"grants":[{"user":"user:alice@@example.com","role":"viewer","scope":"project"}]}`,
+		`{"grants":[{"user":"user:alice@exa mple.com","role":"viewer","scope":"project"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"administrator","scope":"project"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"","scope":"project"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"*"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":""}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"nonsense"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"project,all-repos"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"project,github/acme/app"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"*/acme/app"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"foo/acme/app"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/**"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/.."}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/*/*/*/*/*"}]}`,
+	} {
+		if readerAccepts(doc) {
+			t.Errorf("Decode accepted %s: the corpus of refused documents is wrong", doc)
+		}
+		if schemaAccepts(t, sch, doc) {
+			t.Errorf("the schema accepted %s, which Decode refuses: a hand-written node passing the schema would halt every CLI read of it", doc)
+		}
+	}
+
+	// Documents the schema refuses and the reader folds and accepts, because
+	// the schema spells the canonical form the writer stores and the reader
+	// normalises a variant rather than refusing it. Listed so the strictness is
+	// deliberate and visible: the reader is the authority, and a node the
+	// schema refuses here is still read.
+	for _, doc := range []string{
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"GitHub/ACME/APP"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/app.git"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":" project "}]}`,
+	} {
+		if !readerAccepts(doc) {
+			t.Errorf("Decode refused %s: the reader is supposed to fold this spelling", doc)
+		}
+		if schemaAccepts(t, sch, doc) {
+			t.Errorf("the schema accepted %s: it spells the canonical form the writer stores", doc)
+		}
+	}
+
+	// Everything Encode writes validates, which is the other half: a schema
+	// that refused a document the writer writes would be a schema no
+	// installation could satisfy. The last grant is built by hand with two
+	// spellings of one scope, so this holds the writer to the canonical
+	// spelling as well.
+	for _, grants := range [][]Grant{
+		{{User: alice, Role: RoleViewer, Scope: Scope{Kind: ScopeProject}}},
+		{{User: bob, Role: RoleOperator, Scope: Scope{Kind: ScopeAllRepos}}},
+		{grant(alice, RoleAdmin, scope(t, "github/acme/api-*"))},
+		{grant(alice, RoleViewer, scope(t, "github/acme/app,bitbucket/other/thing"))},
+		{grant(bob, RoleViewer, scope(t, "github/acme/group/nested"))},
+		{{User: alice, Role: RoleViewer, Scope: Scope{Kind: ScopeRepos, Repos: []string{"GitHub/ACME/APP", "github/acme/app.git"}}}},
+	} {
+		raw, err := Encode(grants)
+		if err != nil {
+			t.Fatalf("Encode(%+v): %v", grants, err)
+		}
+		if !schemaAccepts(t, sch, string(raw)) {
+			t.Errorf("Encode wrote %s, which the schema refuses", raw)
+		}
+	}
+}
+
+// TestAccessNodeSchemaPinsTheClosedSet: the names and numbers the schema shares
+// with the Go package, held to it so the two cannot drift. The count cap is
+// MaxGrants, the role enum is the closed set, both levels refuse an unknown
+// field — which is what makes the schema's field set the shape rather than a
+// suggestion — and the providers a pattern may name are config.Providers, the
+// kinds a canonical repository can carry.
+func TestAccessNodeSchemaPinsTheClosedSet(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "access.schema.json"))
 	if err != nil {
 		t.Fatalf("reading the node's schema: %v", err)
@@ -270,6 +484,7 @@ func TestAccessNodeSchemaAgreesWithTheClosedSet(t *testing.T) {
 						Role struct {
 							Enum []string `json:"enum"`
 						} `json:"role"`
+						Scope json.RawMessage `json:"scope"`
 					} `json:"properties"`
 				} `json:"items"`
 			} `json:"grants"`
@@ -302,6 +517,10 @@ func TestAccessNodeSchemaAgreesWithTheClosedSet(t *testing.T) {
 	}
 	if !slices.Equal(g.Items.Properties.Role.Enum, want) {
 		t.Errorf("the schema's role enum = %v, the closed set = %v", g.Items.Properties.Role.Enum, want)
+	}
+	providers := "(" + strings.Join(config.Providers, "|") + ")"
+	if !bytes.Contains(g.Items.Properties.Scope, []byte(providers)) {
+		t.Errorf("the scope pattern does not name the providers %v: a provider no repository can carry would pass the schema and halt the reader", config.Providers)
 	}
 }
 

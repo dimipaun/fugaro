@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/access.schema.json",
   "title": "fugaro access grants (Realtime Database node config/admin/access)",
-  "description": "The role and scope pairs, at the Realtime Database node config/admin/access (D1585, docs/roles-scopes). Each grant names a member, a role and the scope the role is held at; a person may hold several pairs, so the document is a list rather than a map keyed by member. The scope is stored as the string a person types — `project`, `all-repos`, or a comma-separated list of canonical repository patterns — so the reader re-validates it with the same grammar that admitted it. Unlike a CLI document, this schema is closed (additionalProperties is false at both levels) because the Go reader is strict too: internal/access decodes with DisallowUnknownFields, so a node carrying a field the reader does not know is refused rather than ignored, and a field that is added here without a reader change is a node every installation would halt on. The node is under config/admin, whose `.read` and `.write` are false: no client token reads it, and the CLI reaches it over IAM (F22, F28).",
+  "description": "The role and scope pairs, at the Realtime Database node config/admin/access (D1585, docs/roles-scopes). Each grant names a member, a role and the scope the role is held at; a person may hold several pairs, so the document is a list rather than a map keyed by member. internal/access.Decode is the authority for this node: it reads it with DisallowUnknownFields and re-validates every member, role and scope with the grammar that admitted it. This schema is the aid in front of that reader, and internal/access's TestAccessNodeSchemaAndReaderAgree holds the two together by refusing any document the schema accepts and the reader does not — a hand-written node that passed the schema and then halted every CLI read of it is the failure that test exists for. It spells the canonical form the writer stores: the lower-case member internal/access.Member builds, and the lower-case, '.git'-free scope internal/access.ParseScope stores. It is deliberately stricter than the reader there, because the reader folds a variant (an upper-case pattern, a trailing '.git') rather than refusing it, so a node this schema refuses may still be read. The schema is closed (additionalProperties is false at both levels) because the reader is strict too: a node carrying a field the reader does not know is refused rather than ignored, and a field added here without a reader change is a node every installation would halt on. The node is under config/admin, whose `.read` and `.write` are false: no client token reads it, and the CLI reaches it over IAM (F22, F28).",
   "type": "object",
   "additionalProperties": false,
   "required": ["grants"],
@@ -18,8 +18,8 @@
         "properties": {
           "user": {
             "type": "string",
-            "description": "The member, in the canonical `user:<address>` form internal/access.Member builds: the local part byte for byte and the domain lower-cased. A group, a domain and a service account are refused — the CLI cannot match one against a caller (F25).",
-            "pattern": "^user:[^@\\s]+@[^@\\s]+$"
+            "description": "The member, in the canonical `user:<address>` form internal/access.Member builds: the local part byte for byte and the domain lower-cased. The pattern is the reader's own rule — printable ASCII only (0x21 to 0x7e), exactly one `@`, a non-empty local part and a lower-case domain — so a control byte, a space, a second `@`, an empty part or an upper-case domain is refused here and there. A group, a domain and a service account are refused: the CLI cannot match one against a caller (F25).",
+            "pattern": "^user:[\\x21-\\x3f\\x41-\\x7e]+@[\\x21-\\x3f\\x5b-\\x60a-z\\x7b-\\x7e]+$"
           },
           "role": {
             "type": "string",
@@ -28,8 +28,27 @@
           },
           "scope": {
             "type": "string",
-            "description": "What the role covers: `project`, `all-repos`, or a comma-separated list of canonical repository patterns. A lone `*` is refused — it is `all-repos`, which only a project admin grants (D1583).",
-            "minLength": 1
+            "description": "What the role covers: `project`, `all-repos`, or a comma-separated list of canonical repository patterns. The pattern is the reader's grammar: a whole scope is spelled exactly once and never mixed with repositories; a repository names a provider (one of config.Providers), an owner and a repository, at least three segments with none of them empty, and a wildcard may be a segment's only character only when the segment is `*` alone. A lone `*` is refused — it is `all-repos`, which only a project admin grants (D1583) — as are a doubled `*`, a `.` or `..` segment, a provider no repository can carry, and a fifth wildcard (projectpolicy's maxPatternStars, written as a `not` because a regular expression cannot count).",
+            "allOf": [
+              {
+                "pattern": "^(project|all-repos|(github|bitbucket)/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+)/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+)(/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+))*(,(github|bitbucket)/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+)/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+)(/(\\*|[a-z0-9._-]+\\*?[a-z0-9._-]*|\\*[a-z0-9._-]+))*)*)$"
+              },
+              {
+                "not": {
+                  "pattern": "(.*\\*){5}"
+                }
+              },
+              {
+                "not": {
+                  "pattern": "(^|[/,])\\.\\.?([/,]|$)"
+                }
+              },
+              {
+                "not": {
+                  "pattern": "\\.git([,]|$)"
+                }
+              }
+            ]
           }
         }
       }

@@ -127,9 +127,9 @@ func (entry nodeGrant) grant() (Grant, error) {
 
 // Encode renders grants as the node's document, validating each entry and both
 // bounds first, so a writer cannot store a document its own reader would refuse.
-// It writes the canonical forms — Member's member, Scope.String's scope — so
-// the node holds one spelling of each, which is what Decode's validation
-// requires back.
+// It writes the canonical forms — Member's member and the scope ParseScope
+// produces — so the node holds one spelling of each, which is what Decode's
+// validation requires back.
 func Encode(grants []Grant) ([]byte, error) {
 	if len(grants) > MaxGrants {
 		return nil, fmt.Errorf("the grants node would hold %d grants; at most %d are allowed", len(grants), MaxGrants)
@@ -146,7 +146,17 @@ func Encode(grants []Grant) ([]byte, error) {
 		if !g.Scope.Valid() {
 			return nil, fmt.Errorf("grant %d: the scope is not one this package parsed", i+1)
 		}
-		entries = append(entries, nodeGrant{User: user, Role: string(g.Role), Scope: g.Scope.String()})
+		// The scope is written as the canonical spelling, not as the caller
+		// holds it: Valid accepts a variant — an upper-case pattern, a trailing
+		// ".git" — and writing it as written would put a second spelling of one
+		// scope in the node, which Read would hand back as a Scope the caller
+		// did not write. ParseScope is the one grammar that says what the
+		// spelling is, so it is the one that produces it.
+		scope, err := ParseScope(g.Scope.String())
+		if err != nil {
+			return nil, fmt.Errorf("grant %d: the scope is not one this package parsed: %w", i+1, err)
+		}
+		entries = append(entries, nodeGrant{User: user, Role: string(g.Role), Scope: scope.String()})
 	}
 	raw, err := json.Marshal(nodeDoc{Grants: &entries})
 	if err != nil {

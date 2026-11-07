@@ -70,6 +70,10 @@ func TestNoRunTokenReadsTheAccessNode(t *testing.T) {
 	// And nothing along the node's own path grants a client read or write: a
 	// later edit that added an explicit child grant would re-open the family the
 	// ancestor closes, and the walk is over the ancestors and the node itself.
+	// Every value that is not the boolean false counts, because the two shapes a
+	// grant is written in are an expression (a string) and the boolean true; a
+	// walk that looked only for strings would pass a `{ ".read": true }` added
+	// here (the review finding on this change).
 	for i := 1; i <= len(segs); i++ {
 		p := strings.Join(segs[:i], "/")
 		a, ok := paths[p]
@@ -77,8 +81,8 @@ func TestNoRunTokenReadsTheAccessNode(t *testing.T) {
 			continue
 		}
 		for _, attr := range []string{".read", ".write"} {
-			if v, has := a[attr].(string); has {
-				t.Errorf("/%s %s = %q: no client token may read or write the grants node", p, attr, v)
+			if v, has := a[attr]; has && v != false {
+				t.Errorf("/%s %s = %v: no client token may read or write the grants node", p, attr, v)
 			}
 		}
 	}
