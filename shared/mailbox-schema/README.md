@@ -419,8 +419,12 @@ the two lengths is what kills it. `repo.length > TARGET_MAX` narrowed to
 `> TARGET_MAX + 1` it accepted one a code unit past it, with every test in this
 package **and** every test on the Go side green. A bound that can be missed in
 either direction therefore takes two mutants here, and the row that kills each
-one lives in `bounds.test.js` (and in the Go replay), not in `vectors.json`: that
-file sits on exactly two lengths by accident and on no other bound.
+one lives in `bounds.test.js` (and in the Go replay), not in `vectors.json`.
+That file holds the tag's length, the 40-character head SHA, and
+one-past-the-bound refusals that kill a **widened** body or options-count bound;
+it holds no accept at a string or list bound, which is the half a **narrowed**
+bound needs, and nothing on the repository or run bound, the 64-character head
+SHA, or the C0, DEL and carriage-return rules.
 
 Two of the guards are about the **boundary** rather than a refusal: that `index.js`
 carries no import and no buffer type, because that is what keeps the schema importable

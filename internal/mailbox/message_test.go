@@ -271,11 +271,16 @@ func TestSchemaVectorRefusals(t *testing.T) {
 const boundsVectorsPath = "../../shared/mailbox-schema/vectors.bounds.json"
 
 // TestTheSharedBoundVectorsHold replays shared/mailbox-schema/vectors.bounds.json.
-// The merged vectors.json sits on exactly two lengths by accident — every case
-// carries a tag of MACMax and every action case a head SHA of SHAMin, so its
-// replay holds those — and on no other bound, so a bound moved by one survived
-// on both ends: `> TargetMax` narrowed to `>= TargetMax` refused a 200-code-unit
-// repository here and in the module, and widened to `> TargetMax+1` accepted a
+// The merged vectors.json holds four positions and no others: every case
+// carries a tag of MACMax and every action case a head SHA of SHAMin, and its
+// refusals carry the upper side of two further bounds — a body of TextMax+1
+// code units and OptionsMax+1 options, each one past its bound, which is what
+// kills a bound WIDENED by one. It holds no accept at a string or list bound,
+// which is what a bound NARROWED by one needs, and nothing at all on the
+// repository or run bound, on the second head-SHA length, or on the C0, DEL
+// and carriage-return rules — so a bound moved by one survived on both ends:
+// `> TargetMax` narrowed to `>= TargetMax` refused a 200-code-unit repository
+// here and in the module, and widened to `> TargetMax+1` accepted a
 // 201-code-unit one, with every Go test and all 51 node tests green. That file
 // is the fix, and this replay is the Go half of it.
 //

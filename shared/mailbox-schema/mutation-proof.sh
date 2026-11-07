@@ -441,11 +441,16 @@ run "canonicalBytes: -0 is refused" \
 # test in this package AND every test on the Go side, in both directions, until
 # the T1 follow-up of PR #715 added the rows that catch them.
 #
-# Those rows are not in vectors.json: that file sits on exactly two lengths by
-# accident (every case carries a tag of MAC_MAX and every action case a head SHA
-# of SHA_MIN) and on no other bound, which vectors.bounds.json states. They are
-# in bounds.test.js, the parity test for the shared artifact both ends consume,
-# and in internal/mailbox's TestTheSharedBoundVectorsHold on the Go side.
+# Those rows are not all in vectors.json. That file holds the tag's length,
+# the SHA_MIN head-SHA length, and the upper side of two further bounds — the
+# one-past-the-bound refusals of a body of TEXT_MAX + 1 code units and of
+# OPTIONS_MAX + 1 options, which kill a bound WIDENED by one. It holds no
+# accept at a string or list bound, which is what a bound NARROWED by one
+# needs, and nothing at all on the repository or run bound, on the SHA_MAX
+# length, or on the C0, DEL and carriage-return rules — all of which
+# vectors.bounds.json states. The rows are in bounds.test.js, the parity test
+# for the shared artifact both ends consume, and in internal/mailbox's
+# TestTheSharedBoundVectorsHold on the Go side.
 #
 # So: add a bound to the schema, and it needs a row in vectors.bounds.json AND a
 # mutant here. A bound with a row and no mutant is a row that can be deleted by
