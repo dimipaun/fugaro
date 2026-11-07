@@ -5379,6 +5379,11 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     pencil.click()
     await flush()
     expect(sent, 'a pencil press sent an edit').toEqual([])
+    // D1116: the press leaves the keyboard on the pencil rather than dropping it
+    // to `<body>`, so the editor it drew is reached from the control that opened
+    // it -- and a pencil under an open confirmation window is the control the
+    // keyboard comes back to when that window is answered or closed.
+    expect(document.activeElement, 'the press dropped the keyboard').toBe(pencil)
 
     const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
     expect(editor, 'the pencil drew no editor').toBeDefined()
