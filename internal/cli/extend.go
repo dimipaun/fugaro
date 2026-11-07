@@ -144,10 +144,11 @@ func declareLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.S
 
 // paidCommandNames are the command names whose code this build does not carry:
 // the commands the owner moves out of the core, and the ones that never lived
-// there -- `graph` is ee/'s from the start (D1362). A build without that code
-// shows a stub for each name it does not hold rather than leaving the name
-// unknown to cobra, whose "unknown command" would mislead a source builder and
-// the app into thinking the name was never part of the CLI (D522).
+// there — `graph` is ee/'s from the start (D1362). A core build shows a stub
+// for each name it does not hold rather than leaving the name unknown to cobra,
+// whose "unknown command" would mislead a source builder and the app into
+// thinking the name was never part of the CLI (D522). A build whose edition is
+// ee gets no stub: applyExtensions says why.
 var paidCommandNames = []string{"report", "coordinator", "graph"}
 
 // newPaidStub is the command a build shows for a paid name it carries no code
@@ -192,6 +193,19 @@ func applyExtensions(root *cobra.Command) {
 			continue
 		}
 		if _, registered := registrations[name]; registered {
+			continue
+		}
+		// The stub's message is a statement about a build that is not the
+		// Subscription Edition — "graph is part of Fugaro Subscription Edition;
+		// this build does not include it" is true of the core build it is
+		// written for, and a falsehood to the person who has that edition. A
+		// tagged build carries the paid code, so a paid name it does not answer
+		// to is a registration that has not landed yet (`graph`, until CG3
+		// registers it): the honest answer there is cobra's own "unknown
+		// command", which is what the design says the message is for anyway —
+		// it appears only in untagged/core builds (§6 of
+		// docs/design/ee-boundary-moves.md).
+		if Edition() == EditionEE {
 			continue
 		}
 		root.AddCommand(newPaidStub(name))

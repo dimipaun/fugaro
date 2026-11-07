@@ -585,10 +585,13 @@ func TestUntaggedPaidCommandSaysWhy(t *testing.T) {
 }
 
 // TestUntaggedBuildHasTheGraphStub: `fugaro graph` is ee/'s command (D1362), so
-// a build without that code carries no graph command at all -- and the name is
-// still an answer the CLI gives, the stub D522 fixes, rather than cobra's
-// "unknown command", which would tell a source builder, the console and a skill
-// that the name was never part of the CLI (T3).
+// a core build carries no graph command at all -- and the name is still an
+// answer the CLI gives, the stub D522 fixes, rather than cobra's "unknown
+// command", which would tell a source builder, the console and a skill that the
+// name was never part of the CLI (T3). The other half of the rule is
+// ee/register's TestTaggedBuildCarriesNoPaidStub: a build whose edition is ee
+// shows no stub, because its sentence is written for the builds that are not
+// the Subscription Edition.
 func TestUntaggedBuildHasTheGraphStub(t *testing.T) {
 	extendState(t)
 	if slices.Contains(coreRootPaths(), "fugaro graph") {
