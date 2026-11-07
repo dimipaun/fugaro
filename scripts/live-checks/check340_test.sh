@@ -486,6 +486,17 @@ iam)
       if [ -n "${FAKE340_LIST_DENIED:-}" ] || readback_denied; then
         deny_iam iam.serviceAccounts.list
       fi
+      # FAKE340_LIST_WARNS: a list that ANSWERS and also carries a line of
+      # gcloud's own on stderr — the impersonation WARNING a machine with
+      # `auth/impersonate_service_account` set prints on every call, the list
+      # among them, or a config or update notice. It is not an answer and it is
+      # not on stdout, which is where the list's answer is; a check that merged
+      # the two would read this line as the email and report the account as
+      # present.
+      if [ -n "${FAKE340_LIST_WARNS:-}" ]; then
+        printf 'WARNING: This command is using service account impersonation. All API calls will be executed as [%s].\n' \
+          "sandbox-operator@example.invalid" >&2
+      fi
       want=${filter#email=}
       if [ -n "$want" ] && { [ -n "${FAKE340_SA_EXISTS:-}" ] || [ -f "$dir/accounts/${want%%@*}" ]; }; then
         printf '%s\n' "$want"
@@ -1307,6 +1318,34 @@ test_a_denied_account_list_stops_the_guard() {
   expect_bucket_clean "account list denied"
 }
 
+# The account list's ANSWER is its stdout, and gcloud's own lines go to stderr:
+# a machine with `auth/impersonate_service_account` configured prints the
+# impersonation warning on every call, the flagless account list included, and a
+# config or update notice prints on machines with neither. Read together they are
+# a line with no email in it taken for the email, which is the account being
+# there — so the guard stops because the name it drew is "already taken" and the
+# Restore reports an account it deleted as "still present". Both rows are then
+# false, and on such a machine the check that gates R12 can never run at all.
+test_a_warning_on_the_account_lists_stderr_is_not_an_answer() {
+  setup_case account-list-warns relative
+  RUN340_ENV=(FAKE340_LIST_WARNS=yes)
+  run340_default
+  expect_status "$status" 0 "list warns: the run still answered"
+  expect_contains "$out" "FACT account: PASS — " "list warns: the guard reads the account as absent"
+  expect_contains "$out" "the account list answers no email for it" "list warns: and says the list answered no email"
+  expect_absent "$out" "already taken" "list warns: the warning is not read as the name being taken"
+
+  # And the same line beside the Restore's own read: the delete was refused over
+  # an account that is gone, and the warning on the list's stderr must not turn
+  # that into "still present" — a FAIL over a teardown that did its work.
+  setup_case account-list-warns-restore relative
+  RUN340_ENV=(FAKE340_DELETE_DENIED=gone FAKE340_LIST_WARNS=yes)
+  run340_default
+  expect_status "$status" 0 "list warns, denied delete: the run still answered"
+  expect_contains "$out" "gone (confirmed by list)" "list warns, denied delete: the list's answer is read as gone"
+  expect_absent "$out" "still present" "list warns, denied delete: the warning is not read as the account's email"
+}
+
 # Sharding, so the package's Go test can run the tests of this file side by
 # side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i, and
 # CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
@@ -1355,6 +1394,7 @@ t test_a_reports_row_says_whether_the_binding_was_in_the_policy
 t test_a_denied_delete_of_an_account_the_list_shows_gone_is_not_an_error
 t test_a_denied_delete_of_an_account_the_list_still_shows_is_a_fail
 t test_a_denied_account_list_stops_the_guard
+t test_a_warning_on_the_account_lists_stderr_is_not_an_answer
 
 if [ "$failures" -ne 0 ]; then
   echo "check340_test: $failures failure(s)" >&2

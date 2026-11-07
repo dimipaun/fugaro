@@ -420,23 +420,39 @@ guard_bucket_reachable() {
 # a different permission and its answer is unambiguous — the email it prints
 # means present, no output at all means gone — so it is the one call presence is
 # read from. A list that does not ANSWER is neither, and the caller has to say so
-# rather than pick one; ACCOUNT_STATE carries that and ACCOUNT_SAID its words.
+# rather than pick one; ACCOUNT_STATE carries that and ACCOUNT_SAID its words —
+# and ACCOUNT_SAID is the call's STDERR, which is never an answer: see below.
 ACCOUNT_STATE=""
 ACCOUNT_SAID=""
 account_presence() {
-  local out
+  local out status=0 err="$SCRATCH/account-list-error"
   ACCOUNT_STATE=""
   ACCOUNT_SAID=""
-  if ! out=$(gcloud iam service-accounts list --project="$P" \
-    --filter="email=$SA_EMAIL" --format="value(email)" 2>&1); then
+  out=$(gcloud iam service-accounts list --project="$P" \
+    --filter="email=$SA_EMAIL" --format="value(email)" 2>"$err") || status=$?
+  ACCOUNT_SAID=$(cat "$err" 2>/dev/null || true)
+  if [ "$status" -ne 0 ]; then
     ACCOUNT_STATE=unknown
-    ACCOUNT_SAID=$out
     return 0
   fi
-  case "$(printf '%s' "$out" | tr -d '[:space:]')" in
-  "") ACCOUNT_STATE=gone ;;
-  *) ACCOUNT_STATE=present ;;
-  esac
+  # The ANSWER is stdout, and only a line that IS the email means present. stderr
+  # is read separately, into ACCOUNT_SAID, and never as an answer: gcloud writes
+  # its own messages there — the impersonation warning of a configured
+  # `auth/impersonate_service_account`, a config or update notice — and a list
+  # whose stderr was merged in would read one of those lines as the email. That
+  # reports a free name as taken (the guard stops and the check never runs) and a
+  # deleted account as still there (the Restore's row says it failed to delete
+  # what it deleted), which are the two wrong answers this function exists to
+  # prevent. A listing filtered on this email can only answer this email, so
+  # stdout without it is the account being gone.
+  # A here-string rather than a pipe: `grep -q` exits at the first match, and a
+  # printer still writing would then die of SIGPIPE — which `pipefail` would turn
+  # into a failed test and read as the account being gone.
+  if grep -qixF -- "$SA_EMAIL" <<<"$out"; then
+    ACCOUNT_STATE=present
+  else
+    ACCOUNT_STATE=gone
+  fi
 }
 
 guard_account_absent() {
@@ -713,14 +729,19 @@ policy_names_binding() { # member role
 REPORTS_BINDING=""
 REPORTS_BINDING_SAID=""
 reports_binding_state() {
-  local out
+  local out status=0 err="$SCRATCH/policy-read-error"
   REPORTS_BINDING=""
   REPORTS_BINDING_SAID=""
-  if ! out=$(gcloud storage buckets get-iam-policy "gs://$B" --project="$P" 2>&1); then
+  out=$(gcloud storage buckets get-iam-policy "gs://$B" --project="$P" 2>"$err") || status=$?
+  REPORTS_BINDING_SAID=$(cat "$err" 2>/dev/null || true)
+  if [ "$status" -ne 0 ]; then
     REPORTS_BINDING=unknown
-    REPORTS_BINDING_SAID=$out
     return 0
   fi
+  # The policy is read out of stdout alone: stderr is gcloud's own messages, and
+  # a line of them merged into the YAML would be parsed as if it were part of the
+  # policy — the same reason account_presence keeps them apart. REPORTS_BINDING_SAID
+  # carries them, so a refusal is still quoted in full when the read fails.
   if printf '%s\n' "$out" | policy_names_binding "serviceAccount:$SA_EMAIL" roles/storage.objectUser; then
     REPORTS_BINDING=present
   else
