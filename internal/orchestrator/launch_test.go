@@ -1,0 +1,809 @@
+package orchestrator_test
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/orchestrator"
+)
+
+// The O6 tests plan over one clock and one set of caps wide enough to hold
+// every item they put in front of them, so a test that means to pin a cap
+// narrows that one field and what stops a spawn there is that cap alone.
+func o6Now() time.Time { return time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC) }
+
+func o6Caps() orchestrator.Caps {
+	return orchestrator.Caps{
+		MaxRunning:     8,
+		MaxPerCycle:    4,
+		SpawnPerMinute: 4,
+		SpawnPerHour:   16,
+		SpawnPerDay:    64,
+	}
+}
+
+// withCaps is those caps with one field narrowed by the caller.
+func withCaps(narrow func(*orchestrator.Caps)) orchestrator.Caps {
+	c := o6Caps()
+	narrow(&c)
+	return c
+}
+
+// o6Item is a work item of the shape these tests plan over: the standard
+// declaration, the phase the caller names, and a person's standing approval
+// whose digest is the item's own.
+func o6Item(id string, phase orchestrator.Phase, approvedAt time.Time) orchestrator.WorkItem {
+	w := workItemOf(id)
+	w.Phase = phase
+	return o6ApprovedBy(w, approvedAt)
+}
+
+// o6ApprovedBy is the item with a person's standing approval over it as it now
+// stands. A test that changes a field and then approves is a person approving
+// the item they read; one that approves first and changes a field after is the
+// case the launcher exists to refuse.
+func o6ApprovedBy(w orchestrator.WorkItem, approvedAt time.Time) orchestrator.WorkItem {
+	w.Approved = &orchestrator.Approval{
+		By:         "owner",
+		At:         approvedAt.UTC(),
+		SpecDigest: orchestrator.SpecDigest(w),
+		Attempts:   orchestrator.ApprovalAttempts,
+	}
+	return w
+}
+
+// o6Node is a node carrying exactly the items a test hands it.
+func o6Node(t *testing.T, now time.Time, items ...orchestrator.WorkItem) orchestrator.State {
+	t.Helper()
+	s := stateWithAQueuedItem(t, now)
+	s.WorkItems = items
+	return s
+}
+
+// o6FailedItem is the position the one automatic retry is planned from: an
+// item whose first attempt under the standing approval has failed.
+func o6FailedItem(id string, approvedAt, at time.Time) (orchestrator.WorkItem, orchestrator.Intent) {
+	w := o6Item(id, orchestrator.PhaseFailed, approvedAt)
+	w.RunID = "20261107-090000-abcd"
+	w.Attempts = 1
+	it := orchestrator.Intent{
+		ID:         orchestrator.IntentID(id, 1),
+		RunID:      w.RunID,
+		SpecDigest: orchestrator.SpecDigest(w),
+		ApprovalAt: approvedAt.UTC(),
+		At:         at.UTC(),
+		Outcome:    orchestrator.OutcomeFailed,
+	}
+	return w, it
+}
+
+// o6OpenItem is an item whose attempt is committed and has not reported: a run
+// the daemon believes is going, which is what the crash that committed the
+// intent without starting it leaves behind.
+func o6OpenItem(id, runID string, approvalAt, at time.Time) (orchestrator.WorkItem, orchestrator.Intent) {
+	w := o6Item(id, orchestrator.PhaseRunning, approvalAt)
+	w.RunID = runID
+	w.Attempts = 1
+	it := orchestrator.Intent{
+		ID:         orchestrator.IntentID(id, 1),
+		RunID:      runID,
+		SpecDigest: orchestrator.SpecDigest(w),
+		ApprovalAt: approvalAt.UTC(),
+		At:         at.UTC(),
+	}
+	return w, it
+}
+
+// onlyAction is the one action a plan must hold for a step that is about one.
+func onlyAction(t *testing.T, got []orchestrator.Action) orchestrator.Action {
+	t.Helper()
+	if len(got) != 1 {
+		t.Fatalf("the plan holds %d action(s) where this step is about one: %+v", len(got), got)
+	}
+	return got[0]
+}
+
+// o6Launcher records what it was asked to start and starts nothing: a run id
+// in started is one the daemon believes is going.
+type o6Launcher struct {
+	asked   []string
+	started []string
+	refuse  error
+	wrongID string
+}
+
+func (l *o6Launcher) Launch(_ context.Context, _ orchestrator.Spec, runID string) (string, error) {
+	l.asked = append(l.asked, runID)
+	if l.wrongID != "" {
+		return l.wrongID, nil
+	}
+	if l.refuse != nil {
+		return "", l.refuse
+	}
+	l.started = append(l.started, runID)
+	return runID, nil
+}
+
+// o6Mint mints the run ids a test named, in order, and counts the calls: a
+// recovery that minted a second run id is exactly what the count catches.
+type o6Mint struct {
+	t     *testing.T
+	runs  []string
+	calls int
+}
+
+func (m *o6Mint) mint(time.Time) (string, error) {
+	m.calls++
+	if m.calls > len(m.runs) {
+		m.t.Fatalf("the starter minted %d run ids and the test gave it %d", m.calls, len(m.runs))
+	}
+	return m.runs[m.calls-1], nil
+}
+
+// o6Starter is the Starter a test drives: a launcher, a node holding the state
+// the commits land in, and a mint handing out the run ids the test named.
+type o6Starter struct {
+	t     *testing.T
+	s     orchestrator.State
+	l     *o6Launcher
+	m     *o6Mint
+	now   time.Time
+	fail  error
+	wrote bool
+}
+
+func newO6Starter(t *testing.T, s orchestrator.State, now time.Time, runs ...string) *o6Starter {
+	t.Helper()
+	return &o6Starter{t: t, s: s, l: &o6Launcher{}, m: &o6Mint{t: t, runs: runs}, now: now}
+}
+
+// run starts one action the way a tick does. A start that fails is a fact
+// these tests assert on rather than a reason to stop, so it is returned.
+func (o *o6Starter) run(a orchestrator.Action) error {
+	o.t.Helper()
+	o.wrote = false
+	d := orchestrator.Starter{Launcher: o.l, Commit: o.commit, Mint: o.m.mint}
+	next, err := d.Start(context.Background(), o.s, a, o.now)
+	if o.wrote {
+		o.s = next
+	}
+	return err
+}
+
+// commit is the node's write. A commit that failed wrote nothing — which is
+// what PutIfMatch gives a caller — so the state stays as it was.
+func (o *o6Starter) commit(_ context.Context, s orchestrator.State) error {
+	if o.fail != nil {
+		return o.fail
+	}
+	o.s = s
+	o.wrote = true
+	return nil
+}
+
+// o6Report folds a run's outcome into the state the way a tick does: the
+// intent records how the attempt went and the item takes the phase that goes
+// with it, in one write.
+func o6Report(t *testing.T, s orchestrator.State, itemID, intentID string, outcome orchestrator.Outcome, phase orchestrator.Phase, at time.Time) orchestrator.State {
+	t.Helper()
+	op := orchestrator.WorkItemOp{ID: itemID, Phase: &phase, Intent: &orchestrator.IntentOp{ID: intentID, Outcome: &outcome}}
+	return o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &op}, orchestrator.Actor{Class: orchestrator.Daemon, Now: at})
+}
+
+// o6Approve is a person's go for the item as it now stands.
+func o6Approve(t *testing.T, s orchestrator.State, id string, at time.Time) orchestrator.State {
+	t.Helper()
+	w, ok := s.Item(id)
+	if !ok {
+		t.Fatalf("no work item %q to approve", id)
+	}
+	op := orchestrator.Op{Op: orchestrator.OpWorkItemApprove, Approve: &orchestrator.ApproveOp{ID: id, SpecDigest: orchestrator.SpecDigest(w)}}
+	return o6Apply(t, s, op, orchestrator.Actor{Class: orchestrator.Person, Name: "owner", Now: at})
+}
+
+// o6Edit is a session rewriting a declaration, which is how an approved spec
+// stops being the one the person approved.
+func o6Edit(t *testing.T, s orchestrator.State, id, brief string, at time.Time) orchestrator.State {
+	t.Helper()
+	op := orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: id, Brief: &brief}}
+	return o6Apply(t, s, op, orchestrator.Actor{Class: orchestrator.Session, Now: at})
+}
+
+// o6Apply is a write these tests expect the state to accept: one it refuses is
+// the test's own mistake.
+func o6Apply(t *testing.T, s orchestrator.State, op orchestrator.Op, a orchestrator.Actor) orchestrator.State {
+	t.Helper()
+	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{op}}, a)
+	if err != nil {
+		t.Fatalf("the write was refused: %v", err)
+	}
+	return next
+}
+
+// TestSpawnNeverLeavesTheApprovedItem is the first half of the money rule: a
+// launch carries the spec of the item the person approved — every digested
+// field of it, and the digest the approval names — and never a spec of its
+// own, a stale one, or one belonging to the item beside it.
+func TestSpawnNeverLeavesTheApprovedItem(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Minute)
+	first := o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)
+	second := o6Item("wi-2", orchestrator.PhaseQueued, approvedAt)
+	second.Title = "Another title"
+	second.Repo = "other/place"
+	second.Recipe = "other"
+	second.RigorTier = "large"
+	second.Brief = "Another brief entirely."
+	second = o6ApprovedBy(second, approvedAt)
+	s := o6Node(t, now, first, second)
+
+	got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now)
+	if len(got) != 2 {
+		t.Fatalf("the plan holds %d action(s), not the launch of each approved item: %+v", len(got), got)
+	}
+	for i, w := range []orchestrator.WorkItem{first, second} {
+		a := got[i]
+		if a.Kind != orchestrator.ActionLaunch || a.ItemID != w.ID {
+			t.Fatalf("action %d is %s for %q, not a launch of %q", i+1, a.Kind, a.ItemID, w.ID)
+		}
+		if a.Attempt != 1 || a.IntentID != orchestrator.IntentID(w.ID, 1) {
+			t.Errorf("the launch of %q is attempt %d under the intent %q", w.ID, a.Attempt, a.IntentID)
+		}
+		if a.Spec != orchestrator.SpecOf(w) {
+			t.Errorf("the launch of %q carries the spec %+v, not the item's own %+v", w.ID, a.Spec, orchestrator.SpecOf(w))
+		}
+		if a.Digest != orchestrator.SpecDigest(w) || a.Digest != w.Approved.SpecDigest {
+			t.Errorf("the launch of %q carries the digest %q, not the one the person approved (%q)", w.ID, a.Digest, w.Approved.SpecDigest)
+		}
+		if !a.ApprovalAt.Equal(approvedAt) {
+			t.Errorf("the launch of %q spends the approval from %s, and the standing one is from %s", w.ID, a.ApprovalAt, approvedAt)
+		}
+	}
+	// Two items, two launches, and nothing of one on the other's.
+	if got[0].Spec.Repo == got[1].Spec.Repo || got[0].Spec.Brief == got[1].Spec.Brief || got[0].Spec.Title == got[1].Spec.Title {
+		t.Errorf("the two launches carry each other's specs: %+v and %+v", got[0].Spec, got[1].Spec)
+	}
+}
+
+// TestUnapprovedItemIsNeverLaunched is the other half: nothing but a person's
+// standing approval over the spec as it is now makes an item launchable, and
+// the approval is the only road in — no class of actor but a person can give
+// one.
+func TestUnapprovedItemIsNeverLaunched(t *testing.T) {
+	now := o6Now()
+	queued := workItemOf("wi-1")
+	s := o6Node(t, now, queued)
+
+	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+		t.Fatalf("a queued item nobody approved planned %+v", got)
+	}
+
+	// A session may read the item and compute its digest, and that is not an
+	// approval: the launcher's whole fence is that the approval is a person's.
+	forged, err := orchestrator.Apply(s, orchestrator.Patch{
+		BaseRev: s.Rev,
+		Ops: []orchestrator.Op{{Op: orchestrator.OpWorkItemApprove, Approve: &orchestrator.ApproveOp{
+			ID:         "wi-1",
+			SpecDigest: orchestrator.SpecDigest(queued),
+		}}},
+	}, orchestrator.Actor{Class: orchestrator.Session, Name: "session-a", Now: now})
+	if err == nil {
+		t.Fatalf("a session approved a work item: %+v", forged.WorkItems[0])
+	}
+
+	approved := o6Approve(t, s, "wi-1", now)
+	a := onlyAction(t, orchestrator.Plan(approved, orchestrator.RunView{}, o6Caps(), now))
+	if a.Kind != orchestrator.ActionLaunch || a.ItemID != "wi-1" {
+		t.Fatalf("the plan over an approved item is %+v", a)
+	}
+}
+
+// TestRecoveryReissuesUnderTheRecordedRunID is the red step's first half, and
+// the money rule itself: the run id is minted once, committed with the intent
+// before anything starts, and a daemon that died in between re-issues that
+// same launch rather than spending a second one.
+func TestRecoveryReissuesUnderTheRecordedRunID(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	const first = "20261107-120000-aaaa"
+	o := newO6Starter(t, o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)), now, first)
+
+	if err := o.run(onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now))); err != nil {
+		t.Fatalf("the launch was refused: %v", err)
+	}
+	if !slices.Equal(o.l.started, []string{first}) {
+		t.Fatalf("the launcher started %v", o.l.started)
+	}
+
+	// The daemon died here: the intent is committed, the run id is recorded,
+	// and nothing in the process remembers the launch.
+	mid := o.s
+	if len(mid.Intents) != 1 {
+		t.Fatalf("the cycle committed %d intents, not the one it started", len(mid.Intents))
+	}
+	recorded := mid.Intents[0]
+	if recorded.RunID != first || recorded.Outcome != "" {
+		t.Fatalf("the intent reads %+v", recorded)
+	}
+
+	// Inside the claim window the attempt is left alone — the platform may
+	// still be starting the run the state recorded.
+	if got := orchestrator.Plan(mid, orchestrator.RunView{}, o6Caps(), now.Add(orchestrator.ClaimTTL-time.Second)); len(got) != 0 {
+		t.Fatalf("the plan acted on an attempt inside its claim window: %+v", got)
+	}
+	// A run that started is in flight however long it takes, and no window
+	// makes it a second launch.
+	if got := orchestrator.Plan(mid, orchestrator.RunView{Runs: []orchestrator.Run{{RunID: recorded.RunID, Started: true}}}, o6Caps(), now.Add(orchestrator.RetentionWindow)); len(got) != 0 {
+		t.Fatalf("the plan re-issued a run that had started: %+v", got)
+	}
+
+	// Past the window, the attempt is re-issued under the run id it recorded.
+	later := now.Add(orchestrator.ClaimTTL)
+	reissue := onlyAction(t, orchestrator.Plan(mid, orchestrator.RunView{}, o6Caps(), later))
+	if reissue.Kind != orchestrator.ActionReissue || reissue.RunID != recorded.RunID || reissue.IntentID != recorded.ID {
+		t.Fatalf("recovery planned %+v, not a re-issue of %q under %q", reissue, recorded.ID, recorded.RunID)
+	}
+	if reissue.Spec != orchestrator.SpecOf(mid.WorkItems[0]) || reissue.Digest != recorded.SpecDigest {
+		t.Errorf("the re-issue carries %+v / %q, not the spec the intent was committed for", reissue.Spec, reissue.Digest)
+	}
+
+	o.now = later
+	if err := o.run(reissue); err != nil {
+		t.Fatalf("the re-issue was refused: %v", err)
+	}
+	if o.m.calls != 1 {
+		t.Errorf("recovery minted %d run ids; the attempt it re-issued already had one", o.m.calls)
+	}
+	if !slices.Equal(o.l.asked, []string{first, first}) {
+		t.Errorf("the launcher was asked for %v, and the run id is minted once", o.l.asked)
+	}
+	if len(o.s.Intents) != 1 || orchestrator.AttemptsUnder(o.s, "wi-1", approvedAt) != 1 {
+		t.Errorf("the re-issue left %+v: one attempt, counted once", o.s.Intents)
+	}
+}
+
+// TestEditedSpecIsNeverLaunched: what the person approved is the spec they
+// read. An edit since is another spec, so the item is not one to start — and a
+// person who reads it again and approves it is what starts it.
+func TestEditedSpecIsNeverLaunched(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Minute)
+	s := o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt))
+	if len(orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now)) != 1 {
+		t.Fatalf("the approved item is not launchable to begin with")
+	}
+
+	edited := o6Edit(t, s, "wi-1", "A different brief.", now)
+	if w, _ := edited.Item("wi-1"); w.Approved != nil {
+		t.Fatal("the edit left the approval standing")
+	}
+	if got := orchestrator.Plan(edited, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+		t.Fatalf("an item edited since its approval planned %+v", got)
+	}
+
+	again := o6Approve(t, edited, "wi-1", now.Add(time.Minute))
+	a := onlyAction(t, orchestrator.Plan(again, orchestrator.RunView{}, o6Caps(), now.Add(time.Minute)))
+	w, _ := again.Item("wi-1")
+	if a.Spec != orchestrator.SpecOf(w) || a.Digest != orchestrator.SpecDigest(w) {
+		t.Fatalf("the launch after a re-approval carries %+v / %q, not the item as it now stands", a.Spec, a.Digest)
+	}
+	if a.Spec.Brief != "A different brief." {
+		t.Errorf("the launch carries the brief %q", a.Spec.Brief)
+	}
+}
+
+// TestOneAutomaticRetryUnderTheSameApproval is the red step's second half: one
+// approval covers the first attempt and at most one automatic retry, and a
+// second failure is where the automatic part stops.
+func TestOneAutomaticRetryUnderTheSameApproval(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	const first, retry = "20261107-120000-aaaa", "20261107-120000-bbbb"
+	o := newO6Starter(t, o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)), now, first, retry)
+
+	if err := o.run(onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now))); err != nil {
+		t.Fatalf("the first attempt was refused: %v", err)
+	}
+	// The first attempt leaves the approval standing: the retry is what spends
+	// it, and the retry has not happened yet.
+	if w, _ := o.s.Item("wi-1"); w.Approved == nil || w.SpentApprovalAt != nil {
+		t.Fatalf("the first attempt spent the approval: %+v", w)
+	}
+
+	o.s = o6Report(t, o.s, "wi-1", "wi-1:1", orchestrator.OutcomeFailed, orchestrator.PhaseFailed, now.Add(time.Minute))
+
+	// The one retry, under a run id of its own.
+	a := onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now.Add(2*time.Minute)))
+	if a.Kind != orchestrator.ActionRetry || a.Attempt != 2 || a.IntentID != "wi-1:2" {
+		t.Fatalf("the plan after a failed first attempt is %+v, not the one retry", a)
+	}
+	if a.ApprovalAt != approvedAt {
+		t.Errorf("the retry spends the approval from %s, and the person's is from %s", a.ApprovalAt, approvedAt)
+	}
+	o.now = now.Add(2 * time.Minute)
+	if err := o.run(a); err != nil {
+		t.Fatalf("the retry was refused: %v", err)
+	}
+	if !slices.Equal(o.l.started, []string{first, retry}) {
+		t.Fatalf("the launcher started %v: a retry is its own run", o.l.started)
+	}
+	// Committing the retry's intent spends the approval in the same write.
+	w, _ := o.s.Item("wi-1")
+	if w.Approved != nil {
+		t.Error("committing the retry left the approval standing")
+	}
+	if w.SpentApprovalAt == nil || !w.SpentApprovalAt.Equal(approvedAt) {
+		t.Errorf("the spent marker reads %v, not the approval the retry spent", w.SpentApprovalAt)
+	}
+	if n := orchestrator.AttemptsUnder(o.s, "wi-1", approvedAt); n != 2 {
+		t.Errorf("%d attempts are committed under the approval, and it covers 2", n)
+	}
+
+	// The retry failed too: that is the second failure, and there is no third
+	// attempt to be had without a person.
+	o.s = o6Report(t, o.s, "wi-1", "wi-1:2", orchestrator.OutcomeFailed, orchestrator.PhaseFailed, now.Add(3*time.Minute))
+	if got := orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now.Add(4*time.Minute)); len(got) != 0 {
+		t.Fatalf("the plan after the retry failed is %+v, and the approval is spent", got)
+	}
+}
+
+// TestRetryRefusedWhenTheSpecChanged: the retry is the approval's, and the
+// approval covers the spec that was read. An edit since makes the item another
+// one, and what starts under a new approval is the first attempt under it.
+func TestRetryRefusedWhenTheSpecChanged(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	item, first := o6FailedItem("wi-1", approvedAt, now.Add(-30*time.Minute))
+	s := o6Node(t, now, item)
+	s.Intents = []orchestrator.Intent{first}
+
+	edited := o6Edit(t, s, "wi-1", "A different brief.", now)
+	if got := orchestrator.Plan(edited, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+		t.Fatalf("the retry of an edited item planned %+v", got)
+	}
+
+	again := o6Approve(t, edited, "wi-1", now.Add(time.Minute))
+	a := onlyAction(t, orchestrator.Plan(again, orchestrator.RunView{}, o6Caps(), now.Add(time.Minute)))
+	if a.Kind != orchestrator.ActionLaunch || a.Attempt != 2 {
+		t.Fatalf("the plan over the new approval is %+v: a new approval is a new allowance, and its first attempt is the item's next", a)
+	}
+	w, _ := again.Item("wi-1")
+	if a.Digest != orchestrator.SpecDigest(w) || a.Digest == first.SpecDigest {
+		t.Errorf("the launch carries the digest %q: the edited spec is %q and the failed attempt carried %q", a.Digest, orchestrator.SpecDigest(w), first.SpecDigest)
+	}
+	if a.Spec.Brief != "A different brief." {
+		t.Errorf("the launch carries the brief %q, not the one the person approved", a.Spec.Brief)
+	}
+}
+
+// TestRefusalIsNotRetried: a launch that never started is not a failure to
+// retry — a retry is another attempt, and nothing failed. It is the same
+// attempt, re-issued, and what a refusal burns is nothing at all.
+func TestRefusalIsNotRetried(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+
+	t.Run("a launcher that refused before the start", func(t *testing.T) {
+		const run = "20261107-120000-aaaa"
+		o := newO6Starter(t, o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)), now, run)
+		o.l.refuse = errors.New("the budget pre-check refused the launch")
+
+		if err := o.run(onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now))); err == nil {
+			t.Fatal("a launch the launcher refused reported no error")
+		}
+		if len(o.l.started) != 0 {
+			t.Fatalf("the launcher started %v", o.l.started)
+		}
+		if n := orchestrator.AttemptsUnder(o.s, "wi-1", approvedAt); n != 1 {
+			t.Errorf("the refused start left %d attempts committed: the one it minted a run id for", n)
+		}
+		if w, _ := o.s.Item("wi-1"); w.Approved == nil || w.SpentApprovalAt != nil {
+			t.Errorf("the refused start spent the approval: %+v", w)
+		}
+		// What the plan holds next is that same attempt, not a second one.
+		later := now.Add(orchestrator.ClaimTTL)
+		next := onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), later))
+		if next.Kind != orchestrator.ActionReissue || next.IntentID != "wi-1:1" || next.RunID != run {
+			t.Fatalf("the plan's next move is %+v, not a re-issue of the attempt that never started", next)
+		}
+	})
+
+	t.Run("the kill switch", func(t *testing.T) {
+		s := o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt))
+		off := withCaps(func(c *orchestrator.Caps) { c.KillSwitch = true })
+		if got := orchestrator.Plan(s, orchestrator.RunView{}, off, now); len(got) != 0 {
+			t.Fatalf("the plan with the kill switch on is %+v", got)
+		}
+		a := onlyAction(t, orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now))
+		if a.Kind != orchestrator.ActionLaunch || a.Attempt != 1 {
+			t.Fatalf("the plan with the kill switch off is %+v: a switch that stopped a spawn spent nothing", a)
+		}
+	})
+
+	t.Run("a cap with no room", func(t *testing.T) {
+		s := o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt))
+		if got := orchestrator.Plan(s, orchestrator.RunView{}, withCaps(func(c *orchestrator.Caps) { c.MaxRunning = 0 }), now); len(got) != 0 {
+			t.Fatalf("the plan with no room under the running cap is %+v", got)
+		}
+		a := onlyAction(t, orchestrator.Plan(s, orchestrator.RunView{}, withCaps(func(c *orchestrator.Caps) { c.MaxRunning = 1 }), now))
+		if a.Kind != orchestrator.ActionLaunch {
+			t.Fatalf("the plan with room under the running cap is %+v", a)
+		}
+	})
+
+	t.Run("a commit the node refused", func(t *testing.T) {
+		o := newO6Starter(t, o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)), now, "20261107-120000-aaaa", "20261107-120000-bbbb")
+		a := onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now))
+		o.fail = orchestrator.ErrStaleRev
+		if err := o.run(a); !errors.Is(err, orchestrator.ErrStaleRev) {
+			t.Fatalf("the refused commit reported %v", err)
+		}
+		// Nothing was recorded and nothing started, so the item is exactly as
+		// it was: a write that did not land started no run.
+		if len(o.s.Intents) != 0 || len(o.l.asked) != 0 {
+			t.Fatalf("a commit that failed left %d intents and %v launches", len(o.s.Intents), o.l.asked)
+		}
+		if w, _ := o.s.Item("wi-1"); w.Approved == nil || w.Attempts != 0 || w.Phase != orchestrator.PhaseQueued {
+			t.Errorf("the item after a failed commit is %+v", w)
+		}
+		o.fail = nil
+		if err := o.run(a); err != nil {
+			t.Fatalf("the launch after the node came back was refused: %v", err)
+		}
+		if !slices.Equal(o.l.started, []string{"20261107-120000-bbbb"}) {
+			t.Errorf("the launcher started %v", o.l.started)
+		}
+	})
+}
+
+// TestAPreStartRefusalReissuesTheSameIntent: a refusal before the start burns
+// no attempt — but the intent is committed, because the run id is minted
+// before anything starts, and it is that one attempt that goes out again.
+func TestAPreStartRefusalReissuesTheSameIntent(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	const run = "20261107-120000-aaaa"
+	o := newO6Starter(t, o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)), now, run)
+	o.l.refuse = errors.New("the credentials service is unreachable")
+
+	if err := o.run(onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now))); err == nil {
+		t.Fatal("a launcher that refused reported no error")
+	}
+	if len(o.s.Intents) != 1 {
+		t.Fatalf("the refused start committed %d intents, not the one it minted a run id for", len(o.s.Intents))
+	}
+	if n := orchestrator.AttemptsUnder(o.s, "wi-1", approvedAt); n != 1 {
+		t.Errorf("the attempt is counted %d times, and a pre-start refusal counts once", n)
+	}
+	if c := orchestrator.CountsOf(o.s, now); c.Running != 1 || c.Hour != 1 || c.Day != 1 {
+		t.Errorf("the counts read %+v, and the attempt that never started is one run spent", c)
+	}
+	committed := o.s.Rev
+
+	// Past the claim window the same intent goes out again: no new intent, no
+	// new run id, and nothing written.
+	o.l.refuse = nil
+	o.now = now.Add(orchestrator.ClaimTTL)
+	again := onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), o.now))
+	if again.Kind != orchestrator.ActionReissue {
+		t.Fatalf("the plan's move is %+v, not a re-issue", again)
+	}
+	if err := o.run(again); err != nil {
+		t.Fatalf("the re-issue was refused: %v", err)
+	}
+	if o.m.calls != 1 {
+		t.Errorf("recovery minted %d run ids; the attempt it re-issued already had one", o.m.calls)
+	}
+	if !slices.Equal(o.l.asked, []string{run, run}) {
+		t.Errorf("the launcher was asked for %v, and it is one launch asked twice", o.l.asked)
+	}
+	if o.s.Rev != committed {
+		t.Errorf("the re-issue wrote revision %d over %d: a re-issue commits nothing", o.s.Rev, committed)
+	}
+	if len(o.s.Intents) != 1 || orchestrator.AttemptsUnder(o.s, "wi-1", approvedAt) != 1 {
+		t.Errorf("the re-issue left %+v: one attempt, counted once", o.s.Intents)
+	}
+	if w, _ := o.s.Item("wi-1"); w.Approved == nil {
+		t.Error("the re-issue spent the approval, and no attempt has ended under it")
+	}
+}
+
+// TestAStartedRunsRefusalCounts: a run that started and reported a refusal is
+// an attempt like any other. It spends the run it started, and it is not
+// retried — a refusal is not a failure, so what starts the next attempt is a
+// person's new approval.
+func TestAStartedRunsRefusalCounts(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+
+	t.Run("a refusal that ends the first attempt", func(t *testing.T) {
+		o := newO6Starter(t, o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)), now, "20261107-120000-aaaa")
+		if err := o.run(onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now))); err != nil {
+			t.Fatalf("the launch was refused: %v", err)
+		}
+		o.s = o6Report(t, o.s, "wi-1", "wi-1:1", orchestrator.OutcomeRefused, orchestrator.PhaseFailed, now.Add(time.Minute))
+
+		if got := orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now.Add(2*time.Minute)); len(got) != 0 {
+			t.Fatalf("a run that reported a refusal planned %+v, and a refusal is never retried", got)
+		}
+		w, _ := o.s.Item("wi-1")
+		if w.Approved == nil {
+			t.Error("the refused attempt spent the approval, and only the retry spends it")
+		}
+		if n := orchestrator.AttemptsUnder(o.s, "wi-1", approvedAt); n != 1 {
+			t.Errorf("%d attempts are committed under the approval, and the refusal is one of them", n)
+		}
+		// What a person has is a new approval, and it starts the next attempt.
+		later := now.Add(3 * time.Minute)
+		again := o6Approve(t, o.s, "wi-1", later)
+		a := onlyAction(t, orchestrator.Plan(again, orchestrator.RunView{}, o6Caps(), later))
+		if a.Kind != orchestrator.ActionLaunch || a.Attempt != 2 {
+			t.Fatalf("the plan over a new approval is %+v", a)
+		}
+	})
+
+	t.Run("a refusal that ends the retry", func(t *testing.T) {
+		item, first := o6FailedItem("wi-1", approvedAt, now.Add(-30*time.Minute))
+		o := newO6Starter(t, o6Node(t, now, item), now, "20261107-120000-bbbb")
+		o.s.Intents = []orchestrator.Intent{first}
+		if err := o.run(onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now))); err != nil {
+			t.Fatalf("the retry was refused: %v", err)
+		}
+		w, _ := o.s.Item("wi-1")
+		if w.Approved != nil || w.SpentApprovalAt == nil {
+			t.Fatalf("committing the retry did not spend the approval: %+v", w)
+		}
+		o.s = o6Report(t, o.s, "wi-1", "wi-1:2", orchestrator.OutcomeRefused, orchestrator.PhaseFailed, now.Add(time.Minute))
+
+		if got := orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now.Add(2*time.Minute)); len(got) != 0 {
+			t.Fatalf("the plan after a refused retry is %+v, and the approval is spent", got)
+		}
+		if n := orchestrator.AttemptsUnder(o.s, "wi-1", approvedAt); n != 2 {
+			t.Errorf("%d attempts are committed under the approval, and it covers 2", n)
+		}
+	})
+}
+
+// TestAFailedAttemptNeedsANewApproval: the approval covers two attempts, and
+// two failures spend it. Nothing the daemon does starts a third.
+func TestAFailedAttemptNeedsANewApproval(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	item, first := o6FailedItem("wi-1", approvedAt, now.Add(-30*time.Minute))
+	o := newO6Starter(t, o6Node(t, now, item), now, "20261107-120000-aaaa", "20261107-120000-bbbb")
+	o.s.Intents = []orchestrator.Intent{first}
+
+	a := onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), now))
+	if a.Kind != orchestrator.ActionRetry {
+		t.Fatalf("the plan is %+v, not the retry", a)
+	}
+	if err := o.run(a); err != nil {
+		t.Fatalf("the retry was refused: %v", err)
+	}
+	o.s = o6Report(t, o.s, "wi-1", "wi-1:2", orchestrator.OutcomeFailed, orchestrator.PhaseFailed, now.Add(time.Minute))
+
+	// However many ticks pass, and however eligible the item looks, the
+	// allowance is spent and only a person opens another one.
+	for _, at := range []time.Time{now.Add(2 * time.Minute), now.Add(orchestrator.ClaimTTL), now.Add(orchestrator.RetentionWindow)} {
+		if got := orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), at); len(got) != 0 {
+			t.Fatalf("the plan at %s is %+v, and the approval covers two attempts", at, got)
+		}
+	}
+
+	againAt := now.Add(orchestrator.RetentionWindow)
+	o.s = o6Approve(t, o.s, "wi-1", againAt)
+	next := onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), againAt))
+	if next.Kind != orchestrator.ActionLaunch || next.Attempt != 3 || next.IntentID != "wi-1:3" {
+		t.Fatalf("the plan over the new approval is %+v: its first attempt is the item's third", next)
+	}
+	o.now = againAt
+	if err := o.run(next); err != nil {
+		t.Fatalf("the third attempt was refused: %v", err)
+	}
+	if n := orchestrator.AttemptsUnder(o.s, "wi-1", againAt); n != 1 {
+		t.Errorf("%d attempts are committed under the new approval, and 1 of its 2 is spent", n)
+	}
+	if w, _ := o.s.Item("wi-1"); w.Approved == nil || w.SpentApprovalAt != nil {
+		t.Errorf("the first attempt under the new approval spent it: %+v", w)
+	}
+}
+
+// TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent: when the crash fell
+// before anything could be started and the item is no longer the spec the
+// intent was committed for, nothing may be started under it. The intent is
+// closed as abandoned, and the item is left where a person can see it rather
+// than waiting forever in running.
+func TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	item, intent := o6OpenItem("wi-1", "20261107-120000-aaaa", approvedAt, now)
+	o := newO6Starter(t, o6Node(t, now, item), now)
+	o.s.Intents = []orchestrator.Intent{intent}
+
+	o.s = o6Edit(t, o.s, "wi-1", "A different brief.", now.Add(time.Minute))
+
+	later := now.Add(orchestrator.ClaimTTL)
+	a := onlyAction(t, orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), later))
+	if a.Kind != orchestrator.ActionAbandon || a.IntentID != intent.ID {
+		t.Fatalf("recovery planned %+v, and a spec edited under an approval may not be started", a)
+	}
+	o.now = later
+	if err := o.run(a); err != nil {
+		t.Fatalf("abandoning the intent was refused: %v", err)
+	}
+	if len(o.l.asked) != 0 {
+		t.Fatalf("abandoning the intent asked the launcher for %v", o.l.asked)
+	}
+	if len(o.s.Intents) != 1 || o.s.Intents[0].Outcome != orchestrator.OutcomeAbandoned {
+		t.Fatalf("the intent after the abandon is %+v", o.s.Intents)
+	}
+	// What the intent keeps is the run id that was minted for it and never
+	// started: that is the record of the launch nothing made.
+	if o.s.Intents[0].RunID != intent.RunID {
+		t.Errorf("the abandoned intent lost its run id: %+v", o.s.Intents[0])
+	}
+	w, _ := o.s.Item("wi-1")
+	if w.Phase != orchestrator.PhaseBlocked {
+		t.Errorf("the item is %s after its only attempt was abandoned, and a run in running is one no tick picks up", w.Phase)
+	}
+	if w.Note == "" {
+		t.Error("the abandoned attempt left no note saying why")
+	}
+	if next := orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), later.Add(time.Hour)); len(next) != 0 {
+		t.Fatalf("the plan over an abandoned attempt is %+v", next)
+	}
+}
+
+// TestDependencyOrderIsRespected: an item waits for the work it depends on,
+// and a dependency the list no longer carries holds it rather than being read
+// as done.
+func TestDependencyOrderIsRespected(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Minute)
+
+	build := func(t *testing.T, dep orchestrator.WorkItem) orchestrator.State {
+		t.Helper()
+		dependent := o6Item("wi-2", orchestrator.PhaseQueued, approvedAt)
+		dependent.DependsOn = []string{"wi-1"}
+		dependent = o6ApprovedBy(dependent, approvedAt)
+		return o6Node(t, now, dep, dependent)
+	}
+
+	t.Run("a dependency that is done", func(t *testing.T) {
+		done := workItemOf("wi-1")
+		done.Phase = orchestrator.PhaseDone
+		a := onlyAction(t, orchestrator.Plan(build(t, done), orchestrator.RunView{}, o6Caps(), now))
+		if a.ItemID != "wi-2" || a.Kind != orchestrator.ActionLaunch {
+			t.Fatalf("the plan is %+v, and wi-1 is done", a)
+		}
+	})
+
+	t.Run("a dependency still going", func(t *testing.T) {
+		ready := o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)
+		got := orchestrator.Plan(build(t, ready), orchestrator.RunView{}, o6Caps(), now)
+		if len(got) != 1 || got[0].ItemID != "wi-1" {
+			t.Fatalf("the plan is %+v, and wi-2 waits for wi-1", got)
+		}
+		// The dependency itself was never approved: nothing starts at all, and
+		// wi-2 is not started in its place.
+		queued := workItemOf("wi-1")
+		if got := orchestrator.Plan(build(t, queued), orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+			t.Fatalf("the plan is %+v, and neither item may start", got)
+		}
+	})
+
+	t.Run("a dependency the list does not carry", func(t *testing.T) {
+		ready := o6Item("wi-1", orchestrator.PhaseQueued, approvedAt)
+		dependent := o6Item("wi-2", orchestrator.PhaseQueued, approvedAt)
+		dependent.DependsOn = []string{"wi-9"}
+		dependent = o6ApprovedBy(dependent, approvedAt)
+		s := o6Node(t, now, ready, dependent)
+		got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now)
+		if len(got) != 1 || got[0].ItemID != "wi-1" {
+			t.Fatalf("the plan is %+v, and wi-2 waits for an item the list does not carry", got)
+		}
+	})
+}
