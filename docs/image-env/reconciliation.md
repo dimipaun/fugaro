@@ -1,8 +1,10 @@
 # An image's `ENV`: the issue and this design against the code
 
 **Status: reconciliation for the owner — the scope and the release are answered (2026-11-05, O1 and
-O2); the decisions D1370–D1383 are recommendations and every one of them is still the owner's to
-take, and O3, O4 and O5 are open. Nothing implemented, no task approved.**
+O2), and O3, O4 and O5 are answered (2026-11-06, in §8), each the way its decision recommended: D1376
+and D1377 are what the code will do and `BATCH_` joins D1372's list in IE2. The rest of D1370–D1383
+are still recommendations. Of the plan's four tasks, IE1 alone is implemented
+(docs/image-env/implementation-plan.md).**
 Checked against `origin/main` at **`c52d40f9`** (v0.20.2, the commit the fix round of 2026-11-06
 merged into this branch; the first reading was at `57f7d871`, the commit the branch was cut from, and
 every line citation into a file that changed between the two readings was re-read). The open pull
@@ -249,7 +251,7 @@ above. "The image" is an operator-owned catalog image; "the repository" is untru
 | Probe | Answer |
 | --- | --- |
 | **Can a repository's agent steer which names pass?** | No. The set is computed in Go from the runner's own environment, gated on the deploy's stamp (D1371) and filtered by `config.ReservedEnv` (F3); a repository's `fugaro.yaml` writes no agent environment name at all today (F4, `docs/design/agent-env.md:305-314`). The agent can *read* the values through `/proc` (F18) but cannot add, remove or alter a name in its own environment — nothing in the loop rebuilds the environment from agent-controlled text |
-| **Can a repository-built image in a project that also has catalog images influence it?** | Not through this path: such a job carries **no stamp**, so it passes nothing (D1371). This is the scope ruling made enforceable, and F5 is why it needed a new fact rather than a check |
+| **Can a repository-built image in a project that also has catalog images influence it?** | Not through this path: such a job carries an **empty stamp** (the key is written on every workflow job, so an image's own `ENV` of that name cannot supply one), so it passes nothing (D1371). This is the scope ruling made enforceable, and F5 is why it needed a new fact rather than a check |
 | **Can an image `ENV` override `PATH` or `HOME`?** | No: both are `config.ReservedEnvNames` (`internal/config/validate.go:72`), so the image's values are dropped and the runner's own stand. Nothing else writes `PATH` except `spec.PathPrepend`, which prepends to whatever `out["PATH"]` holds (`internal/agent/env.go:224-231`) — i.e. to the runner's value |
 | **Proxies and CA bundles?** | No — with one name that is reserved by a **prefix** rather than by a name, and the distinction is stated because an earlier draft of this table got it wrong. The four proxy names (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`) and `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE` are `config.ReservedEnvNames` (`internal/config/validate.go:70-71`), and the CA bundles are on `baseEnv` as well (`internal/agent/env.go:22`), so a run keeps the value it already had. **`GIT_SSL_CAINFO` is not on any reserved-name list** — not `config.ReservedEnvNames` (`internal/config/validate.go:68-80`) and not the launcher's `backend.ReservedEnvNames`, which is a backend's own names plus the five `PlatformEnvNames` and nothing else (`internal/backend/launchenv.go:31`, `:50-54`); what denies it is the **`GIT_` prefix** (`internal/config/validate.go:63`) through `config.ReservedEnv` (`:85-88`). It is on `baseEnv` too (`internal/agent/env.go:22`), which is what carries the runner's own value to the agent. An image that needs a TLS-inspecting proxy for its own build sets it at build time, not in the job |
 | **Toolchain hooks that execute inside `verify` — `MAVEN_OPTS`, `GRADLE_OPTS`, `PIP_*`, `NPM_CONFIG_*`, `SBT_OPTS`, `CARGO_*`?** | **They pass, and they execute.** This is the widening the owner accepted in O1 and it is stated, not hidden: an operator-owned image that sets `MAVEN_OPTS=-javaagent:/opt/x.jar` is configuring its own toolchain, and the agent's `fugaro verify test` inherits it. The trust statement: *the operator's image is trusted exactly as the operator is, the same trust `SECURITY.md` extends to an image the operator published; this design gives the repository no new way to reach that set, and the four names that would let a **repository** inject code through a language runtime (`NODE_OPTIONS`, `NODE_PATH`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`) are reserved names and cannot pass.* `PERL5LIB`/`PERL5OPT`/`RUBYOPT`/`RUBYLIB`/`PYTHON*`/`BASH_ENV` stay out for the same reason — `PYTHON` and `BASH` by prefix, the rest by name |
@@ -273,7 +275,9 @@ settles.
   entry's name, under a new `FUGARO_`-prefixed variable.** *Recommendation.* `internal/infra` writes
   it where `entry.Name` is already in hand (`internal/infra/spec.go:1103-1104`, F6); the runner
   passes image variables **only when it is present**, so a job deployed by an older `fugaro update`
-  passes nothing (fail closed, and it converges on the next `update`, which is the HARD RULE).
+  passes nothing (fail closed, and it converges when the operator next runs **`fugaro update
+  --repo .`** — the repository stage, which a plain `fugaro update` does not run and which is already
+  today's door for a changed job, so nothing new is asked of them).
   *Alternative:* read the image's own config at run time — refused: it needs a registry call and a
   credential inside the job, and it cannot answer for a prebuilt entry (F5). *Cost:* a job whose
   image is a catalog entry built **before** this change passes nothing until it is redeployed; the
@@ -284,7 +288,10 @@ settles.
   already reviewed, already mirrored in `schemas/fugaro.schema.json:473`; a name the shape rule
   refuses is dropped rather than made into an environment entry a shell cannot express. *Alternative:*
   a new passthrough-specific list — refused: two lists drift, and the second one is never reviewed as
-  carefully as the first.
+  carefully as the first. **Implemented 2026-11-06, both halves:** IE1's shared subtraction applies
+  the list and the shape (`config.EnvNameRE`, the pattern at `:32` exported for it at the end of
+  `validate.go`, the file's own convention, so no citation into it moves), so IE2 adds no rule of its
+  own.
 - **D1373. Beyond the denylist, the passthrough subtracts every name Fugaro writes: the five platform
   names and the launch-reserved names (`internal/backend/launchenv.go:32-54`), every `FUGARO_*` (a
   consequence of D1372, stated because the stamp depends on it) and every name in
@@ -304,14 +311,16 @@ settles.
   transcript field or report carries a value the passthrough carried. *Cost:* an operator debugging
   a passthrough sees a name and must look at their own image for the value.
 - **D1376. Values the passthrough carries are not registered with the redactor by default.**
-  *Recommendation (put to the owner as O3).* The reasons are F11, F16 and F18: redaction is
+  *Recommendation (put to the owner as O3; **answered 2026-11-06: this one**, so no value the
+  passthrough carries is registered and IE2 adds no `addSecret` call).* The reasons are F11, F16 and F18: redaction is
   best-effort, the agent can already read the runner's environment through `/proc`, and the doc
   already forbids a credential in an image (`docs/base-image.md:28`). *Alternative:* register every
   passed value as a redaction secret (`internal/runner/runner.go:934-941`, ≥4 bytes), which covers
   the transcript, the PR body and the logs — *cost:* configuration values disappear from transcripts
   wherever they appear, which is a product change the owner should own.
 - **D1377. The report is `fugaro doctor --all` (and `--json`), not the default screen.** 
-  *Recommendation (put to the owner as O5).* Doctor is the one command that reads the installation
+  *Recommendation (put to the owner as O5; **answered 2026-11-06: this one**, so the report is
+  IE3's task on that surface).* Doctor is the one command that reads the installation
   and already lists jobs and reads their IAM (`internal/cli/doctor_launcher.go:83-99`); the names it would
   print need one more read, a `Jobs.Get` per job, `JobFullEnv` (`internal/backend/gcp/run.go:377`), which the converge
   already uses (`upgrade_cloud.go:278`). It prints, per job whose image is catalog-owned, the names
@@ -347,8 +356,8 @@ settles.
   option 3 land in 0.20.0; the code only if this design's review is clean in time. *Cost:* 0.20.0
   is also where `docs/repo-image-removal` is slotted (F17) and where the cloud senior review's
   and workspaces designs point — this change is small and independent of all of them, and its
-  `### For operators` entry is "nothing to run: `fugaro update` converges the stamp with the job" if
-  it ships at all. **The answer stands as the answer of 2026-11-05, and `main` has moved past it:**
+  `### For operators` entry names no new command: the stamp arrives with the repository's own
+  `fugaro update --repo .`, which a plain `fugaro update` does not run, if it ships at all. **The answer stands as the answer of 2026-11-05, and `main` has moved past it:**
   0.20.0 is tagged (0.20.2 at `c52d40f9`, this fix round's base) and neither this work nor the
   removal shipped in it, so the slot the answer picked is a number that has passed — which release
   carries the code is the owner's to say, and no task in this plan waits on the number.
@@ -384,10 +393,16 @@ settles.
 - **Registering every passed value with the redactor as a default.** *Not declined — deferred to the
   owner* (D1376, O3), because it changes what every transcript shows in a way only the owner can
   weigh.
-- **Adding `BATCH_` to `config.ReservedEnvPrefixes` in this work.** *Not taken here* (O4): it is a
-  change to a refusal a repository's own `fugaro.yaml` sees today, so it is a decision of its own,
-  and O4 puts it to the owner with the recommendation that it is taken **with** D1372 rather than
-  after it.
+- **Adding `BATCH_` to `config.ReservedEnvPrefixes`.** *Answered 2026-11-06 (O4): yes, with D1372's
+  filter and in IE2*, because on the Batch backend the task variables are the job's environment and
+  no list covers them today (F9): without it, the passthrough hands a run the cluster's own variables
+  on one backend and none on the other. The cost is a new refusal a repository's workflow-secret
+  `env` sees — a tightening, so it is legal under the layering rule, but it is a change to an
+  existing refusal and a decision of its own, which is why it was put to the owner rather than taken
+  here. **It is IE2's, and it is three edits** — `internal/config/validate.go`'s prefix list,
+  `schemas/fugaro.schema.json`'s `env` pattern (`:473`, the mirror `TestFugaroSchemaReservesTheSameEnv`
+  holds to the Go list, so a Go-side-only change reddens `main`) and `docs/design/v1.md`'s enumeration
+  (`:616`) — not IE1's.
 - **The one-line stale comment in `internal/backend/backend.go:131`.** *Noted as F15, not taken:*
   it is not this design's file and a drive-by edit to a comment is exactly the kind of change this
   repository keeps out of a design PR.
@@ -445,25 +460,27 @@ above"; that is no longer true of the neighbours, and the claim is unchanged bec
   only; per-repository images and a plain `env:` map stay out, recorded with their reasons in §6.
 - **O2. The release — ANSWERED 2026-11-05.** **0.20.0**, the design note and option 3 in it, the code
   only if this design's review is clean in time (D1382).
-- **O3. May this work register every value it passes with the redactor? — OPEN, and the answer
-  changes the code.** The recommendation is **no** (D1376): names only, with the trust statement in
-  §4 and the existing "never bake a credential into your image" rule. The alternative is **yes**
-  (`internal/runner/runner.go:934-941` covers the transcript, the PR body, the logs and the reasons),
-  whose cost is that an ordinary configuration value — the issue's own `NEXUS_BASEURL` — stops
-  appearing in Maven output and in the transcript. **Your two answers this far are the reason this is
-  put to you rather than taken:** the issue's own example is a URL, and only you can say whether a
-  transcript that hides it is the right trade.
-- **O4. Should `BATCH_` join `config.ReservedEnvPrefixes`? — OPEN, and it is a decision of its own.**
-  The recommendation is **yes, in the same change** (D1372's list), because on the Batch backend the
-  task variables are the job's environment and no list covers them today (F9): without it, the
+- **O3. May this work register every value it passes with the redactor? — ANSWERED 2026-11-06: no.**
+  **Names only, no value this work passes is registered with the redactor** (D1376 as recommended): the
+  trust statement in §4 and the existing "never bake a credential into your image" rule
+  (`docs/base-image.md:28`) carry it, and nothing in IE2 calls `addSecret` for a passed value. The
+  answer is the recommendation's, so IE2's body is unchanged by it; the alternative is declined and
+  its cost (`NEXUS_BASEURL` disappearing from Maven output and from every transcript) is not paid.
+- **O4. Should `BATCH_` join `config.ReservedEnvPrefixes`? — ANSWERED 2026-11-06: yes.**
+  **`BATCH_` joins the prefix list**, in the same change as D1372's filter: on the Batch backend the
+  task variables *are* the job's environment and no list covers them today (F9), so without it the
   passthrough hands a run the cluster's own variables on one backend and none on the other. The cost
-  is a new refusal a repository's workflow-secret `env` sees — a tightening, so it is legal under the
-  layering rule, but it is a change to an existing refusal and not this design's to take.
-- **O5. Is `fugaro doctor --all` the right surface for the report? — OPEN.** The recommendation is
-  **yes** (D1377): it is the smallest, it respects the pinned one-screen rule, and it needs one read
-  the converge already makes. The alternatives are the default screen (refused, 25 lines), a new
-  `fugaro image env` command, and a note from `fugaro update --repo` — all three in D1377 with their
-  costs.
+  accepted is the new refusal a repository's workflow-secret `env` sees — a tightening, legal under
+  the layering rule. **The edits are IE2's** and they are three, not one: the file O4 names
+  (`internal/config/validate.go`), the schema pattern that mirrors it (`schemas/fugaro.schema.json:473`,
+  held to the Go list by `TestFugaroSchemaReservesTheSameEnv`, `schemas/schemas_test.go:1543`) and the
+  doc enumeration of both (`docs/design/v1.md:616`). None is in IE1's diff; the subtraction IE1 spells
+  reads the list, so it follows the change with no edit of its own.
+- **O5. Is `fugaro doctor --all` the right surface for the report? — ANSWERED 2026-11-06: yes.**
+  **`fugaro doctor --all` (and `--json`) is the report** (D1377 as recommended): the smallest surface,
+  the pinned one-screen default untouched, and one read the converge already makes. The default
+  screen, a new `fugaro image env` command and a note from `fugaro update --repo` are declined with
+  the costs D1377 records. The report is IE3's task.
 - **O6. The live check is yours to run — not a question.** **Check 291**
   (implementation-plan.md §7): a catalog entry on the sandbox whose Dockerfile sets a marker
   variable, a run on it, and the value observed inside the run and its name in the report. It is
