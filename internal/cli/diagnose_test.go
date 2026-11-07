@@ -382,6 +382,41 @@ func TestDiagnoseReadsTheLastImplementAttempt(t *testing.T) {
 	}
 }
 
+// TestDiagnoseReadsImplement1WithoutAStageTiming: the implement walk's floor
+// is implement-1, because a record can hold no implement timing while the
+// transcript is there. Every attempt uploads its transcript and only then
+// writes its stage timing (internal/runner's stageOnce), and a run killed in
+// between leaves exactly that: the transcript, no timing. A record written
+// before the timings were (2026-10-03) has the same shape. Reading the count
+// alone would print no agent message at all for the dead run diagnose exists
+// for -- origin/main read implement-1 here whatever rec.Stages held.
+func TestDiagnoseReadsImplement1WithoutAStageTiming(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusFailed, Stage: "implement", Reason: "the run was killed"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutFile(ctx, "transcripts/implement-1.jsonl", []byte(`{"type":"result","subtype":"success","result":"got halfway"}`+"\n"), "application/x-ndjson")
+
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.AgentMessage != "got halfway" {
+		t.Errorf("agent message = %q, want the one implement transcript the record has", d.AgentMessage)
+	}
+}
+
 // A failed log read is the one GCP error diagnose tolerates: it warns on
 // stderr, exits 0 and still prints everything the bucket holds.
 func TestDiagnoseToleratesLogFailure(t *testing.T) {

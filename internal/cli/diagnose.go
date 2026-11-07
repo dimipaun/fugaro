@@ -684,6 +684,12 @@ func lastTest(recs []verify.Record) (verify.Record, bool) {
 // so reading implement-1 alone would report an attempt the run threw away as
 // the agent's last word. The count from rec.Stages is the same count, since
 // every attempt appends one stage timing of its own.
+//
+// The implement walk keeps implement-1 as its floor: a record can have no
+// implement timing while the transcript is there -- written before the stage
+// timings were (2026-10-03), or a run killed between the attempt's upload and
+// its timing write, which is the dead run diagnose exists for -- and that is
+// the transcript such a record has.
 func agentMessage(ctx context.Context, s *runstore.Store, rec *runstore.Record) string {
 	fixes, implements := 0, 0
 	for _, st := range rec.Stages {
@@ -699,7 +705,7 @@ func agentMessage(ctx context.Context, s *runstore.Store, rec *runstore.Record) 
 			return res.Text
 		}
 	}
-	for n := implements; n >= 1; n-- {
+	for n := max(implements, 1); n >= 1; n-- {
 		if res, ok := transcriptResult(ctx, s, "implement-"+strconv.Itoa(n)); ok {
 			return res.Text
 		}

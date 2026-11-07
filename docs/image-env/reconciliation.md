@@ -187,7 +187,7 @@ environment.** The agent gets `ANTHROPIC_BASE_URL` and the gateway's per-run tok
 `ANTHROPIC_API_KEY` (`internal/agent/env.go:302-344`); both names are reserved, so an image cannot
 set, shadow or redirect them, and `GatewayVars` is copied **last** (`:218-223`). The real key is in
 the runner and is registered for redaction only (`internal/agent/env.go:148-163`; the gateway
-attaches it upstream, `internal/gateway/forward.go:1128-1136`).
+attaches it upstream, `internal/gateway/forward.go:1163-1171`).
 
 **F13. `doctor`'s one-screen rule is pinned, so the report cannot go on the default screen.** The
 default view is capped at **25 lines** (`internal/cli/doctor_render.go:23-26`) by

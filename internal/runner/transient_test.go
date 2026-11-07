@@ -138,6 +138,44 @@ func TestTwoClosedStreamsFailTheStage(t *testing.T) {
 	}
 }
 
+// The second bound is the run's, not the stage's: a later stage that loses a
+// stream of its own is not retried, because the run's one retry is already
+// spent. It fails on its own error, with the agent's own words for it, and
+// the run ends there -- retrying it would make the bound a per-stage one.
+func TestTheRunsOneRetryIsSpentOnTheFirstStage(t *testing.T) {
+	// The cut implement attempt, the implement retry's call, then the review
+	// stage's own cut stream.
+	g := newGW(t, gwConfig(t, ""), "observe", "", cutStream(3), out4k(), cutStream(3))
+	var st []int
+	rec, err := g.run(t,
+		closedStream(""),
+		calling(&st, implement("feature"), call{sonnet, 4000}),
+		closedStream(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v, want the review stage failed on the stream it lost", rec)
+	}
+	if rec.Retries != 1 {
+		t.Errorf("retries = %d, want 1: the run retries one stage, and the implement stage already spent it", rec.Retries)
+	}
+	if len(g.agent.calls) != 3 {
+		t.Errorf("the agent was called %d times, want implement twice and review once: the review stage's cut stream is not the retry's to take",
+			len(g.agent.calls))
+	}
+	if !strings.Contains(rec.Reason, streamClosedText) {
+		t.Errorf("reason = %q, want the review stage's own failure, which is what the run failed for", rec.Reason)
+	}
+	if len(st) != 1 || st[0] != http.StatusOK {
+		t.Errorf("statuses = %v, want the implement retry's one served call", st)
+	}
+	// The review stage's cut call is the upstream's last: no attempt followed it.
+	if g.fake.Count() != 3 {
+		t.Errorf("the upstream saw %d calls, want the three scripted ones", g.fake.Count())
+	}
+}
+
 // A stage error that is not a closed stream is not retried, however
 // transient it looks: the list is closed, and a run's money, its credential
 // and its clock are never spent on a second attempt.
