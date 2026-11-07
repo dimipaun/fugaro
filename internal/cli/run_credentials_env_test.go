@@ -39,25 +39,38 @@ func markRepoCredentialsServiceReady(t *testing.T, f *cloudFixture) {
 	}
 }
 
-// launchWithCredentialsService launches the fixture's run against an
-// installation whose local config carries the service's block with url (empty
-// for an installation that never deployed it, where the block is absent
-// altogether) and the per-repository record when ready is true, and returns
-// what the backend was handed. It is the one place the two subtests below
-// differ.
+// oauthLaunchYAML is cascadeLaunchYAML's shape for a repository the service
+// cannot serve: the same workflow, git provider and project, with agent.auth
+// `oauth`. The auth, and nothing else about the repository, is what the switch
+// reads (infra.CredentialsServiceServes), so the pair is what a test about that
+// one condition needs.
+const oauthLaunchYAML = `version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: oauth
+workflows:
+  web: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// launchWithCredentialsService launches the fixture's run for a checkout
+// carrying yaml against an installation whose local config carries the
+// service's block with url (empty for an installation that never deployed it,
+// where the block is absent altogether) and the per-repository record when
+// ready is true, and returns what the backend was handed.
 //
-// The checkout is a cascade repository's (cascadeLaunchYAML): the switch's
-// third condition is the repository's own agent.auth, read from the document
-// the run will read — the ref's fugaro.yaml, else this machine's checkout —
-// and never from the record, so a repository this launcher cannot read at all
-// is a repository it cannot switch on.
-func launchWithCredentialsService(t *testing.T, url string, ready bool) (plain, secret []string) {
+// The checkout is the test's own, and that is the switch's third condition: it
+// is the repository's agent.auth, read from the document the run will read —
+// the ref's fugaro.yaml, else this machine's checkout — and never from the
+// record, so a repository this launcher cannot read at all is a repository it
+// cannot switch on.
+func launchWithCredentialsService(t *testing.T, yaml, url string, ready bool) (plain, secret []string) {
 	t.Helper()
 	f := newLaunchBudget(t, "enforce")
 	if url != "" {
 		f.appendConfig(t, "credentials_service:\n  url: "+url+"\n")
 	}
-	projectJobCheckoutYAML(t, cascadeLaunchYAML)
+	projectJobCheckoutYAML(t, yaml)
 	if ready {
 		markRepoCredentialsServiceReady(t, f.cloudFixture)
 	}
@@ -86,7 +99,7 @@ func launchWithCredentialsService(t *testing.T, url string, ready bool) (plain, 
 // Mutation (verified, run and restored): drop the lspec.Env line in
 // internal/cli/run.go's launch — this fails with an empty plain list.
 func TestTheCredentialsServiceURLReachesTheJobEnv(t *testing.T) {
-	plain, secret := launchWithCredentialsService(t, launchCredsURL, true)
+	plain, secret := launchWithCredentialsService(t, cascadeLaunchYAML, launchCredsURL, true)
 	want := envCredentialsServiceURL + "=" + launchCredsURL
 	if len(plain) != 1 || plain[0] != want {
 		t.Fatalf("the launch's plain Env = %v, want exactly [%s]", plain, want)
@@ -99,15 +112,17 @@ func TestTheCredentialsServiceURLReachesTheJobEnv(t *testing.T) {
 }
 
 // TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable: the
-// absence of the block is the opt-in's off position, and off is byte for byte
-// what this tree launched before the variable existed — no entry, no empty
-// value, nothing for a backend to merge into the job's environment. Every
-// installation is in this state until an owner runs `fugaro setup
-// --provision-credentials`, so a launcher that put an empty value here would
-// change every run in the world; a launcher that put a value here would make
-// every job believe it has a credentials service to call.
+// absence of the block is the off position, and off is byte for byte what this
+// tree launched before the variable existed — no entry, no empty value, nothing
+// for a backend to merge into the job's environment. Every `fugaro update`
+// writes the block now (docs/credentials-service/default-on.md), so the
+// installations in this state are the ones a run could not deploy it on: a
+// build from a checkout, which has no released image to pin, and a config with
+// no Firebase backend for the service to read. A launcher that put an empty
+// value here would change those runs for no reason; a launcher that put a value
+// here would make every job believe it has a credentials service to call.
 func TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable(t *testing.T) {
-	plain, secret := launchWithCredentialsService(t, "", false)
+	plain, secret := launchWithCredentialsService(t, cascadeLaunchYAML, "", false)
 	if len(plain) != 0 {
 		t.Fatalf("an installation with no credentials service launched with the plain Env %v, want none: the block's presence is the opt-in, and an installation that has not opted in must launch exactly what it launched before this variable existed", plain)
 	}
