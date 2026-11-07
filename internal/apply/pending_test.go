@@ -405,6 +405,90 @@ func TestPendingFileVersioned(t *testing.T) {
 	}
 }
 
+// TestPendingAddKeepsOneEntryPerStep: two changes that owe the same step leave
+// one entry, and the entry that stays names the last change to ask for it. It is
+// the dedupe spec rule 3 asks for (the steps run once): a second entry for one
+// step would make `fugaro apply` run the same stage twice and show one change as
+// two, and it is what keeps the document from growing with every change.
+func TestPendingAddKeepsOneEntryPerStep(t *testing.T) {
+	p := EmptyPending()
+	first := Change{Kind: Setting, Key: "image_catalog.entries.*.name"}
+	p.Add(PendingStep{Step: initflow.Policy, Project: "workspace-a", GCPProject: "proj-1234", Change: first})
+	last := Change{Kind: Setting, Key: "image_catalog.entries.*.description"}
+	p.Add(PendingStep{Step: initflow.Policy, Project: "workspace-a", GCPProject: "proj-1234", Change: last})
+
+	if len(p.Steps) != 1 {
+		t.Fatalf("two changes owing %s left %d entries, want one: the steps dedupe", initflow.Policy, len(p.Steps))
+	}
+	if got := p.Steps[0].Change; got != last {
+		t.Errorf("the entry that stayed names %+v, want %+v: it is the last change to ask for the step", got, last)
+	}
+
+	// A step the document does not owe is added, and the entry already there
+	// keeps its place rather than being displaced by it.
+	p.Add(PendingStep{Step: CatalogBuild, Project: "workspace-a", GCPProject: "proj-1234", Change: first})
+	if got, want := p.Names(), []string{CatalogBuild, initflow.Policy}; !slices.Equal(got, want) {
+		t.Errorf("after a second step the document owes %v, want %v", got, want)
+	}
+}
+
+// TestPendingClearDropsOnlyTheNamedSteps: `fugaro update` clears the stages it
+// ran successfully and leaves the rest (D1567), so a clear that dropped every
+// entry, or one that dropped a step it was not asked about, would lose an owed
+// step silently. The entry that matters most is the catalog build: `fugaro
+// update` never runs it, so it is the one that has to survive every clear the
+// update makes — dropping it leaves a billable build that nothing will run.
+func TestPendingClearDropsOnlyTheNamedSteps(t *testing.T) {
+	p := EmptyPending()
+	for _, step := range []string{CatalogBuild, initflow.Repository, initflow.Policy} {
+		p.Add(PendingStep{
+			Step: step, Project: "workspace-a", GCPProject: "proj-1234",
+			Change: Change{Kind: Resource, Key: ResourceImage},
+		})
+	}
+	p.Clear(initflow.Policy)
+	if got, want := p.Names(), []string{CatalogBuild, initflow.Repository}; !slices.Equal(got, want) {
+		t.Errorf("after clearing %s the document owes %v, want %v", initflow.Policy, got, want)
+	}
+	// Clearing no step is not clearing every step.
+	p.Clear()
+	if got, want := p.Names(), []string{CatalogBuild, initflow.Repository}; !slices.Equal(got, want) {
+		t.Errorf("a clear of no step left %v, want %v", got, want)
+	}
+	p.Clear(CatalogBuild, initflow.Repository)
+	if got := p.Names(); len(got) != 0 {
+		t.Errorf("clearing both remaining steps left %v, want none", got)
+	}
+}
+
+// TestPendingNamesAreDedupedAndOrdered: Names is what `fugaro apply` runs and
+// what its `--status` prints, so it is the document read through initflow — the
+// steps deduped, in initflow's order, with the one non-stage step first, and a
+// name this build cannot run kept last rather than dropped. A document may hold
+// a step twice (a hand edit, or a writer this build does not know), so the
+// dedupe is Names' and not only Add's; the order is initflow's, and is asserted
+// here as the literal list rather than recomputed from Order, which would make
+// the test agree with whatever Order does.
+func TestPendingNamesAreDedupedAndOrdered(t *testing.T) {
+	p := EmptyPending()
+	p.Steps = []PendingStep{
+		{Step: initflow.Workspace},
+		{Step: "zzz-unknown"},
+		{Step: initflow.Policy},
+		{Step: CatalogBuild},
+		{Step: initflow.Repository},
+		{Step: "aaa-unknown"},
+		{Step: initflow.Policy},
+	}
+	want := []string{
+		CatalogBuild, initflow.Repository, initflow.Policy, initflow.Workspace,
+		"aaa-unknown", "zzz-unknown",
+	}
+	if got := p.Names(); !slices.Equal(got, want) {
+		t.Errorf("Names() = %v, want %v: deduped, in initflow's order, %s first and a step this build cannot run last", got, want, CatalogBuild)
+	}
+}
+
 // jsonMembers is the JSON member names of a document struct, sorted.
 func jsonMembers(t *testing.T, v any) []string {
 	t.Helper()
