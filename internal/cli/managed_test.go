@@ -832,6 +832,16 @@ var propertyAgentSites = map[string]string{
 	// The layer stage refuses a marker itself for the same reason: it is
 	// SelfConfirming, so the loop would call it.
 	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
+	// The switch's record is the same shape: credentialsBundleReady opens the
+	// credentials service's bundle with the identity of whoever runs the
+	// update, so a coding agent's session reads nothing there and says so,
+	// and the two doors that write the record leave every entry as the
+	// person's own run left it. The first test drives the repository door end
+	// to end under every marker, the second that door's record write, and the
+	// third the installation door's backfill — under the run markers, which
+	// are the ones that reach it, an agent's session being refused by the
+	// installation step before that door runs at all.
+	"init_credentials.go credentialsBundleReady": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
 }
 
 // The policy tail (init_policy_migrate.go policyMigrationConfirm) is not in
