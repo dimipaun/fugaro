@@ -1,0 +1,79 @@
+# The owner's routing rule as paths: the trees the reviewer routing text calls
+# security-sensitive (docs/stateless-orchestrator/reconciliation.md F15, the rule
+# documented for reviewers) plus the two trees this design adds to it — mobile/
+# and the console, which hold credentials and MACs and must never be routine.
+#
+# One path per line. A "##" line starts a section and names the category; "#"
+# lines are prose. TestRulesTableMatchesTheReviewerRoutingText holds every
+# section name against the routing text, so a category cannot be invented here or
+# drift out of the doc, and TestRoutingRuleFixtureIsNeverRoutine holds every path
+# below to Sensitive — a routine allowlist that reaches one of them is a red
+# test, not a quiet downgrade.
+#
+# The paths name real files of this repository where it has one: a category whose
+# examples have all moved away is a category nothing tests any more. AGENTS.md is
+# the exception, and it is here on purpose — the routing text names it as a
+# category, so the classifier must place it whether or not this repository has
+# written one yet.
+
+## credentials
+internal/creds/state.go
+internal/credsvc/wire.go
+internal/credsvc/cascade.go
+
+## writes
+internal/cli/settings_set.go
+internal/rtdb/client.go
+
+## guards
+internal/initflow/stage.go
+internal/managed/preflight.go
+internal/orchestrator/sensitivity/classify.go
+
+## the managed gate
+internal/managed/converge.go
+internal/managed/apply.go
+
+## Terraform/IAM
+deploy/terraform/gcp/roots/installation/main.tf
+deploy/terraform/gcp/modules/installation/deployer.tf
+
+## the agent environment
+internal/runner/agentenv.go
+internal/agentenv/agentenv.go
+
+## prompts
+shared/prompts/index.js
+internal/followup/prompt.go
+
+## recipes
+internal/recipe/recipe.go
+fugaro.yaml
+
+## CLAUDE.md
+CLAUDE.md
+
+## AGENTS.md
+AGENTS.md
+
+## .claude/**
+.claude/rules/ee.md
+.claude/skills/golang-how-to/SKILL.md
+
+## plugin skills
+plugin/skills/working/SKILL.md
+
+## CI
+.github/workflows/ci.yml
+
+## mobile
+mobile/src/accounts/secure-store.js
+mobile/src/mailbox/gate.js
+mobile/src/mailbox/mac.js
+
+## the console
+console/src/main/spawn.ts
+console/src/main/ipc.ts
+console/src/main/launch.ts
+console/src/main/settingsedit.ts
+console/src/main/installations.ts
