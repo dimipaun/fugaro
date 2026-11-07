@@ -42,6 +42,8 @@ import {
   renderAccountKeys,
 } from '../../src/renderer/screens/accountkeys'
 import type { ScreenElement, ScreenFactory } from '../../src/renderer/screens/accountkeys'
+import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
+import { githubToken } from '../support/fakeSecrets'
 
 // ---------------------------------------------------------------------------
 // The harness: a fake element that refuses what a section may not do.
@@ -297,6 +299,40 @@ describe('the review account keys, drawn from the read the tab already makes', (
     const skewed = section({ version: 2, settings: [] })
     expect(skewed.getAttribute('data-state')).toBe('unavailable')
     expect(drawn(skewed)).toContain('version 2')
+  })
+
+  it('draws the read\'s refusal as the CLI wrote it, not paraphrased', () => {
+    // Design section 6.3: for a refusal the sentence *is* the remedy, so the
+    // console shows it unedited. The refusal goes through `sanitizeRefusal`
+    // (`drawnRefusal`), which keeps a path and a role as the CLI printed them --
+    // the free-text `sentence` class draws the first `<path>` and the second
+    // `[redacted]`, and the tab's settings panel draws this same `settings.read`
+    // refusal unedited beside this section.
+    const refused = section(
+      null,
+      'settings.read: fugaro settings --json exited 1: cannot read /home/zora/checkout/fugaro.yaml: the caller lacks roles/datastore.viewer',
+    )
+    const because = one(refused, ACCOUNT_KEYS_BECAUSE_CLASS).textContent ?? ''
+    expect(because).toContain('/home/zora/checkout/fugaro.yaml')
+    expect(because).toContain('roles/datastore.viewer')
+    expect(because).not.toContain('<path>')
+    expect(because).not.toContain('[redacted]')
+  })
+
+  it('still redacts a credential a child echoed into its refusal', () => {
+    // The other half of the same door, and the reason the sentence is sanitized
+    // rather than drawn as it arrived: a refusal is not this console's own text,
+    // and a CLI that printed the token it failed with must not put it on a
+    // screen. `sanitizeRefusal` is the credential rules and this layer's own two
+    // (`drawnRefusal`), so this half holds while the remedy above survives.
+    const token = githubToken()
+    const refused = section(
+      null,
+      `settings.read: fugaro settings --json exited 1: permission denied for ${token}`,
+    )
+    const because = one(refused, ACCOUNT_KEYS_BECAUSE_CLASS).textContent ?? ''
+    expect(because).not.toContain(token)
+    expect(because).toBe(`settings.read: fugaro settings --json exited 1: permission denied for ${TOKEN_PLACEHOLDER}`)
   })
 
   it('draws no control on any row', () => {

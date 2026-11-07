@@ -39,9 +39,21 @@
 // (`UNSET_PREFIX`). The section always draws both subjects: the project's
 // default row, and the stage rows it found or the registry's own wildcard key
 // when it found none.
+//
+// **The reason a read gave is drawn the way every screen draws it.** The
+// section's two reasons are its own sentences and the CLI's refusal sentence on
+// the `SourceRefusal` channel, and both go through `sanitizeRefusal`
+// (`drawnRefusal`) -- the door the design's section 6.3 keeps for it, which
+// leaves a path, a project and a role as the CLI printed them, because for a
+// permission refusal the sentence *is* the remedy. `sentence` would draw
+// `roles/datastore.viewer` as `[redacted]` and the project's own config path as
+// `<path>`; the tab's settings panel would draw the very same `settings.read`
+// refusal unedited beside this one.
 
+import { sanitizeRefusal } from '../../shared/sanitize'
 import { putText } from '../app'
 import type { ElementLike } from '../app'
+import { REFUSAL_UNREADABLE } from './degraded'
 
 /** ScreenElement and ScreenFactory are the drawing surface, declared here as
  * every screen declares its own: the entry's `DomScreenFactory` is assignable
@@ -119,7 +131,11 @@ export interface AccountKeyRow {
 /** AccountKeys is the section's model: the rows, and whether the read answered.
  * It is what `buildAccountKeys` answers and what the drawing takes, so the
  * section's rules -- which rows exist, which are dropped, which are unset -- are
- * testable with no element in sight. */
+ * testable with no element in sight.
+ *
+ * `because` is the reason **as it will be drawn**: `buildAccountKeys` puts it
+ * through `sanitizeRefusal` (`drawnRefusal`) before it is stored, so the drawing
+ * writes a sentence this console produced and never a document's string. */
 export interface AccountKeys {
   readonly state: 'read' | 'unavailable'
   readonly because: string | null
@@ -155,6 +171,26 @@ const SETTINGS_SHAPE_BECAUSE =
 
 const ROW_SHAPE_BECAUSE =
   'settings --json carried a row this console does not read: the value of a key this section draws is not the type the contract gives it, so no row of it is drawn'
+
+/**
+ * drawnRefusal is a reason as a screen may draw it: `sanitizeRefusal` and
+ * nothing else, which is the one treatment of the CLI's own refusal sentence
+ * (design section 6.3, `src/shared/sanitize.ts`). `sentence` and the other
+ * free-text classes run the pattern rules, and two of them eat the remedy -- a
+ * role is two long segments around a slash and is drawn `[redacted]`, a path is
+ * drawn `<path>` -- while the credential rules still redact a token a child
+ * echoed into its stderr.
+ *
+ * Running it here, in the model, is also what keeps the panel's `literal` call
+ * honest: by the time the drawing reads `model.because`, it is a sentence the
+ * sanitizer produced or this module's own constant. A reason too long for the
+ * console to read at all is `REFUSAL_UNREADABLE` (`./degraded`, the console's
+ * one word for it) rather than a cell the operator reads as the refusal.
+ */
+function drawnRefusal(because: string): string {
+  const drawn = sanitizeRefusal(because, 'the reason this section has nothing to draw')
+  return drawn.ok ? drawn.text : REFUSAL_UNREADABLE
+}
 
 /** objectAt is a value that is a JSON object, or null. */
 function objectAt(raw: unknown): Record<string, unknown> | null {
@@ -251,10 +287,12 @@ export function buildAccountKeys(inputs: AccountKeysInputs): AccountKeys {
       document === null
         ? (inputs.because ?? `no document arrived for \`${ACCOUNT_KEYS_SOURCE}\``)
         : `${SETTINGS_VERSION_WORD}${String(document.version)} and this console reads version ${String(SETTINGS_DOC_VERSION)}`
-    return { state: 'unavailable', because, rows: [] }
+    return { state: 'unavailable', because: drawnRefusal(because), rows: [] }
   }
   const settings = arrayAt(document.settings)
-  if (settings === null) return { state: 'unavailable', because: SETTINGS_SHAPE_BECAUSE, rows: [] }
+  if (settings === null) {
+    return { state: 'unavailable', because: drawnRefusal(SETTINGS_SHAPE_BECAUSE), rows: [] }
+  }
   let defaultRow: AccountKeyRow | null = null
   const stageRows: AccountKeyRow[] = []
   for (const entry of settings) {
@@ -267,7 +305,9 @@ export function buildAccountKeys(inputs: AccountKeysInputs): AccountKeys {
     const stage = stageOf(key)
     if (stage === null && key !== DEFAULT_ACCOUNT_KEY) continue
     const read = valueAt(row)
-    if (read.kind === 'shape') return { state: 'unavailable', because: ROW_SHAPE_BECAUSE, rows: [] }
+    if (read.kind === 'shape') {
+      return { state: 'unavailable', because: drawnRefusal(ROW_SHAPE_BECAUSE), rows: [] }
+    }
     if (stage === null) defaultRow = { key, stage: null, value: read.value }
     else stageRows.push({ key, stage, value: read.value })
   }
@@ -282,8 +322,9 @@ export function buildAccountKeys(inputs: AccountKeysInputs): AccountKeys {
 }
 
 /** literal writes this module's own vocabulary -- the panel's name, the state
- * word and the unset word. A document's string never reaches it: those come
- * through `putText` (`../app.ts`) or not at all. */
+ * word, the unset word and the reason, which `buildAccountKeys` sanitized before
+ * it stored it. A document's string never reaches it: those come through
+ * `putText` (`../app.ts`) or not at all. */
 function literal(element: ScreenElement, text: string): ScreenElement {
   element.textContent = text
   return element
@@ -355,13 +396,13 @@ function accountKeysPanel(factory: ScreenFactory, model: AccountKeys): ScreenEle
   literal(source, ACCOUNT_KEYS_SOURCE)
   element.append(source)
   if (model.because !== null) {
-    // The reason is the CLI's own refusal sentence or one of this module's own,
-    // and it goes through `putText` rather than `literal`: the console's
-    // vocabulary is the panel's words, and a sentence that may carry a path or a
-    // project name is a document string whichever door it arrived by.
+    // The reason is drawn, not paraphrased: `buildAccountKeys` put it through
+    // `sanitizeRefusal` (`drawnRefusal`), so this is a sentence this console
+    // produced -- the CLI's refusal verbatim, which is what the design requires
+    // and what the tab's other panels show for the same read.
     const because = factory.create('p')
     because.setAttribute('class', ACCOUNT_KEYS_BECAUSE_CLASS)
-    putText(because, model.because, 'sentence', 'because')
+    literal(because, model.because)
     element.append(because)
   }
   if (model.state === 'read') element.append(accountKeysBody(factory, model))
