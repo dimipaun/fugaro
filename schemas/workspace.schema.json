@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/workspace.schema.json",
+  "title": "Fugaro workspace record",
+  "description": "A workspace's record: the members of the workspace and its own spend cap, and nothing else. The workspace owner declares it locally and `fugaro update` publishes it at `workspaces/<name>` in the workspace's own database (D1292, docs/workspaces/spec.md §2); its readers are the workspace's own service and the workspace owner's CLI, and no member reads it, because a member's machine holds no grant on the workspace's project at all. It holds no identity provider, no issuer, no assertion-signing key and no service account: every one of those is the member's own pin, in the member's own config, and a record that could supply one would be a record that could aim every member's exchange and every member's database grant at a party of its choosing. Every object here is closed, because workspace.Parse decodes the file strictly: a key an editor completed from this schema is a key the reader knows, and the other way round.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "members"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+      "$comment": "The same pattern as config.ProjectNameRE (internal/config/project.go).",
+      "description": "The workspace's name: a Fugaro project name, not a second grammar (F21). A workspace name and a project name are written and read by the same flags, so a grammar of its own would be one more thing two writers could disagree about."
+    },
+    "members": {
+      "type": "array",
+      "description": "The projects in the workspace, sorted by project with no duplicates. JSON Schema has no ordering keyword even though it has uniqueItems, so the order and the uniqueness are workspace.Record.Validate's rule and are stated here rather than enforced. A project is a member of at most one workspace (D1291): the membership itself is a key in the member's own config, and this list is the workspace's own statement about the group.",
+      "items": {
+        "$ref": "#/$defs/member"
+      }
+    },
+    "cap": {
+      "$ref": "#/$defs/cap",
+      "description": "The workspace's own spend ceiling, or null for a record that states none — which is not a cap of zero, because a cap of zero would forbid every call the workspace's credentials pay for."
+    }
+  },
+  "$defs": {
+    "cap": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "monthly"
+      ],
+      "description": "The workspace's own spend ceiling: what the workspace's own credentials pay for and nothing else (D1300). It is not a member's cap, and no member's own cap is widened by it. The block is the claim that there is a ceiling, so a block that is written states its amount; leaving it out — or writing it as null, which is the same as leaving it out, exactly as workspace.Parse reads it — is how the record states none. A workspace with no members at all is refused at the publish stage (W2) rather than being another way to state no cap.",
+      "properties": {
+        "monthly": {
+          "type": "number",
+          "maximum": 100000,
+          "minimum": 5e-07,
+          "description": "The cap in US dollars per month. workspace.Parse converts it once with pricing.FromUSD into integer micro-dollars (pricing.Micros), the unit the budget database stores, so nothing below that point does money arithmetic in a float. It must be more than zero and at most pricing.MaxUSD, and an amount that rounds to less than one whole micro-dollar is refused: the smallest cap is $0.000001."
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project",
+        "repos"
+      ],
+      "description": "One project in the workspace. It carries the member's project name and the repositories the workspace groups, and no per-member value the workspace's own service needs to reach the member: the job service accounts, the Firebase project and the exchange URL are the service's own per-member table, from the workspace owner's config (spec.md §5), and the record only names the members.",
+      "properties": {
+        "project": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "$comment": "The same pattern as config.ProjectNameRE (internal/config/project.go).",
+          "description": "The member's Fugaro project name: the name its own project config carries."
+        },
+        "repos": {
+          "type": "array",
+          "description": "The repositories this member contributes to the workspace, as `owner/repo`, sorted with no duplicates for the same reason the member list is (workspace.Record.Validate's rule, which the schema cannot express). Empty for a member that contributes none.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
