@@ -149,6 +149,9 @@ func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
 		if ch.Disabled {
 			d += " (the repository disables it)"
 		}
+		if s := installStillBehind(ch.Path, ch.Tag); s != "" {
+			d += "; " + s
+		}
 		return initflow.Status{State: initflow.Done, Detail: d}, nil
 	}
 	d := "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag
@@ -156,6 +159,22 @@ func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
 		d += "; asks you to type the repository's name first (it is not the project's yet)"
 	}
 	return initflow.Status{State: initflow.Todo, Detail: d}, nil
+}
+
+// installStillBehind is what this stage's line owes when the pin is not the
+// whole truth: Claude Code's own record of the installed plugin is another
+// version, so "No changes: ... pins the plugin to vX" alone would read as
+// current while the staleness line every command prints — and doctor's
+// plugin-install check — say the opposite about the same run (#1836). This
+// stage wires the settings file and never installs anything, so the sentence
+// names the step that does, which is the checkout stage's and which will have
+// run by the time the run reports.
+func installStillBehind(settings, tag string) string {
+	r := pluginwire.Status(settings, Version, installedPlugins())
+	if r.Install != pluginwire.InstalledDiffers {
+		return ""
+	}
+	return "Claude Code still has " + pluginwire.Printable(r.Version) + " installed, and the checkout stage's plugin step installs " + tag + " (or, in Claude Code, /plugin marketplace update fugaro)"
 }
 
 func (s *pluginStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
