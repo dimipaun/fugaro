@@ -201,9 +201,11 @@ func TestRunOwnerRuledRefusesAValueNoRulingCanBe(t *testing.T) {
 	f := newCloudFixture(t)
 	seedWaitingRoot(t, f)
 	cases := []struct{ name, id, value, want string }{
-		{"blank", "20261007-150000-abcd", "   ",
+		// Minted from the wall clock: run --pr is windowed by resolvePR, so a
+		// fixed date would pass only until the window slid past it.
+		{"blank", wallRunIDAt(0, "150000", "abcd"), "   ",
 			"--owner-ruled is empty: pass the owner's ruling, a file holding it, or - for stdin"},
-		{"over the bound", "20261007-150000-abce", strings.Repeat("x", task.MaxOwnerRuledBytes+1),
+		{"over the bound", wallRunIDAt(0, "150000", "abce"), strings.Repeat("x", task.MaxOwnerRuledBytes+1),
 			fmt.Sprintf("--owner-ruled is %d bytes; a ruling must be at most %d",
 				task.MaxOwnerRuledBytes+1, task.MaxOwnerRuledBytes)},
 	}
