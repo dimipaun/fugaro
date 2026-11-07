@@ -599,6 +599,11 @@ type initRun struct {
 	// config — is written by this struct (writeConfig), from stages that all run
 	// before the policy stage applies.
 	policyStage *policyMigrateStage
+	// workspaceStage is the converge's workspace stage, held for the same reason
+	// and by the same write: the record it publishes names the database this
+	// struct writes into the local config, so a run that first names a backend
+	// gives the stage its database after the stage's read-only pass is over.
+	workspaceStage *workspaceStage
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -2977,6 +2982,12 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// its own check, which the loop makes right before it applies.
 	if r.policyStage != nil {
 		r.policyStage.forget()
+	}
+	// The workspace stage's plan is made of the same file, and the same write
+	// gives it the database the config did not name a moment ago: its own
+	// comment says the rest (update_workspace.go).
+	if r.workspaceStage != nil {
+		r.workspaceStage.forget()
 	}
 	if !r.o.planOnly {
 		r.publishSharedConfig(ctx, &next)
