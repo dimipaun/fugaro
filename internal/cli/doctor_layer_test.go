@@ -695,6 +695,39 @@ func TestDoctorCatalogImageNamesTheBuildCommand(t *testing.T) {
 			t.Fatalf("a built, current entry must say nothing: %+v", c)
 		}
 	})
+
+	// A record that is there and cannot be read is not an entry no build has
+	// built: doctor's best effort says nothing about what it could not read,
+	// and a record in that state is the daily check's own to fix or delete —
+	// told to rebuild, the owner would build an entry that already has one.
+	// Mutation (run, restore): treat every read error as an absent record, and
+	// both subtests fail with the "no build has built" warning.
+	t.Run("a record that does not parse says nothing", func(t *testing.T) {
+		f, dir, slug, ctx, lc, rf := build(t)
+		key, err := gcp.CatalogRecordKey(slug, "go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeBucketFile(t, f, key, "{ this is not the record's shape")
+		if c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog-app"); c != nil {
+			t.Fatalf("a corrupt record must not be read as no record: %+v", c)
+		}
+	})
+
+	t.Run("a record that cannot be read says nothing", func(t *testing.T) {
+		f, dir, slug, ctx, lc, rf := build(t)
+		key, err := gcp.CatalogRecordKey(slug, "go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Over the read cap, so the read fails with something that is not
+		// ErrNotExist (a mode 000 file would depend on the uid the test runs
+		// as: root reads it anyway).
+		writeBucketFile(t, f, key, strings.Repeat("x", blobx.MaxReadBytes+1))
+		if c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog-app"); c != nil {
+			t.Fatalf("a record that could not be read must not be read as no record: %+v", c)
+		}
+	})
 }
 
 // doctorPublishedCatalog puts the project's image catalog in the published

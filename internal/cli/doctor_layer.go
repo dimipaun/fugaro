@@ -406,8 +406,10 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slu
 // Best effort, as the layer checks are: what cannot be read says nothing, and
 // cat — the catalog the job spec resolves, handed in — being nil is one of
 // those reads (imageCatalogUnreadCheck is its own line when it was the node
-// that did not answer). An entry that is a prebuilt image has nothing to
-// build.
+// that did not answer). So is an entry's build record that is there and could
+// not be read or parsed: only an absent one is the "no build has built it"
+// warning below (catalogEntryRecord). An entry that is a prebuilt image has
+// nothing to build.
 func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, cat *config.Catalog) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
@@ -416,7 +418,12 @@ func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, sl
 			continue
 		}
 		slugs := catalogEntrySlugs(ctx, env, slug, e)
-		rec := catalogEntryRecord(ctx, rb, slugs, e.Name)
+		rec, rerr := catalogEntryRecord(ctx, rb, slugs, e.Name)
+		if rerr != nil {
+			// A record that is there and unreadable is not an entry no build
+			// has built: what cannot be read says nothing (catalogEntryRecord).
+			continue
+		}
 		if rec == nil {
 			// Only an entry this machine can place is called unbuilt, and
 			// only one whose source it read: the record lives under the slug
@@ -539,25 +546,38 @@ func catalogEntrySlugs(ctx context.Context, env *cloudEnv, slug string, e config
 }
 
 // catalogEntryRecord reads entry's build record from the first of slugs that
-// has one, nil when none does. A record that cannot be read or parsed counts
-// as absent, the way `fugaro image ls` reads an entry's digest.
-func catalogEntryRecord(ctx context.Context, rb *blobx.Bucket, slugs []string, entry string) *imagecheck.CatalogRecordState {
+// has one: the record, nil when none does, and an error when one is there and
+// could not be read.
+//
+// Only blobx.ErrNotExist is an absent record. Any other read error, and a
+// record that does not parse, stop the search and are returned as themselves:
+// the caller's "no build has built it" is a claim about a record that was not
+// there to read, and a record that is there and unreadable is the state the
+// daily check stops on ("nothing is submitted for it until it is fixed or
+// deleted", image_check_catalog.go) — told to rebuild instead, it would name a
+// build of an entry that has one.
+// (A 403 is ErrNotExist before it arrives here: the non-strict read folds it,
+// which is what the job and build accounts' conditional grant needs.)
+func catalogEntryRecord(ctx context.Context, rb *blobx.Bucket, slugs []string, entry string) (*imagecheck.CatalogRecordState, error) {
 	for _, s := range slugs {
 		key, err := gcp.CatalogRecordKey(s, entry)
 		if err != nil {
 			continue
 		}
 		data, _, err := rb.Read(ctx, key)
-		if err != nil {
+		if errors.Is(err, blobx.ErrNotExist) {
 			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", key, err)
 		}
 		rec, err := imagecheck.ParseCatalogRecordState(data)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("reading %s: %w", key, err)
 		}
-		return rec
+		return rec, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // imageLeafKeys are the leaf paths under workflows.<name>. that decide a
