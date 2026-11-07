@@ -8,9 +8,12 @@ them**, its **red step**, the mutation that holds it, its **reviewer tier**, its
 **owner-run** flags, what it depends on and its commit. **Every citation below was resolved against
 the tree of `main` at `56c91f66` on 2026-11-07 while writing it**, and where the design's own citation
 had drifted the reconciliation's line is used and the drift is named (F18, F19). **`main` has since
-moved to `4dc17549` and the citations were re-checked against it**: none of the files it changed in
-between is one this plan cites, so every line still resolves, and what the move did change — the two
-number blocks and the docs-pin census — is re-read in the reconciliation's §7 and F28.
+moved to `4dc17549` and the citations were re-checked against it**: **two of the files it changed are
+ones this plan and its reconciliation cite** — `docs/rigor-modes/reconciliation.md`, the census row
+this plan's §7 names and the move itself edited (100 → 101, now `:752`), and the new
+`docs/api-key-review/reconciliation.md`, which did not exist at the base — and no other cited file
+moved, so every other line still resolves. What the move did change — the two number blocks and the
+docs-pin census — is re-read in the reconciliation's §7 and F28.
 
 **Written to:** [spec.md](spec.md) — the design, `docs/design/failure-classes.md`, byte for byte — and
 [reconciliation.md](reconciliation.md). **Where a task below and the reconciliation disagree, the

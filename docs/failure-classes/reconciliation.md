@@ -5,9 +5,13 @@
 at **`56c91f66`** (2026-11-07), path by path and symbol by symbol. Everything below was resolved
 against that tree while writing it; the two commands that read the numbers this work holds are in §7,
 and what could not be resolved at all is in §8. **`main` has moved since** — to **`4dc17549`**, 39
-files and two new docs folders later — so the citations were re-checked against it: **not one of the
-39 files is one this folder cites**, and the census, the row counts and every line below still resolve
-there. What the move *did* change is the two number blocks, and §7 is the re-read one.
+files and two new docs folders later — so the citations were re-checked against it. **Two of the 39
+are files this folder cites, and both are ones it re-read:** `docs/rigor-modes/reconciliation.md`,
+whose census row this folder cites in F28, D1462 and §7 and whose count and line the move itself
+changed (100 → 101, now `:752`), and `docs/api-key-review/reconciliation.md`, which did not exist at
+`56c91f66` and is cited at its content on `main` today. **No other file this folder cites is one of
+the 39**, so every other line below still resolves there; and the move's other change is the two
+number blocks, which §7 re-reads.
 
 **Where this file and [spec.md](spec.md) disagree about the code, this file wins.** Where they
 disagree about what the design *says*, spec.md wins. Where a task in
@@ -349,7 +353,9 @@ be held to it) or **Open** (the design leaves it to the owner).
   (`internal/cli/docs_desktop_console_test.go:353`) reflects over `runview.Row{}` and
   `console/docs/json-contract.md` §5 (`:567`) is where its rows live.
 - **F12 — the plugin's lint**: `plugin/skills_lint_test.go` resolves every command and flag a skill
-  names against the cobra tree; `resolveSkillCommand` is `plugin/routing_skill_test.go`'s own helper.
+  names against the cobra tree; `resolveSkillCommand`, the helper that does it, is
+  `plugin/skillcli_test.go:41`, and `plugin/routing_skill_test.go:122` and
+  `plugin/setup_skill_test.go:670` are two of its callers.
 
 ### Gap
 
@@ -547,12 +553,16 @@ reserves D1490–D1499, and it took them **above** the numbers of its day rather
 *"so that two works in flight cannot claim adjacent numbers and collide at their merge"*, the reason
 it gives for reading the highest on `main` as **D1409** and the highest in a pull-request head as
 **D1429**. `docs/api-key-review` — pull request **#1819**, which this folder read while it was open and
-which has merged since — holds **D1410–D1429** on `main` today, and **Check 330** with it. **D1431–D1469
-is therefore a gap both works stepped over**, and this work's block is its upper half.
+which has merged since — holds **D1410–D1429** on `main` today, and **Check 330** with it. **D1430–D1469
+is therefore a gap both works stepped over** — the file says so itself, taking its block *"above D1429
+rather than at D1430"* (`docs/console-managed-screens/reconciliation.md:280`) — and this work's block is
+its upper half.
 
-**What this folder holds.** **D1450–D1469**, taken on the day the highest claim was D1429 (in #1819) and
-five above it — the reading the other two works took on the same day, which is why none of the three
-reads another's numbers. **The second command prints nothing on `main`**: no path on `main` uses `D145x`
+**What this folder holds.** **D1450–D1469**, taken on the day the highest claim was D1429 (in #1819),
+**twenty-one above it** (D1430–D1449 left free below the block, which is why that stretch is the lower
+half of the gap the two later works stepped over) — the same reading of `main`'s highest D1409 and the
+highest in a head D1429 the other two works took on that day, which is why none of the three reads
+another's numbers. **The second command prints nothing on `main`**: no path on `main` uses `D145x`
 or `D146x`, so the block is still unused, and the two blocks `main` has taken since (D1410–D1429,
 D1470–D1499) are neither inside it nor adjacent to it. Positive controls were run so that "nothing" is
 not a broken command: `D1409` is found in `docs/catalog-build-context/README.md`, and `D1429` in
