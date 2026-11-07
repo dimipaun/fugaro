@@ -348,6 +348,7 @@ func TestSessionCannotRequeueAnApprovedItem(t *testing.T) {
 		{"the run id", upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.RunID = &runID })},
 		{"the attempt count", upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Attempts = ptr(2) })},
 		{"the spent approval", upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.SpentApprovalAt = ptr(now) })},
+		{"the launch", intentDeclareOp("wi-1:1", runID, orchestrator.SpecDigest(approved.WorkItems[0]), now)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := applyAs(t, approved, orchestrator.Session, "session:20261107-090000-abcd", now, tc.op)
@@ -376,18 +377,25 @@ func TestSessionCannotRequeueAnApprovedItem(t *testing.T) {
 // three fields pass from a session.
 func TestOnlyTheDaemonWritesPhaseRunIDAndAttempts(t *testing.T) {
 	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
-	s := stateWithAQueuedItem(t, now)
+	approved := mustApprove(t, now)
 	runID := "20261107-090000-abcd"
-	intent := intentDeclareOp("wi-1:1", runID, orchestrator.SpecDigest(s.WorkItems[0]), now.Add(-time.Minute))
+	intent := intentDeclareOp("wi-1:1", runID, orchestrator.SpecDigest(approved.WorkItems[0]), now)
 
+	// The item is approved on purpose: under an item with no approval standing
+	// the refusal below would come from that rather than from the class, and a
+	// fence covered by a second refusal is not covered at all.
 	for _, class := range []orchestrator.Class{orchestrator.Session, orchestrator.DecisionAgent} {
-		if _, err := applyAs(t, s, class, "session:20261107-090000-abcd", now, intent); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+		if _, err := applyAs(t, approved, class, "session:20261107-090000-abcd", now, intent); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
 			t.Fatalf("a %s actor declared an intent: err = %v, want %v", class, err, orchestrator.ErrActorNotAllowed)
 		}
 	}
 	// The daemon may declare it, and only under a standing approval.
-	if _, err := applyAs(t, s, orchestrator.Daemon, "orchestrator-a", now, intent); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+	if _, err := applyAs(t, stateWithAQueuedItem(t, now), orchestrator.Daemon, "orchestrator-a", now, intent); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
 		t.Fatalf("an unapproved item was launched: err = %v, want %v", err, orchestrator.ErrActorNotAllowed)
+	}
+	launched := mustApply(t, approved, orchestrator.Daemon, "orchestrator-a", now, intent)
+	if got := launched.WorkItems[0]; got.Phase != orchestrator.PhaseRunning || got.RunID != runID || got.Attempts != 1 {
+		t.Fatalf("the daemon's launch left the item at %s, run %q, attempt %d", got.Phase, got.RunID, got.Attempts)
 	}
 }
 
@@ -435,7 +443,11 @@ func TestIntentCarriesTheApprovalItSpends(t *testing.T) {
 		t.Fatal("Apply changed the state it was given")
 	}
 
-	failed := mustApply(t, launched, orchestrator.Daemon, "orchestrator-a", now.Add(time.Minute),
+	// The run reports how it went, which is what ends the attempt: the intent
+	// carries the outcome before the item moves on.
+	reported := mustApply(t, launched, orchestrator.Daemon, "orchestrator-a", now.Add(time.Minute),
+		intentOutcomeOp("wi-1:1", orchestrator.OutcomeFailed))
+	failed := mustApply(t, reported, orchestrator.Daemon, "orchestrator-a", now.Add(time.Minute),
 		phaseOp("wi-1", ptr(orchestrator.PhaseFailed), nil))
 	// The retry goes back through queued, which is the only way failed and
 	// blocked reach running: committing an intent starts a run, so it moves
@@ -483,6 +495,63 @@ func TestIntentCarriesTheApprovalItSpends(t *testing.T) {
 	if _, err := applyAs(t, ended, orchestrator.Daemon, "orchestrator-a", now.Add(4*time.Minute),
 		intentOutcomeOp("wi-1:2", orchestrator.OutcomeFailed)); !errors.Is(err, orchestrator.ErrIntentDeclared) {
 		t.Fatalf("an attempt that already ended ended again: err = %v, want %v", err, orchestrator.ErrIntentDeclared)
+	}
+}
+
+// TestAnAttemptStartsOnlyFromQueuedWithNothingInFlight is the fence around a
+// second run on one item. The phase table alone does not give it — running may
+// move to itself — and what a second declaration takes is the approval's
+// retry: it would spend the allowance, clear the approval that covers it and
+// overwrite the run id of the run already going. An intent is the record of a
+// run, so the item is free only once the attempt on it has reported how it
+// went.
+//
+// Mutation: drop the queued check and the first case lands, which is a run
+// starting on a running item; drop the in-flight check and the second lands,
+// which is a retry declared over a run that has reported nothing.
+func TestAnAttemptStartsOnlyFromQueuedWithNothingInFlight(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	approved, digest := approvedState(t, now)
+	launched := mustApply(t, approved, orchestrator.Daemon, "orchestrator-a", now,
+		intentDeclareOp("wi-1:1", "20261107-090000-abcd", digest, now))
+
+	// A run is in flight: the item is running and wi-1:1 has reported nothing.
+	if _, err := applyAs(t, launched, orchestrator.Daemon, "orchestrator-a", now,
+		intentDeclareOp("wi-1:2", "20261107-100000-abcd", digest, now)); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("a second attempt started over a run in flight: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+
+	// The attempt reports and the item has not moved on behind it: it is still
+	// running, and running is not where an attempt starts. The phase is the
+	// only thing refusing here, the attempt having reported.
+	reported := mustApply(t, launched, orchestrator.Daemon, "orchestrator-a", now,
+		intentOutcomeOp("wi-1:1", orchestrator.OutcomeFailed))
+	if _, err := applyAs(t, reported, orchestrator.Daemon, "orchestrator-a", now,
+		intentDeclareOp("wi-1:2", "20261107-100000-abcd", digest, now)); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("a second attempt started from %s: err = %v, want %v", reported.WorkItems[0].Phase, err, orchestrator.ErrInvalid)
+	}
+
+	// The other half, and the phase says the opposite here: the item is put
+	// back to queued — the table lets failed and blocked move there — with
+	// wi-1:1 still carrying no outcome, so the intent, which is the record of
+	// the run, is what refuses.
+	open := mustApply(t, launched, orchestrator.Daemon, "orchestrator-a", now,
+		phaseOp("wi-1", ptr(orchestrator.PhaseFailed), nil))
+	open = mustApply(t, open, orchestrator.Daemon, "orchestrator-a", now,
+		phaseOp("wi-1", ptr(orchestrator.PhaseQueued), nil))
+	if _, err := applyAs(t, open, orchestrator.Daemon, "orchestrator-a", now,
+		intentDeclareOp("wi-1:2", "20261107-100000-abcd", digest, now)); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("a retry was declared over an attempt that has not reported: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+
+	// Once it reports, the same declaration lands: the fence holds the run
+	// back rather than the item.
+	closed := mustApply(t, open, orchestrator.Daemon, "orchestrator-a", now,
+		intentOutcomeOp("wi-1:1", orchestrator.OutcomeFailed))
+	retried := mustApply(t, closed, orchestrator.Daemon, "orchestrator-a", now,
+		intentDeclareOp("wi-1:2", "20261107-100000-abcd", digest, now))
+	if got := retried.WorkItems[0]; got.Phase != orchestrator.PhaseRunning || got.RunID != "20261107-100000-abcd" || got.Attempts != 2 {
+		t.Fatalf("the retry landed as %s, run %q, attempt %d", got.Phase, got.RunID, got.Attempts)
 	}
 }
 
@@ -568,7 +637,9 @@ func TestRetryCountsOnlyIntentsOfTheStandingApproval(t *testing.T) {
 	approved, digest := approvedState(t, first)
 	launched := mustApply(t, approved, orchestrator.Daemon, "orchestrator-a", first,
 		intentDeclareOp("wi-1:1", "20261107-090000-abcd", digest, first))
-	failed := mustApply(t, launched, orchestrator.Daemon, "orchestrator-a", first, phaseOp("wi-1", ptr(orchestrator.PhaseFailed), nil))
+	reported := mustApply(t, launched, orchestrator.Daemon, "orchestrator-a", first,
+		intentOutcomeOp("wi-1:1", orchestrator.OutcomeFailed))
+	failed := mustApply(t, reported, orchestrator.Daemon, "orchestrator-a", first, phaseOp("wi-1", ptr(orchestrator.PhaseFailed), nil))
 	if got := orchestrator.AttemptsUnder(failed, "wi-1", first); got != 1 {
 		t.Fatalf("the first approval covers %d committed attempts, want 1", got)
 	}
@@ -601,7 +672,9 @@ func TestRetryCountsOnlyIntentsOfTheStandingApproval(t *testing.T) {
 	}
 
 	// Its retry is attempt 3 and it is the one that spends.
-	failedAgain := mustApply(t, retry, orchestrator.Daemon, "orchestrator-a", second, phaseOp("wi-1", ptr(orchestrator.PhaseFailed), nil))
+	reportedAgain := mustApply(t, retry, orchestrator.Daemon, "orchestrator-a", second,
+		intentOutcomeOp("wi-1:2", orchestrator.OutcomeFailed))
+	failedAgain := mustApply(t, reportedAgain, orchestrator.Daemon, "orchestrator-a", second, phaseOp("wi-1", ptr(orchestrator.PhaseFailed), nil))
 	requeuedAgain := mustApply(t, failedAgain, orchestrator.Daemon, "orchestrator-a", second,
 		phaseOp("wi-1", ptr(orchestrator.PhaseQueued), nil))
 	spent := mustApply(t, requeuedAgain, orchestrator.Daemon, "orchestrator-a", second,

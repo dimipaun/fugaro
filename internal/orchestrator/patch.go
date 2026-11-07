@@ -328,6 +328,12 @@ func applyUpsert(s *State, op WorkItemOp, a Actor) error {
 // allowance: Approved is cleared and SpentApprovalAt is set in this same
 // write, while the first attempt clears nothing, so a second failure needs a
 // person's new approval.
+//
+// A declaration is refused unless the item is queued and no attempt of it is
+// still in flight: an intent is the record of a run, so one without an outcome
+// is a run that has not reported, and a second attempt under it would spend an
+// allowance, clear an approval and overwrite a run id that belong to the run
+// already going.
 func commitIntent(s *State, w *WorkItem, op IntentOp, a Actor) error {
 	attempt := IntentAttempt(op.ID)
 	if IntentItem(op.ID) != w.ID || attempt < 1 {
@@ -372,11 +378,17 @@ func commitIntent(s *State, w *WorkItem, op IntentOp, a Actor) error {
 	if approval.SpecDigest != *op.SpecDigest || SpecDigest(*w) != *op.SpecDigest {
 		return fmt.Errorf("%w: the launch spec is not the one the approval covers, so nothing may start under it", ErrDigestMismatch)
 	}
-	if !w.Phase.CanMoveTo(PhaseRunning) {
-		// Committing an intent starts a run, so it moves the item the same way
-		// any other write does: failed and blocked reach running through
-		// queued, which is the path the retry takes (spec's phase table).
-		return fmt.Errorf("%w: %s may not move to %s, and committing an intent starts a run", ErrInvalid, w.Phase, PhaseRunning)
+	// One attempt at a time, started from queued and nowhere else. The phase
+	// table alone would not say so — running may move to itself — and an
+	// attempt declared over a run in flight would take the retry's allowance,
+	// clear the approval that covers it and overwrite the run id of a run that
+	// is still going. failed and blocked reach queued first, which is the path
+	// the retry takes.
+	if w.Phase != PhaseQueued {
+		return fmt.Errorf("%w: the item is %s, and an attempt starts from %s", ErrInvalid, w.Phase, PhaseQueued)
+	}
+	if open := openIntent(*s, w.ID); open != "" {
+		return fmt.Errorf("%w: the attempt %s has not reported how it went, and one run at a time carries an item", ErrInvalid, safetext.OneLine(open))
 	}
 	s.Intents = append(s.Intents, Intent{
 		ID:         op.ID,

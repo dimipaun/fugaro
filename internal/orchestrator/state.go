@@ -461,6 +461,19 @@ func IntentAttempt(id string) int {
 	return n
 }
 
+// openIntent is the id of an attempt of an item that has been declared and
+// has not reported how it went, or "" when every one of them has. An intent is
+// the record of a run, so one with no outcome is a run in flight, and the item
+// it carries may not have a second.
+func openIntent(s State, itemID string) string {
+	for _, it := range s.Intents {
+		if IntentItem(it.ID) == itemID && it.Outcome == "" {
+			return it.ID
+		}
+	}
+	return ""
+}
+
 // attemptsCommitted is the number of the last attempt committed for an item,
 // or 0 when none has been. Attempt numbering runs on across approvals — a
 // re-approved item starts a new allowance, not a new numbering — which is what
