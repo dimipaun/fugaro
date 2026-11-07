@@ -379,14 +379,7 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 	if !credsImageRE.MatchString(image) {
 		return CredentialsServiceSpec{}, userErr("the credentials service's image %q must be pinned by digest (ending in @sha256: and 64 lower-case hex digits): a tag is mutable, and this service reads every model credential the installation holds", image)
 	}
-	b := lc.Budget
-	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
-		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <gcp-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
-	}
-	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
-		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <gcp-project-id>' to write it from the Firebase root's outputs")
-	}
-	jobs, err := CredentialsJobAccounts(lc)
+	b, jobs, err := credentialsInstallation(lc)
 	if err != nil {
 		return CredentialsServiceSpec{}, err
 	}
@@ -406,6 +399,40 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 		// for, and the account it creates is admitted.
 		VerifierAccounts: verifierAccountsField(lc.VerifierAccountsEffective(publishedVerifiers)),
 	}, nil
+}
+
+// CredentialsInstallationFacts is Credentials' own question about the
+// installation, asked on its own: does this project's config name everything
+// the service needs to exist in it at all — the Firebase database it reads,
+// and at least one repository job it may admit? It is what a caller asks
+// BEFORE it resolves the service's image, so a run whose installation cannot
+// carry the service spends no registry read, no signature check and no pull
+// on one; Credentials asks it too (credentialsInstallation, below), so the
+// two can never disagree about an installation.
+func CredentialsInstallationFacts(lc *localcfg.Config) error {
+	_, _, err := credentialsInstallation(lc)
+	return err
+}
+
+// credentialsInstallation is the budget block and the job table Credentials
+// builds the service from, and the refusals an installation that names
+// neither gets: the service reads the installation's own database and admits
+// its repository jobs, so a project with no database named and a project
+// whose table binds no run to a repository are installations the service
+// cannot be deployed into (its own Authenticator refuses a table of none).
+func credentialsInstallation(lc *localcfg.Config) (*localcfg.Budget, []CredentialsJob, error) {
+	b := lc.Budget
+	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
+		return nil, nil, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <gcp-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
+	}
+	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
+		return nil, nil, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <gcp-project-id>' to write it from the Firebase root's outputs")
+	}
+	jobs, err := CredentialsJobAccounts(lc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return b, jobs, nil
 }
 
 // verifierAccountsField spells an effective verifier list as the three-state

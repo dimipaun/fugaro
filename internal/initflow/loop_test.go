@@ -107,8 +107,8 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// (init_layer_stage.go), the checkout's own steps inside fugaro update
 	// (init_checkout_upgrade.go) and the compute backend's provisioning, which
 	// the design puts last (compute-backend §8.1 task 6).
-	if len(names) != 16 {
-		t.Fatalf("the design has sixteen stages, got %v", names)
+	if len(names) != 15 {
+		t.Fatalf("the design has fifteen stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -123,7 +123,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Rules, Policy, Layer, Checkout, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, Layer, Checkout, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -14,52 +13,50 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
-// The credentials stage (docs/credentials-service, D146, D147; plan task
-// C1.20). It is the owner's step and it is behind --provision-credentials:
-// what it turns on is the one Cloud Run service that reads every model
-// credential the installation holds, so --yes never covers it, its
-// confirmation is the project's name typed at a real terminal, and a run
-// without the credsRules marker of C1.3 is refused before anything is
-// planned.
+// The credentials service's deploy (docs/credentials-service/default-on.md, the
+// owner's ruling of 2026-11-05; plan task DON1). Every `fugaro update` writes
+// the installation root's credentials_service block, for every installation, so
+// the service exists wherever the CLI has converged: there is no flag and no
+// stage to opt in with any more, and the block is part of the state the
+// installation stage's own confirmed apply converges.
 //
 // The rig is an images rig: a released CLI version, the release's credentials
 // image published in the fake source under its own "-pinned" tag (so the
-// stage's resolve-and-verify step answers with a digest the destination
-// registry serves, as the remote repository does), and the installation's
-// budget database carrying the marker.
+// resolve-and-verify step answers with a digest the destination registry
+// serves, as the remote repository does), and the installation's budget
+// database carrying the marker.
 
-// credentialsStageRig is the images rig plus the credentials service's own
-// pieces: the released image, the budget backend and its marker.
-func credentialsStageRig(t *testing.T) *imagesRig { return credentialsStageRigAt(t, "1.2.3") }
+// credentialsRig is the images rig plus the credentials service's own pieces:
+// the released image, the budget backend and its marker.
+func credentialsRig(t *testing.T) *imagesRig { return credentialsRigAt(t, "1.2.3") }
 
-// credentialsStageRigAt is credentialsStageRig for a CLI that is another
-// release: the rig whose credentials image is published under version, which
-// is what an upgrade BETWEEN two releases is tested with.
-func credentialsStageRigAt(t *testing.T, version string) *imagesRig {
+// credentialsRigAt is credentialsRig for a CLI that is another release: the rig
+// whose credentials image is published under version, which is what an upgrade
+// BETWEEN two releases is tested with.
+func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	t.Helper()
 	r := newImagesRig(t, version)
 	// The released image, and the nightly-immune "-pinned" tag a release
 	// publishes beside the plain version tag.
 	r.src.publish("dimipaun/fugaro-credentials", version)
 	r.src.tags["dimipaun/fugaro-credentials:"+version+"-pinned"] = r.src.tags["dimipaun/fugaro-credentials:"+version]
-	// The database the stage reads the marker from: a project config with a
-	// budget backend is what update --firebase-project writes. Its firebase_project is
-	// the one the credentials service's own environment carries
-	// (FUGARO_FIREBASE_PROJECT) and its rtdb_url the one FUGARO_RTDB_URL
-	// carries: infra.Credentials takes both from here, because the service
-	// reads the installation's own database and has no default.
+	// The database the marker is read from: a project config with a budget
+	// backend is what `fugaro update --firebase-project` writes. Its
+	// firebase_project is the one the credentials service's own environment
+	// carries (FUGARO_FIREBASE_PROJECT) and its rtdb_url the one FUGARO_RTDB_URL
+	// carries: infra.Credentials takes both from here, because the service reads
+	// the installation's own database and has no default.
 	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+r.db.URL+" }\n")
 	r.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
 	return r
 }
 
 // credentialsDigest is the digest the fake source published the credentials
-// image under: what the stage's resolve-and-verify step returns.
+// image under: what the resolve-and-verify step returns.
 func (r *imagesRig) credentialsDigest() string { return r.credentialsDigestAt("1.2.3") }
 
 // credentialsDigestAt is credentialsDigest for another release.
@@ -67,7 +64,7 @@ func (r *imagesRig) credentialsDigestAt(version string) string {
 	return r.src.tags["dimipaun/fugaro-credentials:"+version]
 }
 
-// credentialsRef is the reference the stage must write for
+// credentialsRef is the reference the deploy must write for
 // credentials_service.image: the remote repository's path, the version as a
 // tag, and the verified digest.
 func (r *imagesRig) credentialsRef() string { return r.credentialsRefAt("1.2.3") }
@@ -78,19 +75,29 @@ func (r *imagesRig) credentialsRefAt(version string) string {
 		"/dimipaun/fugaro-credentials:" + version + "@" + r.credentialsDigestAt(version)
 }
 
-// oldCredentialsRef is the reference an installation that opted in under an
-// EARLIER release holds: that release's version in the tag and a digest the
-// rig never published — an installation's own record, which is what makes an
-// update have to resolve the running release's image rather than read one.
+// oldCredentialsRef is the reference an installation deployed under an EARLIER
+// release holds: that release's version in the tag and a digest the rig never
+// published — an installation's own record, which is what makes an update have
+// to resolve the running release's image rather than read one.
 func oldCredentialsRef(version string) string {
 	return "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry +
 		"/dimipaun/fugaro-credentials:" + version + "@sha256:" + strings.Repeat("ab", 32)
 }
 
+// verifierServiceAccount is the account §2.2 names: the installation's own verifier
+// service account, the one the module creates (verifier.tf, whose address is a
+// fact of the configuration because the account ID is a literal,
+// infra.VerifierAccountID). It is a service account and never a person: the
+// service refuses to start with an address that is both a person and a
+// verifier (credsvc/auth.go:574).
+func verifierServiceAccount() string {
+	return infra.VerifierAccountID + "@" + initProject + ".iam.gserviceaccount.com"
+}
+
 // seedCredentialsService writes the installation root's tfvars as a run of an
-// earlier release left them: an installation that has opted in, on that
-// release's credentials image, with the entry's other facts exactly what the
-// credentials stage writes (infra.Credentials).
+// earlier release left them: an installation that has the service, on that
+// release's credentials image, with the entry's other facts exactly what
+// infra.Credentials writes.
 func seedCredentialsService(t *testing.T, r *imagesRig, image string) {
 	t.Helper()
 	seedCredentialsServiceWithVerifiers(t, r, image, nil)
@@ -140,58 +147,16 @@ func credentialsServiceEntry(t *testing.T, r *imagesRig) map[string]any {
 	return svc
 }
 
-// A coding agent's session applies nothing, and the credentials service is
-// the last stage --yes could ever reach: the run stops at the stage, with the
-// agent's own refusal and the typed route, and NOTHING of the stage runs --
-// no marker read, no digest resolved, no tfvars written.
-//
-// This is the RED STEP of the task (plan C1.20).
-func TestInitCredentialsStageRefusedInAgent(t *testing.T) {
-	r := credentialsStageRig(t)
-	// Everything before the credentials stage is done, so the run reaches it:
-	// the refusal below can only be this stage's.
-	r.setPlanAt(t, "installation")
-	t.Setenv("CLAUDECODE", "1")
-	out, errOut, err := executeStdin(t, "", "setup", "--yes", "--provision-credentials")
-	if err == nil {
-		t.Fatalf("a coding agent's session applied the credentials service:\n%s%s", out, errOut)
-	}
-	s := out + errOut
-	if !strings.Contains(s, initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the agent was not refused with the agent's own sentence: %v\n%s", err, s)
-	}
-	// The refusal is THIS stage's: the loop reached it, with every stage before
-	// it done, so the run is not stopping at an earlier one whose refusal would
-	// read the same. An agent plans a self-confirming engine read-only, and the
-	// installation root's plan is empty here, which is what makes it Done.
-	if !strings.Contains(s, "[done]") || !strings.Contains(s, "installation") {
-		t.Errorf("the installation stage was not done before the credentials stage:\n%s", s)
-	}
-	if !strings.Contains(s, "[needs you]  credentials") {
-		t.Errorf("the run did not reach the credentials stage, so this is another stage's refusal:\n%s", s)
-	}
-	if r.resolveCalls != 0 {
-		t.Errorf("the stage resolved a digest in a coding agent's session (%d calls)", r.resolveCalls)
-	}
-	if _, ok := r.tfvars(t)["credentials_service"]; ok {
-		t.Errorf("the stage wrote credentials_service in a coding agent's session: %v", r.tfvars(t)["credentials_service"])
-	}
-	if applies := r.ran(t, "apply"); len(applies) != 0 {
-		t.Errorf("a coding agent's session applied %v", applies)
-	}
-}
-
 // credentialsOutputs makes the installation root's `terraform output -json`
-// answer carry the credentials service the module publishes once the opt-in
-// is in (deploy/terraform/gcp/roots/installation/outputs.tf): the stage
-// reads it back, and the repository roots read the same object from the
-// installation's outputs.
+// answer carry the credentials service the module publishes (the installation
+// root's outputs.tf): the run reads it back for the audience, and the
+// repository roots read the same object from the installation's outputs.
 //
-// The URL is part of it, and it is what the stage's SECOND apply is for
-// (fillAudience): the apply that creates the service cannot know it — Cloud
-// Run assigns it, and Terraform refuses a resource that reads its own uri —
-// so the revision carries the module's unassigned placeholder until this
-// value comes back and the stage applies it.
+// The URL is part of it, and it is what the SECOND apply is for
+// (fillCredentialsAudience): the apply that creates the service cannot know it
+// — Cloud Run assigns it, and Terraform refuses a resource that reads its own
+// uri — so the revision carries the module's unassigned placeholder until this
+// value comes back and the run applies it.
 func credentialsOutputs(t *testing.T, r *imagesRig) {
 	t.Helper()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
@@ -200,231 +165,409 @@ func credentialsOutputs(t *testing.T, r *imagesRig) {
 	r.save(t)
 }
 
-// credentialsServiceURL is the URL the module's output carries in these
-// tests: the shape Cloud Run assigns (the service's name, the project
-// number, the region), which is the audience its callers' ID tokens are
-// minted for.
+// credentialsServiceURL is the URL the module's output carries in these tests:
+// the shape Cloud Run assigns (the service's name, the project number, the
+// region), which is the audience its callers' ID tokens are minted for.
 const credentialsServiceURL = "https://fugaro-credentials-123456789012.us-east5.run.app"
 
-// --yes never covers the stage. It is registered noYes in initflow's order,
-// so with --yes and no terminal the loop does not even enter the stage: it
-// reports the step left for the owner, naming the flag and the sentence to
-// type. At a terminal the stage asks its own confirmation, which --yes cannot
-// answer either (nothing typed is a refusal, and nothing is applied).
+// TestUpdateSetsCredentialsServiceOnEveryInstallation is the RED STEP of this
+// task. On the tree before it, an installation whose tfvars carried no
+// credentials_service got none from `fugaro update`: the block came from the
+// owner-run --provision-credentials stage, so this test failed at its first
+// assertion with "the installation's tfvars carry no credentials_service".
 //
-// The count of applies throughout is the installation stage's own: the
-// credentials stage never applies here, so a stage that ran would make it two.
-func TestInitCredentialsStageNotCoveredByYes(t *testing.T) {
-	if initflow.YesCovers(initflow.Credentials) || initflow.RunCovers(initflow.Credentials) {
-		t.Fatal("--yes covers the credentials stage: it is the identity the repository jobs' model credentials move to, and the opt-in is the owner's own step")
-	}
-
-	// --yes, no terminal: left for the owner.
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	out, errOut, err := executeStdin(t, "", "setup", "--yes", "--provision-credentials")
-	s := out + errOut
-	if err == nil || !strings.Contains(err.Error(), "left for you") {
-		t.Fatalf("err = %v, want the step left for the owner\n%s", err, s)
-	}
-	if !strings.Contains(s, "left for you (credentials, prompt)") {
-		t.Errorf("the step was not reported as left for the owner:\n%s", s)
-	}
-	if !strings.Contains(s, "type the project's name at the credentials service's confirmation") {
-		t.Errorf("the step left for the owner does not say what to type:\n%s", s)
-	}
-	if !strings.Contains(s, "--provision-credentials") {
-		t.Errorf("the route left for the owner does not name the flag:\n%s", s)
-	}
-	if _, ok := r.tfvars(t)["credentials_service"]; ok {
-		t.Errorf("--yes turned the service on anyway: %v", r.tfvars(t)["credentials_service"])
-	}
-
-	// --yes at a terminal: the stage asks, and --yes is not an answer.
-	r2 := credentialsStageRig(t)
-	r2.setPlanAt(t, "installation")
-	fakeTerminal(t)
-	out, errOut, err = executeStdin(t, "", "setup", "--yes", "--provision-credentials")
-	s = out + errOut
-	if err == nil {
-		t.Fatalf("--yes stood in for the typed confirmation:\n%s", s)
-	}
-	if !strings.Contains(s, "Type "+initProjectName+" to confirm") {
-		t.Errorf("the stage did not ask for the project's name at a terminal:\n%s", s)
-	}
-	if !strings.Contains(s, "nothing was applied") {
-		t.Errorf("nothing typed was not a refusal:\n%s", s)
-	}
-	if _, ok := r2.tfvars(t)["credentials_service"]; ok {
-		t.Errorf("nothing typed turned the service on: %v", r2.tfvars(t)["credentials_service"])
-	}
-
-	// --plan-only shows the plan and changes nothing: the key the stage wrote
-	// to plan is taken back out again, so merely looking at the plan cannot
-	// leave the opt-in where the next ordinary init would apply it.
-	//
-	// The stage's own plan ran — it resolved the image, which nothing else
-	// here does — and the tfvars carry no key afterwards: written to plan
-	// with, taken back out. The installation root's plan is empty in this run
-	// on purpose: a waiting earlier stage would leave this stage "after" it,
-	// and the loop plans a stage only once nothing before it waits.
-	r3 := credentialsStageRig(t)
-	r3.setPlanAt(t, "installation")
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err = executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--provision-credentials")
-	s = out + errOut
-	if r3.resolveCalls == 0 {
-		t.Errorf("the plan-only run never planned the credentials stage:\n%s (err %v)", s, err)
-	}
-	if !strings.Contains(s, "[done]       credentials") {
-		t.Errorf("the credentials stage was not planned to a still-empty plan:\n%s (err %v)", s, err)
-	}
-	if _, ok := r3.tfvars(t)["credentials_service"]; ok {
-		t.Errorf("--plan-only left the opt-in in the tfvars: %v", r3.tfvars(t)["credentials_service"])
-	}
-	if applies := r3.ran(t, "apply"); len(applies) != 0 {
-		t.Errorf("--plan-only applied: %v", applies)
-	}
-}
-
-// A run that cannot show the installation's rules carry the credentials
-// generation is refused BEFORE anything is planned: the tfvars keep no
-// credentials_service, no digest is resolved, and nothing is applied. The
-// refusal names the marker and the one command that writes it, the same
-// remedy a cascade launch names (C1.3, C1.19).
-func TestInitCredentialsStageRefusedWithoutCredsMarker(t *testing.T) {
-	// Absent, and present but older than this binary's generation. A database
-	// that cannot answer at all is the read's own error, covered elsewhere.
-	for name, gen := range map[string]any{
-		"no marker at all":    nil,
-		"an older generation": rules.CredsRulesVersion - 1,
-	} {
-		t.Run(name, func(t *testing.T) {
-			r := credentialsStageRig(t)
-			r.db.Set(rules.PathCredsRulesMarker(), gen) // nil is an absent node
-			r.setPlanAt(t, "installation")
-			credentialsOutputs(t, r)
-			typedThroughYes(t)
-			fakeTerminal(t)
-			out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
-			s := out + errOut
-			if err == nil {
-				t.Fatalf("the stage ran without the credentials rules marker:\n%s", s)
-			}
-			for _, want := range []string{rules.PathCredsRulesMarker(), "fugaro update --firebase-project", credsServiceSince} {
-				if !strings.Contains(s, want) {
-					t.Errorf("the refusal lacks %q:\n%s", want, s)
-				}
-			}
-			if r.resolveCalls != 0 {
-				t.Errorf("a digest was resolved before the rules gate (%d calls)", r.resolveCalls)
-			}
-			if _, ok := r.tfvars(t)["credentials_service"]; ok {
-				t.Errorf("the tfvars were written before the rules gate: %v", r.tfvars(t)["credentials_service"])
-			}
-			if applies := r.ran(t, "apply"); len(applies) != 1 {
-				// The one apply is the installation stage's own; the
-				// credentials stage applied nothing (a stage that ran would
-				// make it two).
-				t.Errorf("the stage applied without the marker: %v", applies)
-			}
-		})
-	}
-	// A marker at or above this binary's generation is admitted: the gate is
-	// "older than the children", never "not exactly this release".
-	r := credentialsStageRig(t)
-	r.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion+1)
-	r.setPlanAt(t, "installation")
+// `fugaro update` is the whole upgrade (CLAUDE.md's HARD RULE): the service
+// deploys with it, on every installation, and no second command names it.
+func TestUpdateSetsCredentialsServiceOnEveryInstallation(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, r)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
-		t.Fatalf("a newer marker was refused: %v\n%s%s", err, out, errOut)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation with no credentials service failed: %v\n%s", err, s)
 	}
-	if r.resolveCalls == 0 {
-		t.Error("a marker at this generation's level or above still refused the run")
+	svc := credentialsServiceEntry(t, r)
+	// The block is infra.Credentials' own, composed from the installation's
+	// local config: the names the module uses, the bundle container the loader
+	// also derives, and the two Firebase facts the service is configured with.
+	for k, want := range map[string]any{
+		"account_id":       infra.CredentialsAccountID,
+		"service":          infra.CredentialsServiceName,
+		"firebase_project": fpID,
+		"rtdb_url":         r.db.URL,
+	} {
+		if svc[k] != want {
+			t.Errorf("credentials_service.%s = %v, want %v: the block is composed from the installation's own config and not from a flag\n%s", k, svc[k], want, s)
+		}
+	}
+	// The job accounts are the installation's own repository jobs: they are
+	// what the service admits, and the table it is handed is what binds a
+	// caller to a repository.
+	jobs, _ := svc["job_accounts"].([]any)
+	if len(jobs) != 1 {
+		t.Fatalf("credentials_service.job_accounts = %v, want the installation's one repository job\n%s", svc["job_accounts"], s)
+	}
+	if job, _ := jobs[0].(map[string]any); job["provider"] != "bitbucket" || job["repo"] != "acme/sandbox" || job["workflow"] != "web" {
+		t.Errorf("credentials_service.job_accounts[0] = %v, want the installation's own repository, workflow and provider", jobs[0])
+	}
+	if got := svc["image"]; got != r.credentialsRef() {
+		t.Errorf("credentials_service.image = %v, want %s: the very first apply that creates the service runs this release's verified image\n%s", got, r.credentialsRef(), s)
+	}
+	// The audience: the module's own output carries the URL Cloud Run assigned,
+	// and the second apply puts it on the revision. A revision whose audience is
+	// not its own URL admits no caller however healthy it looks.
+	if got := svc["url"]; got != credentialsServiceURL {
+		t.Errorf("credentials_service.url = %v, want %s (the URL the installation's outputs carry): the audience is the service's own URL, never a value this side composes\n%s", got, credentialsServiceURL, s)
+	}
+	// And the URL reaches the project config in the SAME run, which is what puts
+	// it on a launch: `fugaro run` hands a job FUGARO_CREDENTIALS_SERVICE_URL
+	// from the selected config's block (run.go's credentialsServiceLaunchEnv),
+	// and waiting for the next ordinary update would leave a window in which the
+	// service is on and every launch goes out without the address.
+	if got := localConfigOf(t, r).CredentialsService; got == nil || got.URL != credentialsServiceURL {
+		t.Errorf("the project config records credentials_service = %+v, want the service's URL %s\n%s", got, credentialsServiceURL, s)
 	}
 }
 
-// The image the stage writes is the released one pinned BY DIGEST: the value
-// in credentials_service.image is the reference the signature was verified
-// for and the digest was read back through the remote repository at, never
-// the tag alone. The module's own validation refuses a tag at plan time
-// (C1.18), so a stage that wrote one would be refused by its own plan — but
-// the reason is not tidiness: the service runs as the account that reads
-// every credential in the bundle, while every operator of the project holds
+// TestUpdateKeepsAnOptedInInstallationsServiceUnchanged: an installation that
+// already has the block keeps it. The block is the record of a service that
+// exists — its URL is the audience every caller's ID token is minted for, and
+// its job table is the installation's own — so the run carries it as it is
+// found and moves the ONE member it owns, the image.
+//
+// Mutation (verified, run and restored): rebuild the block from the spec
+// (infra.Credentials) instead of carrying it, and this test fails on the
+// recorded URL: the module's unassigned placeholder goes back on the revision
+// and the service admits nobody.
+func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation that has the service failed: %v\n%s", err, s)
+	}
+	svc := credentialsServiceEntry(t, r)
+	want := map[string]any{
+		"account_id":       infra.CredentialsAccountID,
+		"service":          infra.CredentialsServiceName,
+		"image":            r.credentialsRef(),
+		"bundle_secret":    "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358",
+		"firebase_project": fpID,
+		"rtdb_url":         r.db.URL,
+		"job_accounts": []any{map[string]any{
+			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
+		"url": credentialsServiceURL,
+	}
+	got, err := json.Marshal(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(expect) {
+		t.Errorf("credentials_service = %s, want %s: the block is carried byte for byte with the image moved to this release's, and nothing else\n%s", got, expect, s)
+	}
+}
+
+// TestUpdateCarriesTheVerifierAccount: the block's verifier_accounts is the
+// verifier account §2.2 names — a service account — and never a person's
+// address. The list is the effective one (localcfg's keep rule: the owner's own
+// when the config states one, the published node's otherwise), and it is
+// written into the block on every installation, which is what makes §4.3's
+// dependency hold: an installation that deployed with an empty verifier list
+// would have CSR10's launcher reader refuse every brief.
+//
+// Mutation (verified, run and restored): write a person's address in place of
+// the account, and this test fails — and the service would not start at all,
+// because NewAuthenticator refuses an address that is both a person and a
+// verifier (internal/credsvc/auth.go:574).
+func TestUpdateCarriesTheVerifierAccount(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	// The node a previous `fugaro update` published, naming the installation's
+	// verifier account: this machine's config is silent about the key, so the
+	// node is where the list is (C3.9g2, D1075).
+	publishedPolicyForTest(t, r, map[string]any{
+		"version":           projectpolicy.Version,
+		"verifier_accounts": []any{verifierServiceAccount()},
+	})
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation deploying the service failed: %v\n%s", err, s)
+	}
+	got, _ := credentialsServiceEntry(t, r)["verifier_accounts"].([]any)
+	if len(got) != 1 || got[0] != verifierServiceAccount() {
+		t.Fatalf("credentials_service.verifier_accounts = %v, want the published node's list [%s]\n%s", credentialsServiceEntry(t, r)["verifier_accounts"], verifierServiceAccount(), s)
+	}
+	for _, a := range got {
+		if addr, _ := a.(string); strings.HasPrefix(addr, "user:") || strings.Contains(addr, "@example.com") {
+			t.Errorf("credentials_service.verifier_accounts names %q, a person: the verifier is a dedicated service account, and the service refuses to start with an address that is both (credsvc/auth.go:574)", addr)
+		}
+	}
+
+	// And with nothing anywhere naming a verifier, the block carries no member
+	// at all: that is the state the module's own default is for — the address of
+	// the verifier account the same apply creates (verifier.tf) — which is a
+	// service account too, and the run records it in the config so the next
+	// update's block names it.
+	plain := credentialsRig(t)
+	plain.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, plain)
+	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	s = out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation with no verifier named failed: %v\n%s", err, s)
+	}
+	if got, ok := credentialsServiceEntry(t, plain)["verifier_accounts"]; ok {
+		t.Errorf("credentials_service.verifier_accounts = %v on an installation whose config and node both name nobody, want the member absent: an absent member is the module's variable null, which is the state its default — the verifier account this apply creates — is for\n%s", got, s)
+	}
+	if got := verifierListOf(localConfigOf(t, plain)); !sameList(got, []string{verifierServiceAccount()}) {
+		t.Errorf("the local config names verifier_accounts = %v, want [%s]: the address is a fact of the configuration (infra.VerifierAccountID), which is what lets one update create the account and name it\n%s", got, verifierServiceAccount(), s)
+	}
+}
+
+// TestProvisionCredentialsFlagIsGone: the flag is REMOVED, not aliased (the
+// owner's ruling of 2026-11-05, §3 DON1). A no-op flag whose name and --help
+// text say "opt in" is a lie in the one surface a user reads to learn what a
+// command does, and `fugaro update` is the whole upgrade, so there is nothing
+// for the flag to do. The refusal names the command that deploys the service
+// now, because the error is what a user who read an older document sees.
+func TestProvisionCredentialsFlagIsGone(t *testing.T) {
+	for door, build := range doorCommands {
+		cmd := build()
+		if f := cmd.Flags().Lookup(retiredCredentialsFlag); f != nil {
+			t.Errorf("fugaro %s still declares --%s: it is removed, not aliased", door, retiredCredentialsFlag)
+		}
+		for _, text := range []string{cmd.Flags().FlagUsages(), cmd.Long} {
+			if strings.Contains(text, retiredCredentialsFlag) {
+				t.Errorf("fugaro %s's help offers --%s; the service is deployed by every fugaro update", door, retiredCredentialsFlag)
+			}
+		}
+	}
+	for _, door := range []string{"setup", "update"} {
+		firstRunEnv(t)
+		out, errOut, err := executeStdin(t, "", door, "--"+retiredCredentialsFlag)
+		s := out + errOut + ErrorText(err)
+		if err == nil {
+			t.Fatalf("fugaro %s --%s exited 0:\n%s", door, retiredCredentialsFlag, s)
+		}
+		if got := ExitCode(err); got != ExitUserError {
+			t.Errorf("fugaro %s --%s: exit %d, want %d", door, retiredCredentialsFlag, got, ExitUserError)
+		}
+		if !strings.Contains(s, "--"+retiredCredentialsFlag) {
+			t.Errorf("fugaro %s's refusal does not name the flag that is gone:\n%s", door, s)
+		}
+		if !strings.Contains(s, "fugaro update") {
+			t.Errorf("fugaro %s's refusal does not name the command that deploys the service now:\n%s", door, s)
+		}
+		if strings.Contains(s, "unknown flag") {
+			t.Errorf("fugaro %s's refusal is pflag's own sentence rather than the removal's:\n%s", door, s)
+		}
+	}
+}
+
+// TestUpdatePinsTheServiceImageByDigest: the block's image is the released
+// image pinned BY DIGEST — the reference the signature was verified for and the
+// digest was read back through the installation's remote repository at, never
+// the tag alone. The module's own validation refuses a tag at plan time, so a
+// deploy that wrote one would be refused by its own plan; the reason is not
+// tidiness: the service runs as the account that reads every credential in the
+// bundle, while every operator of the project holds
 // roles/artifactregistry.writer on the registry the image comes from.
 //
-// The tag-only form is refused before anything is applied, which the
-// development build case below shows: there is no released image to resolve,
-// so there is no reference to write at all.
-func TestInitCredentialsStageFillsTheDigest(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
+// The tag-only form is refused before anything is written, which the
+// development-build case below shows: there is no released image to resolve, so
+// there is no reference to write at all.
+func TestUpdatePinsTheServiceImageByDigest(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, r)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
 	if err != nil {
-		t.Fatalf("%v\n%s%s", err, out, errOut)
+		t.Fatalf("%v\n%s", err, s)
 	}
-	svc, _ := r.tfvars(t)["credentials_service"].(map[string]any)
-	if svc == nil {
-		t.Fatalf("the apply wrote no credentials_service:\n%s", out)
-	}
-	image, _ := svc["image"].(string)
+	image, _ := credentialsServiceEntry(t, r)["image"].(string)
 	if image != r.credentialsRef() {
 		t.Errorf("credentials_service.image = %q, want %q (the verified digest read back through the remote repository)", image, r.credentialsRef())
 	}
 	if !strings.HasSuffix(image, "@"+r.credentialsDigest()) {
 		t.Errorf("the image is not pinned by the verified digest: %q", image)
 	}
-	if svc["account_id"] != infra.CredentialsAccountID || svc["service"] != infra.CredentialsServiceName {
-		t.Errorf("credentials_service = %v, want the account and service names", svc)
-	}
-	if applies := r.ran(t, "apply"); len(applies) != 3 {
-		// The installation stage's own apply; this stage's over the same root
-		// with credentials_service now in the tfvars; and the third, which
-		// puts the service's own URL on the revision. The third is
-		// fillAudience's and it is unavoidable: Cloud Run assigns the URL, so
-		// the apply that CREATES the service cannot know the audience its
-		// callers' ID tokens are minted for.
-		t.Errorf("applies = %v, want the installation root three times (the installation stage's, this stage's, and the audience's)", applies)
-	}
-	if svc["url"] != credentialsServiceURL {
-		t.Errorf("credentials_service.url = %v, want %s (the URL the installation's outputs carry): the audience is the service's own URL, never a value this stage composes — a revision whose audience is not its own URL admits no caller",
-			svc["url"], credentialsServiceURL)
-	}
 	if r.arCalls == 0 {
 		t.Error("the digest was written without being read back through the remote repository")
 	}
-	if !strings.Contains(out, infra.CredentialsServiceName) || !strings.Contains(out, image) {
-		t.Errorf("the stage did not report what it turned on:\n%s", out)
+	// Two applies of a first deploy, and they are the audience's whole story:
+	// the installation stage's own, which creates the service — its revision
+	// then carries the module's unassigned placeholder, because the URL does not
+	// exist until that apply returns — and fillCredentialsAudience's, which puts
+	// the module's own output on it. Both happen before the stage reports done,
+	// so an installation this run calls converged is one that serves.
+	if apps := r.ran(t, "apply"); len(apps) != 2 {
+		t.Errorf("applies = %v, want the installation root twice (the installation stage's, and the audience's)", apps)
 	}
 
-	// A development build has no released image: refused before anything is
-	// written or applied, and the refusal says why.
+	// A development build has no released image, so there is nothing to resolve
+	// and nothing to write: the deploy is skipped rather than failed, because a
+	// build from a checkout cannot break the rest of its own upgrade over an
+	// image only a release publishes (CLAUDE.md's HARD RULE), and nothing is left
+	// stale — the next released run deploys the service.
 	dev := newImagesRig(t, "dev")
-	dev.setPlanAt(t, "installation")
-	dev.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+dev.db.URL+" }\n")
+	dev.setPlanAt(t, "installation", change("module.installation.google_storage_bucket.runs", "update"))
+	dev.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+dev.db.URL+" }\n")
 	dev.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err = executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
-	if err == nil {
-		t.Fatalf("a development build turned the credentials service on:\n%s%s", out, errOut)
-	}
-	if !strings.Contains(out+errOut, "development build") {
-		t.Errorf("the refusal does not say there is no released image:\n%s", out+errOut)
+	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	s = out + errOut
+	if err != nil {
+		t.Fatalf("a development build's update failed instead of deploying nothing: %v\n%s", err, s)
 	}
 	if _, ok := dev.tfvars(t)["credentials_service"]; ok {
 		t.Error("a development build wrote credentials_service")
 	}
-	if applies := dev.ran(t, "apply"); len(applies) != 1 {
-		// Again the installation stage's own: a development build's run adds
-		// no apply of its own.
-		t.Errorf("a development build applied: %v", applies)
+	if dev.resolveCalls != 0 {
+		t.Errorf("a development build resolved %d image(s): it has no released image to resolve", dev.resolveCalls)
+	}
+}
+
+// An installation that cannot carry the service deploys nothing, and the
+// update still converges everything else. The two refusals infra.Credentials
+// makes are the installation's own state: no Firebase backend to read (its
+// budget block names no project or database, so the service would have no
+// database to read and no configuration at all), and no repository job for the
+// service to admit (the service refuses a table that binds no run to a
+// repository, credsvc/auth.go's NewAuthenticator).
+//
+// This is the HARD RULE read at the deploy: a state that cannot carry the
+// service must not turn the one upgrade command into a failure, and the line
+// the run prints is what tells the owner which half is missing.
+func TestUpdateWithoutAFirebaseBackendDeploysNothing(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_storage_bucket.runs", "update"))
+	// The config without the budget block: an installation that has not run
+	// `fugaro update --firebase-project` yet.
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := []string{}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "budget: {") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Join(kept, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an installation with no Firebase backend could not be updated: %v\n%s", err, s)
+	}
+	if !strings.Contains(s, "the credentials service is not deployed") {
+		t.Errorf("the run said nothing about the service it did not deploy:\n%s", s)
+	}
+	if _, ok := r.tfvars(t)["credentials_service"]; ok {
+		t.Errorf("an installation with no Firebase backend was given credentials_service: %v", r.tfvars(t)["credentials_service"])
+	}
+}
+
+// verifierAccountsEnv is the entry the installation module renders for the
+// verifier list, at the key infra.Credentials writes it under. The two rows
+// below are the ones the golden fixture uses, because they are the two shapes
+// a verifier really has: a person's address, and the coordinator's own service
+// account.
+var verifierAccountsEnv = []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
+
+// publishedPolicyForTest writes a policy node at the path the published policy
+// lives at, with the generation marker of the deployed rules beside it: a node
+// exists only under rules that carry it (projectpolicy.Read answers "no policy
+// published" below PolicyRulesVersion, and the rules deploy writes the
+// marker), so a rig that seeded one without the other would be an installation
+// that cannot be.
+func publishedPolicyForTest(t *testing.T, r *imagesRig, node map[string]any) {
+	t.Helper()
+	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	r.db.Set(projectpolicy.PathShared(), node)
+}
+
+// publishedVerifiersForTest writes a policy node carrying the verifier list at
+// the path the published policy lives at, which is what a previous `fugaro
+// update` left there.
+func publishedVerifiersForTest(t *testing.T, r *imagesRig) {
+	t.Helper()
+	publishedPolicyForTest(t, r, map[string]any{
+		"version":           projectpolicy.Version,
+		"verifier_accounts": verifierAccountsEnv,
+	})
+}
+
+// TestCredentialsServiceKeepsThePublishedVerifierList: the verifier list is
+// the one value the block takes from the PUBLISHED node rather than from this
+// machine's configuration (C3.9g2, D1075). A second operator's config states
+// none — it was written before the key existed — and the node is where the
+// owner's list is, so a deploy that read the configuration alone would render
+// the service's variable null and empty a verify route another machine set up.
+//
+// Mutation (verified, run and restored): pass nil to infra.Credentials and
+// never let prepare write the member, and this test fails on the block's list.
+func TestCredentialsServiceKeepsThePublishedVerifierList(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	publishedVerifiersForTest(t, r)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	svc := credentialsServiceEntry(t, r)
+	got, _ := svc["verifier_accounts"].([]any)
+	if len(got) != len(verifierAccountsEnv) {
+		t.Fatalf("credentials_service.verifier_accounts = %v, want the published node's list %v", svc["verifier_accounts"], verifierAccountsEnv)
+	}
+	for i, want := range verifierAccountsEnv {
+		if got[i] != want {
+			t.Errorf("verifier_accounts[%d] = %v, want %v", i, got[i], want)
+		}
+	}
+}
+
+// TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne: writing an empty
+// list is how the owner clears the route, and it is the only spelling that
+// does — deleting the key keeps the node's list, which the test above pins.
+//
+// The entry is written as an empty ARRAY and never dropped, and that is the
+// whole difference between the owner's clear and the module's default: an
+// absent member is the module's variable null, which is the state the default
+// — the verifier account this installation creates — is for (verifier.tftest
+// .hcl pins null → the account alone). A clear that dropped the key would
+// therefore hand the service exactly the caller the owner switched off
+// (CSR14).
+func TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	publishedVerifiersForTest(t, r)
+	r.appendConfig(t, "verifier_accounts: []\n")
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	svc := credentialsServiceEntry(t, r)
+	got, ok := svc["verifier_accounts"]
+	if !ok {
+		t.Fatalf("credentials_service.verifier_accounts is absent on a written empty list, want []: an absent member is the module's variable null, which is the state the module's default (the verifier account this installation creates) is for, so the clear would admit the caller the owner switched off")
+	}
+	if arr, ok := got.([]any); !ok || len(arr) != 0 {
+		t.Errorf("credentials_service.verifier_accounts = %v on a written empty list, want [] (nobody)", got)
 	}
 }
 
@@ -520,773 +663,44 @@ func TestUpgradeNoteCredentialsClauseIsSilentWithoutCascade(t *testing.T) {
 	}
 }
 
-// The flag is refused where it could only mislead, exactly as --provision-batch
-// is: with --repo (another root's run) and with every flag that only reads or
-// only stops, so a run that named --provision-credentials always means the
-// apply it names. The check is asked directly: a --repo run resolves the
-// checkout before it validates anything.
-func TestProvisionCredentialsFlagIsRefusedWhereItCannotApply(t *testing.T) {
-	for _, o := range []*initOptions{{provisionCredentials: true, repo: true}, {provisionCredentials: true, forget: true},
-		{provisionCredentials: true, printVars: true}, {provisionCredentials: true, configOnly: true},
-		{provisionCredentials: true, publishConfig: true}, {provisionCredentials: true, anchor: true}} {
-		err := o.check()
-		if err == nil || !strings.Contains(err.Error(), "--provision-credentials") {
-			t.Errorf("%+v: err = %v, want it refused", o, err)
-		}
-	}
-}
-
-// A database that cannot ANSWER the marker read is refused exactly as one that
-// answers "no marker" is (C1.20's review finding F2; mutation M07). "The read
-// failed" is not "the rules carry the credentials children", and this read is
-// the whole gate of the stage that turns on the one identity which reads every
-// model credential the installation holds — so an unanswered read has to stop
-// the run, and the refusal has to say which read it was so the owner can act.
-//
-// Value-free by construction: the refusal carries the node's PATH and the
-// transport's own message, and no value from the database at all.
-//
-// Mutation (verified, run and restored): make the read's error non-fatal in
-// requireCredsRules (drop the return and carry on as if the marker had been
-// found): this test fails — the stage plans, resolves a digest and writes the
-// tfvars.
-func TestInitCredentialsStageRefusedWhenTheMarkerCannotBeRead(t *testing.T) {
-	r := credentialsStageRig(t)
-	// Only the marker's own read fails: RefusePath matches on the request
-	// path, so every other read of the run (the installation's, the Firebase
-	// root's) is untouched and the refusal below can only be this read's.
-	r.db.RefusePath(rules.PathCredsRulesMarker(), 500, "INTERNAL", "", "the database answered nothing")
-	r.setPlanAt(t, "installation")
+// --print-vars reads the workdir and no cloud, so it carries the block the
+// workdir holds as it is found — verifier_accounts included
+// (CarriedCredentialsServiceAsFound): the print is what a person reads to see
+// what their installation holds, and a document that dropped the owner's list
+// would disagree with the installation it stands for.
+func TestPrintVarsCarriesTheCredentialsService(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
-	s := out + errOut
-	if err == nil {
-		t.Fatalf("the stage carried on when the credentials rules marker could not be read:\n%s", s)
-	}
-	if !strings.Contains(err.Error(), rules.PathCredsRulesMarker()) {
-		t.Errorf("the refusal does not name the node that could not be read: %v\n%s", err, s)
-	}
-	// The refusal has to be the READ's and not the missing marker's: both fail
-	// closed, and only this arm says which of the two the database answered, so
-	// a run told "the database carries no marker" would go looking for a node
-	// that is there. The transport's own message is in it for the same reason
-	// ("the database answered nothing" is what the fake refused with).
-	for _, want := range []string{"reading the credentials rules marker at", "the database answered nothing"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say the read itself failed (%q): %v\n%s", want, err, s)
-		}
-	}
-	if strings.Contains(err.Error(), "carries no credentials rules marker") {
-		t.Errorf("a read that failed is reported as a database with no marker: %v\n%s", err, s)
-	}
-	if r.resolveCalls != 0 {
-		t.Errorf("a digest was resolved before the rules gate answered (%d calls)", r.resolveCalls)
-	}
-	if _, ok := r.tfvars(t)["credentials_service"]; ok {
-		t.Errorf("the tfvars were written when the rules gate could not be read: %v", r.tfvars(t)["credentials_service"])
-	}
-	if applies := r.ran(t, "apply"); len(applies) != 1 {
-		// The one apply is the installation stage's own: a stage that ran
-		// would make it two.
-		t.Errorf("the stage applied when the rules gate could not be read: %v", applies)
-	}
-}
-
-// The apply can finish and the installation's outputs still carry no
-// credentials_service (C1.20's review finding M10). The whole of this stage's
-// change is one key of a JSON document, and Terraform only WARNS about a
-// tfvars key no variable declares: without this check a misspelled key would
-// leave the plan empty, the apply with nothing to change, and the stage
-// reporting a service that does not exist — while the repository roots, which
-// read exactly this output, drop every job's model-secret accessor for a
-// service nothing can call.
-//
-// The key STAYS: the apply ran, so the installation's state may already hold
-// the service, and a tfvars without the key is a plan of its destruction.
-//
-// Mutation (verified, run and restored): delete the `outs.CredentialsService
-// == nil` refusal in Verify: this test fails (the run reports success).
-func TestInitCredentialsStageRefusedWhenTheOutputsCarryNoService(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	// A null value, which is what the installation's output answers for a
-	// service the module did not create.
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": nil})}
-	r.save(t)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
-	s := out + errOut
-	if err == nil {
-		t.Fatalf("the stage reported a service the installation's outputs do not carry:\n%s", s)
-	}
-	if !strings.Contains(err.Error(), "carry no credentials service") {
-		t.Errorf("the refusal does not say what the outputs were missing: %v\n%s", err, s)
-	}
-	if applies := r.ran(t, "apply"); len(applies) != 2 {
-		t.Errorf("applies = %v, want the installation root twice", applies)
-	}
-	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
-		t.Error("a finished apply left the tfvars without the opt-in: the next init would plan the service's destruction, which the bundle container's prevent_destroy refuses")
-	}
-}
-
-// A part-way apply failure must NOT drop the opted-in key (C1.20's review).
-//
-// Terraform can create part of the service — the account, the container, the
-// grant — and then stop. Taking the key back out afterwards would make the
-// next ordinary init plan exactly that part's destruction, a plan the bundle
-// container's prevent_destroy refuses: the installation would be left holding
-// a half-built service whose removal no run can plan and no run can finish.
-// Only a run that never reached the apply puts the key back (putBack).
-//
-// Mutation (verified, run and restored): return to the old rule — restore on
-// every path that did not set s.applied: this test fails, the tfvars losing
-// credentials_service while the service may already exist in state.
-func TestInitCredentialsStageKeepsTheKeyWhenTheApplyFailsPartWay(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	credentialsOutputs(t, r)
-	// The installation stage's apply succeeds; this stage's fails. The fake
-	// answers a key's calls in the order its list names them, so the two
-	// applies of the run get different answers.
-	r.script["apply"] = []any{
-		map[string]any{"exit": 0},
-		map[string]any{"exit": 1, "stderr": "Error: the apply was interrupted\n"},
-	}
-	r.save(t)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
-	s := out + errOut
-	if err == nil {
-		t.Fatalf("the stage reported success when its apply failed:\n%s", s)
-	}
-	if applies := r.ran(t, "apply"); len(applies) != 2 {
-		t.Fatalf("applies = %v, want the installation stage's and this stage's (the second failing)", applies)
-	}
-	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
-		t.Errorf("a part-way apply dropped the opt-in from the tfvars: the next init would plan the service's destruction, which the bundle container's prevent_destroy refuses, so a half-built service would be stuck:\n%s", s)
-	}
-}
-
-// A restore that FAILS is an error of the run, not a warning (C1.20's
-// review). restore is the only thing between a declined run and a leftover
-// key, and a leftover key IS the opt-in — the next ordinary init carries it
-// forward (infra.CarriedCredentialsService) and applies the service with none
-// of this stage's typed confirmation. A warning is a run that reports success
-// while leaving exactly that behind.
-//
-// The failure is driven where it really happens: at the confirmation, which
-// the stage reaches after prepare wrote the key and before it would and
-// applied nothing, the tfvars file is replaced by a directory — a write to it
-// fails for root too, unlike a mode bit.
-//
-// Mutation (verified, run and restored): make the deferred restore print its
-// error and return (fmt.Fprintf(r.w, "warning: %v")) instead of returning it:
-// this test fails — the run's own error is "nothing was applied" and the
-// restore failure is only a line of output.
-func TestInitCredentialsStageFailsWhenItCannotPutTheKeyBack(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	fakeTerminal(t)
-	path := filepath.Join(r.root(), infra.VarsFile)
-	done := false
-	old := canConfirmTyped
-	canConfirmTyped = func(_ initflow.ConfirmClass, c initflow.Conditions) bool {
-		// The opt-in is in the workdir's tfvars by now and nothing has
-		// applied: this is the moment before the stage takes it back out.
-		if !done {
-			if b, err := os.ReadFile(path); err == nil && bytes.Contains(b, []byte("credentials_service")) {
-				done = true
-				if err := os.Remove(path); err != nil {
-					t.Errorf("removing the tfvars to drive the failed put-back: %v", err)
-				} else if err := os.Mkdir(path, 0o700); err != nil {
-					t.Errorf("making a directory of the tfvars: %v", err)
-				}
-			}
-		}
-		return c.Agent == ""
-	}
-	t.Cleanup(func() { canConfirmTyped = old })
-	out, errOut, err := executeStdin(t, "", "setup", "--yes", "--provision-credentials")
-	s := out + errOut
-	if !done {
-		t.Fatalf("the stage never wrote the opt-in into the workdir's tfvars, so no put-back was driven:\n%s", s)
-	}
-	if err == nil {
-		t.Fatalf("a run that could not take the opt-in back out reported success:\n%s", s)
-	}
-	if !strings.Contains(err.Error(), "before the next fugaro update") {
-		t.Errorf("the run's own error is not the failed put-back: %v\n%s", err, s)
-	}
-	if applies := r.ran(t, "apply"); len(applies) != 1 {
-		t.Errorf("applies = %v, want the installation stage's alone: a stage that declined must not apply", applies)
-	}
-}
-
-// The two owner-run applies do NOT exclude one another, and the flag's help
-// says so: they are applies of different roots (the installation's credentials
-// service, the Batch backend's own state), each with its own typed
-// confirmation, so naming both means both — a refusal would be a rule with no
-// reason behind it, and a help text that claimed one would be a rule the code
-// does not have.
-func TestProvisionCredentialsAndBatchAreIndependentApplies(t *testing.T) {
-	o := &initOptions{provisionBatch: true, provisionCredentials: true}
-	if err := o.check(); err != nil {
-		t.Fatalf("--provision-batch --provision-credentials was refused: %v", err)
-	}
-	// ...and a read-only flag beside them is still refused, naming both
-	// applies rather than only one of them.
-	both := &initOptions{provisionBatch: true, provisionCredentials: true, printVars: true}
-	err := both.check()
-	if err == nil || !strings.Contains(err.Error(), "--provision-batch and --provision-credentials") {
-		t.Errorf("err = %v, want the refusal to name both applies", err)
-	}
-	// The --repo path refuses it as the single flag does (checkRepo).
-	ro := &initOptions{provisionCredentials: true, repo: true}
-	if err := ro.checkRepo(); err == nil || !strings.Contains(err.Error(), "--provision-credentials") {
-		t.Errorf("fugaro update --repo --provision-credentials: err = %v, want a refusal naming the flag", err)
-	}
-}
-
-// The confirmation AND the flag's help tell the owner what this release's
-// opt-in actually does (C1.20's review findings F1 and, in the second round,
-// the scope of the promise). They used to say a job that mounts a model
-// credential today would "ask this service instead" — which is not what
-// happens here at all:
-//
-//   - what the opt-in removes is every REPOSITORY job's model credential, in
-//     EVERY agent.auth mode (internal/infra/spec.go's dropModelMounts, which
-//     the repository roots run for oauth and api-key as much as for cascade),
-//   - the runner half is in, and it is the cascade's and the GitHub mint's:
-//     the launch puts the service's address on a per-repository job
-//     (internal/cli/run.go's credentialsServiceLaunchEnv), so a cascade run
-//     takes its credential from the service and a GitHub run mints there —
-//     while an oauth or api-key repository job has nothing to replace the
-//     mount that went, and the bundle has to hold the App key before a GitHub
-//     run can mint at all, and
-//   - the SHARED project jobs are outside it: credentials_service reaches the
-//     installation and workflow modules only, so modules/project keeps
-//     mounting its provider keys and CLAUDE_CODE_OAUTH_TOKEN with their
-//     secretAccessor grants (C3.9 is the task that moves them). Both texts
-//     said "every model credential the installation holds", which is the
-//     whole installation and is not what this step does.
-//
-// An owner typing their project's name at this prompt is deciding something
-// money-and-permanent with that in front of them, so both texts are pinned
-// here — the words that must be there, the scope that must be named, and the
-// claims that must not come back.
-//
-// Mutation (verified, run and restored): restore either old sentence ("stops
-// mounting one and asks this service instead" in the confirmation, "stops
-// mounting each job's model credential and asks the service instead" in the
-// flag's help), drop the shared-jobs sentence from either text, or put back
-// the dormancy sentence this release retires ("the part that ... is not in
-// this release yet"): this test fails.
-func TestCredentialsStageTextsSayWhatTheOptInDoes(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, "", "setup", "--yes", "--provision-credentials")
-	s := out + errOut
-	if err == nil {
-		t.Fatalf("--yes stood in for the typed confirmation:\n%s", s)
-	}
-	if !strings.Contains(s, "⚠ CONFIRM") {
-		t.Fatalf("the stage never showed its confirmation, so this test read the wrong text:\n%s", s)
-	}
-	for _, want := range []string{
-		"the REPOSITORY jobs' model credentials move to",
-		"drops its model credential",
-		"in every agent.auth mode",
-		"oauth and api-key as much as cascade",
-		"does NOT reach the shared project jobs",
-		"CLAUDE_CODE_OAUTH_TOKEN",
-		// What this release wires, which is the cascade's half and the
-		// GitHub mint's — and what it leaves unwired, which is every other
-		// agent.auth mode's own credential (the mount drop is auth-blind
-		// while only the cascade's calls reach the service).
-		"And it is wired",
-		"a cascade run takes its model credential from the service",
-		"its installation token minted there",
-		"fugaro creds set github-app-key",
-		"no model credential of its own and nothing yet to replace it",
-		"agent.auth: cascade",
-	} {
-		if !strings.Contains(s, want) {
-			t.Errorf("the confirmation does not say %q:\n%s", want, s)
-		}
-	}
-	for _, unwanted := range []string{
-		"asks this service instead",
-		"every model credential the installation holds",
-		// The two claims this release retires: the runner's half is here,
-		// and "no re-applied repository job has a model credential at all"
-		// is false of a cascade job now that the launch hands the job the
-		// service's address.
-		"not in this release yet",
-		"no re-applied repository job has a model credential at all",
-	} {
-		if strings.Contains(s, unwanted) {
-			t.Errorf("the confirmation still says %q:\n%s", unwanted, s)
-		}
-	}
-
-	// The flag's help, which is what an owner reads BEFORE they run it.
-	cmd := NewRootCmd()
-	initCmd, _, ferr := cmd.Find([]string{"setup"})
-	if ferr != nil {
-		t.Fatal(ferr)
-	}
-	f := initCmd.Flags().Lookup("provision-credentials")
-	if f == nil {
-		t.Fatal("fugaro setup has no --provision-credentials flag")
-	}
-	for _, want := range []string{
-		"the REPOSITORY jobs' model credentials move to",
-		"drops its model credential",
-		"in every agent.auth mode",
-		"oauth and api-key as much as cascade",
-		"does NOT reach the shared project jobs",
-		"CLAUDE_CODE_OAUTH_TOKEN",
-		"And it is wired",
-		"a cascade run takes its model credential from the service",
-		"its installation token minted there",
-		"fugaro creds set github-app-key",
-		"has no model credential to use and nothing yet to replace it",
-		"agent.auth: cascade",
-	} {
-		if !strings.Contains(f.Usage, want) {
-			t.Errorf("the flag's help does not say %q:\n%s", want, f.Usage)
-		}
-	}
-	for _, unwanted := range []string{
-		"asks the service instead",
-		"not in this release yet",
-		"no re-applied repository job has a model credential to use",
-	} {
-		if strings.Contains(f.Usage, unwanted) {
-			t.Errorf("the flag's help still says %q:\n%s", unwanted, f.Usage)
-		}
-	}
-}
-
-// THE ROOT CAUSE of C1.20's second review round (finding F3): an ordinary
-// `fugaro update` after the opt-in must keep the credentials_service key.
-//
-// The tfvars are rewritten from the spec on every run, and the spec never
-// carries the key — so the key is carried forward from the workdir's PREVIOUS
-// tfvars (infra.CarriedCredentialsService, init.go's prepare). The order is
-// what broke it: PrepareWorkdir rebuilds the workdir's tree (os.RemoveAll of
-// dir/gcp) BEFORE the installation stage calls prepare, so a carry that reads
-// wd.Root at that point reads a file that no longer exists, answers "nothing
-// to carry", and drops the key. The next apply then plans the service, its
-// account and its grant away — a plan the bundle container's prevent_destroy
-// refuses, so every ordinary init after the opt-in FAILS instead of applying.
-//
-// This runs the real thing end to end: the real opt-in, then the real
-// ordinary run over the same workdir.
-//
-// Mutation (verified, run and restored): read the carried key from wd.Root
-// again in prepare (the order this test exists to pin): the second run drops
-// credentials_service and this test fails.
-func TestOrdinaryInitAfterTheOptInKeepsTheCredentialsService(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	credentialsOutputs(t, r)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
-		t.Fatalf("the opt-in run failed: %v\n%s%s", err, out, errOut)
-	}
-	want, err := json.Marshal(r.tfvars(t)["credentials_service"])
-	if err != nil || string(want) == "null" {
-		t.Fatalf("the opt-in run wrote no credentials_service (%s, %v)", want, err)
-	}
-
-	// The ordinary run: no --provision-credentials, so the credentials stage
-	// is not even registered, and nothing but the carry can keep the key.
-	out, errOut, err := executeStdin(t, "", "setup", "--yes")
-	if err != nil {
-		t.Fatalf("the ordinary run after the opt-in failed: %v\n%s%s", err, out, errOut)
-	}
-	got, err := json.Marshal(r.tfvars(t)["credentials_service"])
-	if err != nil || string(got) == "null" {
-		t.Fatalf("an ordinary fugaro update dropped the opt-in: the next plan is the service's destruction, which the bundle container's prevent_destroy refuses\n%s%s", out, errOut)
-	}
-	if string(got) != string(want) {
-		t.Errorf("credentials_service = %s, want it carried forward exactly as %s", got, want)
-	}
-}
-
-// verifierAccountsEnv is the entry the installation module renders for the
-// verifier list, at the key infra.Credentials writes it under. The two rows
-// below are the ones the golden fixture uses, because they are the two shapes
-// a verifier really has: a person's address, and the coordinator's own service
-// account.
-var verifierAccountsEnv = []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
-
-// publishedPolicyForTest writes a policy node at the path the published policy
-// lives at, with the generation marker of the deployed rules beside it: a node
-// exists only under rules that carry it (projectpolicy.Read answers "no policy
-// published" below PolicyRulesVersion, and the rules deploy writes the
-// marker), so a rig that seeded one without the other would be an installation
-// that cannot be.
-func publishedPolicyForTest(t *testing.T, r *imagesRig, node map[string]any) {
-	t.Helper()
-	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
-	r.db.Set(projectpolicy.PathShared(), node)
-}
-
-// publishedVerifiersForTest writes a policy node carrying the verifier list at
-// the path the published policy lives at, which is what a previous `fugaro
-// update` left there.
-func publishedVerifiersForTest(t *testing.T, r *imagesRig) {
-	t.Helper()
-	publishedPolicyForTest(t, r, map[string]any{
-		"version":           projectpolicy.Version,
-		"verifier_accounts": verifierAccountsEnv,
-	})
-}
-
-// TestCredentialsServiceKeepsThePublishedVerifierList: the verifier list is
-// the one value this stage takes from the PUBLISHED node rather than from this
-// machine's configuration (C3.9g2, D1075). A second operator's config states
-// none — it was written before the key existed — and the node is where the
-// owner's list is, so a stage that read the configuration alone would render
-// the service's variable null and empty a verify route another machine set up.
-//
-// The stage runs before the policy stage, so what it reads is the node the
-// PREVIOUS `fugaro update` published: this rig seeds exactly that.
-func TestCredentialsServiceKeepsThePublishedVerifierList(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	credentialsOutputs(t, r)
-	publishedVerifiersForTest(t, r)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
-		t.Fatalf("%v\n%s%s", err, out, errOut)
-	}
-	svc, _ := r.tfvars(t)["credentials_service"].(map[string]any)
-	got, _ := svc["verifier_accounts"].([]any)
-	if len(got) != len(verifierAccountsEnv) {
-		t.Fatalf("credentials_service.verifier_accounts = %v, want the published node's list %v", svc["verifier_accounts"], verifierAccountsEnv)
-	}
-	for i, want := range verifierAccountsEnv {
-		if got[i] != want {
-			t.Errorf("verifier_accounts[%d] = %v, want %v", i, got[i], want)
-		}
-	}
-}
-
-// TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne: writing an empty
-// list is how the owner clears the route, and it is the only spelling that
-// does — deleting the key keeps the node's list, which the stage above pins.
-//
-// The entry is written as an empty ARRAY and never dropped, and that is the
-// whole difference between the owner's clear and the module's default: an
-// absent member is the module's variable null, which is the state the default
-// — the verifier account this installation creates — is for (verifier.tftest
-// .hcl pins null → the account alone). A clear that dropped the key would
-// therefore hand the service exactly the caller the owner switched off
-// (CSR14).
-func TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	credentialsOutputs(t, r)
-	publishedVerifiersForTest(t, r)
-	r.appendConfig(t, "verifier_accounts: []\n")
-	typedThroughYes(t)
-	fakeTerminal(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
-		t.Fatalf("%v\n%s%s", err, out, errOut)
-	}
-	svc, _ := r.tfvars(t)["credentials_service"].(map[string]any)
-	got, ok := svc["verifier_accounts"]
-	if !ok {
-		t.Fatalf("credentials_service.verifier_accounts is absent on a written empty list, want []: an absent member is the module's variable null, which is the state the module's default (the verifier account this installation creates) is for, so the clear would admit the caller the owner switched off")
-	}
-	if arr, ok := got.([]any); !ok || len(arr) != 0 {
-		t.Errorf("credentials_service.verifier_accounts = %v on a written empty list, want [] (nobody)", got)
-	}
-}
-
-// The opt-in records the service's URL in the project config, and that is what
-// makes it reach a run at all: `fugaro run` puts FUGARO_CREDENTIALS_SERVICE_URL
-// on a job from the selected config's credentials_service block (run.go's
-// credentialsServiceLaunchEnv), and the block is published with the rest of the
-// installation's facts (localcfg.Shared/MergeShared) so a teammate's machine
-// gets it too. The value is the installation's own record and never something
-// this stage composes: it is what the installation root's outputs carry, which
-// is the service resource's own uri.
-//
-// It is written in the opt-in run ITSELF and not left to the next ordinary
-// init: the installation stage's writeConfig ran before the service existed, so
-// waiting would leave a one-run window in which the service is on, the
-// repository jobs have lost their model credentials, and every launch still
-// goes out without the variable — the run the owner launches right after this
-// one, which is the whole point of the stage.
-//
-// Mutation (verified, run and restored): drop the recordURL call from Apply's
-// apply branch: this test fails, the config carrying no block.
-func TestInitCredentialsStageRecordsTheURLInTheProjectConfig(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	// The outputs as the run really meets them: the installation stage reads
-	// them BEFORE the apply that creates the service, so its read carries no
-	// credentials service (the module's output answers null while the tfvars
-	// have no key), and every read from the credentials stage on carries the
-	// URL. Scripting the list is what makes this test about recordURL at all —
-	// with one static answer the installation stage would write the block and
-	// the stage's own write would be invisible. The first two steps are the
-	// reads before the service exists (the installation stage's own output
-	// read and the writeConfig that follows it); the third is this stage's.
-	noService := map[string]any{"stdout": outputsJSONWith(t, nil)}
-	withService := map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-		"credentials_service": map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
-	})}
-	r.script["output"] = []any{noService, noService, withService}
-	r.save(t)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
-	if err != nil {
-		t.Fatalf("%v\n%s%s", err, out, errOut)
-	}
-	data, err := os.ReadFile(r.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lc, err := localcfg.Parse(data)
-	if err != nil {
-		t.Fatalf("the project config the opt-in wrote does not parse: %v\n%s", err, data)
-	}
-	if lc.CredentialsService == nil || lc.CredentialsService.URL != credentialsServiceURL {
-		t.Fatalf("credentials_service = %+v, want the URL the installation's outputs carry (%s): without it every launch of this project goes out with no address on the job while the installation has the service on\n%s", lc.CredentialsService, credentialsServiceURL, data)
-	}
-	if !strings.Contains(out, credentialsServiceURL) {
-		t.Errorf("the stage did not say it recorded the URL:\n%s", out)
-	}
-	// The block is published: a machine that has no local config reads it from
-	// the runs bucket (localcfg.Select), which is the ledger item of PR #903.
-	pub, err := lc.Shared().Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(pub), "credentials_service:") || !strings.Contains(string(pub), credentialsServiceURL) {
-		t.Errorf("the published shared config carries no credentials service:\n%s", pub)
-	}
-}
-
-// An installation that has NOT opted in records no block, and that is the
-// off position of every reader: `fugaro run` puts no variable on the job, so
-// the launch is byte for byte what it was before the wiring existed. An
-// ordinary init of such an installation must therefore not invent one — there
-// is no URL for it to write, and a block with an empty url is a config the
-// loader refuses (localcfg's validCredentialsServiceURL).
-func TestAnOrdinaryInitOfAnInstallationWithoutTheServiceRecordsNoBlock(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	// The outputs of an installation that never opted in: the field is absent,
-	// which is what the module's output answers (outputs.tf).
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, nil)}
-	r.save(t)
-	typedThroughYes(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes"); err != nil {
-		t.Fatalf("%v\n%s%s", err, out, errOut)
-	}
-	data, err := os.ReadFile(r.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "credentials_service") {
-		t.Errorf("an ordinary init of an installation without the service wrote a credentials_service block:\n%s", data)
-	}
-}
-
-// --print-vars prints the installation as it STANDS, so it carries the
-// opted-in key too (C1.20's review). Printing a document that drops the
-// opt-in is a reading of the installation the owner cannot trust: it is the
-// same document a real run writes (init.go's prepare does the same carry),
-// and --print-vars is how an owner looks at the variables without a cloud
-// call.
-//
-// Mutation (verified, run and restored): drop the carry from the --print-vars
-// branch: this test fails, the key missing from the printed document.
-func TestPrintVarsCarriesTheOptedInKey(t *testing.T) {
-	r := credentialsStageRig(t)
-	r.setPlanAt(t, "installation")
-	credentialsOutputs(t, r)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
-		t.Fatalf("the opt-in run failed: %v\n%s%s", err, out, errOut)
-	}
-	out, errOut, err := executeStdin(t, "", "setup", "--print-vars")
+	seedCredentialsServiceWithVerifiers(t, r, oldCredentialsRef("1.2.2"), verifierAccountsEnv)
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--print-vars")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("--print-vars did not print one JSON object: %v\n%s", err, out)
+		t.Fatalf("--print-vars did not print a document: %v\n%s", err, out)
 	}
 	svc, _ := doc["credentials_service"].(map[string]any)
 	if svc == nil {
-		t.Fatalf("--print-vars dropped the opt-in the workdir carries:\n%s", out)
+		t.Fatalf("--print-vars printed no credentials_service for an installation that holds one:\n%s", out)
 	}
-	if svc["image"] != r.credentialsRef() {
-		t.Errorf("printed credentials_service.image = %v, want %q", svc["image"], r.credentialsRef())
+	if svc["image"] != oldCredentialsRef("1.2.2") {
+		t.Errorf("--print-vars printed image %v, want the workdir's own %s: this path reads no cloud, so it has no release to pin", svc["image"], oldCredentialsRef("1.2.2"))
 	}
-}
-
-// credentialsBatchRig is the credentials rig plus what the compute stage's
-// provisioning needs to reach its own apply: the installation's pin, the
-// run-class account a repository root created, the rebuild job, and the
-// compute root's own outputs.
-func credentialsBatchRig(t *testing.T) *imagesRig {
-	t.Helper()
-	r := credentialsStageRig(t)
-	r.appendConfig(t, "base_images:\n  "+config.BaseKind+": "+computePin+"\n")
-	r.iam.AddServiceAccount(initProject, "fugaro-acme-web@proj-1234.iam.gserviceaccount.com", "Fugaro job acme/sandbox web")
-	// The rebuild job the compute stage starts once its apply is done, in the
-	// SCHEDULER region and not the installation's: Cloud Scheduler does not
-	// serve us-east5, so the module creates it in us-east4 and the stage starts
-	// it there (the compute rig registers it the same way, and the module's
-	// scheduler_region says why).
-	r.sched.SetJob(initProject, "us-east4", infra.PreloadSchedulerJob,
-		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
-	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSON(t)}
-	r.save(t)
-	return r
-}
-
-// A run that names BOTH owner-run applies keeps the opt-in (C1.20's third
-// review round, finding 1). The compute stage begins by reading the
-// installation's outputs, and that read runs init.go's prepare on the
-// installation's OWN workdir: the tfvars are rewritten from the spec — which
-// never carries credentials_service — so the key the credentials stage wrote
-// a few stages earlier is gone unless the carry reads the document the workdir
-// holds NOW and not only the snapshot PrepareWorkdir took before the run
-// started.
-//
-// What losing it costs, and why this is not a cosmetic loss: the next
-// fugaro update carries nothing forward, plans the service, its account, its
-// grant and its bundle secret away, and the bundle container's
-// prevent_destroy refuses that plan — at the INSTALLATION stage, before any
-// later stage runs, so the --provision-credentials run that would put the key
-// back cannot reach its own apply either. The plan is made before the compute
-// stage's typed confirmation, so even an owner who declines the Batch
-// provisioning is left in it.
-//
-// The two typed confirmations are answered in the order the stages run:
-// credentials first (it is registered before the repository stage), Batch
-// second.
-//
-// Mutation (verified, run and restored): carry only from wd.PrevVars in
-// prepare (drop the current-document carry): this test fails, the
-// installation's tfvars holding no credentials_service after the run.
-func TestCredentialsAndBatchInOneRunKeepTheOptIn(t *testing.T) {
-	r := credentialsBatchRig(t)
-	r.setPlanAt(t, "installation")
-	credentialsOutputs(t, r)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n", "setup", "--yes", "--provision-credentials", "--provision-batch")
-	s := out + errOut
-	if err != nil {
-		t.Fatalf("the run naming both applies failed: %v\n%s", err, s)
-	}
-	if applies := r.ran(t, "apply"); len(applies) < 2 {
-		t.Fatalf("applies = %v, want the installation's and the compute root's at least: the run did not reach the Batch provisioning\n%s", applies, s)
-	}
-	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
-		t.Errorf("the run's later compute stage rewrote the installation's tfvars and dropped the opt-in: the next fugaro update plans the service's destruction, which the bundle container's prevent_destroy refuses at the installation stage, before the credentials stage can put the key back:\n%s", s)
+	got, _ := svc["verifier_accounts"].([]any)
+	if len(got) != len(verifierAccountsEnv) {
+		t.Errorf("--print-vars printed verifier_accounts = %v, want the workdir's list %v as it is found", svc["verifier_accounts"], verifierAccountsEnv)
 	}
 }
 
-// Apply's empty-plan branch keeps the key (C1.20's third review round, finding
-// 2). "No changes" is not "nothing happened": the plan that found nothing to
-// do found it WITH the key in the tfvars, so the installation's state already
-// holds exactly the service the key describes. Putting the key back there
-// leaves a document that plans that service's destruction — a plan the bundle
-// container's prevent_destroy refuses — and this stage reports itself done
-// while doing it, the same trap the apply path is guarded against.
-//
-// Mutation (verified, run and restored): drop the keepKey assignment from the
-// empty-plan branch: this test fails, the tfvars losing credentials_service
-// while the stage reports "No changes".
-func TestInitCredentialsStageKeepsTheKeyWhenThePlanFindsNothing(t *testing.T) {
-	r := credentialsStageRig(t)
-	credentialsOutputs(t, r)
-	// The installation root's plan finds nothing to do, which is this branch:
-	// terraform's detailed exit code 0, not 2. Three plans run in that root
-	// and the fake consumes a scripted list in order: the installation
-	// stage's (nothing to do), this stage's (nothing to do — the empty-plan
-	// branch), and the audience's (fillAudience, which DOES have work: the
-	// tfvars this fixture starts from carry no URL, so this run writes the
-	// output's URL and applies it).
-	r.script["plan@installation"] = []any{
-		map[string]any{"exit": 0}, map[string]any{"exit": 0}, map[string]any{"exit": 2},
-	}
-	r.save(t)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
-	s := out + errOut
-	if err != nil {
-		t.Fatalf("a run whose plan found nothing to do failed: %v\n%s", err, s)
-	}
-	if !strings.Contains(s, "No changes: the installation's credentials service matches the plan.") {
-		t.Fatalf("the credentials stage did not reach its empty-plan branch, so this test read the wrong path:\n%s", s)
-	}
-	if _, ok := r.tfvars(t)["credentials_service"]; !ok {
-		t.Errorf("the stage reported \"No changes\" and took the opt-in out of the tfvars: the installation's state holds the service, so the next plan is that service's destruction, which the bundle container's prevent_destroy refuses:\n%s", s)
-	}
-	if svc, _ := r.tfvars(t)["credentials_service"].(map[string]any); svc["url"] != credentialsServiceURL {
-		t.Errorf("the empty-plan run left the audience unset (%v): a service whose plan finds nothing to do is the one that already exists, and the placeholder the module writes without a URL admits no caller", svc["url"])
-	}
-}
-
-// ...and the one way out of that branch which does NOT keep the key: a Verify
-// that refuses says the installation's outputs carry no service, and that
-// output is a function of the tfvars key (modules/installation/outputs.tf), so
-// the root does not read it and the state holds nothing of the service. The
-// key goes back — a key this run could not deliver must not sit in the tfvars
-// for a later fugaro to apply with none of this stage's typed confirmation.
-//
-// Mutation (verified, run and restored): set keepKey before the Verify in the
-// empty-plan branch (keep the key whatever the outputs say): this test fails,
-// the tfvars keeping credentials_service.
-func TestInitCredentialsStageTakesTheKeyBackWhenTheNoChangeRunVerifiesNothing(t *testing.T) {
-	r := credentialsStageRig(t)
-	// The plan finds nothing to do, and the outputs carry no credentials
-	// service: the key is in the tfvars and the installation does not read it.
-	r.script["plan@installation"] = map[string]any{"exit": 0}
-	r.save(t)
-	typedThroughYes(t)
-	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials")
-	s := out + errOut
-	if err == nil {
-		t.Fatalf("a run whose outputs carry no credentials service reported success:\n%s", s)
-	}
-	if !strings.Contains(err.Error(), "carry no credentials service") {
-		t.Errorf("the run's error is not Verify's refusal: %v\n%s", err, s)
-	}
-	if _, ok := r.tfvars(t)["credentials_service"]; ok {
-		t.Errorf("a run that applied nothing and enabled nothing left the opt-in in the tfvars: the next ordinary init carries it forward and applies the service with none of this stage's typed confirmation:\n%s", s)
-	}
-}
-
-// The upgrade's own step (0.15.0). An installation that has opted in runs the
-// credentials image of the release that pinned it and no other, and until this
-// task NOTHING moved it: the credentials stage is registered only under
-// --provision-credentials, and an ordinary run rewrites the tfvars from a spec
-// that never carries the key and carries the PREVIOUS document's entry forward
+// The upgrade's own step (0.15.0). An installation that has the service runs
+// the credentials image of the release that pinned it and no other, and until
+// this task NOTHING moved it: the writer ran only under
+// --provision-credentials — before this task, that is. An installation that
+// opted in under an earlier release ran that release's credentials image and no
+// other, and NOTHING moved it: an ordinary run rewrote the tfvars from a spec
+// that never carries the key and carried the PREVIOUS document's entry forward
 // verbatim (infra.CarriedCredentialsService, init.go's prepare) — image and
 // all. So an installation that opted in under an earlier release stayed on that
 // release's image for ever, and every later release's behavior that the image
@@ -1295,18 +709,22 @@ func TestInitCredentialsStageTakesTheKeyBackWhenTheNoChangeRunVerifiesNothing(t 
 // HTTP/1 body limit) never reached it. CLAUDE.md's hard rule is that the
 // upgrade carries its own migration and `fugaro update` is the whole of it.
 //
+// The deploy of the block itself is on every installation now (this task), so
+// this is the carry half: an installation that HAS the block keeps every fact
+// of it and only the image moves.
+//
 // Mutation (verified, run and restored): return from pinCredentialsImage before
 // it resolves (the carry this test exists to replace): the tfvars keep 1.2.2's
 // image and this test fails.
 func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	s := out + errOut
 	if err != nil {
-		t.Fatalf("an ordinary update of an opted-in installation failed: %v\n%s", err, s)
+		t.Fatalf("an ordinary update of an installation that has the service failed: %v\n%s", err, s)
 	}
 	svc := credentialsServiceEntry(t, r)
 	if got := svc["image"]; got != r.credentialsRef() {
@@ -1330,6 +748,10 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 			t.Errorf("credentials_service.%s = %v, want %v: the re-pin rewrote a fact of the service it does not own", k, svc[k], want)
 		}
 	}
+	// One apply, and no audience fill: the block already carries the URL the
+	// module's own output does, which is every run after the one that deployed
+	// the service (prepare carries it forward), so there is nothing for the
+	// second apply to change.
 	if apps := r.ran(t, "apply"); len(apps) != 1 {
 		t.Errorf("applies = %v, want the installation root's alone", apps)
 	}
@@ -1348,21 +770,6 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
 		t.Errorf("the converged update's image = %v, want %s", got, r.credentialsRef())
 	}
-
-	// An installation that has NOT opted in is untouched: nothing is resolved,
-	// no credentials_service is written, and the release's image is not pinned
-	// onto an installation whose owner never asked for the service.
-	plain := credentialsStageRig(t)
-	plain.setPlanAt(t, "installation", change("module.installation.google_storage_bucket.runs", "update"))
-	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
-		t.Fatalf("an ordinary update of an installation without the service failed: %v\n%s%s", err, out, errOut)
-	}
-	if plain.resolveCalls != 0 || plain.arCalls != 0 {
-		t.Errorf("an installation without the credentials service resolved %d image(s) and read %d back: the opt-in is what the re-pin is for, and an installation that never opted in is byte for byte the run it was", plain.resolveCalls, plain.arCalls)
-	}
-	if _, ok := plain.tfvars(t)["credentials_service"]; ok {
-		t.Errorf("an ordinary update wrote credentials_service into an installation that never opted in: %v", plain.tfvars(t)["credentials_service"])
-	}
 }
 
 // update --firebase-project re-pins too. The flag moves the installation's
@@ -1374,7 +781,7 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 // credentials image and the h2c port this release's module names is never what
 // the service runs.
 func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	// The mark the door wrote when the installation was set up: the Firebase
 	// stage refuses a database that holds data and is not this installation's,
 	// and an installation that can be updated is one it already wrote.
@@ -1422,7 +829,7 @@ func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
 // drop the audience the service's callers mint their ID tokens for, which
 // admits nobody.
 func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *testing.T) {
-	r := credentialsStageRigAt(t, "0.15.0")
+	r := credentialsRigAt(t, "0.15.0")
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("0.14.2"))
@@ -1463,7 +870,7 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 // here applies the installation with the previous release's image and reports
 // the service as moved), and never a digest nothing verified.
 func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
@@ -1502,7 +909,7 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	// run reads carries the service.
 	doc := credentialsVarsOnDisk(t, r)
 	if doc == nil {
-		t.Fatalf("the failed update left the installation with no tfvars at all: the next run carries no credentials_service forward, plans the service's removal, and the bundle container's prevent_destroy refuses that plan — the installation is stuck until --provision-credentials\n%s", s)
+		t.Fatalf("the failed update left the installation with no tfvars at all: the next run carries no credentials_service forward, plans the service's removal, and the bundle container's prevent_destroy refuses that plan — the installation could then never be updated again\n%s", s)
 	}
 	svc, _ := doc["credentials_service"].(map[string]any)
 	if svc == nil {
@@ -1534,7 +941,7 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 // is the base image's own rule (init_images.go's baseIsCurrent, which compares
 // with newer and never moves a pin back).
 func TestUpdateKeepsANewerRecordedCredentialsImage(t *testing.T) {
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	ahead := oldCredentialsRef("1.2.4")
@@ -1568,7 +975,7 @@ func TestUpdateKeepsANewerRecordedCredentialsImage(t *testing.T) {
 // comparison happens to answer "newer" for the wrong reason, which is why the
 // rig at what will be the current release is the one that pins this.
 func TestUpdateReplacesACredentialsImageThatNamesNoRelease(t *testing.T) {
-	r := credentialsStageRigAt(t, "0.15.0")
+	r := credentialsRigAt(t, "0.15.0")
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seeded := "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry +
@@ -1602,7 +1009,7 @@ func TestUpdateReplacesACredentialsImageThatNamesNoRelease(t *testing.T) {
 // The installation stage really ran: the tfvars this test reads are the ones
 // prepare wrote, which no earlier stage of an agent's run reaches.
 func TestUpdateInAnAgentSessionPinsNoCredentialsImage(t *testing.T) {
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
@@ -1678,7 +1085,7 @@ func credentialsVarsOnDisk(t *testing.T, r *imagesRig) map[string]any {
 // Mutation (verified, run and restored): drop the forget the local-config write
 // makes (init.go's writeConfig) and this test fails with that sentence.
 func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	// The database is this installation's, marked (the ownership check every
@@ -1742,16 +1149,16 @@ func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
 //
 // The address is a fact of the configuration and not of the apply (the
 // module's account_id is a literal, infra.VerifierAccountID), and that is what
-// lets ONE ordinary update both create the account and name it: the
-// installation's outputs carry no credentials service at all here, so nothing
-// in them could name a verifier, and the config is named anyway.
+// lets ONE ordinary update both create the account and name it: the module's
+// output carries the service's name, region and URL and no verifier list at
+// all, so nothing in it could name one, and the config is named anyway.
 //
 // Mutation (verified, run and restored): write the address from a flag or a
 // config value — nothing in either names it in this rig — and this test fails;
 // take it from the module's output and it fails on the rig whose outputs carry
 // no service.
 func TestOrdinaryInitAfterTheOptInNamesTheVerifierAccount(t *testing.T) {
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	r.setPlanAt(t, "installation")
 	seedCredentialsService(t, r, r.credentialsRef())
 	// The node a previous release published names no verifier: the key is this
@@ -1760,8 +1167,7 @@ func TestOrdinaryInitAfterTheOptInNamesTheVerifierAccount(t *testing.T) {
 	if got := verifierListOf(localConfigOf(t, r)); got != nil {
 		t.Fatalf("the rig's local config already names a verifier (%v): the gate fires only while nothing anywhere names one", got)
 	}
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, nil)}
-	r.save(t)
+	credentialsOutputs(t, r)
 	want := "fugaro-verifier@" + initProject + ".iam.gserviceaccount.com"
 
 	out, errOut, err := executeStdin(t, "", "setup", "--yes")
@@ -1821,7 +1227,7 @@ func TestCredentialsServiceKeepsTheOwnersVerifierList(t *testing.T) {
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
-			r := credentialsStageRig(t)
+			r := credentialsRig(t)
 			r.setPlanAt(t, "installation")
 			credentialsOutputs(t, r)
 			// The database is this installation's, marked (the ownership
@@ -1838,7 +1244,7 @@ func TestCredentialsServiceKeepsTheOwnersVerifierList(t *testing.T) {
 			}
 			typedThroughYes(t)
 			fakeTerminal(t)
-			if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-credentials"); err != nil {
+			if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes"); err != nil {
 				t.Fatalf("%v\n%s%s", err, out, errOut)
 			}
 			lc := localConfigOf(t, r)
@@ -1868,7 +1274,7 @@ func TestCredentialsServiceKeepsTheOwnersVerifierList(t *testing.T) {
 // Mutation (verified, run and restored): carry the block verbatim and leave
 // the member absent, and this test fails on the block's member.
 func TestOrdinaryUpdateCarriesTheOwnersClearIntoTheBlock(t *testing.T) {
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	r.setPlanAt(t, "installation")
 	credentialsOutputs(t, r)
 	// The node the owner's clear is about: it holds a list, which the clear
@@ -1965,7 +1371,7 @@ func sameList(got, want []string) bool {
 // the printed document.
 func TestPrintVarsKeepsTheCarriedVerifierList(t *testing.T) {
 	owner := "person-1@example.com"
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	seedCredentialsServiceWithVerifiers(t, r, r.credentialsRef(), []string{owner})
 	if got := verifierListOf(localConfigOf(t, r)); got != nil {
 		t.Fatalf("the rig's local config already names a verifier (%v): this test is about the machine whose config is silent", got)
@@ -2022,7 +1428,7 @@ func TestPrintVarsKeepsTheCarriedVerifierList(t *testing.T) {
 // silently replaced.
 func TestAFailedPolicyReadKeepsTheVerifierList(t *testing.T) {
 	owner := "person-1@example.com"
-	r := credentialsStageRig(t)
+	r := credentialsRig(t)
 	r.setPlanAt(t, "installation")
 	credentialsOutputs(t, r)
 	// The node a NEWER Fugaro published: this binary reads the document, sees a

@@ -96,8 +96,6 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newSecretsStage(e) }},
 	{stage: initflow.Plugin, ctor: "newPluginStage(",
 		build: func(e *initEngine) initflow.Stage { return newPluginStage(e) }},
-	{stage: initflow.Credentials, ctor: "newCredentialsStage(", behind: "--provision-credentials", noYes: true,
-		build: func(e *initEngine) initflow.Stage { return newCredentialsStage(e) }},
 	{stage: initflow.Repository, ctor: "newRepositoryStage(", covered: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newRepositoryStage(e) }},
 	{stage: initflow.Rules, ctor: "newRulesStage(", covered: true, self: true,
@@ -131,8 +129,6 @@ func flagOptions(behind string) (o initOptions, ok bool) {
 		return initOptions{createProject: true}, true
 	case "--provision-batch":
 		return initOptions{provisionBatch: true}, true
-	case "--provision-credentials":
-		return initOptions{provisionCredentials: true}, true
 	}
 	return initOptions{}, false
 }
@@ -209,7 +205,7 @@ func TestRefusalMatrixListsEveryStageTheCLIRegisters(t *testing.T) {
 	}
 
 	plain := initStages(prodEngine(initOptions{}))
-	all := initStages(prodEngine(initOptions{createProject: true, provisionBatch: true, provisionCredentials: true}))
+	all := initStages(prodEngine(initOptions{createProject: true, provisionBatch: true}))
 
 	// The set of stages, both directions, and the flag each is behind: a
 	// stage behind a flag is not in the unflagged list, and every other row is.
