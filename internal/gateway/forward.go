@@ -892,7 +892,8 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}
 	if cut {
 		o.charge.streamCut = s.streamCutSide(r, end)
-		s.logStreamCut(p.model, resp.StatusCode, tee, o.charge.streamCut, time.Since(start))
+		s.logStreamCut(p.model, resp.StatusCode, tee, o.charge.streamCut, time.Since(start),
+			streamEndError(end.err, keyFrom(up.Header), up.Header.Get(HeaderRunIdentity)))
 	}
 	return o
 }
@@ -902,7 +903,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 // the status the upstream answered with, whether a terminal event arrived,
 // the bytes and events the agent was sent, the last event's own type name
 // (through the closed list: a provider cannot name an event in this line),
-// how long the call took, and which end stopped the stream (streamCutSide).
+// how long the call took, which end stopped the stream (streamCutSide), and
+// what the failing read or write said (streamEndError; "" when neither
+// failed and the body simply ended, which is its own answer).
 //
 // It names the stage and the model, as every call's line does, and nothing
 // else about the call: no header, no credential, no request and no byte of
@@ -911,11 +914,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 // or fully, and a call that settled unparsed may have had a whole stream
 // whose usage the gateway could not read. Both can name the same call when
 // a cut stream leaves nothing to settle on.
-func (s *Server) logStreamCut(model string, status int, t *usageTee, cut string, took time.Duration) {
+func (s *Server) logStreamCut(model string, status int, t *usageTee, cut string, took time.Duration, errText string) {
 	s.log.Warn("budget: stream ended before its terminal event",
 		"stage", s.stageName(), "model", logValue(model), "status", status,
 		"terminal_event_seen", t.stopped, "events", t.eventCount, "last_event", t.lastEvent,
-		"bytes", t.bytes, "ms", took.Milliseconds(), "cut", cut)
+		"bytes", t.bytes, "ms", took.Milliseconds(), "cut", cut, "error", errText)
 }
 
 // logUsageUnparsed warns once a 2xx call settles at its reservation
@@ -1344,12 +1347,16 @@ func isSSE(h http.Header, requested bool) bool {
 }
 
 // pumpEnd is how a response copy ended: which of the two ends of it stopped
-// the copy, and which way. It is three facts and no text, so nothing an
-// upstream wrote can travel in it.
+// the copy, and which way. err is that read's or write's own error, and it
+// is the one thing here that this gateway did not choose: Go's transport
+// wrote it, out of the failure the connection suffered, and not out of
+// anyone's body (what a `budget: stream ended before its terminal event`
+// line says about a cut stream; streamEndError makes it safe to log).
 type pumpEnd struct {
-	eof      bool // the upstream's body ended (io.EOF)
-	readErr  bool // reading the upstream's body failed
-	writeErr bool // writing to the agent failed: it went away, or the flush did
+	eof      bool  // the upstream's body ended (io.EOF)
+	readErr  bool  // reading the upstream's body failed
+	writeErr bool  // writing to the agent failed: it went away, or the flush did
+	err      error // the read's or the write's error; nil when the body simply ended
 }
 
 // pump copies src to the client, flushing after every write, and hands
@@ -1366,14 +1373,17 @@ func pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]by
 			}
 			tee(buf[:n])
 			if werr != nil {
-				return pumpEnd{writeErr: true}
+				return pumpEnd{writeErr: true, err: werr}
 			}
 		}
 		if errors.Is(err, io.EOF) {
+			// The body ended where its sender meant it to, so there is no
+			// error to report: a stream cut here was cut by whatever the
+			// upstream decided to send, not by a failure.
 			return pumpEnd{eof: true}
 		}
 		if err != nil {
-			return pumpEnd{readErr: true}
+			return pumpEnd{readErr: true, err: err}
 		}
 	}
 }
@@ -1403,6 +1413,37 @@ func (s *Server) streamCutSide(r *http.Request, e pumpEnd) string {
 		return cutClient
 	}
 	return cutUpstream
+}
+
+// streamEndError is what the read or the write that ended a streamed
+// response said, ready for a log line: "" when neither failed, so a body
+// that simply ended at an event boundary says so by saying nothing.
+//
+// The text is the transport's, which is why it is scrubbed rather than
+// trusted. Every credential this call carried is replaced first -- the key
+// the upstream was sent, and a service call's run identity beside it
+// (keyFrom, HeaderRunIdentity: the two the response body is already
+// scrubbed of) -- because a credential can reach an error message through a
+// URL or a header a transport chose to quote. Control characters go next,
+// so the text cannot leave the one line it is logged on whatever an error
+// message holds, and logValue bounds the rest.
+func streamEndError(err error, secrets ...string) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	for _, k := range secrets {
+		if k != "" {
+			s = strings.ReplaceAll(s, k, redacted)
+		}
+	}
+	s = strings.Map(func(r rune) rune {
+		if r < ' ' || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	return logValue(s)
 }
 
 func isRedirect(status int) bool { return status >= 300 && status <= 399 }
