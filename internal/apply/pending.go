@@ -37,8 +37,9 @@ import (
 // (D1570).
 
 // PendingVersion is the version of the pending document. A file whose version
-// is not this one is refused rather than read as this version's, and is never
-// written over: a newer fugaro's record of what is owed survives an older one.
+// is not this one is refused rather than read as this version's. The writer
+// protects only a version newer than this one — that fugaro's record of what is
+// owed survives an older one — and writes over anything else (SavePending).
 const PendingVersion = 1
 
 // PendingFileSuffix is the pending document's name beside the project config:
@@ -160,14 +161,16 @@ func LoadPending(getenv func(string) string, project, gcpProject string) (*Pendi
 // config, 0600 in a directory created 0700, through a rename, so a reader never
 // sees half a document.
 //
-// A document a newer fugaro wrote is refused and left alone — this build cannot
-// read it, and rebuilding it from nothing would drop that fugaro's record of
-// what is owed. Everything else the writer finds there is written over: a
-// document this build cannot parse, and one whose version is not a newer one (a
-// hand-edited or damaged file), are state gone wrong, and leaving them would
-// refuse every later write — the clear `fugaro update` does among them — until
-// someone deleted the file by hand. The file is a hint, and what says whether
-// anything was owed is the last_apply stamp `doctor` compares (D1575).
+// A document whose version is newer than this build's is refused and left
+// alone: rebuilding it from nothing would drop that fugaro's record of what is
+// owed. Everything else the writer finds at the path is written over — a
+// document whose version is not a newer one (a hand-edited or damaged file),
+// one this build cannot parse, and one the read refuses outright (a symbolic
+// link, a non-regular file, one over the bound). None of them is a newer
+// fugaro's record, and leaving any of them would refuse every later write — the
+// clear `fugaro update` does among them — until someone deleted the file by
+// hand. The file is a hint, and what says whether anything was owed is the
+// last_apply stamp `doctor` compares (D1575).
 func SavePending(getenv func(string) string, project string, p *Pending) error {
 	path, err := PendingPath(getenv, project)
 	if err != nil {

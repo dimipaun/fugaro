@@ -12,7 +12,7 @@
   "properties": {
     "version": {
       "const": 1,
-      "description": "The document's own version. A file whose version is not this one is refused rather than read as this version's, and is never written over: a newer fugaro's record of what is owed survives an older one.",
+      "description": "The document's own version. A file whose version is not this one is refused rather than read as this version's. The writer protects only a version newer than its own — that fugaro's record of what is owed survives an older one — and writes over anything else it finds at the path, a hand-edited or damaged file among them, because leaving one would refuse every later write, the clear `fugaro update` does among them.",
       "$comment": "PendingVersion in internal/apply/pending.go."
     },
     "last_apply": {
