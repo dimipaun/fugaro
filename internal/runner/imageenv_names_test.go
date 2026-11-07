@@ -33,6 +33,7 @@ func TestImageEnvDroppedNamesDropsTheReservedNames(t *testing.T) {
 		"PATH", "HOME", "LD_PRELOAD", "LC_ALL", "NODE_OPTIONS", "JAVA_TOOL_OPTIONS",
 		"BASH_ENV", "PERL5LIB", "http_proxy", "ANTHROPIC_BASE_URL",
 		"GOOGLE_APPLICATION_CREDENTIALS", "FUGARO_BUCKET", "CLOUD_RUN_JOB", "BATCH_TASK_INDEX",
+		"CLAUDE_CONFIG_DIR", "CLAUDE_ENV_FILE",
 	} {
 		env := map[string]string{name: "x", "NEXUS_BASEURL": "https://example.invalid/"}
 		if got := runner.ImageEnvDroppedNames(env, nil); !slices.Contains(got, name) {

@@ -75,6 +75,8 @@ var (
 		"JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS",
 		"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_SDK_GO_LOGGING_LEVEL", "CLOUD_ML_REGION",
 		"GCE_METADATA_HOST", "GCE_METADATA_IP",
+		// Where Claude Code keeps its user-level settings, CLAUDE.md and sessions: a review run's fresh home (D894(a)) and session resume both assume $HOME/.claude.
+		"CLAUDE_CONFIG_DIR", "CLAUDE_ENV_FILE",
 		// The image build step's own variables (images/derived/cloudbuild.yaml).
 		"IMAGE", "SECRET_ENVS", "WORKFLOW", "REPO_URL", "BASE_BRANCH",
 	}
