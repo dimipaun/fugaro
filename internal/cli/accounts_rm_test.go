@@ -7,6 +7,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -18,11 +19,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestAccountsRmRefusesWhileAProfileListsIt is spec §4 step 1, and it is the
@@ -353,9 +357,19 @@ func TestAccountsRmSaysTheTokenIsNotRevokedAtTheProvider(t *testing.T) {
 }
 
 // TestAccountsRmRefusesACodingAgentsSession is spec §4's last line: this
-// command deletes a credential, and no plan gate admits a removal of a secret
-// (D1172), so a coding agent's session is refused outright — --yes included —
-// with nothing written and the secret still there.
+// command deletes a credential, and a session the managed gate did not admit
+// is refused outright — --yes included — with nothing written and the secret
+// still there.
+//
+// The refusal asserted here is THIS command's and not the settings write
+// path's. The two are not interchangeable: the write path refuses the same
+// input on its own fence (applySettingsEdit, which every settings write goes
+// through), and every assertion about the file, the secret and the words
+// "coding agent's session" holds just as well when that fence answers instead
+// — which is why the sentences that are only this command's are pinned too,
+// and why the diff is pinned as absent. A run that reached the write path
+// prints the removal before it refuses it, and says nothing about what it read
+// off the session.
 func TestAccountsRmRefusesACodingAgentsSession(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
@@ -363,17 +377,32 @@ func TestAccountsRmRefusesACodingAgentsSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 	t.Setenv("CLAUDECODE", "1") // a coding agent's session
 
-	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
 	if rmErr == nil {
-		t.Fatalf("a coding agent's session removed the account")
+		t.Fatalf("a coding agent's session removed the account:\n%s", out)
 	}
 	if !strings.Contains(rmErr.Error(), "coding agent's session") {
 		t.Errorf("the refusal does not name the session it refused: %v", rmErr)
 	}
 	if !strings.Contains(rmErr.Error(), "fugaro accounts rm") {
 		t.Errorf("the refusal does not name the command the person runs at their own terminal: %v", rmErr)
+	}
+	if !strings.Contains(rmErr.Error(), "nothing was read off this session") || !strings.Contains(rmErr.Error(), id) {
+		t.Errorf("the refusal is not this command's own — it does not say that nothing was read off the session and that the secret %s is still there: %v", id, rmErr)
+	}
+	if strings.Contains(rmErr.Error(), "refusing to write") {
+		t.Errorf("the settings write path refused this run and this command's own refusal never fired: %v", rmErr)
+	}
+	if strings.Contains(out, "CONFIRM") {
+		t.Errorf("the refused session was asked to confirm the removal it may not make:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "- ") {
+			t.Errorf("the refused session was shown the removal's diff before the refusal: %q\n%s", line, out)
+		}
 	}
 	after, err := os.ReadFile(r.cfg)
 	if err != nil {
@@ -557,6 +586,212 @@ func TestAccountsRmRemovesAnAccountWhoseSecretIsAlreadyGone(t *testing.T) {
 	if _, ok := lc.ClaudeAccounts["legacy"]; ok {
 		t.Errorf("claude_accounts.legacy is still declared: %v", slices.Sorted(maps.Keys(lc.ClaudeAccounts)))
 	}
+}
+
+// TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession is the red step of the
+// accounts handoff's inverse: in a managed project's coding agent session the
+// removal goes through, where the same session was refused before the gate
+// existed — because the removal's referrers are checked and clean, which is the
+// one rule this command's own file states for it (managed spec §4.2, D1180).
+//
+// The removal is the step the gate judges, and the converge behind it is add's
+// own runner: its stages are the ones `fugaro update` runs, and a stage with
+// something to apply is a person's step in a session, exactly as it is for
+// `accounts add`. So what this asserts is the removal itself — written, deleted
+// and recorded — and that the command does not claim a converged installation
+// it did not reach.
+//
+// The record is the gate's and it follows the write: one admitted verdict,
+// whose digest is of the document that was applied and whose rules name both
+// halves of the check this command makes.
+func TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+	before := readFileString(t, r.cfg)
+	lcBefore := r.addLocal(t)
+	_, next, _, err := accountsRmResolve(r.cfg, lcBefore, "team-a", "standard", []byte(before))
+	if err != nil {
+		t.Fatalf("the resolver refused the config this test removes from: %v", err)
+	}
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if after := readFileString(t, r.cfg); after == before {
+		t.Fatalf("the removal was not written in a managed project's coding agent session: %v\nstdout:\n%s\nstderr:\n%s", rmErr, out, rmErr)
+	}
+	lc := r.addLocal(t)
+	if _, ok := lc.ClaudeAccounts["team-a"]; ok {
+		t.Errorf("claude_accounts.team-a is still declared: %v", slices.Sorted(maps.Keys(lc.ClaudeAccounts)))
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: the admission covers the account's removal, not the declaration alone", got, id)
+	}
+	if rmErr != nil && strings.Contains(rmErr.Error(), "coding agent's session") {
+		t.Errorf("the session was refused a removal the gate admitted: %v", rmErr)
+	}
+	if rmErr != nil && !strings.Contains(rmErr.Error(), "in your own terminal window") {
+		t.Errorf("the run failed for a reason that is not a step left to the person at their terminal: %v", rmErr)
+	}
+	if strings.Contains(out, "Nothing else to run") {
+		t.Errorf("the command ended on its ready line, which is only true of a converged installation:\n%s", out)
+	}
+
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one admission of this removal: %+v", len(recs), recs)
+	}
+	rec := recs[0]
+	if !strings.HasSuffix(rec.Command, " accounts rm") {
+		t.Errorf("the record names %q, want the command a person types", rec.Command)
+	}
+	if rec.Verdict != managedmode.AuditAdmitted {
+		t.Errorf("the record's verdict is %q, want %q: the step was applied", rec.Verdict, managedmode.AuditAdmitted)
+	}
+	if want := gateDigest(next); rec.PlanDigest != want {
+		t.Errorf("the record's plan_digest is %q and the removal this command would write hashes to %q: the record does not name the document that was applied", rec.PlanDigest, want)
+	}
+	for _, want := range []string{"no profile lists claude_accounts.team-a", "no repository this machine can read names team-a"} {
+		if !slices.ContainsFunc(rec.Rules, func(rule string) bool { return strings.Contains(rule, want) }) {
+			t.Errorf("the record's rules (%v) do not name the rule %q: the record is what an owner reads to see what was judged", rec.Rules, want)
+		}
+	}
+}
+
+// TestAccountsRmManagedRefusesWhileARepositoryStillNamesIt is the other half of
+// that rule: a repository this machine can read whose committed fugaro.yaml
+// names the account in agent.oauth_token is a referrer, and it refuses the
+// removal BY THE GATE, before the file is written and before the secret is
+// touched — with the refusal, and the record of it, naming the repository that
+// was found rather than the key that would have been removed.
+func TestAccountsRmManagedRefusesWhileARepositoryStillNamesIt(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if err == nil {
+		t.Fatalf("a repository that still names the account did not stop the removal:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") || !strings.Contains(err.Error(), "agent.oauth_token") {
+		t.Errorf("the refusal does not name the repository and the key that still reference the account: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Errorf("the refused removal deleted %v", got)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one refusal: %+v", len(recs), recs)
+	}
+	if recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the record's verdict is %q, want %q: the step was refused", recs[0].Verdict, managedmode.AuditRefused)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "owner/repo-a") }) {
+		t.Errorf("the record's rules (%v) do not name the repository that refused the removal", recs[0].Rules)
+	}
+}
+
+// TestAccountsRmWarnsWhileARepositoryStillNamesIt is the same referrer on the
+// owner's own path, where it is a warning and not a block (spec §4 step 2,
+// D783's shape): the file belongs to a repository this command cannot write, so
+// the owner's own edit is not stopped by it — they are told which repository
+// breaks with the removal and what its next run does — and the removal they
+// confirmed goes through.
+//
+// The warning is printed BEFORE the confirmation and not after it, which is the
+// order this test pins: the break it names is one the removal makes, so the
+// moment it can still be declined is the moment it belongs in.
+func TestAccountsRmWarnsWhileARepositoryStillNamesIt(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: team-a is named by owner/repo-a's committed fugaro.yaml in agent.oauth_token") {
+		t.Errorf("the run does not name the repository whose committed file still names the account:\n%s", out)
+	}
+	if !strings.Contains(out, "stops at launch") || !strings.Contains(out, "fugaro accounts add ") {
+		t.Errorf("the warning does not say what that repository's next run does once the declaration is gone, and how to put the account back:\n%s", out)
+	}
+	if i, j := strings.Index(out, "warning:"), strings.Index(out, "CONFIRM"); i < 0 || j < 0 || i > j {
+		t.Errorf("the warning is not printed while the confirmation can still be declined (warning at %d, confirm at %d):\n%s", i, j, out)
+	}
+	// The warning is not a refusal: what the person confirmed is what ran.
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: the reference is a warning and not a block", got, id)
+	}
+	if lc := r.addLocal(t); func() bool { _, ok := lc.ClaudeAccounts["team-a"]; return ok }() {
+		t.Errorf("claude_accounts.team-a is still declared after a removal the owner confirmed")
+	}
+}
+
+// TestAccountsRmWarnsAboutARepositoryItCannotRead is the other half of that
+// warning: a repository this machine has no readable checkout of is unknown
+// rather than clean, and unknown is said rather than assumed. It is a warning
+// and not a refusal on purpose — refusing on it would refuse every machine that
+// does not hold every checkout of the project, and what the unread reference
+// would break is a run that stops at launch, which the owner reads about here.
+func TestAccountsRmWarnsAboutARepositoryItCannotRead(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: this machine cannot read owner/repo-a") {
+		t.Errorf("the run does not say which repository it could not read:\n%s", out)
+	}
+	if !strings.Contains(out, "fugaro accounts ls") {
+		t.Errorf("the warning does not name the read that shows the reference:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: an unread repository is a warning and not a block", got, id)
+	}
+}
+
+// accountsRmRepoYAML is the committed fugaro.yaml of the repository a removal
+// is warned about and refused on: the file's own bytes are the whole answer for
+// agent.oauth_token (it is repository-scope), so the fixture is a file a
+// repository could hold rather than a fragment — it decodes strictly, which is
+// what config.AgentOf reads it with.
+const accountsRmRepoYAML = `version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: oauth-token
+  oauth_token: team-a
+workflows:
+  web:
+    commands: { build: go build ./..., test: go test ./... }
+`
+
+// accountsRmCheckout makes a real checkout of repo and remembers it for the
+// project, so the reference check has something to read: the file is committed
+// on the base branch, as the file a run would check out is.
+func accountsRmCheckout(t *testing.T, repo, fugaroYAML string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": fugaroYAML})
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's files")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
+		localcfg.CheckoutIdentity{Provider: "github", Repo: repo}, dir, time.Now(), checkoutTempRoots()); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 // accountsRmLocalShared is the world two profiles sharing one account are in:

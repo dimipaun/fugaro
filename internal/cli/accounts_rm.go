@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/yamledit"
@@ -38,6 +40,18 @@ import (
 // secret does not revoke the token at the provider (D866), and a delete that
 // fails puts the local config back behind a compare-and-swap rather than
 // leaving a file whose declaration is gone while the credential is still there.
+//
+// Both worlds judge the same thing before anything moves (spec §4 step 1, and
+// the managed plan's accounts handoff row): a profile that still lists the
+// account refuses the removal, and so does a repository this machine can read
+// whose committed fugaro.yaml names it in agent.oauth_token. What differs is
+// who acts on the answer. A person's own run warns about the repository and
+// goes on — that file is a repository's and not this installation's, so their
+// edit may not be blocked by one this command cannot write (spec §4 step 2,
+// D783's shape) — while a coding agent's session is admitted only by a managed
+// project's gate, whose rules are those referrers read back (managed spec §4.2,
+// D1180). Everywhere else a session keeps the refusal this command has always
+// made.
 //
 // The local config half is internal/yamledit's edit and the settings commands'
 // shared write path, as add's is (D847); the converge is add's own runner,
@@ -67,12 +81,19 @@ fugaro accounts rm NAME --profile PROFILE takes the name out of that profile's
 list alone, and this command removes the declaration, the secret and the job
 once no profile lists it.
 
+If a repository's committed fugaro.yaml still names the account in
+agent.oauth_token, the command warns instead, naming the repository and the run
+that stops at launch: that file belongs to the repository and not to this
+installation, so your own edit is not blocked by one this command cannot write.
+
 Removing the declaration also deletes the secret claude-oauth-token-<name>
-through Secret Manager's own delete, which is reversible within its grace
-period. The secret's ID is named in the confirmation before it goes, and the
-command says plainly that deleting the secret does not revoke the token at the
-provider: the token stays valid until it expires or you revoke it in
-Anthropic's own console, which no command here reaches.
+through Secret Manager's own delete. That delete cannot be undone — Secret
+Manager keeps no grace period for a secret — and the copy of the credential
+left behind is the token at the provider. The secret's ID is named in the
+confirmation before it goes, and the command says plainly that deleting the
+secret does not revoke the token at the provider: it stays valid until it
+expires or you revoke it in Anthropic's own console, which no command here
+reaches.
 
 Then it converges, in the same command and behind the same confirmation: the
 policy node the account was published in, the job set and this checkout's
@@ -83,7 +104,9 @@ way it was and the command stops: an account whose declaration is gone while
 its secret is still there is the one state this command may not leave behind.
 
 Run it at your own terminal: this command deletes a credential, so a coding
-agent's session is refused, --yes included.`,
+agent's session is refused, --yes included, unless a managed project's gate
+admits the removal — which it does only when no profile and no repository still
+names the account.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAccountsRm(cmd, args[0], o)
@@ -137,15 +160,37 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	}
 	command := accountsRmCommand(plan)
 
-	// The removal is refused in a coding agent's session for the same reason
-	// `add` is (spec §4's last line), and here it is the whole command and not
-	// one step of it: a managed project's gate never admits a step whose
-	// subject is a credential — no plan is a deletion (D1172) — so there is no
-	// answer for this command to pass into the write path below, and the
-	// refusal comes before the diff rather than after it.
-	if marker := agentMarker(os.Getenv); marker != "" {
+	// The repositories this project has enrolled, read before the gate and
+	// before the confirmation: one whose committed fugaro.yaml names the account
+	// is a reference this command cannot edit, and it is what the gate refuses a
+	// session on and what the confirmation warns a person about (spec §4 step 2,
+	// managed spec §4.2).
+	referrers, unseen := accountsRmRepos(lc, plan.name)
+
+	// The managed gate, before anything is screened and written
+	// (accounts_managed.go, add's own file, and the helper below): in a managed
+	// project's coding agent's session it decides whether this removal is a step
+	// the session may take, admitting one whose referrers are checked and clean
+	// and refusing one whose are not — before the diff is shown, so a refusal
+	// leaves the file and the secret exactly as they were. Everywhere else it
+	// answers the zero Managed, which is every fence below unchanged.
+	m, gate, err := accountsRmGate(cmd.Context(), lc, plan, next, referrers)
+	if err != nil {
+		return err
+	}
+
+	// The refusal a session with no admission keeps, in this command's own
+	// words. It comes before the diff rather than after it, and --yes does not
+	// answer it.
+	if marker := agentMarker(os.Getenv); marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
 		return accountsRmSession(marker, plan, command)
 	}
+
+	// The one reference this command may not answer for, before the person
+	// answers the confirmation and not after it: what it warns about is a break
+	// the removal makes, and the confirmation is the moment that break can still
+	// be declined.
+	accountsRmWarn(cmd, plan, referrers, unseen)
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
@@ -153,10 +198,19 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 		New:     next,
 		What:    accountsRmWhat(plan),
 		Kind:    settingsDocLocal,
+		Managed: m,
 		Command: command,
 		Yes:     o.yes,
 	}); err != nil {
 		return err
+	}
+	// The record of the admission, written after the write it was admitted for
+	// and never before it (D1014, spec §6): a step the gate admitted that never
+	// reached its write leaves no record at all.
+	if yamledit.Changed(old, next) {
+		if err := gate.recorded(cmd.Context()); err != nil {
+			return err
+		}
 	}
 
 	// The secret, which is the step the confirmation above named the ID for.
@@ -254,6 +308,75 @@ func accountsRmServing(lc *localcfg.Config, name string) []string {
 	return out
 }
 
+// accountsRmRepos is the repository half of the reference check (spec §4 step 2,
+// managed spec §4.2): the repositories this project has enrolled whose committed
+// fugaro.yaml names the account in agent.oauth_token, and the ones this machine
+// cannot read — no checkout here, a file that does not parse — whose state is
+// unknown rather than clean. It is the same walk `fugaro models rm` makes over
+// the same set (modelsModelPinned), with no network and no cloud in it.
+//
+// The file is read through config.AgentOf and not through a resolved config:
+// agent.oauth_token is repository-scope, so the file's own bytes are the whole
+// answer, and a repository whose file leans on the project layer for something
+// else is one this command can still read.
+func accountsRmRepos(lc *localcfg.Config, name string) (referrers, unseen []string) {
+	checkouts, err := localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		checkouts = localcfg.EmptyCheckouts()
+	}
+	remembered := map[string]string{}
+	for _, c := range checkouts.ProjectCheckouts(lc.Name) {
+		remembered[localcfg.CheckoutIdentity{Provider: c.Provider, Repo: c.Repo}.Key()] = checkoutPath(c)
+	}
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		dir := remembered[checkoutKeyFor(repo, remembered)]
+		if dir == "" {
+			unseen = append(unseen, repo)
+			continue
+		}
+		data, err := readFugaroYAML(filepath.Join(dir, "fugaro.yaml"))
+		if err != nil {
+			unseen = append(unseen, repo)
+			continue
+		}
+		agent, ok := config.AgentOf(data)
+		if !ok {
+			unseen = append(unseen, repo)
+			continue
+		}
+		if agent.OAuthToken == name {
+			referrers = append(referrers, repo)
+		}
+	}
+	return referrers, unseen
+}
+
+// accountsRmWarn is the whole of the protection spec §4 step 2 leaves for a
+// reference this command cannot edit (D783's shape, as `fugaro models rm` warns
+// about a pin): it names every repository this machine can see whose committed
+// fugaro.yaml names the account, what that repository's next run does once the
+// declaration is gone, and the repositories it cannot read. It is a warning and
+// never a block — that file is a repository's and not this installation's, so
+// the owner's own edit may not be stopped by one this command cannot write —
+// and it is printed while the confirmation below can still be declined, because
+// the break it describes is one the removal makes.
+func accountsRmWarn(cmd *cobra.Command, plan accountsRmPlan, referrers, unseen []string) {
+	if !plan.drop {
+		return
+	}
+	out := cmd.OutOrStdout()
+	if len(referrers) > 0 {
+		fmt.Fprintf(out, "warning: %s is named by %s's committed fugaro.yaml in agent.oauth_token\n",
+			pluginwire.Printable(plan.name), strings.Join(referrers, ", "))
+		fmt.Fprintf(out, "warning: the next run of each stops at launch: named Claude account %s is not one it may use once the declaration is gone. Take the name out of that file, or put the account back with `fugaro accounts add %s`\n",
+			pluginwire.Printable(plan.name), quoteWord(plan.name))
+	}
+	if len(unseen) > 0 {
+		fmt.Fprintf(out, "warning: this machine cannot read %s, so a reference there is unknown: run `fugaro accounts ls` in that checkout to see it\n",
+			strings.Join(unseen, ", "))
+	}
+}
+
 // accountsRmServed is spec §4 step 1's refusal, and it is the reason this
 // command is not one edit: a profile's claude_accounts names a job the
 // installation has deployed, so the account is taken out of the profile first,
@@ -276,11 +399,106 @@ func accountsRmNoEntry(name, want string, serving []string) error {
 		pluginwire.Printable(want), pluginwire.Printable(want), pluginwire.Printable(name), accountsAddProfiles(serving))
 }
 
-// accountsRmSession is spec §4's last line and D1172, in the shape add's token
-// step uses for the step no gate admits.
+// accountsRmSession is spec §4's last line as the managed gate leaves it
+// (managed spec §4.2, D1181): the refusal a coding agent's session reads when no
+// admission covers this removal. A managed project's gate admits an `accounts
+// rm` whose referrers are checked and clean, and that is the only thing that
+// does; a removal the gate refused returns the gate's own sentence instead of
+// this one (accountsRmGate), so what reaches here is a project this program
+// could not read as managed, or a mark read that did not answer — the two cases
+// a mark that cannot be read is not a permission for.
 func accountsRmSession(marker string, plan accountsRmPlan, command string) error {
-	return userErr("refusing to remove %s in a coding agent's session (%s is set): this command deletes a credential, and a removal of a secret is the class of step a managed project's gate never admits — no plan is a deletion — so nothing was read off this session, nothing was written and the secret %s is still there; run this yourself at your own terminal: %s",
+	return userErr("refusing to remove %s in a coding agent's session (%s is set): this command deletes a credential, and only a managed project's gate admits it — with no admission covering this removal (no profile and no repository may still name the account, spec §4.2) nothing was read off this session, nothing was written and the secret %s is still there; run this yourself at your own terminal: %s",
 		pluginwire.Printable(plan.name), marker, plan.secretID, command)
+}
+
+// accountsRmGate is the whole of this command's call of the gate, add's shape
+// (accounts_managed.go): read, judge, admit. It answers the value the write
+// below is decided under (the zero value is "not managed", which keeps today's
+// refusal), the gate itself — whose recorded call the caller makes after its
+// write — and the gate's own refusal, in the gate's own words, when the gate
+// refused the document.
+//
+// doc is the file as this command would write it, and it is the same bytes the
+// rules were read from and the same bytes the caller applies.
+func accountsRmGate(ctx context.Context, lc *localcfg.Config, plan accountsRmPlan, doc []byte, referrers []string) (initflow.Managed, managedGate, error) {
+	marker := agentMarker(os.Getenv)
+	if marker == "" {
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	clients, err := newInitClients(ctx, lc)
+	if err != nil {
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	_, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	gate, err := readManagedGate(ctx, managedGateEnv{lc: lc, s: clients.Storage, crm: clients.CRM, db: db}, managedGateFacts{
+		Subcommand: "accounts rm",
+		Argv:       os.Args[1:],
+		// What this command would have written, for the ownership question
+		// D1017 asks with the database it is about to write.
+		Declined:    "nothing was removed",
+		AgentMarker: marker,
+		// The whole-project inventory (D59) is `fugaro managed apply`'s read and
+		// is not consulted on this path: a command that has none passes false.
+		InventoryFallback: false,
+	})
+	if err != nil {
+		// No installation to read, a mark that did not answer, or the ownership
+		// question's own refusal: the project is not one this program can prove
+		// is managed, so the session keeps this command's refusal and nothing is
+		// recorded.
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	applied, refused := accountsRmRules(plan, referrers)
+	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
+	if len(refused) > 0 {
+		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+	}
+	// YesOrTyped is the class of the confirmation this step is: the ordinary
+	// y/N the diff is answered with, and not a Typed step — the value D846
+	// reserves for a loosened ceiling is what the declaration's own rules
+	// already refuse here.
+	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	if err == nil {
+		return m, gate, nil
+	}
+	if errors.Is(err, managedmode.ErrNotConverged) {
+		return m, gate, &ExitError{Code: ExitUserError, Err: err}
+	}
+	// The second read did not answer, immediately before the write: a mark that
+	// cannot be read is not a permission.
+	return initflow.Managed{}, managedGate{}, nil
+}
+
+// accountsRmRules are the rules the gate judges this removal by, in the words
+// the record and the refusal carry: the rules that were applied and passed, and
+// the ones that refused. They are this command's own and live here rather than
+// in internal/managed, where the SHAPE of a verdict and the one class rule are
+// (D1021).
+//
+// The rule is the design's whole content for this command (managed spec §4.2,
+// D1172, D1180's row): a removal is admitted only when no profile and no
+// repository this machine can read still references the account, and each
+// refusal names the referrer it found rather than the key it would remove. A
+// repository this machine cannot read is not one of these refusals but a warning
+// (accountsRmWarn): refusing on it would refuse every project whose checkouts
+// are not all on this machine, and what it would prevent is a run that stops at
+// launch, which is a break the owner reads about rather than a permission.
+func accountsRmRules(plan accountsRmPlan, referrers []string) (applied, refused []string) {
+	if plan.drop {
+		applied = append(applied, "no profile lists claude_accounts."+pluginwire.Printable(plan.name)+" once this step has run")
+	} else {
+		refused = append(refused, accountsAddProfiles(plan.rest)+" still lists claude_accounts."+pluginwire.Printable(plan.name)+" after this step, and a profile's claude_accounts names a job this installation has deployed: taking the account out from under a live job leaves a job the policy cannot describe, which only the owner can answer for (spec §4 step 1)")
+	}
+	if len(referrers) > 0 {
+		refused = append(refused, "the committed fugaro.yaml of "+strings.Join(referrers, ", ")+" names "+pluginwire.Printable(plan.name)+" in agent.oauth_token, so the next run of each stops at launch: that file belongs to a repository this command cannot write, and repairing it is the owner's own edit (D783)")
+	} else {
+		applied = append(applied, "no repository this machine can read names "+pluginwire.Printable(plan.name)+" in its agent.oauth_token")
+	}
+	return applied, refused
 }
 
 // accountsRmWhat is the one confirmation's text (spec §4 step 2): every change
@@ -307,7 +525,7 @@ func accountsRmWhat(plan accountsRmPlan) string {
 	parts = append(parts, fmt.Sprintf("remove claude_accounts.%s (its allow_data_to was [%s])",
 		pluginwire.Printable(plan.name), strings.Join(plan.allow, ", ")))
 	parts = append(parts,
-		fmt.Sprintf("delete the secret %s (Secret Manager's own delete, reversible within its grace period)", plan.secretID),
+		fmt.Sprintf("delete the secret %s (Secret Manager's own delete, which cannot be undone here)", plan.secretID),
 		fmt.Sprintf("deleting the secret does not revoke the token at the provider: %s's token stays valid until it expires or you revoke it in Anthropic's own console, which no command here reaches",
 			pluginwire.Printable(plan.name)),
 		"publish and deploy, so the job the account owned is gone")

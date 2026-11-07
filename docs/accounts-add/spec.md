@@ -365,9 +365,10 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    `claude-oauth-token-<name>` is **deleted** through the store's own `Delete`
    (`internal/backend/gcp/secrets.go`) — the call exists and **no command reaches it today**, so
    `accounts rm` is the first door to it. Leaving a live credential in Secret Manager with only the
-   owner's admins able to read it is not what "remove the account" can mean, and Secret Manager's own
-   delete is reversible within its grace period, which is the recovery an owner actually wants. The
-   secret's ID is named in the confirmation before it goes, and the command **says plainly that
+   owner's admins able to read it is not what "remove the account" can mean, and the delete is
+   one-way: Secret Manager's v1 API has no `undelete` for a secret, so the copy that survives is the
+   **token at the provider**, which is what the sentence below names. The secret's ID is named in the
+   confirmation before it goes, and the command **says plainly that
    deleting the secret does not revoke the token at the provider**: the token stays valid until it
    expires or the owner revokes it in Anthropic's own console, which no command here reaches (D866).
    A repository whose committed `fugaro.yaml`
@@ -377,7 +378,10 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
 3. **Converge.** The same publish and deploy as `add` (§2.5), so the job the account owned is gone from
    the installation.
 
-`rm` is refused in a coding agent's session for the same reason `add` is.
+`rm` is refused in a coding agent's session for the same reason `add` is — the refusal above, kept
+wherever no admission covers the removal. In a managed project the gate admits an `rm` whose referrers
+are checked and clean, which is the accounts row of the managed design's §4.2 and its rule for this
+command: no profile and no repository this machine can read may still name the account.
 
 ## 5. What the existing commands become
 

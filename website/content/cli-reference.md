@@ -269,12 +269,19 @@ fugaro accounts rm NAME --profile PROFILE takes the name out of that profile's
 list alone, and this command removes the declaration, the secret and the job
 once no profile lists it.
 
+If a repository's committed fugaro.yaml still names the account in
+agent.oauth_token, the command warns instead, naming the repository and the run
+that stops at launch: that file belongs to the repository and not to this
+installation, so your own edit is not blocked by one this command cannot write.
+
 Removing the declaration also deletes the secret claude-oauth-token-<name>
-through Secret Manager's own delete, which is reversible within its grace
-period. The secret's ID is named in the confirmation before it goes, and the
-command says plainly that deleting the secret does not revoke the token at the
-provider: the token stays valid until it expires or you revoke it in
-Anthropic's own console, which no command here reaches.
+through Secret Manager's own delete. That delete cannot be undone — Secret
+Manager keeps no grace period for a secret — and the copy of the credential
+left behind is the token at the provider. The secret's ID is named in the
+confirmation before it goes, and the command says plainly that deleting the
+secret does not revoke the token at the provider: it stays valid until it
+expires or you revoke it in Anthropic's own console, which no command here
+reaches.
 
 Then it converges, in the same command and behind the same confirmation: the
 policy node the account was published in, the job set and this checkout's
@@ -285,7 +292,9 @@ way it was and the command stops: an account whose declaration is gone while
 its secret is still there is the one state this command may not leave behind.
 
 Run it at your own terminal: this command deletes a credential, so a coding
-agent's session is refused, --yes included.
+agent's session is refused, --yes included, unless a managed project's gate
+admits the removal — which it does only when no profile and no repository still
+names the account.
 
 Usage: `fugaro accounts rm NAME`
 

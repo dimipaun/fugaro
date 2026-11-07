@@ -96,7 +96,7 @@ func TestDocsManagedAgentConvergeHandoffsMatchTheTree(t *testing.T) {
 		{"fugaro settings set", []string{"settings", "set"}, "landed", "internal/cli/settings_managed.go"},
 		{"fugaro rigor set", []string{"rigor", "set"}, "owed", ""},
 		{"fugaro accounts add", []string{"accounts", "add"}, "landed", "internal/cli/accounts_managed.go"},
-		{"fugaro accounts rm", []string{"accounts", "rm"}, "landed", ""},
+		{"fugaro accounts rm", []string{"accounts", "rm"}, "landed", "internal/cli/accounts_rm.go"},
 	} {
 		line := macDocCommandLine(t, doc, c.command)
 		if !strings.Contains(line, "**"+c.state+"**") {
