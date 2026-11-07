@@ -323,6 +323,9 @@ func TestUpdatePublishesTheFirstPolicyNodeForACatalog(t *testing.T) {
 	if !strings.Contains(st.Detail, "no policy is published") {
 		t.Errorf("the check does not say the project has no node: %q", st.Detail)
 	}
+	if !strings.Contains(st.Detail, "the image_catalog") || strings.Contains(st.Detail, "guardrails") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
 	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
 	if err != nil {
 		t.Fatal(err)
@@ -388,6 +391,9 @@ func TestUpdatePublishesTheFirstPolicyNodeForAnOrchestratorBlock(t *testing.T) {
 	}
 	if !strings.Contains(st.Detail, "no policy is published") {
 		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the orchestrator's guardrails") || strings.Contains(st.Detail, "image_catalog") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
 	}
 	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
 	if err != nil {

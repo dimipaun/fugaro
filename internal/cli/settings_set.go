@@ -1141,12 +1141,19 @@ func settingsModeRank(mode string) int {
 // orchestrator's block is written in (policy.DecisionModels, least capable
 // first), and -1 for a name the order does not hold. The block's own writers
 // refuse a name outside the order (policy.ValidOrchestrator), so one can only
-// come from a node written by hand — and reading it as the cheapest tier is the
-// fail-closed half of D846's asymmetry, the answer settingsLoosens already gives
-// a value it cannot parse. The write path never reaches this — the allowlist
-// refuses the block's keys — but the publish door does: policyCeilingMembers
-// names a member per class, so a node republished with a class moved down the
-// order is a loosening there and one moved up is not (D1234, G6).
+// come from a node written by hand, and -1 sits below every tier rather than at
+// the cheapest one — the two sides of settingsLoosens' comparison then read it
+// as D846's asymmetry asks. A new value outside the order is looser than any
+// name inside it, so an edit that writes one takes the typed name even though
+// nobody can prove it tightens; an old value outside the order is lower than
+// every tier, so a node repaired by naming a model the order holds is not a
+// loosening. Two values outside the order compare equal, the one pair nothing
+// is proven about either way.
+//
+// The write path never reaches this — the allowlist refuses the block's keys —
+// but the publish door does: policyCeilingMembers names a member per class, so
+// a node republished with a class moved down the order is a loosening there and
+// one moved up is not (D1234, G6).
 func settingsDecisionModelRank(name string) int {
 	return slices.Index(policy.DecisionModels, name)
 }

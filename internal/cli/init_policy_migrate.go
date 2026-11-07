@@ -285,6 +285,27 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	return m, true, nil
 }
 
+// firstPublishNodeOnlyMembers names the members only the node can carry that
+// the local config states, in the order the node's own text writes them, so a
+// line about a first publish names what this file holds and not the member it
+// does not.
+//
+// A member written but stating no value is not one of them:
+// ImageCatalogEffective is nil for a config that names no catalog and for one
+// that writes an empty catalog, which publishes no member at all (D1156), and
+// OrchestratorEffective is nil for a block that sets no key (SetsNothing). The
+// publish would create a policy that admits nothing and carry neither with it.
+func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
+	var out []string
+	if lc.ImageCatalogEffective(nil) != nil {
+		out = append(out, "the image_catalog")
+	}
+	if lc.OrchestratorEffective(nil) != nil {
+		out = append(out, "the orchestrator's guardrails")
+	}
+	return out
+}
+
 // firstPublishCarriesANodeOnlyMember is whether the local config states
 // something only the node can carry, which is what a first publish is made for:
 // an image catalog (D1156) and the orchestrator's guardrails (D1239) are read
@@ -296,14 +317,8 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // budget ceiling, a base branch or a model list reaches every run through the
 // job's own environment and the shared config, so a project that has never
 // published a node is a project those are already read for.
-//
-// A member written but stating no value is not one of them either:
-// ImageCatalogEffective is nil for a config that names no catalog and for one
-// that writes an empty catalog, which publishes no member at all (D1156), and
-// OrchestratorEffective is nil for a block that sets no key (SetsNothing). The
-// publish would create a policy that admits nothing and carry neither with it.
 func firstPublishCarriesANodeOnlyMember(lc *localcfg.Config) bool {
-	return lc.ImageCatalogEffective(nil) != nil || lc.OrchestratorEffective(nil) != nil
+	return len(firstPublishNodeOnlyMembers(lc)) > 0
 }
 
 // firstPolicyPublish is the publish half of a project that has never published a
@@ -930,10 +945,11 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	case !published && m == nil:
 		return initflow.Status{State: initflow.Done, Detail: policyNoneDetail()}, nil
 	case !published:
-		// The project has no node and the local config states a catalog, so the
-		// check is not the no-policy state: it is the first publish this run
-		// would make, and it says so rather than reporting the stage done.
-		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("no policy is published at %s, and the local config states an image_catalog that only the node carries: this run publishes the project's first node, after your confirmation", projectpolicy.PathShared())}, nil
+		// The project has no node and the local config states a member only the
+		// node carries, so the check is not the no-policy state: it is the first
+		// publish this run would make, and it says so, naming the member the
+		// operator's own file states, rather than reporting the stage done.
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("no policy is published at %s, and the local config states %s, which only the node carries: this run publishes the project's first node, after your confirmation", projectpolicy.PathShared(), strings.Join(firstPublishNodeOnlyMembers(s.e.lc), " and "))}, nil
 	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
 	case m.generations != nil:
@@ -986,7 +1002,7 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 func (m *policyMigration) planDetail() string {
 	switch {
 	case m.firstPublish:
-		return "publish the project's first policy node, carrying the image_catalog the local config states, after your confirmation"
+		return fmt.Sprintf("publish the project's first policy node, carrying %s, after your confirmation", strings.Join(firstPublishNodeOnlyMembers(m.lc), " and "))
 	case m.generations != nil:
 		return fmt.Sprintf("re-seed %s from the published policy node, after your confirmation", m.path)
 	case m.record != "":
