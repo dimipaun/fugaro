@@ -237,9 +237,14 @@ func (s *imagesStage) allow() []string {
 	return mirror.DefaultSources
 }
 
-// kinds are the base kinds to mirror: --base's, and the workflows' of the
+// kinds are the base kinds to mirror: --base's, the workflows' of the
 // checkout init runs in (best effort: no checkout, or no valid fugaro.yaml,
-// adds none).
+// adds none), and base when the project's own image catalog has an entry this
+// installation builds. That last one is what makes `fugaro image add <entry>`
+// a state the next `fugaro update` converges on its own (#1843): the catalog
+// check job runs FROM base_images.base and every catalog build is built FROM
+// it, nothing else names that kind, and the catalog lives in the project
+// config rather than in any checkout.
 func (s *imagesStage) kinds(ctx context.Context) []string {
 	if s.only != nil {
 		only := slices.DeleteFunc(slices.Clone(s.only), func(k string) bool { return !slices.Contains(config.Bases, k) })
@@ -256,6 +261,9 @@ func (s *imagesStage) kinds(ctx context.Context) []string {
 		for _, w := range cfg.Workflows {
 			set[w.BaseKind()] = true
 		}
+	}
+	if s.e.lc != nil && infra.CatalogBuilds(s.e.lc) {
+		set[config.BaseKind] = true
 	}
 	return slices.Sorted(maps.Keys(set))
 }
@@ -487,7 +495,7 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 		// image-refresh.md's step 2); the notes say which kind and why.
 		return initflow.Status{State: initflow.Skipped, Detail: "No changes: " + strings.Join(notes, "; ")}, nil
 	case len(items) == 0:
-		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase-project, a base image with --base KIND or a checkout whose fugaro.yaml names it"}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase-project, and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds"}, nil
 	case releaseVersion() == "":
 		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to pin or copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro update --base-image KIND=<tag>"}, nil
 	}
