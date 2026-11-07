@@ -814,14 +814,18 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
 - **Interfaces:** `doctorCredentialsServiceDeployed` (`internal/cli/doctor_brokering.go:102`) stops
   returning `nil` for an installation with no `credentials_service` block — that early return
   (`if lc.CredentialsService == nil { return nil }`) is exactly the sentence the ruling makes false: an
-  installation that has not converged is now a state worth reporting rather than one worth staying
-  silent about. It produces **one line**, in the shape the other checks already use (an `ID`, a
-  `Severity`, a `Problem`, a `Fix`), that says the service is **deployed and serving and admitting
-  nobody**, and names **which** half is missing:
+  installation that has not taken the opt-in is now a state worth reporting rather than one worth
+  staying silent about. It produces **one line**, in the shape the other checks already use (an `ID`, a
+  `Severity`, a `Problem`, a `Fix`) that names **which** half is missing. The line for an installation
+  that never opted in says that state and not one of being behind: **on this release the flag is the
+  opt-in**, what it changes is the installation's own workflows, and a doctor line is read as a step to
+  take, so that line says what the opt-in asks for and does rather than presenting a run that re-writes
+  every repository root as routine (DON1 rewrites it when the flag goes, and then the state is
+  genuinely "update and the service is there"):
 
   | state | the line |
   |---|---|
-  | no block in the local config | the installation has not converged on the service; `fugaro update --provision-credentials` deploys it (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it) |
+  | no block in the local config | the installation has not opted into the service: this release deploys it only behind `fugaro update --provision-credentials` (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it), and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind. Taking the opt-in is what moves the credential out of the jobs: every repository root re-applied after it drops its jobs' model credential in **every** `agent.auth` mode (which is why a project that takes it runs its workflows with `agent.auth: cascade`), the stage asks for its own **typed confirmation** (a `--yes` run does not cover it), and a GitHub run of it refuses to mint until the bundle holds the App's key (`fugaro creds set github-app-key`) |
   | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update --provision-credentials` re-applies the root (the same flag as the row above, for the same reason) |
   | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer |
   | deployed, the bundle's newest version is not `ENABLED` | deployed and admitting nobody: the version and its document are there and Secret Manager will not serve them, so the loader's read fails closed. The line names the version and its state; `DISABLED` is the one an operator's incident disable leaves, and the fix names the enable (`gcloud secrets versions enable <version> --secret=<id>`) because `creds set` refuses while the newest version is disabled |
@@ -850,14 +854,16 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
   exist: whether a run can work around it.** The two states a run cannot work around — the block
   written and no service behind it, and a job account the service does not admit — keep the
   **warning** they already had: they print in the default view, and `--strict` is where they become a
-  failure. The others — never converged, an empty bundle, a bundle whose newest version is not
+  failure. The others — not opted in, an empty bundle, a bundle whose newest version is not
   `ENABLED`, an empty verifier list — are `OK` with
-  severity **info**, which is doctor's measurement class: **an installation that has not run `update`
-  yet is not broken, it is behind**, and **a repository held off is not broken either, it is the
-  answer's own state**, so neither may be an item of doctor's one screen — a clean installation would
-  print an item for merely being behind the release, and `fugaro doctor --strict` in a repository's CI
-  would go red for it. They are the answer §1.4 asks for under `--all` and in `--json`, where a reader
-  who wants the service *used* reads which half is missing, and none of them fails `--strict`.
+  severity **info**, which is doctor's measurement class: **an installation that has not taken the
+  opt-in is not broken** (on this release it is running the way it did before the service existed, and
+  DON1 makes it an installation that has not run `update` yet), and **a repository held off is not
+  broken either, it is the answer's own state**, so neither may be an item of doctor's one screen — a
+  clean installation would print an item for merely being behind the release, and `fugaro doctor
+  --strict` in a repository's CI would go red for it. They are the answer §1.4 asks for under `--all`
+  and in `--json`, where a reader who wants the service *used* reads which half is missing, and none of
+  them fails `--strict`.
 - **Tests:** `TestDoctorReportsTheServiceStateInOneLine` (the six service states, each producing
   exactly one check with the expected `ID` and severity), `TestDoctorNamesTheMissingHalfNotNotConfigured`
   (the line never reads "not configured": it names the App key, the verifier account, the bundle or the

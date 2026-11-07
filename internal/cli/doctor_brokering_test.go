@@ -615,7 +615,14 @@ type brokeringServiceState struct {
 	// names are the halves the line must name. A line that said one
 	// undifferentiated "not configured" would name none of them, which is the
 	// answer the ruling refused (§1.4).
-	names    []string
+	names []string
+	// absent are the readings the line may not carry, and the one row that has
+	// them is the installation that never opted in: on this release the flag is
+	// the opt-in and taking it re-writes every repository root, so a line that
+	// called that state "not converged" and named a run that "deploys it on
+	// every installation" would be telling the operator of a working
+	// installation to run a step that can break its workflows.
+	absent   []string
 	severity string
 	// red is what --strict must answer: the two states a run cannot work
 	// around are warnings, and the three that are the installation being
@@ -625,7 +632,7 @@ type brokeringServiceState struct {
 }
 
 // brokeringServiceStates are the six states of the service: the installation
-// that has not converged on it at all, the one whose block is written and
+// that has not opted into it at all, the one whose block is written and
 // whose service is not deployed, the deployed service whose bundle holds no
 // version, the deployed service whose newest bundle version is disabled, the
 // deployed service whose verifier list admits nobody, and the deployed service
@@ -644,8 +651,15 @@ func brokeringServiceStates() []brokeringServiceState {
 	}
 	return []brokeringServiceState{
 		{
-			name:     "the installation has not converged on the service",
-			names:    []string{infra.CredentialsServiceName, selfCommand() + " update --provision-credentials"},
+			// The opt-in this release gates behind DON1's flag, which is not
+			// the same state as an installation behind the release: the line
+			// may not read as "run this" (the flag re-writes every repository
+			// root and drops their jobs' model credential), so what is pinned
+			// here are the two things taking it needs and the confirmation it
+			// asks for.
+			name:     "the installation has not opted into the service",
+			names:    []string{infra.CredentialsServiceName, selfCommand() + " update --provision-credentials", "agent.auth: cascade", selfCommand() + " creds set github-app-key", "typed confirmation"},
+			absent:   []string{"has not converged", "deploys it on every installation", "nothing for a run to fetch"},
 			severity: "info",
 			build:    newBrokeringUnoptedRig,
 		},
@@ -833,6 +847,11 @@ func TestDoctorNamesTheMissingHalfNotNotConfigured(t *testing.T) {
 			for _, want := range state.names {
 				if !strings.Contains(c.Problem+c.Fix, want) {
 					t.Errorf("the line does not name %q, which is what this state is missing: %q", want, c.Problem+" / "+c.Fix)
+				}
+			}
+			for _, unwanted := range state.absent {
+				if strings.Contains(strings.ToLower(c.Problem+" "+c.Fix), strings.ToLower(unwanted)) {
+					t.Errorf("the line reads as %q, which this state is not: %q", unwanted, c.Problem+" / "+c.Fix)
 				}
 			}
 		})

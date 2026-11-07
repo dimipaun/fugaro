@@ -104,27 +104,33 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // account may invoke it, whether it has anything to serve with.
 //
 // The ruling of 2026-11-05 (docs/credentials-service/default-on.md) is what
-// makes the states behind that one AHEAD of it doctor's business: `fugaro
-// update` deploys the service on every installation and a run is switched to
-// it only when it can serve that run, so an installation that has not
-// converged on the service, one whose bundle holds no version (or only one
-// that is switched off) and one whose verifier list is empty are states a
-// release leaves behind rather than faults in an installation. None of them is
-// an item of the default view: they
-// are measurements, one line each, and --all and --json are where a reader who
-// wants the service used finds which half is missing. The two states a run
-// cannot work around — the block written and no service behind it, and a job
-// account the service does not admit — keep the warning they already had, and
-// --strict is where those become a failure.
+// makes the states behind that one AHEAD of it doctor's business: the release
+// ends with the service deployed on every installation and a run switched to it
+// only when it can serve that run, so an installation that has not taken the
+// opt-in, one whose bundle holds no version (or only one that is switched off)
+// and one whose verifier list is empty are states a release leaves behind
+// rather than faults in an installation. On THIS release the opt-in is still
+// the flag DON1 removes, and that is what the first state has to say: nothing
+// there is broken and nothing is behind, an installation that never asked for
+// the service runs the way it did before the service existed. None of them is
+// an item of the default view: they are measurements, one line each, and --all
+// and --json are where a reader who wants the service used finds which half is
+// missing. The two states a run cannot work around — the block written and no
+// service behind it, and a job account the service does not admit — keep the
+// warning they already had, and --strict is where those become a failure.
 //
-// The fix on the two "no service" states names the flag that deploys it today
-// (update --provision-credentials): the credentials stage is registered behind
-// it and is the only writer of the credentials_service block, so a fix naming
-// plain `fugaro update` would send an operator to a run that changes nothing
-// and print the same line again. The fix on the empty verify route names the
-// same command for the same reason: the service's verifier list is written into
-// it by that stage's apply, not by a publish. DON1 removes the flag and
-// rewrites every string here that names it.
+// The opt-in state's fix is not an instruction to run something: the flag is
+// the credentials stage's own gate and taking it re-writes this installation's
+// repository roots, so the line says what the command is, what it asks for
+// (its own typed confirmation, which --yes does not cover) and the two
+// prerequisites the stage's own text names — the auth mode the repositories
+// have to run and the App key the bundle has to hold — rather than presenting a
+// run that can break workflows as the routine step a doctor line reads as. The
+// one other state whose fix names the flag is NOT_FOUND: there the opt-in is
+// already written and the flag re-applies the root, which is a repair and not a
+// decision. The empty verify route names the same command for its own reason:
+// the service's verifier list is written into it by that stage's apply, not by
+// a publish. DON1 removes the flag and rewrites every string here that names it.
 //
 // Both halves of the deployed service's state are read from the service's own
 // IAM policy, which is where the module writes the grant: one member, the
@@ -147,8 +153,8 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	const id = "credentials-service-deployed"
 	if lc.CredentialsService == nil {
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
-			Problem: fmt.Sprintf("the installation has not converged on the credentials service (%s): the credentials stage of %s deploys it on every installation, and until that run has been made this installation has no service for a run to fetch a model credential from", infra.CredentialsServiceName, selfCommand()+" update --provision-credentials"),
-			Fix:     selfCommand() + " update --provision-credentials (its credentials stage is the only writer of the block, and this release runs it behind that flag)"}}
+			Problem: fmt.Sprintf("the installation has not opted into the credentials service (%s): this release deploys it only behind %s, and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind — taking the opt-in is what moves the credential out of the jobs, and it does that to every repository root re-applied after it, in every agent.auth mode (which is why a project that takes it runs its workflows with agent.auth: cascade), and a GitHub run of it refuses to mint until the bundle holds the App's key", infra.CredentialsServiceName, selfCommand()+" update --provision-credentials"),
+			Fix:     "the opt-in is " + selfCommand() + " update --provision-credentials, and its credentials stage asks for its own typed confirmation before it applies (a --yes run does not cover it): take it when agent.auth: cascade is what this installation runs, and put the App's key in the bundle it creates (" + selfCommand() + " creds set github-app-key) before its first GitHub run"}}
 	}
 	unreadable := func(what string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning",
