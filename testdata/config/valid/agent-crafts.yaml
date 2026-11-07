@@ -1,0 +1,13 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: vertex
+  models: { coder: claude-opus-5-5, reviewer: claude-sonnet-5-5 }
+  crafts:
+    coder: { model: deepseek-v4-1, access: openrouter-main }
+    review: { access: anthropic-key }
+    senior-review: { model: opus-5-5, access: claude-pool }
+    security-review: { model: opus-5-1, access: vertex }
+workflows:
+  server: { commands: { build: make, test: make test } }

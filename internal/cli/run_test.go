@@ -63,6 +63,36 @@ func TestRunLaunches(t *testing.T) {
 	}
 }
 
+// TestRunTakesACheckoutPath: the language the flag's help promises -- a path
+// inside a checkout is the repository its origin names -- for the headline
+// launch. `--repo .` from a checkout of acme/app launches acme/app, and the
+// stored task carries the owner/name, never the path. (The plain launch is
+// resolved in resolveAttemptPlan rather than in runRun's own pass, which is
+// the launch shape --pr and --review-run need; this is the end-to-end claim
+// the flag's help and the plugin skill make.)
+func TestRunTakesACheckoutPath(t *testing.T) {
+	testutil.IsolateGit(t)
+	f := newCloudFixture(t)
+	t.Chdir(repoArgCheckout(t, filepath.Join(t.TempDir(), "app"), githubOrigin))
+	out, _, err := execute(t, "run", "--repo", ".", "--ref", "main", "--run-id", "20260927-100000-abcd", "--json", "Add a feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res launchResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Status != "launched" || res.Repo != "acme/app" {
+		t.Fatalf("result = %+v (%s), %v", res, out, err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want one", n)
+	}
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	spec, err := runstore.Open(b, appSlug, "20260927-100000-abcd").ReadTask(context.Background())
+	if err != nil || spec.Repo != "acme/app" || spec.Task != "Add a feature" {
+		t.Fatalf("task = %+v, %v", spec, err)
+	}
+}
+
 func TestRunHumanOutput(t *testing.T) {
 	newCloudFixture(t)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature")

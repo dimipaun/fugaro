@@ -1121,10 +1121,18 @@ export const CONSOLE_OPERATIONS = [
   // rule: a sensitive row is dropped whole by the read, so it has no pencil and
   // reaches this operation not at all.
   //
-  // **What this operation does not have**: no `--repo` (the edit lands in the
-  // selected installation's own layers, and the layer a repository's own config
-  // file would be is the fourth one the read's `target_layer` would name if that
-  // were the one), no `--add`/`--remove` (a list edit is a form no control can
+  // **What this operation does not have**: no `--repo` (the row whose
+  // `target_layer` is `repo` -- the layer the read names for the keys a
+  // repository's own config file carries -- is edited where the child's own
+  // working directory says, because that is what the CLI resolves `--layer repo`
+  // from with no `--repo`: the one at the checkout `git rev-parse
+  // --show-toplevel` finds for `.`, or its own refusal when that
+  // directory is not one (`internal/cli/settings_set.go`). The child's directory
+  // is the installation's recorded checkout when it has one and
+  // `privateWorkingDirectory` otherwise, so this surface names no repository and
+  // never checks that the directory is one; whether such a row should be refused
+  // instead is the settings write's own open question, not a rule here), no
+  // `--add`/`--remove` (a list edit is a form no control can
   // choose: the read carries no member that says a key is list-shaped), and no
   // third subcommand: `settings get` is a read of one key this screen does not
   // need and `set`/`unset` are this row's own two, so no other word of the group

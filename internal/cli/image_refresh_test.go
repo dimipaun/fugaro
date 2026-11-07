@@ -683,6 +683,24 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 			t.Fatalf("exit %d, err %q, want %q", ExitCode(err), err, want)
 		}
 	})
+	// The outside-a-checkout sentence names the repository the flag means, so
+	// the flag is resolved before it is written: a value that is neither
+	// owner/name nor a path -- a token pasted into the wrong flag is the case
+	// that matters -- is refused by the resolver rather than printed as the
+	// repository to run in a checkout of.
+	t.Run("a --repo that is no repository", func(t *testing.T) {
+		useVersion(t, "0.5.1")
+		newAnchorModeRig(t, refreshYAML, true)
+		t.Chdir(t.TempDir())
+		const value = "fake-token-EXAMPLEEXAMPLE"
+		_, _, err := executeStdin(t, "", "image", "refresh", "--repo", value)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--repo: the repository must look like owner/name") {
+			t.Fatalf("exit %d, err %q", ExitCode(err), err)
+		}
+		if strings.Contains(err.Error(), "run it in a checkout of "+value) {
+			t.Fatalf("the refusal names the unvalidated value as the repository: %v", err)
+		}
+	})
 }
 
 // The options the command builds for its
