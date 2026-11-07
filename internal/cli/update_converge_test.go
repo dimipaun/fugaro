@@ -43,6 +43,10 @@ type convergeRig struct {
 	*imagesRig
 	root     string
 	settings string
+	// claude is the fake the checkout stage's plugin step runs: what it
+	// recorded is how a test sees that the plugin was installed in Claude
+	// Code, as opposed to pinned in the checkout's settings.
+	claude *testutil.ClaudePluginFake
 }
 
 // v4Node is the published node the release before this one leaves behind: the
@@ -57,6 +61,14 @@ func v4Node() map[string]any {
 }
 
 func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
+	t.Helper()
+	return newConvergeRigYAML(t, node, refreshYAML)
+}
+
+// newConvergeRigYAML is newConvergeRig over a checkout whose default branch
+// holds yaml as fugaro.yaml: the fixture for the update door's own failures,
+// where the file the repository stage reads is the thing that is wrong.
+func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *convergeRig {
 	t.Helper()
 	fakeTerraform(t) // built with go, which upgradeEnv takes off PATH
 	upgradeEnv(t, convergeRelease)
@@ -110,7 +122,7 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion-1)
 	r.db.Set(projectpolicy.PathShared(), node)
 
-	root := repoCheckout(t, githubOrigin, refreshYAML)
+	root := repoCheckout(t, githubOrigin, yaml)
 	t.Chdir(root)
 	settings := filepath.Join(root, ".claude", "settings.json")
 	checkoutFile(t, settings, wiredAt("v"+convergePrev))
@@ -135,7 +147,7 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 
 	seedAppSecret(t, r.initRig, "github-app-key")
 	seedAppSecret(t, r.initRig, "claude-oauth-token")
-	return &convergeRig{imagesRig: r, root: root, settings: settings}
+	return &convergeRig{imagesRig: r, root: root, settings: settings, claude: f}
 }
 
 // seedAppSecret stores acme/app's own container for logical, as a run of
