@@ -49,7 +49,7 @@ gh api "repos/<owner>/<repo>/rulesets/<ruleset-id>" \
   | gh api --method PUT "repos/<owner>/<repo>/rulesets/<ruleset-id>" --input -
 
 gh api "repos/<owner>/<repo>/rulesets/<ruleset-id>" \
-  --jq '{rules: [.rules[].type], bypass: [.bypass_actors[] | "\(.actor_type) \(.actor_id)"]}'
+  --jq '{rules: [.rules[].type], bypass: [(.bypass_actors // [])[] | "\(.actor_type) \(.actor_id)"]}'
 ```
 
 **Read both halves back afterwards**, the way the environment call above is read back, and for the same reason: the API accepts either half on its own and only the read shows you which one you got. The last command prints the rule list and the bypass list, and it has to name `creation` among the rules and `RepositoryRole 5` among the bypass actors. With the rule and no bypass the owner's own tags are refused — a refused `scripts/release.sh` on a merged release PR — and with the bypass and no rule nothing about creating a tag has changed.

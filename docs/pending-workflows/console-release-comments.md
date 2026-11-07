@@ -27,8 +27,12 @@ git diff -U0 -- .github/workflows/console-release.yml \
 ```
 
 It must print nothing: every changed line is a comment or a blank one. Then make
-the staged twin the same text — the three commands the file's own header
-documents, in this order — and commit, deleting this file in the same commit:
+the staged twin the same text — `TestDocsConsoleReleaseWorkflowIsStagedAndPinned`
+requires the two to be byte-identical, and a twin that differs from the file that
+runs puts `main` in the state the staging directory exists to avoid, where the
+byte-identity clause is red and `scripts/release-gate.sh` therefore refuses
+every tag, the CLI's included — and commit, deleting this file in the same
+commit:
 
 ```sh
 cp .github/workflows/console-release.yml docs/pending-workflows/console-release.yml
