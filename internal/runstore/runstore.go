@@ -995,13 +995,27 @@ type Record struct {
 	// is every record written before this field existed: the field is
 	// additive, so an old reader sees the record it always saw.
 	OwnerDecisions *OwnerDecisions `json:"owner_decisions,omitempty"`
-	// OwnerRuled is the owner's ruling a follow-up was launched with
-	// (task.Spec.OwnerRuled, fugaro run --owner-ruled): the launcher's own
-	// text, appended to that run's brief verbatim, echoed onto the record so a
-	// reader can see what the run was told after the decisions above. Absent
-	// for every run launched without one, which is every record written before
-	// this field existed.
+	// OwnerRuled is the owner's ruling this run worked from: the one its launch
+	// was given (task.Spec.OwnerRuled, fugaro run --owner-ruled), or, for a
+	// follow-up launched without one, the one the run before it worked from,
+	// which it inherits (internal/runner's workingRuling). The text its brief
+	// works from verbatim, echoed onto the record so a reader can see it beside
+	// the decisions it answers. Absent for every run that worked from none,
+	// which is every record written before this field existed.
 	OwnerRuled string `json:"owner_ruled,omitempty"`
+	// OwnerRuledDecisions is the decisions the ruling above answered: the block
+	// the run before this one left waiting, which the ruling was accepted
+	// against (internal/cli, resolvePR) and which the reviewers are shown under
+	// it, so they know exactly which findings it settles and which they still
+	// report (followup.RulingAddendum). It is recorded beside the ruling and
+	// read back with it, because a later follow-up inherits the pair: without
+	// it a question the owner has settled would be raised and halted on again
+	// run after run, which is the loop the ruling exists to end. Absent for a
+	// run that worked from no ruling, and for one whose ruling answered nothing
+	// a reader may show: the block is bounded on read like OwnerDecisions, and
+	// a ruling with no decisions beside it is text that settles nothing, which
+	// no brief is handed as an answer.
+	OwnerRuledDecisions *OwnerDecisions `json:"owner_ruled_decisions,omitempty"`
 	// Checkpoint is the report a governance halt left (T6.1, D329, G7):
 	// what stopped the run, why it is over and what it would have done
 	// next, written by the runner as the run stops. Absent — never an empty

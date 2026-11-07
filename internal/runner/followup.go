@@ -44,6 +44,12 @@ type followState struct {
 	// (OD1), listed in the review briefs so a reviewer can tell a finding that
 	// ruling settles from one it does not (ownerRuling).
 	prevOwner *runstore.OwnerDecisions
+	// prevRuled and prevRuledDecisions are the ruling the previous run worked
+	// from and the decisions it answered, as that run recorded them: what this
+	// one inherits when its own launch carries no ruling, so a question the
+	// owner has settled stays settled (workingRuling).
+	prevRuled          string
+	prevRuledDecisions *runstore.OwnerDecisions
 	// prevAnswer is the previous follow-up's followup.md, as stored.
 	prevAnswer string
 	// rootTask and diffStat are a fresh session's context.
@@ -237,6 +243,13 @@ func (r *run) prepareFollowUp(ctx context.Context) error {
 	// bounded it before it accepted the ruling this launch carries: the review
 	// briefs list these beside the ruling (ownerRuling).
 	r.follow.prevOwner = prevRec.OwnerDecisions.Bounded()
+	// And what that run itself worked from, with the decisions its ruling
+	// answered: this follow-up inherits the pair when its own launch carries no
+	// ruling, so a question the owner has already settled is not raised and
+	// halted on again (workingRuling). Both are the previous record's own
+	// fields, bounded again on read for the reason above.
+	r.follow.prevRuled = prevRec.OwnerRuled
+	r.follow.prevRuledDecisions = prevRec.OwnerRuledDecisions.Bounded()
 	prevTask, err := prev.ReadTask(ctx)
 	if err != nil {
 		prevTask = nil
@@ -380,7 +393,11 @@ func (r *run) promptData() followup.PromptData {
 		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.diffBase(), StateDir: r.d.StateDir,
 		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: f.restored.Moved,
 		RootTask: f.rootTask, DiffStat: f.diffStat, PreviousAnswer: f.prevAnswer, Nonce: f.nonce, Redact: r.redactor(),
-		OwnerRuled: r.spec.OwnerRuled,
+		// The ruling this run works from, which is the launch's own or the one
+		// it inherits from the run before it (workingRuling): the implement
+		// stage is told the owner's answer either way, or it would set about
+		// changing what the owner settled.
+		OwnerRuled: r.ownerRuling().Text,
 	}
 }
 

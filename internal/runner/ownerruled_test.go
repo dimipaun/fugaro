@@ -68,23 +68,37 @@ func TestFollowUpCarriesTheOwnersRuling(t *testing.T) {
 // this is the prompt each of them is handed; a case that read only the senior
 // call could not tell a ruling added to that brief from one added to the senior
 // loop alone.
-func TestTheOwnersRulingReachesEveryReviewLevel(t *testing.T) {
+// criticalLevelsCfg is followUpYAML with the critical rigor mode and all three
+// review levels on, which is a plan that runs the cheap first line, the senior
+// review and the adversarial review over one pull request.
+func criticalLevelsCfg(t *testing.T) string {
+	t.Helper()
 	cfg := followUpYAML(t, "")
 	cfg = strings.Replace(cfg, "  review_rounds: 2\n",
 		"  review_rounds: 2\n  first_line_review: on\n  first_line_rounds: 1\n  models: { coder: coder-model, reviewer: senior-model }\n", 1)
-	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: critical\nagent:\n", 1)
-	// The first run reviews all three levels too (it is the same plan), and
-	// must push: a follow-up needs a pull request of its own to continue.
-	h := followUpHarness(t, cfg, nil,
-		implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
-	seedWaiting(t, h, runstore.OwnerDecision{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"})
-	h.followUp(t, followID, runID, "Tidy up.")
-	const ruling = "Counsel cleared the MIT text as it stands. Keep the approval flow; product will revisit it next quarter."
-	spec := &task.Spec{Version: 1, RunID: followID, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: "Tidy up.",
-		Branch: "fugaro/" + runID, PR: 1, PreviousRun: runID, OwnerRuled: ruling}
+	return strings.Replace(cfg, "agent:\n", "rigor:\n  default: critical\nagent:\n", 1)
+}
+
+// ruledFollowUp launches follow-up id over previous as `fugaro run --pr N
+// --owner-ruled` does: the task's own text with the owner's ruling beside it.
+func (h *fuHarness) ruledFollowUp(t *testing.T, id, previous, text, ruling string) {
+	t.Helper()
+	h.followUp(t, id, previous, text)
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: text,
+		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, OwnerRuled: ruling}
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestTheOwnersRulingReachesEveryReviewLevel(t *testing.T) {
+	// The first run reviews all three levels too (it is the same plan), and
+	// must push: a follow-up needs a pull request of its own to continue.
+	h := followUpHarness(t, criticalLevelsCfg(t), nil,
+		implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	seedWaiting(t, h, runstore.OwnerDecision{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"})
+	const ruling = "Counsel cleared the MIT text as it stands. Keep the approval flow; product will revisit it next quarter."
+	h.ruledFollowUp(t, followID, runID, "Tidy up.", ruling)
 	rec, err := h.run(t, implement("tidy"), review("ship", 0), review("ship", 0), review("ship", 0))
 	if err != nil {
 		t.Fatalf("the follow-up failed: %v", err)
@@ -112,6 +126,59 @@ func TestTheOwnersRulingReachesEveryReviewLevel(t *testing.T) {
 	}
 }
 
+// TestALaterFollowUpInheritsTheRuling: the ruling is not the launch's alone.
+// A ruled follow-up whose reviewers accept the ruling leaves no decisions of
+// its own — it ships — so nothing on its record would say the owner answered
+// anything, and the follow-up after it, launched with no ruling, would put the
+// same question to its reviewers, have them mark it needs_owner and halt: the
+// waste the ruling exists to end, one run further out. The ruling and the
+// decisions it answered are therefore recorded as a pair and read back by the
+// run that follows (owner.go, workingRuling), whose reviewers see the same
+// block the ruling's own run did.
+func TestALaterFollowUpInheritsTheRuling(t *testing.T) {
+	h := followUpHarness(t, criticalLevelsCfg(t), nil,
+		implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	seedWaiting(t, h, runstore.OwnerDecision{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"})
+	const ruling = "Counsel cleared the MIT text as it stands. Keep the approval flow; product will revisit it next quarter."
+	h.ruledFollowUp(t, followID, runID, "Tidy up.", ruling)
+	rec, err := h.run(t, implement("tidy"), review("ship", 0), review("ship", 0), review("ship", 0))
+	mustReady(t, rec, err)
+	// The reviewers accepted the ruling, so this run left no question of its
+	// own: that is the case the pair on the record is there for.
+	if rec.OwnerDecisions != nil {
+		t.Fatalf("the ruled follow-up left decisions of its own: %+v", rec.OwnerDecisions)
+	}
+	if rec.OwnerRuled != ruling || rec.OwnerRuledDecisions == nil {
+		t.Fatalf("the ruled follow-up recorded ruling %q, decisions %+v; want the pair it worked from",
+			rec.OwnerRuled, rec.OwnerRuledDecisions)
+	}
+	// The follow-up after it is launched with no ruling of its own.
+	h.followUp(t, follow2ID, followID, "More.")
+	rec, err = h.run(t, implement("more"), review("ship", 0), review("ship", 0), review("ship", 0))
+	mustReady(t, rec, err)
+	if rec.OwnerRuled != ruling || rec.OwnerRuledDecisions == nil {
+		t.Fatalf("the later follow-up recorded ruling %q, decisions %+v; want the pair the run before it worked from",
+			rec.OwnerRuled, rec.OwnerRuledDecisions)
+	}
+	// The implement brief works from the inherited ruling too: it is the text
+	// the whole run answers the decisions with, not the reviewer's alone.
+	if !strings.Contains(h.agent.calls[0].Prompt, ruling) {
+		t.Errorf("the later follow-up's implement brief does not carry the inherited ruling:\n%s", h.agent.calls[0].Prompt)
+	}
+	for i, level := range []string{"the first line", "the senior review", "the adversarial review"} {
+		prompt := h.agent.calls[i+1].Prompt
+		if !strings.Contains(prompt, ruling) {
+			t.Errorf("%s's prompt does not carry the inherited ruling verbatim:\n%s", level, prompt)
+		}
+		if !strings.Contains(prompt, "`LICENSE.md`: the licence text needs counsel's clearance") {
+			t.Errorf("%s's prompt does not list the decision the inherited ruling answers:\n%s", level, prompt)
+		}
+		if !strings.Contains(prompt, "<<<fugaro-owner-ruling-") || !strings.Contains(prompt, "<<<end-fugaro-owner-ruling-") {
+			t.Errorf("%s's prompt does not fence the inherited ruling off as the launch's text:\n%s", level, prompt)
+		}
+	}
+}
+
 // TestFollowUpWithoutARulingSaysNothingAboutOne: the section is the ruling's
 // own, and a run launched without one carries no trace of it — an empty
 // heading, like an empty field, would read as an owner who said nothing rather
@@ -128,8 +195,8 @@ func TestFollowUpWithoutARulingSaysNothingAboutOne(t *testing.T) {
 	}
 	for i, c := range h.agent.calls {
 		// The implement brief's ruling section, and the review briefs' addendum:
-		// neither has anything to say when the launch carries no ruling.
-		for _, claim := range []string{"owner has ruled", "This follow-up was launched to answer the decisions"} {
+		// neither has anything to say when the run works from no ruling.
+		for _, claim := range []string{"owner has ruled", "works from the repository owner's ruling"} {
 			if strings.Contains(c.Prompt, claim) {
 				t.Errorf("call %d claims a ruling nobody gave (%q):\n%s", i+1, claim, c.Prompt)
 			}

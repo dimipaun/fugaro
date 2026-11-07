@@ -137,12 +137,14 @@ type Diagnosis struct {
 	// for a run that tolerated nothing, and for every record written before
 	// the field existed.
 	Tolerated *runstore.ToleratedFindings `json:"tolerated,omitempty"`
-	// Ruling is the owner's ruling this run was launched with (OD1,
+	// Ruling is the owner's ruling this run worked from (OD1,
 	// runstore.Record.OwnerRuled, fugaro run --owner-ruled): the answer to
 	// the findings a run on this pull request left, which the brief of this
-	// run carries verbatim. The record's own text, redacted and clipped on
-	// read like every other field of it, and absent for a run launched
-	// without one — which is every run that is not answering a decision.
+	// run carries verbatim — the ruling its own launch was given, or the one
+	// the run before it worked from, which a follow-up launched without one
+	// inherits. The record's own text, redacted and clipped on
+	// read like every other field of it, and absent for a run that worked
+	// from no ruling — every run that is not answering a decision.
 	Ruling string `json:"owner_ruled,omitempty"`
 	// Checkpoint is the report a governance halt left (T6.1, D329, G7): why a
 	// tripwire stopped the run, and what a person deciding whether to continue

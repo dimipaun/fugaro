@@ -469,7 +469,31 @@
         "total": { "type": "integer", "minimum": 0, "description": "How many decisions the review left, so a record whose list was capped still says how many there were. Never less than the length of decisions." }
       }
     },
-    "owner_ruled": { "type": "string", "description": "The owner's ruling a follow-up run was launched with (`fugaro run --pr N --owner-ruled`, task.json's owner_ruled), echoed onto the record so a reader can see what the run was told after the decisions above. It is the launcher's own text, appended to that run's brief verbatim. Absent for every run launched without one, which is every record written before this field existed." },
+    "owner_ruled": { "type": "string", "description": "The owner's ruling this run worked from: the one its launch was given (`fugaro run --pr N --owner-ruled`, task.json's owner_ruled), or, for a follow-up launched without one, the one the run before it worked from, which it inherits so a question the owner has settled is not raised and halted on again. The text its brief works from verbatim, echoed onto the record so a reader can see it beside the decisions it answers. Absent for every run that worked from none, which is every record written before this field existed." },
+    "owner_ruled_decisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisions", "total"],
+      "description": "The decisions the ruling above answered (OD1): the block the run before this one left waiting, which the ruling was accepted against, and which the reviewers are shown under the ruling so they know exactly which findings it settles and which they still report. It is read back with the ruling and inherited with it by the next follow-up. Bounded like owner_decisions: at most 100 decisions, each a path and a sentence of at most 200 runes. Absent for a run that worked from no ruling, and for one whose ruling answered nothing a reader may show, which is every record written before this field existed.",
+      "properties": {
+        "decisions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "description": "One entry per decision the ruling answered, in the reviewer's order. Never empty, like owner_decisions' list.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["summary"],
+            "properties": {
+              "file": { "type": "string", "maxLength": 200, "description": "The path the reviewer read, clipped to 200 runes and redacted by the runner. Absent when it named none." },
+              "summary": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The reviewer's own sentence for the finding, clipped to 200 runes (runstore.MaxOwnerDecisionText) and redacted by the runner: what the ruling answers, and what a later follow-up's reviewer reads to tell a settled finding from one it still reports." }
+            }
+          }
+        },
+        "total": { "type": "integer", "minimum": 0, "description": "How many decisions the ruling answered, so a block whose list was capped still says how many there were. Never less than the length of decisions." }
+      }
+    },
     "review_scope": {
       "type": "object",
       "additionalProperties": false,
