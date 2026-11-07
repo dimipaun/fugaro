@@ -158,6 +158,25 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// Credentials are the installation's named credentials (design
+	// docs/model-crafts/spec.md §1): a name a craft's access speaks and the
+	// type of the provider that serves it, whose secret value this file never
+	// holds. It generalises claude_accounts, which keeps its meaning until
+	// `fugaro update` migrates an installation (reconciliation MC4), and it is
+	// created here or in the published node and nowhere a launcher can write:
+	// a credential is a spending and data-egress grant (F12, D1628), which is
+	// why a repository may select among them and never add one.
+	Credentials []config.Credential `yaml:"credentials,omitempty"`
+	// Pools are named, ordered lists of those credentials with a strategy
+	// (spec §2). They are created where credentials are, and for the same
+	// reason.
+	Pools []config.Pool `yaml:"pools,omitempty"`
+	// Crafts are the credential or pool each craft's calls go out on (spec
+	// §3): the project's own answer, published to the policy node by the same
+	// publish that carries the two blocks above. It is here rather than in the
+	// shared config because a key naming a credential is a way around that
+	// credential's own allow_data_to, exactly as default_claude_account is.
+	Crafts config.Crafts `yaml:"crafts,omitempty"`
 	// DefaultClaudeAccount is the account every stage of a run uses when
 	// nothing more specific does (spec §11.1, D873). It names an account of
 	// claude_accounts, or "default" for the unsuffixed secret, and only this
@@ -1779,6 +1798,21 @@ func (c *Config) validate() error {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	// The installation's credentials and pools, and the crafts that choose
+	// among them (docs/model-crafts/spec.md §1–3). A craft's access is held to
+	// the name rule and not to this file's own definitions, exactly as
+	// fugaro.yaml's is: the layers are merged before an access is resolved, so
+	// whether a name exists is the resolver's answer (MC2) and a second answer
+	// here would be a second rule.
+	for _, p := range config.ValidateCredentials(c.Credentials) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, p := range config.ValidatePools(c.Pools, c.Credentials) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, p := range config.ValidateCrafts(c.Crafts) {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	// The account-choice keys are checked against the REFERENCE rule and not

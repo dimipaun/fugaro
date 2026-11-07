@@ -814,10 +814,18 @@ func levelProblems(path string, r *ReviewLevels) []Problem {
 // whether or not a budget is on (the pin rules are CheckPins).
 func validateAgentModels(a Agent) []Problem {
 	var ps []Problem
-	for _, m := range []struct{ path, val string }{
+	// A craft's model is a model ID wherever it is written, so it is held to
+	// the same shape as agent.model and agent.models.*: the gateway prices and
+	// pins it, and a value that is not an ID is refused here rather than at a
+	// run. The crafts themselves are checked by ValidateCrafts.
+	models := []struct{ path, val string }{
 		{"agent.model", a.Model}, {"agent.models.coder", a.Models.Coder},
 		{"agent.models.reviewer", a.Models.Reviewer}, {"agent.models.background", a.Models.Background},
-	} {
+	}
+	for _, name := range CraftNames {
+		models = append(models, struct{ path, val string }{"agent.crafts." + name + ".model", a.Crafts.Of(name).Model})
+	}
+	for _, m := range models {
 		switch {
 		case len(m.val) > 100:
 			ps = append(ps, Problem{Path: m.path, Message: "must be at most 100 characters"})
@@ -825,7 +833,7 @@ func validateAgentModels(a Agent) []Problem {
 			ps = append(ps, Problem{Path: m.path, Message: "must not contain whitespace"})
 		}
 	}
-	return append(ps, validateAgentTokens(a)...)
+	return append(append(ps, ValidateCrafts(a.Crafts)...), validateAgentTokens(a)...)
 }
 
 // validateAgentTokens checks the token limits, which are policy keys.
