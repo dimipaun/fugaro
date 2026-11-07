@@ -362,6 +362,34 @@ const reviewLevelsSince = "0.16.0"
 // on levels reads.
 const reviewLevelsKnows = "the review levels (review_levels, agent.levels)"
 
+// noneModelSince is the first fugaro release whose runner reads a level's
+// `model: none` as the level's own switch (config.NoneModel) rather than as a
+// model ID: LevelSetting.validate folds the literal into `none: true`, so the
+// level is skipped and the string is never resolved as a model name. Every
+// release that acts on levels knows the keys — one older than
+// reviewLevelsSince drops the whole block in silence, which is the gate beside
+// this one — so between reviewLevelsSince and this release a runner decodes
+// the block and resolves the level on the model `none`: a run whose
+// allowed_models refuses that ID dies at bootstrap, and one with no ceiling
+// runs the level the owner switched off, on a model which is not one. Neither
+// skips the level, which is the silence this gate exists for.
+//
+// Like artifactsSince it carries no shipped flag: refusing every image that
+// predates the release is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same as
+// for every other *Since constant here — a refusal there would name a release
+// nothing can compare it with, and the spelling is the file's own to keep off
+// such an image. It names 0.21.0, the release this work is slotted for, which
+// is not tagged yet: docs/release.md's Before-you-tag list verifies the number
+// against the tag actually cut, the way reviewLevelsSince's bullet records.
+const noneModelSince = "0.21.0"
+
+// noneModelKnows names, for this gate's messages, what the job image's runner
+// has to know: a level whose model is the literal none, which a runner at
+// noneModelSince or later reads as the level's own switch. The message reads
+// "needs a job image whose runner knows <this>".
+const noneModelKnows = "a level's model named none as the level's own switch"
+
 // reviewJobSince is the first fugaro release that deploys and launches the
 // review-only job variant (design docs/cloud-senior-review, CSR7): the second
 // job per (profile, provider, account), with its own service account and no
@@ -1254,11 +1282,9 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // refuses (launchPolicyGates), and inventing a floor off it would refuse a
 // launch that works: that read fails towards asking nothing. The file's own
 // absence does not — it is not a file the run's bootstrap refuses, it is a
-// launch made from outside the repository's checkout (launchFileConfig), and
-// what this launch knows without it is resolved rather than skipped: the mode
-// --mode asked for, the owner's floor, and the project layer the task carries
-// (launchLayerConfig), which is the configuration half no checkout was needed
-// to read.
+// launch made from outside the repository's checkout — and the configuration
+// this reads is launchLevelsConfig's, which resolves over the project layer the
+// task carries when there is no file to read, rather than reading none.
 //
 // The mode is the launcher's approximation of the run's: the ref's file with
 // the flag raised over it, as noteRigorRequest reads it, since the
@@ -1268,18 +1294,6 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // first-line step of its own. CatalogDefault is read as false: it decides
 // level 1's own default alone, which this gate does not judge.
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) (string, error) {
-	if cfg == nil {
-		// No configuration file was read, because the launcher stands
-		// outside the repository's checkout and this run's ref is not in one
-		// either. It is not without configuration all the same: the task
-		// carries the project layer itself, and resolving over that layer
-		// keeps the mode the flag asked for (spec.Rigor), the owner's floor,
-		// and the layer's own defaults — a rigor default of its own, an
-		// agent.levels block — which is the part an empty configuration
-		// would hide, and hidden it is a level a runner older than
-		// reviewLevelsSince drops in silence.
-		cfg = launchLayerConfig(spec)
-	}
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
@@ -1300,6 +1314,26 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
 }
 
+// launchLevelsConfig is the configuration the launch's review-level gates read:
+// the file the run will check out, resolved over the layer that applies to it
+// (launchFileConfig), and — where no file can be read at all, because the
+// launcher stands outside the repository's checkout and this run's ref is not
+// in one either — the project layer the task carries itself (launchLayerConfig).
+//
+// One function for both readers is the point: the levels ask
+// (launchReviewLevelsAsk) and the gate on a level whose model is the literal
+// none (checkNoneModelImage, checkCloneNoneModelImage) judge the same text, and
+// in this state the task's layer is all of it — the layer's own agent.levels
+// block, and a level in it a runner older than noneModelSince resolves as a
+// model ID rather than skipping. A gate reading launchFileConfig alone sees
+// nothing there and runs the level the layer switched off.
+func launchLevelsConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
+	if cfg := launchFileConfig(ctx, env, spec); cfg != nil {
+		return cfg
+	}
+	return launchLayerConfig(spec)
+}
+
 // launchLayerConfig is the configuration a launch from outside the
 // repository's checkout resolves: the project layer the task carries
 // (spec.ProjectLayer, embedProjectLayer), resolved over a fugaro.yaml that
@@ -1312,10 +1346,21 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 // where a layer the run does use and this gate ignored is a level the run
 // drops in silence.
 //
-// A layer that does not parse or does not resolve leaves the empty
-// configuration. embedProjectLayer parsed the layer before storing it, so
-// neither happens for a task this launcher wrote; a layer that will not read
-// back is a run's own problem to refuse, not a skew this gate names.
+// A layer that does not parse leaves the empty configuration: embedProjectLayer
+// parsed the layer before storing it, so that does not happen for a task this
+// launcher wrote, and a layer that will not read back is a run's own problem to
+// refuse, not a skew this gate names.
+//
+// A layer that parses but does not resolve over the anchor is kept all the same,
+// as a configuration carrying the layer alone. The anchor is what fails there,
+// not the layer: it is a stand-in for a file this launcher could not read, it
+// carries no workflow and no profile:, and a layer that names no
+// default_profile of its own has nothing to resolve over it ("workflows: must
+// define at least one workflow, or name a profile with profile:"). The layer is
+// still text the run reads — the file at the ref resolves it once the run has
+// one — so the gates that read it off the text see it (SetsLevelsNoneModel),
+// where an empty configuration reads as a layer that says nothing and runs the
+// level the layer switched off in silence.
 func launchLayerConfig(spec *task.Spec) *config.Config {
 	if spec.ProjectLayer == nil {
 		return &config.Config{}
@@ -1328,7 +1373,7 @@ func launchLayerConfig(spec *task.Spec) *config.Config {
 	if c, _, ps := config.Resolve(anchor, l); len(ps) == 0 {
 		return c
 	}
-	return &config.Config{}
+	return &config.Config{Layer: l}
 }
 
 // launchRecipeForLevels is the recipe launchReviewLevelsAsk judges the levels
@@ -1391,6 +1436,75 @@ func checkCloneReviewLevelsImage(lc *localcfg.Config, spec *task.Spec, subject s
 		return nil
 	}
 	return checkCloneImageSince(lc, spec, reviewLevelsSince, subject, reviewLevelsKnows, reviewLevelsAlt, warn)
+}
+
+// noneModelSources reports, for the launch's noneModelSince gate, whether the
+// configuration the run will read names a level's model none: the repository's
+// fugaro.yaml (fromRepo) or the project layer it resolves over (fromLayer).
+// The configuration is launchLevelsConfig's, so a launch from outside the
+// repository's checkout — no file read at all — is asked of the layer the task
+// carries, which is the same layer that stands in for the levels ask above it.
+// Both are read off the text rather than off the resolved agent.levels, which
+// the fold leaves without the literal (Config.RepoLevelsNoneModelSet,
+// ProjectLayer.SetsLevelsNoneModel).
+//
+// The task's own review_levels is not one of the sources: the launcher writes
+// it, and it writes the level folded into `none: true` (LevelSetting.validate),
+// so no runner ever reads the spelling there.
+func noneModelSources(cfg *config.Config) (fromRepo, fromLayer bool) {
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoLevelsNoneModelSet, cfg.Layer.SetsLevelsNoneModel()
+}
+
+// noneModelSubject names, for the gate's messages, which file names a level's
+// model none, and the way out that file's author has: the other spelling of
+// the same switch in that same file, which every runner that acts on levels
+// reads — a level written `none: true` is skipped by 0.16.0 and later, so
+// rewriting the level is a way out with no image to move. The distinction is
+// rigorSubject's: the layer's literal reaches every repository of the project
+// and only its operator can rewrite it.
+func noneModelSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
+	const (
+		repoAlt  = "write it as none: true in fugaro.yaml"
+		layerAlt = "write it as none: true in the project layer's defaults.agent.levels and publish it again"
+		same     = ": it is the same switch, and every runner that acts on levels reads it, from " + reviewLevelsSince + " on"
+	)
+	switch {
+	case fromRepo && fromLayer:
+		return "fugaro.yaml's agent.levels and the project layer's defaults.agent.levels of " + repo,
+			"write them as none: true in both" + same
+	case fromLayer:
+		return "the project layer's defaults.agent.levels (read for " + repo + ")", layerAlt + same
+	}
+	return "fugaro.yaml's agent.levels of " + repo, repoAlt + same
+}
+
+// checkNoneModelImage refuses a launch whose job image runs a fugaro older
+// than noneModelSince while the configuration the run reads names a level's
+// model none: a runner before that release reads the literal as a model ID, so
+// the level the file switched off is run — or the run dies at bootstrap on an
+// allowed_models refusal — rather than skipped. The judge is the build record's
+// base_ref, as every checkImageSince gate's is.
+func checkNoneModelImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := noneModelSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := noneModelSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, noneModelSince, subject, noneModelKnows, "; or "+alt, warn)
+}
+
+// checkCloneNoneModelImage is checkNoneModelImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneNoneModelImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := noneModelSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := noneModelSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(lc, spec, noneModelSince, subject, noneModelKnows, "; or "+alt, warn)
 }
 
 // reviewJobKnows names, for the gate's messages, what the job image's runner
@@ -1637,8 +1751,10 @@ func rigorLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fr
 
 // launchFileConfig is the configuration a launch reads the file the run will
 // check out for — the config-key image gates (rigorLaunchSources,
-// governanceLaunchSources) and compressionRequested: from cascadeRefConfig,
-// with the launcher's own checkout standing in when the ref cannot be read.
+// governanceLaunchSources), compressionRequested, and launchLevelsConfig,
+// which resolves the task's own layer over it when this answers nil: from
+// cascadeRefConfig, with the launcher's own checkout standing in when the ref
+// cannot be read.
 func launchFileConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
 	cfg := cascadeRefConfig(ctx, env, spec)
 	if cfg == nil {
@@ -1784,6 +1900,117 @@ func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Sp
 	}
 	subject, alt := governanceSubject(spec.Repo, fromRepo, fromLayer)
 	return checkCloneImageSince(env.lc, spec, governanceSince, subject, governanceKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// jobsSince is the first fugaro release whose config reader knows the project
+// layer's jobs: block (R13: the installation's two scheduled jobs and whether
+// each is stopped). The key is the layer's alone — a repository's fugaro.yaml
+// has no jobs: key and refuses an unknown one — and the layer is decoded with
+// KnownFields, so a layer that carries it makes every repository of the project
+// whose job image is older than this release fail at bootstrap on a key its
+// runner does not know, before the agent starts and after the launch was paid
+// for. Like governanceSince the judge is the image that runs the run: the
+// installation's base image for a checkout: clone workflow, the base a
+// workflow's build record was built FROM for a derived one. fugaro update
+// --repo gates it before any cloud effect (gateJobs, beside gateGovernance),
+// a launch gates it the way checkGovernanceImage does (checkJobsImage,
+// checkCloneJobsImage) from a checkout of the repository, where the layer the
+// run will read can be read here at all, and fugaro validate warns
+// (jobsImageWarnings).
+//
+// It names 0.22.0, the release the key ships in ("Sloth",
+// docs/periodic-reviews/implementation-plan.md §P7), which is not tagged yet:
+// the release that tags it holds this number to the tag it cuts, as it does for
+// sharedSince's 0.14.0 and reviewJobSince's 0.19.0. docs/release.md ("Before
+// you tag") has the checklist verify it.
+const jobsSince = "0.22.0"
+
+// jobsLayerSet reports whether the project layer the configuration resolves
+// over writes jobs:, at any value: SetsJobs' question, and its reason — an
+// empty block (`jobs:`) is a line an older runner's decoder refuses just as a
+// populated one is, and Jobs' zero value cannot tell the two apart. The
+// configuration is launchFileConfig's, so the launch gates fire where the
+// sibling gates' do: from a checkout of the repository, where the layer the run
+// will read can be read here at all (checkoutConfig, or the ref's file resolved
+// over the layer the task carries, cascadeRefConfig). Outside one it is nil and
+// nothing is gated, which is the shape governanceSince and rigorSince have:
+// there only fugaro update --repo checks.
+func jobsLayerSet(cfg *config.Config) bool {
+	return cfg != nil && cfg.Layer.SetsJobs()
+}
+
+// jobsSubject names, for the gates' messages, the block and the way out its
+// author has: the layer is the operator's file, and the repositories the block
+// breaks each have the same fix — removing it and publishing the layer again.
+func jobsSubject(repo string) (subject, alt string) {
+	return "the project layer's jobs: block (read for " + repo + ")",
+		"remove the jobs: block from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
+}
+
+// jobsKnows names, for the image gates' messages, the key the job image's
+// runner has to know: the refusal reads "needs a job image whose runner knows
+// <this>", and the block is one key of the layer file whatever it holds.
+const jobsKnows = "the project layer's jobs: block"
+
+// jobsImageWarnings warns, once, that the project layer a configuration
+// resolves over writes jobs:, which needs every job image on jobsSince. It is
+// validate's half of checkJobsImage and a warning rather than a Problem for
+// rigorImageWarnings' reason: the layer is valid, and what has to move is the
+// installation (the base image, or a workflow's derived one), which is why both
+// ways to move an image are named.
+func jobsImageWarnings(c *config.Config) []config.Problem {
+	if !jobsLayerSet(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "jobs", Message: "the project layer's jobs: block needs fugaro " + jobsSince + " or later in the job image that runs it, and in the CLI of everyone who reads this layer: an older runner decodes the layer strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseJobsSkew refuses fugaro update --repo, before any cloud effect, when
+// the project layer the checkout resolves writes jobs: and the installation's
+// base image predates jobsSince — a runner built from it decodes the layer with
+// KnownFields and refuses it at bootstrap. The states of ref are read as
+// refuseRigorSkew reads them: no base image passes, one that is not a release
+// only warns.
+func refuseJobsSkew(repo string, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromLayer {
+		return nil
+	}
+	subject, alt := jobsSubject(repo)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, jobsSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the layer strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, jobsSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkJobsImage and checkCloneJobsImage are the launch's own jobsSince gate,
+// for a workflow whose job image is a derived one and for a checkout: clone
+// workflow respectively: the pair every other per-workflow image gate has
+// (checkImageSince/checkCloneImageSince), with checkGovernanceImage's judge and
+// its one source — the project layer, which is the only file that can write the
+// key. A launch whose configuration writes no jobs: is never gated.
+func checkJobsImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !jobsLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := jobsSubject(spec.Repo)
+	return checkImageSince(ctx, env, slug, spec, kind, jobsSince, subject, jobsKnows, "; or "+alt, warn)
+}
+
+// checkCloneJobsImage is checkJobsImage for a checkout: clone workflow: see
+// checkCloneImageSince.
+func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	if !jobsLayerSet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := jobsSubject(spec.Repo)
+	return checkCloneImageSince(env.lc, spec, jobsSince, subject, jobsKnows, "; or "+alt, warn)
 }
 
 // warnCoreJobImage warns when the build record of slug's workflow reports a

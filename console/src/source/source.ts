@@ -306,6 +306,35 @@ export interface FugaroSource {
    * neither is `coordinatorStatus`, which is the stored view and needs no host
    * credential either. */
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot>
+  /** managedStatus is one managed project's two marks, whether they agree, and
+   * the newest audit record's bounded subset (`managed status --json`, the
+   * managed screens' plan's CM4, D1472 to D1477; `console/docs/json-contract.md`
+   * §6.21). It has **no argument at all**: the whole argv is the spawn row's own
+   * words, so a caller influences nothing about it -- not the project, not the
+   * generation, not the record. The document is closed, and the audit subset is
+   * the command's own bound: **`argv` is never in it** (D1476), which is why no
+   * screen can widen the disclosure by asking differently. The read is the
+   * caller's own database node and the installation's two marks, like
+   * `coordinatorIntents` above and for the same reason: no host credential is
+   * involved, so it succeeds under `FUGARO_CREDENTIALS_SERVICE_URL` where
+   * `coordinatorShow`'s host read refuses. */
+  managedStatus(args: ValidatedArguments): Promise<Snapshot>
+  /** policyShow is the published policy node a project's runs read, and nothing
+   * else (`project policy show --json`, the same plan's CM4, D1480 and D1481).
+   * It has **no argument at all** -- no positional word and no
+   * `--gcp-project`/`--region`, since the two project flags are main-process
+   * state (rule 3). It is this command rather than `project show --json` because
+   * the latter also carries the **installation's** caps, which belong to the
+   * Spend screen (F18, D1481); what this document carries is the project's own
+   * `budget` block, which is the project's policy and not a spend figure -- and
+   * a ceiling all the same, which is why the reduced mode withholds the read
+   * (`REDUCED_VIEW_OPERATIONS`'s `caps`, `src/main/ipc.ts`). The
+   * read is the project's own database node and writes neither it nor the state
+   * file. Its document has no section of the contract -- the neighbouring reads'
+   * are `managed status`'s (§6.21, this plan's CM2) and the graph's (§6.22, the
+   * graph plan's CG9a) -- so a screen that draws this node takes its fields from
+   * the command's own `{project, policy}` shape and from nothing else. */
+  policyShow(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -505,8 +534,10 @@ export const GRAPH_SCOPE_ALL = 'all'
  * for are the ones its own previous answer's `sources[]` carried: the read
  * teaches the surface the scopes that exist, and nothing else is ever spawned.
  *
- * `all` is the one value that is not a source of that array -- it is the
- * selector, and the read a screen opens on -- so it is admitted beside them.
+ * `all` is the one value that is not a source of that array: it is the selector
+ * rather than a source, and the command's own default, so it is admitted beside
+ * them. (A screen opens on the plan scope, not on `all`: the Graph reaches this
+ * read when that scope refuses for want of a checkout.)
  * The refusal is the console's own sentence, like `NO_PLAN_CHECKOUT`'s: no child
  * ran, so there is no CLI sentence to show.
  */
@@ -606,6 +637,8 @@ export function handlersFor(
     'coordinator.status': (args) => source.coordinatorStatus(args),
     'coordinator.show': (args) => source.coordinatorShow(args),
     'coordinator.intents': (args) => source.coordinatorIntents(args),
+    'managed.status': (args) => source.managedStatus(args),
+    'policy.show': (args) => source.policyShow(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,

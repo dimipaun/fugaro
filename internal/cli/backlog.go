@@ -123,7 +123,8 @@ func newBacklogAddCmd() *cobra.Command {
 	return cmd
 }
 
-// runBacklogAdd writes the item and says which file it wrote.
+// runBacklogAdd writes the item, regenerates the index beside it and reports
+// the two files it wrote.
 func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
 	if o.date == "" {
 		o.date = time.Now().UTC().Format("2006-01-02")
@@ -143,14 +144,30 @@ func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
 		filedBy = "unknown"
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: --filed-by looks like an email address, which an item never records; it records unknown")
 	}
+	// The reporter opens with the filing rather than at the door, so the one
+	// refusal above it — a --mode outside the vocabulary — keeps no log
+	// (D1352, D1354). What backlog.Write itself refuses is this filing's own
+	// failure: it is a failed step, and the log under it holds the run whose
+	// output that path names (G8).
+	rep, sink := reporterFor(cmd, "backlog-add", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	step := rep.Step("filed")
 	item, err := backlog.Write(o.dir, backlog.New{
 		Title: o.title, Mode: o.mode, Area: o.area, FiledBy: filedBy, FiledIn: o.filedIn,
 		Date: o.date, Body: backlog.Body(what, o.why, o.done, o.links),
 	})
 	if err != nil {
-		return userErr("%v", err)
+		return failStep(rep, step, userErr("%v", err))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "filed %s\nwrote %s\n", item.Path, filepath.Join(o.dir, backlog.IndexName))
+	step.Done(item.Path)
+	// The index is its own step, though the filing wrote both files: each is
+	// one path a reader comes back for, and the item's step already carries
+	// its own.
+	step = rep.Step("wrote")
+	step.Done(filepath.Join(o.dir, backlog.IndexName))
+	rep.Summary()
 	return nil
 }
 
@@ -231,17 +248,26 @@ func addBacklogFlags(cmd *cobra.Command, o *backlogOptions) {
 	cmd.Flags().StringVar(&o.dir, "dir", backlog.Dir, "the folder the item files live in")
 }
 
-// runBacklogIndex writes the index and says which file it wrote.
+// runBacklogIndex writes the index and reports which file it wrote.
 func runBacklogIndex(cmd *cobra.Command, o *backlogOptions) error {
 	items, err := backlog.Load(o.dir)
 	if err != nil {
 		return userErr("%v", err)
 	}
+	// The reporter opens with the write: reading the folder is what a
+	// refused index failed at, and nothing of this run has happened yet
+	// (D1352, D1354).
+	rep, sink := reporterFor(cmd, "backlog-index", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	step := rep.Step("wrote")
 	path := filepath.Join(o.dir, backlog.IndexName)
 	if err := os.WriteFile(path, []byte(backlog.Render(items)), 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+		return failStep(rep, step, fmt.Errorf("write %s: %w", path, err))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", path)
+	step.Done(path)
+	rep.Summary()
 	return nil
 }
 

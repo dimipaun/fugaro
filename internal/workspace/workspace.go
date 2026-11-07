@@ -174,11 +174,17 @@ func (r *Record) Validate() error {
 			if j == 0 {
 				continue
 			}
+			// The entries are quoted rather than placed (%q and not %s), as the
+			// name above is: a repository is the one string of this record
+			// nothing holds to a grammar — a name here would be a project name,
+			// and this is a host path — so it may carry an escape, and this
+			// sentence reaches a terminal from the CLI's own refusal and from
+			// the migration of a node that carries one.
 			switch prev := m.Repos[j-1]; {
 			case repo == prev:
-				errs = append(errs, fmt.Errorf("members[%d].repos[%d]: %s is listed twice", i, j, repo))
+				errs = append(errs, fmt.Errorf("members[%d].repos[%d]: %q is listed twice", i, j, repo))
 			case repo < prev:
-				errs = append(errs, fmt.Errorf("members[%d].repos[%d]: %s is out of order after %s; the list is sorted", i, j, repo, prev))
+				errs = append(errs, fmt.Errorf("members[%d].repos[%d]: %q is out of order after %q; the list is sorted", i, j, repo, prev))
 			}
 		}
 	}

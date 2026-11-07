@@ -612,6 +612,11 @@ type initRun struct {
 	// config — is written by this struct (writeConfig), from stages that all run
 	// before the policy stage applies.
 	policyStage *policyMigrateStage
+	// workspaceStage is the converge's workspace stage, held for the same reason
+	// and by the same write: the record it publishes names the database this
+	// struct writes into the local config, so a run that first names a backend
+	// gives the stage its database after the stage's read-only pass is over.
+	workspaceStage *workspaceStage
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -1689,6 +1694,7 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	if o.budget > 0 {
 		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
 	}
+	opts.ReportsPaused, opts.CatalogCheckPaused = jobsPaused(lc)
 	spec, err := infra.Installation(lc, opts)
 	if err != nil {
 		return infra.InstallationSpec{}, initErr(err)
@@ -1703,6 +1709,79 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 		}
 	}
 	return spec, nil
+}
+
+// jobsPaused is the project layer's jobs: block (R13) as the installation's
+// options take it: whether each of the project's two scheduled jobs is stopped.
+// A file this run can read gives both values — the ones the layer states, and
+// paused where it states nothing (config.Jobs' own default) — and a file it
+// cannot read gives none at all, which infra.InstallOptions reads as paused.
+//
+// It reads the LOCAL layer file — the one the owner edits and the run's layer
+// stage publishes — because the installation stage runs before that stage and
+// this is the only copy readable without the runs bucket. Silence is paused
+// along every way of having no value: no file, a file this CLI does not read
+// (a symlink, an oversized one), a file that does not parse. An unreadable
+// file is not silently accepted as an answer — it is not an answer at all, and
+// the layer stage refuses it moments later with the message that names it —
+// while the one thing neither direction may do is start a schedule the owner
+// never asked for.
+//
+// The installation's own apply does not stop at that silence: where this run's
+// layer stage will not leave the local file's bytes in place — the file is not
+// there and is seeded from the published object, or it is stale and is
+// re-seeded from it (D854) — the published object is the project's answer, and
+// publishedJobsPaused takes it, because that stage runs after this one.
+func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
+	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
+	if err != nil {
+		return nil, nil
+	}
+	data, err := readLayerFile(path)
+	if err != nil {
+		return nil, nil
+	}
+	l, ps := projectLayerProblems(data, lc)
+	if len(ps) > 0 || l == nil {
+		return nil, nil
+	}
+	reports, catalog := l.ReportsPaused(), l.CatalogCheckPaused()
+	return &reports, &catalog
+}
+
+// publishedJobsPaused completes the installation's jobs: state from the
+// published project layer, for the runs whose layer stage does not leave the
+// local file's own bytes in place: the stage seeds a file that is not there
+// FROM that object, and re-seeds one the object has moved past (D854's stale
+// state), and it runs after the installation stage. Without this, a `fugaro
+// update` on either machine would apply the silence of a file that is not the
+// project's answer (paused) and stop a schedule the published layer has
+// started, until the next update.
+//
+// Which of the two files this run leaves in place is the layer stage's own
+// decision, so it is the stage's own reading that answers it here (layerPlanFor)
+// rather than a second rule that could drift from it. Every other state — the
+// file is published as it stands, or it already is the published layer —
+// settles the question by itself, whatever it says: silence in the file the
+// stage publishes is its answer, and nothing the published object says may
+// overrule it. A bucket that cannot be read, a layer this CLI does not read and
+// a spec that carries no catalog check all leave the spec exactly as
+// installOptions built it: paused, which is also what the module defaults the
+// value to, and the layer stage names the read that failed a moment later.
+func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec) infra.InstallationSpec {
+	if spec.CatalogCheck == nil {
+		return spec
+	}
+	p, err := layerPlanFor(ctx, lc)
+	if err != nil || p.skip != "" || (p.stale == nil && !p.seed) {
+		return spec
+	}
+	l, ps := projectLayerProblems(p.published, lc)
+	if len(ps) > 0 || l == nil {
+		return spec
+	}
+	spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	return spec
 }
 
 // checkManagedStateBucket refuses a managed creation whose installation state
@@ -2337,6 +2416,12 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 // fugaro update --firebase-project runs it twice more, as the first and third of its
 // applies.
 func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (outs infra.InstallationOutputs, stop bool, err error) {
+	// The project's schedules, read before anything of this run is planned or
+	// applied: see publishedJobsPaused, which is the half of the setting the
+	// local layer file cannot answer where this run's layer stage will not keep
+	// its bytes — a file that is not there, or one the published object has
+	// moved past (D854).
+	spec = r.publishedJobsPaused(ctx, lc, spec)
 	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
 		return outs, false, err
 	}
@@ -2910,6 +2995,12 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// its own check, which the loop makes right before it applies.
 	if r.policyStage != nil {
 		r.policyStage.forget()
+	}
+	// The workspace stage's plan is made of the same file, and the same write
+	// gives it the database the config did not name a moment ago: its own
+	// comment says the rest (update_workspace.go).
+	if r.workspaceStage != nil {
+		r.workspaceStage.forget()
 	}
 	if !r.o.planOnly {
 		r.publishSharedConfig(ctx, &next)
@@ -3581,6 +3672,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The project layer's jobs: block is the same kind of break on jobsSince,
+	// in the layer alone: no repository's file can carry the key.
+	if err := r.gateJobs(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// git.author is the same kind of break on gitAuthorSince, in the
 	// repository's own file alone: the key is InRepo, so no layer can carry
 	// it.
@@ -4030,6 +4126,26 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateJobs is fugaro update --repo's gate for jobsSince: refuseJobsSkew, with
+// gateRigor's escapes and for its reason. The key is the project layer's alone
+// — a repository's fugaro.yaml has no jobs: key and refuses an unknown one — so
+// the repository half the other gates carry is absent: what is judged is the
+// layer this repository's configuration resolves over, and the refusal names it.
+//
+// The layer is the one this repository's configuration resolves over — the copy
+// the run will read — and the refusal names it, so the operator is sent to the
+// file and not to their checkout.
+func (r *initRun) gateJobs(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseJobsSkew(repo, cfg.Layer.SetsJobs(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateGitAuthor is fugaro update --repo's gate for gitAuthorSince:

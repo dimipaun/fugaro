@@ -227,6 +227,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'one line of the legend: a word of `GRAPH_LEGEND_WORDS` (`graph/model.ts`\'s own `STATE_WORDS`, which is one exhaustive function over the closed `PlanState` union, less the unreachable `stuck`), or `GRAPH_DEPENDS_ON`/`GRAPH_CRITICAL_PATH` for the two kinds of line -- this file\'s own vocabulary and never a document string',
     },
+    'scopeLabel(scope)': {
+      within: 'scopeControl',
+      reason:
+        '`GRAPH_SCOPE_ALL_LABEL`/`GRAPH_SCOPE_PLAN_LABEL`, this file\'s own names for the two scopes it can read, chosen by `scopeLabel` over the same closed union -- so what an operator reads in the menu is the console\'s word for a read it makes, and never a word a document supplied',
+    },
   },
   'run.ts': {
     UNAVAILABLE_MARK:
@@ -588,7 +593,50 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       within: 'canvas',
       reason: '`viewBoxOf`: four numbers off the picture\'s own bounds and the state\'s zoom, so what the canvas looks at is geometry rather than a style',
     },
-    theme: { within: 'renderGraph', reason: 'a `GraphTheme`, the closed `GRAPH_THEMES` tuple' },
+    theme: 'a `GraphTheme`, the closed `GRAPH_THEMES` tuple, stamped on the root of **both** of this screen\'s drawings: `renderGraph` and the coordinator scope\'s `renderScopeGraph` (CG10) each draw the one `section.graph`, so the tuple is read in two places and a third reading would be the theme arriving from somewhere else',
+    'state.scope': {
+      within: 'scopeControl',
+      reason:
+        '`GraphScope`, the closed two-word union this screen\'s control is built from (`GRAPH_SCOPES`), written as `data-scope` so a drawing says which read it is; the control\'s own `value`s come from the same tuple, and no document names a scope -- the CLI\'s source vocabulary belongs to the wire (`graph.ts`\'s own header)',
+    },
+    scope: {
+      within: 'scopeControl',
+      reason:
+        'one entry of `GRAPH_SCOPES`, this file\'s own scope tuple, written as an `<option>`\'s `value`: what the entry is, and never a string a document chose, so the value the entry reads back through `scopeOf` is one it drew itself',
+    },
+    "source.source.ok ? source.source.text : ''": {
+      within: 'scopeSource',
+      reason:
+        'the sanitizer\'s own answer for a source\'s name (`graph/model.ts` builds every field with `sanitizeText` and its own wire path), or the empty string where it refused -- a hook a rule may key on, and never a second spelling of a document\'s word; what a reader sees beside it is the same `Sanitized` value through `drawInto`',
+    },
+    "source.state.ok ? source.state.text : ''": {
+      within: 'scopeSource',
+      reason:
+        'the same value on `data-state`: a source\'s own state word (`up`, `down`, `stale`, `unreadable` as the document spelled them, through the `label` class) or the empty string, with the word drawn as text beside it -- H10\'s "no state is a colour alone" is why the text is there and this attribute is only the hook',
+    },
+    'release.release': {
+      within: 'scopeRelease',
+      reason:
+        'the release a coordinator node names, which `graph/model.ts` holds as the group\'s **key** (`ScopeRelease.release`) and which is written as `data-release` and never drawn -- the heading beside it is the `Sanitized` version the document carried, or this console\'s own words for a node that names none',
+    },
+    'node.key': {
+      within: 'scopeNode',
+      reason:
+        'the document\'s source-qualified key (`<source>:<id>`, `schema.ts` §6.22), the value the model groups and dedupes by and never spells -- written as `data-key` and never drawn, exactly as a plan card\'s layout key is',
+    },
+    "node.source.ok ? node.source.text : ''": {
+      within: 'scopeNode',
+      reason: 'the sanitizer\'s own answer for the source a node came from, or the empty string where it refused: the same hook `scopeSource` carries, on the node row',
+    },
+    "node.state.ok ? node.state.text : ''": {
+      within: 'scopeNode',
+      reason: 'the same value on the node\'s `data-state`, with the word drawn as text beside it for the reason the source row\'s is',
+    },
+    'state.text': {
+      within: 'stateWord',
+      reason:
+        '`stateWord` is `markWord` with the other door into a text slot: a **document\'s** word is a `Sanitized` value, and this is the sanitizer\'s own answer or -- because the write is behind `state.ok` -- no attribute at all. A refused word is deliberately unmarked: a `data-word` holding the console\'s `n/a` would be a state the stylesheet painted as if the source had said it',
+    },
   },
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },

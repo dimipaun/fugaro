@@ -2679,6 +2679,7 @@ func TestSchemasReviewLevelsMatchDecoder(t *testing.T) {
 		},
 		{"no block", "", true},
 		{"a level that is off", "agent:\n  levels:\n    l3: { none: true }\n", true},
+		{"a level skipped by its model name", "agent:\n  levels:\n    l3: { model: none }\n", true},
 		{"a level that is off beside a round count", "agent:\n  levels:\n    l3: { none: true }\n  adversarial_rounds: 5\n", true},
 		{"a level that is not a mapping", "agent:\n  levels:\n    l1: claude-haiku-4-5\n", false},
 		{"a fourth level", "agent:\n  levels:\n    l4: { model: claude-opus-5-5 }\n", false},
@@ -2725,7 +2726,9 @@ func TestSchemasReviewLevelsMatchDecoder(t *testing.T) {
 	// The schema is the looser side for `none: true` beside another key, which
 	// config.ReviewLevels.Validate refuses at both paths — a level that is off
 	// has no settings — and which $defs.level says in its own description that
-	// it cannot express.
+	// it cannot express. `model: none` is the same switch written the other
+	// way, and the same asymmetry holds for it: the schema reads `model` as any
+	// model ID, and the decoder refuses the block.
 	for _, tc := range []struct {
 		name, text string
 		sch        *jsonschema.Schema
@@ -2733,6 +2736,8 @@ func TestSchemasReviewLevelsMatchDecoder(t *testing.T) {
 	}{
 		{"repo", repoHead + "agent:\n  levels:\n    l2: { none: true, model: claude-opus-5-5 }\n", repoSchema, repoProblems},
 		{"layer", head + "defaults:\n  agent:\n    levels:\n      l2: { none: true, model: claude-opus-5-5 }\n", layerSchema, layerProblems},
+		{"repo, model: none beside another key", repoHead + "agent:\n  levels:\n    l2: { model: none, effort: high }\n", repoSchema, repoProblems},
+		{"layer, model: none beside another key", head + "defaults:\n  agent:\n    levels:\n      l2: { model: none, effort: high }\n", layerSchema, layerProblems},
 	} {
 		t.Run("schema looser/"+tc.name, func(t *testing.T) {
 			if ps := tc.decode(tc.text); len(ps) == 0 {
