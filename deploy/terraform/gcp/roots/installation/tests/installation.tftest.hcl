@@ -2614,16 +2614,16 @@ run "credentials_service_on" {
   # below, which names none, is where the entry carries the installation's own
   # verifier account alone (CSR14 — the entry is rendered in every state of the
   # list, and an absent member is the state the account is the default in).
-  # Three of the ten are rendered only
-  # from what this file's own variables name: the verifier list (C3.9g1) and,
-  # since BB4, the read mint's admitted people — the operators among the
-  # installation's user: members, as the bare addresses a Google ID token's
-  # email claim carries, which is what the service verifies them by — and the
-  # review class's own set, below. What the
-  # service does with a value (a database URL that is not the Firebase
-  # project's, an audience that is not a URL, a job table that binds nothing,
-  # a verifier list or a person list that is not a list of addresses) is
-  # refused by the process itself, by name, and is C1.14's tests.
+  # Three of the ten are rendered only from what this file's own variables
+  # name: the verifier list (C3.9g1) and, since BB4, the read mint's admitted
+  # people — the operators among the installation's user: members, as the bare
+  # addresses a Google ID token's email claim carries, which is what the
+  # service verifies them by — and, since this change, the review class's own
+  # set, which the paragraph below is about. What the service does with a value
+  # (a database URL that is not the Firebase project's, an audience that is not
+  # a URL, a job table that binds nothing, a verifier list or a person list
+  # that is not a list of addresses) is refused by the process itself, by name,
+  # and is C1.14's tests.
   #
   # This run also names two review job accounts, so the EIGHTH name is
   # rendered: the review class's admitted set, which the class is dead without
