@@ -19,5 +19,10 @@ import (
 // says what that half does instead.
 func ownedByUser(fi fs.FileInfo) bool {
 	st, ok := fi.Sys().(*syscall.Stat_t)
-	return ok && int(st.Uid) == os.Geteuid()
+	return ok && int(st.Uid) == euid()
 }
+
+// euid is os.Geteuid as a variable, so the ownership check is testable
+// without a second account — the same shape internal/report's log directory
+// check uses.
+var euid = os.Geteuid
