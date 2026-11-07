@@ -35,7 +35,8 @@
           "step": {
             "type": "string",
             "minLength": 1,
-            "description": "The step's name: one of internal/initflow's stage names, or `catalog-build`, the one step that is not a stage — the billable Cloud Build of a catalog image, which `fugaro update` never runs (D1577). The order the steps run in is not this array's: it is internal/initflow's own (Names, Needs), computed when the document is read."
+            "description": "The step's name: one of internal/initflow's stage names, or `catalog-build`, the one step that is not a stage — the billable Cloud Build of a catalog image, which `fugaro update` never runs (D1577). The order the steps run in is not this array's: it is internal/initflow's own (Names, Needs), computed when the document is read. It is deliberately not an enum: the vocabulary is initflow's, and a copy of it here would be the second registry of stages D1561 rules out — a stage renamed there would leave this list refusing a step the binary can run.",
+            "$comment": "apply.CatalogBuild in internal/apply/steps.go, and initflow.Names in internal/initflow/stage.go."
           },
           "project": {
             "type": "string",
