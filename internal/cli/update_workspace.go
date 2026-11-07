@@ -131,6 +131,26 @@ func (e *workspacePublishNotOurs) Error() string { return e.reason }
 // backend is a state `fugaro update` must not stop on.
 const workspaceNoDBReason = "the project's config names no Firebase budget backend, so there is no database to publish the workspace record in"
 
+// workspaceNoMemberReason is the skip for a config that declares a workspace and
+// lists no member in it. The state is one the owner's own commands reach —
+// `fugaro workspace cap set` writes the cap alone on a project that has no
+// table, and `fugaro workspace member rm` of the last member leaves the table
+// empty — so it is a config this program must be able to read, and the sentence
+// names the local edit that fixes it rather than leaving the owner to work it
+// out from a node that was not written.
+//
+// It is a skip and never an error, and that is the HARD RULE and not politeness:
+// a Check that answers an error stops the run (initflow's loop marks the stage
+// and blocks every stage after it), so a cap-only config would leave the owner
+// with a `fugaro update` that fails after `brew upgrade` and a release whose
+// later stages — the layer, the checkout, and everything the run registers after
+// this one — never ran. Nothing is published either way: no member is a record
+// that admits nobody.
+func workspaceNoMemberReason(lc *localcfg.Config) string {
+	return fmt.Sprintf("the workspace %s declares no member, and a record that lists none is a workspace that admits nobody: nothing is published; declare the projects the workspace groups with 'fugaro workspace member add %s <project>' in this project's config, then run %s",
+		lc.Name, lc.Name, selfCommand()+" update")
+}
+
 // workspaceRecordOf builds the record this installation publishes. It answers
 // nil for a config that is not a workspace's own — one that declares no member
 // table and no cap, which is every member's config and every project in no
@@ -144,11 +164,15 @@ const workspaceNoDBReason = "the project's config names no Firebase budget backe
 // published is sorted, which is what makes two spellings of one member list one
 // node rather than two documents that compare unequal.
 //
-// A record that lists no member is refused, and that is W0's own note made a
-// refusal: a published node listing none is a workspace that admits nobody, and
-// it is published into a database the workspace's own service rolls up and
-// admits against — so the state is spelled out to the owner with the local edit
-// that fixes it, rather than written and discovered from the other side.
+// A record that lists no member is not published, and that is W0's own note: a
+// published node listing none is a workspace that admits nobody, and it is
+// published into a database the workspace's own service rolls up and admits
+// against — so the state is spelled out to the owner with the local edit that
+// fixes it, rather than written and discovered from the other side. It is the
+// skip workspaceNoMemberReason gives and not an error of this function's: the
+// state is this config's own file, reachable from `fugaro workspace cap set` and
+// from `fugaro workspace member rm` of the last member, and a stage of `fugaro
+// update` that failed the run on it would leave every stage after it blocked.
 func workspaceRecordOf(lc *localcfg.Config) (*workspace.Record, error) {
 	if lc == nil || (lc.WorkspaceMembers == nil && lc.WorkspaceCap == nil) {
 		return nil, nil
@@ -168,8 +192,7 @@ func workspaceRecordOf(lc *localcfg.Config) (*workspace.Record, error) {
 		r.Cap = workspace.Cap{Monthly: monthly, Set: true}
 	}
 	if len(r.Members) == 0 {
-		return nil, userErr("the workspace %s declares no member, and a record that lists none is a workspace that admits nobody: nothing is published; declare the projects the workspace groups with 'fugaro workspace member add %s <project>' in this project's config, then run %s",
-			lc.Name, lc.Name, selfCommand()+" update")
+		return nil, &workspacePublishNotOurs{reason: workspaceNoMemberReason(lc)}
 	}
 	if err := r.Validate(); err != nil {
 		return nil, userErr("the workspace record this installation declares could not be published: %v", err)
@@ -191,8 +214,15 @@ func readWorkspaceNode(ctx context.Context, db *rtdb.Client, lc *localcfg.Config
 }
 
 // workspaceConfigState is the config's own half of the read: the record this
-// installation declares (nil for one that publishes none), and the skip for one
-// that declares a record and names no database to publish it in.
+// installation declares (nil for one that publishes none), and the skips the
+// config alone decides — a record that lists no member (workspaceNoMemberReason)
+// and a record with no database named to publish it in (workspaceNoDBReason).
+// Both are skips and not errors, so neither can stop the run.
+//
+// The record's own state is asked FIRST and the database second, which is the
+// order the owner's remedy is in: a member to declare is an edit of this file,
+// while the database a run with --firebase-project is about to name is one this
+// same run writes.
 //
 // It is a function of its own because the stage asks it EVERY time and caches
 // only what is below it (workspaceStage.plan): the run writes this file under
@@ -211,28 +241,11 @@ func workspaceConfigState(lc *localcfg.Config) (*workspace.Record, error) {
 	return rec, nil
 }
 
-// workspacePublicationFor reads the state and works out what this run would
-// write. A nil publication with a nil error is a config that publishes no
-// workspace record at all, which is a skip and not a failure.
-//
-// The order is the policy stage's, and it is the order that matters: the record
-// is built from the config FIRST (so a workspace with no member is refused
-// before any database is opened), then the ownership gate, then the read. A
-// stage that read the node first would reach into a database the installation
-// never adopted just to find out it was not allowed to write there.
-func workspacePublicationFor(ctx context.Context, lc *localcfg.Config) (*workspacePublication, error) {
-	rec, err := workspaceConfigState(lc)
-	if err != nil || rec == nil {
-		return nil, err
-	}
-	return workspacePublicationRead(ctx, lc, rec)
-}
-
-// workspacePublicationRead is workspacePublicationFor past the config's own
-// answers: the database, the ownership gate and the node. This is the half the
-// stage caches, because it is the half that reaches the cloud, and the half a
-// re-pointed or newly named backend invalidates whole — which is what forget is
-// for.
+// workspacePublicationRead is the read past the config's own answers
+// (workspaceConfigState): the database, the ownership gate and the node. This is
+// the half the stage caches, because it is the half that reaches the cloud, and
+// the half a re-pointed or newly named backend invalidates whole — which is what
+// forget is for.
 func workspacePublicationRead(ctx context.Context, lc *localcfg.Config, rec *workspace.Record) (*workspacePublication, error) {
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {

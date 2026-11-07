@@ -428,24 +428,94 @@ func TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace(t *testing.
 	})
 }
 
-// TestUpdateRefusesToPublishAWorkspaceWithNoMembers: a member is in the
-// workspace only when the table lists it, so a record that lists none is a
-// workspace that admits nobody, and it is refused here rather than published
-// (W0's own note: this is the state W2's publish refuses).
-func TestUpdateRefusesToPublishAWorkspaceWithNoMembers(t *testing.T) {
+// TestUpdateSkipsAPublishWithNoMembers: a member is in the workspace only when
+// the table lists it, so a record that lists none is a workspace that admits
+// nobody — and it is SKIPPED here rather than published, and equally rather than
+// refused. The state is this config's own and one the owner's commands reach
+// (`fugaro workspace cap set` writes the cap alone on a project with no table,
+// `fugaro workspace member rm` of the last member empties it), so a stage that
+// answered an error would stop the whole run on a config this program reads:
+// initflow's loop marks the stage and blocks every stage after it. The skip
+// names the local edit that fixes it, and nothing is written.
+func TestUpdateSkipsAPublishWithNoMembers(t *testing.T) {
 	h := newWSUpdateHome(t, "workspace_members: {}\n"+wsOwnerCap)
 	r := newWSUpdateRig(t, h)
-	for _, yes := range []bool{true, false} {
-		_, out, err := r.apply(t, yes)
-		if err == nil {
-			t.Fatalf("a workspace with no members was published (yes=%v):\n%s", yes, out)
+	st := r.check(t)
+	if st.State != initflow.Skipped {
+		t.Errorf("check = %v (%s), want skipped: a record that lists no member is nothing this run publishes", st.State, st.Detail)
+	}
+	for _, want := range []string{"declares no member", "fugaro workspace member add"} {
+		if !strings.Contains(st.Detail, want) {
+			t.Errorf("the skip does not say %q, so the owner is not told how to fix it: %s", want, st.Detail)
 		}
-		if !strings.Contains(err.Error(), "no member") {
-			t.Errorf("the refusal is %q, and it does not say that the workspace declares no member", err)
+	}
+	for _, yes := range []bool{true, false} {
+		oc, out, err := r.apply(t, yes)
+		if err != nil {
+			t.Fatalf("a workspace with no members failed the stage (yes=%v): %v\n%s", yes, err, out)
+		}
+		if oc.Changed {
+			t.Errorf("a skipped publish reports a change (yes=%v): %s", yes, oc.Detail)
 		}
 	}
 	if h.project(t, "workspace-alpha").db.Value(projectpolicy.PathWorkspaces()) != nil {
-		t.Error("a refused publish wrote into the database")
+		t.Error("a skipped publish wrote into the database")
+	}
+}
+
+// TestUpdateWithACapAndNoMemberRunsOn is the same state through the WHOLE
+// command, which is where the defect was: `fugaro workspace cap set` on a
+// project that declares no member — or `workspace member rm` of the last one —
+// leaves a config with workspace_cap and no table, and the owner's `fugaro
+// update` after `brew upgrade` has to converge the rest of the installation all
+// the same. The stage's Check answered a userError, the loop stopped the run
+// there, and the layer and the checkout — every stage this door registers after
+// this one — were left Blocked: the release's later work never ran, on a config
+// the release itself reads.
+//
+// What the run answers instead: this one stage skipped, in the sentence that
+// names the local edit, everything after it reached, and the exit code 0.
+func TestUpdateWithACapAndNoMemberRunsOn(t *testing.T) {
+	for _, k := range agentMarkers {
+		t.Setenv(k, "")
+	}
+	r, db := updateBudgetRig(t)
+	r.appendConfig(t, wsOwnerCap)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	var res convergeJSON
+	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
+		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
+	}
+	var blocked []string
+	for _, s := range res.Stages {
+		if s.State == "blocked" {
+			blocked = append(blocked, s.Name)
+		}
+	}
+	if err != nil {
+		t.Fatalf("a config with a cap and no member failed the run, and %d stage(s) after this one are blocked (%v: %s)\n%s\n%s",
+			len(blocked), err, strings.Join(blocked, ", "), out, errOut)
+	}
+	if got := res.state(initflow.Workspace); got != "skipped" {
+		t.Errorf("the workspace stage is %q, want skipped: a record listing no member is not this run's to publish\n%s", got, out)
+	}
+	if d := res.stageDetail(t, initflow.Workspace); !strings.Contains(d, "declares no member") {
+		t.Errorf("the stage does not say what the config states: %q", d)
+	}
+	// The stages after it, and the reason this is the HARD RULE's test: an error
+	// here blocks every one of them — the loop stops the run and marks what it
+	// did not reach — and the release's later work never happens.
+	for _, name := range []string{initflow.Layer, initflow.Checkout} {
+		if got := res.state(name); got == "blocked" || got == "" {
+			t.Errorf("the %s stage is %q, want a stage this run reached and did not block:\n%s", name, got, out)
+		}
+	}
+	if len(blocked) > 0 {
+		t.Errorf("the run left %s blocked, so the release's later work never happens:\n%s", strings.Join(blocked, ", "), out)
+	}
+	if v := db.Value(projectpolicy.PathWorkspaces()); v != nil {
+		t.Errorf("the run published a record for a workspace with no member: %v", v)
 	}
 }
 
@@ -483,10 +553,10 @@ func TestUpdateNamesTheOneCommandAndNoOther(t *testing.T) {
 	_, out, err = r.apply(t, false)
 	collect("apply", err, out)
 
-	// A workspace with no members: the refusal.
+	// A workspace with no members: the skip, whose sentence names the local
+	// edit and the one command.
 	h2 := newWSUpdateHome(t, "workspace_members: {}\n"+wsOwnerCap)
-	_, _, err = newWSUpdateRig(t, h2).apply(t, true)
-	collect("no members", err, "")
+	collect("no members", nil, newWSUpdateRig(t, h2).check(t).Detail)
 
 	// A project that declares no workspace: the skip.
 	h3 := newWSUpdateHome(t, "")
