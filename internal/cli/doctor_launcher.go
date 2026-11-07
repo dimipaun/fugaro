@@ -13,7 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// doctorMaxJobPages is the most pages the launcher-jobs check follows while
+// doctorMaxJobPages is the most pages a check follows while
 // listing a location's Cloud Run jobs: at the 100 a page it asks for, room for
 // 20,000 jobs, which is far past any installation's job set (one per
 // (profile, provider, account) plus one per per-repository workflow). It is a
@@ -22,6 +22,59 @@ import (
 // whatever the server does (internal/managed's inventoryMaxPages is the same
 // guard on its own listing).
 const doctorMaxJobPages = 200
+
+// doctorJobsParent is the Cloud Run parent every job of this installation lives
+// under: both checks that walk the location's jobs (the launcher reach and the
+// names a run drops) build it the same way.
+func doctorJobsParent(lc *localcfg.Config) string {
+	return fmt.Sprintf("projects/%s/locations/%s", lc.GCPProject, lc.Region)
+}
+
+// doctorJobNames lists the Cloud Run jobs of parent, by resource name, for the
+// checks that then read each job: the launcher policies doctor compares against
+// its launcher list, and the container env the report of what a run drops is
+// made of. One listing per check, each with its own walk, so neither check
+// depends on the other having run.
+//
+// A walk past doctorMaxJobPages, or one the server answers with a token it has
+// already given, is an error and never a shorter list: the caller's own failure
+// message is what a reader sees, and a listing cut short would read as jobs that
+// are not there.
+func doctorJobNames(ctx context.Context, svc *runapi.Service, parent string) ([]string, error) {
+	var jobs []string
+	seen := map[string]bool{}
+	page := ""
+	for pages := 1; ; pages++ {
+		resp, err := svc.Projects.Locations.Jobs.List(parent).PageSize(100).PageToken(page).Context(ctx).Do()
+		if err != nil {
+			return nil, err
+		}
+		for _, j := range resp.Jobs {
+			if j.Name == "" {
+				continue
+			}
+			jobs = append(jobs, j.Name)
+		}
+		next := resp.NextPageToken
+		if next == "" {
+			return jobs, nil
+		}
+		// The SDK follows whatever next-page token the server answers with
+		// and never notices one it has already followed, so a server that
+		// repeats a token would have doctor walk this listing forever -- the
+		// same two guards internal/managed's inventory read carries, for the
+		// same reason. The repeat guard is what names the real cause and
+		// keeps a listing of a few pages from being walked to the bound.
+		if seen[next] {
+			return nil, fmt.Errorf("the server repeated page token %q after %d pages of the location's jobs", oneLineCLI(next), pages)
+		}
+		if pages >= doctorMaxJobPages {
+			return nil, fmt.Errorf("the listing of %s's jobs runs past %d pages", parent, doctorMaxJobPages)
+		}
+		seen[next] = true
+		page = next
+	}
+}
 
 // doctorLauncherReach is the launcher-jobs check (plan task 3.5 step 1): the
 // grant count doctor sees on the project's Cloud Run jobs, and the jobs a
@@ -67,83 +120,53 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 		return unchecked(err)
 	}
 	launchers := launcherMembers(lc.Terraform.Launchers, lc.Terraform.Operators)
-	parent := fmt.Sprintf("projects/%s/locations/%s", lc.GCPProject, lc.Region)
+	jobs, err := doctorJobNames(ctx, svc, doctorJobsParent(lc))
+	if err != nil {
+		return unchecked(err)
+	}
 	var (
-		jobs      []string // every job in the location, by name
-		grants    int      // (job, launcher) bindings
+		grants    int // (job, launcher) bindings
 		startable []string
 		unread    []string
 		public    []string // jobs a public member can start
 		withheld  int      // jobs whose policy the caller may not read
 		selfCan   []string // of those, the jobs the caller can start
 	)
-	seen := map[string]bool{}
-	page := ""
-	for pages := 1; ; pages++ {
-		resp, err := svc.Projects.Locations.Jobs.List(parent).PageSize(100).PageToken(page).Context(ctx).Do()
+	for _, job := range jobs {
+		p, err := svc.Projects.Locations.Jobs.GetIamPolicy(job).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
+		if err != nil && isAccessDenied(err) {
+			// A plain launcher's doctor: the fugaroLauncher role lists
+			// jobs and does not read their policies. What the caller
+			// can still learn is its own reach, as the bucket check
+			// falls back to TestIamPermissions — both of fugaro run's
+			// permissions, since a launch carries overrides.
+			r, terr := svc.Projects.Locations.Jobs.TestIamPermissions(job,
+				&runapi.GoogleIamV1TestIamPermissionsRequest{Permissions: launchPermissions}).Context(ctx).Do()
+			if terr != nil {
+				unread = append(unread, shortJobName(job))
+				continue
+			}
+			withheld++
+			if r != nil && len(r.Permissions) == len(launchPermissions) {
+				selfCan = append(selfCan, shortJobName(job))
+			}
+			continue
+		}
 		if err != nil {
-			return unchecked(err)
+			// One job's policy unreadable: the job is named in a warning
+			// below rather than silently counted as a job no launcher can
+			// start, which is what an unreadable policy would look like.
+			unread = append(unread, shortJobName(job))
+			continue
 		}
-		for _, j := range resp.Jobs {
-			if j.Name == "" {
-				continue
-			}
-			jobs = append(jobs, j.Name)
-			p, err := svc.Projects.Locations.Jobs.GetIamPolicy(j.Name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
-			if err != nil && isAccessDenied(err) {
-				// A plain launcher's doctor: the fugaroLauncher role lists
-				// jobs and does not read their policies. What the caller
-				// can still learn is its own reach, as the bucket check
-				// falls back to TestIamPermissions — both of fugaro run's
-				// permissions, since a launch carries overrides.
-				r, terr := svc.Projects.Locations.Jobs.TestIamPermissions(j.Name,
-					&runapi.GoogleIamV1TestIamPermissionsRequest{Permissions: launchPermissions}).Context(ctx).Do()
-				if terr != nil {
-					unread = append(unread, shortJobName(j.Name))
-					continue
-				}
-				withheld++
-				if r != nil && len(r.Permissions) == len(launchPermissions) {
-					selfCan = append(selfCan, shortJobName(j.Name))
-				}
-				continue
-			}
-			if err != nil {
-				// One job's policy unreadable: the job is named in a warning
-				// below rather than silently counted as a job no launcher can
-				// start, which is what an unreadable policy would look like.
-				unread = append(unread, shortJobName(j.Name))
-				continue
-			}
-			n, can := launcherGrantsOn(p, launchers, lc.GCPProject)
-			grants += n
-			if can {
-				startable = append(startable, shortJobName(j.Name))
-			}
-			if publicCanStart(p, lc.GCPProject) {
-				public = append(public, shortJobName(j.Name))
-			}
+		n, can := launcherGrantsOn(p, launchers, lc.GCPProject)
+		grants += n
+		if can {
+			startable = append(startable, shortJobName(job))
 		}
-		next := resp.NextPageToken
-		if next == "" {
-			break
+		if publicCanStart(p, lc.GCPProject) {
+			public = append(public, shortJobName(job))
 		}
-		// The SDK follows whatever next-page token the server answers with
-		// and never notices one it has already followed, so a server that
-		// repeats a token would have doctor walk this listing forever -- the
-		// same two guards internal/managed's inventory read carries, for the
-		// same reason. A walk past either bound is a read that failed, and
-		// this check has one answer for a failed read (the warning above),
-		// never a shorter list of jobs: a listing cut short would read as
-		// jobs a launcher cannot start.
-		if seen[next] {
-			return unchecked(fmt.Errorf("the server repeated page token %q after %d pages of the location's jobs", oneLineCLI(next), pages))
-		}
-		if pages >= doctorMaxJobPages {
-			return unchecked(fmt.Errorf("the listing of %s's jobs runs past %d pages", parent, doctorMaxJobPages))
-		}
-		seen[next] = true
-		page = next
 	}
 	slices.Sort(startable)
 	slices.Sort(selfCan)
