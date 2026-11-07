@@ -355,9 +355,9 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 // plan full of deletes must not be answered with the owner's command when the
 // error says the gate reached no verdict. gateRefused is where the two
 // questions meet, and this is the pin on their order. The verdict is the
-// end-to-end tests' own in all three arms — the guard's refusal alone, which
-// the command is offered for, and the same removal beside a refusal no list
-// reaches, which it is not.
+// end-to-end tests' own in every arm that carries one — the guard's refusal
+// alone, which the command is offered for, and the same removal beside a
+// refusal no list reaches, which it is not.
 func TestGateRefusedAsksTheDeleteQuestionOnlyOfARefusal(t *testing.T) {
 	doc := []byte(`{"resource_changes":[{"address":"module.installation.google_storage_bucket.uploads",` +
 		`"type":"google_storage_bucket","change":{"actions":["delete"],"before":{"id":"b","name":"b","project":"p"}}}]}`)
