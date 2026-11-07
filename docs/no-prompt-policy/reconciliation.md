@@ -323,7 +323,13 @@ the meta repo's own design (out of this plan).
   prices need no IAM grant — Google documents "You don't need any specific IAM permissions" — so no `iam.tf` edit
   and **no new `grantRules` row**; the only installation change is enabling `cloudbilling.googleapis.com` in
   `apis.tf`; and contract prices are **not reachable from a project** (their roles' lowest grant level is the billing
-  account), which is why the estimator uses the list price, an upper bound, and never wants them. Two facts the
+  account), which is why the estimator uses the list price, an upper bound, and never wants them. The one way that
+  "no grant" could have broken is the quota project: the header `X-Goog-User-Project` is sent whenever a client names
+  one, whatever the credential, and the project it names must be one the caller may use — so the lookup names the
+  installation project **only on the user path** (where the person already holds `serviceusage.serviceUsageConsumer`)
+  and passes none for a service account, which then sends no header at all. A row for the catalog check account was
+  considered and rejected: that principal kind is the one `cover.go`'s `grantRules` accepts nothing for, so the grant
+  would reach the owner as a question from `fugaro update`. Two facts the
   spike could not verify without a credential remain, and are its one gate before T8 starts: whether an OAuth
   caller with no billing role reads public prices (one `curl`), and the Cloud Build machine-minute SKUs and their
   machine-type→SKU→region mapping (two `curl`s).

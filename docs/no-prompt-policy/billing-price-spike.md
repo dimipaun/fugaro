@@ -20,7 +20,7 @@ grant is needed"*).
 | --- | --- |
 | Which API | `cloudbilling.googleapis.com`, the **Cloud Billing Catalog API**: `services.list` then `services.skus.list` (GA, `v1`), whose `Sku.pricingInfo` carries the public list-price timeline. The newer **Google Cloud Pricing API** (`v2beta/services`, `v2beta/skus`, `v1beta/skus/<id>/price`) is **Preview** and does the same for public data. |
 | Which role | **None.** Google documents *"You don't need any specific IAM permissions to make this API call"* for the public services and SKUs. |
-| Which grant to write in `iam.tf` | **None.** Not a new `grantRules` row either. The only installation change is enabling the API (§3). |
+| Which grant to write in `iam.tf` | **None.** Not a new `grantRules` row either. The only installation change is enabling the API (§3) — and that holds for **both** credential kinds, because the rule for the quota project depends on which one is calling (§1.2). |
 | Which credential | The launching identity's own credentials are enough in principle; the documented examples use an **API key**. Which of the two the endpoint actually accepts for an OAuth caller is **UNVERIFIED** (§1.4) and is the one call the owner should make before T8 starts. |
 | Contract prices | **Not reachable from a project**, by design: they need `billing.billingAccountSkus.list` / `billing.billingAccountPrice.get` on the **Cloud Billing account** (`roles/billing.viewer`/`roles/billing.admin`, whose lowest grant level is the billing account). A project module cannot grant it. The cap needs an upper bound, and the **list price is one** — so this is a limit we do not need to cross. |
 | The recommendation | The lookup, as D1550 says, with three amendments and a per-process cache (§6). One fact must be verified first (§1.4); if it fails, the fallback is the pinned dated table, which is the smallest design that still caps builds in dollars. |
@@ -68,31 +68,56 @@ This matters here, in three ways:
   **`cloudbilling.googleapis.com` is not in that list**. Fugaro's own live checklist has the
   operator enable it by hand today, on the **ADC quota project** (`docs/gcp-live-checklist.md:1339`)
   — the arrangement the next bullet says a launch path may not rely on.
-- **The lookup's client must carry the installation project as its quota project, and the repo's one
-  Cloud Billing client does not.** The Cloud Run/Logging backend sets it
-  (`internal/backend/gcp/gcp.go:78-82`, `option.WithQuotaProject(o.GCPProject)`), but that is that
-  backend's option builder. `internal/billing/accounts.go:249-271` `newService` passes **no**
-  `option.WithQuotaProject` and leans on whatever quota project the credentials themselves name —
-  its own comment says so: *"including their own quota project, which the Cloud Billing API needs
-  and which is never the project being set up"* — and `ErrNoQuotaProject`
-  (`internal/billing/accounts.go:168-174`) exists for the case where they name none, when Google
-  bills the call to its own project. That is exactly the hand-enabled arrangement
+- **Which quota project the client names depends on the credential, and getting that wrong is the one
+  way this design grows a grant.** The repo's own Cloud Billing client is the counter-example to
+  avoid: `internal/billing/accounts.go:249-271` `newService` passes **no** `option.WithQuotaProject`
+  and leans on whatever quota project the credentials themselves name — its own comment says so:
+  *"including their own quota project, which the Cloud Billing API needs and which is never the project
+  being set up"* — and `ErrNoQuotaProject` (`:168-174`) exists for the case where they name none, when
+  Google bills the call to its own project. That is exactly the hand-enabled arrangement
   `docs/gcp-live-checklist.md:1339` records and `internal/infra/firebase.go:498-503` reports as an
-  error. **A launch path must not inherit that choice:** T8's client has to pass
-  `option.WithQuotaProject(<installation project>)`, so the API is enabled on a project `fugaro
-  update` owns. Reusing `internal/billing`'s client as it stands would instead demand the operator
-  enable the API on their own ADC quota project **by hand — an operator step outside `fugaro
-  update`, which the HARD RULE forbids.**
-- On the installation project, that enablement needs nothing new: `roles/serviceusage.serviceUsageConsumer`
-  — the one permission set that lets user credentials use a project as a quota project — is already
-  granted to the installation's people and accounts
-  (`deploy/terraform/gcp/modules/firebase/iam.tf:109`, and the `grantRules` row for
-  `google_project_iam_member` in `internal/infra/tf/cover.go:139`).
+  error, so **a launch path must not inherit that choice** — but the choice is not one setting for
+  everyone. `option.WithQuotaProject(p)` makes the client send `X-Goog-User-Project: p` on **every**
+  request, service-account credentials included: the header goes out whenever a quota project resolved
+  non-empty, whatever the credential kind is
+  (`google.golang.org/api@v0.299.0` `transport/http/dial.go:189,240-242`). So:
+  - **User ADC — the person's CLI, and an agent on their credentials — passes
+    `option.WithQuotaProject(<installation project>)`**, the pattern the Cloud Run/Logging backend
+    already uses (`internal/backend/gcp/gcp.go:67-82`, `option.WithQuotaProject(o.GCPProject)`). A user
+    credential has no project of its own and some APIs refuse it without a quota project (the repo says
+    so at `:74-75`), and the alternative fallback is the user's own ADC file, whose `quota_project_id`
+    may name **any** project of theirs (`google.golang.org/api@v0.299.0` `internal/creds.go:285-303`:
+    precedence is the client option, then `GOOGLE_CLOUD_QUOTA_PROJECT`, then the credentials file) — a
+    project `fugaro update` does not own and where the operator would have to enable the API by hand.
+    **This path needs no grant:** the person already holds `roles/serviceusage.serviceUsageConsumer` on
+    the installation project (`deploy/terraform/gcp/modules/firebase/iam.tf:109-115`, `usage_consumer`
+    over `setunion(local.people, local.admins)`).
+  - **Service-account credentials — the catalog check job, and the history job — pass no quota project
+    at all.** Then the client sends **no** `X-Goog-User-Project` header, and the request is billed to
+    the account's own project: the installation project, where this section enables the API. Nothing
+    supplies a quota project in that case unless something asks for one — with no client option the
+    only fallbacks are `GOOGLE_CLOUD_QUOTA_PROJECT` and a `quota_project_id` in the credentials file,
+    and a service-account key file carries `project_id`, not `quota_project_id` (the library's own
+    fixtures give that field only to a user-account file). **`serviceusage.services.use` is therefore
+    not in play for the job, and no `grantRules` row is needed** — which matters more than it looks:
+    `toCatalogCheck` is the principal kind that **no row accepts** (`internal/infra/tf/cover.go:1329-1338`),
+    so a grant to that account is not an ordinary covered change at all; it reaches the owner as a
+    question from `fugaro update`, which the HARD RULE says an upgrade must not need.
+- On the installation project, the user path's enablement needs nothing new: the one permission set
+  that lets a credential use a project as its quota project is already granted there to the
+  installation's **people and admins**
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:109-115`; the `grantRules` row that covers the grant
+  is `roles/serviceusage.serviceUsageConsumer: toPeople | toAccounts` at
+  `internal/infra/tf/cover.go:185`). The only other holder anywhere is the **history account**
+  (`:117-121` `history_usage`), and for the reason the service-account bullet above implies: its
+  Firestore client names a project that is **not** its own (`:100-108`), because the Firebase project
+  can differ from the installation project (`fugaro update --firebase-project`). That comment is about
+  the other-project case, not about a job naming its own project.
 
 So the enablement, if the lookup ships, is one line in `apis.tf`'s `local.apis` — a
 `google_project_service`, a type `allowedTypes` already covers (`internal/infra/tf/cover.go:22`), and
-*no* `grantRules` change — **provided the client chooses the quota project as above**; the same
-requirement is stated again in §3's table and in §6.
+*no* `grantRules` change — **provided the client names a quota project only for user credentials**; the
+same requirement is stated again in §2's table, §3's table and §6.
 
 ### 1.3 Contract and negotiated prices
 
@@ -202,9 +227,9 @@ that is not `fugaro-b-<repo>@<project>.iam.gserviceaccount.com`.
 
 | Path | Submit identity (the credential the API call carries) | Build runs as | Submitting today | What a billing read would add |
 | --- | --- | --- | --- | --- |
-| A person's CLI at a terminal | Their **ADC** — `authorized_user`, i.e. the person (`internal/cli/init_project.go:490` `credentialNote` names it; `GOOGLE_APPLICATION_CREDENTIALS` can override it with a service-account key). `gcloud auth application-default login` is the documented way to get it. | The repository's build account | `cloudbuild.builds.create` through the custom role `roles/fugaroBuildSubmitter` (`deploy/terraform/gcp/modules/installation/iam.tf:35`, granted to `var.operators` at `:77` `operator_build_submitter`) | Nothing to grant. `cloudbilling.googleapis.com` **enabled on the installation project**, which the lookup's client must name as its quota project — `internal/backend/gcp/gcp.go:78-82` is the pattern, and `internal/billing/accounts.go:249-271` is the counter-example that must not be copied (§1.2) — and `serviceusage.services.use` there, already held (`roles/serviceusage.serviceUsageConsumer`, `firebase/iam.tf:109`). |
+| A person's CLI at a terminal | Their **ADC** — `authorized_user`, i.e. the person (`internal/cli/init_project.go:490` `credentialNote` names it; `GOOGLE_APPLICATION_CREDENTIALS` can override it with a service-account key). `gcloud auth application-default login` is the documented way to get it. | The repository's build account | `cloudbuild.builds.create` through the custom role `roles/fugaroBuildSubmitter` (`deploy/terraform/gcp/modules/installation/iam.tf:35`, granted to `var.operators` at `:77` `operator_build_submitter`) | Nothing to grant. `cloudbilling.googleapis.com` **enabled on the installation project** — which the lookup's client must name as its quota project (`internal/backend/gcp/gcp.go:67-82` is the pattern; `internal/billing/accounts.go:249-271` is the counter-example that must not be copied, §1.2) — and `serviceusage.services.use` there, already held (`roles/serviceusage.serviceUsageConsumer`, `firebase/iam.tf:109-115`). |
 | An agent's session, on the person's credentials | **The same identity.** Nothing in the credential path reads `internal/agentenv`'s markers: an agent runs the same binary with the same ADC, so it submits as the person and reads prices as the person. | The repository's build account | the same `roles/fugaroBuildSubmitter` | The same, and no more. A price is public, read-only data: an agent that can build can already spend the money, and reading the rate it is charged at is not a privilege change (F20's trust probes are unchanged). |
-| The catalog check job (`fugaro-catalog-check`) | Its **own service account** (`installation/catalogcheck.tf:43`), on the job `fugaro image check --job --catalog` (`:99`, `:125`) | Each repository's build account, per repository | `projects/<p>/roles/fugaroBuildSubmitter`, granted by `installation/catalogcheck.tf:33-41` `catalog_check_build_submitter`, plus `roles/iam.serviceAccountUser` on each repo's build account (`modules/repo/catalogcheck.tf:24`) | The API enabled on the project, and — for the **key** route — the key delivered to the job. That is a new secret on the launch path and *a new `grantRules` row* (§3). For the **token** route, nothing: the job's own SA token is the identity, and a service account's own project *is* its quota project (`firebase/iam.tf:102-104` says as much of the history account) — the installation project, where §1.2 enables the API. |
+| The catalog check job (`fugaro-catalog-check`) | Its **own service account** (`installation/catalogcheck.tf:43`), on the job `fugaro image check --job --catalog` (`:99`, `:125`) | Each repository's build account, per repository | `projects/<p>/roles/fugaroBuildSubmitter`, granted by `installation/catalogcheck.tf:33-41` `catalog_check_build_submitter`, plus `roles/iam.serviceAccountUser` on each repo's build account (`modules/repo/catalogcheck.tf:24`) | The API enabled on the project, and — for the **key** route — the key delivered to the job. That is a new secret on the launch path and *a new `grantRules` row* (§3). For the **token** route, **nothing, and the lookup's client must pass no quota project here**: with service-account credentials that means no `X-Goog-User-Project` header is sent at all, so the account's own project — the installation project, where §1.2 enables the API — is the one billed, and `serviceusage.services.use` never enters the picture (§1.2). Note what **not** to cite here: `firebase/iam.tf:100-108` reads the other way, because that client names a project that is not the account's own (the Firebase project, which `fugaro update --firebase-project` may make a different one) — which is why the history account holds `serviceusage.services.use` (`:117-121`) and this job does not. |
 
 Two notes a reader should not have to rediscover:
 
@@ -224,10 +249,30 @@ Two notes a reader should not have to rediscover:
 
 | Change | Where | Needed? |
 | --- | --- | --- |
-| Enable `cloudbilling.googleapis.com` | `deploy/terraform/gcp/modules/installation/apis.tf`, in `local.apis` — on the **installation project**, which the lookup's client must carry as its quota project (§1.2) | **Yes**, if the lookup ships. A `google_project_service`, already in `allowedTypes` (`internal/infra/tf/cover.go:22`), so no cover change. It is not enabled today. Without the quota project, this row is not enough and the enablement lands on the operator's own project instead — an operator step (HARD RULE). |
+| Enable `cloudbilling.googleapis.com` | `deploy/terraform/gcp/modules/installation/apis.tf`, in `local.apis` — on the **installation project**, which the lookup's client must name as its quota project **for user credentials** (§1.2) | **Yes**, if the lookup ships. A `google_project_service`, already in `allowedTypes` (`internal/infra/tf/cover.go:22`), so no cover change. It is not enabled today. Without the quota project on the user path, this row is not enough and the enablement lands on the operator's own project instead — an operator step (HARD RULE). |
 | Any `google_project_iam_member` granting a billing role | `installation/iam.tf` | **No.** A project grant of `roles/billing.viewer` would not carry the permissions anyway (§1.3). Do not write it. |
+| `roles/serviceusage.serviceUsageConsumer` for the catalog check account | `installation/catalogcheck.tf`, and a new `toCatalogCheck` row in `cover.go`'s `grantRules` | **No, and it would not be an ordinary row** (see below). The job's lookup client passes no quota project, so the job never needs the permission; only the **user** path does, and the person already holds it. |
 | A new `grantRules` row | `internal/infra/tf/cover.go:139` | **No** for the token route. |
 | A new `grantRules` row for a **secret**, if an API key is chosen | `cover.go`'s `google_secret_manager_secret_iam_member` row | **Yes, and it is a widening.** The catalog check account is its own principal kind (`toCatalogCheck`, `cover.go:123`, matched by `isCatalogCheckMember` at `:732`) and **no row accepts it** (`:103-113`: every grant to it is refused by the plan review today). An API key handed to the job therefore means a new row admitting `toCatalogCheck`. Prefer the token route to avoid it. |
+
+**Why the `serviceUsageConsumer` row above is the wrong fix even if the job ever did need it.** A
+grant naming `toCatalogCheck` is not covered by init's one confirmation the way `toAccounts` rows are:
+that kind exists precisely so every grant to this account is **refused by the plan review and asked of
+the owner** (`internal/infra/tf/cover.go:103-113`, `:1329-1338`, `TestCatalogCheckAccountIsItsOwnPrincipalKind`).
+It is the one row an upgrade cannot ship silently, so reaching for it to buy a number used only to
+reserve is the opposite of the smallest change.
+
+And the header is not new to this account: `internal/cli/image_check_catalog.go:540` already builds the
+job's build-submit client with `gcp.Options{GCPProject: e.gcpProject}`, which is
+`option.WithQuotaProject(<installation project>)` (`internal/backend/gcp/gcp.go:78-82`) — sent from the
+catalog check service account. `serviceUsageConsumer` is granted in exactly two places in
+`deploy/terraform/gcp`, and neither is that account (`firebase/iam.tf:109-115` for people and admins,
+`:117-121` for the history account). So one of two things is true, and T8's live run is what tells them
+apart: either a header naming the caller's **own** project costs no permission — in which case the
+lookup could pass one too and the split in §1.2 is simply the tidier rule — or the catalog check job's
+build-submit path has needed that permission since it shipped, in which case the lookup must not add a
+second caller with the same need. The split rule costs nothing under either reading, which is why §1.2
+recommends it rather than betting.
 
 So T8's `deploy/terraform/gcp/modules/installation/iam.tf` edit — *"only if the spike finds a grant
 is needed"* (implementation plan, T8) — **is not needed**, and tension T5's *"a new grant in a
@@ -246,7 +291,7 @@ the estimator must do so it stays survivable.
 | Cause | Signal | Behaviour | Precedent in the repo |
 | --- | --- | --- | --- |
 | API disabled on the project | 403 with `google.rpc.ErrorInfo`, `reason: SERVICE_DISABLED`, `metadata.service = cloudbilling.googleapis.com` | **Refuse**, and name the API and the project with the `gcloud services enable … --project <p>` line | `internal/infra/apis.go:82-99` `serviceDisabled`; `internal/infra/firebase.go:517-536` `disabledConsumer` (already used for this very API) |
-| No quota project on the ADC | 403 naming a Google-owned quota project, `reason: SERVICE_DISABLED` | **Does not arise with §1.2's client**, which names the installation project itself — and that is precisely why the fix is required. It is the failure mode of a client that leaves the quota project to the credentials: refuse, and tell the operator `gcloud auth application-default set-quota-project <p>`, which is a hand step a launch path may not depend on | `internal/billing/accounts.go:168-174` `ErrNoQuotaProject`; `internal/infra/firebase.go:499-503` |
+| No quota project on the ADC | 403 naming a Google-owned quota project, `reason: SERVICE_DISABLED` | **Refuse.** Reachable on the **user** path only, and only if the client did not name one: the person's ADC carries no quota project, Google bills the call to a project of its own, and the error therefore names that project rather than the installation's. This is exactly the failure §1.2's option exists to prevent, and the shape `ErrNoQuotaProject` reports. With service-account credentials no header is sent at all, so the mode cannot arise | `internal/billing/accounts.go:168-174` `ErrNoQuotaProject`; `internal/infra/firebase.go:499-503` |
 | Permission denied | 403 without `SERVICE_DISABLED` | **Refuse** | `internal/billing/accounts.go:150-159` `ErrNoPermission` |
 | Quota / rate limit | 429 `RESOURCE_EXHAUSTED` | Retry with a small bound, then **refuse**. A build is one lookup per command (§6), so this should be rare | the same shape `internal/billing` uses for its paged read |
 | Offline, DNS, TLS | transport error | **Refuse.** Note it is *not* a new offline scenario: submitting the build itself needs the network. What is new is that a transient failure of a **second** API now blocks a paid action that would otherwise have proceeded — which is the argument for the cache in §6 | — |
@@ -342,15 +387,23 @@ price refuses — with three amendments.**
    *number*. `TestBuildCostIsAnUpperBound` freezes the SKU ids and the arithmetic. This is what turns
    a silent mapping bug into a failing test — and a silent mapping bug is the one way this design
    under-estimates.
-3. **No grant, and no key.** The installation change is `cloudbilling.googleapis.com` in
-   `apis.tf`, and its client passes `option.WithQuotaProject(<installation project>)` — **not**
-   `internal/billing`'s client, which leaves the quota project to the credentials (§1.2). No `iam.tf`
-   edit, no `grantRules` row, no secret, no API key — provided §1.4's probe says the token route
-   works.
+3. **No grant, and no key.** The installation change is `cloudbilling.googleapis.com` in `apis.tf`, and
+   the client names a quota project **only for user credentials**: `option.WithQuotaProject(<installation
+   project>)` when the ADC is a person's, and none at all when it is a service account's (`§1.2`) — the
+   job's credential then sends no `X-Goog-User-Project` and needs no `serviceusage.services.use`. The
+   client is **not** `internal/billing`'s, which leaves the quota project to the credentials (§1.2), and
+   the lazy fallback is **not** allowed either: `GOOGLE_CLOUD_QUOTA_PROJECT` in the environment can
+   supply one for a service account, so the lookup must not let it (`internal/creds.go:285-303`), and
+   the catalog check job's environment must not carry the variable (`catalog_check.env` is written by
+   `internal/infra`). T8 pins all three with one test beside the lookup: the option slice carries
+   `option.WithQuotaProject(<installation project>)` for user ADC and **not** for service-account
+   credentials, and the env var does not change either answer. No `iam.tf` edit, no `grantRules` row, no
+   secret, no API key — provided §1.4's probe says the token route works.
 
 **The exact grant, stated once:** *none*. Federated out: nothing in `installation/iam.tf`, nothing in
-`cover.go`'s `grantRules`, one line in `apis.tf` **plus the quota project the client names** — that
-pair, and nothing else, is what keeps the enablement inside `fugaro update`.
+`cover.go`'s `grantRules`, one line in `apis.tf` — plus, on the user path, a quota project the
+installation already lets that person use (`§1.2`). That pair, and nothing else, is what keeps the
+enablement inside `fugaro update`.
 
 **The cache rule, stated once:** one lookup per command, held in memory, reused for every build that
 command submits; never persisted, so it never ages and needs no limit. If the owner later wants
@@ -412,7 +465,10 @@ The repository, by path and symbol:
 | `docs/no-prompt-policy/reconciliation.md` §3 D1543/D1548/D1550, §5 T5, F5, F18, F19, F20, §6 | The decisions and the UNVERIFIED this spike answers |
 | `docs/no-prompt-policy/implementation-plan.md` T8 | The file list, and *"the grant in `iam.tf` is UNVERIFIED until then"* |
 | `internal/backend/gcp/build.go:227,231,233,363,398-410,483,496` | The build request: service account, machine type, the fixed 3600 s timeout, the submit path |
-| `internal/backend/gcp/gcp.go:78-82` | ADC as the identity, and the quota-project pattern to copy: `option.WithQuotaProject(<installation project>)` — that backend's own builder, not a shared one |
+| `internal/backend/gcp/gcp.go:67-82` | ADC as the identity, and the quota-project pattern for the **user** path: `option.WithQuotaProject(o.GCPProject)` when a project is known — that backend's own builder, not a shared one, and the option it sets unconditionally (§1.2 splits it by credential) |
+| `google.golang.org/api@v0.299.0` `transport/http/dial.go:189,240-242`; `internal/creds.go:29,285-303` | The header rule the split rests on: `X-Goog-User-Project` is set whenever a quota project resolved non-empty, whatever the credential kind; with no client option the only fallbacks are `GOOGLE_CLOUD_QUOTA_PROJECT` and a `quota_project_id` in the credentials file |
+| `internal/cli/image_check_catalog.go:50,540` | The catalog check job's client, built with `gcp.Options{GCPProject: …}` — the same account, already sending the same header |
+| `deploy/terraform/gcp/modules/firebase/iam.tf:100-121` | `usage_consumer` (people and admins) and `history_usage` (the history account): who holds `serviceUsageConsumer`, and why the Firestore client needs it — an account naming a project that is **not** its own |
 | `internal/cli/init_project.go:437,490` | `adcInfo`/`credentialNote`: `authorized_user` is the person |
 | `internal/billing/accounts.go:41-68,150-174,249-271` | The repo's existing Cloud Billing client: ADC only, `billingAccounts.list`, the permission/quota-project/API-disabled errors — and `newService`, which names **no** quota project, so the lookup must not copy it (§1.2) |
 | `internal/infra/apis.go:20-31,82-99`; `internal/infra/firebase.go:498-536` | Disabled-API detection, and that `cloudbilling.googleapis.com` is not enabled by the installation |
@@ -433,12 +489,19 @@ The repository, by path and symbol:
    under API-key examples, and the IAM pages list no public-catalog permission at all.
 2. **The Cloud Build machine-minute SKUs**: their ids, `displayName`s, `usageUnit`s and
    `serviceRegions`, and therefore the machine-type→SKU→region mapping (§1.5). Two `curl`s.
-3. That Cloud Build rejects an unknown `machineType` at submit time rather than falling back to the
+3. **That a service-account request with no quota project is billed to the account's own project, and
+   that naming its own project needs no `serviceusage.services.use`** (§1.2). The split rule rests on
+   the first half; the library source settles what header is sent, but not which project Google then
+   treats as the consumer. The second half is the one §3's argument reaches for evidence on: the
+   catalog check job's existing client already sends that header from that account, and no job account
+   holds the permission — either that is fine or that path has always needed it. T8's live run should
+   confirm both, since the split is what keeps the job's reach unchanged.
+4. That Cloud Build rejects an unknown `machineType` at submit time rather than falling back to the
    default (§5). Assumed in the safe direction.
-4. That a negotiated contract price is never **above** the public list price (§1.3) — assumed, and
+5. That a negotiated contract price is never **above** the public list price (§1.3) — assumed, and
    stated so a reviewer can attack it.
-5. Whether `fugaro update`'s own apply would be refused by `cover.go` if a future task ever adds the
+6. Whether `fugaro update`'s own apply would be refused by `cover.go` if a future task ever adds the
    `google_project_service` row for this API. Not checked: the type is allowed and the change is
    one entry, but the golden plans were not re-rendered in a docs-only change.
-6. Whether the console or the mobile app read the marker or the budget record in a way the build
+7. Whether the console or the mobile app read the marker or the budget record in a way the build
    lease's settled price would have to appear in. Out of this spike's scope; T8 owns it.
