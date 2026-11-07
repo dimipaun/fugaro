@@ -214,7 +214,13 @@ func TestAllowDeleteWritesALog(t *testing.T) {
 	if _, _, err := execute(t, allowDeleteArgs(webApproval)...); err != nil {
 		t.Fatal(err)
 	}
-	writesALog(t, "allow-delete")
+	// The addresses the step's line points at are the command's own print and
+	// go in the log with it (D1352): the entry is what a later refusal is read
+	// against, and the log is where a run's account is read back.
+	log := writesALog(t, "allow-delete")
+	if !strings.Contains(log, webApproval.address) {
+		t.Errorf("the log does not hold the list the step says it wrote:\n%s", log)
+	}
 }
 
 // TestAllowDeleteAFailedWriteIsAFailedStep: the list's write is the run's one
@@ -302,7 +308,15 @@ func TestManagedUnflagWritesALog(t *testing.T) {
 	if _, _, err := executeStdin(t, initProject+"\n", managedUnflagArgs()...); err != nil {
 		t.Fatal(err)
 	}
-	writesALog(t, "managed-unflag")
+	// The command's own lines are in the log as well as on the screen: it
+	// prints them itself, and the log is the run's full output (D1352). The
+	// halves are the ones it prints while the step is in flight, so a
+	// relocation that kept them on the screen alone would leave the log
+	// holding a step that points at nothing.
+	log := writesALog(t, "managed-unflag")
+	if !strings.Contains(log, "  marker object gs://") || !strings.Contains(log, "removed") {
+		t.Errorf("the log does not hold what the run printed about the two halves:\n%s", log)
+	}
 }
 
 // TestManagedUnflagPrintsTheHalvesOnTheirOwnLine: what each half of the mark
