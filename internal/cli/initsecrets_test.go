@@ -545,9 +545,9 @@ func TestSecretsWithoutFugaroYAMLTakesOnlyTheGitCredential(t *testing.T) {
 }
 
 // A repository the local config allows two named Claude accounts for is
-// asked for both, each as its own claude setup-token + secrets set pair, in
-// addition to the default; a name that already has a stored version is not
-// asked for again.
+// asked for both, beside the default: the default's own mint-then-store
+// pair, and each named account's one `fugaro accounts add` command. A name
+// that already has a stored version is not asked for again.
 func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
 	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
@@ -561,8 +561,8 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 		t.Fatalf("%v, left %v", err, res.Left)
 	}
 	// The whole list, not a piece of it: the default's pair, then
-	// acme-personal's, with nothing for the name that already has a stored
-	// version and nothing for the one this repository is not allowed.
+	// acme-personal's one command, with nothing for the name that already has
+	// a stored version and nothing for the one this repository is not allowed.
 	// strings.Contains over the joined lines would pass for a command that
 	// only *begins* with the wanted text — a different name suffix, another
 	// --repo, another flag — which is the shape this test exists to pin.
@@ -570,8 +570,7 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 		"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE",
 		"claude setup-token",
 		"fugaro secrets set claude-oauth-token --repo acme/app",
-		"claude setup-token",
-		"fugaro secrets set claude-oauth-token-acme-personal",
+		"fugaro accounts add acme-personal",
 	}
 	cmds := strings.Join(res.Left[0].Commands, "\n")
 	if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(wantCmds) {
@@ -583,8 +582,41 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 	if strings.Contains(cmds, "other-team") {
 		t.Errorf("a name this repository is not allowed got asked for: %q", cmds)
 	}
-	if n := strings.Count(cmds, "claude setup-token"); n != 2 {
-		t.Errorf("claude setup-token count = %d, want 2 (default + acme-personal)", n)
+	if n := strings.Count(cmds, "claude setup-token"); n != 1 {
+		t.Errorf("claude setup-token count = %d, want 1 (the default account's only; a named account's own command is fugaro accounts add)", n)
+	}
+	if strings.Contains(cmds, "secrets set claude-oauth-token-acme-personal") {
+		t.Errorf("the named account still gets the old mint-then-store pair: %q", cmds)
+	}
+}
+
+// TestInitSecretsNamesTheProfileThatServesTheAccount: the one command init
+// hands the operator for a named account's token carries the profile whose
+// claude_accounts already lists it. A project with several profiles refuses a
+// bare `fugaro accounts add` (accountsAddProfile), and a project with one that
+// does not serve the account would have that command add the account to it and
+// deploy a job — neither of which the store-the-token step it replaced ever
+// did (code review, medium).
+func TestInitSecretsNamesTheProfileThatServesTheAccount(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app"}},
+	}
+	// Two profiles, only the second of which serves the account.
+	r.e.lc.Profiles = map[string]config.JobProfile{
+		"alpha": {},
+		"zeta":  {ClaudeAccounts: []string{"acme-personal"}},
+	}
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if !strings.Contains(cmds, "fugaro accounts add acme-personal --profile zeta") {
+		t.Errorf("the account's command does not name the profile that already serves it: %q", cmds)
+	}
+	if strings.Contains(cmds, "--profile alpha") {
+		t.Errorf("a profile that does not serve the account was named: %q", cmds)
 	}
 }
 

@@ -372,10 +372,12 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		}
 		// Every named Claude account this repository may choose (beyond the
 		// bare default, which SecretMounts above already asked for when
-		// agent.auth is oauth) gets its own claude setup-token + secrets set
-		// pair, so init prompts for every account the owner has allowed,
-		// not just the one SecretMounts already knows about per workflow
-		// (design docs/design/named-oauth-tokens.md §3 T3, §4).
+		// agent.auth is oauth) gets its own entry, so init asks for every
+		// account the owner has allowed, not just the one SecretMounts
+		// already knows about per workflow; the line it leaves for one of
+		// them is that account's own `fugaro accounts add` command (Left),
+		// not the default's mint-then-store pair (design
+		// docs/design/named-oauth-tokens.md §3 T3, §4).
 		if cfg.Agent.Auth == "oauth" {
 			for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
 				if n == config.DefaultClaudeAccount {
@@ -590,8 +592,29 @@ func (s *secretsStage) Left() initflow.Left {
 			set += " --repo " + quoteWord(s.tg.repo)
 		}
 		switch {
-		case isClaudeOAuthSecret(name):
+		case name == config.ClaudeOAuthToken:
 			cmds = append(cmds, "claude setup-token", set)
+		case strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix):
+			// A named account's token is the one command that declares the
+			// account, stores the token where the shared job mounts it and
+			// converges the installation (spec accounts-add §8): the pair the
+			// default account above keeps is `claude setup-token` plus a
+			// `secrets set` the owner has to scope by hand, and for a named
+			// account both halves are `accounts add`'s own. "default" is
+			// reserved, so the command below is the only spelling and the
+			// default account has none.
+			account := strings.TrimPrefix(name, config.ClaudeOAuthTokenPrefix)
+			add := selfCommand() + " accounts add " + quoteWord(account)
+			// The profile whose claude_accounts already lists the account, for
+			// the reason doctor's own account fixes carry it: without --profile
+			// the command stops in a project with several profiles
+			// (accountsAddProfile), and it would otherwise take the only one
+			// there is — serving the account from a profile that did not, and
+			// deploying a job — where storing the token was the whole step.
+			if profile := config.ClaudeAccountProfile(s.e.lc.Profiles, account); profile != "" {
+				add += " --profile " + quoteWord(profile)
+			}
+			cmds = append(cmds, add)
 		case name == multilineSecret:
 			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:
