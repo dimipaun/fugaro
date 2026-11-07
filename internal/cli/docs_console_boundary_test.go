@@ -12,7 +12,7 @@ package cli
 //   - TestConsoleIsOutsideTheGoModule -- (a1) no Go file in the module has an
 //     import under console/; (a3) the allow-list of files permitted to MENTION
 //     a console/ path, plus the two halves of that list's contract -- its size
-//     is pinned, so a third entry cannot arrive quietly;
+//     is pinned, so a fifth entry cannot arrive quietly;
 //     and that console/ itself holds no Go code, no go.mod and no go.sum.
 //   - TestGoModHasNoConsoleDependency -- (b) go.mod's require block is
 //     unchanged from the baseline recorded in this file, and go.sum names no
@@ -29,15 +29,18 @@ package cli
 // which made Task 0.1 impossible to write. So (a1) matches on IMPORT LINES
 // only -- an import path is a module path, which is the real boundary, while a
 // comment or a string that merely names console/docs/json-contract.md is a read
-// of a document -- and the allow-list below carries the two files those reads
-// live in: this test's own partner for the sections whose command is still in
-// the core, and, since ee-reorg E2.1b moved the coordinator's command and shapes
-// to ee/, that package's copy of the same check for the section that documents
-// it. Its second half is asserted too, because the exception is narrow: an
-// allow-listed file may mention a console/ path and may neither import one nor
-// embed one. Widening the list is a deliberate edit to the slice below, with a
-// test that fails on the size changing, rather than a quiet new reference in
-// some future file.
+// of a document -- and the allow-list below carries the files those reads live
+// in: this test's own partner for the sections whose command is still in the
+// core, and, since ee-reorg E2.1b and E2.2b1 moved the coordinator's and the
+// report's commands and shapes to ee/, those packages' copies of the same check
+// for the sections that document it. The fourth entry reads no console document
+// at all: security-classification SC1's floor names every tree the engine holds
+// security-sensitive, the console's main process among them, as a glob in a data
+// table. The list's second half is asserted too, because the exception is
+// narrow: an allow-listed file may mention a console/ path and may neither
+// import one nor embed one. Widening the list is a deliberate edit to the slice
+// below, with a test that fails on the size changing, rather than a quiet new
+// reference in some future file.
 //
 // The mention half of (a3) is a heuristic, and the file says which half of it
 // is which. Its floor is the plan's literal rule: a file whose text holds the
@@ -160,12 +163,27 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // entry and not a line in a test of its own. Bytes again, like the other four:
 // no import under console/, no go:embed, nothing built against what the console
 // holds.
+//
+// The sixth arrived with security-classification SC1
+// (docs/security-classification/implementation-plan.md §4), and it is the one
+// entry that reads no console document: the engine's security-pattern floor
+// (internal/orchestrator/sensitivity/floor.go) names every tree this repository
+// holds security-sensitive, one name, one category and one glob per row, and the
+// console's main process — where the spawn and IPC allow-lists are — is one of
+// them (reconciliation §6's `console-main` row). The reference is a glob in a
+// data table and not a read of the tree: that file imports nothing from console/
+// and embeds nothing from it, which is what the per-entry assertions below check
+// it for. The case for the entry is that a floor naming the console is the floor
+// the routing text asks for — the fixture that holds those paths already lives
+// in that package's testdata, and a floor that could not name them would be a
+// list that cannot cover the rule it is measured against.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
 	"ee/coordinator/cli/console_contract_test.go",
 	"ee/report/cli/console_contract_test.go",
 	"schemas/schemas_test.go",
 	"internal/cli/settings_console_fixture_test.go",
+	"internal/orchestrator/sensitivity/floor.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -797,10 +815,11 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// report's), each in the package its command and shapes moved to, and
 		// the fourth and the fifth the settings-edit plan's C4, which reads the
 		// console's settings fixture from both sides -- the schema that
-		// documents it and the write this package answers it with; this number
-		// is what makes a sixth one impossible to add quietly.
-		if len(consoleBoundaryAllowList) != 5 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, and the two halves of the settings fixture's check, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+		// documents it and the write this package answers it with; the sixth is security-classification SC1's (the floor row that names the
+		// console's main process); this number is what makes a seventh one
+		// impossible to add quietly.
+		if len(consoleBoundaryAllowList) != 6 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, the two halves of the settings fixture's check and the sensitivity floor's row naming the console's main process, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 
