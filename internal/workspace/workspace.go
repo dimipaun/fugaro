@@ -73,16 +73,18 @@ type Cap struct {
 // schemas/workspace.schema.json describes. It is a type of its own because the
 // file writes money as dollars and Record holds micro-dollars, and the
 // conversion is Parse's one job; every other field is carried through
-// unchanged.
+// unchanged. The two lists are pointers so a key left out can be told from a
+// key written empty: the schema requires both, and Record cannot express the
+// difference.
 type fileRecord struct {
-	Name    string       `yaml:"name"`
-	Members []fileMember `yaml:"members"`
-	Cap     *fileCap     `yaml:"cap,omitempty"`
+	Name    string        `yaml:"name"`
+	Members *[]fileMember `yaml:"members"`
+	Cap     *fileCap      `yaml:"cap,omitempty"`
 }
 
 type fileMember struct {
-	Project string   `yaml:"project"`
-	Repos   []string `yaml:"repos"`
+	Project string    `yaml:"project"`
+	Repos   *[]string `yaml:"repos"`
 }
 
 // fileCap is a cap that is written: a pointer, so a record that states no cap
@@ -107,9 +109,20 @@ func Parse(raw []byte) (*Record, error) {
 		}
 		return nil, err
 	}
-	r := &Record{Name: f.Name, Members: make([]Member, 0, len(f.Members))}
-	for _, m := range f.Members {
-		r.Members = append(r.Members, Member{Project: m.Project, Repos: m.Repos})
+	// The two lists are required keys (schemas/workspace.schema.json), so a key
+	// left out is refused rather than read as an empty list: a nil list would
+	// become an empty one through FileForm, and the file would not read back as
+	// the record it made. A key written empty is a workspace with no members, or
+	// a member that contributes no repository, and is read as what it says.
+	if f.Members == nil {
+		return nil, errors.New("members: the record states its members; the key is required, even for a workspace with none")
+	}
+	r := &Record{Name: f.Name, Members: make([]Member, 0, len(*f.Members))}
+	for i, m := range *f.Members {
+		if m.Repos == nil {
+			return nil, fmt.Errorf("members[%d].repos: a member states the repositories it contributes; the key is required, even for a member that contributes none", i)
+		}
+		r.Members = append(r.Members, Member{Project: m.Project, Repos: *m.Repos})
 	}
 	if f.Cap != nil {
 		monthly, err := pricing.FromUSD(f.Cap.Monthly)
@@ -125,7 +138,7 @@ func Parse(raw []byte) (*Record, error) {
 }
 
 // Validate checks the rules the record's shape does not carry: the names, the
-// two lists' order, and the cap. It is what a caller that built a record
+// two lists' entries and their order, and the cap. It is what a caller that built a record
 // itself calls before writing one -- the CLI's `workspace cap set` is the
 // first (W8) -- and Parse calls it, so a file and a built record are held to
 // one rule.
@@ -151,6 +164,13 @@ func (r *Record) Validate() error {
 		// these strings, and two spellings of one set are two records that
 		// say the same thing and compare unequal.
 		for j, repo := range m.Repos {
+			// An entry that is not a repository is refused here because the
+			// schema refuses it too (its minLength is 1): a record this package
+			// reads has to be one the schema admits, and an empty repository is
+			// a member contributing a repository it does not name.
+			if repo == "" {
+				errs = append(errs, fmt.Errorf("members[%d].repos[%d]: a repository is not the empty string", i, j))
+			}
 			if j == 0 {
 				continue
 			}

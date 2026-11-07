@@ -12,10 +12,15 @@ import "gopkg.in/yaml.v3"
 // a record that does not survive the pair is a struct and a schema that
 // disagree.
 func FileForm(r *Record) ([]byte, error) {
-	f := fileRecord{Name: r.Name, Members: make([]fileMember, 0, len(r.Members))}
+	members := make([]fileMember, 0, len(r.Members))
 	for _, m := range r.Members {
-		f.Members = append(f.Members, fileMember{Project: m.Project, Repos: m.Repos})
+		repos := m.Repos
+		if repos == nil {
+			repos = []string{}
+		}
+		members = append(members, fileMember{Project: m.Project, Repos: &repos})
 	}
+	f := fileRecord{Name: r.Name, Members: &members}
 	if r.Cap.Set {
 		f.Cap = &fileCap{Monthly: r.Cap.Monthly.USD()}
 	}

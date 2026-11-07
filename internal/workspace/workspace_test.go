@@ -330,6 +330,48 @@ func TestRecordRoundTripsThroughTheSchema(t *testing.T) {
 			}
 		})
 	}
+
+	// And the keys the schema requires, and the one entry shape it refuses
+	// inside a repository list, held to the same two-sided rule. The two lists
+	// are required keys and not optional ones: a list left out is refused here
+	// rather than read as a list stated empty, because FileForm writes both
+	// keys, and a nil list read as an empty one would not survive the round
+	// trip the test above makes -- the record would come back with a list where
+	// it had none.
+	for _, tc := range []struct {
+		name string
+		raw  string
+		ok   bool
+	}{
+		{"a record with no member list", "name: workspace-alpha\n", false},
+		{"a record that states no members", "name: workspace-alpha\nmembers: []\n", true},
+		{"a member with no repository list", "name: workspace-alpha\nmembers:\n  - project: repo-a\n", false},
+		{"a member that contributes no repository", "name: workspace-alpha\nmembers:\n  - project: repo-a\n    repos: []\n", true},
+		{"a member with an empty repository", "name: workspace-alpha\nmembers:\n  - project: repo-a\n    repos: ['']\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(tc.raw)
+			rec, perr := workspace.Parse(raw)
+			verr := wsValidate(sch, raw)
+			if (perr == nil) != tc.ok || (verr == nil) != tc.ok {
+				t.Fatalf("Parse accepted = %v (%v), the schema accepted = %v, want %v\n%s", perr == nil, perr, verr == nil, tc.ok, raw)
+			}
+			if !tc.ok {
+				return
+			}
+			out, err := workspace.FileForm(rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			back, err := workspace.Parse(out)
+			if err != nil {
+				t.Fatalf("this package writes a file it does not read: %v\n%s", err, out)
+			}
+			if !reflect.DeepEqual(rec, back) {
+				t.Errorf("the record did not round trip:\n got %+v\nwant %+v\nfrom\n%s", back, rec, out)
+			}
+		})
+	}
 }
 
 // wsAgrees holds the keys of one object of the file form against the
