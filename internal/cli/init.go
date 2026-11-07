@@ -2187,13 +2187,15 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	if err != nil || stop {
 		return err
 	}
-	// The credentials service's readiness, on EVERY repository entry the
-	// local config holds (refreshCredentialsServiceReady): the installation
-	// door is the one that reads the bundle for the whole installation, and
-	// this is where the record reaches the file — before the write below, so
-	// the repository stage that re-loads it in this same run plans against
-	// what the record says.
-	r.refreshCredentialsServiceReady(ctx, lc, outs)
+	// No credentials-service record is written here, deliberately: the record
+	// says "THIS repository's root has been applied with the service on", and
+	// the grant that makes the service usable to a repository is made by that
+	// root's own apply (modules/workflow/sa.tf). The installation root applies
+	// no repository root, so a record written from here would tell a launch
+	// the service is ready for a repository whose job accounts hold no
+	// roles/run.invoker, and a `cascade` run has no credential of its own to
+	// fall back to (D143). The repository stage of this same run is the door
+	// that applies a root, and it records there (recordCredentialsServiceReady).
 	// 8. The local config.
 	return r.writeConfig(ctx, lc, spec, outs, path, old, r.res.Applied)
 }
@@ -3388,7 +3390,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err != nil {
 		return err
 	}
-	cfg := rf.Cfg
+	// The auth the runs of this repository read, which is not necessarily the
+	// one this working tree writes (deploymentConfig): everything below —
+	// the gates, the spec and the record — is judged for the document a run
+	// checks out, so that the root deployed here is the root a launch hands
+	// the credentials service's address to.
+	cfg := deploymentConfig(ctx, root, rf.Cfg)
 	repo, err := checkoutRepo(ctx, root)
 	if err != nil {
 		return err
@@ -3574,9 +3581,10 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// no invoker grant — while writing a record that tells the next launch
 	// the service is ready, which is the one state the switch exists to make
 	// impossible. The persisted write stays where it is, in writeRepoConfig
-	// after the apply; this is the in-memory half that the plan, the launch
-	// and that write all read.
-	r.refreshCredentialsServiceReady(ctx, lc, outs)
+	// after the apply, and it writes THIS value — the one the spec was built
+	// with — so the record cannot claim a grant the plan did not make. Only
+	// this repository's entry moves: it is the only root this door applies.
+	r.recordCredentialsServiceReady(ctx, lc, outs, repo)
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -4445,32 +4453,40 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	if next.Repos == nil {
 		next.Repos = map[string]localcfg.Repo{}
 	}
-	key := spec.Name
-	if want, err := task.CanonicalRepo(spec.Name); err == nil {
-		for _, k := range slices.Sorted(maps.Keys(lc.Repos)) {
-			if c, err := task.CanonicalRepo(k); err == nil && c == want {
-				key = k
-				break
-			}
-		}
+	key := repoConfigKey(lc, spec.Name)
+	// CredentialsServiceReady is the credentials service's readiness the SPEC
+	// below was built with: recordCredentialsServiceReady
+	// (init_credentials.go) refreshed this repository's entry from this run's
+	// bundle reading a moment before infra.Repo read it, so this value IS the
+	// switch's readiness half as the plan, the launch and this write all see
+	// it — true when the bundle holds a model credential and the root was
+	// deployed to be served by the service, false otherwise.
+	//
+	// It is read back out of the entry and not from the bundle again here on
+	// purpose: the record means "this repository's root has been applied with
+	// the service on", and a fresh reading would let it say ready for a root
+	// whose plan was made held off — the state the switch exists to make
+	// impossible, since that job's account holds no roles/run.invoker and a
+	// `cascade` run has nothing of its own to fall back to (D143). A
+	// repository this config does not hold yet is exactly that case: its spec
+	// was built with no entry to read, so its first run deploys the held-off
+	// root and records false, and the next run in the same checkout is the one
+	// that switches it on.
+	//
+	// The value is written as false as well as true: a bundle that is later
+	// emptied switches the repository off again, which puts its mounts back,
+	// and that is the fail-safe direction.
+	ready := false
+	if entry, ok := lc.Repos[key]; ok {
+		ready = entry.CredentialsServiceReady
 	}
-	// CredentialsServiceReady is the credentials service's readiness as this
-	// run read it (credentialsBundleReady, init_credentials.go): whether the
-	// bundle holds a model credential, so this repository's runs may be
-	// served by the service instead of by a credential mounted on the job.
-	// It is the record the switch's readiness half is read from — the plan
-	// that drops the job's model mounts (infra's spec) and the launch that
-	// hands it the service's address (credentialsServiceLaunchEnv) are
-	// decided by it — and it is written on every run, true or false: a
-	// bundle that is later emptied switches the repository off again, which
-	// puts its mounts back, and that is the fail-safe direction.
 	next.Repos[key] = localcfg.Repo{
 		Provider:                spec.Provider,
 		BaseBranch:              spec.BaseBranch,
 		Workflows:               slices.Sorted(maps.Keys(cfg.Workflows)),
 		GitHubAppID:             spec.GitHubAppID,
 		Vertex:                  spec.UsesVertex(),
-		CredentialsServiceReady: r.credentialsBundleReady(ctx, lc),
+		CredentialsServiceReady: ready,
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {
 		// The installation enables the API from the recorded repositories,
@@ -4484,6 +4500,26 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		r.publishSharedConfig(ctx, &next)
 	}
 	return nil
+}
+
+// repoConfigKey is the key repo holds in the local config's repos: the entry
+// already there whose canonical form (task.CanonicalRepo, which folds the
+// provider's spelling) is repo's, else repo itself. A repository is written
+// through the key it already has, so an entry written by another provider's
+// spelling is updated rather than duplicated, and the two readers of the
+// credentials-service record — the spec built from the local config and this
+// door's own write — name the same entry.
+func repoConfigKey(lc *localcfg.Config, repo string) string {
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return repo
+	}
+	for _, k := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if c, err := task.CanonicalRepo(k); err == nil && c == want {
+			return k
+		}
+	}
+	return repo
 }
 
 // forgetRepo is the repository's rollback: every address leaves

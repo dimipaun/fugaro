@@ -1036,8 +1036,13 @@ type Repo struct {
 	// service holds a model credential this repository's runs can be served
 	// with — the bundle is not empty — so a job of it may stop mounting one
 	// of its own. fugaro update sets it, from one read of the bundle it
-	// already makes with the operator's identity, and writes it on every
-	// repository entry: a bundle that is later emptied switches the
+	// already makes with the operator's identity, and writes it on the entry
+	// of the repository whose root IT applies: the grant that makes the
+	// service usable to a repository is made by that root's own apply
+	// (deploy/terraform/gcp/modules/workflow/sa.tf), so a record written for
+	// a repository this run does not apply would vouch for a service its jobs
+	// have no grant to knock with — a `cascade` run has no credential of its
+	// own to fall back to. A bundle that is later emptied switches the
 	// repository back off on the next update, which is what puts its jobs'
 	// mounts back, and that is the fail-safe direction.
 	//

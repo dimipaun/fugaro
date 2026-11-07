@@ -183,20 +183,41 @@ func putSwitchBundle(t *testing.T, r *initRig, doc []byte) {
 }
 
 // addSwitchRepo adds a second repository entry to the rig's local config: the
-// installation door refreshes EVERY entry the config holds, not only the one
-// the run converges, so a test needs more than the one the rig ships with.
-func addSwitchRepo(t *testing.T, r *imagesRig, name string) {
+// switchRepos is the `repos:` line the rigs ship, so a test can rewrite it.
+const switchRepos = "  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }"
+
+// addSwitchRepo adds a second repository entry to the rig's local config: what
+// a sibling entry does when the door converges acme/sandbox is one of the
+// things below asserts.
+func addSwitchRepo(t *testing.T, r *initRig, name string) {
 	t.Helper()
 	b, err := os.ReadFile(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const anchor = "  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }"
-	if !strings.Contains(string(b), anchor) {
-		t.Fatalf("the rig's local config no longer holds %q:\n%s", anchor, b)
+	if !strings.Contains(string(b), switchRepos) {
+		t.Fatalf("the rig's local config no longer holds %q:\n%s", switchRepos, b)
 	}
-	entry := anchor + "\n  " + name + ": { provider: bitbucket, base_branch: master, workflows: [web] }"
-	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), anchor, entry, 1)), 0o600); err != nil {
+	entry := switchRepos + "\n  " + name + ": { provider: bitbucket, base_branch: master, workflows: [web] }"
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), switchRepos, entry, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withoutSwitchRepo leaves the rig's local config holding name alone: the
+// repository the door converges is then one the config does not hold yet,
+// which is what a first onboarding of a repository looks like.
+func withoutSwitchRepo(t *testing.T, r *initRig, name string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), switchRepos) {
+		t.Fatalf("the rig's local config no longer holds %q:\n%s", switchRepos, b)
+	}
+	entry := "  " + name + ": { provider: bitbucket, base_branch: master, workflows: [web] }"
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), switchRepos, entry, 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -233,30 +254,33 @@ func repoCredentialsServiceFact(t *testing.T, slug string) (map[string]any, bool
 	return svc, true
 }
 
-// TestTheInstallationDoorRecordsTheBundleOnEveryRepositoryItHolds is the
-// installation half of the record, driven end to end: the ordinary `fugaro
-// update`, no direct call to the writer.
+// TestTheInstallationDoorRecordsNoRepositoryItDoesNotApply is the installation
+// half of the record, driven end to end: the ordinary `fugaro update`, no
+// direct call to the writer.
 //
 // The bundle holds a model credential and the local config holds TWO
-// repositories, only one of which is any checkout's — the door refreshes both
-// (DON8: "reads the bundle once for the installation and writes the record on
-// every repository entry the local config holds"), and neither is written by
-// the repository stage, which a run outside a checkout skips entirely.
+// repositories, and the answer this run must leave for BOTH of them is "not
+// recorded" — however ready the bundle is. The record is a statement about a
+// grant, and the grant that makes the service usable to a repository is made
+// by that repository's OWN root's apply (modules/workflow/sa.tf's
+// google_cloud_run_v2_service_iam_member.credentials; the installation root
+// grants run.invoker to the operators, the coordinator and the verifier and to
+// no job account). This run applies the installation root alone — the
+// repository stage is skipped, there being no checkout here — so recording
+// either entry would tell a launch of that repository the service is ready
+// while its job accounts hold no grant: the launch hands it the service's
+// address, which opens the git provider keyless for a mint the service refuses,
+// and a `cascade` run has no credential of its own to fall back to (D143).
 //
-// The record has to be in the file BEFORE the repository stage re-loads it:
-// the stage that applies a repository root plans from the record, so a record
-// written afterwards leaves the plan of a held-off root — mounts kept, no
-// invoker grant on the service — beside a record that tells the next launch
-// the service is ready, which is the one state the switch exists to make
-// impossible.
-//
-// Mutation (verified, run and restored): drop the refresh from install()
-// (internal/cli/init.go) and this fails with neither entry recorded.
-func TestTheInstallationDoorRecordsTheBundleOnEveryRepositoryItHolds(t *testing.T) {
+// Mutation (verified, run and restored): move the record back to the
+// installation door (call recordCredentialsServiceReady from install(),
+// internal/cli/init.go, with every repository the config holds) and this fails
+// with both entries recorded.
+func TestTheInstallationDoorRecordsNoRepositoryItDoesNotApply(t *testing.T) {
 	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, r)
-	addSwitchRepo(t, r, "acme/other")
+	addSwitchRepo(t, r.initRig, "acme/other")
 	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
@@ -268,8 +292,8 @@ func TestTheInstallationDoorRecordsTheBundleOnEveryRepositoryItHolds(t *testing.
 		t.Fatalf("the local config does not parse: %v", err)
 	}
 	for _, name := range []string{"acme/sandbox", "acme/other"} {
-		if !lc.Repos[name].CredentialsServiceReady {
-			t.Errorf("the local config's record for %s is not set after an update that read a bundle holding a model credential: the installation door is the one that reads the bundle for the whole installation, and a repository it never records stays on its own model mounts for ever\n%s", name, readFileString(t, r.cfg))
+		if lc.Repos[name].CredentialsServiceReady {
+			t.Errorf("the local config records the credentials service as ready for %s after an update that read a bundle holding a model credential, and this run applied no repository root: the record vouches for the roles/run.invoker grant only that root's apply makes, so a launch of %s would be handed the service's address with no grant to knock with — an oauth job whose mounts are still there, whose git provider the address opens keyless, and whose run has no fallback (D143)\n%s", name, name, readFileString(t, r.cfg))
 		}
 	}
 }
@@ -321,12 +345,76 @@ func TestTheRepositoryDoorReadsTheBundleBeforeItPlansItsRoot(t *testing.T) {
 	}
 }
 
-// recordForRepo runs the repository stage's own write (initRun.writeRepoConfig,
-// init.go:3671) over the rig's installation and returns the config it left: the
-// writer's own read of the bundle, which is what the tests below are about. The
-// ORDER — that the bundle is read and the record refreshed before the root's
-// spec is built — is pinned by the two end-to-end tests above, which drive the
-// doors themselves.
+// TestTheRootIsDeployedForTheAuthTheRunsRead pins the plan's half of the
+// switch against the SAME document the launch reads: the fugaro.yaml at the
+// default branch, which is the file every run of the repository checks out —
+// and not whatever this working tree happens to hold.
+//
+// The two rows are one uncommitted edit apart in each direction, and each is
+// the failure the other document would produce. Over a default branch that says
+// cascade, a working tree edited to oauth leaves the launcher (which reads the
+// ref) handing the job the service's address: a plan built from the working
+// tree would keep that job's model mounts and grant its account no
+// roles/run.invoker, so the run is refused by the service with nothing to fall
+// back to (D143) — the root has to be deployed for the cascade the runs read.
+// Over a default branch that says oauth, a working tree edited to cascade is
+// the same break the other way: a plan built from the working tree drops the
+// job's model mount while the launcher, reading oauth, withholds the address,
+// and the job is left with no model credential at all.
+//
+// The document is read where the plan reads it, the repository root's tfvars:
+// installation.credentials_service is there exactly when the switch is on
+// (repoCredentialsService).
+//
+// Mutation (verified, run and restored): build the spec from the working tree
+// again (drop the deploymentConfig call in repoEngine, internal/cli/init.go)
+// and both rows fail, each with the answer the other document gives.
+func TestTheRootIsDeployedForTheAuthTheRunsRead(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		committed, worktree string
+		want                bool
+	}{
+		"the default branch is cascade and the working tree is edited to oauth": {"cascade", "oauth", true},
+		"the default branch is oauth and the working tree is edited to cascade": {"oauth", "cascade", false},
+	} {
+		r := credentialsRig(t)
+		r.repoReady(t)
+		r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+		credentialsOutputs(t, r)
+		putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+		dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", tc.committed, "aurora", ""))
+		// The uncommitted edit: the working tree's file is not the default
+		// branch's, which is the state `fugaro update --repo` runs in and the
+		// converge's repository stage refuses (init_repo_target.go).
+		if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(checkoutYAML("bitbucket", tc.worktree, "aurora", "")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(dir)
+		out, errOut, err := executeStdin(t, "", "update", "--repo", "--plan-only")
+		if err != nil {
+			t.Fatalf("%s: the run failed: %v\nstdout:\n%s\nstderr:\n%s", name, err, out, errOut)
+		}
+		_, present := repoCredentialsServiceFact(t, slug)
+		if present != tc.want {
+			t.Errorf("%s: the repository root's tfvars carry installation.credentials_service: %v, want %v — the plan is judged on the file the RUN will read, not on this working tree's, or the root deployed here is one a launch parts company with\nstdout:\n%s", name, present, tc.want, out)
+		}
+	}
+}
+
+// recordForRepo runs the repository door's own two halves over the rig's
+// installation and returns the config it left: the refresh the spec is built
+// from (initRun.recordCredentialsServiceReady — the read of the bundle these
+// tests are about) and then the persisted write (initRun.writeRepoConfig),
+// which writes the value the plan read.
+//
+// The ORDER the real door keeps — bundle read and record refreshed before the
+// root's spec is built — is pinned by TestTheRepositoryDoorReadsTheBundle-
+// BeforeItPlansItsRoot above, which drives the door itself. The outs value is
+// empty because the rigs here carry the block in the local config already.
 func recordForRepo(t *testing.T, r *initRig) *localcfg.Config {
 	t.Helper()
 	e := rigEngine(t, r, &initOptions{yes: true})
@@ -334,6 +422,7 @@ func recordForRepo(t *testing.T, r *initRig) *localcfg.Config {
 	if cfg == nil {
 		t.Fatalf("the fixture's fugaro.yaml does not parse: %v", problems)
 	}
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, infra.InstallationOutputs{}, "acme/sandbox")
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	if err := e.r.writeRepoConfig(t.Context(), e.lc, spec, cfg, r.cfg, e.old); err != nil {
 		t.Fatalf("the repository stage's config write failed: %v", err)
@@ -343,6 +432,49 @@ func recordForRepo(t *testing.T, r *initRig) *localcfg.Config {
 		t.Fatalf("the project config does not parse: %v", err)
 	}
 	return lc
+}
+
+// TestTheRecordIsWrittenAsThePlanReadIt is the record's meaning, at the writer:
+// TRUE only where the plan that this same run applies was itself built with the
+// switch on, and only on the entry of the repository whose root that plan is.
+//
+// The bundle is ready in both halves, so nothing here is about the bundle. The
+// first half is the ordinary one — the config holds this repository and a
+// sibling — and only the converged repository's entry may move: the sibling's
+// root was not applied, so its record would vouch for a roles/run.invoker grant
+// nobody made, and its launch would be handed the service's address with no
+// grant to knock with (D143). The second half is a repository the config does
+// not hold yet, which is every first onboarding of a repository on an
+// installation whose service is already on: there is no entry for the spec to
+// read, so the plan deploys the held-off root — mounts kept, no grant — and the
+// record has to say so. Writing the fresh bundle reading instead would be the
+// same broken state in the other direction, and this repository would be
+// launched onto a service its job cannot call until its next update.
+//
+// Mutation (verified, run and restored): give writeRepoConfig the fresh reading
+// again (CredentialsServiceReady: r.credentialsBundleReady(ctx, lc)) and the
+// second half fails with the record set.
+func TestTheRecordIsWrittenAsThePlanReadIt(t *testing.T) {
+	model := []byte(config.AnthropicSecret + ": " + credsValue(t, "model") + "\n")
+
+	sibling := switchRig(t)
+	addSwitchRepo(t, sibling, "acme/other")
+	putSwitchBundle(t, sibling, model)
+	lc := recordForRepo(t, sibling)
+	if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
+		t.Errorf("the record for the converged repository is not set over a bundle holding a model credential: the spec was built from this value, so this run deployed the root for a service the launch will not be told about")
+	}
+	if lc.Repos["acme/other"].CredentialsServiceReady {
+		t.Errorf("the record moved for acme/other, whose root this run did not apply: its job accounts hold no roles/run.invoker, so its launch would be handed the service's address — which opens the git provider keyless — and the service would refuse it with no fallback (D143)")
+	}
+
+	fresh := switchRig(t)
+	withoutSwitchRepo(t, fresh, "acme/other")
+	putSwitchBundle(t, fresh, model)
+	lc = recordForRepo(t, fresh)
+	if lc.Repos["acme/sandbox"].CredentialsServiceReady {
+		t.Errorf("the record says the service is ready for a repository the local config did not hold when the spec was built: that spec kept the job's model mounts and granted its account no roles/run.invoker, so this record would hand the next launch an address its job cannot knock with — the one state the switch exists to make impossible")
+	}
 }
 
 // TestTheSwitchIsOffUntilTheBundleHoldsAModelCredential is the readiness half

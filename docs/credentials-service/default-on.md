@@ -43,6 +43,7 @@ that finds every place it is written and every test that pins it.
 | **Why, in the owner's words** | the reason for opt-in was **cost**, and a Cloud Run service that **scales to zero costs nothing idle**; so **remove the opt-in complexity** |
 | **Reverses** | the "ships dormant / optional" rulings and the `--provision-credentials` opt-in as the *only* way the service is deployed |
 | **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it, because the drop it triggers is auth-blind (§1.4) |
+| **Amended after review** | 2026-11-07 — the readiness record is a **per-repository fact written by the door that applies that repository's root**, and it is written as the value that root's **plan was built with**: a record vouches for a grant, only a root's own apply makes one, and the same rule runs the other way (§3 DON8) |
 | **The Open item, answered** | **2026-11-05: DEPLOY NOW, SWITCH LATER.** The service deploys everywhere; the switch happens **per repository** and only where the service can serve that repository's runs — its auth mode must be one the service serves **and** the bundle must hold what that mode needs. §1.5 states what the switch flips; §3 DON8 is the task |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
 
@@ -916,12 +917,24 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   checkout's `fugaro.yaml` and the published policy. So the readiness half is **recorded** by the
   command that does read the cloud — `fugaro update` — as a per-repository boolean in the local config,
   following `localcfg.Repo.Vertex` (`internal/localcfg/localcfg.go:1030-1033`, the fact `update` sets
-  from `infra`'s spec at `internal/cli/init.go:4271`). **Both doors refresh it**, and either alone is
-  enough: `fugaro update` reads the bundle once for the installation and writes the record on every
-  repository entry the local config holds; `fugaro update --repo PATH` refreshes the entry for that
-  repository, which is also the door that applies its root. **It is written `false` as well as `true`** —
-  a bundle that is later emptied switches the repository back off on the next `update`, which re-adds
-  the mounts, which is the fail-safe direction and not a failure.
+  from `infra`'s spec at `internal/cli/init.go:4488`). **The record is written where the root is
+  applied, and only there** (the header's second *amended after review* row): `fugaro update --repo PATH`
+  — and the converge's repository stage, which is the same engine — reads the bundle once and refreshes
+  the entry for the repository whose root it applies; `fugaro update`'s installation door writes no
+  record at all, because it applies no repository root. The reason is the grant: the thing that makes the
+  service usable to a repository is the `roles/run.invoker` grant its **own** root's apply makes
+  (`deploy/terraform/gcp/modules/workflow/sa.tf`'s `google_cloud_run_v2_service_iam_member.credentials`;
+  the installation root grants `run.invoker` to the operators, the coordinator and the verifier and to no
+  job account), so a record written for a repository whose root was not applied would tell that
+  repository's launch the service is ready while its job accounts hold no grant — and a `cascade` run has
+  no credential of its own to fall back to (D143). **It is written `false` as well as `true`**, and it is
+  written as **the value the plan was built with** and not from a second reading of the bundle, for the
+  same reason in the other direction: a record that says ready for a root whose plan was made held off is
+  the same broken state. A repository joining the local config is that case — its spec is built with no
+  entry to read — so its first run deploys the held-off root and records `false`, and the run after it,
+  in the same checkout, is the one that switches it on. A bundle that is later emptied switches the
+  repository back off on the next `update`, which re-adds the mounts, which is the fail-safe direction
+  and not a failure.
 - **What the switch flips, and the one thing it does not touch.** §1.5's three flips are this task's
   output, and **flip 1 needs no Terraform change at all** — which is the finding that makes this task
   small. `deploy/terraform/gcp/modules/workflow/sa.tf:148-151` gates the mount drop on

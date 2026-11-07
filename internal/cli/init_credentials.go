@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -148,29 +149,37 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 	return r.credsReady
 }
 
-// refreshCredentialsServiceReady records this run's bundle reading on every
-// repository entry the local config holds (docs/credentials-service/
-// default-on.md, DON8: "both doors refresh it, and either alone is enough").
+// recordCredentialsServiceReady records this run's bundle reading on the ONE
+// repository entry whose root this run applies (docs/credentials-service/
+// default-on.md, DON8's record, amended by the review of 2026-11-07).
 //
-// It runs on BOTH doors and before anything reads the record back:
+// It is the repository door's (repoEngine, init.go), and it runs before the
+// repository root's spec is built, so the plan that root makes and the record
+// the launch reads are the same answer. Without this the record lags the plan
+// by one run — the plan of a held-off root keeps the job's model mounts and
+// grants its account no roles/run.invoker, while the record written afterwards
+// tells the next launch the service is ready, which is a job handed the
+// service's address with no grant to knock with, and the service refuses it
+// rather than falling back (D143).
 //
-//   - the installation door (install, init.go) refreshes it after the
-//     installation root has applied and before the local config is written,
-//     so the file the same run's repository stage re-loads already carries it;
-//   - the repository door (repoEngine, init.go) refreshes it before the
-//     repository root's spec is built, so the plan that root makes and the
-//     record the launch reads are the same answer. Without this the record
-//     lags the plan by one run — the plan of a held-off root keeps the job's
-//     model mounts and grants its account no roles/run.invoker, while the
-//     record written afterwards tells the next launch the service is ready,
-//     which is a job handed the service's address with no grant to knock
-//     with, and the service refuses it rather than falling back (D143).
+// One entry and not every entry the local config holds, which is what this
+// helper did first: the record is read as "this repository's root has been
+// applied with the service on", and the ONLY thing that makes the service
+// usable to a repository is the roles/run.invoker grant its own root's apply
+// makes (modules/workflow/sa.tf's google_cloud_run_v2_service_iam_member.
+// credentials; the installation root grants run.invoker to operators, the
+// coordinator and the verifier and to no job account). Recording readiness for
+// a repository whose root this run does not apply is therefore a record of
+// something that did not happen: its launch would be handed the service's
+// address while its job accounts hold no grant, and a `cascade` run has no
+// credential of its own to fall back to, so it halts at the service's door
+// (D143). The installation door (install, init.go) applies no repository root
+// at all and so writes no record — which is also why a run outside a checkout,
+// whose repository stage is skipped, leaves every entry as it was.
 //
-// Every entry is written and not just the one being converged: the bundle is
-// one installation's, so the answer is the same for all of them, and a
-// repository whose root has not been applied yet keeps its mounts (the switch
-// only ever ADDS the service's address to a job that can still run without
-// it). The value is written false as well as true — see writeRepoConfig.
+// The value is written false as well as true: a bundle that is later emptied
+// switches the repository off again, and that is the fail-safe direction (see
+// writeRepoConfig).
 //
 // outs is the installation's own record of the service, used when the local
 // config does not carry the block yet: on the run that deploys it the config
@@ -179,8 +188,20 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 // here — the bundle's container is derived from the project and the
 // installation's name (openBundleStore) — so a URL the first apply could not
 // know yet is not a reason to answer false.
-func (r *initRun) refreshCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs) {
+func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo string) {
 	if lc == nil || len(lc.Repos) == 0 {
+		return
+	}
+	key := repoConfigKey(lc, repo)
+	entry, ok := lc.Repos[key]
+	if !ok {
+		// A repository the local config does not hold has nothing for the
+		// spec below to read, so this run deploys its root held off — mounts
+		// kept, no invoker grant — and its record has to stay false: the
+		// write at the end of this door creates the entry from the value the
+		// spec was built with, and the run after this one, in the same
+		// checkout, is the one that switches it on. Recording it ready here
+		// would be a record of a grant this run never made.
 		return
 	}
 	probe := lc
@@ -196,9 +217,60 @@ func (r *initRun) refreshCredentialsServiceReady(ctx context.Context, lc *localc
 			probe = &withBlock
 		}
 	}
-	ready := r.credentialsBundleReady(ctx, probe)
-	for key, repo := range lc.Repos {
-		repo.CredentialsServiceReady = ready
-		lc.Repos[key] = repo
+	entry.CredentialsServiceReady = r.credentialsBundleReady(ctx, probe)
+	lc.Repos[key] = entry
+}
+
+// deploymentConfig is the checkout's resolved config as this run DEPLOYS the
+// repository root from: the same document with agent.auth taken from the
+// fugaro.yaml at the default branch — the file the runs of this repository
+// read — where the working tree would answer differently.
+//
+// The switch (infra.CredentialsServiceServes) is judged on agent.auth, so a
+// plan that reads it from another document than the launch does is a job
+// deployed for one auth and launched for another. `fugaro update --repo` reads
+// the working tree, which an uncommitted edit or a checkout parked on another
+// branch can leave saying oauth over a default branch that says cascade; the
+// launcher reads the file at the ref the run checks out (internal/cli/run.go's
+// launchFileConfig). Worktree oauth over a cascade default branch plans a root
+// that keeps the job's model mounts and grants its account no
+// roles/run.invoker, and the launch hands that job the service's address
+// anyway, which is the halt with no fallback D143 is about. The other
+// direction drops the mount and withholds the address, which leaves the job
+// with no model credential at all. The two answers have to come from one
+// document, and the document is the default branch's: the repository stage
+// already holds the working tree to it, byte for byte (init_repo_target.go's
+// readFugaroYAML comparison, "the engine reads the working tree: it must be
+// the default branch's file"), and it is the ref a run is cut from unless the
+// checkout is parked on another branch origin has (run_ref.go's newRunRef). A
+// run cut with --ref from a third branch whose own fugaro.yaml says something
+// else again is the case this cannot reach: no update can know which branch a
+// future run is cut from, and the default branch is the ref a plan can be held
+// to.
+//
+// It is agent.auth alone that moves, and it moves for the whole deployment and
+// not only for the switch: agent.auth is also what decides which model
+// credential a job mounts and whether it is a Vertex one (infra's SecretMounts
+// and WorkflowAccounts), so a deployment planned for one auth and launched for
+// another is incoherent on those axes too. Nothing else is taken from the
+// default branch — the workflows, the secrets and the base branch this engine
+// deploys are the working tree's, as they have always been.
+//
+// A default branch this checkout cannot answer for — no remote-tracking ref,
+// no file at it, a file that does not resolve, or no project layer to resolve
+// it over — leaves the config exactly as it was, which is the fallback the
+// launcher's own read takes (launchFileConfig). In the converge door the two
+// documents are the same file anyway: the repository stage refuses a checkout
+// whose fugaro.yaml is not the default branch's before this engine runs.
+func deploymentConfig(ctx context.Context, root string, cfg *config.Config) *config.Config {
+	if cfg == nil || root == "" {
+		return cfg
 	}
+	db := defaultBranchParse(ctx, root)
+	if db.cfg == nil || db.cfg.Agent.Auth == "" || db.cfg.Agent.Auth == cfg.Agent.Auth {
+		return cfg
+	}
+	out := *cfg
+	out.Agent.Auth = db.cfg.Agent.Auth
+	return &out
 }
