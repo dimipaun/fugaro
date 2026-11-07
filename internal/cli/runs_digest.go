@@ -607,9 +607,9 @@ func runRunsDigestDue(cmd *cobra.Command, o *digestOptions) error {
 }
 
 // digestHasReport is whether the folder holds a report of this period. The
-// dimension is compared as well as the key: a file of another shape is a row
-// only under its own dimension, and ReportName never yields two dimensions for
-// one name.
+// dimension is compared as well as the key: a row's dimension comes from the
+// shape of the file's name, and only a file of this period's own shape is this
+// period's report.
 func digestHasReport(rows []digest.Row, p digest.Period) bool {
 	for _, r := range rows {
 		if r.Key == p.Key && r.Dim == p.Dim {
@@ -625,7 +625,8 @@ func digestHasReport(rows []digest.Row, p digest.Period) bool {
 // in key order rather than period order, so the greatest key is not the newest
 // report and the comparison is made here.
 func digestNewestReport(rows []digest.Row, now time.Time) *digestDueReport {
-	var newest *digestDueReport
+	var newest digest.Period
+	found := false
 	for _, r := range rows {
 		p, err := digest.NewPeriod(r.Dim, r.Key)
 		if err != nil {
@@ -633,25 +634,15 @@ func digestNewestReport(rows []digest.Row, now time.Time) *digestDueReport {
 			// that somehow reached a row without one is no period to report.
 			continue
 		}
-		if newest != nil && !digestPeriodIsLater(p, newest) {
+		if found && (p.End < newest.End || (p.End == newest.End && p.Key < newest.Key)) {
 			continue
 		}
-		newest = &digestDueReport{Key: p.Key, Dim: p.Dim, DaysAgo: digestDaysAgo(p.End, now)}
+		newest, found = p, true
 	}
-	return newest
-}
-
-// digestPeriodIsLater is whether p comes after the report already held: by its
-// last day, and by its key when two periods end on the same day.
-func digestPeriodIsLater(p digest.Period, held *digestDueReport) bool {
-	heldEnd := held.Key
-	if h, err := digest.NewPeriod(held.Dim, held.Key); err == nil {
-		heldEnd = h.End
+	if !found {
+		return nil
 	}
-	if p.End != heldEnd {
-		return p.End > heldEnd
-	}
-	return p.Key > held.Key
+	return &digestDueReport{Key: newest.Key, Dim: newest.Dim, DaysAgo: digestDaysAgo(newest.End, now)}
 }
 
 // digestDaysAgo is how many whole days have passed between a period's last day
@@ -662,7 +653,7 @@ func digestDaysAgo(end string, now time.Time) int {
 	if err != nil {
 		return 0
 	}
-	days := int(now.Sub(last).Hours() / 24)
+	days := int(now.Sub(last) / (24 * time.Hour))
 	if days < 0 {
 		return 0
 	}
