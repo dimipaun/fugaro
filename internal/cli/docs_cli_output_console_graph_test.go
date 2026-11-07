@@ -44,7 +44,12 @@ package cli
 //	  cite `internal/report/report.go` in the reconciliation -> fails, naming the
 //	  path: the reconciliation's findings are only worth as much as the code
 //	  behind them, and a citation that has moved turns a checked finding into an
-//	  unchecked one with no other symptom.
+//	  unchecked one with no other symptom;
+//	  link `reconciliation.md#numbers-this-work-holds` from the index -> passes,
+//	  and fails when the anchor is left on the target: a link that names a section
+//	  of a file that is there is a link that resolves, and reading the anchor as
+//	  part of the name reports it as a file that is not, which is a pin that
+//	  teaches a later writer to drop the anchor rather than keep the link.
 
 import (
 	"os"
@@ -217,10 +222,11 @@ func TestDocsCliOutputConsoleGraphStatusLines(t *testing.T) {
 	}
 }
 
-// cocgLinkRE finds a relative markdown link target: everything up to an anchor.
-// It is the shape a document cites one of its own files in, and the shape that
-// reads as a path in all five documents, which is why it is checked in all five
-// while the code-span paths below are checked where they mean something.
+// cocgLinkRE finds a relative markdown link target, anchor and all: the anchor
+// is stripped where the target is resolved, since it is the file that has to
+// exist. It is the shape a document cites one of its own files in, and the shape
+// that reads as a path in all five documents, which is why it is checked in all
+// five while the code-span paths below are checked where they mean something.
 var cocgLinkRE = regexp.MustCompile(`\]\(([^)]+)\)`)
 
 // cocgPathRE finds a repository path in a code span: a full path from the
@@ -251,7 +257,16 @@ func TestDocsCliOutputConsoleGraphCitedPathsExist(t *testing.T) {
 				continue // an external reference is not a path of this tree
 			}
 			links++
-			resolved := filepath.Join("..", "..", filepath.FromSlash(filepath.Dir(path)), filepath.FromSlash(target))
+			// A target may carry an anchor (`reconciliation.md#t7`), and it is the
+			// file that has to be there: stat'ing the anchor along with it reports a
+			// link that is there as a file that is not. A target that is nothing but
+			// an anchor points inside the document it is written in and names no path
+			// of this tree at all, so it is counted as a link and resolved no further.
+			file, _, _ := strings.Cut(target, "#")
+			if file == "" {
+				continue
+			}
+			resolved := filepath.Join("..", "..", filepath.FromSlash(filepath.Dir(path)), filepath.FromSlash(file))
 			if _, err := os.Stat(resolved); err != nil {
 				t.Errorf("%s links to %q, which is not a file of this tree: a link that resolves to nothing is a reader sent to a document that is not there", path, target)
 			}
