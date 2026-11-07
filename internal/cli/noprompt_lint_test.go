@@ -366,6 +366,36 @@ func TestLintCatchesAnAliasedStdinReader(t *testing.T) {
 			"import \"fmt\"\nfunc f(cmd *cobra.Command) { var s string; _, _ = fmt.Fscan(cmd.InOrStdin(), &s) }",
 			[]string{"fmt.Fscan"},
 		},
+		{
+			"a sized reader",
+			"import \"bufio\"\nfunc f(cmd *cobra.Command) { r := bufio.NewReaderSize(cmd.InOrStdin(), 16); _, _, _ = r.ReadRune() }",
+			[]string{"bufio.NewReaderSize", "ReadRune"},
+		},
+		{
+			"a read-writer",
+			"import \"bufio\"\nfunc f(cmd *cobra.Command) { _ = bufio.NewReadWriter(bufio.NewReader(cmd.InOrStdin()), cmd.OutOrStdout()) }",
+			[]string{"bufio.NewReadWriter", "bufio.NewReader"},
+		},
+		{
+			"a byte read",
+			"import \"bufio\"\nfunc f(cmd *cobra.Command) { r := bufio.NewReader(cmd.InOrStdin()); _, _ = r.ReadByte() }",
+			[]string{"bufio.NewReader", "ReadByte"},
+		},
+		{
+			"a read filled from stdin",
+			"import \"io\"\nfunc f(cmd *cobra.Command) { b := make([]byte, 4); _, _ = io.ReadFull(cmd.InOrStdin(), b) }",
+			[]string{"io.ReadFull"},
+		},
+		{
+			"a read filled from stdin, at least",
+			"import \"io\"\nfunc f(cmd *cobra.Command) { b := make([]byte, 4); _, _ = io.ReadAtLeast(cmd.InOrStdin(), b, 4) }",
+			[]string{"io.ReadAtLeast"},
+		},
+		{
+			"stdin read through a dot-imported io",
+			"import . \"io\"\nfunc f(cmd *cobra.Command) { b := make([]byte, 4); _, _ = ReadFull(cmd.InOrStdin(), b) }",
+			[]string{"io.ReadFull"},
+		},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -462,6 +492,8 @@ func TestLintLeavesPredicatesAndDataReadsAlone(t *testing.T) {
 		{"a store read", "import \"context\"\nfunc f(ctx context.Context, b *bucket) { _, _, _ = b.Read(ctx, \"k\") }"},
 		{"a package data read", "import \"github.com/dimipaun/fugaro/internal/streams\"\nfunc f(p string) { _, _ = streams.Read(p) }"},
 		{"stdin put in a variable of its own", "func f(cmd *cobra.Command) { in := cmd.InOrStdin(); _ = in }"},
+		{"a full read from a package's own reader", "import (\n\"crypto/rand\"\n\"io\"\n)\nfunc f(b []byte) { _, _ = io.ReadFull(rand.Reader, b) }"},
+		{"a read-writer written to", "import \"bufio\"\nfunc f(w io.Writer) { _ = bufio.NewWriter(w) }"},
 		{"a call in a string", "func f() { _ = \"bufio.NewReader(cmd.InOrStdin()).ReadString('\\\\n')\" }"},
 		{"a call in a comment", "func f() { // _ = bufio.NewReader(cmd.InOrStdin())\n}"},
 	}
