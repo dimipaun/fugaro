@@ -75,6 +75,14 @@ const (
 	// than truncated: a request that carries more than this is refused, because
 	// a state that was cut down would come back altered.
 	maxStateBytes = 512
+	// maxChallengeBytes is what an S256 challenge is and no more: RFC 7636 §4.2
+	// makes the challenge the base64url encoding of a SHA-256 digest, which is
+	// 43 characters without padding, so a longer value is one no verifier
+	// derives. It is bounded here beside the state for the same reason the
+	// state is — this GET is unauthenticated and writes the record, so an
+	// unbounded value in that record is one an anonymous caller leaves in the
+	// installation's database for the record's whole life.
+	maxChallengeBytes = 43
 	// approvalDigits is how many decimal digits a flow's number carries. Six is
 	// what makes a number a person can read off a screen and type back, and it
 	// is short enough that the page can show it as one word.
@@ -206,6 +214,15 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 	if challenge == "" {
 		s.redirectError(w, r, redirectURI, state, oauthError(oidc.ErrInvalidRequest(),
 			"code_challenge is required: every client of this authorization server uses PKCE with S256, and the exchange refuses a code that was issued without one"))
+		return
+	}
+	// Refused rather than stored, exactly as the state above is: the challenge
+	// goes into the record, and no verifier derives a challenge longer than an
+	// S256 one, so a value this size is a request that could not have come from
+	// a client of this server.
+	if len(challenge) > maxChallengeBytes {
+		s.redirectError(w, r, redirectURI, state, oauthError(oidc.ErrInvalidRequest(),
+			"code_challenge is longer than an S256 challenge can be: the challenge is the base64url SHA-256 digest of the verifier, which is 43 characters, so this one is refused rather than kept"))
 		return
 	}
 	switch method := oidc.CodeChallengeMethod(q.Get("code_challenge_method")); method {

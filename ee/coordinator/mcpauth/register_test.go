@@ -153,6 +153,13 @@ func TestRegistrationRefusesANonLoopbackURI(t *testing.T) {
 		"https://evil.example.org/client.example.net/callback",
 		"http://127.0.0.1.example.org/callback",
 		"http://localhost.example.org/callback",
+		// And the same trap on the other side of the host: these *end* in a
+		// loopback name, so a rule that matched a suffix would take them. The
+		// host is compared as a whole, and both directions of the mistake are
+		// pinned here rather than only the one a reader thinks of first.
+		"http://evil-127.0.0.1/callback",
+		"http://evil-localhost/callback",
+		"http://evil-127.0.0.1:8976/callback",
 		// A URI that would send the code to the browser rather than to a
 		// client, and one this server cannot reason about at all.
 		"https://client.example.net/callback#fragment",

@@ -239,6 +239,23 @@ func TestPKCEIsRequiredAndPlainIsRefused(t *testing.T) {
 		t.Errorf("an authorization request that names no code_challenge_method was refused with %q; want %q: an absent method defaults to plain (RFC 7636 §4.3), and this server tells the client to say S256 rather than reading the default", got, oidc.InvalidRequest)
 	}
 
+	// The challenge is bounded here for the same reason the state is, and the
+	// bound is refused rather than applied: this GET is unauthenticated and
+	// writes the record, so a challenge nothing bounds is a value an anonymous
+	// caller leaves in the installation's database for the record's whole life.
+	// An S256 challenge is 43 characters, so the value below is one no verifier
+	// derives — and the request is refused before the record is written.
+	q = authorizeQuery(clientID, testClientRedirect)
+	q.Set("code_challenge", strings.Repeat("a", maxChallengeBytes+1))
+	if got := oauthErrorOf(t, ts.authorizeRequest(t, q), host); got != string(oidc.InvalidRequest) {
+		t.Errorf("an authorization request carrying a %d-byte code_challenge was refused with %q; want %q: the challenge is kept in the record this GET writes, and one longer than an S256 challenge can be is one no verifier derives", maxChallengeBytes+1, got, oidc.InvalidRequest)
+	}
+	for key := range ts.store.objects(t) {
+		if strings.HasPrefix(key, requestPrefix) {
+			t.Errorf("%s exists after a request that was refused: a refusal that leaves the record it refused to write is the value kept anyway", key)
+		}
+	}
+
 	// And the exchange is where the challenge is actually checked: a code
 	// issued for one verifier is not redeemable with another.
 	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
@@ -666,22 +683,39 @@ func TestRefreshTokenIsSingleUse(t *testing.T) {
 	}
 }
 
-// racingFamilyObjects is a bucket whose first replace of a family runs another
-// writer to completion before the bytes asked for are written. It puts a
-// competing rotation in the one window a rotation has: after the family has
-// been read and before it is written, which is where racingObjects puts it too
-// — the difference is the caller, which is the endpoint here rather than the
-// store, so the race is entered through a request.
-type racingFamilyObjects struct {
+// interleavedObjects is a bucket whose first read or write of the key a test
+// names runs another writer to completion first: before a matching read's bytes
+// are handed back, or before a matching write is made. It is racingObjects
+// reached from the outside — the race is entered through a request here rather
+// than through a store call, so the caller under test is the endpoint.
+//
+// The two hooks are the two windows D930's rotation work leaves open, and each
+// is a place a real revoke or a real second exchange can land: between a
+// rotation's read of the family and its own write, and between the endpoint's
+// lookup of a token and the store's read of the family that lookup resolved.
+type interleavedObjects struct {
 	objects
-	race  func()
-	fired bool
+	// onRead and onReplace accept the keys their hook opens for; exactly one of
+	// them is set, and the hook runs once.
+	onRead    func(key string) bool
+	onReplace func(key string) bool
+	hook      func()
+	fired     bool
 }
 
-func (o *racingFamilyObjects) replace(ctx context.Context, key string, data []byte, gen int64) (int64, error) {
-	if !o.fired && strings.HasPrefix(key, familyPrefix) {
+func (o *interleavedObjects) read(ctx context.Context, key string) ([]byte, int64, error) {
+	data, gen, err := o.objects.read(ctx, key)
+	if err == nil && !o.fired && o.onRead != nil && o.onRead(key) {
 		o.fired = true
-		o.race()
+		o.hook()
+	}
+	return data, gen, err
+}
+
+func (o *interleavedObjects) replace(ctx context.Context, key string, data []byte, gen int64) (int64, error) {
+	if !o.fired && o.onReplace != nil && o.onReplace(key) {
+		o.fired = true
+		o.hook()
 	}
 	return o.objects.replace(ctx, key, data, gen)
 }
@@ -706,10 +740,11 @@ func TestARefreshThatLosesItsRaceIsRefusedWithoutRetryAdvice(t *testing.T) {
 	// Both are filled in after the flow, because the flow is what mints the
 	// token and the race is what rotates it.
 	var presented, winnerRefresh string
-	var raced *racingFamilyObjects
+	var raced *interleavedObjects
 	ts := newTestServerOver(t, testConfig(), func() time.Time { return testNow }, func(objs objects) objects {
-		raced = &racingFamilyObjects{objects: objs}
-		raced.race = func() {
+		raced = &interleavedObjects{objects: objs}
+		raced.onReplace = func(key string) bool { return strings.HasPrefix(key, familyPrefix) }
+		raced.hook = func() {
 			// The other client, doing nothing wrong: it holds the same
 			// refresh token, it got there first, and it rotates it. It runs
 			// against the plain bucket below the wrapper, so its own write is
@@ -762,6 +797,70 @@ func TestARefreshThatLosesItsRaceIsRefusedWithoutRetryAdvice(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("the winner's own pair was refused after the loser's exchange: %d (%s); want a rotation — a lost race is not a replay, and the family the winner holds is alive",
 			rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestARefreshWhoseFamilyWasRevokedUnderItIsRefused: the other side of the same
+// window as the test above, and the same answer.
+//
+// A revoke is one delete of the family object, and the records of its tokens
+// are left where they are: an exchange that read its token record before that
+// delete and its family after it is left holding a record whose family is gone
+// — the state store.go names as a record outliving its family. The store
+// reports that as the token no longer resolving, and the answer has to be the
+// terminal one: the family is gone, so a 5xx here invites a retry that presents
+// a token of a family nobody will rotate again, and the client that retried is
+// told the wrong thing about its own session.
+//
+// The revoke is interleaved rather than made by hand, because the window is
+// what the test is about: the endpoint's own lookup reads the family and
+// succeeds, the revoke deletes it, and the store's read — the one the rotation
+// decides on — finds nothing. A hand-made state cannot tell the two reads
+// apart, and the endpoint refuses the request at its own lookup, which is the
+// answer that already worked.
+func TestARefreshWhoseFamilyWasRevokedUnderItIsRefused(t *testing.T) {
+	ctx := context.Background()
+
+	var famID string
+	var armed bool
+	var raced *interleavedObjects
+	ts := newTestServerOver(t, testConfig(), func() time.Time { return testNow }, func(objs objects) objects {
+		raced = &interleavedObjects{objects: objs}
+		raced.onRead = func(key string) bool { return armed && key == familyPrefix+famID }
+		raced.hook = func() {
+			// The replay that revokes the family, and the whole of what a
+			// revoke is: one delete of the family object. The records of its
+			// tokens are left where they are, which is the state store.go
+			// names — a record that outlived its family.
+			if err := newRecords(objs).RevokeFamily(ctx, famID); err != nil {
+				t.Errorf("the revoke that lands under the exchange: %v", err)
+			}
+		}
+		return raced
+	})
+
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+	rec, err := ts.store.LookupByHash(ctx, TokenHash(tokens.RefreshToken))
+	if err != nil {
+		t.Fatalf("the refresh token of the flow just run: %v", err)
+	}
+	famID, armed = rec.FamilyID, true
+
+	rec2, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	})
+	if !raced.fired {
+		t.Fatal("the revoke never landed, so nothing below is about an exchange whose family went under it")
+	}
+	if rec2.Code != http.StatusBadRequest {
+		t.Errorf("the exchange whose family was revoked under it answered %d (%s); want 400: a family that is gone is not a server that failed, and a 5xx is the status a client retries",
+			rec2.Code, strings.TrimSpace(rec2.Body.String()))
+	}
+	if !strings.Contains(rec2.Body.String(), string(oidc.InvalidGrant)) {
+		t.Errorf("the exchange whose family was revoked under it answered %d (%s); want invalid_grant, which is terminal and carries no invitation to come back",
+			rec2.Code, strings.TrimSpace(rec2.Body.String()))
 	}
 }
 

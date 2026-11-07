@@ -306,6 +306,20 @@ func (s *Server) exchangeRefresh(w http.ResponseWriter, r *http.Request, form ur
 		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(),
 			"the refresh token was already rotated away: the family is revoked and the client has to authorize again"))
 		return
+	case errors.Is(err, ErrTokenNotFound):
+		// The family was gone by the time the rotation read it, though the
+		// record of the token being presented was still there a moment earlier.
+		// That is the same theft window as the case above, seen from the other
+		// side: a revoke deletes the family and its records, and an exchange
+		// that read its record before that delete and its family after it is
+		// one the store cannot carry — RotateRefresh reports it as the token
+		// it looked up no longer resolving, which is exactly what a client
+		// presenting a token of a revoked family gets. It is terminal for the
+		// same reason the replay is: the family is gone, and 5xx here would
+		// invite the retry that presents the spent token again.
+		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(),
+			"the refresh token's family was revoked while this exchange was in flight: the token is spent with it, and the client has to authorize again"))
+		return
 	case errors.Is(err, ErrConflict):
 		// Two exchanges of one refresh token landed at once — a double-submit,
 		// or a client that retried — and the store's swap made the other one
