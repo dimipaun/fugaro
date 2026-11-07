@@ -1,6 +1,8 @@
 # A repository build context for catalog `dockerfile` entries — the Dockerfiles teams already have
 
 **Status: plan only; nothing is implemented; no task approved.** This is a plan for the owner to read.
+
+**2026-11-07: D1390-D1409 are all answered, each the recommendation** (asked one at a time; reconciliation section 7 carries the dated answer in each row). D1408 is answered (fold into `docs/project-image-catalog/context-design.md`), so the first gate is lifted; D1409 puts the work after the removal and after D1208's migrated entries (0.22.0). **No task is approved yet**: each still needs the owner's explicit go.
 It adds no code, no schema, no config key and no Terraform; it edits no file outside `docs/`. Nothing
 in it is an approval: every task in [implementation-plan.md](implementation-plan.md) needs the owner's
 own go, and the first task needs an answer before it — see **Open items** below.
