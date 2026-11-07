@@ -267,6 +267,18 @@ describe('the review account keys, drawn from the read the tab already makes', (
     expect(valueCells(root)).not.toContain('')
   })
 
+  it('draws the value the read spells as unset as the console\'s own word', () => {
+    // The read answers a key no layer decides with the registry's sentence for
+    // what unset means (`unset = the project's default account`), which is not
+    // an account and not a value this section draws: the row says unset, and the
+    // sentence reaches no cell.
+    const root = section(
+      settingsDoc([settingRow(STAGE_ACCOUNT_KEY, "unset = the project's default account")]),
+    )
+    expect(valueCells(root)).toEqual([ACCOUNT_KEYS_UNSET_WORD, ACCOUNT_KEYS_UNSET_WORD])
+    expect(drawn(root)).not.toContain("the project's default account")
+  })
+
   it('withholds the section for a row of a shape it does not read', () => {
     const root = section(settingsDoc([{ ...settingRow(DEFAULT_ACCOUNT_KEY), value: 42 }]))
     expect(root.getAttribute('data-state')).toBe('unavailable')
