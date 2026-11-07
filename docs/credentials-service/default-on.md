@@ -45,6 +45,7 @@ that finds every place it is written and every test that pins it.
 | **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it, because the drop it triggers is auth-blind (§1.4) |
 | **Amended after review** | 2026-11-07 — the readiness record is a **per-repository fact written by the door that applies that repository's root**, and it is written as the value that root's **plan was built with**: a record vouches for a grant, only a root's own apply makes one, and the same rule runs the other way (§3 DON8) — and **neither door writes one in a coding agent's session or in a run's own process**, where the bundle is not read at all |
 | **Amended after review** | 2026-11-07 — the record is the **switch itself**, not the reading of the bundle: the auth its plan was built for is **folded into it** (`infra.CredentialsServiceServes`, not a second copy of its conjunction), so a root applied before its owner committed the cascade is recorded held off and no launch is handed an address whose `roles/run.invoker` grant no apply made. The auth stays **read live** at every build and every launch, which is what honours an edit in the other direction |
+| **Amended after review** | 2026-11-07 — **a read that failed is not a reading and therefore not an answer.** The three states that answer are facts about the bundle, true for every reader (no version, a newest version that is `DISABLED`, a document that parses without a `KindModel` entry); an error is a fact about **this machine's identity**, and the record travels in the local config `fugaro update` publishes, so a `false` written from it switches the service off for every machine of the installation — including the jobs whose mounts the last apply dropped. A failed read leaves the record as the last reading wrote it (§3 DON8) |
 | **The Open item, answered** | **2026-11-05: DEPLOY NOW, SWITCH LATER.** The service deploys everywhere; the switch happens **per repository** and only where the service can serve that repository's runs — its auth mode must be one the service serves **and** the bundle must hold what that mode needs. §1.5 states what the switch flips; §3 DON8 is the task |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
 
@@ -1001,7 +1002,21 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   `credentialsBundleReady` answers "nothing was read" there and neither door writes — every entry keeps
   the record the person's own last run left on it, and the repository door's plan is the one that record
   already answers. An agent's run therefore moves no switch; the person's own next `fugaro update` is
-  what converges it, which is still the one command CLAUDE.md's HARD RULE promises.
+  what converges it, which is still the one command CLAUDE.md's HARD RULE promises. **A read that
+  failed leaves the record alone the same way** (the header's other 2026-11-07 row): the three states
+  that answer — no version, a newest version that is `DISABLED`, a document with no `KindModel` entry —
+  are facts about the bundle and true for every reader, while an error is a fact about the identity
+  that read. `credentialsBundleReady` says so in its second answer, which is `false` wherever there is
+  no reading to write (both markers, every failure), so a `false` reaches the config only from a
+  reading that produced it. The reason is what the record *is*: it is published with the local config
+  (`internal/localcfg/shared.go`), so one identity refused the bundle's version list — an operator
+  without the accessor role, a listing that failed — would write the switch off for every machine of
+  the installation, and every teammate's `cascade` run would then be handed no service address by
+  `credentialsServiceLaunchEnv` and stop at the service's door (D143) on the word of a machine that
+  read nothing. The cost of the rule is a convergence, not a wrong write: an entry the failed read
+  could not judge stays unrecorded, and the next run that *can* read the bundle — the same door, the
+  next time it works — is the one that records it. The three answering states are kept as writes
+  because each of them means the same thing to every reader of the bundle, the service included.
 - **What the switch flips, and the one thing it does not touch.** §1.5's three flips are this task's
   output, and **flip 1 needs no Terraform change at all** — which is the finding that makes this task
   small. `deploy/terraform/gcp/modules/workflow/sa.tf:148-151` gates the mount drop on
@@ -1035,7 +1050,10 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   `TestTheRecordFollowsTheAuthTheRunsRead` (the record is the switch: one ready bundle, two auths, and
   the `oauth` one records nothing — the direction the third review round found, with the held-off apply
   it belongs to) and `TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService` (that same state at the
-  launch: a cascade document, the block present, no record, and the job is handed no address); and
+  launch: a cascade document, the block present, no record, and the job is handed no address);
+  `TestAnUnreadableBundleLeavesTheRecordAlone` (the fourth review round: over a bundle the record was
+  written from, the version list starts answering 403, and the record is still `true` in the entry
+  **and in the file `fugaro update` publishes** — the write a failed read may not make); and
   `TestNoRepositoryRootGainsAServiceTheBundleCannotServe` (the whole-predicate guard: **no** repository
   root in the fixtures plans `installation.credentials_service` set unless all three conditions hold).
 - **Red step:** `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone` fails the moment DON1 lands and
@@ -1050,7 +1068,9 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   drop condition 3 → the `oauth` test fails, which is the review's finding reintroduced; store the auth
   mode in the record instead of reading it live → the edit-the-`fugaro.yaml` test fails; record the
   bundle's reading alone and leave the auth to the launch → `TestTheRecordFollowsTheAuthTheRunsRead`
-  fails, the `oauth` apply recorded ready over a root it planned held off; make
+  fails, the `oauth` apply recorded ready over a root it planned held off; answer a failed read with
+  `false` rather than with no answer → `TestAnUnreadableBundleLeavesTheRecordAlone` fails, and one
+  refused listing publishes the switch off for the whole installation; make
   `repoCredentialsService` return the block regardless → the no-repository-gains test fails and `sa.tf`
   drops the mounts of a repository nobody switched on; implement the predicate a second time in
   `internal/cli` and let the two disagree → the launch and the plan part company, which is the state

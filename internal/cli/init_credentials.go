@@ -93,28 +93,39 @@ const credsServiceSince = "0.10.0"
 // version at all, one whose newest version is DISABLED, and one that parses
 // with no KindModel entry are three ways of holding nothing.
 //
-// Every failure answers false, and none of them fails the run. The bundle is a
-// secret this machine's identity may not be able to read, and a run that could
-// not read it is not a run that knows the service is ready: the repository
-// keeps its model credentials mounted, which is the fail-safe direction a
-// `fugaro update` with the operator's own identity corrects on the next run.
-// What each failure is says so as a warning, because the record it leaves
-// behind is the reason a repository is not switched on.
+// A read that FAILS is not a reading, which is why it is not an answer either
+// (the review of 2026-11-07's third round). The three states that answer are
+// facts about the bundle itself, true for every reader: no version at all, a
+// newest version that is DISABLED (the state `creds set`'s rotation leaves the
+// version it replaced, and the service reads `latest`), and a document that
+// parses without a KindModel entry. An error is none of those — a container
+// this machine's identity may not read, a version it may not access, a listing
+// that failed, a document that does not parse — and the identity that reads
+// here is the operator's own, never the service's: the answer a failed read
+// would write is a claim about every other machine of the installation, since
+// the record travels in the local config that `fugaro update` publishes
+// (internal/localcfg/shared.go). Written false there, one refused read would
+// switch the service off for every teammate's `fugaro run` — including the ones
+// whose jobs had their model mounts dropped by the last apply and have nothing
+// else to run on — and every one of them halts at the service's door (D143) on
+// the word of a machine that read nothing. So a failed read leaves the record
+// as the last reading wrote it, warns what failed, and fails no run.
 //
 // Nothing here reads the BUDGET backend or the node: the switch's other half,
 // the repository's agent.auth, is read where the spec is built, from the
 // checkout's own fugaro.yaml (infra.CredentialsServiceServes).
 //
-// The second answer, record, is whether the reading may be written down at
-// all, and it is false in exactly one state: a coding agent's session or a
-// Fugaro run's own process. There the bundle is not opened — its document
-// holds every model credential the service issues, and `fugaro creds ls/set`
-// make the same refusal before their first call (credsOwnerOnly,
-// internal/cli/creds.go) — so there is no reading to record, and the callers
-// leave each entry's own record as the person's last run wrote it. Answering
-// false there instead would be a write no read produced: it would switch a
-// repository off, or keep it off, on a session's word alone, and an agent
-// running `fugaro update` would silently rewrite the switch of every
+// The second answer, record, is whether there is a reading to write down at
+// all, and it is false wherever the bundle was not read: a coding agent's
+// session and a Fugaro run's own process, where it is not opened — its
+// document holds every model credential the service issues, and `fugaro creds
+// ls/set` make the same refusal before their first call (credsOwnerOnly,
+// internal/cli/creds.go) — and every failed read above. The callers leave each
+// entry's own record as the person's last run wrote it then. Answering false
+// in either of those states instead would be a write no reading produced: it
+// would switch a repository off, or keep it off, on a session's word alone,
+// and an agent running `fugaro update` — or an operator whose identity lost
+// the bundle's accessor role — would silently rewrite the switch of every
 // repository this machine serves.
 func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Config) (ready, record bool) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
@@ -136,8 +147,8 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 		return false, true
 	}
 	unreadable := func(err error) (bool, bool) {
-		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s): the repositories of this installation keep the model credentials they mount until one run can read it", oneLineCLI(err.Error())))
-		return false, true
+		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s) and the switch's record is left as the last reading wrote it: nothing was read, so there is no answer to write, and a false published here would switch the service off for every machine of this installation", oneLineCLI(err.Error())))
+		return false, false
 	}
 	store, err := openBundleStore(ctx, lc)
 	if err != nil {
@@ -227,10 +238,13 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 // made with, and a record judged on a working tree the runs never see is the
 // same disagreement one edit away.
 //
-// Nothing is written in a coding agent's session or in a run's own process
-// (credentialsBundleReady's second answer): the bundle is a secret those two
-// may not read, so there is no reading to record, and this repository keeps
-// the record the person's last run left on it.
+// Nothing is written where the bundle was not read (credentialsBundleReady's
+// second answer): in a coding agent's session or in a run's own process, whose
+// bundle is a secret they may not open, and on a read that FAILED, whose error
+// is an answer about this machine and not about the bundle — the record travels
+// in the published config, so a false written from one would switch the service
+// off for every machine of the installation. This repository keeps the record
+// the last reading left on it either way.
 //
 // outs is the installation's own record of the service, used when the local
 // config does not carry the block yet: on the run that deploys it the config
@@ -257,9 +271,11 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 	}
 	ready, record := r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
 	if !record {
-		// A coding agent's session or a run's own process: the bundle was not
-		// opened, so there is no reading to write, and the entry keeps the
-		// record the person's last run left on it.
+		// Nowhere the bundle was not read — a coding agent's session, a run's
+		// own process, or a read that failed — is there a reading to write, so
+		// the entry keeps the record the person's last run left on it. A failed
+		// read is the one that reaches an operator's own run, and the write it
+		// would make is the installation-wide one the doc above refuses.
 		return
 	}
 	// The one predicate, not a second copy of its conjunction: `installed` is
@@ -328,12 +344,15 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // inert where it agrees: a bundle that is empty writes false over an absent
 // field, which is the same document and the same answer to every reader.
 //
-// Nothing is written in a coding agent's session or in a run's own process
-// (credentialsBundleReady's second answer): the bundle is a secret those two
-// may not read, so there is no reading to record, every entry keeps the record
-// the person's last run left on it, and the convergence happens on that
-// person's next `fugaro update` — which is still the one command CLAUDE.md's
-// HARD RULE promises.
+// Nothing is written where the bundle was not read (credentialsBundleReady's
+// second answer): in a coding agent's session or in a run's own process, and on
+// a read that failed. Every entry keeps the record the person's last run left
+// on it, and the convergence happens on that person's next `fugaro update` —
+// which is still the one command CLAUDE.md's HARD RULE promises. A failed read
+// costs this door a convergence rather than a wrong write: an entry it cannot
+// judge stays unrecorded, so an installation whose opt-in predates this release
+// converges on the next run that CAN read the bundle — which is the same door,
+// the next time it works, and never a second command.
 func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs) {
 	if lc == nil || len(lc.Repos) == 0 {
 		return
@@ -357,10 +376,12 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, lc *local
 	}
 	ready, record := r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
 	if !record {
-		// A coding agent's session or a run's own process: the bundle was not
-		// opened, so every entry keeps the record the person's last run left
-		// on it and the upgrade converges on that person's next `fugaro
-		// update`.
+		// Nowhere the bundle was not read — a coding agent's session, a run's
+		// own process, or a read that failed — is there a reading to write, so
+		// every entry keeps the record the person's last run left on it and the
+		// upgrade converges on that person's next `fugaro update`. This door
+		// only ever visited entries it found NOT ready, so a failed read costs
+		// it a convergence and cannot clear a record someone else wrote.
 		return
 	}
 	for _, key := range switched {

@@ -1192,6 +1192,13 @@ type Repo struct {
 	// repository off again on the next update, which is what puts its jobs'
 	// mounts back, and that is the fail-safe direction.
 	//
+	// A read that FAILED writes nothing here at all, in either direction: the
+	// record is published for the whole installation
+	// (internal/localcfg/shared.go), and one refused read — an operator whose
+	// identity lost the bundle's accessor role — would switch the service off
+	// for every other machine's cascade runs, whose jobs have nothing left to
+	// run on (internal/cli/init_credentials.go).
+	//
 	// The auth is folded in rather than judged again by each reader, and that
 	// is the one state it closes: an owner who fills the bundle and applies
 	// the root while the checkout still says `agent.auth: oauth` gets a

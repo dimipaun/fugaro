@@ -693,6 +693,47 @@ func TestTheRecordFollowsTheAuthTheRunsRead(t *testing.T) {
 	}
 }
 
+// TestAnUnreadableBundleLeavesTheRecordAlone is the other half of what a
+// reading is: a read that FAILED is not the answer "the bundle holds no model
+// credential", and writing that answer is not a local choice — the record
+// travels in the local config `fugaro update` publishes
+// (internal/localcfg/shared.go), so one refused read on one machine would
+// switch the service off for every teammate's `fugaro run`, whose jobs had
+// their model mounts dropped by the apply that switched them on and have
+// nothing of their own left to run on. Every one of those runs halts at the
+// service's door (D143) until somebody whose identity CAN read the bundle runs
+// `fugaro update` again.
+//
+// The failure is the one an operator meets after a role change or a rotation:
+// the container is there and this identity may not list its versions — the
+// fake's 403, armed on the one list the door makes (FailVersionsAfter counts
+// the lists the fake has served, so the first call below has to make one
+// before the refusal can be aimed at the second). The record starts at the
+// value a person's own run wrote — the switch is ON, and the mounted state of
+// that repository's jobs is what makes the false so expensive — and it is
+// still there after the refused run, in the file the next publish reads.
+//
+// Mutation (verified, run and restored): answer the failed read with a write
+// (return false, true from unreadable, the pre-fix code) and this fails with
+// the record cleared and the key gone from the config.
+func TestAnUnreadableBundleLeavesTheRecordAlone(t *testing.T) {
+	r := switchRig(t)
+	putSwitchBundle(t, r, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	markSwitchRepoReady(t, r, "acme/sandbox")
+	if got := recordForRepo(t, r, config.AuthCascade); !got.Repos["acme/sandbox"].CredentialsServiceReady {
+		t.Fatalf("the fixture is not the state this test starts from: over a readable bundle holding a model credential, the record has to be written")
+	}
+	r.sm.FailVersionsAfter = r.sm.VersionsListCalls()
+
+	lc := recordForRepo(t, r, config.AuthCascade)
+	if !lc.Repos["acme/sandbox"].CredentialsServiceReady {
+		t.Errorf("the record was cleared by a run that read nothing: the bundle's version list answered 403, and an error is an answer about this machine's identity and not about the model credentials the bundle holds")
+	}
+	if raw := readFileString(t, r.cfg); !strings.Contains(raw, "credentials_service_ready: true") {
+		t.Errorf("the local config no longer carries the record after a read that failed, and this file is the one `fugaro update` publishes for the installation: every other machine reads the cleared switch, withholds the service's address from a `cascade` run whose job mounts no model credential, and halts at the service's door (D143)\n%s", raw)
+	}
+}
+
 // markSwitchRepoReady writes the record a person's OWN run leaves on a
 // repository's entry: it read a bundle that held a model credential, so the
 // entry the next run reads already answers the switch.
