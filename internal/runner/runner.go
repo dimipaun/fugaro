@@ -2691,6 +2691,16 @@ func (r *run) agentLoop(ctx context.Context) {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
 		}
+		// The ruling the run was launched with (OD1) reaches the reviewer here
+		// and not only the implement brief: the review stages read in sessions
+		// of their own, and a reviewer that does not know the owner answered
+		// marks the same finding needs_owner again — the run stops where it
+		// stopped and the next follow-up is refused, which is the loop the
+		// ruling exists to end. All three levels are handed this one brief
+		// (reviewPromptWithFocus, AdversarialPrompt), so they all read it.
+		if add := followup.RulingAddendum(r.spec.OwnerRuled, r.redactor()); add != "" {
+			reviewPrompt += "\n\n" + add
+		}
 	}
 	tier := ""
 	for _, st := range r.plan {

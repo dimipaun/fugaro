@@ -171,6 +171,7 @@ func TestPromptBuildersNeedRedact(t *testing.T) {
 	for name, f := range map[string]func(){
 		"ImplementPrompt": func() { d := baseData(); d.Redact = nil; ImplementPrompt(d, sample()) },
 		"QuoteAnswer":     func() { QuoteAnswer("x", nil) },
+		"RulingAddendum":  func() { RulingAddendum("a ruling", nil) },
 	} {
 		func() {
 			defer func() {
@@ -211,6 +212,37 @@ func TestReviewAddendum(t *testing.T) {
 	golden(t, "review", ReviewAddendum(sample(), nonce))
 	if got := ReviewAddendum(Selection{}, nonce); got != "" {
 		t.Fatalf("addendum for no comments = %q, want empty", got)
+	}
+}
+
+// TestRulingAddendum: what a ruled follow-up's REVIEWER reads (OD1) is the
+// owner's own words under a heading that marks them theirs, and the one rule
+// that keeps the reviewer's labels consistent with the run the ruling came
+// from: a finding the ruling settles is not needs_owner. A launch without a
+// ruling adds nothing at all, so every other follow-up's review prompt is
+// unchanged by the addendum's existence.
+func TestRulingAddendum(t *testing.T) {
+	const ruled = "Counsel cleared the MIT text as it stands. Keep the approval flow."
+	got := RulingAddendum(ruled, keep)
+	golden(t, "ruling", got)
+	for _, want := range []string{ruled, "owner has ruled", "never mark it needs_owner"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the ruling addendum lacks %q:\n%s", want, got)
+		}
+	}
+	for _, none := range []string{"", " \n\t "} {
+		if got := RulingAddendum(none, keep); got != "" {
+			t.Errorf("RulingAddendum(%q) = %q, want empty", none, got)
+		}
+	}
+	// The ruling is a person's text like any other free-text field: redacted,
+	// and clipped to the bound the launcher stored it under.
+	redact := func(s string) string { return strings.ReplaceAll(s, "SECRETVALUE0123", "[REDACTED]") }
+	if got := RulingAddendum("the licence is SECRETVALUE0123", redact); strings.Contains(got, "SECRETVALUE") || !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("the ruling was not redacted:\n%s", got)
+	}
+	if got := RulingAddendum(strings.Repeat("r", 5<<10), keep); !strings.Contains(got, clippedSuffix) {
+		t.Errorf("a 5 KiB ruling was not clipped:\n%s", got)
 	}
 }
 
