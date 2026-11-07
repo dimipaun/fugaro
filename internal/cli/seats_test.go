@@ -11,10 +11,18 @@ package cli
 // guard).
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"gocloud.dev/blob"
+
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // seatsOut is `fugaro seats --json`'s document as these tests read it.
@@ -229,5 +237,182 @@ func TestSeatsReadsNinetyDays(t *testing.T) {
 	}
 	if len(doc.People) != 1 || doc.People[0].Person != "recent@example.com" {
 		t.Fatalf("people = %+v, want the requester of the run inside the 90 days alone", doc.People)
+	}
+}
+
+// seatsTableRows is the rows of the table under head in a human seats
+// output: the lines between that header and the next blank one.
+func seatsTableRows(out, head string) []string {
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(l, head) {
+			continue
+		}
+		var rows []string
+		for _, row := range lines[i+1:] {
+			if strings.TrimSpace(row) == "" {
+				break
+			}
+			rows = append(rows, row)
+		}
+		return rows
+	}
+	return nil
+}
+
+// seatsCells is a table row's cells, split where the tabwriter wrote its
+// columns: the same reading runs_test.go's launcher-cell test makes.
+func seatsCells(line string) []string {
+	return regexp.MustCompile(`  +`).Split(strings.TrimRight(line, " "), -1)
+}
+
+// seatsPutRawTaskStores data as id's task.json, as it is: the object a build
+// that cannot decode it reads. seedRun's own writer marshals a valid spec and
+// cannot produce one.
+func seatsPutRawTask(t *testing.T, f *cloudFixture, id, data string) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	if err := runstore.Open(b, appSlug, id).PutFile(ctx, "task.json", []byte(data), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSeatsSanitizesHostileValues: a member is text somebody typed into a
+// config and a requester is text a run's own agent wrote, so both are
+// untrusted and must clear the bar every other value this CLI prints clears:
+// no tabwriter column or row of their own, no escape, bidi or line-separator
+// rune, no unbounded width -- and the document carries the text the table
+// does. Mutation caught: interpolating a member or a recorded requester into
+// its cell as it is.
+func TestSeatsSanitizesHostileValues(t *testing.T) {
+	pinSeatsClock(t)
+	f := newCloudFixture(t)
+	bidi := string(rune(0x202e))
+	f.appendConfig(t, fmt.Sprintf("terraform:\n  launchers: [\"user:%s@example.com\"]\n"+
+		"  operators: [\"group:eng%s@example.com\"]\n", bidi, bidi))
+	huge := strings.Repeat("x", 10_000)
+	hostile := []string{
+		"a\tb@example.com", "a\nb@example.com", "a\rb@example.com", "esc\x1b[2Jc@example.com",
+		"bidi" + bidi + "evil@example.com",
+		"line" + string(rune(0x2028)) + "sep@example.com",
+		"para" + string(rune(0x2029)) + "graph@example.com",
+		huge + "@example.com",
+	}
+	for i, who := range hostile {
+		seedRun(t, f, runIDAt(i+1, "090000", fmt.Sprintf("%04x", i)), "", who, false)
+	}
+
+	out, _, err := execute(t, "seats")
+	if err != nil {
+		t.Fatalf("seats: %v", err)
+	}
+	people, flagged := seatsTableRows(out, "PERSON"), seatsTableRows(out, "NOT COUNTED")
+	// The launcher list's one person, and the requesters: the three that
+	// differ only in whitespace print alike and are one row, an ESC's CSI
+	// sequence is dropped whole, and the rest are one each.
+	if len(people) != 7 || len(flagged) != 1 {
+		t.Fatalf("seats printed %d people and %d not-counted rows, want 7 and 1:\n%s", len(people), len(flagged), out)
+	}
+	for _, row := range people {
+		if n := len(seatsCells(row)); n != 2 {
+			t.Errorf("a hostile value opened a column of its own: %q has %d cells, want 2:\n%s", row, n, out)
+		}
+	}
+	for _, row := range flagged {
+		if n := len(seatsCells(row)); n != 3 {
+			t.Errorf("a hostile value opened a column of its own: %q has %d cells, want 3:\n%s", row, n, out)
+		}
+	}
+	for _, r := range out {
+		switch {
+		case r == '\x1b', r == '\r', r >= 0x202a && r <= 0x202e, r == 0x2028, r == 0x2029:
+			t.Fatalf("hostile rune %U reached the table:\n%q", r, out)
+		case r < 0x20 && r != '\t' && r != '\n':
+			t.Fatalf("control rune %U reached the table:\n%q", r, out)
+		}
+	}
+	for _, row := range people {
+		if n := utf8.RuneCountInString(seatsCells(row)[0]); n > maxNameCellRunes+1 {
+			t.Errorf("cell %q is %d runes, want at most %d: a value a source wrote is not printed whole", seatsCells(row)[0], n, maxNameCellRunes+1)
+		}
+	}
+	if n := utf8.RuneCountInString(out); n > 4000 {
+		t.Errorf("the table is %d runes, not bounded:\n%.200q", n, out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Errorf("the clipped value carries no mark that it was cut:\n%s", out)
+	}
+	if n := strings.Count(out, "a?b@example.com"); n != 1 {
+		t.Errorf("the three whitespace variants became %d rows, want 1: two texts that print alike are one identity:\n%s", n, out)
+	}
+
+	// The document carries the same text the table does, sanitised and capped
+	// the same way: a consumer of --json is as much a terminal as the table.
+	jout, _, err := execute(t, "seats", "--json")
+	if err != nil {
+		t.Fatalf("seats --json: %v", err)
+	}
+	doc := seatsDocOf(t, jout)
+	if len(doc.People) != 7 || len(doc.NotCounted) != 1 {
+		t.Fatalf("the document holds %d people and %d not-counted rows, want 7 and 1", len(doc.People), len(doc.NotCounted))
+	}
+	for _, p := range doc.People {
+		if n := utf8.RuneCountInString(p.Person); n > maxNameCellRunes+1 {
+			t.Errorf("the document's person %q is %d runes, want at most %d", p.Person, n, maxNameCellRunes+1)
+		}
+		for _, r := range p.Person {
+			if r == '\x1b' || r == '\t' || r == '\r' || r >= 0x202a && r <= 0x202e || r == 0x2028 || r == 0x2029 {
+				t.Errorf("the document carried hostile rune %U in %q", r, p.Person)
+			}
+		}
+	}
+}
+
+// TestSeatsReadsOnPastATaskItCannotDecode: one run's task.json this build
+// cannot decode is that run's unreadable object, not the estimate's failure.
+// The run's own agent can write that object (runs/<slug>/ is its account's),
+// so a fatal read here would let a single run fail the command and print
+// nothing for the whole window; runs ls reads the same object as one error
+// row. The estimate is produced, the count is said, and whoever requested that
+// run is counted nowhere. Mutation caught: returning the read error instead of
+// counting it, or parsing with ReadTask and letting its error out.
+func TestSeatsReadsOnPastATaskItCannotDecode(t *testing.T) {
+	pinSeatsClock(t)
+	f := newCloudFixture(t)
+	seedRun(t, f, runIDAt(2, "090000", "aaaa"), "", "ok@example.com", false)
+	// An unknown field: what a newer CLI's task.json looks like to this build,
+	// which refuses unknown fields (task.Parse).
+	id := runIDAt(3, "090000", "bbbb")
+	seatsPutRawTask(t, f, id, `{"version":1,"run_id":"`+id+`","repo":"acme/app","ref":"main",`+
+		`"workflow":"web","task":"x","requested_by":"ghost@example.com","future_field":1}`)
+
+	out, _, err := execute(t, "seats", "--json")
+	if err != nil {
+		t.Fatalf("seats: %v (the estimate is produced with the unreadable run counted, not refused)", err)
+	}
+	doc := seatsDocOf(t, out)
+	if doc.Unreadable != 1 {
+		t.Errorf("unreadable = %d, want 1: the run whose task.json this build cannot decode", doc.Unreadable)
+	}
+	if len(doc.People) != 1 || doc.People[0].Person != "ok@example.com" {
+		t.Fatalf("people = %+v, want the readable run's requester alone", doc.People)
+	}
+	if strings.Contains(out, "ghost@example.com") {
+		t.Errorf("the unreadable run's requester reached the document: an object nobody can read names nobody:\n%s", out)
+	}
+
+	human, _, err := execute(t, "seats")
+	if err != nil {
+		t.Fatalf("seats: %v", err)
+	}
+	for _, want := range []string{"estimate: 1 person", "1 run task of the window could not be read", "the estimate is a lower bound by that much"} {
+		if !strings.Contains(human, want) {
+			t.Errorf("seats does not say %q:\n%s", want, human)
+		}
+	}
+	if strings.Contains(human, "ghost@example.com") {
+		t.Errorf("the unreadable run's requester reached the table:\n%s", human)
 	}
 }

@@ -39,6 +39,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -49,6 +50,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // seatsWindow is how far back the estimate reads run requesters: the ruling's
@@ -222,6 +224,16 @@ func runSeats(cmd *cobra.Command, o *seatsOptions) error {
 // problem, not the window's -- it never makes the estimate unproducible -- and
 // it is counted so the output can say the estimate is a lower bound by that
 // many runs, the way runs ls reports a corrupt object of one run.
+//
+// "Cannot be used" is the object and the spec, not only the encoding: the
+// object is read raw and parsed here rather than through ReadTask's own error,
+// so a task.json this build cannot DECODE -- a field a newer CLI wrote, which
+// Parse's DisallowUnknownFields refuses, or a spec failing its own rules --
+// is that run's unreadable task, exactly as runs ls reads it (runs.go: an
+// unparseable task.json is the row that says so, and the listing goes on). The
+// run's own agent can write this object (runs/<slug>/ is its account's), so
+// one such object read as fatal would let a single run fail the estimate for
+// the whole window.
 func seatsRequesters(ctx context.Context, env *cloudEnv, slugs []string, since time.Time) (requesters []string, unreadable int, err error) {
 	type ref struct{ slug, id string }
 	var refs []ref
@@ -238,17 +250,27 @@ func seatsRequesters(ctx context.Context, env *cloudEnv, slugs []string, since t
 	bad := make([]bool, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
-		spec, err := absent(runstore.Open(env.bucket.Bucket, refs[i].slug, refs[i].id).ReadTask(ctx))
+		raw, err := runstore.Open(env.bucket.Bucket, refs[i].slug, refs[i].id).ReadFile(ctx, "task.json")
 		switch {
-		case err == nil && spec != nil:
-			found[i] = spec.RequestedBy
-		case err == nil:
+		case errors.Is(err, runstore.ErrNotFound):
 			// No task.json: this directory holds no run to read a requester
-			// from.
-		case corruptObject(err):
-			bad[i] = true
-		default:
+			// from, which is not the same as one nobody can read.
+		case err != nil:
+			if corruptObject(err) {
+				bad[i] = true
+				return
+			}
 			errs[i] = err
+		default:
+			spec, perr := task.Parse(raw)
+			if perr != nil {
+				// The object is there and this build cannot use it: a decode
+				// failure is this run's unreadable task, never the estimate's
+				// failure.
+				errs[i] = perr
+				return
+			}
+			found[i] = spec.RequestedBy
 		}
 	})
 	for _, e := range errs {
