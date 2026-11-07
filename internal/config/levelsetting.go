@@ -274,20 +274,56 @@ func (s *LevelSetting) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
-	var written map[string]json.RawMessage
-	if err := json.Unmarshal(data, &written); err != nil {
+	keys, err := levelJSONKeys(data)
+	if err != nil {
 		return err
 	}
-	for k := range written {
+	for _, k := range keys {
 		if !levelSettingJSONKeys[k] {
 			return errors.New("json: unknown field " + strconv.Quote(k))
 		}
 	}
 	*s = LevelSetting(v)
-	if _, ok := written["none"]; ok {
-		s.noneFalse = !s.Off
+	for _, k := range keys {
+		if k == "none" {
+			s.noneFalse = !s.Off
+			break
+		}
 	}
 	return nil
+}
+
+// levelJSONKeys are the keys a level block writes, in the order the document
+// writes them, and nil for a block that is not an object (a null level, which
+// carries no keys). The order is the point: encoding/json names the first
+// field it does not know, in that order, so a refusal that read the keys off a
+// Go map would name an arbitrary one of them instead.
+func levelJSONKeys(data []byte) ([]string, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	first, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := first.(json.Delim); !ok || d != '{' {
+		return nil, nil
+	}
+	var out []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		k, ok := tok.(string)
+		if !ok {
+			return nil, fmt.Errorf("json: object key %v is not a string", tok)
+		}
+		out = append(out, k)
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // validate checks one level's settings under name.

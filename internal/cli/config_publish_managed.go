@@ -791,9 +791,13 @@ func layerAllowlistRules(published, next []byte, marker string) []string {
 // it replaces had on: l1, l2 and l3, in that order. A level already off stays
 // off without a rule (nothing moved), and a level turned back on is a raise the
 // rule admits. A level is off in either spelling — `none: true`, or its model
-// named none (config.NoneModel) — and the rule reads both, because the layer a
-// session hands this command has not necessarily been through the decoder that
-// folds the second into the first.
+// named none (config.NoneModel) — and the rule reads both. Both layers reach it
+// from config.ParseProjectLayer, which validates the block and folds the second
+// spelling into the first, so today the model clause answers for nothing and
+// `next.Defaults.Agent.Levels` carries the switch alone; it is kept because the
+// answer it gives is the fail-closed one, the way layerAllowlistRules keeps its
+// unreadable-document branch, and a caller that handed over a block no decoder
+// had been over would still be judged on what it wrote.
 func layerLevelOff(prev, next *config.ProjectLayer) []string {
 	off := func(s *config.LevelSetting) bool {
 		return s != nil && (s.Off || s.Model == config.NoneModel)

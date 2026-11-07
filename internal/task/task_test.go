@@ -1313,6 +1313,12 @@ func TestReviewLevelsNoneModelIsNone(t *testing.T) {
 // the block's own rules reach a hand-written
 // task.json through Validate: a spec written straight into the bucket
 // refuses the same documents a launcher would have refused before writing.
+//
+// The last two rows pin which key a refusal names when a block writes two it
+// does not know: the first the document writes, the way encoding/json's own
+// DisallowUnknownFields named it, and not whichever a map happened to hand
+// over first. The pair is written both ways round because that is the whole
+// difference between the two readers.
 func TestReviewLevelsRefusesUnknownKey(t *testing.T) {
 	head := `"version":1,"run_id":"20261031-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
 	for _, tc := range []struct {
@@ -1332,6 +1338,8 @@ func TestReviewLevelsRefusesUnknownKey(t *testing.T) {
 		{"a focus over the bound", `{"l3":{"focus":"` + strings.Repeat("a", config.MaxLevelFocusBytes+1) + `"}}`, "longer than"},
 		{"a focus with a bidi override", `{"l3":{"focus":"the ‮migration"}}`, "U+202E"},
 		{"a focus with a control character", `{"l1":{"focus":"the\u0007migration"}}`, "U+0007"},
+		{"two unknown keys, the first one named", `{"l2":{"rounds":2,"bogus":1}}`, "rounds"},
+		{"two unknown keys, in the other order", `{"l2":{"bogus":1,"rounds":2}}`, "bogus"},
 	} {
 		_, err := Parse([]byte("{" + head + `,"review_levels":` + tc.doc + "}"))
 		if err == nil {
