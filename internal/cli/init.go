@@ -4120,12 +4120,20 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		if err != nil {
 			return infra.RepoSpec{}, nil, err
 		}
+		if len(rets) == 0 {
+			// Nothing to retire is the run's own settlement, and the record
+			// says so: an empty set replaces a previous update's, so the
+			// console's project screen never draws the older set as the last
+			// update's own (recordUpdate).
+			r.recordUpdate(ctx, lc, nil)
+		}
 		if len(rets) > 0 {
 			r.retired = true
 			if r.o.retire {
 				if err := r.retirePlan(ctx, c, t, wd, ready, rets, opts, im); err != nil {
 					return infra.RepoSpec{}, nil, err
 				}
+				r.recordUpdate(ctx, lc, rets)
 				return ready, missing, nil
 			}
 			// A managed project retires this set by itself (issue #1794): no
@@ -4140,6 +4148,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 				return infra.RepoSpec{}, nil, err
 			}
 			if auto {
+				r.recordUpdate(ctx, lc, rets)
 				return ready, missing, nil
 			}
 			// The gate, and it is the two cases the design names and no
@@ -4213,6 +4222,15 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		return infra.RepoSpec{}, nil, err
 	}
 	r.res.Applied = true
+	// The third way a retirement's address goes away, and the last moment its
+	// record can be written: a set the run left to the ordinary plan is
+	// settled by the apply above, which is what deletes it. rets is non-empty
+	// here exactly for that case -- the two flows that retire by themselves
+	// returned long before this line -- and the record is written from the
+	// same read (recordUpdate).
+	if first && len(rets) > 0 {
+		r.recordUpdate(ctx, lc, rets)
+	}
 	return ready, missing, nil
 }
 

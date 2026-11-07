@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -1213,4 +1214,76 @@ func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
 		}
 	}
 	return &out
+}
+
+// recordUpdate writes this run's retirement into the machine's own record of
+// the last update (localcfg's update.json, in the state directory the
+// remembered checkouts live in): the console's Project tab draws what the last
+// plain `fugaro update` retired, and of how many runs were in flight while it
+// did, and nothing else on this machine keeps either (F20, F21, D1484, D1485).
+//
+// It is called where the run's retirement is settled and nowhere else, once
+// per run:
+//
+//   - the run found nothing to retire, which is a record of its own: an empty
+//     set replaces the previous update's, so the screen never draws an earlier
+//     update's rows as the last one's;
+//   - --retire ran the guarded flow to the end, or a managed project retired
+//     its own derived addresses (retireManaged) -- the two flows that remove
+//     addresses from the state and delete them;
+//   - the run's set was left to the ordinary plan, written after that plan
+//     applied (planRepo's tail), which is the one other way an address of the
+//     set goes away.
+//
+// A run that stops before any of them -- a refusal, a failed apply, a plan
+// that aborted on prevent_destroy, --plan-only -- records nothing: the last
+// update that settled a retirement is the one the record names, which is a
+// truer sentence than a run that retired nothing overwriting it. `fugaro
+// setup --repo` records nothing either: its door is not the update's, and a
+// first onboarding is not the last update of anything.
+//
+// It is best effort in the direction the whole upgrade depends on (CLAUDE.md's
+// HARD RULE): a state directory that cannot be written warns and the update
+// finishes, because the record is the console's and the installation's update
+// is the user's. The warning is not optional the way recordCheckout's silence
+// is -- "the next command records it again" is true of a checkout, which is
+// recorded by every command that works in one, and false of this: nothing
+// writes this record until the next update.
+func (r *initRun) recordUpdate(ctx context.Context, lc *localcfg.Config, rets []infra.Retirement) {
+	if r.o.door != updateDoor.name || r.o.planOnly {
+		return
+	}
+	up := localcfg.UpdateProject{At: time.Now(), Retire: updateRecordRows(rets)}
+	// The count is read through the budget database the project publishes to,
+	// the way the policy publish's own refusal counts runs (project_cmd.go's
+	// runsInFlight). A project with no budget backend has no registry to read,
+	// which is not worth a line on every update; a read that fails when there
+	// is one leaves the number absent and says so, because a console that
+	// draws a smaller number than the runs that were really there is what
+	// D1483 is about.
+	if _, db, err := budgetDBFor(ctx, lc); err == nil {
+		if n, err := runsInFlight(ctx, db, lc); err == nil {
+			up.RunsInFlight = &n
+		} else {
+			r.warn(fmt.Sprintf("could not count the runs in flight while %s's retirement was settled (%v); the record under the state directory carries no runs_in_flight", lc.Name, err))
+		}
+	}
+	if err := localcfg.RecordUpdate(os.Getenv, r.projectName, up); err != nil {
+		r.warn(fmt.Sprintf("the retirement of this update was not recorded (%v): the console's project screen reads that record, so it keeps drawing whatever the previous update left there. Run fugaro update again where the state directory can be written", err))
+	}
+}
+
+// updateRecordRows is the run's own rows as the record holds them. The record
+// cannot name infra.Retirement (internal/infra imports localcfg), so the two
+// types are kept in step by hand and by TestUpdateRecordRowsAreTheRunsOwn, in
+// which both documents must come out byte for byte the same.
+func updateRecordRows(rets []infra.Retirement) []localcfg.UpdateRetirement {
+	out := make([]localcfg.UpdateRetirement, 0, len(rets))
+	for _, r := range rets {
+		out = append(out, localcfg.UpdateRetirement{
+			Address: r.Address, Kind: r.Kind, Cause: r.Cause, Kept: r.Kept,
+			Logical: r.Logical, SecretID: r.SecretID, Job: r.Job, Region: r.Region, Protected: r.Protected,
+		})
+	}
+	return out
 }

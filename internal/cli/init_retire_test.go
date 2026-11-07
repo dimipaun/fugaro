@@ -2389,3 +2389,211 @@ func retireJobUpdate() planChange {
 		"containers": []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/app:1"}}}}}}}
 	return c
 }
+
+// updateRecord is this machine's record of the last update, read the way the
+// console's own reader will read it (localcfg's document, not a private
+// paraphrase of it), and updateRecordFor is one project's entry.
+func updateRecord(t *testing.T) *localcfg.UpdateRecord {
+	t.Helper()
+	rec, err := localcfg.LoadUpdateRecord(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+func updateRecordFor(t *testing.T, project string) localcfg.UpdateProject {
+	t.Helper()
+	up, ok := updateRecord(t).Projects[project]
+	if !ok {
+		t.Fatalf("no update was recorded for %s: %+v", project, updateRecord(t).Projects)
+	}
+	return up
+}
+
+// recordedAddresses is the record's own set, as its member names it.
+func recordedAddresses(up localcfg.UpdateProject) []string {
+	out := make([]string, 0, len(up.Retire))
+	for _, r := range up.Retire {
+		out = append(out, r.Address)
+	}
+	return out
+}
+
+// recordedRow is one row of the record by address, and the test fails when the
+// set does not hold it.
+func recordedRow(t *testing.T, up localcfg.UpdateProject, addr string) localcfg.UpdateRetirement {
+	t.Helper()
+	for _, r := range up.Retire {
+		if r.Address == addr {
+			return r
+		}
+	}
+	t.Fatalf("%s is not in the recorded set %v", addr, recordedAddresses(up))
+	return localcfg.UpdateRetirement{}
+}
+
+// TestUpdateRecordsTheRetirementsItMade: the record of the last update is what
+// the console's Project tab draws (F20, F21, D1484, D1485), and this is the
+// whole of what the record must name: the derived addresses the managed project
+// retired by itself, with the members the run's own rows carry -- and not the
+// container that was kept, which was never a retirement.
+func TestUpdateRecordsTheRetirementsItMade(t *testing.T) {
+	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
+	out, errOut, err := executeStdin(t, "", "update")
+	text := out + errOut
+	if err != nil && !strings.Contains(text, firstBuildHold) {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 1 {
+		t.Fatalf("the retirement did not run: JobDeletes = %v\n%s", deletes, text)
+	}
+	up := updateRecordFor(t, initProjectName)
+	if want := []string{retireJobAddr, retireMemberAddr, retireSvcAddr}; !slices.Equal(slices.Sorted(slices.Values(recordedAddresses(up))), want) {
+		t.Errorf("the record names %v, want %v", recordedAddresses(up), want)
+	}
+	if up.At.IsZero() {
+		t.Error("the record carries no time")
+	}
+	// The rows are the run's own, not an address list: a row the console
+	// draws a job from carries the job's name, its region and its protection.
+	job := recordedRow(t, up, retireJobAddr)
+	if job.Kind != "workflow job" || job.Job != retireJobName || job.Region != "us-east5" || !job.Protected {
+		t.Errorf("the job's row is %+v, want its kind, name, region and protection", job)
+	}
+	if job.Cause == "" {
+		t.Errorf("the job's row names no cause: %+v", job)
+	}
+	if member := recordedRow(t, up, retireMemberAddr); member.Kind != "secret accessor" || member.Protected {
+		t.Errorf("the member's row is %+v, want the grant the plan's own delete takes away", member)
+	}
+}
+
+// TestUpdateRecordRowsAreTheRunsOwn: the record's row type is a copy of
+// infra.Retirement (internal/infra imports localcfg, so localcfg cannot name
+// it), and the copy is kept in step by hand. This is the pin: the two
+// documents must come out byte for byte the same, so a member added, renamed
+// or retyped on either side fails here rather than reaching the console as a
+// row it cannot read.
+func TestUpdateRecordRowsAreTheRunsOwn(t *testing.T) {
+	rets := []infra.Retirement{
+		{Address: retireJobAddr, Kind: "workflow job", Cause: "the workflow's default variant is app",
+			Kept: "the job is deleted after the state removal", Job: retireJobName, Region: "us-east5",
+			Protected: true, ProtectedRead: true},
+		{Address: retireKeptAddr, Kind: "secret container", Cause: "no workflow mounts it",
+			Kept: infra.KeptSecret, Logical: retireKeptName, SecretID: "fugaro-acme-sandbox-claude-oauth-token-bmb",
+			Protected: true},
+	}
+	want, err := json.Marshal(rets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(updateRecordRows(rets))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("the record's rows are\n%s\nand the run's own are\n%s", got, want)
+	}
+}
+
+// TestUpdateRecordsTheRunsInFlightItSaw: the other half of F20, and the number
+// the console draws beside the retirement. It comes from the same read the
+// policy publish's own refusal counts with (runsInFlight over the budget
+// database's agents registry), and it is the count at the moment the retirement
+// was settled.
+func TestUpdateRecordsTheRunsInFlightItSaw(t *testing.T) {
+	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
+	db := gcpfake.NewRTDB(t)
+	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
+	db.Set("agents", map[string]any{initProject: map[string]any{
+		"run-1": map[string]any{"repo": "bitbucket/acme/sandbox"},
+		"run-2": map[string]any{"repo": "bitbucket/acme/sandbox"},
+	}})
+	out, errOut, err := executeStdin(t, "", "update")
+	text := out + errOut
+	if err != nil && !strings.Contains(text, firstBuildHold) {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
+	}
+	up := updateRecordFor(t, initProjectName)
+	if up.RunsInFlight == nil || *up.RunsInFlight != 2 {
+		t.Errorf("runs_in_flight = %v, want the 2 runs the registry held", up.RunsInFlight)
+	}
+}
+
+// TestTheUpdateRecordIsTheLastRunsAndNotAMerge: the record is the LAST update's
+// set, not a log of every update's. A second update that retires nothing
+// replaces the first's rows with an empty set -- what the console draws is what
+// the last update did, and an append-only file would draw the first update's
+// retirement as the last one's for the rest of the installation's life.
+func TestTheUpdateRecordIsTheLastRunsAndNotAMerge(t *testing.T) {
+	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
+	out, errOut, err := executeStdin(t, "", "update")
+	text := out + errOut
+	if err != nil && !strings.Contains(text, firstBuildHold) {
+		t.Fatalf("the first update: exit %d, err %v\n%s", ExitCode(err), err, text)
+	}
+	first := updateRecordFor(t, initProjectName)
+	if len(first.Retire) != 3 {
+		t.Fatalf("the first update recorded %v, want the 3 derived addresses", recordedAddresses(first))
+	}
+	// The state and the plan the first update left: the addresses it retired
+	// are gone from the state (its plan deleted them, its state removal took
+	// the protected job's out), the container that was kept is out of it too,
+	// and nothing deletes anything any more. The rig's terraform is scripted
+	// and does not write that state back, so the second update is given the
+	// world the first one's work would have left.
+	r.script["show -json@repo"] = map[string]any{"stdout": retireStateDoc(t, retireOpts{stateEmpty: true, keptAsNote: true})}
+	after := []planChange{retireChange(retireRegistryAddr, "google_artifact_registry_repository", "create")}
+	b, merr := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": after})
+	if merr != nil {
+		t.Fatal(merr)
+	}
+	r.script["show@repo"] = map[string]any{"stdout": string(b)}
+	r.save(t)
+	out, errOut, err = executeStdin(t, "", "update")
+	text = out + errOut
+	if err != nil && !strings.Contains(text, firstBuildHold) {
+		t.Fatalf("the second update: exit %d, err %v\n%s", ExitCode(err), err, text)
+	}
+	last := updateRecordFor(t, initProjectName)
+	if len(last.Retire) != 0 {
+		t.Errorf("the second update's record still names %v, want the first update's set replaced", recordedAddresses(last))
+	}
+	if last.At.Before(first.At) {
+		t.Errorf("the record's time went backwards: %s then %s", first.At, last.At)
+	}
+}
+
+// TestUpdateRecordInAnUnwritableStateDirectoryIsReported: the record is the
+// console's and the upgrade is the user's, so a state directory that cannot be
+// written does not fail the update (CLAUDE.md's HARD RULE: `fugaro update` is
+// the whole upgrade and it works) -- and it is not silent either, the way
+// recordCheckout's own failure is: nothing writes this record again until the
+// next update, so the run the user can still fix it in is this one.
+func TestUpdateRecordInAnUnwritableStateDirectoryIsReported(t *testing.T) {
+	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
+	// The state directory is a regular file: every writer of it fails, and
+	// nothing else the run does is touched by it.
+	state := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, localcfg.CheckoutsDir), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := executeStdin(t, "", "update")
+	text := out + errOut
+	if err != nil && !strings.Contains(text, firstBuildHold) {
+		t.Fatalf("the update did not get past the retirement: exit %d, err %v\n%s", ExitCode(err), err, text)
+	}
+	if !strings.Contains(text, "was not recorded") {
+		t.Errorf("the update did not say the record could not be written:\n%s", text)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 1 {
+		t.Errorf("the retirement did not run: JobDeletes = %v", deletes)
+	}
+	if _, err := localcfg.LoadUpdateRecord(os.Getenv); err == nil {
+		t.Error("a record was read out of a state directory that is a file")
+	}
+}
