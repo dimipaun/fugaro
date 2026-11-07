@@ -316,6 +316,39 @@ func TestRetryRespectsTheRunCap(t *testing.T) {
 	}
 }
 
+// The retry is a stage the run pays for twice, and the run's token ceiling
+// has to see both attempts: the caller's own countTokens only ever sees the
+// last attempt of a stage (countTokens, halt.go), so the ended attempt's
+// tokens are added where it ends, in stage's transient branch, before the
+// retry.
+//
+// The figures are chosen so the under-count changes the outcome: the ended
+// attempt and its retry each report 40 tokens and the review reports 40, so
+// the run's total is 120 and the 100-token ceiling halts it. A total that lost
+// the ended attempt's 40 stops at 80, and the run succeeds.
+func TestTheRetryCountsTheEndedAttemptsTokens(t *testing.T) {
+	h := newHarness(t, tokenCfg(t, "100"), nil)
+	cut := withUsage(func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		return agent.Result{Text: streamClosedText, IsError: true, Subtype: "success"}, nil
+	}, agent.Usage{Input: 40}, nil)
+	rec, err := h.run(t,
+		cut,
+		withUsage(implement("feature"), agent.Usage{Input: 40}, nil),
+		withUsage(review("ship", 0), agent.Usage{Input: 40}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Retries != 1 || len(h.agent.calls) != 3 {
+		t.Fatalf("retries = %d over %d calls, want the implement stage's one retry and the review", rec.Retries, len(h.agent.calls))
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltTokenCap || rec.Halt.Scope != "run" {
+		t.Fatalf("rec = %+v, halt = %+v; want the run halted by its token ceiling", rec, rec.Halt)
+	}
+	if want := "run used 120 tokens of 100"; rec.Halt.Detail != want {
+		t.Fatalf("detail = %q, want %q: the ended attempt's tokens are not in the run's total", rec.Halt.Detail, want)
+	}
+}
+
 // The retry line names the stage and the run's count and carries nothing
 // else: no text the agent wrote, no prompt, no credential.
 func TestRetryLineCarriesNoContent(t *testing.T) {

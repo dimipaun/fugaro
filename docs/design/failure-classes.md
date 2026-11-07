@@ -201,7 +201,7 @@ Today no such function exists: 36 statements in 24 functions write the fields, e
 its own (§1). The change is mechanical and it *removes* writers rather than adding one: every one of
 those statements becomes one `recordEnd(…)` call, and the deferred function in `Run`
 (`internal/runner/runner.go:586`), the two bootstrap terminals beside it (`:650`, `:656`),
-`finalize`'s switch (`internal/runner/runner.go:4156`) and the twelve `end*` helpers with the three
+`finalize`'s switch (`internal/runner/runner.go:4371`) and the twelve `end*` helpers with the three
 `fail*Infra` and two `refuse*` writers all go through it. Its comment states the rule once: *the last
 call wins, and the four fields are written together, so a class can never describe a status the
 record does not carry.* The one statement it must account for rather than absorb is `storeUnposted`
