@@ -225,10 +225,9 @@ function unknownKeys(map, allowed, what) {
 
 /**
  * Every way the file departs from the rules above, as lines — the whole gate, so that a
- * plant below can be held to the one line it is about. `has` is the path check, which the
- * cases below replace with a fixture only when they mean to test it.
+ * plant below can be held to the one line it is about.
  */
-export function problems(doc, has = repoHas) {
+export function problems(doc) {
   const out = []
   if (doc.version !== 1) out.push(`${DATA} writes version ${JSON.stringify(doc.version)}; this file's format version is 1`)
   out.push(...unknownKeys(doc, KEYS.root, DATA))
@@ -273,7 +272,7 @@ export function problems(doc, has = repoHas) {
       if (needs && (typeof row.evidence !== 'string' || row.evidence === '')) {
         out.push(`${where} is ${row.status} and names no evidence path: a row of either status claims something exists today, so it names the path in this repository that backs it`)
       }
-      if (row.evidence !== undefined && !has(row.evidence)) {
+      if (row.evidence !== undefined && !repoHas(row.evidence)) {
         out.push(`${where} names the evidence path ${JSON.stringify(row.evidence)}, which is not in this repository`)
       }
     }
