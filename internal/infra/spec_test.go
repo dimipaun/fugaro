@@ -2997,6 +2997,80 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 	}
 }
 
+// TestNoRepositoryRootGainsAServiceTheBundleCannotServe is the whole-predicate
+// guard docs/credentials-service/default-on.md §3 (DON8) names: no repository
+// root the fixtures can build carries `installation.credentials_service` unless
+// all three of CredentialsServiceServes' conditions hold.
+//
+// The two tests above each pin one half — which addresses move, and which
+// mounts the job keeps — and each of them spells out the agent.auth it is
+// about. This one is the guard against a fixture being the exception: it walks
+// every agent block the tree knows against every state of the other two
+// conditions, so a repository root that gained the block on the strength of the
+// installation's own outputs alone (the mutation: `repoCredentialsService`
+// returning the block regardless) is caught on a row no test named, and it
+// asserts the ON row's shape as well, because a root that carried the block
+// with the URL left in it would be a value the workflow module reads half of.
+//
+// The four states are the whole of what the three conditions can be, in the
+// order an installation reaches them: nothing deployed (every installation
+// before DON1); nothing deployed while a record says ready (a local config left
+// behind by an installation that turned the service off again — the record is
+// not the switch's authority on its own); the service deployed and its bundle
+// holding no model credential, which is the state EVERY installation is in the
+// moment its update deploys the service, because `fugaro creds set` is the
+// bundle's only writer; and all three holding, which is the one row that may
+// move, and only for the cascade.
+func TestNoRepositoryRootGainsAServiceTheBundleCannotServe(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent string
+		lc    string
+	}{
+		{name: "cascade, the auth the service serves", agent: repoRootCascadeAgent, lc: repoRootLC},
+		{name: "oauth", agent: repoRootOAuthAgent, lc: repoRootLC},
+		{name: "api-key", agent: `agent: { auth: api-key }`, lc: repoRootAPIKeyLC},
+		{name: "vertex", agent: repoRootVertexAgent, lc: repoRootLC},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			served := tc.agent == repoRootCascadeAgent
+			for _, st := range []struct {
+				name      string
+				installed bool
+				ready     bool
+			}{
+				{name: "no service at all"},
+				{name: "no service, a record that says ready", ready: true},
+				{name: "the service deployed, the bundle not ready", installed: true},
+				{name: "the service deployed, the bundle ready", installed: true, ready: true},
+			} {
+				in := repoRootInputs(t, tc.agent)
+				in.LC = parseLC(t, tc.lc)
+				if st.installed {
+					in.Installation.CredentialsService = credentialsService()
+				}
+				if st.ready {
+					serviceReady(t, in.LC, in.Repo)
+				}
+				rs, err := Repo(in)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := rs.Installation.CredentialsService
+				if want := served && st.installed && st.ready; want != (got != nil) {
+					if want {
+						t.Fatalf("%s: the repository root carries no credentials service, want the installation's: the installation has the block, the record vouches for the bundle and agent.auth is %s — all three conditions — so this is the one row the switch turns on, and without it no repository of any installation ever reaches the service", st.name, config.AuthCascade)
+					}
+					t.Errorf("%s: the repository root carries installation.credentials_service %+v, want none: modules/workflow/sa.tf's gate is `var.credentials_service == null` and reads no auth, so this root's next apply would take the job's model credential away and grant its account roles/run.invoker on a service that cannot hand it back — the release blocker §1.4 states", st.name, got)
+				}
+				if got != nil && (got.Name != credentialsService().Name || got.Region != credentialsService().Region) {
+					t.Errorf("%s: the repository root's credentials service is %+v, want name and region alone (%+v): a repository root reads those two and nothing else, and Terraform silently drops an attribute a variable's type does not carry rather than refusing it (repoCredentialsService)", st.name, got, credentialsService())
+				}
+			}
+		})
+	}
+}
+
 // TestCascadeMountsNoOAuthToken: a `cascade` workflow mounts no model
 // credential in any case, the service on or off (docs/credentials-service,
 // D143; C1.20). The cascade's first tier is the shared subscription OAuth
