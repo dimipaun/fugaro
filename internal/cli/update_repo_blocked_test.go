@@ -118,7 +118,7 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 // branch holds refreshYAML and the working tree holds the same file with one
 // workflow's build command changed, which resolves and names this project.
 //
-// Mutation (run, restore): drop the yamlNotOnboarded call from planFor
+// Mutation (run, restore): drop the cloud skip from planFor
 // (init_checkout_upgrade.go) and this test fails — the checkout stage's own
 // line reads "ran fugaro upgrade's pin, plugin, cloud for this checkout" and
 // the change that edit asked for reaches Cloud Build.
@@ -174,10 +174,11 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 // removed: the repository stage's own Check is Todo (nothing about the file is
 // wrong) and the stop is the ID, asked for at the apply.
 //
-// Mutation (run, restore): make the checkout stage's cloud skip follow the stop
-// unconditionally (drop the PastStops split in planFor,
-// init_checkout_upgrade.go) and this test fails: the checkout runs its cloud
-// step, submits the job image builds and fails on them.
+// Mutation (run, restore): take the run's own stop back out of the cloud skip
+// — a fresh resolveRepoTarget in planFor's repositoryStopped
+// (init_checkout_upgrade.go), or no PastStops hand-off from the loop
+// (initflow/loop.go) — and this test fails: the checkout runs its cloud step,
+// submits the job image builds and fails on them.
 func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T) {
 	r := newConvergeRig(t, v4Node())
 	currentRelease(t)
