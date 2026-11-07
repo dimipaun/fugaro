@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,7 +52,10 @@ func newMigrationRig(t *testing.T, f *projectFixture, o *initOptions) *migration
 	cmd.SetOut(out)
 	cmd.SetErr(&syncBuf{})
 	cmd.SetIn(strings.NewReader(""))
-	run := &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
+	// The run's own streams are the door's (newInitRun): the stage writes the
+	// diff through initRun.w, so a test that gives this run a reporter sees what
+	// a person would.
+	run := newInitRun(cmd, o)
 	run.setProject(lc)
 	return &migrationRig{f: f, s: newPolicyMigrateStage(&initEngine{r: run, lc: lc, path: f.path}), cmd: cmd, out: out}
 }

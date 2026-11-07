@@ -25,6 +25,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
 )
 
@@ -607,16 +608,13 @@ func TestTheLineStaysDownThroughAWholeQuestion(t *testing.T) {
 	step.Done("")
 }
 
-// TestAMidStageConfirmationIsNeverDrawnOver is the round-3 finding. The
-// confirmations a converge asks are the shared ones — the layer stage's
-// confirmRemoval, the policy stage's confirmTypedStrict, confirmRemoval and
-// confirmEmptyAllowList — and each holds the command rather than the run, so
-// each writes and reads through cmd. Asked with a step of the run's own open (a
-// step is open across every stage), every one of them landed on the line the
-// spinner had drawn — the frame and then the banner, with no clear between them
-// — and the redraw every 100ms kept painting the frame over the prompt and over
-// the name typed under it (G1). The question now goes to the person with the
-// line down, and no redraw reaches the screen while it is open.
+// TestAMidStageConfirmationIsNeverDrawnOver is the round-3 finding, on the
+// layer stage's re-seed: the confirmation a stage asks is the shared
+// confirmRemoval, which holds the command rather than the run. Asked with a step
+// of the run's own open (a step is open across every stage), it landed on the
+// line the spinner had drawn — the frame and then the banner, with no clear
+// between them — and the redraw every 100ms kept painting the frame over the
+// prompt and over the name typed under it (G1).
 func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	clearAgentMarkers(t)
@@ -624,34 +622,65 @@ func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 	writerAsTerminal(t)
 	r := newLayerStageRig(t, testProjectLayer, localEdit, "3")
 	run := r.s.e.r
-	// The answer arrives while the question is open: stdin is a pipe, so this
-	// test decides when the person has read the block and typed their name.
-	answer, typed := io.Pipe()
-	defer typed.Close()
-	run.cmd.SetIn(answer)
 	run.rep = report.New(report.Options{Out: r.out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
 	// The loop opens the stage's step as it enters it (initflow's converge),
 	// which is what makes this a prompt asked mid-stage and not one before the
 	// first step — the shape TestConfirmPromptsAreNeverSuppressed covers.
 	step := run.rep.Step(initflow.Layer)
-	done := make(chan error, 1)
-	go func() {
+	answerAQuestionMidStage(t, run, r.out, func() error {
 		_, err := r.s.Apply(context.Background(), initflow.Env{Interactive: true})
-		done <- err
-	}()
+		return err
+	})
+	step.Done("")
+}
+
+// TestThePolicyStagesConfirmationIsNeverDrawnOver is the finding's own repro:
+// the policy migration prints its diff through the run's own writer and asks
+// confirmRemoval from inside the step the loop opened for the stage, so the
+// banner's line is the one the frame was drawn on.
+func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	clearAgentMarkers(t)
+	fakeTerminal(t)
+	writerAsTerminal(t)
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+	run := h.s.e.r
+	run.rep = report.New(report.Options{Out: h.out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
+	step := run.rep.Step(initflow.Policy)
+	answerAQuestionMidStage(t, run, h.out, func() error {
+		_, err := h.s.Apply(context.Background(), initflow.Env{Interactive: true})
+		return err
+	})
+	step.Done("")
+}
+
+// answerAQuestionMidStage drives ask — the stage's call, which asks one question
+// of the person — from another goroutine and asserts what the screen shows. The
+// answer is on a pipe, so the test decides when the person has read the block
+// and typed their name, and the question is the typed one both these stages ask
+// (confirmTyped's, which confirmRemoval and confirmTypedStrict are).
+func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, ask func() error) {
+	t.Helper()
+	answer, typed := io.Pipe()
+	defer typed.Close()
+	run.cmd.SetIn(answer)
+	done := make(chan error, 1)
+	go func() { done <- ask() }()
 
 	head := "⚠ CONFIRM (project " + initProjectName + "): "
 	prompt := "Type " + initProjectName + " to confirm: "
-	waitForOutput(t, r.out, prompt)
-	out := r.out.String()
-	at := strings.Index(out, head)
+	waitForOutput(t, out, prompt)
+	shown := out.String()
+	at := strings.Index(shown, head)
 	if at < 0 {
-		t.Fatalf("the stage asked no confirmation, so this test proves nothing:\n%q", out)
+		t.Fatalf("the stage asked no confirmation, so this test proves nothing:\n%q", shown)
 	}
-	if before := out[:at]; !strings.HasSuffix(before, "\r\x1b[K") {
+	if before := shown[:at]; !strings.HasSuffix(before, "\r\x1b[K") && !strings.HasSuffix(before, "\n") {
 		t.Errorf("the spinner drew the confirmation over its own line: %q", before)
 	}
-	rest := out[at:]
+	rest := shown[at:]
 	nl := strings.Index(rest, "\n")
 	if nl < 0 {
 		t.Fatalf("the confirmation's banner never ended, so the prompt under it cannot be read as its own line:\n%q", rest)
@@ -663,27 +692,39 @@ func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 	// A redraw every 100ms is what the finding measured, and three intervals of
 	// quiet are what says the spinner is down. The prompt is on the screen
 	// already, so anything written here is a frame over the answer being typed.
-	quiet := len(out)
+	quiet := len(shown)
 	time.Sleep(spinWatch)
-	if after := r.out.String(); len(after) != quiet {
+	if after := out.String(); len(after) != quiet {
 		t.Errorf("the spinner redrew over the prompt being answered: %q", after[quiet:])
 	}
 
 	if _, err := fmt.Fprintln(typed, initProjectName); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-done; err != nil {
-		t.Fatalf("apply: %v\n%s", err, r.out.String())
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the stage: %v\n%s", err, out.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("the stage is still asking after the answer:\n%q", out.String())
 	}
-	// The answer puts the stage's line back: the first thing written after the
-	// prompt is the frame again and not a line's own clear, which is what a run
-	// that stopped drawing for the rest of the stage's minutes would show.
-	got := r.out.String()
-	after := got[strings.Index(got, prompt)+len(prompt):]
-	if !strings.HasPrefix(after, "\r") || strings.HasPrefix(after, "\r\x1b[K") {
-		t.Errorf("the answer did not put the stage's line back: %q", after)
+	// The answer puts the stage's line back: what is on the screen after the
+	// question is a line in flight again, not the stage's last line left
+	// standing — which is what a run that stopped drawing for the rest of the
+	// stage's minutes would show.
+	got := out.String()
+	if strings.HasSuffix(got, "\n") {
+		t.Errorf("the stage's line did not come back after the answer: %q", tail(got, 80))
 	}
-	step.Done("")
+}
+
+// tail is the last n bytes of s, or all of it.
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 // spinWatch is three of the reporter's redraw intervals (spinInterval is
