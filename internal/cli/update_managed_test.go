@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
@@ -353,6 +354,105 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 				t.Errorf("the run offers --allow-delete for a plan another rule refused as well:\n%s", got)
 			}
 		})
+	}
+}
+
+// The third question gateDeleteLeft asks, and the one neither the addresses nor
+// the verdict can answer: a plan whose removals are ALL on the list the flag
+// clears can still be a plan the owner's own run refuses, because the run that
+// passes --allow-delete asks the step's own guard (initRun.guard) and that guard
+// refuses a project job whatever any list says (infra.RefuseProjectJobDeletes:
+// the job's deletion protection would make the apply remove its launchers'
+// grants and then fail). A plan that replaces the job and removes its launcher
+// grant is exactly that shape — both addresses are removals tf.Listable names,
+// so the verdict is removals-only and the flag is offered for both — and the
+// second run below is the witness that the command could not help: the owner
+// runs it with both flags and their own run refuses it and applies nothing.
+//
+// Mutation (run, restore): drop infra.RefuseProjectJobDeletes from
+// gateDeleteLeft — the left-for-you offers "fugaro update --allow-delete
+// <grant> --allow-delete <job>".
+func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
+	mod := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"]`
+	grant := mod + `.google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"]`
+	job := mod + ".google_cloud_run_v2_job.this"
+	removal := func(address, typ string, actions ...string) planChange {
+		return planChange{"address": address, "type": typ, "mode": "managed",
+			"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": map[string]any{}}}
+	}
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, removal(grant, "google_cloud_run_v2_job_iam_member", "delete"),
+		removal(job, "google_cloud_run_v2_job", "delete", "create"))
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run applied a plan that replaces a project job:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
+	}
+	if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+		t.Errorf("a plan the owner's own run refuses left them a command (%q): the flag clears both removals and the run that passes it still refuses the project job:\n%s", left, got)
+	}
+	refused := leftFor(got, initflow.Installation, initflow.LeftRefused)
+	if refused == "" {
+		t.Fatalf("the refused step left nothing at all:\n%s", got)
+	}
+	if !strings.Contains(refused, "a person files an issue") {
+		t.Errorf("the refusal is not the plan's own:\n%s", refused)
+	}
+	if strings.Contains(got, "--allow-delete") {
+		t.Errorf("the run offers --allow-delete for a plan its own guard refuses:\n%s", got)
+	}
+
+	// And what the offered command would have done, which is the whole reason
+	// the three questions come before it: the owner's own run with both flags
+	// refuses the same plan, with the project-job sentence, and applies nothing.
+	r2 := updateManagedRig(t)
+	updating(t, r2)
+	r2.setPlan(t, removal(grant, "google_cloud_run_v2_job_iam_member", "delete"),
+		removal(job, "google_cloud_run_v2_job", "delete", "create"))
+	got2, err2 := updateRun(t, r2, "update", "--yes", "--allow-delete", grant, "--allow-delete", job)
+	if err2 == nil || !strings.Contains(got2, "retiring a project job is not supported yet") {
+		t.Errorf("the owner's own run with the flags the refusal would have offered did not refuse the project job (err %v):\n%s", err2, got2)
+	}
+	if n := len(r2.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran in the run that passed the flag", n)
+	}
+}
+
+// The pair's other half, asked of a document the gate's own verdict would carry
+// a second refusal for: tf.Guard is the step's own guard too (initRun.guard runs
+// it beside the project-job rule), so a plan it refuses is not one the owner's
+// run would apply either, and the command must not be offered for it however
+// the verdict's lines read. The document below carries the removal the flag
+// admits beside a change no list clears (tf.Listable leaves a change with no
+// actions out for exactly that reason), and the verdict names only the removal —
+// the state the gate itself would not produce, which is what makes this the
+// second belt and not the first: what is pinned is that gateDeleteLeft answers
+// about the plan it is handed rather than about the sentence it was given.
+//
+// Mutation (run, restore): drop tf.Guard from gateDeleteLeft — the refusal
+// carries the removal's command.
+func TestGateDeleteLeftAsksTheGuardAboutTheWholePlan(t *testing.T) {
+	const removal = "module.installation.google_storage_bucket.uploads"
+	doc := []byte(`{"resource_changes":[` +
+		`{"address":"` + removal + `","type":"google_storage_bucket","change":{"actions":["delete"],` +
+		`"before":{"id":"b","name":"b","project":"p"}}},` +
+		`{"address":"module.installation.google_cloud_run_v2_job.runner","type":"google_cloud_run_v2_job",` +
+		`"change":{"actions":[]}}]}`)
+	verdict := managedmode.Verdict{Refusals: []managedmode.Refusal{
+		{Gate: "guard", Address: removal, Why: "delete"},
+		{Gate: "cover", Address: removal, Why: "actions delete"},
+	}}
+	got := (&initRun{o: &initOptions{door: updateDoor.name}}).gateRefused(
+		fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged), doc, verdict)
+	if got.Refusal != initflow.GateRefusedPlan {
+		t.Errorf("gateRefused().Refusal = %v, want the plan refusal: the plan carries a change the guard the owner's run asks refuses", got.Refusal)
+	}
+	if len(got.Owner.Commands) != 0 || got.Owner.Text != "" {
+		t.Errorf("a plan the guard refuses whole left the owner a command: %+v", got.Owner)
 	}
 }
 
