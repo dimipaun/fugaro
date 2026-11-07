@@ -2,8 +2,8 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
-not started; this folder approves no task.** The owner's spec of
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
+and M8–M10 are not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -788,13 +788,14 @@ rather than silent.
 **What a stolen Firebase ID token reaches.** One thing: **the approve step's `POST /oauth/authorize`**
 — the single endpoint that consumes one (the owner's answer of 2026-11-04, amended the same day by
 M-a; an earlier draft had it at `POST /oauth/token`) — and only while it is unexpired and only if its
-issuer and audience match the project. **The last of the bounds this paragraph used to state is not
-built**: an identity has to be one the project's own lists admit, and **M5's approve step mints a
-code and a family for any verified Firebase address** — resolving an identity through the launcher
-and operator lists is **M7** (`ee/coordinator/mcpauth/identity.go`, `TestIdentityOffTheListsIsRefused`,
-`TestOnlyExactUserEntriesAreRead`), which is not started. So until M7 lands, what stands between a
-verified Firebase identity and a token family is that sign-in and nothing else, and the lists narrow
-it afterwards rather than M5 keeping the rule. It is
+issuer and audience match the project. **The last of the bounds this paragraph used to state is built
+at one door and not at the other**: an identity has to be one the project's own lists admit, and
+**M5's approve step still mints a code and a family for any verified Firebase address** — resolving
+an identity through the launcher and operator lists is **M7** (`ee/coordinator/mcpauth/identity.go`,
+`TestIdentityOffTheListsIsRefused`, `TestOnlyExactUserEntriesAreRead`), which reads them on every
+request to the MCP endpoint, so a verified Firebase address still gets a token family and **that
+token reaches no tool**: an identity on neither list is refused before the request body is read, and
+the lists bound what a token buys rather than who may obtain one. It is
 never a bearer for the MCP endpoint and it is never a grant at the token endpoint, which is the whole
 reason the coordinator mints its own tokens, and it is why the design will not accept a Firebase
 token as an access token
