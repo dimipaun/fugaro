@@ -404,8 +404,9 @@ a stylistic preference:
   it: it holds **one** secret, `EXPO_TOKEN`, and because EAS holds the app's
   distribution credentials on your account, that token is what would let the
   approved job build and **submit**. It is not a store credential and it is not a
-  signing key — it is a token, held as an environment secret behind your own
-  approval click — but it is a credential CI may read, and the reason §10 states
+  signing key — it is a token, held as an environment secret that only a job
+  naming `environment: mobile-release` can read — but it is a credential CI may
+  read, and the reason §10 states
   its placement rather than assuming it.
 - **A key in an agent's environment is the thing D120 was answered against.**
   A Fugaro run's container is not a safe place for a store credential: the
@@ -422,7 +423,7 @@ a stylistic preference:
 | **Android app signing key** | **Play app signing** — **Google's**, not yours, and not something you can export | Google | nowhere: there is no copy of it to place. This is the one credential whose location is not a choice |
 | **App Store Connect API key** (a `.p8` file, a key id and an issuer id) | **owner-held**, on your machine, or in your password manager as the file | you, and `eas submit` reading it | **never in this repository**, **never in CI** for this check, never pasted |
 | **Play service account** (the JSON key) | **owner-held**, on your machine — and **not at a path this repository names**: `mobile/eas.json` carries **no** `serviceAccountKeyPath` and no other credential path, and its own test (`mobile/src/eas-config.test.js`) refuses a key whose name suggests one. You give EAS the file when it asks (the first `eas submit` after P4.4 does), or let the EAS project hold it as a credential | you, and `eas submit`, which reads the file wherever you keep it | **never in this repository** (the file Check 89's step 5 looks for is `google-play-service-account.json`), never in CI. Its **contents** are never read by Check 89 |
-| **Expo access token** (the one name CI may hold) | your Expo account's access tokens, on `https://expo.dev/`, under the account's own settings; stored as the **environment secret `EXPO_TOKEN`** **on the `mobile-release` environment** (§9), which is where the staged `mobile-release.yml` reads it — **never a repository secret** | you, and the job that names `environment: mobile-release` and no other job in the repository, after your approval | **never in this repository**, never on a build machine that does not need it, never as a repository secret |
+| **Expo access token** (the one name CI may hold) | your Expo account's access tokens, on `https://expo.dev/`, under the account's own settings; stored as the **environment secret `EXPO_TOKEN`** **on the `mobile-release` environment** (§9), which is where the staged `mobile-release.yml` reads it — **never a repository secret** | you, and the job that names `environment: mobile-release` and no other job in the repository — no click in between since 2026-11-07 (§9) | **never in this repository**, never on a build machine that does not need it, never as a repository secret |
 
 **The secret *names* the staged workflow would read, and nothing else.** This
 page names them and holds no value of any of them; a value here would be the
@@ -545,7 +546,8 @@ reaches a store:
   that is ever wanted: internal distribution, no `submit` section, no credential
   of any kind. It is not the profile Check 89 uses, and it is **not** the one the
   staged release workflow builds (§10 — that one builds and submits `internal`,
-  under the protected environment and your approval);
+  under the protected environment's deployment branch policy and the release
+  procedure, no approval click since 2026-11-07);
 - **the export-compliance answer is declared in the config, not asked again.**
   `mobile/app.config.js` merges
   `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` into every resolution —
@@ -584,7 +586,7 @@ number:
 |---|---|---|
 | **`website-live`** | `.github/workflows/website-promote.yml` (`environment: website-live`, in its `promote` job) | the site's **live promotion**: the job copies an already-reviewed preview channel onto the live channel. `workflow_dispatch`-only, the actor is guarded to you, and its deployment branch policy is **`main`**. It holds repository **variables** — a project id, a provider name, a service-account address — and no secret, because the deploy authenticates by Workload Identity Federation. Its one-time setup is [../website/preview-promote.md](../website/preview-promote.md). |
 | **`console-release`** | `.github/workflows/console-release.yml`, and its staged twin `docs/pending-workflows/console-release.yml` (which `console-release-linux.yml` and then `console-release-tag.yml` superseded, both now applied and removed, and which `console-release-feed.yml` supersedes and is still staged, as `console-release-symbols.yml` supersedes it for the crash reporter's symbol upload) — each declaring `environment: console-release` in its own `release` job | the desktop console's **signing, notarisation and stapling job**, on a `console-vX.Y.Z` tag push, publishing the release of that name. **This is the closer precedent**: it is a signing job, and it reads its six Apple secrets only through the environment, only as `secrets.NAME` in the one step that signs. |
-| **`mobile-release`** | `.github/workflows/mobile-release.yml` — **applied 2026-10-23** (staged by **#777**) — declaring `environment: mobile-release` in both its `ios` job and its `android` job | the mobile app's **build and store submission** on the app's own release tag (`mobile-vX.Y.Z`): one job per platform, building on EAS and submitting to TestFlight's internal testers and to Play's internal-testing track, behind your approval. §10 has the rest of it. |
+| **`mobile-release`** | `.github/workflows/mobile-release.yml` — **applied 2026-10-23** (staged by **#777**) — declaring `environment: mobile-release` in both its `ios` job and its `android` job | the mobile app's **build and store submission** on the app's own release tag (`mobile-vX.Y.Z`): one job per platform, building on EAS and submitting to TestFlight's internal testers and to Play's internal-testing track, behind the environment's deployment branch policy — **2026-11-07: the environment no longer requires a reviewer**, so what fences the build is that policy plus the release procedure and the tag ruleset (§9). §10 has the rest of it. |
 
 **And two things that are not environments, because a reader will expect them to
 be.** `.github/workflows/release.yml` — the CLI's own release — declares **no**
@@ -599,16 +601,29 @@ trigger offers, and the policy has to admit them: the app's own release tag
 (`mobile-v*`) and `main`. **The one thing this section adds is that the
 environment has to exist before the file is copied in**: GitHub
 creates a missing environment on first use, and the environment it creates that
-way has **no required reviewer**, so the first run would go straight through,
-holding the Expo token, with nobody's click in between. Create it, then copy the
-file (the staged file's own header says the same thing, first).
+way has **no deployment branch policy and no required reviewer** — nothing at all
+between a trigger and a runner — so the first run would go straight through from
+whatever ref started it, holding the Expo token. Create it, then copy the file
+(the staged file's own header says the same thing, first).
+
+**2026-11-07: the `mobile-release` environment still exists and is still what
+carries the fences, but it no longer requires a reviewer.** The owner removed the
+approval click, so the deployment branch policy below is the whole of the
+environment's own lock; what holds a build to a reviewed commit is the release
+procedure (§10's release gate, which checks the tagged commit is an ancestor of
+`origin/main`) and the **"protect release tags"** ruleset, which stops a
+`mobile-vX.Y.Z` tag moving after it is pushed. Putting the click back is one
+`gh api` call per environment, and the one `docs/release.md` gives under "What
+fences a release now" is the same call this page's sibling
+[../website/preview-promote.md](../website/preview-promote.md) gives for
+`website-live`.
 
 **One difference from `console-release` is deliberate and should not be lost.**
 The console's job holds Apple signing material in a protected environment because
 a console release is signed in CI. The mobile path's store credentials stay where
 they have always been — on your EAS project, under your account — and the only
-credential the staged workflow reads is `EXPO_TOKEN`, behind your approval
-(§14's Tension 5 records what that token reaches). If a **store credential or a
+credential the staged workflow reads is `EXPO_TOKEN`, behind the environment's
+deployment branch policy (§14's Tension 5 records what that token reaches). If a **store credential or a
 signing key** ever appears in this repository's settings, that is the finding
 Check 89's step 5 exists to produce.
 
@@ -622,10 +637,16 @@ In the repository's settings → **Environments** → **New environment**
 documentation at `https://docs.github.com/`):
 
 - **Name:** `mobile-release`.
-- **Required reviewers:** **you, and only you**. This is what makes the
-  environment a lock rather than a label: a job carrying `environment:
-  mobile-release` waits for your approval before a runner exists, and a
-  credential stored in the environment is unreadable without it.
+- **Required reviewers: none since 2026-11-07** — until then it was **you, and
+  only you**. The click is what made the environment a lock rather than a label:
+  a job carrying `environment: mobile-release` waited for your approval before a
+  runner existed, and a credential stored in the environment was unreadable
+  without it. With the click gone, a job starts as soon as its trigger fires, and
+  what holds it to a reviewed commit is the deployment branch policy below, the
+  release procedure in §10 and the tag ruleset — plus, for the token, the fact
+  that only a job naming `environment: mobile-release` can read it at all.
+  Restoring the click is one `gh api` call per environment, and `docs/release.md`
+  gives it under "What fences a release now".
 - **Deployment branches and tags:** restricted to the refs that may deploy into
   it — and **this list has to name every ref §10's trigger offers, or the
   environment is unreachable.** GitHub refuses a deployment to an environment
@@ -646,8 +667,9 @@ documentation at `https://docs.github.com/`):
   §10's account say the same thing, and the difference is the whole reason the
   environment exists. A **repository** secret is readable by every workflow in
   the repository, whatever job it runs in; an **environment** secret is readable
-  only by a job that names `environment: mobile-release`, and then only after the
-  required reviewer has approved it. A repository secret under the same name
+  only by a job that names `environment: mobile-release`, and — since the
+  required reviewer was removed on 2026-11-07 — with nothing else in between. A
+  repository secret under the same name
   would be the weaker fence — which is what §7's "a key in CI is a key any later
   workflow change can read" is about. `ASC_API_KEY_ID`,
   `PLAY_SERVICE_ACCOUNT_JSON`, `APPLE_DISTRIBUTION_CERTIFICATE` and
@@ -687,19 +709,21 @@ disagree, **the file wins** — and then this page is the thing to fix.
 |---|---|
 | **Trigger** | the **`push` of a tag matching `mobile-v[0-9]+.[0-9]+.[0-9]+`** — the app's own stream, and not the CLI's `v[0-9]+.[0-9]+.[0-9]+` the file carried until the owner's ruling of 2026-10-22 (the CLI's filter started this workflow on every CLI release, so the app was built and submitted whenever the CLI moved); a bare `mobile-*` would also start a release on `mobile-vtest` or on a `mobile-v1.2.3-rc1` tag, which is not a release of anything. The other trigger is **`workflow_dispatch`**, whose one input `dry_run` **defaults to `true` and stops before the submission** — so a person trying the workflow gets a build, a summary and no store upload. The app is versioned with **its own** tag (C6's "versioned with the CLI's tag" is superseded), and a tag is the one ref that means "this commit is a release": the tag's version, `mobile/app.json`'s `expo.version` and `mobile/package.json`'s `version` are the same number, which the file's first step enforces. **Refused: `pull_request`, `pull_request_target`, `workflow_run` and every scheduled trigger** — a job that builds on EAS and holds an Expo token must never run on a pull request from any branch, which is the defect the console's two files exist to prevent: `.github/workflows/console-tests.yml` runs on every pull request and holds no secret, while the job that holds the signing material runs only on a tag push. |
 | **The two jobs** | `ios` and `android`, one per platform, independent of each other — neither needs the other, so a platform that fails never blocks the other's release. Each runs on a **pinned** `ubuntu-24.04` with a 90-minute timeout, and **`concurrency`** is keyed on the workflow's own name rather than the ref, so two releases queue instead of submitting at once and a release mid-submission is never cancelled. |
-| **Locks** | **two, on each job.** `environment: mobile-release` — whose only required reviewer is you (§9) — **and the release gate**: on a tag push each job runs `scripts/release-gate.sh` (the app's `mobile-vX.Y.Z` tag, which the script accepts under that one prefix), which is what every publishing workflow here does; a dispatch that would submit runs a second gate step, so a dispatch naming an off-main branch or a `mobile-vtest` tag cannot build and submit behind nothing but the click. **Before either gate, on any tag ref, the version rule runs**: the tag's version is compared with `mobile/app.json`'s `expo.version` **and** `mobile/package.json`'s `version`, and a tag that disagrees with either stops the job — EAS reports the config's version, so the alternative is a store record under a version no tag names, and the manifest is compared because the app's own test pins the two lines to each other and no workflow here runs that suite. This is why the jobs carry `checks: read` beside `contents: read`, and why the checkout is full-depth. |
+| **Locks** | **two, on each job.** `environment: mobile-release` — whose fence is its deployment branch policy and, since 2026-11-07, no required reviewer (§9) — **and the release gate**: on a tag push each job runs `scripts/release-gate.sh` (the app's `mobile-vX.Y.Z` tag, which the script accepts under that one prefix), which is what every publishing workflow here does; a dispatch that would submit runs a second gate step, so a dispatch naming an off-main branch or a `mobile-vtest` tag cannot build and submit behind nothing but the environment (which, since 2026-11-07, is a branch policy rather than a click). **Before either gate, on any tag ref, the version rule runs**: the tag's version is compared with `mobile/app.json`'s `expo.version` **and** `mobile/package.json`'s `version`, and a tag that disagrees with either stops the job — EAS reports the config's version, so the alternative is a store record under a version no tag names, and the manifest is compared because the app's own test pins the two lines to each other and no workflow here runs that suite. This is why the jobs carry `checks: read` beside `contents: read`, and why the checkout is full-depth. |
 | **What it does** | builds on EAS with the **`internal`** profile of §8 and **submits the build it just made** — `eas build --json` is captured and its id is passed to `eas submit --id`, not `--latest`, which would take whoever's latest build of the profile. iOS goes to TestFlight's **internal** testers and Android to Play's **internal-testing** track: the same C8-bounded tracks Check 89 checks, reached from CI rather than from your terminal. |
 | **Which platforms run** | both are enabled by design (the owner's ruling of **2026-10-20**: both platforms ship from here), and one **repository variable** — `MOBILE_RELEASE_DISABLED_PLATFORMS`, naming `ios`, `android` or `ios,android` — is a **skip** list that turns one off. An unset variable names neither, so both run. |
 | **Permissions** | declared explicitly and minimally, at the workflow level **and** on each job: **`permissions:`** with **`contents: read`**, plus `checks: read` because the release gate reads the commit's check-runs. No write scope of any kind — no `id-token: write`, no `packages: write`, never `permissions: write-all`. |
 | **Actions** | pinned, every one, to a **full 40-character commit SHA** with a `# vX.Y.Z` comment beside it, as every other workflow in this repository is (a tag is mutable; a commit is not). Before copying the file in, compare the pins against `main`'s, so the copy cannot downgrade one. |
-| **Secrets** | **one**, reached **only** through the job-level `environment:` and bound on the steps that talk to EAS rather than at job level: `secrets.EXPO_TOKEN`, which is the **`mobile-release` environment secret of §9 and never a repository secret** (a repository secret is readable by any workflow in the repository; an environment secret only by a job that names the environment, after your approval) — and no other secret, and **no literal** beside any reference: no value, no long base64 blob, no `password:` with something after it. |
+| **Secrets** | **one**, reached **only** through the job-level `environment:` and bound on the steps that talk to EAS rather than at job level: `secrets.EXPO_TOKEN`, which is the **`mobile-release` environment secret of §9 and never a repository secret** (a repository secret is readable by any workflow in the repository; an environment secret only by a job that names the environment, with no approval step in between since 2026-11-07) — and no other secret, and **no literal** beside any reference: no value, no long base64 blob, no `password:` with something after it. |
 | **The store identity** | **not in the file.** The two identities live in the EAS project's own `production` environment, and every `eas` command there runs through **`eas env:exec production`**, which loads them; the two **variable names** appear once, in the mask step, which passes each resolved value to `::add-mask::` so a config dump or a submit report cannot print a bundle identifier into a **public** repository's log. A mask read that fails or comes back empty stops the job before anything is built. |
 | **What the summary carries** | the EAS build page's id and nothing else: the artifact download URL is never read, because it is a link to a signed binary whose `Info.plist` carries the bundle identifier, in a public run summary. |
 | **The gate the app is outside** | the app is outside the **CLI tag's** release gate in the sense D125 means: no `vX.Y.Z` release step builds or submits it, and the gate holds no store credential. Each job *runs* `scripts/release-gate.sh` as its own step (after the version rule), and the script's one edit since 2026-10-22 is the change this row records: it strips the app's `mobile-` prefix and holds the version under it to the same strict `vX.Y.Z` shape, so the app's own tag is gated exactly as the CLI's is. Nothing else about the gate changed — the required-check set, the on-main check and the identical-tree fallback are the same — and no store credential, signing key or identity was added to it. |
 
 **Two things this page adds to the file, because they are the ones that bite.**
 **The environment must exist before the copy-in** (§9), or GitHub creates it
-without a required reviewer and the first run submits with nobody's click. And
+with no branch policy and no required reviewer, and the first run submits from
+whatever ref started it — which since 2026-11-07 is the whole of the danger, the
+click being gone from the environments that do exist. And
 **the mask is a claim about the CLI, not a proof**: whether `::add-mask::`
 really keeps the identity out of `eas`'s output is on the owner's checklist in
 [docs/pending-workflows/README.md](../pending-workflows/README.md)'s

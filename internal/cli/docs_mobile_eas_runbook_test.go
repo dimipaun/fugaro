@@ -229,8 +229,8 @@ func TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives(t *testing.T) {
 }
 
 // TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape
-// asserts the repository-side half is described: a protected environment whose
-// only required reviewer is the owner, the trigger the build would run on,
+// asserts the repository-side half is described: a protected environment, the
+// trigger the build would run on,
 // least privilege, pinned actions -- and that the runbook writes no workflow
 // file, only the shape a later staged file under docs/pending-workflows/ would
 // have (Global Constraint 8). It also pins the precedent claim to the tree as
@@ -1284,8 +1284,8 @@ func sectionText(doc, from, to string) string {
 // environment settings and §10's workflow shape each describe where it may live,
 // and they are different fences: a **repository** secret is readable by every
 // workflow in the repository, whatever job it runs in, while an **environment**
-// secret is readable only by a job that names `environment: mobile-release`, and
-// only after its required reviewer has approved. A page whose table said
+// secret is readable only by a job that names `environment: mobile-release` (and,
+// since the reviewer was removed on 2026-11-07, by nothing else). A page whose table said
 // "repository secret" while its settings said "the only secret that belongs
 // here" would be describing the weaker fence as the stronger one, which is the
 // arrangement §7's own "a key in CI is a key any later workflow change can read"
