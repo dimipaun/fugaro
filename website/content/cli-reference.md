@@ -1986,6 +1986,17 @@ when it was assembled, one entry per scope in sources, the nodes, the edges
 (the coordinator's view has none) and the warnings. Without it, a short
 table: each scope's state, then its nodes grouped by release.
 
+--watch --json prints a whole document per change instead of one and
+exits, one compact object per line: the first snapshot at once, then one
+document for every change of the scopes it covers, at most one a second,
+and a document every 30 seconds while nothing changes. Every document
+carries the stream's own id and a sequence that rises within it, so a
+reader reads a new id as a whole new snapshot rather than comparing its
+sequence with the one before. It subscribes to each scope once, and a
+scope it cannot reach is a state in the document rather than an exit.
+--watch needs --json, which is the only shape a reader of the stream can
+consume.
+
 Exit codes: 1 for a refused scope or a project with no database, 2 for a
 failure of the database or the runs bucket.
 
@@ -2002,6 +2013,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--source` | string | `all` | no | the scope to read: all, coordinator, orchestrator:<id> or local:<id> |
+| `--watch` | bool | `false` | no | print a whole document per change, one compact object per line (needs --json) |
 
 Subcommands:
 
