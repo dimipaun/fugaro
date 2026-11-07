@@ -101,6 +101,20 @@ is regenerated from it. Section map and open points:
 [reconciliation.md](reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms).
 (amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate must be released before the Terms go public).
 
+**Amended 2026-11-07: the licence-key design note exists.** [licence-key.md](licence-key.md) is
+D308 as the owner's rulings of 2026-10-27 leave it: one key per organisation with a seat count, one
+claim set (tier, features, seats, organisation, issued, expires) and a key id, **expiry only** — no
+covered-versions date and no release-date stamping; the 30-day grace and the read-only state after
+it, which keeps cancel and the kill switch; the next key issued 30 days before expiry, with the
+verifier taking the latest valid one; a maximum lifetime per tier with no revocation, and the limits
+accepted beside them (a refunded buyer keeps a working key, a clock set back extends `expires`, a
+key can be shared); a staging key id production verifiers refuse; and where each product keeps the
+key, with the console handing it to the CLI it spawns in the environment and never in argv. The
+subscriptions plan's S2.1 is the task that writes it, and L3.1 of this plan's
+[implementation-plan.md](implementation-plan.md) — the earlier text of the same note — is marked
+superseded there. **Nothing is built:** `ee/licence/` does not exist, no release reads or mounts a
+key, and minting stays the owner's, by hand, until the entity and the owner-operated service exist.
+
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
 
@@ -109,6 +123,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | [spec.md](spec.md) | The owner's spec, verbatim (no typo fixes) |
 | [reconciliation.md](reconciliation.md) | Findings F1–F27 against the code and the published licence texts, resolutions R1–R8, decisions D300–D310 with the owner's answers (D301 and D303 amended), tensions T1 (ruled), T2 (accepted) and T3 (D303's mixed-licence release), items O1–O3, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices L0–L5 (L4.2, L4.3 and L5.1 owner-run), tasks with their tests and dependencies, levels, the critical path, the shared-files table. Nothing in it is approved |
+| [licence-key.md](licence-key.md) | The licence key's design (the subscriptions plan's S2.1, superseding this plan's L3.1): the claim set and the expiry-only rule, the offline check at `ee/register`, the grace and the read-only lapse, the overlapping renewal, the accepted limits, the staging key id, where each product keeps the key and how the console hands it to the CLI it spawns. **A design, not built; no release reads or mounts a key** |
 | [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, a draft for counsel (2026-10-27, amended the same day to the owner's answers and edited 2026-10-29 on the owner's ruling D531 so it stops calling the coordinator Core): not reviewed, not in force; prices and other Order Form items in brackets, with the two open owner items and counsel's questions |
 
 ## The numbers this work holds

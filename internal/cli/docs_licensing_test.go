@@ -366,3 +366,205 @@ func TestDocsLicensingOneWording(t *testing.T) {
 		t.Errorf("clause 2.1 of the three licence files does not name %s: the bracketed placeholder it replaced is gone, and the agreement the Licensor publishes has to be reachable from the sentence that requires it", claURL)
 	}
 }
+
+// The licence-key design note (subscriptions plan S2.1; D308 as extended by
+// D438 and as ruled on 2026-10-27 by O4, T26 and the key binding, with
+// D436/T12 for the lapse).
+//
+// The note is a design, so it compiles nothing and refuses nothing: every
+// verifier task that follows it -- the Go one (S2.3), the console's (S2.4),
+// the app's (S2.5), the two entry paths (S2.7, S2.8) and the key the
+// coordinator job is handed (S1.9, carried as E1.4) -- is written against what
+// this file says. That is the whole reason it is pinned here: a trust boundary
+// that three languages implement from one page is the one page whose silent
+// edit costs the most, and the plan's S2.1 entry names no test at all, so
+// nothing else in this package would read it.
+//
+// It lives in this file rather than in a `docs_licence_key_test.go` of its own
+// because the count of `internal/cli/docs_*_test.go` is pinned in
+// `docs/rigor-modes/reconciliation.md`, a dated record four tests hold to its
+// figure: a fifth file moves the count and edits another plan's record. This
+// file is already the licensing folder's own pin, so the note joins it.
+//
+// What is pinned is the *content* the plan's S2.1 entry lists, in the plan's
+// own order, plus the two cross-file halves a reader arrives by: L3.1 marked
+// superseded in the licensing plan and the note's row in the licensing README
+// table. Which words the note chooses is not what these tests are about:
+// flattenDoc folds the whitespace, and every phrase is read
+// case-insensitively. A missing phrase fails with the consequence of the claim
+// rather than with the spelling, because the reader who loses it is a verifier
+// author in another language, not a reader of the note.
+//
+// Mutations (verified, run and restored): cut "raw bytes before any JSON is
+// parsed" out of the note -- TestDocsLicenceKeyDesign fails, naming that
+// claim; and delete the note's row from the licensing README --
+// TestDocsLicenceKeyNoteIsInTheLicensingReadme fails, naming the table, which
+// is the half no S2.1 test but these reaches.
+
+const licenceKeyNotePath = "docs/licensing/licence-key.md"
+
+// licenceKeyDesignGroups is the note's content, one group per subject the
+// plan's S2.1 entry names. Each phrase is a fact a verifier implements, not a
+// wording: the "why" is what a reader loses when the phrase is gone.
+var licenceKeyDesignGroups = []struct {
+	subject string
+	why     string
+	phrases []string
+}{
+	{
+		subject: "the key",
+		why:     "the format is what three verifiers agree on byte for byte, and the claims are the licence's own terms",
+		phrases: []string{
+			"ed25519",
+			"base64url",
+			"before any json is parsed",
+			"key id",
+			"rotate",
+			"tier",
+			"features",
+			"seats",
+			"organisation",
+			"issued",
+			"expires",
+		},
+	},
+	{
+		subject: "expiry only (O4)",
+		why:     "the covered-versions date carried the perpetual fallback, which D436 dropped: a key that states a version window is a key the product has no rule for",
+		phrases: []string{
+			"expiry only",
+			"no covered-versions date",
+			"no release-date stamping",
+		},
+	},
+	{
+		subject: "the check",
+		why:     "the check gates at the registration point and nowhere else, so the MIT core keeps building and running with no key at all",
+		phrases: []string{
+			"ee/register",
+			"nothing in the core",
+			"offline",
+			"no phone-home",
+			"valid",
+			"grace",
+			"expired",
+		},
+	},
+	{
+		subject: "the lapse",
+		why:     "read-only is what a lapse costs, and cancel and the kill switch are what it must never cost (T12, D436)",
+		phrases: []string{
+			"30-day grace",
+			"read-only",
+			"cancel",
+			"kill switch",
+		},
+	},
+	{
+		subject: "renewal and overlap",
+		why:     "the overlap is why an issuing outage of up to 60 days is survivable, and the latest valid key is the one a verifier acts on (T26)",
+		phrases: []string{
+			"30 days before expiry",
+			"two keys",
+			"the latest valid one",
+		},
+	},
+	{
+		subject: "limits",
+		why:     "these are the accepted limits, and the tier maximum is the one that bounds a leaked signing key rather than merely warning about it",
+		phrases: []string{
+			"maximum lifetime",
+			"no revocation",
+			"refund",
+			"clock",
+		},
+	},
+	{
+		subject: "test-mode keys",
+		why:     "a staging key has to be unusable against a production installation, or the environment that exists to be broken is the environment that licenses customers",
+		phrases: []string{
+			"staging key id",
+			"refused",
+			"production",
+		},
+	},
+	{
+		subject: "storage and hand-off",
+		why:     "a key that reaches a child in argv is a key every local process reads (F41), and each product stores it where its own platform keeps a credential",
+		phrases: []string{
+			"licence.key",
+			"never in argv",
+			"environment",
+			"secure store",
+			"secret manager",
+		},
+	},
+	{
+		subject: "states and minting",
+		why:     "the no-key state is a real installation rather than an error (F43), minting is the owner's and off every machine an agent reaches (R8, T13), and the coordinator's job is handed its key rather than typing one",
+		phrases: []string{
+			"no key",
+			"minted by hand",
+			"owner-run",
+			"private signing key",
+			"coordinator",
+		},
+	},
+}
+
+// TestDocsLicenceKeyDesign: `docs/licensing/licence-key.md` is the S2.1 note,
+// and it states every subject the plan's S2.1 entry names.
+func TestDocsLicenceKeyDesign(t *testing.T) {
+	flat := strings.ToLower(flattenDoc(readDoc(t, licenceKeyNotePath)))
+	for _, group := range licenceKeyDesignGroups {
+		for _, want := range group.phrases {
+			if !strings.Contains(flat, strings.ToLower(want)) {
+				t.Errorf("%s never says %q (%s): %s", licenceKeyNotePath, want, group.subject, group.why)
+			}
+		}
+	}
+}
+
+// TestDocsLicenceKeyNoteSupersedesL31: the note is licensing task L3.1's
+// successor rather than a second design beside it, and the licensing plan has
+// to say so where a reader of L3.1 arrives. Two notes on one key, neither
+// marked, is how a verifier gets written against the withdrawn text -- the
+// covered-versions date and the release-date stamping L3.1 still carries are
+// exactly what O4 dropped.
+//
+// The supersession line has to name the plan that carries the note and the
+// note itself: a bare "superseded" leaves the reader of L3.1 with no later
+// text to read, which is the state the subscriptions plan's own status census
+// recorded against this task.
+func TestDocsLicenceKeyNoteSupersedesL31(t *testing.T) {
+	const plan = "docs/licensing/implementation-plan.md"
+	doc := readDoc(t, plan)
+	section := docSection(t, plan, doc, "#### L3.1 — The licence-key design note")
+	flat := strings.ToLower(flattenDoc(section))
+
+	for _, want := range []string{
+		"superseded",
+		"docs/subscriptions/implementation-plan.md",
+		"licence-key.md",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s's L3.1 section never says %q: the note it used to commission is written now by the subscriptions plan's S2.1, and L3.1's text still carries the covered-versions date and the release-date stamping that O4 dropped, so a reader who lands on L3.1 first has to be told where the later text is and that it exists", plan, want)
+		}
+	}
+}
+
+// TestDocsLicenceKeyNoteIsInTheLicensingReadme: the licensing README's table is
+// the folder's map of what each file is for, so the note takes a row in it.
+// The row is the only route to the note from the folder's front page, and a
+// design the front page does not name is a design the next reader of the
+// folder does not know exists (that table is where spec.md, reconciliation.md,
+// the implementation plan and the Terms are reached from).
+func TestDocsLicenceKeyNoteIsInTheLicensingReadme(t *testing.T) {
+	const readme = "docs/licensing/README.md"
+	doc := readDoc(t, readme)
+	for _, want := range []string{"](licence-key.md)", "licence key"} {
+		if !strings.Contains(strings.ToLower(doc), want) {
+			t.Errorf("%s carries no %q: the table is the folder's map, and the S2.1 note is a document a verifier author has to be able to find from the folder's front page", readme, want)
+		}
+	}
+}
