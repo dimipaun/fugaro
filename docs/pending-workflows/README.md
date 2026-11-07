@@ -3044,6 +3044,32 @@ Every changed line is then a comment or a blank one. Delete the fragment
 no byte-identity clause that needs it kept, and a fragment whose change has been
 applied is a stale instruction.
 
+**That commit also owes this page its references back, and no test can catch it
+if it does not.** A fragment is `.md` precisely so that neither enumerator reads
+it (`internal/cli/docs_desktop_console_test.go` and `website/test/readme.mjs`
+both walk this directory for `.ya?ml`), which means a commit that deletes a
+fragment and leaves this page naming it is green and wrong — and following a
+fragment's own `git rm` line exactly as written lands that commit. Three edits
+go with it, and each fragment repeats them in its own "How to apply" so the two
+halves of the procedure cannot part:
+
+1. **The opening line's second sentence shrinks, and then goes.** That is the
+   one beginning *Three further files here are not workflows at all*. While one
+   fragment is still here, drop the names that are gone from its list; when the
+   **last** one is applied, delete the sentence outright, so the opening states
+   the two pending files and the two files kept by design and names nothing that
+   is no longer in this directory.
+2. **This whole section goes with the last fragment** — `## The three
+   comment-only fragments (2026-11-07)`, down to the line before `## Before you
+   copy: check the action pins`.
+3. **The dated note at the top of this page loses the clause that points
+   here.** Its last sentence is *Every sentence below that says a person
+   approves a deployment … and `## The three comment-only fragments (2026-11-07)`
+   below holds the corrections for those comments*; with the section deleted the
+   pointer has nowhere to go, so end that sentence at *still carry the old
+   text*. The rest of the note stays — it is the record of the 2026-11-07
+   change, and `docs/release.md` states the same thing for the environments.
+
 The console's fragment is applied to **both** copies of that file. The staged
 `docs/pending-workflows/console-release.yml` and the applied
 `.github/workflows/console-release.yml` must stay byte-identical

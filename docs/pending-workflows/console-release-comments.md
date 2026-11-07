@@ -36,6 +36,15 @@ git add docs/pending-workflows/console-release.yml
 git rm docs/pending-workflows/console-release-comments.md
 ```
 
+**That commit also owes `docs/pending-workflows/README.md` its references back.**
+This fragment is named in that page's opening line, in its section `## The three
+comment-only fragments (2026-11-07)`, and in the dated note at the top of the
+page, and that section writes the three edits out as exact text — including that
+the **last** fragment applied is the one that deletes the section. Do them in the
+same commit: no test can see a dangling reference here, because the fragments are
+`.md` and neither `internal/cli`'s docs tests nor `website/test/readme.mjs`
+enumerates them.
+
 `docs/design/desktop-console.md` §9.4 and `docs/release.md` ("What fences a
 release now") carry the same correction in prose, and the latter gives the one
 `gh api` call that restores the click.

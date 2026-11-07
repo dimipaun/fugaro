@@ -30,6 +30,15 @@ commit, and delete this file (`git rm docs/pending-workflows/mobile-release-comm
 in the same commit — a fragment whose change has been applied is a stale
 instruction, and there is no byte-identity clause that needs it kept.
 
+**That commit also owes `docs/pending-workflows/README.md` its references back.**
+This fragment is named in that page's opening line, in its section `## The three
+comment-only fragments (2026-11-07)`, and in the dated note at the top of the
+page, and that section writes the three edits out as exact text — including that
+the **last** fragment applied is the one that deletes the section. Do them in the
+same commit: no test can see a dangling reference here, because the fragments are
+`.md` and neither `internal/cli`'s docs tests nor `website/test/readme.mjs`
+enumerates them.
+
 `docs/mobile/eas-signing-runbook.md` is the runbook for this environment, and its
 §9 and §10 carry the same correction in prose.
 
