@@ -836,7 +836,7 @@ func refuseMigrationUnknownKeys(moved []byte) error {
 		return nil
 	}
 	return userErr("%s carries %d key(s) this Fugaro does not know (%s), and migrating it would write a document whose meaning this binary cannot read: nothing was written; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run %s again",
-		projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys), selfCommand()+" update")
+		projectpolicy.PathShared(), len(p.UnknownKeys), unknownKeysText(p.UnknownKeys), selfCommand()+" update")
 }
 
 // write puts the migrated node back with the ETag it was read at. A concurrent
