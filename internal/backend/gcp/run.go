@@ -159,10 +159,9 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	// chose this image, and the runner passes the image's own variables only
 	// when it reads a non-empty stamp (docs/image-env, D1371). A launcher
 	// entry naming it would hand an image the stamp its own catalog never
-	// gave it. The name is a literal here because internal/runner owns
-	// runner.ImageEntryEnv and imports this package, so importing it back
-	// would be a cycle.
-	reserved := backend.ReservedEnvNames("FUGARO_RUN", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION", "FUGARO_IMAGE_ENTRY")
+	// gave it. backend.ImageEntryEnv is the one spelling, and Batch reserves
+	// it too.
+	reserved := backend.ReservedEnvNames("FUGARO_RUN", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION", backend.ImageEntryEnv)
 	extra, err := backend.LaunchEnv(spec, reserved...)
 	if err != nil {
 		// Nothing has been sent, so this is a refusal and not an ambiguity:
