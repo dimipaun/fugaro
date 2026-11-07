@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
@@ -398,24 +399,41 @@ func layerWalkKeys(data []byte, visit func(path []string, value []string)) bool 
 // because a re-typed scalar (`5` written as `"5"`) is a different document,
 // which the fail-closed direction of every read of this gate answers with a
 // refusal rather than with a comparison nobody can make.
+//
+// Every piece goes in under its own length (layerNodeField), which is what
+// makes the rendering injective: a value carrying a comma, a brace or another
+// value's own text is still one piece, and no two different nodes can render to
+// the same string. The rendering is never printed — the rule compares it and
+// nothing else — so it is written to be unambiguous rather than to be read.
+// Writing the pieces bare was a hole, found in review of #1809:
+// `rebuild.paths: [a, b]` and `rebuild.paths: ["a, !!str b"]` are different
+// documents and rendered to the same text, so a coding agent's session could
+// change a key outside the allowlist and this comparison would report it
+// unchanged.
 func layerNodeValue(n *yaml.Node) string {
 	switch n.Kind {
 	case yaml.MappingNode:
 		members := make([]string, 0, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			members = append(members, n.Content[i].Value+"="+layerNodeValue(n.Content[i+1]))
+			members = append(members, layerNodeField(n.Content[i].Value)+layerNodeValue(n.Content[i+1]))
 		}
 		slices.Sort(members)
-		return "{" + strings.Join(members, ", ") + "}"
+		return layerNodeField("map") + layerNodeField(strconv.Itoa(len(members))) + strings.Join(members, "")
 	case yaml.SequenceNode:
 		members := make([]string, 0, len(n.Content))
 		for _, e := range n.Content {
 			members = append(members, layerNodeValue(e))
 		}
-		return "[" + strings.Join(members, ", ") + "]"
+		return layerNodeField("seq") + layerNodeField(strconv.Itoa(len(members))) + strings.Join(members, "")
 	}
-	return n.ShortTag() + " " + n.Value
+	return layerNodeField("val") + layerNodeField(n.ShortTag()) + layerNodeField(n.Value)
 }
+
+// layerNodeField is one piece of a rendering under its own length: the digits
+// before the colon say how many bytes of text follow, so a reader always knows
+// where the piece ends and no piece can be read as two however its own text was
+// written.
+func layerNodeField(s string) string { return strconv.Itoa(len(s)) + ":" + s }
 
 // layerListOfBlocks reports whether a list holds blocks, so its elements are
 // addressed by index: the registry's own spelling of a list of scalars is the

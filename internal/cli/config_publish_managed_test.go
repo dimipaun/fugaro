@@ -15,6 +15,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"gopkg.in/yaml.v3"
+
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
@@ -1334,6 +1336,98 @@ func TestConfigPublishManagedRefusesADottedKeyFlattenedOntoTheAllowlist(t *testi
 	rec := r.audits(t)
 	if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
 		t.Fatalf("the record is %v, want one refusal", rec)
+	}
+}
+
+// A value can be spelled so that it renders as another document's value: a
+// list of two scalars and a list of one scalar whose text carries the first
+// list's own punctuation are different documents, and `rebuild.paths:
+// [go.mod, go.sum]` against `rebuild.paths: ["go.mod, !!str go.sum"]` is a
+// change to a key outside the allowlist whichever way round it is written. The
+// comparison reads values as rendered text, so a rendering that is not
+// injective reports the two as the same value and admits the change (found in
+// review of #1809). Both directions are asked, because the collision is
+// symmetric and a fix that only caught one of them would still be a hole.
+func TestConfigPublishManagedRefusesAValueSpelledAsAnotherValue(t *testing.T) {
+	head := minimalAnchored + "default_profile: web\nprofiles:\n  web:\n    rebuild:\n      paths: "
+	plain := head + "[go.mod, go.sum]\n"
+	spelled := head + "[\"go.mod, !!str go.sum\"]\n"
+	cases := []struct {
+		name      string
+		published string
+		next      string
+	}{
+		{"two paths spelled as one", plain, spelled},
+		{"one path spelled as two", spelled, plain},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			_, _, err := execute(t, "config", "publish", layerFile(t, tc.next))
+			if err == nil {
+				t.Fatalf("%s was published in a coding agent's session", tc.name)
+			}
+			if !strings.Contains(err.Error(), "layer.profiles.web.rebuild.paths") {
+				t.Errorf("the refusal does not name the key that changed: %v", err)
+			}
+			if !strings.Contains(err.Error(), "allowlist") {
+				t.Errorf("the refusal does not name the allowlist as the rule that refused: %v", err)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.published {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			rec := r.audits(t)
+			if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+				t.Fatalf("the record is %v, want one refusal", rec)
+			}
+		})
+	}
+}
+
+// The rendering the comparison reads values by, over the shapes a layer holds:
+// two spellings of one value must render alike, and two values must never. The
+// command-level case is TestConfigPublishManagedRefusesAValueSpelledAsAnotherValue;
+// this is the rendering itself, including the pairs the command cannot reach
+// because a key's own validation refuses the document first (a mise tool
+// version, say, is not a version once a comma is in it). A rendering that is
+// not injective reports a change as no change, which is what admitted the
+// change in review of #1809.
+func TestLayerNodeValueTellsValuesApart(t *testing.T) {
+	value := func(t *testing.T, text string) *yaml.Node {
+		t.Helper()
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte("k: "+text+"\n"), &doc); err != nil {
+			t.Fatalf("the case's own YAML does not parse: %v", err)
+		}
+		return doc.Content[0].Content[1]
+	}
+	same := [][2]string{
+		{"[a, b]", "[\"a\", \"b\"]"},
+		{"[a, b]", "[\n  a,\n  b,\n]"},
+		{"{a: one, b: two}", "{b: two, a: one}"},
+		{"{a: [b, c]}", "{a: [b, c]}"},
+		{"one", "\"one\""},
+	}
+	for _, tc := range same {
+		got, want := layerNodeValue(value(t, tc[0])), layerNodeValue(value(t, tc[1]))
+		if got != want {
+			t.Errorf("%s and %s say the same thing and render differently:\n%q\n%q", tc[0], tc[1], got, want)
+		}
+	}
+	differs := [][2]string{
+		{"[a, b]", "[\"a, !!str b\"]"},
+		{"{go: \"1.24\", node: \"20\"}", "{go: \"1.24, node=!!str 20\"}"},
+		{"[a]", "[[a]]"},
+		{"{a: [b, c]}", "{a: \"[!!str b, !!str c]\"}"},
+		{"5", "\"5\""},
+	}
+	for _, tc := range differs {
+		got, want := layerNodeValue(value(t, tc[0])), layerNodeValue(value(t, tc[1]))
+		if got == want {
+			t.Errorf("%s and %s are different values and render the same: %q", tc[0], tc[1], got)
+		}
 	}
 }
 
