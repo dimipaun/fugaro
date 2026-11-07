@@ -108,7 +108,10 @@ type plannedStep struct {
 // not the failure fugaro upgrade makes of that read, because there the user
 // asked for the refresh by name and here the step is one of a run. A checkout
 // whose fugaro.yaml names another project is not this run's to touch, and
-// neither is one whose fugaro.yaml does not resolve at all (yamlNotValid).
+// neither is one whose fugaro.yaml is not the file the repository stage
+// onboards (yamlNotOnboarded): the images are built from that file, so a build
+// from one the run refused to onboard is a billable image from a config no
+// cloud run of the project reads.
 //
 // Everything else is the steps' own: every other reason the refresh skips (no
 // fugaro.yaml, a teammate checkout, one not onboarded, a development build, a
@@ -130,17 +133,14 @@ func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc plugi
 		if err != nil {
 			return nil, fmt.Errorf("reading the checkout's remotes: %w", err)
 		}
-		why := "this checkout has no origin repository to refresh"
+		cloudSkip = "this checkout has no origin repository to refresh"
 		if origin {
 			// The origin is read first, as it always was: a checkout git
 			// cannot read is a failure of the stage and not a reason to drop
 			// a step, so the file is asked about only where there is one to
 			// drop over it.
-			if why, err = s.yamlNotValid(ctx, loc); err != nil {
-				return nil, err
-			}
+			cloudSkip = s.yamlNotOnboarded(ctx)
 		}
-		cloudSkip = why
 	}
 	steps := make([]plannedStep, 0, len(checkoutSteps))
 	for _, step := range checkoutSteps {
@@ -175,31 +175,32 @@ func (s *checkoutStage) namesAnotherProject(loc pluginwire.Location) (string, er
 	return "", nil
 }
 
-// yamlNotValid is why this checkout's fugaro.yaml is not one the cloud step
-// may build for: the file is there and names this project (so
-// namesAnotherProject let it through), and resolving it the way the repository
-// stage resolves it does not. It is the same file and the same verdict, which
-// is the point: the repository stage stopped needs-you over it with
-// `fugaro validate` as the fix, and this stage's own step would otherwise turn
-// the user's file into a failure of the run — the cloud step's verdict on a
-// local-file error is a failure in every mode (upgrade.go's policyStep),
-// because there the user asked for the refresh by name and here the step is
-// one of a run.
+// yamlNotOnboarded is why this checkout's fugaro.yaml is not one the cloud step
+// may build for: the repository stage's own resolution of this checkout —
+// resolveRepoTarget, the same call, the same file and the same verdict — stops
+// needs-you over it. This stage runs past that stop for the pin and the plugin,
+// which read no repository file; the cloud step is the half that may not,
+// because it builds the repository's job images from that very file, so
+// building them where the run refused to onboard the repository is a billable
+// image from a config no cloud run of the project reads (#1836).
 //
-// Only the cloud step is dropped for it: the pin and the plugin read the
-// checkout's settings and Claude Code, never the file, and they are what
-// clears the staleness line that names `fugaro update` — the one door that
-// would otherwise not be able to clear it (#1836). planFor asks it after the
-// origin read, so a checkout git cannot read still fails the stage.
-func (s *checkoutStage) yamlNotValid(ctx context.Context, loc pluginwire.Location) (string, error) {
-	data, err := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml"))
-	if err != nil {
-		return "", err
+// Asking that stage's resolution and not the file's own parse is the point:
+// the repository stage stops needs-you for two drifts of this file — the
+// default branch's does not resolve, or the working tree's is not the default
+// branch's — and a working tree that is valid but behind is the second, which
+// reading the working tree's file alone calls current.
+//
+// Its other answers are not this: a checkout with no origin to onboard, no
+// default branch ref, no fugaro.yaml on it, or another project's is a skip, and
+// the cloud step's own check decides there, as it did before this door had the
+// tolerance at all. So is a file the run cannot read: unknown is not the same
+// as not onboarded, and namesAnotherProject has already failed the stage for
+// it.
+func (s *checkoutStage) yamlNotOnboarded(ctx context.Context) string {
+	if tg, st := resolveRepoTarget(ctx, s.e.lc.Name); tg == nil && st.State == initflow.NeedsYou {
+		return "this checkout's fugaro.yaml is not the one the repository stage onboards, so its job images are not refreshed here: that stage's own line leaves the fix for it, and rerunning " + s.e.r.o.doorProgram() + " runs the refresh once it is made"
 	}
-	if _, problems := parseCheckoutFugaroYAML(ctx, data, s.e.lc); len(problems) > 0 {
-		return "this checkout's fugaro.yaml does not resolve (" + layerProblemsText(problems) + "), so its job images are not refreshed here: fix what fugaro validate says, then rerun " + s.e.r.o.doorProgram(), nil
-	}
-	return "", nil
+	return ""
 }
 
 // hasOriginRemote: whether the checkout has an origin remote at all. It is the

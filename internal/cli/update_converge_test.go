@@ -47,6 +47,10 @@ type convergeRig struct {
 	// recorded is how a test sees that the plugin was installed in Claude
 	// Code, as opposed to pinned in the checkout's settings.
 	claude *testutil.ClaudePluginFake
+	// builder is the fake Cloud Build the checkout stage's cloud step submits
+	// to: what it recorded is how a test sees, and counts, the billable
+	// job-image builds of a run.
+	builder *fakeBuilder
 }
 
 // v4Node is the published node the release before this one leaves behind: the
@@ -132,7 +136,7 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	// The checkout stage's cloud step rebuilds the workflow images the records
 	// still show on the previous release's base: billable builds, and here the
 	// fake builder's, never a real submit.
-	useFakeBuilder(t)
+	builder := useFakeBuilder(t)
 	records = map[string]string{}
 	prev := openRecordBucket
 	openRecordBucket = openFakeRecords
@@ -147,7 +151,7 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 
 	seedAppSecret(t, r.initRig, "github-app-key")
 	seedAppSecret(t, r.initRig, "claude-oauth-token")
-	return &convergeRig{imagesRig: r, root: root, settings: settings, claude: f}
+	return &convergeRig{imagesRig: r, root: root, settings: settings, claude: f, builder: builder}
 }
 
 // seedAppSecret stores acme/app's own container for logical, as a run of

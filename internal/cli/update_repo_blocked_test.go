@@ -104,6 +104,60 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 	staleLineWaitsForTheRun(t, errOut)
 }
 
+// TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard (#1836, review):
+// the checkout runs past the repository stage's needs-you for the pin and the
+// plugin, which read this machine's own files, and its cloud step is the third
+// step of the same stage — the one that builds the repository's job images from
+// that very fugaro.yaml, billable Cloud Builds included. A working tree whose
+// file is valid but not the default branch's (an edit not merged yet) is
+// exactly what the repository stage refuses to onboard, so the run must not
+// build from it: the tolerance is for the local half, and an image from a
+// config no cloud run of the project reads is the other half.
+//
+// The fixture is the drift the file's own parse alone cannot see: the default
+// branch holds refreshYAML and the working tree holds the same file with one
+// workflow's build command changed, which resolves and names this project.
+//
+// Mutation (run, restore): drop the yamlNotOnboarded call from planFor
+// (init_checkout_upgrade.go) and this test fails — the checkout stage's own
+// line reads "ran fugaro upgrade's pin, plugin, cloud for this checkout" and
+// the change that edit asked for reaches Cloud Build.
+func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
+	r := newConvergeRigYAML(t, v4Node(), refreshYAML)
+	currentRelease(t)
+	skillWarned.Store(false)
+	t.Cleanup(func() { skillWarned.Store(false) })
+	// One unmerged edit to the checkout's file: valid, this project's, and not
+	// the default branch's, so the repository stage stops over it.
+	checkoutFile(t, filepath.Join(r.root, "fugaro.yaml"), strings.Replace(refreshYAML, "build: sh build.sh", "build: sh build2.sh", 1))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err == nil {
+		t.Fatalf("the run reported success while the checkout's fugaro.yaml is not the default branch's:\n%s", out)
+	}
+	var res convergeJSON
+	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
+		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
+	}
+	if got := res.state(initflow.Repository); got != "needs-you" {
+		t.Fatalf("the repository stage is %q, want needs-you: the working tree's fugaro.yaml is not the default branch's\n%s", got, out)
+	}
+
+	// The run's own account of what it ran for the checkout: its two local
+	// steps, and never the cloud one.
+	if d := res.stageDetail(t, initflow.Checkout); strings.Contains(d, "cloud") {
+		t.Errorf("the checkout stage ran its cloud step over a fugaro.yaml the repository stage did not onboard: %q\n%s", d, out)
+	}
+	if n := len(r.builder.specs); n != 0 {
+		t.Errorf("%d job image(s) reached Cloud Build from a fugaro.yaml the repository stage did not onboard: %+v\n%s", n, r.builder.specs, out)
+	}
+	// And the parity with the other fixtures still holds: the tolerated half is
+	// the one the user's stuck line is about, and it moved.
+	if got := claudeListVersion(t, r); got != convergeRelease {
+		t.Errorf("Claude Code lists the plugin as %q after the run, want %q: the pin and the plugin are what this stage's tolerance is for\n%s", got, convergeRelease, out)
+	}
+}
+
 // TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind (#1836c): the
 // staleness line and the plugin stage's line are about the two halves of the
 // plugin — the copy Claude Code holds and the pin in .claude/settings.json —
