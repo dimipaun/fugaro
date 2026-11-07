@@ -2588,13 +2588,14 @@ the Coordinator tab's, because its `all` scope is the coordinator's stored view
 `graph.NodeKey` and the `--source` value parsed by `graph.ParseScope`
 (`ee/graph/key.go`). Cited by symbol, not by line, for §6.11's reason.
 
-**The command this section describes is not on `main` yet, and the section is
-written first on purpose.** CG1 (the document, the key and the scope pattern)
-has landed; CG3 (`graph --json`), CG7 (`graph --watch --json`) and the console's
-own read (CG9a, CG9b) are the tasks that follow, in that order. Every field
-below is read off `ee/graph/document.go`'s struct tags and every rule off the
-plan's H1 to H5, so a later task that finds the code disagreeing with this
-section has found a defect in one of the two.
+**`fugaro graph --json` has landed; the stream and the console's own read have
+not.** CG1 (the document, the key and the scope pattern) and CG3 (`graph
+--json`, the coordinator scope) are on `main`, so the command, its `--source`
+set and every field below are what the released CLI writes; CG7 (`graph --watch
+--json`) and the console's own read of this document (CG9a, CG9b) are the tasks
+that follow, in that order. The fields are read off `ee/graph/document.go`'s
+struct tags and the rules off the plan's H1 to H5, so a task that finds the code
+disagreeing with this section has found a defect in one of the two.
 
 **The section is numbered §6.22, and that is not a typo.** §6.21 is already
 claimed for another command's document: `docs/console-managed-screens/implementation-plan.md`
@@ -2606,8 +2607,17 @@ takes the next number free rather than the claim written down first.
 show a card when there is none (F10); `graph` asks the project's database what
 the coordinator's sweep stored — the read §6.13 already makes, through the
 caller's own credentials (`roles/firebasedatabase.viewer`) — so a scope paints
-with no checkout at all. **The plan scope keeps its checkout and its card**; the
-new scopes are what the dropdown adds beside it (D1356).
+with no checkout at all. **The one fact it does take from the local config is
+each repository's provider**, which that repository's slug is keyed by (§6.13's
+`provider` row is the same resolution): a `repos` entry that leaves `provider`
+out has no provider to find unless the working directory *is* that repository's
+checkout, so in a console child it is refused with the sentence that names the
+entry to set — a refusal of the whole read, with no document, which the console
+answers as it answers any other (T3, keep the plan scope and show the sentence),
+and never a `down` or `unreadable` state. Onboarding writes every repository's
+provider, so this is the hand-edited entry and not the ordinary one. **The plan
+scope keeps its checkout and its card**; the new scopes are what the dropdown
+adds beside it (D1356).
 
 **`--source` selects the scope, and the set is closed.** `all` is the default and
 is the union of the scopes that exist — today the coordinator alone —
@@ -2648,32 +2658,58 @@ one entry of `sources`:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `source` | string | never | never | the scope this state is about, exactly as it is written on the command line (`graph.Scope.String`): `all`, `coordinator`, `orchestrator:<id>` or `local:<id>`. It is the source half of every `key` that came from it, and the value the console sends back as `--source` |
+| `source` | string | never | never | the source this state is about (`graph.Scope.String`): `coordinator`, `orchestrator:<id>` or `local:<id>`, and **never `all`** — `all` is a selector and not a source, so a read that selected it (`graph --json`'s default) writes one entry per scope that exists, each named for itself, which today is one `coordinator` entry. It is the source half of every `key` that came from it, and a value a console may send back as `--source` |
 | `state` | string | never | never | one of the four words below. **The whole answer**, so a screen draws it as a word and never as a colour alone (H3, H10) |
-| `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good — for the coordinator scope, the sweep's stored time (CG2). **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it |
+| `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good. **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it — it draws one from this field when it is set, and never from `generated_at`. **The coordinator's stored view carries no time of its own** — it is a function of its inputs, which is why the Coordinator screen claims no age for it (CG2) — so a caller that read the views without knowing when the sweep stored them has none to give and prints null, and **`graph --json`, a one-shot read, is that caller**: its coordinator scope has a null `as_of` and is never stale by age. The stream (CG7) is the caller that knows its own read's time and can fill it; the sweep's own marker is a separate fact and not this field |
 | `reason` | string | never | never | why, in words, when the state is not `up`; `""` when it is. The read's own sentence, sanitised like every other string here, and the field a screen shows **beside** the state rather than instead of it |
 
 **The four states, defined.** A scope that is down is a **state and not an
 exit** (H3): the read answered, and this entry is its answer.
 
 - `up` — the source was read and its data is what it is. `reason` is `""`.
-- `down` — the source could not be reached: a withdrawn RTDB stream, a local
-  orchestrator whose node is gone. The other scopes keep their figures, and a
-  stream keeps streaming.
-- `stale` — the source answered with data known to be old: the coordinator's
-  stored view is stale once it is older than twice the sweep period (the sweep
-  is the 15-minute Scheduler job, F16; CG2), and the instant it is old as of is
-  `as_of`.
+- `down` — the source answered and has nothing stored. **The coordinator's
+  scope is down when the project lists repositories and the sweep has stored a
+  view for none of them** (CG2; `CoordinatorSource.Nodes`): the read succeeded,
+  so this is neither a refusal nor `unreadable`, and what the document still
+  carries is the half that needs no stored view — each repository's runs — so
+  `nodes` is **not** empty and `reason` is the read's own sentence, `the
+  coordinator has no stored view for any of the project's repositories`. A
+  screen draws those nodes with the state beside them, never an empty graph.
+  The other scopes are down when they cannot be reached at all: a withdrawn
+  RTDB stream, a local orchestrator whose node is gone. Either way the state is
+  one scope's: the other scopes keep their figures, and a stream keeps
+  streaming.
+- `stale` — the source answered with data known to be old. The coordinator's
+  scope is stale when the sweep's own marker stands beside a view it could not
+  recompute (CG2's `RepoView.Stale`): that marker is the age fact the stored read
+  carries, and its `reason` is the scope's. The other way is a caller that
+  supplied an `as_of` older than twice the sweep period (the sweep is the
+  15-minute Scheduler job, F16; CG2), and the instant it is old as of is then
+  that `as_of` — which a one-shot read, `graph --json`'s, does not supply, so for
+  it `stale` is the marker alone.
 - `unreadable` — the source answered with something this build cannot read. It
-  is a state of the source, never a refusal of the whole read.
+  is a state of the source, never a refusal of the whole read. The coordinator's
+  scope answers it in two cases, and they are one class: the database holds a
+  view, or a stale marker, that its strict decoding refuses — an unknown field, a
+  value of another shape — or it holds a record whose identity this build cannot
+  carry into a `key`, because sanitising it would rewrite it and a rewritten key
+  is one two things can share (D1356, `Sanitise`); the scope says it cannot read
+  the answer rather than printing a key that could merge two nodes. `reason` is
+  the refusal's own sentence, so a screen says what it could not read rather than
+  showing a graph with records quietly missing. The scope's `nodes` is **empty**
+  in both cases: a screen draws the state and the reason, never a partial graph.
 
 **A refused read is the other case, and it is terminal.** An invalid `--source`
 (H1), or a scope this build does not have (`orchestrator:` and `local:` before
 CG4 and CG5), is an error with a non-zero exit and **no document at all**, naming
 the command — which is what the console reads as "this CLI has no graph" and
-answers by keeping the plan scope and a refusal sentence (T3, CG10). A refusal
-and a `down` source are told apart by exactly that: one is a process that printed
-nothing and failed, the other is a document with the state in it.
+answers by keeping the plan scope and a refusal sentence (T3, CG10). A repository
+whose `repos` entry names no provider is refused the same way (above), and so is
+a database the scope's read could not reach — an IAM refusal, a connection that
+failed: those reads made no answer at all, where `unreadable` is an answer this
+build cannot read and a `down` source is one that answered with nothing stored.
+A refusal and a `down` source are told apart by exactly that: one is a process
+that printed nothing and failed, the other is a document with the state in it.
 
 one entry of `nodes`:
 
