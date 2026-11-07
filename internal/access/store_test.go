@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -466,12 +467,42 @@ func longScope(n int) string {
 	return prefix + strings.Repeat("a", n-len(prefix))
 }
 
+// overByteCapNode is the document that pins the one gap between the schema and
+// the reader: MaxGrants grants whose scopes each sit exactly at
+// projectpolicy.MaxPatternLen, which is the largest document the schema's own
+// bounds let a node reach. Every entry of it is one the schema accepts; the
+// document is over MaxNodeBytes, so the reader refuses it. It is built from
+// nodeGrant rather than through Encode, which refuses the very document the
+// Decode half must refuse.
+func overByteCapNode(t *testing.T) string {
+	t.Helper()
+	grants := make([]nodeGrant, MaxGrants)
+	for i := range grants {
+		grants[i] = nodeGrant{User: alice, Role: string(RoleViewer), Scope: longScope(projectpolicy.MaxPatternLen)}
+	}
+	raw, err := json.Marshal(nodeDoc{Grants: &grants})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) <= MaxNodeBytes {
+		t.Fatalf("the document is %d bytes, at most %d are allowed: it does not pin the gap between the schema and the reader's byte cap", len(raw), MaxNodeBytes)
+	}
+	return string(raw)
+}
+
 // TestAccessNodeSchemaAndReaderAgree: the schema in schemas/ is the aid a person
 // validates a hand-written node against, and internal/access.Decode is the
 // authority that reads it. The two are held together here in the one direction
 // that matters — every document the schema accepts must be one the reader
 // accepts — because the other way round is how a node that passes the schema
 // goes on to halt every CLI read of it (the review finding on this change).
+//
+// One bound is out of reach and is pinned by name instead: the reader's byte cap
+// is on the serialized document, which no keyword of this schema counts, so a
+// node the schema accepts can still be over MaxNodeBytes. overByteCapNode below
+// is that node — every entry in it is one the schema accepts, and the document
+// as a whole is over the cap — so the gap is a case in this corpus rather than
+// something a later review rediscovers.
 //
 // The schema is deliberately stricter than the reader in the spelling it
 // requires: it spells the canonical form Encode stores, while Decode folds a
@@ -499,6 +530,14 @@ func TestAccessNodeSchemaAndReaderAgree(t *testing.T) {
 		// writer can write, so the schema must accept them.
 		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/*/*/*,github/acme/*/*/*"}]}`,
 		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"` + longScope(projectpolicy.MaxPatternLen) + `"}]}`,
+		// Wildcards inside a segment, which the reader allows and the writer
+		// writes: Encode stores what ParseScope parsed, and ParseScope refuses
+		// only a doubled "*" (it matches inside one segment and never crosses
+		// "/"). A pattern that let a segment carry one wildcard refused both of
+		// these (the review finding on this change).
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/a*b*c"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/acme/*b*"}]}`,
+		`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"github/a*b/c*,bitbucket/other/*app*"}]}`,
 	} {
 		if !readerAccepts(doc) {
 			t.Errorf("Decode refused %s: the corpus of documents both accept is wrong", doc)
@@ -558,6 +597,25 @@ func TestAccessNodeSchemaAndReaderAgree(t *testing.T) {
 		}
 	}
 
+	// The one gap the schema cannot close, and the reason this test states its
+	// claim as "everything the schema accepts, except the byte cap". A JSON
+	// Schema counts members and string lengths, never the serialized document,
+	// so the document below — MaxGrants grants, each scope at
+	// projectpolicy.MaxPatternLen, every entry one the schema accepts — passes
+	// the schema and is over MaxNodeBytes. The reader refuses it, which is the
+	// fail-closed answer and the only one available to it; the byte cap is the
+	// reader's, and a schema cannot make the two agree about it. The one keyword
+	// that could is maxItems, and it cannot here: 256 grants of a 255-character
+	// scope are about 80 KiB while 256 short ones are about 17 KiB, so any count
+	// low enough to bound the bytes refuses documents Encode writes.
+	over := overByteCapNode(t)
+	if !schemaAccepts(t, sch, over) {
+		t.Errorf("the schema refused the %d-byte document of %d grants: the one gap between it and the reader is not the byte cap", len(over), MaxGrants)
+	}
+	if _, err := Decode([]byte(over)); err == nil || !strings.Contains(err.Error(), "bytes; at most") {
+		t.Errorf("Decode of the %d-byte document = %v, want the byte cap's own refusal", len(over), err)
+	}
+
 	// Documents the schema refuses and the reader folds and accepts, because
 	// the schema spells the canonical form the writer stores and the reader
 	// normalises a variant rather than refusing it. Listed so the strictness is
@@ -598,6 +656,60 @@ func TestAccessNodeSchemaAndReaderAgree(t *testing.T) {
 		}
 		if !schemaAccepts(t, sch, string(raw)) {
 			t.Errorf("Encode wrote %s, which the schema refuses", raw)
+		}
+	}
+}
+
+// TestAccessNodeSchemaRefusesNothingTheReaderReads: the corpus above pins the
+// cases a person thought of, and both review findings on this schema were cases
+// nobody thought of — a member spelling, a control byte, a star inside a
+// segment — so the space is enumerated here rather than sampled: every scope the
+// generator below can build, in both directions.
+//
+// The first direction is the dangerous one, and it is the whole claim of the
+// schema: a document it accepts must be one Decode accepts, or a hand-written
+// node that passes the schema halts every CLI read of it. The second is the
+// writer's half of the same agreement: every spelling ParseScope accepts has a
+// canonical form, and that form — the one Encode stores — must validate, or the
+// schema would refuse a node the CLI itself writes.
+func TestAccessNodeSchemaRefusesNothingTheReaderReads(t *testing.T) {
+	sch := nodeSchema(t)
+
+	// The pieces are the grammar's own edges: an empty segment, the wildcard
+	// alone and inside a segment, a doubled and a tripled star, "." and "..",
+	// the characters a repository name may carry and the ones it may not, an
+	// upper-case spelling, and a provider no repository can carry.
+	pieces := []string{"", "*", "a", "a*", "*a", "a*b", "a**", "a***b", "*a*", ".", "..", "a.b", "a.b.c", "A", "a b", "a+b", "_", "-"}
+	providers := []string{"github", "bitbucket", "foo", "*", "", "GITHUB"}
+	var scopes []string
+	for _, p := range providers {
+		for _, a := range pieces {
+			for _, b := range pieces {
+				scopes = append(scopes, p+"/"+a+"/"+b, p+"/"+a+"/"+b+"/"+a, p+"/"+a+"/"+b+","+p+"/"+a+"/"+b)
+			}
+		}
+	}
+	scopes = append(scopes,
+		"project", "all-repos", "*", "", "project,github/a/b", "github/a/b,", ",github/a/b",
+		" github/a/b ", "GITHUB/A/B", "github/a/b.git", "github/a/b.git.git", "github/a.git/b",
+	)
+	if len(scopes) < 5000 {
+		t.Fatalf("the generator built %d scopes: it is the check's whole coverage, so a shortened one is a weakened test", len(scopes))
+	}
+
+	for _, s := range scopes {
+		doc := `{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":` + strconv.Quote(s) + `}]}`
+		if schemaAccepts(t, sch, doc) && !readerAccepts(doc) {
+			t.Errorf("the schema accepted the scope %q, which Decode refuses: a hand-written node passing the schema halts every CLI read of it", s)
+		}
+		if canon, err := ParseScope(s); err == nil {
+			canonical := `{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":` + strconv.Quote(canon.String()) + `}]}`
+			if !readerAccepts(canonical) {
+				t.Errorf("Decode refused %q, the canonical spelling it parsed from %q: the reader cannot read back what it read", canon.String(), s)
+			}
+			if !schemaAccepts(t, sch, canonical) {
+				t.Errorf("the schema refused %q, the canonical spelling of %q the writer stores", canon.String(), s)
+			}
 		}
 	}
 }
