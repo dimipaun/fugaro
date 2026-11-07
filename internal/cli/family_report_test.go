@@ -8,6 +8,7 @@ package cli
 // on the way to a credential is a step; what a person has to answer is not.
 
 import (
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -47,9 +48,7 @@ func familyStep(t *testing.T, account string) string {
 	if len(steps) != 1 {
 		t.Fatalf("the run printed %d step line(s), want one:\n%s", len(steps), account)
 	}
-	switch {
-	case strings.HasPrefix(steps[0], markDone):
-	case strings.HasPrefix(steps[0], markFailed), strings.HasPrefix(steps[0], markLeft), strings.HasPrefix(steps[0], markSkipped):
+	if !strings.HasPrefix(steps[0], markDone) {
 		t.Fatalf("the run's step is not a tick, and the change it reports succeeded: %q", steps[0])
 	}
 	return steps[0]
@@ -184,6 +183,42 @@ func TestSecretsRmWritesALog(t *testing.T) {
 	familyLog(t, "secrets-rm")
 }
 
+// TestSecretsRmFailureIsACrossAndALog: a removal whose delete fails is not a
+// tick, whatever else the command printed (G3), and the run's account carries
+// the cross, the error and the path of the log the rest of it is in (G8).
+// This is the one path of the command that ends a step itself, so it is the
+// one place the rules for a failure are this batch's to keep.
+func TestSecretsRmFailureIsACrossAndALog(t *testing.T) {
+	familyLogs(t)
+	sm, id, path := secretsRmFixture(t)
+	before := readFileString(t, path)
+	sm.FailDeleteWith = http.StatusForbidden
+
+	out, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	if err == nil {
+		t.Fatalf("the delete failed, yet the removal succeeded:\n%s", out)
+	}
+	step := stepLineOf(reportLines(out), "Removing")
+	if !strings.HasPrefix(step, markFailed+" Removing project_secrets.bitbucket-token") {
+		t.Errorf("the failed removal is not a cross naming the entry:\n%s", out)
+	}
+	if !strings.Contains(step, "was put back") {
+		t.Errorf("the step does not carry the error the command returns: %q", step)
+	}
+	log, _ := onlyLog(t, "secrets-rm")
+	if !strings.Contains(out, "full output: "+log) {
+		t.Errorf("the failure does not name the log the rest of it is in:\n%s", out)
+	}
+	if last := reportLines(out); !strings.HasPrefix(last[len(last)-1], "Failed in ") {
+		t.Errorf("the run's account does not close on a failed outcome:\n%s", out)
+	}
+	// The failure is a failure and not a half-done removal: the value is where
+	// it was and the config entry is back (secretsRmUndo).
+	if got := sm.Latest(id); string(got) != tokenValue || readFileString(t, path) != before {
+		t.Errorf("the failed removal changed something: value %q, config %s", got, readFileString(t, path))
+	}
+}
+
 // lineAt is the first line of account that carries want, or -1.
 func lineAt(account []string, want string) int {
 	for i, l := range account {
@@ -231,9 +266,9 @@ func noisyTerraform(t *testing.T, r *initRig) {
 	r.save(t)
 }
 
-// stageLine is the stage's own line of the run's account, whatever marker it
-// earned: a stage this rig skips is not a tick, and what these commands are
-// about is that each stage has a line at all.
+// familyStageLine is the stage's own line of the run's account, whatever
+// marker it earned: a stage this rig skips is not a tick, and what these
+// commands are about is that each stage has a line at all.
 func familyStageLine(t *testing.T, account []string, stage string) string {
 	t.Helper()
 	if l := stepLineOf(account, stage); l != "" {
