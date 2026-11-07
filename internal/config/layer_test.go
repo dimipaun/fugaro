@@ -984,3 +984,40 @@ func TestProjectLayerRefusesAJobsKeyItDoesNotKnow(t *testing.T) {
 		})
 	}
 }
+
+// TestProjectLayerJobsIsTopLevel: the block is a top-level key of the layer
+// file, like governance: and claude_models, and not a member of defaults:. The
+// defaults overlay is replace-not-tighten, so a block under it would be a value
+// a repository's own file could replace with a looser one — and the one value
+// here that must never come from a repository's file is paused: false. A layer
+// that writes the key under defaults: is refused as an unknown key there, which
+// is what makes the placement a rule and not a convention, and SetsJobs reads
+// the tree at the root, so it is what the skew gates judge.
+func TestProjectLayerJobsIsTopLevel(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	l := mustLayer(t, head+"jobs:\n  catalog_check:\n    paused: false\n  reports: null\n")
+	if l.Jobs == nil || l.Jobs.CatalogCheck == nil || l.Jobs.CatalogCheck.Paused == nil || *l.Jobs.CatalogCheck.Paused {
+		t.Fatalf("layer jobs = %+v", l.Jobs)
+	}
+	if !l.SetsJobs() {
+		t.Error("SetsJobs = false for a layer whose text writes jobs:")
+	}
+	if _, ps := ParseProjectLayer([]byte(head+"defaults:\n  jobs:\n    catalog_check: { paused: false }\n"), testAnchor); len(ps) == 0 {
+		t.Error("defaults.jobs was accepted: the block is a top-level key of the layer file")
+	}
+	// The key decides, whatever it holds: `jobs:` with nothing under it and an
+	// empty block are lines an older runner's KnownFields decoder refuses
+	// exactly like a populated one, so SetsJobs has to say so for both — a gate
+	// reading Jobs alone would let them through.
+	for _, text := range []string{"jobs:\n", "jobs: {}\n"} {
+		if l := mustLayer(t, head+text); !l.SetsJobs() {
+			t.Errorf("SetsJobs = false for %q, and that key is what an older runner refuses", strings.TrimSpace(text))
+		}
+	}
+	if l := mustLayer(t, head+"jobs: { catalog_check: { paused: false } }\n"); l.SetsJobs() != true {
+		t.Error("SetsJobs = false for a layer that writes jobs:")
+	}
+	if (*ProjectLayer)(nil).SetsJobs() {
+		t.Error("SetsJobs = true for no layer at all")
+	}
+}
