@@ -1518,9 +1518,14 @@ export const CONSOLE_OPERATIONS = [
   // the **installation's** caps -- dollars that belong to the Spend screen and
   // to the tab's own `caps` panel, and that a decoder here would have to drop
   // (D1481). What the node does carry is the *project's* own `budget` block, and
-  // that is the project's policy rather than a spend figure: the tab draws it as
-  // the policy it is. **It is a ceiling all the same**, which is what the
-  // reduced mode withholds, so this read is on the tab's own view list
+  // **no screen draws it**: those figures are configured ceilings, drawn where
+  // the `caps` panel draws one and nowhere else, so the policy notes read the
+  // node, drop the block and draw no figure of it (the managed screens'
+  // reconciliation, §6 rule 3 -- which also retires this comment's earlier claim
+  // that the tab draws the block "as the policy it is"; no screen of that work
+  // does, review of 2026-11-07). **The read is not moneyless all the same**, and
+  // that is what the reduced mode withholds: the ceiling travels in the
+  // **document**, so this read is on the tab's own view list
   // (`REDUCED_VIEW_OPERATIONS`'s `caps`, below) with `budget.show` and
   // `settings.read` -- the same ruling that puts the settings read there for its
   // `budget.*` rows. The view entry is untouched: the tab's view is `caps`
