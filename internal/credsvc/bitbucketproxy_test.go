@@ -837,6 +837,48 @@ func TestBitbucketRouteUserCallNamesNoRepository(t *testing.T) {
 	}
 }
 
+// TestBitbucketRoutePRFactsUnreadableIsRefused: a write whose pull request
+// this service cannot read is REFUSED rather than checked against nothing —
+// G12's fail-closed side, and the reason the facts read is required at all.
+//
+// The two answers the API can give are both cases here, and the first is the
+// sharp one: an error status is not facts even beside a readable document, so
+// a route that decoded the body without checking the status would decide a
+// write on a 500's body. The write itself is never forwarded in either case —
+// for a comment on the run's OWN pull request (fpr) an empty source is a
+// source no rule refuses, so falling through here would be a write on nothing.
+func TestBitbucketRoutePRFactsUnreadableIsRefused(t *testing.T) {
+	document := `{"source":{"branch":{"name":"someone-elses-branch"},"repository":{"full_name":"` +
+		testBitbucketRepo + `"}},"destination":{"branch":{"name":"main"}}}`
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"an error status beside a readable document", http.StatusInternalServerError, document},
+		{"a 200 whose body is not the document", http.StatusOK, "not the API's document at all"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, up, _ := proxySvc(t)
+			up.answerWith(tc.status, tc.body)
+
+			resp, ans := s.proxyCall(t, http.MethodPut, proxyPath(proxyRESTPath("/pullrequests/7")),
+				[]byte(`{"title":"the run's work"}`))
+			proxyRefused(t, resp, ans, http.StatusServiceUnavailable, ErrorStateUnavailable, "could not be read")
+
+			seen := up.calls()
+			if len(seen) != 1 || seen[0].method != http.MethodGet {
+				t.Fatalf("the upstream saw %+v, want the facts read alone: an unknown pull request is never written to", seen)
+			}
+			line := s.onlyAuditLine(t)
+			if line["status"] != ErrorStateUnavailable || line["purpose"] != PurposeBitbucketAPI {
+				t.Errorf("the audit line = %v, want the refusal under the Bitbucket API purpose", line)
+			}
+		})
+	}
+}
+
 // TestBitbucketRoutePRCreateIsCheckedOnItsBody: a create names a pull request
 // that does not exist yet, so there is no fact for this service to read and the
 // source it names is checked in the body it is about to send (G12). Two things
