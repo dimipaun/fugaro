@@ -123,6 +123,13 @@ deny() { # permission
     perm=$FAKE340_DENY_PERM
   fi
   printf 'ERROR: (gcloud.storage) HTTPError 403: %s does not have %s access to the Google Cloud Storage object.\n' "$impersonate" "$perm" >&2
+  if [ -n "${FAKE340_MULTILINE_DENY:-}" ]; then
+    # A refusal whose real reason is on a LATER line: the first line names the
+    # permission, and the second says why. A quote that took only the first line
+    # lost the second, which is what the owner's failed reports/ and tokens/
+    # listings looked like behind the impersonation warning.
+    printf 'ERROR: (gcloud.storage) the request was refused before the clause was evaluated, and this second line is the one a first-line-only quote hid.\n' >&2
+  fi
   exit 1
 }
 
@@ -155,6 +162,14 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# gcloud prints this on EVERY impersonated call, before the call's own answer,
+# whether it worked or not — so it is the first line a first-line-only quote
+# would report, hiding the ERROR behind it. The fake prints it for real, which is
+# what makes the "quote the whole error, drop the warning" pin a reading.
+if [ -n "$impersonate" ]; then
+  printf 'WARNING: This command is using service account impersonation. All API calls will be executed as [%s].\n' "$impersonate" >&2
+fi
 
 # The two clause kinds, as R12 writes them: the listing half's value out of
 # api.getAttribute('storage.googleapis.com/objectListPrefix', '') and the read
@@ -364,12 +379,20 @@ storage)
       # here rather than passing a fake that skimmed it.
       expression=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["expression"])' "$condition_file")
       title=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["title"])' "$condition_file")
-      printf '%s\t%s\t%s\t%s\n' "$member" "$role" "$expression" "$title" >>"$dir/bindings"
       # Kept as well as bound: a binding goes away again (between the two forms,
       # and in the Restore), and what this check GRANTED is what a test asserts
       # on -- R12's two clauses and their || -- so the text has to survive the
       # run that wrote it.
       printf '%s\t%s\t%s\t%s\n' "$member" "$role" "$expression" "$title" >>"$dir/grants"
+      if [ -n "${FAKE340_REPORTS_BINDING_MISSING:-}" ] && [ "$role" = roles/storage.objectUser ]; then
+        # The grant call ANSWERED that it landed, but the bucket policy it is
+        # read back from does not name it: the reports/ listing then fails while
+        # the policy says the binding was never there -- the reading a row has to
+        # tell apart from a clause that does not match.
+        :
+      else
+        printf '%s\t%s\t%s\t%s\n' "$member" "$role" "$expression" "$title" >>"$dir/bindings"
+      fi
       printf 'bindings:\n'
       ;;
     remove-iam-policy-binding)
@@ -439,6 +462,14 @@ iam)
       ;;
     describe)
       id=${email%%@*}
+      if [ -n "${FAKE340_SA_DESCRIBE_DENIED:-}" ]; then
+        # The owner's own first run: the identity could create and impersonate
+        # the account but was refused iam.serviceAccounts.get on it, so a
+        # describe is not the account being absent -- it is the account not
+        # being readable.
+        printf 'ERROR: (gcloud.iam.service-accounts.describe) PERMISSION_DENIED: %s does not have iam.serviceAccounts.get access to the service account %s.\n' "$account" "$email" >&2
+        exit 1
+      fi
       if readback_denied; then
         deny iam.serviceAccounts.get
       fi
@@ -451,6 +482,12 @@ iam)
       ;;
     delete)
       id=${email%%@*}
+      if [ -n "${FAKE340_DELETE_REFUSED:-}" ]; then
+        # The delete the Restore's evidence rests on, refused: this run cannot
+        # confirm the account is gone, which is a FAILed row and never a pass.
+        printf 'ERROR: (gcloud.iam.service-accounts.delete) PERMISSION_DENIED: %s does not have iam.serviceAccounts.delete access to the service account %s.\n' "$account" "$email" >&2
+        exit 1
+      fi
       if [ -f "$dir/accounts/$id" ]; then
         rm -f "$dir/accounts/$id"
         printf 'deleted service account [%s]\n' "$email"
@@ -652,6 +689,11 @@ test_neither_form_listing_is_a_fail() {
   expect_contains "$out" "gcloud said: ERROR:" "neither form: the row carries gcloud's own words"
   expect_contains "$out" "storage.objects.list" "neither form: and the permission the refusal names"
   expect_absent "$out" "(gcloud said: )" "neither form: no row quotes an empty error"
+  # A failed reports/ listing has to say whether the binding is even there: here
+  # it landed (the fake bound it), so the failure is the clause not matching the
+  # request and not a grant that never arrived.
+  expect_contains "$out" "IS in the bucket policy read back now" "neither form: the row says the reports binding landed"
+  expect_absent "$out" "using service account impersonation" "neither form: and the impersonation warning is not the quoted reason"
   expect_contains "$out" "FACT list-prefix: FAIL — " "neither form: the answer"
   expect_contains "$out" "NEITHER form listed" "neither form: the row says which reading it is"
   expect_contains "$out" "must NOT land" "neither form: it says what R12 has to do"
@@ -659,6 +701,47 @@ test_neither_form_listing_is_a_fail() {
   expect_contains "$out" "FACT restore: PASS — " "neither form: the Restore still ran"
   expect_bucket_clean "neither form"
   expect_scratch_gone "neither form"
+}
+
+# The whole error, not its first line. gcloud prints the service-account
+# impersonation WARNING first on every impersonated call, so a row that quoted
+# only the first line reported the warning as the reason and hid the ERROR behind
+# it — which is how the owner's failed reports/ and tokens/ listings came back
+# with nothing to read. The row has to carry every line of the call's own answer.
+test_a_multi_line_error_is_quoted_in_full() {
+  setup_case multiline none
+  RUN340_ENV=(FAKE340_MULTILINE_DENY=yes)
+  run340_default
+  expect_status "$status" 1 "multi-line error"
+  expect_contains "$out" "FACT relative-lists-runs: FAIL — " "multi-line error: the listing fails"
+  expect_contains "$out" "this second line is the one a first-line-only quote hid" \
+    "multi-line error: the line after the first is quoted"
+  expect_contains "$out" "storage.objects.list" "multi-line error: and the permission is still named"
+  expect_absent "$out" "using service account impersonation" "multi-line error: the impersonation warning is dropped"
+  expect_contains "$out" " | " "multi-line error: the lines are joined, not lost"
+  expect_bucket_clean "multi-line error"
+}
+
+# A reports/ listing that fails while the binding is NOT in the bucket policy is
+# a grant that never landed, not a clause that does not match — and the two must
+# be told apart, because only the second is a reading about the attribute. The
+# row says which, read back with the owner's identity (the account cannot read
+# the policy it is the subject of).
+test_a_reports_listing_that_fails_names_the_binding() {
+  setup_case reports-binding-missing relative
+  RUN340_ENV=(FAKE340_REPORTS_BINDING_MISSING=yes)
+  run340_default
+  expect_status "$status" 1 "reports binding missing"
+  expect_contains "$out" "FACT relative-lists-reports: FAIL — " "reports binding missing: the reports listing fails"
+  expect_contains "$out" "the roles/storage.objectUser binding for " "reports binding missing: the row names the binding it read back"
+  expect_contains "$out" "is NOT in the bucket policy read back now, so it never landed" \
+    "reports binding missing: and says it never landed"
+  # The read-back is the owner's, not the account's: it is the policy's own
+  # contents, and the account holds no permission to read them.
+  policy_call=$(grep 'get-iam-policy' "$dir/state/calls")
+  expect_contains "$policy_call" "gcloud storage buckets get-iam-policy" "reports binding missing: the policy was read back"
+  expect_absent "$policy_call" "--impersonate" "reports binding missing: with your own identity"
+  expect_bucket_clean "reports binding missing"
 }
 
 # A grant wider than R12's two prefixes: the account can list anywhere. Every
@@ -812,6 +895,29 @@ test_an_account_that_already_exists_stops() {
   expect_contains "$out" "already exists" "account already there: the row says why it stops"
   expect_absent "$(cat "$dir/state/calls")" "service-accounts create" "account already there: nothing was created"
   expect_bucket_clean "account already there"
+}
+
+# A describe that is REFUSED is not the name being free. The owner's first run
+# could create and impersonate the throwaway account but was refused
+# iam.serviceAccounts.get on it, and reading that refusal as "absent" is how a
+# name somebody else holds would be adopted. The row says could-not-read-back,
+# the run goes on, and the create is what refuses a name that is really taken.
+test_a_denied_describe_is_could_not_read_back() {
+  setup_case describe-denied relative
+  RUN340_ENV=(FAKE340_SA_DESCRIBE_DENIED=yes)
+  run340_default
+  expect_status "$status" 0 "denied describe"
+  expect_contains "$out" "FACT account: INFO — could not read back" "denied describe: the row says it could not be read back"
+  expect_absent "$out" "FACT account: PASS" "denied describe: the row is not a pass"
+  expect_absent "$out" "is absent from" "denied describe: and never says the name is free"
+  expect_contains "$out" "iam.serviceAccounts.get" "denied describe: the row carries the refusal"
+  expect_contains "$out" "FACT list-prefix: PASS — " "denied describe: the run still answers the question"
+  # The Restore's evidence is the delete's own answer, not a describe the
+  # identity may not read.
+  expect_contains "$out" "FACT restore: PASS — " "denied describe: the Restore still confirms"
+  expect_contains "$out" "the delete call answered" "denied describe: and says which evidence it used"
+  expect_bucket_clean "denied describe"
+  expect_scratch_gone "denied describe"
 }
 
 # The arguments: both are required, an unknown one is refused, and --help prints
@@ -1054,12 +1160,13 @@ test_a_passing_run_reads_the_policy_back() {
   expect_bucket_clean "policy read-back"
 }
 
-# A Restore that cannot READ what it deleted must not read as a pass. The
-# listing, the bucket policy and the account are read back to make the PASS row
-# a reading rather than a claim, and an error from any of them — a 403, a dropped
-# call — says this run cannot tell, not that the thing is gone. The fake denies
-# exactly those reads, and only once something of the run's has been removed,
-# which is when the policy read-back matters most.
+# A Restore that cannot READ what it deleted must not read as a pass. The four
+# prefixes and the bucket policy are read back to make the PASS row a reading
+# rather than a claim, and an error from either — a 403, a dropped call — says
+# this run cannot tell, not that the thing is gone. The fake denies exactly those
+# reads, and only once something of the run's has been removed, which is when the
+# policy read-back matters most. The account is not one of them: its evidence is
+# the delete call's own answer, which a denied describe cannot take away.
 test_a_restore_that_cannot_read_back_does_not_pass() {
   setup_case readback-denied relative
   RUN340_ENV=(FAKE340_READBACK_DENIED=yes)
@@ -1070,10 +1177,26 @@ test_a_restore_that_cannot_read_back_does_not_pass() {
   expect_contains "$out" "FACT restore: FAIL — " "unreadable Restore: the Restore row fails"
   expect_contains "$out" "Not readable, so not confirmed:" "unreadable Restore: the row says what could not be read back"
   expect_contains "$out" "the listing could not be read back" "unreadable Restore: the four prefixes are named"
-  expect_contains "$out" "could not be read back to check" "unreadable Restore: and so is the account read-back"
+  expect_contains "$out" "the bucket policy (it could not be read" "unreadable Restore: and so is the policy read-back"
   expect_absent "$out" "were read back: the policy no longer names the account" "unreadable Restore: the pass sentence is not printed on reads that did not answer"
   expect_contains "$out" "CHECK 340 RESULT END (exit 1)" "unreadable Restore: the block does not read as a pass"
   expect_bucket_clean "unreadable Restore"
+}
+
+# A delete the bucket refuses is the evidence failing, so the account is not
+# confirmed gone and the Restore row FAILs: the delete's own answer is what the
+# PASS row rests on, and a refusal is not that answer.
+test_a_denied_delete_is_not_a_restore_pass() {
+  setup_case delete-denied relative
+  RUN340_ENV=(FAKE340_DELETE_REFUSED=yes)
+  run340_default
+  expect_status "$status" 1 "denied delete"
+  expect_contains "$out" "FACT list-prefix: PASS — " "denied delete: the form itself passed"
+  expect_contains "$out" "FACT restore: FAIL — " "denied delete: the Restore row fails"
+  expect_contains "$out" "the delete call was refused or did not answer" "denied delete: the row says which evidence failed"
+  expect_contains "$out" "iam.serviceAccounts.delete" "denied delete: and carries the refusal"
+  expect_absent "$out" "the policy no longer names the account" "denied delete: the pass sentence is not printed"
+  [ -n "$(find "$dir/state/accounts" -type f)" ] || fail "denied delete: the case did not leave the account behind"
 }
 
 # The policy read-back is the one the PASS row makes a claim about ("The bucket
@@ -1157,11 +1280,14 @@ t() {
 t test_the_relative_form_passes
 t test_the_full_path_form_passes
 t test_neither_form_listing_is_a_fail
+t test_a_multi_line_error_is_quoted_in_full
+t test_a_reports_listing_that_fails_names_the_binding
 t test_a_grant_wider_than_the_two_prefixes_is_a_fail
 t test_a_root_listing_that_is_allowed_is_a_fail
 t test_a_restore_that_could_not_delete_is_a_fail
 t test_a_passing_run_reads_the_policy_back
 t test_a_restore_that_cannot_read_back_does_not_pass
+t test_a_denied_delete_is_not_a_restore_pass
 t test_a_restore_that_cannot_read_the_policy_does_not_pass
 t test_the_second_form_waits_for_the_first_bindings_to_be_gone
 t test_a_removal_that_never_takes_effect_stops
@@ -1180,6 +1306,7 @@ t test_a_dry_run_prints_the_plan_and_makes_no_call
 t test_a_dry_run_still_refuses_belong
 t test_a_bucket_that_cannot_be_reached_stops
 t test_an_account_that_already_exists_stops
+t test_a_denied_describe_is_could_not_read_back
 t test_usage_and_arguments
 t test_a_gs_prefix_and_a_trailing_slash_are_accepted
 
