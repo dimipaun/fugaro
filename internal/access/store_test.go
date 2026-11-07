@@ -114,6 +114,10 @@ func TestAccessNodeRefusesUnknownRole(t *testing.T) {
 // same is true of a document whose grants list is empty: the database keeps no
 // member for an empty list, so there is no third "present and empty" state, and
 // neither shape is a wildcard.
+//
+// The fold that makes those two one state is the database's, and gcpfake does
+// not apply it (see foldAsTheDatabaseKeeps): the document is folded here, which
+// is the state the read below answers for.
 func TestAbsentAccessNodeGrantsNothingNew(t *testing.T) {
 	ctx := context.Background()
 	f, db := accessDB(t)
@@ -131,10 +135,16 @@ func TestAbsentAccessNodeGrantsNothingNew(t *testing.T) {
 	}
 
 	// A document holding an empty grants list is the absent state, not a third
-	// one: the database prunes an empty list as it prunes an empty object, so
-	// nothing is left at the node. The fake prunes it the way the real database
-	// does, so the read below is the read an installation gets.
-	f.Set(PathNode, json.RawMessage(`{"grants":[]}`))
+	// one: the database keeps no member for an empty list, so nothing is left at
+	// the node. gcpfake stores the empty list it is handed rather than folding it
+	// (foldAsTheDatabaseKeeps), so the document is folded here and what is
+	// planted is the node the real database is left holding — the state the read
+	// below answers for.
+	var doc any
+	if err := json.Unmarshal([]byte(`{"grants":[]}`), &doc); err != nil {
+		t.Fatal(err)
+	}
+	f.Set(PathNode, foldAsTheDatabaseKeeps(doc))
 	if v := f.Value(PathNode); v != nil {
 		t.Fatalf("the database kept %#v at the node: a list is an object with numeric keys there, so an empty one is pruned (#1658)", v)
 	}
@@ -157,6 +167,14 @@ func TestAbsentAccessNodeGrantsNothingNew(t *testing.T) {
 // node is gone (WriteIfMatch). Clearing the roster therefore lands the
 // installation back in the state it started in, which grants nothing beyond the
 // implicit admins.
+//
+// gcpfake stores the empty list it is handed and does not fold it
+// (foldAsTheDatabaseKeeps), so the fold is applied here to the document the
+// write actually left at the node, and the reads below answer for the node the
+// real database holds. Teaching the fake to fold is not this change's to make:
+// four unrelated cli tests seed nodes holding empty lists — states the real
+// database cannot hold — and one of them pins a doctor line no installation can
+// reach.
 func TestAccessNodeZeroGrantWriteLeavesTheAbsentState(t *testing.T) {
 	ctx := context.Background()
 	f, db := accessDB(t)
@@ -168,6 +186,10 @@ func TestAccessNodeZeroGrantWriteLeavesTheAbsentState(t *testing.T) {
 	if err := WriteIfMatch(ctx, db, nil, absent.ETag); err != nil {
 		t.Fatalf("WriteIfMatch of no grants on an absent node: %v", err)
 	}
+	if got, want := string(mustJSON(t, f.Value(PathNode))), `{"grants":[]}`; got != want {
+		t.Fatalf("the write left %s at the node, want the zero-grants document %s", got, want)
+	}
+	f.Set(PathNode, foldAsTheDatabaseKeeps(f.Value(PathNode)))
 	if v := f.Value(PathNode); v != nil {
 		t.Fatalf("the database holds %#v at the node: an empty grants list is an empty object there and is pruned (#1658)", v)
 	}
@@ -185,6 +207,7 @@ func TestAccessNodeZeroGrantWriteLeavesTheAbsentState(t *testing.T) {
 	if err := WriteIfMatch(ctx, db, nil, held.ETag); err != nil {
 		t.Fatalf("WriteIfMatch of no grants: %v", err)
 	}
+	f.Set(PathNode, foldAsTheDatabaseKeeps(f.Value(PathNode)))
 	if v := f.Value(PathNode); v != nil {
 		t.Fatalf("the database holds %#v at the node: the emptied list is pruned with it", v)
 	}
@@ -195,6 +218,49 @@ func TestAccessNodeZeroGrantWriteLeavesTheAbsentState(t *testing.T) {
 	if after.Found || len(after.Grants) != 0 {
 		t.Fatalf("Read after clearing the node = %+v, want the absent node that grants nothing new", after)
 	}
+}
+
+// foldAsTheDatabaseKeeps returns what the Realtime Database keeps of a written
+// value: a list is an object with numeric keys there, so an empty list is an
+// empty object and is pruned whole, and an object left with no member is gone
+// (#1658, the finding internal/cli's sameNode and dropAbsentMembers carry for
+// the same reason). It walks the JSON model, which is what the fake hands back.
+//
+// It is stated here because gcpfake's normalise keeps the empty list it is
+// given: the fake is shared with tests that seed states the real database cannot
+// hold, so the fold this node's contract rests on is applied where the contract
+// is tested rather than changed under those tests.
+func foldAsTheDatabaseKeeps(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for k, c := range x {
+			if c = foldAsTheDatabaseKeeps(c); c != nil {
+				out[k] = c
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case []any:
+		if len(x) == 0 {
+			return nil
+		}
+		return x
+	default:
+		return v
+	}
+}
+
+// mustJSON renders a stored node for an error message.
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshalling %#v: %v", v, err)
+	}
+	return b
 }
 
 // TestAccessNodeOverCapRefused: both bounds hold on both sides. A document past

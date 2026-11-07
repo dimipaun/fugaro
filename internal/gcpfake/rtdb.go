@@ -21,9 +21,7 @@ import (
 // unreachable backend (503); DropStreams cuts the open connections.
 //
 // Values are JSON; numbers read back as json.Number. A null value is an
-// absent node, and empty objects and empty lists are pruned, as in the real
-// database — a list is an object with numeric keys there, so an empty list is
-// an empty object (#1658).
+// absent node and empty objects are pruned, as in the real database.
 type RTDB struct {
 	*Server
 
@@ -622,7 +620,7 @@ func setAt(n any, p []string, v any) any {
 }
 
 // normalise converts test-supplied Go values (ints, structs) to the JSON
-// model and prunes nulls, empty objects and empty lists.
+// model and prunes nulls and empty objects.
 func normalise(v any) any {
 	switch x := v.(type) {
 	case nil:
@@ -638,15 +636,6 @@ func normalise(v any) any {
 			return nil
 		}
 		return out
-	case []any:
-		// The database has no list type: a list is an object with numeric keys,
-		// so an empty list is an empty object and is pruned the same way. A
-		// list with members is kept, because the database hands a
-		// contiguous one back as the list it was written as (#1658).
-		if len(x) == 0 {
-			return nil
-		}
-		return x
 	case json.Number, string, bool:
 		return x
 	default:
@@ -660,8 +649,7 @@ func normalise(v any) any {
 		if err := dec.Decode(&out); err != nil {
 			panic(err)
 		}
-		switch out.(type) {
-		case map[string]any, []any:
+		if _, same := out.(map[string]any); same {
 			return normalise(out)
 		}
 		return out
