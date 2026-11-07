@@ -17,4 +17,4 @@ that answer.
 | [reconciliation.md](reconciliation.md) | findings F1–F14, decisions D1640–D1648 with the owner's answers, open items |
 | [implementation-plan.md](implementation-plan.md) | tasks WC1–WC4, levels, critical path, shared files, Check 430 |
 
-Independent review has **not** run for this package.
+One independent review ran on 2026-11-07 and its findings are applied; no second round has run.
