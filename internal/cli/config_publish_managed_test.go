@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -1242,6 +1243,97 @@ func TestConfigPublishManagedRefusesAKeyOutsideTheAllowlist(t *testing.T) {
 				t.Errorf("the record does not name the key that refused: %q", rules)
 			}
 		})
+	}
+}
+
+// The shapes the comparison must not lose, where a key outside the allowlist
+// is reached by a different walk than the cases above: the whole block the
+// registry spells as one row (`claude_models`, so the walk stops above it and
+// the block's own members are never paths of their own), a key under a
+// wildcard row of the registry (`profiles.*.resources.memory`, where `*` is the
+// profile's name and not a level the visitor chooses), and an ordinary key
+// outside the agent block nobody has decided about. Each is refused here and
+// by no other rule of the gate: a walk that stopped descending, or a
+// comparison that only looked under `defaults.agent`, would admit them.
+func TestConfigPublishManagedRefusesAKeyOutsideTheAllowlistInEveryShape(t *testing.T) {
+	profile := "default_profile: web\nprofiles:\n  web:\n    resources: { memory: %s }\n"
+	cases := []struct {
+		name      string
+		published string
+		next      string
+		names     string
+	}{
+		{
+			"a block the registry spells as one row",
+			minimalAnchored + "claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n",
+			minimalAnchored,
+			"layer.claude_models",
+		},
+		{
+			"a key under a wildcard row",
+			minimalAnchored + fmt.Sprintf(profile, "8Gi"),
+			minimalAnchored + fmt.Sprintf(profile, "16Gi"),
+			"layer.profiles.web.resources.memory",
+		},
+		{
+			"an ordinary key outside the agent block",
+			minimalAnchored + "defaults:\n  git:\n    pr:\n      early_draft: true\n",
+			minimalAnchored + "defaults:\n  git:\n    pr:\n      early_draft: false\n",
+			"layer.defaults.git.pr.early_draft",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			_, _, err := execute(t, "config", "publish", layerFile(t, tc.next))
+			if err == nil {
+				t.Fatalf("%s was published in a coding agent's session", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the refusal does not name %s as the key that refused: %v", tc.names, err)
+			}
+			if !strings.Contains(err.Error(), "allowlist") {
+				t.Errorf("the refusal does not name the allowlist as the rule that refused %s: %v", tc.names, err)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.published {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			rec := r.audits(t)
+			if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+				t.Fatalf("the record is %v, want one refusal", rec)
+			}
+		})
+	}
+}
+
+// A key can be spelled so that the walk flattens it onto an allowlisted path:
+// `defaults: { agent.review_rounds: 9 }` is one key named
+// `agent.review_rounds` under `defaults`, and the walk joins its segments
+// into the same `layer.defaults.agent.review_rounds` the nested key has, so
+// the allowlist rule alone cannot tell the two apart and abstains. The
+// document's own shape rules are what answer, and they answer the same way
+// for a person: no document that spells a key this way is published, so the
+// flattening cannot be used to hide a change behind an allowlisted name.
+func TestConfigPublishManagedRefusesADottedKeyFlattenedOntoTheAllowlist(t *testing.T) {
+	r := newManagedPublishRig(t)
+	agentSession(t)
+	publishedLayer(t, r.cloudFixture, minimalAnchored)
+	next := minimalAnchored + "defaults:\n  agent.review_rounds: 9\n"
+	_, _, err := execute(t, "config", "publish", layerFile(t, next))
+	if err == nil {
+		t.Fatal("a document spelling an allowlisted key as one dotted key was published")
+	}
+	if !strings.Contains(err.Error(), "agent.review_rounds") {
+		t.Errorf("the refusal does not name the key the document spelled: %v", err)
+	}
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != minimalAnchored {
+		t.Fatalf("the published layer moved: %q", got)
+	}
+	rec := r.audits(t)
+	if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the record is %v, want one refusal", rec)
 	}
 }
 
