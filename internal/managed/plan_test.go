@@ -1347,6 +1347,18 @@ func TestRefusedOnlyForRemovals(t *testing.T) {
 			{Gate: costGate, Address: removal, Why: "nvidia-l4: an attached GPU"}}}, admits, false},
 		{"a removal no list admits", Verdict{Refusals: []Refusal{guardLine, coverLine}}, nil, false},
 		{"a plan-level refusal", Verdict{Refusals: []Refusal{{Gate: coverGate, Why: "no plan"}}}, admits, false},
+		// The clause the row above cannot pin: its admits holds no empty
+		// address, so the containment test alone already answers no. An address
+		// is the plan's own text, and tf.Listable reads a change's actions and
+		// whether it moved and not the shape of the address — so a document
+		// carrying a change with an empty address puts "" on admits, and a
+		// refusal with no address at all (a gate that refused the plan and
+		// listed no change) then reads as that removal's on the addresses
+		// alone. Nothing an owner can type approves an empty address, so the
+		// clause answers no and the flag stays unoffered.
+		{"a plan-level refusal beside an address the plan left empty",
+			Verdict{Refusals: []Refusal{guardLine, coverLine, {Gate: coverGate, Why: "no plan"}}},
+			[]string{removal, ""}, false},
 		{"a verdict that refused nothing", Verdict{}, admits, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
