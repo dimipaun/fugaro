@@ -685,10 +685,11 @@ renders the Part headings above the sections they group.
 | 18 to 23 | 28 to 33 |
 | 24 Governing law and venue | 34 Governing law, venue and language |
 
-**Held back from this repository.** Counsel's text states a late-payment interest rate (section
-12.2) and a liability cap for the Community Plan, Free Plans and Beta Features (section 10.5).
-Neither figure was published here before, so both stand as bracketed items until the owner
-decides; every other figure in counsel's text was already in the earlier draft.
+**Held back from this repository, and in the text since 2026-10-29.** Counsel's text states a
+late-payment interest rate (section 12.2) and a liability cap for the Community Plan, Free Plans and
+Beta Features (section 10.5). Neither figure was published here before, so both stood as bracketed
+items until the owner ruled on 2026-10-29 that they go in as counsel wrote them; every other figure
+in counsel's text was already in the earlier draft.
 
 **Open**, as the list after the agreement records: counsel's comment on section 4.4
 (Modifications); the provisions counsel's document highlights (5.1(i), 5.3 and 5.5); the owner's
