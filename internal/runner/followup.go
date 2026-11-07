@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -518,8 +519,7 @@ func (r *run) readPRRetrying(ctx context.Context) (gitprov.PRInfo, error) {
 // before updating its pull request, as the infra_error Run then records,
 // so diagnose still shows what the agent did. Nothing is posted.
 func (r *run) storeUnposted(ctx context.Context, err error, records []verify.Record) {
-	rec := *r.rec
-	rec.Status, rec.Outcome, rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, r.redact(err.Error())
+	rec := reportCopy(r.rec, runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, r.redact(err.Error()))
 	fu := r.followUpSection()
 	report := agent.Redact(FollowUpReport(&rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secretList())
 	r.storeReport(ctx, report, fu)
@@ -555,17 +555,20 @@ func (r *run) giveUpNoteAllowed(ctx context.Context) bool {
 // updates: failed, with outcome none. Its report is stored, not posted,
 // so diagnose still shows what the run did.
 func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.Record) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	// Every reason this is called with is the pull request or the branch
+	// changing under the run, which is the class branch_moved names; the two
+	// branches below are the ways that fact is recorded instead.
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.BranchMoved, reason)
 	if r.follow == nil && r.isCancelled() {
 		// A cancelled run stays cancelled (design 4.2a, E10); the PR note
 		// is its reason.
-		r.rec.Status, r.rec.Reason = runstore.StatusCancelled, "cancelled; "+reason
+		r.recordEnd(runstore.StatusCancelled, r.rec.Outcome, failure.Cancelled, "cancelled; "+reason)
 	}
 	if h := r.haltValue(); h != nil {
 		// A halt stays a halt: the run stopped for its limit, and the
 		// pull request was left as it was for the reason given too.
-		r.rec.Status, r.rec.Halt = runstore.StatusHalted, h
-		r.rec.Reason = (&HaltError{*h}).Error() + "; " + reason
+		r.rec.Halt = h
+		r.recordEnd(runstore.StatusHalted, r.rec.Outcome, haltClass(h.Reason), (&HaltError{*h}).Error()+"; "+reason)
 	}
 	r.d.Log.Warn("the pull request was not updated", "reason", reason)
 	r.storeEnded(ctx, records)

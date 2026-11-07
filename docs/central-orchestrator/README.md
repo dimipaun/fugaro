@@ -15,9 +15,36 @@ was read at, and this branch's own merge base.
 **Nothing here is approved.** The owner wrote the spec; the reconciliation and the plan are
 this work's. No decision has been answered, no part of the plan has been accepted, and the
 plan's owner gate at the end is unpassed. The two siblings this work depends on are also
-unbuilt: the always-on orchestrator design is in **open PR #632** (with the rigor modes work
-in **open PR #773**), and `docs/credentials-service/` and `docs/coordinator/` are each
+unbuilt: the always-on orchestrator design is in **open PR #632** (with the rigor modes work,
+**open PR #773** when this was written and **on `main` now**), and `docs/credentials-service/`
+and `docs/coordinator/` were each
 *"plan only; nothing is implemented"* in their own words.
+
+**Re-planned 2026-11-07 (D435; T20): the parts land in `ee/`, behind `ee/register`, and #831 closes
+as superseded.** The owner's ruling of 2026-10-27 is that **central orchestrators — and the hosted
+MCP server with them — are born in the business-licensed folder**
+([../subscriptions/reconciliation.md](../subscriptions/reconciliation.md), D435), so **a part whose
+product is the orchestrator itself lands under `ee/orchestrator/`**, reached only through
+`ee/register`, while the parts whose product is a capability the core already enforces — P1's
+allow-list admission, the policy and the rules, the caps and the breaker, P3's lease and its two core
+readers — stay in the core, and the Terraform stays in `deploy/terraform/` where the MIT `fugaro
+update` applies it. `implementation-plan.md` carries the ruling and a note under each part saying
+which of the two it is, and **two parts' premises have moved since they were written**: P1's
+admission has been made by another root (the credentials service's, D146/C1.18), so what it adds is
+a citation and its managed half is open with the owner, and P0's closest model —
+`internal/cli/docs_rigor_modes_test.go` — is in the tree now rather than in an open pull request.
+Both are recorded in each part's own note rather than by rewriting it. **#831**, the pull
+request that was building P2 (`fugaro orchestrator add|rm|ls`) as core code, **closes as
+superseded** — and that closure is **OWNER-RUN**: the pull request is already closed (2026-10-27,
+per the census of 2026-11-07,
+[../subscriptions/status-2026-11-07.md](../subscriptions/status-2026-11-07.md)), but the comment T20
+names, `gh pr close 831 --comment "Superseded: re-planned in ee/ (T20)"`, is a person's to post, so
+it is recorded here as **unperformed** rather than reported as done. **Two sentences above are stale
+as of the same date, and are corrected rather than deleted**: `docs/coordinator/` is no longer
+*"plan only"* — its P1–P5 are built, in `ee/coordinator/` since the ee-reorg plan's E2.1b — and
+`docs/credentials-service/` no longer is either: its service is deployed by every `fugaro update`
+(DON1). What is still true of both is what this folder's dependency actually rests on: neither
+sibling's own parts that this plan waits for are built.
 
 | File | What it is |
 | --- | --- |
@@ -37,11 +64,19 @@ re-numbered, and no sentence was added. **If a later reader finds a difference b
 ## What this work holds, in one paragraph
 
 **The spec is a good idea whose deployment section describes a surface Fugaro has never
-had, and whose credential section depends on work that does not exist.** There is no Cloud
+had, and whose credential section depends on work that does not exist.** There was no Cloud
 Run **service** anywhere in this repository — every workload is a Cloud Run *job*, and the
-type is not only absent but **refused**: `internal/infra/tf/cover.go`'s `allowedTypes` admits
+type was not only absent but **refused**: `internal/infra/tf/cover.go`'s `allowedTypes` admitted
 only `google_cloud_run_v2_job` and `google_cloud_run_v2_job_iam_member`, and
-`Cover.NotCovered` makes any other type a typed confirmation at `fugaro init` (#1). There is
+`Cover.NotCovered` makes any other type a typed confirmation at `fugaro init` (#1). **Corrected
+2026-11-07:** the first half of that is no longer true — writing at this plan's base commit, the
+reconciliation and this paragraph are right, and today the **installation's** allow-list carries
+`google_cloud_run_v2_service` and its `_iam_member` too, put there by the credentials service's own
+root (D146/C1.18) and deployed by every `fugaro update` (DON1), while a **managed** project's plan
+still refuses the type on purpose: `internal/infra/tf/managed_cover.go`'s `managedDropped` holds
+both rows with a reason each, both ending *"keeping it is the owner's decision"*. That is what this
+work's P1 becomes — a citation rather than an addition, with the managed half recorded open with the
+owner. The rest of the paragraph stands. There is
 no WebSocket in either direction (#3), no lease record of any kind (#6), no merge path that a
 service could use (#22), no public sign-in provider — `internal/cli/init_firebase.go`'s
 `refusePublicSignUp` refuses every one of them (#32) — no notification sender (#34), no alert
@@ -68,7 +103,16 @@ Check numbers are allocated, never reused and never renumbered once taken — th
 checklist's own numbering ruling (`docs/gcp-live-checklist.md`). **Decision numbers follow the
 same rule and state it in their own document**: *"a decision number, once allocated, is never
 reused or renumbered either"*, with the allocation made by the owner in advance to a line of
-work rather than to whoever answers first (`docs/design/desktop-console-v2.md`).
+work rather than to whoever answers first (`docs/design/desktop-console-v2.md`). **Corrected
+2026-11-07:** the D-block row above reads the register at this plan's base commit, and the
+coordinator's own index has recorded since 2026-10-21 that the reading has moved —
+**D193–D197** are that work's own, so what is free for a move into the block is **D198 onward**
+([docs/coordinator/README.md](../coordinator/README.md), §"What still reads this register the old
+way"). The row is otherwise unchanged: **D1–D26 stay folder-local and open**, and D435 answers
+where the code lands rather than numbering anything. **The check-number row is corrected by the same
+date**: **119** is still the rigor modes work's, but that work is **on `main` now** rather than in
+open PR #773, so 119 is taken rather than proposed — which changes nothing this work holds, since
+it claims no check number either way and takes the next free one at merge time (D24).
 
 ## Related
 
@@ -83,17 +127,23 @@ work rather than to whoever answers first (`docs/design/desktop-console-v2.md`).
   orchestrator would have to meet (a credential in the installation's own secret manager, a
   dedicated identity, and **behind the same launch claim and the same budget caps**). The
   central orchestrator *is* that question (§3 #53).
-- `docs/rigor-modes/` (**open PR #773**, not on `main`, so no link here) — the five modes this
+- `docs/rigor-modes/` (**open PR #773** when this was written; **on `main` now, corrected
+  2026-11-07**, so the parenthesis reads as history) — the five modes this
   spec's escalation table names (`POC`, `Startup`, `Pro`, `Critical`, `Hotfix`), and the one place
   the spec's *"Escalation timeouts (resolved)"* has no home yet: that work builds no
   scheduler and never mentions a timeout (C6, §3 #39, **D8**).
 - [docs/credentials-service/](../credentials-service/README.md) — *the* "security service"
-  the spec's Interaction channel and Submission auth name. Plan only; D130–D154 answered
-  2026-10-17; nothing implemented (C3, §3 #21).
+  the spec's Interaction channel and Submission auth name. **Plan only when this was written; not
+  now** — D130–D154 answered 2026-10-17, and since then the service has landed and every
+  `fugaro update` deploys it (DON1, the owner's ruling of 2026-11-05) — with the slice this plan
+  waits on for its credential path (D4) still the credentials work's own to ship (C3, §3 #21).
 - [docs/coordinator/](../coordinator/README.md) — the sibling document set, and the register
   of every D-block and check range. The coordinator is *"advisory, not authoritative … It
-  never blocks or reorders merges"*, and unbuilt; the spec's *"every orchestrator … reports to
-  the coordinator"* therefore describes a path with no reader (§3 #51, **D14**). **Added
+  never blocks or reorders merges"*, and **partly built rather than unbuilt**: P0–P5 are in the
+  tree — P1–P5 under `ee/coordinator/` since the ee-reorg plan's E2.1b — and P6–P8 are not started,
+  so the spec's *"every orchestrator … reports to the coordinator"* still describes a path with no
+  reader in **v1's** terms (§3 #51, **D14**): what exists is the view and the record it is written
+  into, and the reader the orchestrator would report through is P8. **Added
   2026-10-21:** the coordinator is **not** a role this work's service plays — the owner answered
   that work's D196 **(B)**, so it gets **its own** resident service and every orchestrator,
   this one included, reaches it **as a client**; this plan's P4/P5 no longer block it.
