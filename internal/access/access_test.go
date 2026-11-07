@@ -415,6 +415,11 @@ func TestUnparseableGrantDeniesEverything(t *testing.T) {
 		{User: alice, Role: RoleAdmin, Scope: Scope{Kind: ScopeAllRepos, Repos: []string{"github/acme/app"}}},
 		{User: alice, Role: RoleAdmin, Scope: Scope{Kind: ScopeKind(99), Repos: []string{"github/acme/app"}}},
 		{User: "", Role: RoleAdmin, Scope: Scope{Kind: ScopeProject}},
+		// A project scope that carries repositories is not a scope this
+		// package parsed (Scope.Valid is false), and it is the shape that
+		// reaches the project-level answer: the kind alone would read as
+		// "project admin" on a value nothing ever wrote.
+		{User: alice, Role: RoleAdmin, Scope: Scope{Kind: ScopeProject, Repos: []string{"github/acme/app"}}},
 	}
 	for i, g := range bad {
 		in := knows(g)
@@ -423,6 +428,16 @@ func TestUnparseableGrantDeniesEverything(t *testing.T) {
 		}
 		if Allowed(in, alice, ActionViewRepo, "github/acme/app") {
 			t.Errorf("grant %d (%+v): the caller is allowed a read, want refused", i, g)
+		}
+		// The project-level answer is the highest-privilege path, and it reads
+		// a different half of the grant: the same fail-closed rule has to hold
+		// there, or a malformed scope grants the one role that can hand out
+		// every other.
+		if Allowed(in, alice, ActionManageProject, "") {
+			t.Errorf("grant %d (%+v): the caller is allowed to manage the project, want refused", i, g)
+		}
+		if Allowed(in, alice, ActionViewProject, "") {
+			t.Errorf("grant %d (%+v): the caller is allowed to read the project, want refused", i, g)
 		}
 		if Effective(in, "", "github/acme/app") != RoleNone {
 			t.Errorf("grant %d: an empty caller holds something", i)

@@ -155,6 +155,12 @@ func Allowed(in Input, caller string, action Action, repo string) bool {
 // admin, and otherwise the highest role of the grants that name them with the
 // project scope (an all-repos or repository grant holds no project-level
 // thing, F19).
+//
+// It gates on Scope.Valid for the same reason Effective does, and it is the
+// half where skipping it would matter most: a grant whose kind is ScopeProject
+// but whose value this package did not parse (a project scope carrying
+// repositories) would otherwise read as project admin, which is the role that
+// hands out every other. The kind alone is not the scope.
 func effectiveAtProject(in Input, caller string) Role {
 	if caller == "" {
 		return RoleNone
@@ -164,7 +170,7 @@ func effectiveAtProject(in Input, caller string) Role {
 	}
 	best := RoleNone
 	for _, grant := range in.Grants {
-		if grant.User != caller || grant.Scope.Kind != ScopeProject || !grant.Role.Valid() {
+		if grant.User != caller || !grant.Role.Valid() || !grant.Scope.Valid() || grant.Scope.Kind != ScopeProject {
 			continue
 		}
 		if grant.Role.Rank() > best.Rank() {
