@@ -412,6 +412,11 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(modelsModel{}),
 		reflect.TypeOf(modelsRepo{}),
 		reflect.TypeOf(priceCatalog{}),
+		// §6.21, the managed screens' read (the managed-screens plan's CM2):
+		// the document and the bounded subset of the newest audit record,
+		// which is bounded because argv is not in it.
+		reflect.TypeOf(managedStatusDoc{}),
+		reflect.TypeOf(managedStatusAudit{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -671,6 +676,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// §6.20, the write's dry run (the settings-edit plan's C3, CLI 0.16.0):
 		// the one shape its field table is read against.
 		reflect.TypeOf(settingsWriteDoc{}),
+		// §6.21, the managed screens' own document (the managed-screens plan's
+		// CM2): the marks' four facts and the bounded subset of the newest
+		// audit record, which is bounded because argv is not in it.
+		reflect.TypeOf(managedStatusDoc{}), reflect.TypeOf(managedStatusAudit{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1008,6 +1017,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// document and half of them -- `--dry-run` not least -- belong to both.
 	"settings set":   newSettingsSetCmd,
 	"settings unset": newSettingsUnsetCmd,
+	// §6.21 documents the managed screens' read (the managed-screens plan's
+	// CM2), one closed document about one managed project. The console's own
+	// rule 6 row for it is that plan's CM3 and not this task's, so the console
+	// does not spawn it yet — but the document describes its flags, so they are
+	// checked against this constructor like any other command's.
+	"managed status": newManagedStatusCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document

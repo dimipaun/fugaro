@@ -2607,6 +2607,123 @@ than a document. The command is the same pair §6.19's paragraph describes, so t
 `--`-terminated value, the two spellings the console passes and the layer's
 provenance are written down there and not twice here.
 
+### 6.21 `fugaro managed status --json` — a managed project's marks and its trail
+
+**Command:** `internal/cli/managed_status.go` `newManagedStatusCmd` /
+`managedStatus`, with the document built as `managedStatusDoc` and its trail
+read by `managedStatusTrail`. Cited by symbol, not by line, for §6.11's reason.
+**It is the read the managed screens are built on**, and it is a command of its
+own rather than two members on doctor's document (the managed-screens plan's
+CM2, D1473): doctor's `--json` is a list of `id`/`ok`/`problem`/`fix` checks
+with no room in it for records, while a screen wants one closed document about
+one project — which is what the coordinator's stored read (§6.13) already is
+for the coordinator. **The console's own rule 6 row for it —
+`managed status --json --project <name> [--config <path>]` — is that plan's
+CM3**, so the console does not spawn it yet; the shape is written down here now
+because CM3's row and CM5's screen are what it is read against, and a shape that
+is not written down is a shape that drifts.
+
+**Why the CLI's own facts and never its prose** (D1472). The managed state is
+available today elsewhere only as doctor's `managed-audit` check, whose answer
+is two sentences (`problem` and `fix`); a screen that parsed them would break on
+the next rewording of either, silently, and would draw a *wrong* state rather
+than nothing. So every fact a screen draws is a member below, computed by the
+read that already computes it — `managed.ReadMarkFacts`, the one reader of the
+marker, whose `MarkFacts` carries the version, the reason and the generation
+(D1474) — and by the audit family's one parser, `managed.ListAuditRecords`,
+which is the reader the record's own writer ships. Nothing here is a second
+parse of either.
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `project` | string | never | never | the selected project's name, as the project config spells it |
+| `gcp_project` | string | never | never | the GCP project the marks were read from |
+| `managed` | bool | never | never | the marks' own answer: true only when the creation fact in the runs bucket and the `fugaro_managed` label on the project **agree**, which is the read a managed apply makes too. It is a fact about the project and never about the machine that asked |
+| `reason` | string | never | never | the read's own sentence for a project that is **not** managed, and `""` when it is (D1474). Bounded text, sanitised by the read. A screen shows it beside `managed`, never instead of it |
+| `version` | int | never | never | the creation fact's version (`1`, `2` or `3`), and `0` when the read believed no object. `0` is a fact about the project — an unmanaged one has no creation fact — and not an unknown about the read |
+| `generation` | string | never | never | the creation fact object's own generation, in decimal, and `""` when no object was placed. **A string and not a number**, spelling the record's own `marker_generation`: an object's generations start at `1`, so a `0` here would be read as a generation rather than as the absence of one |
+| `audit` | object | never | **yes** | the bounded subset below — the newest record of the window — and **null** when the window holds no record, or when the project is not managed and the trail was not read at all. Null is not "nothing happened": `audit_state` is what tells a read that did not answer from a day with nothing in it |
+| `audit_day` | string | never | never | the UTC day `audit_count` counts and `audit` belongs to, spelled as the family spells a date directory (`2006-01-02`). **`""` exactly when no record was found in the window**, or when the trail was not read: a day with nothing in it is no day to name |
+| `audit_count` | int | never | never | how many records are filed under `audit_day`, and `0` in both of the cases above |
+| `audit_state` | string | never | never | the sentence for a read that **did not answer**, and `""` for one that did. Bounded text. It is set only for a managed project: a project that is not managed files no record at all (D1025), so there is no trail to read and no state to report about it |
+
+**The `audit` member is the bounded subset, and the bound is the point**
+(D1476):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `at` | string | never | never | when the command ran, in UTC, RFC 3339 to the second. It is the record's own time and never the listing's order |
+| `command` | string | never | never | the command as a person types it (`fugaro config publish`), which is the record's own name for it and not its argv. Bounded text |
+| `verdict` | string | never | never | the gate's own answer about the judged plan: `admitted` or `refused`. **A refusal is a record an owner reads most**, so it is drawn beside an admission and never instead of it |
+| `identity` | string | never | never | the account the write ran as: the deployer account for a managed apply, the operator's own elsewhere. Bounded text |
+| `plan_digest` | string | never | never | the sha256 of the exact document the gate judged, so a reader compares the record against a plan rather than believing a summary of it |
+
+**What is never in it, and it is the whole of the bound: the argv.** The record
+itself carries the argv the write ran as, the rules the gate fired and the marks
+that were in force; none of them reaches this document. The argv is the argv of
+a session — a path, a root name or a title an operator did not mean to publish —
+on a surface anybody at the machine can read, and the five members above are
+also what makes a row stable across CLI versions (D1476).
+
+**Two days, and the day that answered** (D1477). The trail is the newest record
+of the current UTC day, and of the previous day **only when today holds
+nothing**: the shape doctor's check already reads, so a session that ran an
+apply twenty minutes before midnight is still the last one an operator reads
+about. `audit_day` names the day the answer came from — today, yesterday, or
+nothing at all — and `audit_count` counts that day's records, so the two are
+read as a pair. There is no date control and no paging: a date the operator
+picks would be a second word on the spawn row, a new bound on the read and an
+empty state for a day with nothing in it, for a trail the two-day window already
+answers.
+
+**An unread trail is a state, and never an empty day.** A listing that failed —
+a refused grant, an outage, an object the parser refuses — is an unknown, and an
+unknown drawn as `audit_count: 0` is the silent pass: "nothing was recorded" and
+"the records could not be read" look identical in a count, and only the second
+is a reason to look further. So a read that did not answer carries
+`audit_state`, with the five members above empty and **no `audit` at all** — a
+figure beside a state would be read as an answer — while an empty day is
+`audit: null` with `audit_state: ""`. **A read that did not answer is not an
+exit**: the command prints the document and exits zero, because the state is the
+answer. Only a read that could not be made at all — the marks, which are the
+document's whole subject — is a non-zero exit with no document.
+
+**It never says "revoked"** (D1475). A run-time fact of a write gate is
+persisted nowhere, so a project whose marker or label was taken off is *not
+managed*, which is a different claim from a mark that was revoked; a screen that
+drew the second from the first would be showing a state the CLI does not have.
+
+**A project that is not managed is not read for a trail at all.** `audit`,
+`audit_day`, `audit_count` and `audit_state` are null, `""`, `0` and `""`: a
+managed project is the only one that files a record (D1025), so an object left
+in the bucket for a project whose marks do not say so is not a fact about that
+project, and reading it anyway would let a trail outlive the marks that justify
+it.
+
+**Flags** (`newManagedStatusCmd`): `--json`, and the aiming pair `--project
+<name>` and `--config <path>` that every project read carries. `--gcp-project
+<id>` and `--region <r>` come with `addCloudFlags` and are not part of the
+console's row. The command takes no argument, writes no cloud object and keeps
+no cache of its own, and needs no checkout to answer — so it runs anywhere, a
+coding agent's session included.
+
+**It is not in the console's read set yet, and the difference is one local
+file.** The command resolves the selected project the way every cloud command
+does: `selectProject` resolves the working directory as a checkout on the way to
+the installation, and that resolution remembers the checkout it ran in
+(`recordCheckout`, `internal/cli/project.go`) unless the command's own path
+stands on the read-only list that stops it (`consoleReadPaths`,
+`internal/cli/project.go`, §6.8). `managed status` is **not** on that list: CM3
+is the task that adds its rule 6 row, and that task adds the design §5.1 row
+with it, because a `consoleReadPaths` entry whose argv the design's own table
+does not allow fails the test that reads that table back out of the design. So
+until CM3 lands, a console that spawned it would write
+`$XDG_CONFIG_HOME/fugaro/state/checkouts.json` in an enrolled checkout exactly
+as a person's own run does: local state, the file §6.8's `checkouts` reads, and
+never a cloud object.
+
 ### 6.22 `fugaro graph --json` — the dependency graph, and its stream
 
 **Command:** `ee/graph/cli/graph.go`, registered through `RegisterCommand`
