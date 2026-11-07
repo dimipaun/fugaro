@@ -452,7 +452,7 @@ func brokeringServiceStates() []brokeringServiceState {
 	return []brokeringServiceState{
 		{
 			name:     "the installation has not converged on the service",
-			names:    []string{infra.CredentialsServiceName, "fugaro update"},
+			names:    []string{infra.CredentialsServiceName, selfCommand() + " update"},
 			severity: "info",
 			build:    newBrokeringUnoptedRig,
 		},
