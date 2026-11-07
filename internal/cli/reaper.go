@@ -151,7 +151,17 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 		// caller's side of the call, not a failure of the API it then reads.
 		return userErr("%v", err)
 	}
-	rep, err := r.Reap(ctx)
+	// The pass's reporter, opened where the pass itself starts: every refusal
+	// above it — this command's own before it reaches the APIs (no batch:
+	// block, a refused project) and batch.NewReaper's — is answered before
+	// there is a pass, and a refused pass keeps no log (D1352, D1354). From
+	// here the sweep is one step and the report is kept beside it.
+	rep, sink := reporterFor(cmd, "reaper", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	step := rep.Step("sweep " + opts.GCPProject + "/" + opts.Region)
+	pass, err := r.Reap(ctx)
 	// The report is printed whether or not the pass finished (Reap returns
 	// what it did before an error), and the error follows it: a caller that
 	// reads only the exit code still gets the lines in the job's log.
@@ -165,14 +175,22 @@ func runReaper(ctx context.Context, cmd *cobra.Command, o cloudOptions, dryRun b
 	// reason. A line this command prints is the engine's own sentence about
 	// this installation's project, region and job id; it is bounded by what
 	// those are, not by a wire format.
-	for _, line := range rep.Lines() {
-		if _, werr := fmt.Fprintln(cmd.OutOrStdout(), oneLine(line)); werr != nil {
+	// The report leads stdout exactly as it did before the reporter, and the
+	// log holds it too: it is the whole of what this command prints (D1352).
+	// The line in flight goes down first, because the report is what the pass
+	// has to say and is read line by line (G1).
+	rep.Pause()
+	out := loggedOut(cmd.OutOrStdout(), sink)
+	for _, line := range pass.Lines() {
+		if _, werr := fmt.Fprintln(out, oneLine(line)); werr != nil {
 			return werr
 		}
 	}
 	if err != nil {
-		return remote(err)
+		return failStep(rep, step, remote(err))
 	}
+	step.Done("")
+	rep.Summary()
 	return nil
 }
 

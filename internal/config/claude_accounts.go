@@ -46,6 +46,67 @@ var ClaudeAccountNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}
 // derived identifier comfortably inside those limits.
 const MaxClaudeAccountNameLen = 31
 
+// AnthropicKeyAccount is the account axis's value for the project's own
+// Anthropic API key: the sentinel a profile's claude_accounts entry and the
+// published accounts block spell where an account name would stand, and the one
+// value of the axis that is not a Claude account at all (docs/api-key-review,
+// D1417: the key this names is the project's own, the one the credentials
+// bundle already holds at tier B).
+//
+// It is derived from the key's own secret name (AnthropicSecret) so the two
+// spellings cannot drift, and the doubled dash is deliberate: it puts the
+// sentinel outside ClaudeAccountNameRE — the same trick ReviewSigningKeySuffix
+// is built on — so no installation can hold a Claude account of this name and
+// no value an installation already spells changes meaning. The axis gains one
+// value and renames none.
+//
+// It is valid where an account is REFERENCED (ValidClaudeAccountRef) and
+// refused where one is DEFINED (ValidateClaudeAccounts): the credential under
+// it is not a token this file derives but the platform's own
+// (ClaudeAccountSecret's namespace holds no secret of this name), so a
+// claude_accounts entry under it would be an account no bundle could ever
+// hold. A profile that lists it is served, on the review path, by the bundle's
+// tier-B entry — the review-only variant mounts nothing at all (O1), which is
+// why the value rides the account axis rather than a profile's secrets.
+//
+// A profile that names it is publishable today and DEPLOYABLE by no
+// installation yet: every reader of the account axis on the way to a job —
+// internal/infra's ProjectJobs (ProjectJobAccounts and projectAccountMount),
+// this file's
+// ProjectJobTokenAccount, modules/project's job.account validation — reads a
+// profile's claude_accounts as the Claude OAuth tokens its jobs mount, and the
+// project's own key is no token of any job's. The two of those that are claims
+// about a credential answer for it here and in the deployer (ProjectJobTokenAccount
+// returns no token, and ProjectJobs refuses a profile that names it in words the
+// operator can act on — for EVERY profile, ahead of the skip that leaves a
+// Bitbucket profile undeployed, because a refusal reached only by the jobs a
+// profile deploys would let a Bitbucket profile pass an installation
+// unrefused); the two that ARE the route — the module's job.account validation
+// and the task spec's oauth_token — belong to the task that builds it. An
+// installation that publishes a profile naming the sentinel is therefore
+// refused by fugaro update before terraform is planned, whichever provider its
+// profiles run on, which is fail-closed and deliberate: the route that deploys
+// its review variant is the api-key review plan's next task (AK5), and no
+// message here may send an operator at a route that does not exist.
+//
+// The account-CHOICE keys stand beside those readers and are the same claim
+// from the other side — a profile entry says which account a repository's runs
+// may use, a choice key says which account a run's stages choose — so they
+// refuse the value too, in this file's one sentence for them
+// (AnthropicKeyAccountChoiceMessage): localcfg's choiceRefProblem (the
+// default_claude_account and stages.<s>.claude_account keys) and
+// projectpolicy's decoder (default_claude_account and claude_account_stages) —
+// the entry lookup's own sentence would otherwise prescribe the claude_accounts
+// entry ValidateClaudeAccounts refuses.
+//
+// Which repositories it may serve is decided where every other axis value's is
+// (projectpolicy's accounts block, D3), and its own source is the profiles that
+// name it: the key is stored project-wide rather than for a list of
+// repositories (D2's sweep, so ProjectSecretReaches answers for it the way it
+// answers for any reserved name), and a profile's allow_repos is where a
+// repository says its reviews are served by the project's own key.
+const AnthropicKeyAccount = AnthropicSecret + "--project"
+
 // ClaudeOAuthTokenPrefix is ClaudeAccountSecret's prefix for every name but
 // the default: the whole claude-oauth-token-<name> namespace is reserved
 // for a named Claude account's derived secret ID and may never be a
@@ -140,7 +201,9 @@ func ProjectJobAccounts(pr JobProfile) []string {
 // one plus one per account it lists, so:
 //
 //   - an account the profile lists is a job of its own, and the job holds that
-//     account's token;
+//     account's token — unless it is the sentinel, which is no account's token
+//     at all (AnthropicKeyAccount): a profile that lists it adds a job name and
+//     no mount;
 //   - the no-account job holds the default account's token when the profile
 //     lists "default" — D5's one case of an account riding a job that is not
 //     its own, the job every profile has — and no token at all when it does
@@ -157,6 +220,16 @@ func ProjectJobTokenAccount(pr JobProfile, account string) (string, bool) {
 	name := account
 	if name == "" {
 		name = DefaultClaudeAccount
+	}
+	// The sentinel names no token, whichever profile lists it: the credential
+	// under it is the project's own Anthropic API key, held by the platform and
+	// served to a review caller by the credentials service, and the review-only
+	// variant that carries it mounts nothing at all (O1). So the job whose
+	// account segment is the sentinel holds no Claude token — the answer the
+	// launcher's gate and the runner's re-check are built on, a job holding no
+	// token being one an OAuth run must not land on.
+	if name == AnthropicKeyAccount {
+		return "", false
 	}
 	if !slices.Contains(pr.ClaudeAccounts, name) {
 		return "", false
@@ -200,6 +273,44 @@ func AllowedClaudeAccounts(accounts map[string]ClaudeAccount, repo string) []str
 // printed to a terminal) and it names the fix, which is the operator's next
 // move.
 const reservedAccountNameMessage = "this name is reserved: the platform holds another credential under it, so an account spoken by it would leave one name meaning two credentials — pick a different account name"
+
+// anthropicKeyAccountNameMessage is the sentence ValidateClaudeAccounts answers
+// AnthropicKeyAccount with, and it is the definition half's alone: the
+// reference half accepts the value (ValidClaudeAccountRef), so only a
+// claude_accounts KEY is refused. It never echoes the name, and it names both
+// the reason and the fix — the operator writing it as a key meant to configure
+// an account whose token does not exist.
+//
+// The fix it names is a different name, not a profile entry: a profile that
+// names the sentinel is published today and refused by fugaro update (this
+// constant's comment in AnthropicKeyAccount), so a sentence sending the
+// operator there would hand them a route that ends in a refusal. The clause
+// changes when that variant is deployed (AK5).
+const anthropicKeyAccountNameMessage = `this is the account axis's value for the project's own Anthropic API key, not a Claude account: its credential is the project's own, held by the platform, so there is no token to store under this name, and no job serves a profile that names it yet — pick a different account name`
+
+// AnthropicKeyAccountChoiceMessage is the one sentence every account-CHOICE key
+// answers AnthropicKeyAccount with. A profile's claude_accounts entry names the
+// account a repository's runs may use, which is why ValidClaudeAccountRef
+// admits the sentinel there; a choice key names the account a run's stages
+// choose — the local config's default_claude_account and
+// stages.<s>.claude_account, the project layer's default_claude_account and
+// claude_account_stages — and the project's own key is no such account: no job
+// mounts it, in this release, as a Claude token (the deployer refuses the
+// profile that lists it, ProjectJobTokenAccount answers no token for it). So
+// the value is refused there, and the move the sentence names is the one that
+// works today, dropping the key.
+//
+// It never names a claude_accounts entry, and that is the point of its own
+// case: the lookup that answers a name this file does not define would tell the
+// operator to define claude_accounts: {anthropic-api-key--project:
+// {allow_data_to: [...]}}, the one entry ValidateClaudeAccounts refuses
+// (anthropicKeyAccountNameMessage) — a refusal naming what another refusal
+// forbids, which is no remedy at all.
+//
+// It is declared once, beside the sentinel itself, because two packages ask the
+// question (localcfg's choiceRefProblem, projectpolicy's decoder): a second
+// wording for one rule is a second rule.
+const AnthropicKeyAccountChoiceMessage = `the project's own Anthropic API key is not a Claude account and no job this installation deploys mounts it: its credential is the project's own copy, held by the platform, so a key that chooses a run's account cannot name it — drop the key`
 
 // ReviewVariantAccount is one entry of ProjectJobAccounts' axis as the
 // review-only variant's names spell it: the policy's own spelling of the
@@ -273,6 +384,9 @@ func reservedClaudeAccountName(name string) bool { return name == BitbucketSecre
 
 // ValidateClaudeAccounts reports every rule the local config's
 // claude_accounts block breaks, the same shape as ValidateModelProviders.
+// AnthropicKeyAccount is refused here and accepted by ValidClaudeAccountRef:
+// the value names the project's own Anthropic API key, which no entry of this
+// block can define (AnthropicKeyAccount's comment).
 // A name or repository slug that fails its own check is never echoed raw:
 // Path and Message run it through pluginwire.Printable first (the same
 // treatment layer.go's showKey gives a project layer key), since the value
@@ -287,6 +401,8 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 			ps = append(ps, Problem{Path: at, Message: `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here`})
 		case reservedClaudeAccountName(name):
 			ps = append(ps, Problem{Path: at, Message: reservedAccountNameMessage})
+		case name == AnthropicKeyAccount:
+			ps = append(ps, Problem{Path: at, Message: anthropicKeyAccountNameMessage})
 		case len(name) > MaxClaudeAccountNameLen:
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)})
 		case !ClaudeAccountNameRE.MatchString(name):
@@ -321,6 +437,14 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 // name and service account, so it is refused wherever a name is written and not
 // only where one is defined — a policy that admitted it would deploy a coding
 // job onto a review job's account).
+//
+// AnthropicKeyAccount is the second value valid here and only here, beside
+// DefaultClaudeAccount and for the same reason: it names the project's own
+// Anthropic API key rather than an account, and the credential under it is the
+// platform's, so an installation states it here and never defines it. It is
+// outside ClaudeAccountNameRE by construction and is therefore named as its own
+// case rather than reaching the shape rule.
+//
 // The message never echoes the name: a value that fails this check
 // reached it exactly because it is untrusted text, and the sentence is printed
 // to a terminal (the same treatment ValidateClaudeAccounts gives one).
@@ -329,6 +453,8 @@ func ValidClaudeAccountRef(name string) string {
 	case name == "":
 		return `an account name must not be empty: name the account whose token this profile's runs use, or remove the entry`
 	case name == DefaultClaudeAccount:
+		return ""
+	case name == AnthropicKeyAccount:
 		return ""
 	case reservedClaudeAccountName(name):
 		return reservedAccountNameMessage
@@ -377,6 +503,23 @@ func MountsAnthropicKey(secret string) bool {
 // profiles break in their claude_accounts entries, the same shape as
 // ValidateClaudeAccounts and ValidateModelProviders.
 //
+// AnthropicKeyAccount is the third case and the only one that resolves to
+// neither block: it names the project's own Anthropic API key, whose
+// credential the platform holds, so an installation states it and never
+// defines it — a file that demanded a claude_accounts entry for it would
+// refuse the one shape the sentinel exists for. Stating it is what this
+// function allows; whether an installation can then deploy the profile is not
+// this file's question and is not true yet (AnthropicKeyAccount's comment).
+//
+// What it does NOT check is the key's reach, and that is deliberate: the key
+// is stored project-wide (D2's sweep) rather than for a list of repositories,
+// so there is no entry here for a repository to be missing from. Which
+// repositories it may serve on the review path is the policy's accounts list,
+// derived from the profiles that name the sentinel and kept to the reach
+// ProjectSecretReaches answers for the key
+// (projectpolicy.DeriveAccounts) — a refusal of this file's would be a second
+// copy of that rule, and the two would disagree.
+//
 // It resolves each entry against the two blocks an account can be defined in,
 // because that is the question this document alone can answer: "default" is
 // the unsuffixed claude-oauth-token, whose project-wide copy exists only when
@@ -406,6 +549,16 @@ func ValidateProfileClaudeAccounts(profiles map[string]JobProfile, accounts map[
 				continue
 			}
 			seen[ref] = true
+			if ref == AnthropicKeyAccount {
+				// The sentinel names no account of either block and must not be
+				// resolved against one: its credential is the project's own
+				// Anthropic API key, held by the platform rather than derived
+				// from an entry here (AnthropicKeyAccount's comment), so there
+				// is nothing this file could define for it. Listing it twice is
+				// still refused above — that rule is about the entry and not
+				// about what it names.
+				continue
+			}
 			if ref == DefaultClaudeAccount {
 				if _, ok := projectSecrets[ClaudeAccountSecret(DefaultClaudeAccount)]; !ok {
 					ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("the default account is not stored project-wide here: its token is %s, and a project job mounts it only when project_secrets carries a %s entry with the repositories that may use it — add project_secrets: {%s: {allow_data_to: [owner/name]}} to this file, or drop the entry from the profile",
