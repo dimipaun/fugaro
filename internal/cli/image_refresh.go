@@ -236,9 +236,13 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		return nil, err
 	}
 	if o.repo != "" {
-		want, err := task.CanonicalRepo(o.repo)
+		flag, err := repoArg(ctx, o.repo)
 		if err != nil {
-			return nil, userErr("--repo %s: %v", o.repo, err)
+			return nil, err
+		}
+		want, err := task.CanonicalRepo(flag)
+		if err != nil {
+			return nil, userErr("--repo %s: %v", pluginwire.Printable(o.repo), err)
 		}
 		if got, err := task.CanonicalRepo(repo); err != nil || got != want {
 			return nil, userErr("--repo %s is not %s's origin (%s): run it in a checkout of %s", pluginwire.Printable(o.repo), o.checkoutName(root), pluginwire.Printable(repo), pluginwire.Printable(o.repo))

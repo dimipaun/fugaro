@@ -1390,8 +1390,11 @@ type attemptPlan struct {
 // --attempts cannot take the --pr a plain launch's refusal suggests.
 func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total time.Duration, warn io.Writer, forAttempts bool) (*attemptPlan, error) {
 	repo := o.repo
+	var err error
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return nil, err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return nil, err
 		}
@@ -1672,8 +1675,11 @@ func printBatch(w io.Writer, batch string, attempts int, incomplete bool, result
 // never silently ignored.
 func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedRecipe, text string, total time.Duration, warn io.Writer) (string, *task.Spec, error) {
 	repo := o.repo
+	var err error
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return "", nil, err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return "", nil, err
 		}

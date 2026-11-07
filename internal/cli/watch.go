@@ -230,6 +230,10 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	var err error
+	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+		return err
+	}
 	if o.interval < 0 {
 		return userErr("--interval must be positive")
 	}

@@ -497,6 +497,10 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	if o.repo != "" && o.all {
 		return userErr("--repo and --all don't go together")
 	}
+	var err error
+	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+		return err
+	}
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
 		return err

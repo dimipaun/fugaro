@@ -131,6 +131,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		return err
 	}
 	repo := o.repo
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return err
+	}
 	if repo == "" {
 		repo = origin
 	}

@@ -285,6 +285,10 @@ func newLsCmd() *cobra.Command {
 
 func runLs(cmd *cobra.Command, o *lsOptions) error {
 	ctx := cmd.Context()
+	var err error
+	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+		return err
+	}
 	if o.repo != "" && o.all {
 		return userErr("--repo and --all don't go together")
 	}

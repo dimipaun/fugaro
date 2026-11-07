@@ -373,8 +373,11 @@ func digestPeriod(dim digest.Dim, date string, now time.Time) (digest.Period, er
 // owner/name a record's own repo field is compared against and the slug the
 // runs bucket keeps that repository's runs under.
 func digestRepo(ctx context.Context, env *cloudEnv, repo string) (string, string, error) {
+	var err error
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return "", "", err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return "", "", err
 		}

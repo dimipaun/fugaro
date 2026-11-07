@@ -424,6 +424,9 @@ func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretR
 	ctx := cmd.Context()
 	r := &secretRepo{repo: flag}
 	var err error
+	if r.repo, err = repoArg(ctx, flag); err != nil {
+		return nil, err
+	}
 	if r.repo == "" {
 		if r.repo, err = originRepo(ctx); err != nil {
 			return nil, err

@@ -178,8 +178,11 @@ func accountsConfig(cmd *cobra.Command, o cloudOptions) (lc *localcfg.Config, no
 func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 	ctx := cmd.Context()
 	repo := o.repo
+	var err error
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return err
 		}

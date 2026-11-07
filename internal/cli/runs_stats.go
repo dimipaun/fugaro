@@ -202,6 +202,10 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	if o.repo != "" && o.all {
 		return userErr("--repo and --all don't go together")
 	}
+	var err error
+	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+		return err
+	}
 	if o.maxRuns < 1 {
 		return userErr("--max-runs %d: use at least 1", o.maxRuns)
 	}

@@ -226,6 +226,9 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		return err
 	}
 	repo := o.repo
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return err
+	}
 	if repo == "" {
 		repo = origin
 	}
