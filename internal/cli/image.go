@@ -98,7 +98,12 @@ func newImageBuildCmd() *cobra.Command {
 			"the checkout's fugaro.yaml and origin say what to build.\n\n" +
 			"A Cloud Build is billable, so it asks for the project's name typed at a real\n" +
 			"terminal: --json, a pipe and a coding agent's session never confirm it (it\n" +
-			"prints the one line to run in your own terminal window and exits 1).\n" +
+			"prints the one line to run in your own terminal window and exits 1). One\n" +
+			"exception: building a catalog entry in a project whose marks say it is\n" +
+			"managed asks a person at a real terminal nothing, because the managed gate\n" +
+			"judges that build against the project's own bound on billable builds and\n" +
+			"records it. A derived image (--workflow, or a checkout with no catalog) is\n" +
+			"not that row and keeps the typed name.\n" +
 			"--local builds with your own Docker and costs nothing in the cloud.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

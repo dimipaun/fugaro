@@ -2149,6 +2149,7 @@ website/
   data/typical-costs.yaml          # the owner's own measurement of what a job costs, pinned by test/caps-and-costs.mjs
   data/console-screens.yaml        # the console page's slides: hand-written, one row per screenshot
   data/mobile-claims.yaml          # the phone app's page: one row per claim, with the state the page marks it with (D240, D241)
+  data/compatibility.yaml          # the compatibility page: one row per claim, with its status, its edition and the repository path that backs it (D1520-D1539)
   data/mobile-screens.yaml         # the phone page's slides: the same rows as the console's, empty until the owner's captures land (D251)
   design-ref/zoom-levels/*.dc.html # the four owner-approved zoom boards, redrawn as the site's SVG: the source of the levels' words (2026-10-22)
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
