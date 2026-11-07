@@ -862,6 +862,11 @@ func TestSettingsSetRefusesEveryKeyOutsideSpec44(t *testing.T) {
 	for _, key := range []string{
 		"endpoints.compute", "terraform.state_bucket", "policy_generation", "layer_generation",
 		"credentials_service.url", "budget.rtdb_url", "name", "runs_bucket", "bucket_url",
+		// The two schedules (R13): the layer keys the generic path refuses
+		// until someone says otherwise, because paused: false is the one
+		// direction here that starts a job and it is the owner's own edit of
+		// the layer file (the refusal itself is asserted below).
+		"jobs.reports.paused", "jobs.catalog_check.paused",
 	} {
 		t.Run(key, func(t *testing.T) {
 			out, _, err := execute(t, "settings", "set", key, "x", "--yes")

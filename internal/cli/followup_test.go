@@ -135,12 +135,12 @@ func TestRunPRPrintsPRBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "launched " + appSlug + "/" + fuID + " (follow-up of PR #7, after " + rootID + ")\n  branch fugaro/" + rootID + "\n  logs https://"
+	want := markDone + " launch " + appSlug + "/" + fuID + " (follow-up of PR #7, after " + rootID + ")\n  branch fugaro/" + rootID + "\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}
 	out, _, err = execute(t, args...)
-	if want := "already launched " + appSlug + "/" + fuID + " (follow-up of PR #7, after " + rootID + ")\n  branch fugaro/" + rootID + "\n"; err != nil || !strings.HasPrefix(out, want) {
+	if want := markSkipped + " launch " + appSlug + "/" + fuID + " (follow-up of PR #7, after " + rootID + ") already launched\n  branch fugaro/" + rootID + "\n"; err != nil || !strings.HasPrefix(out, want) {
 		t.Fatalf("repeat: %v, output:\n%s\nwant prefix:\n%s", err, out, want)
 	}
 	if n := len(f.run.Executions()); n != 1 {

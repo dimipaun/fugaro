@@ -16,6 +16,7 @@ package cli
 // wired to it (CL5b); the rest follow one batch at a time.
 
 import (
+	"io"
 	"os"
 	"runtime"
 	"time"
@@ -65,6 +66,39 @@ func reporterFor(cmd *cobra.Command, name string, secrets func() []string) (*rep
 	}
 	o.Sink = sink
 	return report.New(o), sink
+}
+
+// reporterOpener is a reporterFor a command hands to its flow instead of
+// calling it itself: the flow opens the reporter where its own work starts, so
+// a refusal made before that point — one this CLI answers without reaching the
+// APIs — keeps no log, not even an empty file (D1352, D1354). A nil one is a
+// caller driving the flow with no reporter at all, the flow's own tests, and
+// it prints exactly what it printed before there was one.
+type reporterOpener func() (*report.Reporter, report.Sink)
+
+// loggedOut is where a command's own output goes: the writer it printed to
+// before the reporter, and the run's log beside it, so the log holds what the
+// person read (D1352). A run that could not open one — a read-only home,
+// CL3's noLog — writes to the screen alone.
+//
+// The reporter's own step lines are not routed through here: they are the
+// screen's account of the steps, and what the log keeps is the run's own
+// output beside them.
+func loggedOut(w io.Writer, sink report.Sink) io.Writer {
+	if sink == nil {
+		return w
+	}
+	return io.MultiWriter(w, sink)
+}
+
+// failStep ends a step in failure and closes the run, so a command's failure
+// path is one line and still returns its own error: the step is the run's
+// verdict, the summary is the line under it, and both have to be written
+// before the command's error reaches cobra, which prints it (G8).
+func failStep(rep *report.Reporter, step *report.Step, err error) error {
+	step.Failed(err, nil)
+	rep.Summary()
+	return err
 }
 
 // boolFlag reads a boolean flag when the command has it, and is false when it

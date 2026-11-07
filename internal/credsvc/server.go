@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -108,7 +109,63 @@ func routeAct(path string) (purpose, credential string) {
 		// account to name and so carries none.
 		return PurposeReviewSign, ""
 	}
+	if strings.HasPrefix(path, BitbucketProxyPrefix) {
+		// The Bitbucket proxy route (B1.5), and the ONE route whose two facts
+		// this rule cannot read off the path. Which of the two purposes the
+		// call asked for — git or the Bitbucket API — is the classification's
+		// answer (internal/gitproxy's Classify, the one reading of a path this
+		// service has), and a rule that guessed between them from the segments
+		// would be a second reading of a path, which is exactly what this
+		// design refuses everywhere else (G13). The credential is the bundle's
+		// Bitbucket token whichever way it goes, so it is known here and the
+		// route's handler names it on every line it writes.
+		//
+		// What is left for the refusals answered ABOVE the classification —
+		// the binding of the two identities and the operator's stop switches —
+		// is therefore no purpose and no credential: the service had not yet
+		// decided what the call was, and a line that named one of the two would
+		// be recording a fact it did not have.
+		return "", ""
+	}
 	return PurposeForward, ""
+}
+
+// servedRoute reports whether this service serves the call at all: the paths
+// that are this service's own contract, and the run's Bitbucket traffic under
+// its prefix (B1.5). A call it does not serve is a 404 and nothing else, which
+// is how D143's "no admin surface" is kept — a route that does not exist cannot
+// be reached by a caller who is not an operator.
+//
+// The methods are part of the rule and not a blanket, and they are the methods
+// the calls under those paths actually use: POST for every path of this
+// service's own contract (each of them a body-carrying call), and GET, POST and
+// PUT under the prefix. The three are what the classified calls need — git's
+// info/refs GET and its two POSTs, and the REST allow-list's GETs, its create
+// and comment POSTs and its update PUT (G4 allows "update", and
+// bitbucket.Provider's own ApplyReady and EnsurePR send it) — and nothing else
+// is admitted, so a DELETE, a PATCH or a HEAD under the prefix is a route this
+// service does not have.
+//
+// What a method is worth is decided once: the classification refuses a method a
+// call does not take (call_not_allowed), so this gate is only about which
+// requests have a route at all, and the two do not disagree — the prefix admits
+// every method the classifier can name and no other.
+func servedRoute(r *http.Request) bool {
+	if strings.HasPrefix(r.URL.Path, BitbucketProxyPrefix) {
+		switch r.Method {
+		case http.MethodGet, http.MethodPost, http.MethodPut:
+			return true
+		}
+		return false
+	}
+	if r.Method != http.MethodPost {
+		return false
+	}
+	switch r.URL.Path {
+	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath:
+		return true
+	}
+	return false
 }
 
 // JobAccount is one job service account and the repository whose runs are
@@ -581,14 +638,12 @@ func NewServer(cfg Config) (*Server, error) {
 // credential is the App key, the only one that endpoint has.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath &&
-		r.URL.Path != MintPath && r.URL.Path != SignPath && r.URL.Path != VerifyPath &&
-		r.URL.Path != BitbucketReadPath && r.URL.Path != GitHubReadPath) {
+	if !servedRoute(r) {
 		// There is no other route, and in particular no admin route: D143's
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+" and "+GitHubReadPath)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+" and "+GitHubReadPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -741,6 +796,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// gate and the handler makes it, because the key is the CALLER'S
 		// account's.
 		s.sign(ctx, w, r, id, req, purpose)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, BitbucketProxyPrefix) {
+		// The Bitbucket proxy route (B1.5). Everything above it is its
+		// admission and nothing below it is: the two identities have been
+		// verified, the pairing has fixed the repository the run's own job
+		// account is (canonical, G3), and the operator's stop flag has been
+		// read, so a stopped service proxies nothing. It reads the project's
+		// published block itself — which is what admits the repository, and
+		// whether the installation proxies it at all (G9) — and the bundle,
+		// for the one token it forwards with; and it consults no cascade,
+		// because a Bitbucket token is not a model credential and no tier,
+		// admission or budget has anything to say about it.
+		s.bitbucketProxy(ctx, w, r, id, canonical)
 		return
 	}
 	// The project's policy, and the request itself, are read before the bundle:
