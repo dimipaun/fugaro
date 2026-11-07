@@ -26,14 +26,26 @@ import (
 
 // reviewJobAdmitted is E7's second half — whether the installation's
 // credentials service admits a review caller of a project-scoped job — and it
-// is FALSE in this release, because that admission is C3.9, which is not built
-// (§1): the service refuses a caller whose account belongs to a shared project
-// job whole (internal/credsvc's Global Constraint 6), and the review caller is
-// exactly that. A launcher cannot ask the service its configuration (there is
-// no admin route, D143) and cannot see the admission decision without making a
-// call that mints a credential, so the fact is a constant here: the release
-// that meets E7 flips it, and until then every review refuses rather than
-// starting a job whose first call the service would answer 401.
+// is FALSE in this release. The class's own code is on main (C3.9a–C3.9g:
+// internal/credsvc's ClassReview, ReviewOf and pairReview, and verifyJob
+// reading the review class before the per-repository table — CSR14 #1778 and
+// CSR15 #1781), so what this constant waits on is not that code but the wiring
+// that gives a deployment an account to admit with it: nothing outside a test
+// sets AuthConfig.ReviewJobAccounts or Config.ReviewAccounts —
+// credentials_serve.go's credentialsServiceConfig, the only production builder
+// of that configuration, assigns neither, credentialsServiceEnvNames and its
+// internal/infra/tf twin carry no name for the set, and
+// credsvc.ReviewJobAccountsFor has no production call site — so every
+// installation's service builds an empty review table and answers a review
+// caller with ErrUnverifiedJob. Flipping this before that wiring lands starts a
+// job whose first call the service answers 401: the spend-and-fail this
+// constant exists to gate.
+//
+// A launcher cannot ask the service its configuration (there is no admin route,
+// D143) and cannot see the admission decision without making a call that mints
+// a credential, so the fact is a constant here: the release that meets E7 flips
+// it, and until then every review refuses rather than starting a job whose
+// first call the service would answer 401.
 //
 // A test that has to reach the launch sets it, the way compressionForTest's
 // seam is set, so the command's other refusals and the launch itself stay

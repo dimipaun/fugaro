@@ -1124,6 +1124,32 @@ is untouched by anything here.
 
 ### CSR11. Flip `reviewJobAdmitted` — after the owner's live check, and only then (SEC, OWNER-RUN)
 
+**HELD (2026-11-07): the wiring the flip waits on is not in the tree, and the flip was attempted and
+taken back for it.** Half of this task's reason is on `main`: the class's own code — `ClassReview`,
+`ReviewOf`, `pairReview` (`internal/credsvc/review.go`), the review class read before the
+per-repository table (`internal/credsvc/auth.go`'s `verifyJob`) and the verifier the launcher
+impersonates (CSR14 #1778, CSR15 #1781, both merged). What is NOT in the tree is the wiring that gives
+a deployment an account to admit with it: `internal/cli/credentials_serve.go`'s
+`credentialsServiceConfig` — the only production builder of `credsvc.Config`/`AuthConfig` — sets
+neither `ReviewJobAccounts` nor `ReviewAccounts`, `credentialsServiceEnvNames` and the
+`internal/infra/tf` allow-list hold the service's environment to seven names with no review-account
+one, `deploy/terraform/gcp/modules/installation/credentials.tf` renders none, and
+`credsvc.ReviewJobAccountsFor` has no production call site. So every installation's service builds an
+**empty** review table (`NewServer`'s `reviewAccounts`), `verifyJob`'s review branch never fires, the
+variant's account is not in `jobAccounts` either, and a review's first credential call comes back
+`ErrUnverifiedJob` — the spend-and-fail this task's gate exists to prevent. **The constant therefore
+stays `false`, and CSR12's switch stays with it**, because the flip is the commit that removes the
+switch: holding the flip holds the switch, and the owner's live check's step 3 is still reached with
+it. `credentialsServiceConfig`'s own comment defers this wiring to the deployment of the variant's
+jobs and calls the empty set the fail-closed statement of an installation that admits no review job —
+the variant's jobs do deploy (`internal/infra/projectjobs.go` derives them per profile, provider and
+account), so what is owed is the set itself. Filling it is a decision and not a repair — an eighth
+name the module renders in the shape `FUGARO_JOB_ACCOUNTS` already has, a document the service
+parses, carrying each review account's Claude account as `ReviewJobAccount` needs it (the entry's own
+repository is derivable from the identity, so the pair is what a policy read supplies today), or a
+policy read at the service's start-up, which that comment refuses on purpose so a revision's
+start-up depends on no installation state (D143) — and it lands before this constant can be flipped.
+
 **Decisions:** **D893 (c)** — the flip is E7's second half made true by C3.9a–C3.9g, which are **merged**
 on the credentials service's side; **O1**; and **D888/O7** for the release it lands in.
 **Findings:** F1, F5, **F9**. **Depends on:** **CSR8** (a flipped constant launches a run the container
