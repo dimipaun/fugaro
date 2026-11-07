@@ -447,6 +447,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 		default:
 			repo := o.repo
+			if repo, err = repoArg(ctx, repo); err != nil {
+				return err
+			}
 			if repo == "" {
 				if repo, err = originRepo(ctx); err != nil {
 					return err
@@ -527,6 +530,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// text that differs from it by the findings.
 		if o.reviewRun != "" {
 			repo := o.repo
+			if repo, err = repoArg(ctx, repo); err != nil {
+				return err
+			}
 			if repo == "" {
 				if repo, err = originRepo(ctx); err != nil {
 					return err

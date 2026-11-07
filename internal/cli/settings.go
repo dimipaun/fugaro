@@ -107,14 +107,14 @@ func runSettings(cmd *cobra.Command, args []string, o settingsOptions) error {
 	if o.repo != "" && o.allRepos {
 		return userErr("--repo and --all-repos are two different reads: name one repository, or every one this machine remembers")
 	}
-	var err error
-	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
-		return err
-	}
 	for _, l := range o.layer {
 		if !slices.Contains(settings.Layers, l) {
 			return userErr("--layer %s: the layers are %s", l, strings.Join(settings.Layers, ", "))
 		}
+	}
+	var err error
+	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+		return err
 	}
 	// --repo names a repository the way a scope is spelled — `repo:owner/name`,
 	// the pattern the document's own schema holds the scope to — so a bare name

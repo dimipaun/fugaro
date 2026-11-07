@@ -242,7 +242,9 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		}
 		want, err := task.CanonicalRepo(flag)
 		if err != nil {
-			return nil, userErr("--repo %s: %v", pluginwire.Printable(o.repo), err)
+			// repoArg answers with owner/name either way, so this is the shape
+			// fold and nothing more; its error doesn't quote its input.
+			return nil, userErr("--repo: %v", err)
 		}
 		if got, err := task.CanonicalRepo(repo); err != nil || got != want {
 			return nil, userErr("--repo %s is not %s's origin (%s): run it in a checkout of %s", pluginwire.Printable(o.repo), o.checkoutName(root), pluginwire.Printable(repo), pluginwire.Printable(o.repo))
