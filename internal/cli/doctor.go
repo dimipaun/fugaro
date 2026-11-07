@@ -845,7 +845,7 @@ func doctorSecrets(cmd *cobra.Command, lc *localcfg.Config) []secretEntry {
 	ctx := cmd.Context()
 	env := &cloudEnv{lc: lc, gcp: gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
 		Endpoints: gcp.Endpoints{SecretManager: lc.Endpoints.SecretManager, NoAuth: lc.Endpoints.NoAuth}}}
-	r, err := resolveSecretRepo(cmd, env, "")
+	r, err := resolveSecretRepo(cmd, env, cloudOptions{}, "")
 	if err != nil {
 		return nil
 	}

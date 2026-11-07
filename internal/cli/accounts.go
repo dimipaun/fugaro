@@ -47,7 +47,7 @@ type accountsOptions struct {
 
 func (o *accountsOptions) addFlags(cmd *cobra.Command) {
 	addCloudFlags(cmd, &o.cloud)
-	cmd.Flags().StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
+	cmd.Flags().StringVar(&o.repo, "repo", "", "repository as owner/name, or a path inside its checkout (default: this checkout's origin)")
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 }
 
@@ -178,8 +178,11 @@ func accountsConfig(cmd *cobra.Command, o cloudOptions) (lc *localcfg.Config, no
 func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 	ctx := cmd.Context()
 	repo := o.repo
+	var err error
+	if repo, err = repoArg(ctx, o.cloud, repo); err != nil {
+		return err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return err
 		}

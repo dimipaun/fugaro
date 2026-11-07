@@ -95,7 +95,7 @@ func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 	// --repo is the flag that opts OUT of the project default (D2): it names
 	// one repository's own container, and with no value means this checkout's
 	// origin, the repository a missing scope used to mean.
-	cmd.Flags().StringVar(&o.repo, "repo", "", "work on one repository's own copy, given as owner/name (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide")
+	cmd.Flags().StringVar(&o.repo, "repo", "", "work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide")
 	cmd.Flags().BoolVar(&o.projectWide, "project-wide", false, "the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo)")
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 }
@@ -420,10 +420,13 @@ type secretRepo struct {
 // resolveSecretRepo resolves --repo to its slug and label. flag is empty for
 // a bare --repo (NormalizeRepoArgs rewrites it to --repo=) and for a caller
 // that passed no flag at all, and both mean this checkout's origin.
-func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretRepo, error) {
+func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, o cloudOptions, flag string) (*secretRepo, error) {
 	ctx := cmd.Context()
 	r := &secretRepo{repo: flag}
 	var err error
+	if r.repo, err = repoArg(ctx, o, flag); err != nil {
+		return nil, err
+	}
 	if r.repo == "" {
 		if r.repo, err = originRepo(ctx); err != nil {
 			return nil, err
@@ -619,7 +622,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name, repo)) {
 		return secretsSetProjectWide(cmd, env, o, name)
 	}
-	r, err := resolveSecretRepo(cmd, env, o.repo)
+	r, err := resolveSecretRepo(cmd, env, o.cloud, o.repo)
 	if err != nil {
 		return err
 	}
@@ -1727,7 +1730,7 @@ there may be stored per repository and perfectly present.`,
 			if o.projectWide || !cmd.Flags().Changed("repo") {
 				return listProjectWide(cmd, env, o)
 			}
-			r, err := resolveSecretRepo(cmd, env, o.repo)
+			r, err := resolveSecretRepo(cmd, env, o.cloud, o.repo)
 			if err != nil {
 				return err
 			}
