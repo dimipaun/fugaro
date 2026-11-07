@@ -84,12 +84,15 @@ import (
 // (`noYes` in the stage table today and under a managed project), the layer
 // stage and the checkout's own steps.
 //
-// The workspace stage is not here either, and it is the one of them that is
-// deliberately a write the gate could have admitted: its document is the node
-// it publishes, exactly as the policy stage's is. What the gate would be
-// standing in for there is the owner's own word about who is in their group —
-// an admitted write would admit a member on a mark's say-so, which is the one
-// thing rule 1 forbids (SEC, update_workspace.go).
+// The workspace stage is here with the policy one, and for the same reason: its
+// document is the node it publishes (docs/workspaces/spec.md §6 — W2's publish
+// "runs under the gate update already opens"), and its two questions are the
+// policy stage's two, the database is this installation's (D1017) and the node
+// is one this binary's own may write over. What the gate may never admit there
+// is a publish that admits more to the group than the node already carries:
+// that step is initflow.Typed (D846) and D1026 admits no plan gate's answer for
+// a Typed step, so the one write that decides who is in the group stays the
+// owner's own word and never a mark's (SEC, rule 1).
 //
 // The policy stage's own two branches that write NO node are outside the gate
 // as well, and they are the ones this map cannot express: D854's bare re-seed
@@ -103,6 +106,7 @@ var gatedStages = map[string]bool{
 	initflow.Repository:    true,
 	initflow.Rules:         true,
 	initflow.Policy:        true,
+	initflow.Workspace:     true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the
@@ -607,6 +611,80 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 var policyAdmittedRules = []string{
 	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
 	fmt.Sprintf("this machine's config is not behind the published node (D854), which is the state in which publishing writes version %d over a node this binary's own may write", projectpolicy.Version),
+}
+
+// gateStep judges the workspace node this stage is about to publish, and answers
+// whether the gate admitted it: the workspace stage's version of the policy
+// stage's gateStep, for the second stage of this command whose document is the
+// database node it writes rather than a plan.
+//
+// The document is p.body — the bytes the stage's conditional write puts at
+// workspaces/<name>, built once and confirmed against, so the document the gate
+// judged and the document that lands are the same bytes (the ETag the write is
+// conditional on is the read the diff was made from). The two questions are
+// workspaceAdmittedRules, which the stage answered before it built the
+// document: the database is this installation's (budgetDBUnadopted, D1017) and
+// the node in play is one this binary's own may write over.
+//
+// A publish that ADMITS more to the group than the node already carries is
+// initflow.Typed, the class D846 gives the policy stage's raised ceiling and
+// the one D1026 refuses whatever a plan gate said: the record decides who is in
+// the group, so a member this stage adds may only be the owner's own word and
+// never a mark's. Every other publish — the first one, a plain rewrite, a
+// migration, a removal — is the ordinary YesOrTyped step the gate may stand in
+// for.
+func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
+	r := s.e.r
+	if !r.gateUnderway() {
+		return false, nil
+	}
+	class := gateClass()
+	if len(p.widens) > 0 {
+		class = initflow.Typed
+	}
+	doc := p.body
+	if len(doc) == 0 {
+		// A node write with no bytes to write is the stage's own contract
+		// broken, and it is refused rather than published: an empty document is
+		// the one thing this gate must never hand to a write.
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace node this step would publish is empty")}
+	}
+	conv := managedmode.ConvergeAdmitted(doc, class, workspaceAdmittedRules)
+	mg, err := r.gate.g.admit(ctx, class, conv)
+	if err != nil {
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+	}
+	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
+	if !initflow.GateConfirms(class, r.conditions(), mg) {
+		// The Typed class is the one not-admitted answer with a sentence of the
+		// gate's own, and it is given here rather than left to the caller's
+		// coding-agent refusal: this step's document WAS admitted by the rules
+		// above, so what refuses it is the class rule and nothing about the
+		// session. In the owner's own terminal the widening keeps exactly what
+		// it has without a gate — the typed confirmation this class asks for,
+		// which --yes does not stand in for — and the gate is nobody's answer
+		// there (the policy stage's own reading of the same rule).
+		if class == initflow.Typed && marker != "" {
+			refused := conv.Refuse()
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused}
+		}
+		return false, nil
+	}
+	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	return true, nil
+}
+
+// workspaceAdmittedRules is what the record says admitted the workspace step:
+// the two questions the stage answered before its write, in the order it asked
+// them — the database is this installation's (D1017), and the node in play is
+// one this binary's own may write over (the version the migration walked to, or
+// the first publish's absent one). Neither the document's content nor a member
+// it names is here: the record's digest is what an owner checks the node
+// against, and a record that listed the group would be a second copy of the
+// thing the node exists to be.
+var workspaceAdmittedRules = []string{
+	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
+	fmt.Sprintf("the published node is one this binary's own may write over: it is at version %d, or at a version the migration carries to it in place", projectpolicy.WorkspaceVersion),
 }
 
 // gateApplied records the step the gate admitted, AFTER the step's own write

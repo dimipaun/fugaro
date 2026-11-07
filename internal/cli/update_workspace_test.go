@@ -48,6 +48,19 @@ const wsOwnerTable = `workspace_members:
 // wsOwnerCap is the workspace's own cap, in dollars as the file writes it.
 const wsOwnerCap = "workspace_cap:\n  monthly: 25\n"
 
+// wsOwnerTwoMembers is the same table with a project the published node does
+// not carry yet: the write that admits a member, and so the one this stage
+// reserves for the owner's own typed word.
+const wsOwnerTwoMembers = wsOwnerTable + `  member-d:
+    job_service_accounts:
+      - job-account-d@member-d-gcp.iam.gserviceaccount.com
+    firebase_project: member-d-fb
+    fp: member-d
+    exchange_url: https://exchange.example.com/v1
+    repos:
+      - owner/repo-d
+`
+
 // wsPin is a member's own half: the membership key and the pin beside it (W1).
 // It is the config on this machine that names the workspace, and it carries no
 // part of the owner's side.
@@ -228,6 +241,62 @@ func wsNumber(t *testing.T, v any) int64 {
 		t.Fatalf("the node's value is %T (%v), not a number", v, v)
 		return 0
 	}
+}
+
+// wsPublishedNode seeds a node at the workspace's own path, as a release before
+// this one wrote it: version 1 with the members and the cap the caller names.
+// It is how a test says what is already published, which is the other half of
+// every diff this stage makes.
+func wsPublishedNode(t *testing.T, p *wsUpdateProject, name string, members []any, capMicros int64) {
+	t.Helper()
+	node := map[string]any{
+		"version": projectpolicy.WorkspaceVersion,
+		"name":    name,
+		"members": members,
+	}
+	if capMicros > 0 {
+		node["cap"] = map[string]any{"monthly_micros": capMicros}
+	}
+	p.db.Set(projectpolicy.PathWorkspace(name), node)
+}
+
+// wsPublishedMember is one member entry of a node a test seeded.
+func wsPublishedMember(project string, repos ...string) map[string]any {
+	out := make([]any, 0, len(repos))
+	for _, r := range repos {
+		out = append(out, r)
+	}
+	return map[string]any{"project": project, "repos": out}
+}
+
+// wsRepos is one member's repositories as the node carries them.
+func wsRepos(t *testing.T, p *wsUpdateProject, name, project string) []string {
+	t.Helper()
+	raw, ok := wsNode(t, p, name)["members"].([]any)
+	if !ok {
+		t.Fatalf("the node at %s carries no members list", projectpolicy.PathWorkspace(name))
+	}
+	for _, m := range raw {
+		entry, ok := m.(map[string]any)
+		if !ok {
+			t.Fatalf("a member entry is %T (%v), not an object", m, m)
+		}
+		if entry["project"] != project {
+			continue
+		}
+		repos, ok := entry["repos"].([]any)
+		if !ok {
+			t.Fatalf("%s's repos are %T (%v), not a list", project, entry["repos"], entry["repos"])
+		}
+		out := make([]string, 0, len(repos))
+		for _, r := range repos {
+			s, _ := r.(string)
+			out = append(out, s)
+		}
+		return out
+	}
+	t.Fatalf("the node at %s lists no member %s: %v", projectpolicy.PathWorkspace(name), project, raw)
+	return nil
 }
 
 // wsMembers is the member list the node carries, as `project` names in order.
@@ -485,5 +554,205 @@ func TestMembershipNeedsBothSides(t *testing.T) {
 	// and not the config that named the workspace.
 	if got := wsMembers(t, h.project(t, "workspace-alpha"), "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
 		t.Errorf("the published members are %v, want [member-b]: member-c names the workspace here and no table declares it, and a member is in the workspace only when both halves say so", got)
+	}
+}
+
+// TestUpdateDiffSaysWhatItRemoves: the write REPLACES the node, so what the
+// record no longer declares is removed from the published document — a member,
+// a member's repository, the workspace's own ceiling. The operator confirms a
+// diff, and a diff that read "nothing is removed" while dropping a member would
+// be the one silent change this stage must not make: every run of every member
+// project reads the record this write replaces.
+//
+// A removal is not a widening and it does not take the typed name: the owner
+// asked for it by editing their own table, and what the diff owes them is the
+// statement of it. The second half is the other side of the same coin: a write
+// that removes nothing says so, rather than leaving the reader to work it out
+// against the node above.
+func TestUpdateDiffSaysWhatItRemoves(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	// The table declares member-b with owner/repo-a and owner/repo-b; the node
+	// carries a repository that is no longer declared and a member that is not.
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b", "owner/repo-z"),
+		wsPublishedMember("member-c", "owner/repo-c"),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	oc, out, err := r.apply(t, true)
+	if err != nil {
+		t.Fatalf("the run did not publish the node the record declares: %v\n%s", err, out)
+	}
+	if !oc.Changed {
+		t.Errorf("the publish reports no change: %s", oc.Detail)
+	}
+	for _, want := range []string{
+		"removed: member member-c",
+		"removed: owner/repo-z from member-b",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the diff does not say %q, so the operator confirmed a removal they were not shown:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "nothing is removed") {
+		t.Errorf("the diff says nothing is removed while it removes a member and a repository:\n%s", out)
+	}
+	if got := wsMembers(t, p, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+		t.Errorf("the published members are %v, want [member-b]: member-c is not in this installation's table any more", got)
+	}
+	if got := wsRepos(t, p, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
+		t.Errorf("member-b's published repositories are %v, want the two the table declares", got)
+	}
+}
+
+// TestUpdateTheCeilingIsTheDirectionTheWideningIs: the cap half of the
+// classifier, where getting the direction wrong is the defect that matters. A
+// node that states a ceiling and a record that states none leaves the group
+// with NO bound on what it spends through the workspace's own credentials, so
+// it is the largest widening this node has and it takes the typed project name.
+// A ceiling where there was none is the opposite direction — it BOUNDS the
+// group — and it is an ordinary write, which is what keeps the typed name
+// reserved for the writes that admit.
+func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
+	t.Run("a dropped ceiling is a widening", func(t *testing.T) {
+		h := newWSUpdateHome(t, wsOwnerTable) // the record states no cap
+		p := h.project(t, "workspace-alpha")
+		wsPublishedNode(t, p, "workspace-alpha", []any{
+			wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+		}, 10_000_000)
+
+		r := newWSUpdateRig(t, h)
+		_, out, err := r.apply(t, true)
+		if err == nil {
+			t.Fatalf("--yes published a record that removes the workspace's own ceiling:\n%s", out)
+		}
+		if !strings.Contains(err.Error(), "spend through the workspace's own credentials becomes unbounded") {
+			t.Errorf("the refusal does not say what the dropped ceiling admits: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "removed: the workspace's own ceiling of $10 a month") {
+			t.Errorf("the diff does not show the ceiling as removed:\n%s", out)
+		}
+		// And the owner's own word completes it, which is what makes the typed
+		// branch a way through rather than a wall.
+		fakeTerminal(t)
+		r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
+		if _, out, err := r.apply(t, false); err != nil {
+			t.Fatalf("the typed project name did not publish the record: %v\n%s", err, out)
+		}
+		if cap, ok := wsNode(t, p, "workspace-alpha")["cap"]; ok {
+			t.Errorf("the published node still carries the ceiling the record does not state: %v", cap)
+		}
+	})
+
+	t.Run("a ceiling where there was none bounds the group", func(t *testing.T) {
+		h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+		p := h.project(t, "workspace-alpha")
+		wsPublishedNode(t, p, "workspace-alpha", []any{
+			wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+		}, 0)
+
+		r := newWSUpdateRig(t, h)
+		_, out, err := r.apply(t, true)
+		if err != nil {
+			t.Fatalf("--yes was refused a write that BOUNDS the group: %v\n%s", err, out)
+		}
+		cap, ok := wsNode(t, p, "workspace-alpha")["cap"].(map[string]any)
+		if !ok {
+			t.Fatalf("the published node carries no ceiling: %v", wsNode(t, p, "workspace-alpha"))
+		}
+		if got := wsNumber(t, cap["monthly_micros"]); got != 25_000_000 {
+			t.Errorf("the published ceiling is %v micro-dollars, want 25000000 ($25)", cap["monthly_micros"])
+		}
+		if strings.Contains(out, "added: the workspace's own ceiling") {
+			t.Errorf("the diff reports a ceiling where there was none as what this write ADDS to the group:\n%s", out)
+		}
+	})
+}
+
+// TestUpdateAdmittingAMemberTakesTheTypedName is the positive control under the
+// widening classifier: a publish that admits a project the node does not carry
+// is reserved for the owner's own typed word — --yes does not stand in, the
+// no-terminal session is refused with the sentence that says so, and the typed
+// name completes it. Without this the typed branch of the confirmation would be
+// dead code that no test could tell from a classifier that had stopped
+// classifying anything.
+func TestUpdateAdmittingAMemberTakesTheTypedName(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTwoMembers+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	_, out, err := r.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes admitted a member to the workspace:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "member-d is admitted to the workspace") {
+		t.Errorf("the refusal does not name the member this write admits: %v\n%s", err, out)
+	}
+	if got := wsMembers(t, p, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+		t.Errorf("the published members are %v, want [member-b]: nothing was confirmed", got)
+	}
+	// The session with no terminal is refused with the same sentence inside the
+	// error, because that is the only place it can be read.
+	if !strings.Contains(err.Error(), "this admits more to the workspace workspace-alpha than the published record does") {
+		t.Errorf("the refusal does not say what the write admits: %v\n%s", err, out)
+	}
+
+	fakeTerminal(t)
+	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
+	oc, out, err := r.apply(t, false)
+	if err != nil {
+		t.Fatalf("the typed project name did not admit the member: %v\n%s", err, out)
+	}
+	if !oc.Changed {
+		t.Errorf("the admitted publish reports no change: %s", oc.Detail)
+	}
+	if got := wsMembers(t, p, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-d"}) {
+		t.Errorf("the published members are %v, want [member-b member-d]", got)
+	}
+}
+
+// TestUpdateRefusesANodeCarryingAKeyThisFugaroDoesNotKnow is P8 at this stage's
+// write: a node a NEWER Fugaro wrote is read (the reader tolerates the key) and
+// refused where this run would REWRITE it, because publishing the local record
+// would write a document without that key — a value somebody else's release put
+// there and this binary cannot carry. The count and the names are what the
+// refusal says about it, and the node is left exactly as it was.
+func TestUpdateRefusesANodeCarryingAKeyThisFugaroDoesNotKnow(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	// The node differs from the record (member-c is not declared any more), so
+	// this run would write — which is the moment the unknown key is lost. The
+	// whole document is seeded here rather than through wsPublishedNode: the
+	// extra key has to be in the stored value, and a map read back and edited
+	// does not write through to the database.
+	p.db.Set(projectpolicy.PathWorkspace("workspace-alpha"), map[string]any{
+		"version": projectpolicy.WorkspaceVersion,
+		"name":    "workspace-alpha",
+		"members": []any{
+			wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+			wsPublishedMember("member-c", "owner/repo-c"),
+		},
+		"cap":    map[string]any{"monthly_micros": 25_000_000},
+		"rollup": map[string]any{"spend_micros": 1},
+	})
+
+	r := newWSUpdateRig(t, h)
+	_, out, err := r.apply(t, true)
+	if err == nil {
+		t.Fatalf("a publish wrote over a node carrying a key this Fugaro does not know:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "rollup") {
+		t.Errorf("the refusal does not name the key it would drop: %v", err)
+	}
+	after := wsNode(t, p, "workspace-alpha")
+	if _, still := after["rollup"]; !still {
+		t.Errorf("the refusal wrote the node anyway: %v", after)
+	}
+	if got := wsMembers(t, p, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-c"}) {
+		t.Errorf("the refused write changed the published members: %v", got)
 	}
 }

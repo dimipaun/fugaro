@@ -96,11 +96,18 @@ type workspacePublication struct {
 	// this Fugaro's version: there is nothing to do, and nothing is written.
 	done bool
 	// widens names what this write adds to a group the workspace ALREADY
-	// publishes — a member, a repository, a ceiling where there was none or a
-	// higher one. It is the confirmation's input and not the write's: a widen is
-	// what the owner's own typed word is reserved for, and a first publish has
-	// nothing to widen.
+	// publishes — a member, a repository, a higher ceiling, or the ceiling
+	// itself when the record states none. It is the confirmation's input and not
+	// the write's: a widen is what the owner's own typed word is reserved for,
+	// and a first publish has nothing to widen.
 	widens []string
+	// removals names what this write takes OUT of a group the workspace already
+	// publishes: a member the record no longer declares, a repository of one it
+	// still declares, and the cap when the record states none. The node is
+	// replaced whole, so these are real changes to the document and the diff has
+	// to state them: the operator confirms a diff, and a member the node stops
+	// listing stops being admitted through the workspace the moment it lands.
+	removals []string
 	// drift are the half-done memberships this machine can see (W1's own
 	// sentences). They are reported and never resolved: neither half of a
 	// membership is this stage's to complete.
@@ -274,7 +281,9 @@ func workspacePublicationIn(ctx context.Context, lc *localcfg.Config, db *rtdb.C
 	if err != nil {
 		return nil, userErr("building the workspace record for %s: %v", rec.Name, err)
 	}
-	p.body, p.widens = written, workspaceWidening(rec, node, found)
+	p.body = written
+	p.widens = workspaceWidening(rec, node, found)
+	p.removals = workspaceRemovals(rec, node)
 	return p, nil
 }
 
@@ -312,13 +321,60 @@ func workspaceWidening(rec *workspace.Record, node *projectpolicy.Workspace, fou
 			}
 		}
 	}
-	if rec.Cap.Set {
-		switch {
-		case node.Cap == nil:
-			out = append(out, fmt.Sprintf("the workspace's own ceiling becomes %s a month", money(rec.Cap.Monthly)))
-		case rec.Cap.Monthly > node.Cap.MonthlyMicros:
-			out = append(out, fmt.Sprintf("the workspace's own ceiling rises from %s to %s a month", money(node.Cap.MonthlyMicros), money(rec.Cap.Monthly)))
+	switch {
+	case rec.Cap.Set && node.Cap != nil && rec.Cap.Monthly > node.Cap.MonthlyMicros:
+		out = append(out, fmt.Sprintf("the workspace's own ceiling rises from %s to %s a month", money(node.Cap.MonthlyMicros), money(rec.Cap.Monthly)))
+	case !rec.Cap.Set && node.Cap != nil:
+		// The whole ceiling gone is the largest widening this node has: what the
+		// group spends through the workspace's own credentials stops being
+		// bounded at all. A ceiling where there was none is the other direction
+		// and is not here — it BOUNDS the group, which is a tightening, and the
+		// policy stage's own rule reads D846 the same way ("a publish that raises
+		// a ceiling, removes one or widens the model list").
+		out = append(out, "spend through the workspace's own credentials becomes unbounded")
+	}
+	return out
+}
+
+// workspaceRemovals names what this write takes OUT of a group the workspace
+// already publishes. The node is replaced whole, so a member the record no
+// longer declares, a repository of a member it still declares, and the cap a
+// record that states none drops are all real changes to the document — and the
+// diff the operator confirms is where they are said. Nothing computes them
+// anywhere else: a publish that dropped a member under a diff reading "nothing
+// is removed" would be the silent removal this stage must not make.
+//
+// A removal is not a widening — it takes away rather than admits — and it does
+// not take the typed name: the owner asked for it by editing their own table
+// (`fugaro workspace member rm`), which is their own word about their own group
+// already. One removal is both a removal and a widening, and it is in both
+// lists: the cap. It is stated here as what the node loses and in
+// workspaceWidening as what the group gains, because it is one change with two
+// readers — the person reading the diff, and the class rule that decides
+// whether a mark may stand in for the write.
+func workspaceRemovals(rec *workspace.Record, node *projectpolicy.Workspace) []string {
+	if node == nil {
+		return nil
+	}
+	declared := make(map[string][]string, len(rec.Members))
+	for _, m := range rec.Members {
+		declared[m.Project] = m.Repos
+	}
+	var out []string
+	for _, m := range node.Members {
+		repos, still := declared[m.Project]
+		if !still {
+			out = append(out, fmt.Sprintf("member %s", m.Project))
+			continue
 		}
+		for _, repo := range m.Repos {
+			if !slices.Contains(repos, repo) {
+				out = append(out, fmt.Sprintf("%s from %s", repo, m.Project))
+			}
+		}
+	}
+	if node.Cap != nil && !rec.Cap.Set {
+		out = append(out, fmt.Sprintf("the workspace's own ceiling of %s a month is removed", money(node.Cap.MonthlyMicros)))
 	}
 	return out
 }
@@ -393,13 +449,17 @@ func workspaceRefusal(path string, err error) error {
 // layer stages: it shows its own diff, takes its own confirmation and refuses a
 // coding agent's session.
 //
-// It is NOT a stage of the managed gate (gatedStages, update_managed.go), and
-// that is a decision rather than an omission: what this write decides is who is
-// in the group — the member list the workspace's own service rolls up and
-// admits against — and that is the owner's own word about their own group. A
-// mark's admission standing in for it would let a document nobody read admit a
-// member, which is the one thing rule 1 forbids (SEC). It is not in runCovered
-// either, for the policy stage's reason: it takes its own confirmation.
+// It is a stage of the managed gate (gatedStages, update_managed.go), because
+// the workspaces design says so: spec §6 has W2's publish of workspaces/<name>
+// running "under the gate update already opens", so a managed project's coding
+// agent converges it like the policy node beside it rather than stopping here
+// with a step for the owner. What the gate may NOT admit is the one write this
+// stage is watched for: a publish that admits more to the group than the node
+// already carries is initflow.Typed (D846), and D1026 admits no plan gate's
+// answer for a Typed step — so a member is still admitted by the owner's own
+// word and never by a mark (SEC, rule 1). It is not in runCovered, for the
+// policy stage's reason: it takes its own confirmation where the gate does not
+// stand in for one.
 type workspaceStage struct {
 	e       *initEngine
 	planned bool
@@ -523,11 +583,20 @@ func (p *workspacePublication) planDetail() string {
 	return fmt.Sprintf("publish the workspace record this installation declares at %s, after your confirmation", p.path)
 }
 
-// Apply is the write. A coding agent's session never reaches it: the record
-// decides who is in the group, and that is a cloud write like any other.
+// Apply is the write. A managed project's gate is asked FIRST (spec §6: W2's
+// publish "runs under the gate update already opens"), and only this door has
+// one: in a coding agent's session on a managed project the step that publishes
+// the record is judged before it writes, and an admitted one proceeds. The
+// session's own refusal is kept for every other case, which is why it moves
+// below the plan rather than going away: the plan is read-only, so a session
+// that is going to refuse refuses after the same reads it has always made, and
+// the sentence it reads is the one it always read.
 func (s *workspaceStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
-		return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+	gate := s.e.r.gateUnderway()
+	if !gate {
+		if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
+			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+		}
 	}
 	p, err := s.plan(ctx)
 	if reason, skip := workspaceSkip(err); skip {
@@ -542,28 +611,52 @@ func (s *workspaceStage) Apply(ctx context.Context, env initflow.Env) (initflow.
 	if p.done {
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
+	admitted, err := s.gateStep(ctx, p)
+	if err != nil {
+		return initflow.Outcome{}, err
+	}
+	if !admitted {
+		if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
+			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+		}
+	}
 	cmd := s.e.r.cmd
-	if err := p.confirm(cmd, env.Yes, cmd.OutOrStdout()); err != nil {
+	if err := p.confirm(cmd, env.Yes, cmd.OutOrStdout(), admitted); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := p.write(ctx); err != nil {
 		return initflow.Outcome{}, err
+	}
+	if admitted {
+		// The record follows the write (D1014) and not the admission: what an
+		// owner reads is that this node was published, and a step that failed
+		// inside the write has published nothing to record.
+		if err := s.e.r.gateApplied(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
 	}
 	return initflow.Outcome{Changed: true, Detail: p.doneDetail()}, nil
 }
 
 // confirm is the confirmation this write is made behind: the typed project name
 // when the write puts more in a group the workspace already publishes, and the
-// ordinary y/N (or --yes) otherwise.
+// ordinary y/N (or --yes) otherwise. A managed project's gate that admitted the
+// node replaces both — the diff is printed either way, and the class rule has
+// already refused a widening there (gateStep).
 //
 // The typed name is the policy stage's loosening rule (confirmTypedStrict, D846)
 // read on this node: what it reserves is a write that ADMITS something — a
 // project that can now spend against the workspace's credentials, a repository
-// it now covers, a ceiling above the one the owner set — and --yes does not
-// stand in for it, which is what the sentence says to the operator whose script
-// has just passed --yes and been refused.
-func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer) error {
+// it now covers, a ceiling above the one the owner set, or the ceiling itself
+// when the record states none — and --yes does not stand in for it, which is
+// what the sentence says to the operator whose script has just passed --yes and
+// been refused. What it does NOT reserve is a removal: a member the record no
+// longer declares shrinks the group, and the diff says so.
+func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer, admitted bool) error {
 	p.print(w)
+	if admitted {
+		return nil
+	}
 	what := p.what()
 	if len(p.widens) == 0 {
 		return confirmRemoval(cmd, p.lc, yes, what)
@@ -601,7 +694,7 @@ func (p *workspacePublication) print(w io.Writer) {
 	if !p.found {
 		fmt.Fprintf(w, "%s: no record is published yet; this writes the first one for the workspace %s (%s)\n", p.path, p.record.Name, p.recordSummary())
 	} else {
-		fmt.Fprintf(w, "%s: published (version %d) and rewritten in place as version %d; nothing is removed\n", p.path, p.from, projectpolicy.WorkspaceVersion)
+		fmt.Fprintf(w, "%s: published (version %d) and rewritten in place as version %d\n", p.path, p.from, projectpolicy.WorkspaceVersion)
 		for _, ch := range p.changes {
 			fmt.Fprintf(w, "  %d to %d: %s\n", ch.From, ch.To, ch.Changed)
 			if len(ch.Kept) > 0 {
@@ -609,13 +702,17 @@ func (p *workspacePublication) print(w io.Writer) {
 			}
 		}
 		fmt.Fprintf(w, "  this installation declares: %s\n", p.recordSummary())
-		if !p.done {
-			// The member list is the whole of what this write ADMITS, so the
-			// members it adds are named rather than left to be diffed by eye
-			// against the node above.
-			for _, add := range p.widens {
-				fmt.Fprintf(w, "  added: %s\n", add)
-			}
+		// Both directions of the diff, and neither is left to be worked out by
+		// eye against the node above: the write replaces the document, so what
+		// it adds AND what it drops are what the operator is confirming.
+		if len(p.removals) == 0 {
+			fmt.Fprintf(w, "  nothing is removed\n")
+		}
+		for _, rm := range p.removals {
+			fmt.Fprintf(w, "  removed: %s\n", rm)
+		}
+		for _, add := range p.widens {
+			fmt.Fprintf(w, "  added: %s\n", add)
 		}
 	}
 	for _, d := range p.drift {
