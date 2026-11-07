@@ -89,9 +89,18 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	}
 
 	// Step 8: the read-back, which is what the command's own last line is made
-	// of.
+	// of. It is a step of the run's account only when it fails: the account it
+	// prints on success IS this step's answer — the block below is read off it —
+	// so a line of its own would be the run saying the same thing twice. An
+	// abandoned step ends nothing and counts nothing (Reporter.Step), and a
+	// read-back that fails ends it with a cross: this command's last line says
+	// there is nothing left to run, and a run that cannot read back what it
+	// wrote may not close on "Done" (G3, G8).
+	readBack := run.rep.Step("Reading back " + pluginwire.Printable(repos[0]))
+	defer readBack.Abandon()
 	check, err := accountsAddCheck(cmd, repos[0])
 	if err != nil {
+		readBack.Failed(errors.New(oneLine(err.Error())), nil)
 		return err
 	}
 	// The publish line is read off the node itself and not off what the
@@ -134,15 +143,18 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 }
 
 // accountsAddStoreSecret runs the project-wide store (secretsSetProjectWide,
-// spec §2.2 step 5) and answers the version it wrote. The store prints its own
-// step and answers the version it wrote, so the version reaches this command's
-// block without a line being read back out of its output (CL7a): the step and
-// the block are two accounts of one store, and neither is parsed out of the
-// other.
+// spec §2.2 step 5) and answers the version it wrote. It opens the step through
+// the one opener both stores share (secretsStoreStep), so this step of the
+// account is `fugaro secrets set`'s own: one line naming the container, a cross
+// carrying the server's error when the store fails, and the run's log beside
+// it. The version then reaches this command's block as the store's answer and
+// not as a line read back out of its output (CL7a): the step and the block are
+// two accounts of one store, and neither is parsed out of the other.
 func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, name string) (string, error) {
 	secret := config.ClaudeAccountSecret(name)
-	_, version, err := secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
-	return version, err
+	return secretsStoreStep(run, secret, func() (string, string, error) {
+		return secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
+	})
 }
 
 // accountsAddClearMark clears the account's mark (spec §2.2 step 6) and answers
@@ -275,7 +287,14 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 	// captures in this file do it, so stdout is the answer alone.
 	answer := cmd.OutOrStdout()
 	cmd.SetOut(cmd.ErrOrStderr())
-	res, err := initflow.Run(ctx, accountsAddStages(e), e.options())
+	opts := e.options()
+	// The reporter is this command's (ReportBorrowed): the loop's steps are
+	// three of the eight this command accounts for, and the closing line is
+	// printed where this command's own run ends — after the read-back, which is
+	// what its last line is made of. The loop printing it here would account a
+	// run "Done" before the step that may fail (G3).
+	opts.ReportBorrowed = true
+	res, err := initflow.Run(ctx, accountsAddStages(e), opts)
 	cmd.SetOut(answer)
 	if err != nil {
 		return nil, userErr("%v", err)

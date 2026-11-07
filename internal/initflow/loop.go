@@ -73,6 +73,18 @@ type Options struct {
 	// The caller points the reporter and Out at the same writer, so the two
 	// are one view.
 	Report *report.Reporter
+	// ReportBorrowed says the reporter is the caller's and not this run's, so
+	// the loop prints its steps and the blocks it owes and leaves the closing
+	// line to whoever opened the reporter. A run whose steps do not end with
+	// the loop — `accounts add` accounts for eight of them and runs three
+	// through the loop, with the read-back after it — would otherwise be
+	// accounted "Done" in the middle of itself, and a step that failed after
+	// that line exits 1 behind an account that says the run finished (G3).
+	//
+	// False is a run whose reporter is its own: the converge (init.go) opens
+	// it, the loop is the whole of the run, and the closing line is its last
+	// word.
+	ReportBorrowed bool
 	// Program is the command the run's own lines name: the front door the
 	// caller is running ("fugaro setup", "fugaro update"). The loop is
 	// behind both and cannot know which one it is, so it never names a
@@ -821,11 +833,13 @@ func (l *loop) finish() {
 		// The error itself is the caller's to print (the CLI returns it).
 		fmt.Fprintf(l.o.Out, "stopped at %s; fix: %s\n", f.Stage, f.Fix)
 	}
-	if l.o.Report != nil && !l.o.PlanOnly && !l.refused {
+	if l.o.Report != nil && !l.o.PlanOnly && !l.refused && !l.o.ReportBorrowed {
 		// Last, so the closing line is the last thing the run says: the
 		// reporter counts the steps it was given and names the outcome.
 		// A refused run has no outcome to name — the caller's exit code is
-		// not the account's — so it says nothing more (G3).
+		// not the account's — so it says nothing more (G3), and neither does a
+		// borrowed reporter, whose owner prints the line where its own run
+		// ends (ReportBorrowed).
 		l.o.Report.Summary()
 	}
 }

@@ -331,6 +331,14 @@ func TestAccountsAddDefaultIsShort(t *testing.T) {
 	for _, stage := range []string{"policy", "installation", "repository"} {
 		familyStageLine(t, lines, stage)
 	}
+	// Step 5's store is a step of the same account: the one line that names the
+	// container the token went into, through the opener `fugaro secrets set`
+	// uses, so a store that fails is a cross of this run rather than an error
+	// with no account around it.
+	store := stepLineOf(lines, "Storing")
+	if want := config.ClaudeAccountSecret("team-a"); !strings.HasPrefix(store, markDone+" Storing ") || !strings.Contains(store, want) {
+		t.Errorf("the store is not a tick naming the container it wrote to (%q):\nstderr:\n%s", store, errOut)
+	}
 	// The two stages that did something are ticks carrying what they did; the
 	// third is skipped in this rig and says so rather than ticking.
 	for _, stage := range []string{"policy", "installation"} {

@@ -623,7 +623,8 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		repo = r
 	}
 	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name, repo)) {
-		return secretsStoreStep(run, name, func() (string, string, error) { return secretsSetProjectWide(run, cmd, env, o, name) })
+		_, err := secretsStoreStep(run, name, func() (string, string, error) { return secretsSetProjectWide(run, cmd, env, o, name) })
+		return err
 	}
 	r, err := resolveSecretRepo(cmd, env, o.repo)
 	if err != nil {
@@ -713,21 +714,26 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 			pluginwire.Printable(name), pluginwire.Printable(r.repo))
 	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: r.label, gcp.LabelSecret: name}
-	return secretsStoreStep(run, name, func() (string, string, error) {
+	_, err = secretsStoreStep(run, name, func() (string, string, error) {
 		return storeSecret(run, cmd, env, o, gcp.SecretID(r.slug, name), labels, name)
 	})
+	return err
 }
 
-// secretsStoreStep prints one store of one value as one step and answers its
-// error. The step is opened here and nowhere else, because two commands reach
-// the store — `fugaro secrets set` and the converge behind `fugaro accounts
-// add` — and a value stored for the same reason is accounted for the same way
-// (CL7a). store answers the container it wrote to and the version it wrote,
-// which is the whole of the step's detail and not decoration: the line this
-// replaces named the container, and the person who stored the value is the one
-// who has to be able to find it in Secret Manager. A store that fails ends the
-// step with a cross and its error.
-func secretsStoreStep(run *stepRun, name string, store func() (id, version string, err error)) error {
+// secretsStoreStep prints one store of one value as one step and answers the
+// version the store wrote with its error. The step is opened here and nowhere
+// else, because two commands reach the store — `fugaro secrets set` and the
+// converge behind `fugaro accounts add` — and a value stored for the same
+// reason is accounted for the same way (CL7a). store answers the container it
+// wrote to and the version it wrote, which is the whole of the step's detail
+// and not decoration: the line this replaces named the container, and the
+// person who stored the value is the one who has to be able to find it in
+// Secret Manager. A store that fails ends the step with a cross and its error.
+//
+// The version comes back because one caller's answer is made of it: `accounts
+// add` names it in its own block, and it is the store's answer rather than a
+// line read back out of the step's.
+func secretsStoreStep(run *stepRun, name string, store func() (id, version string, err error)) (string, error) {
 	st := run.rep.Step("Storing " + pluginwire.Printable(name))
 	defer st.Abandon()
 	id, version, err := store()
@@ -735,10 +741,10 @@ func secretsStoreStep(run *stepRun, name string, store func() (id, version strin
 		// One line, whatever the server said: the step's own line is one line,
 		// and a message with newlines in it would break the account in two.
 		st.Failed(errors.New(oneLine(err.Error())), nil)
-		return err
+		return "", err
 	}
 	st.Done("version " + version + " in " + id)
-	return nil
+	return version, nil
 }
 
 // The two blocks a policy entry can live in (D1260): project_secrets holds
