@@ -653,10 +653,13 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // `src/main/spawn.ts` declares no argument for the row.
   //
   // **The group's writers are not here, and that is deliberate** (D1114): `set`
-  // and `unset` are C3's, which adds their never rows in the commit that adds
-  // the write. Until then the never table is the table main shipped, and a row
-  // here marked `mutating` would name a command this surface's never list does
-  // not yet refuse.
+  // and `unset` are the settings write's own two subcommands (`settings.edit`,
+  // `src/main/ipc.ts`), and `get` is a read this screen does not need, so the
+  // group's other words stay off the surface. **Unlike `models`, no settings
+  // word is on the never table below**, and none moved when the write landed
+  // (D1114) -- which is why this row is `allowed` and not `mutating`: a
+  // `mutating` row would name a command this surface's never list does not
+  // refuse.
   { command: 'settings', kind: 'allowed', where: 'internal/cli/settings.go:64' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
