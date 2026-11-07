@@ -497,11 +497,12 @@ func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 // every time and left the owner unable to apply a policy at all, so the count
 // becomes a note on the command's output and the write proceeds.
 //
-// The note replaces the refusal and nothing else. The diff and the stage's own
-// confirmation are still asked (the rig's gate is the managed answer alone,
-// whose inner gate admits nothing, so admitted is false here), the node is
-// written, and the generation the write landed is recorded in the file it was
-// built from exactly as a run with nothing in flight records it.
+// The note replaces the refusal and nothing else. The diff is still printed and
+// the stage's own typed confirmation is NOT asked of a person on a managed
+// project (the owner's ruling of 2026-11-06; the rig's gate admits nothing, so
+// admitted is false here, and the person branch is what spares the prompt), the
+// node is written, and the generation the write landed is recorded in the file
+// it was built from exactly as a run with nothing in flight records it.
 func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
@@ -519,8 +520,11 @@ func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d: the note did not let the write through", got, projectpolicy.Version)
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
-		t.Errorf("the note took the stage's own confirmation with it:\n%s", out)
+	if strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("a person on a managed project was asked to type the project's name (the owner's ruling of 2026-11-06):\n%s", out)
+	}
+	if !strings.Contains(out, "note: this rewrites the published policy node in place") {
+		t.Errorf("the write did not say what it does:\n%s", out)
 	}
 	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
 		t.Errorf("the generation the write landed is recorded as %q, want %q: the note changed the record", gen, want)
@@ -1272,4 +1276,64 @@ func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject: the owner's ruling
+// of 2026-11-06, no typed prompt for a person at a real terminal on a managed
+// project. The tail is driven directly with admitted false (the gate did not
+// stand in for the confirmation) and nothing on stdin: a person on a managed
+// project proceeds on a note, an unmanaged project and a coding agent's session
+// still need the typed name and are refused without it.
+//
+// The person condition is the session being the owner's own (no coding-agent
+// marker, which is the same reading the in-flight note takes), and the three
+// subtests are its mutation check: flipping either half — an unmanaged project,
+// or a marker on the managed one — must bring the refusal back.
+func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
+	run := func(t *testing.T, managed bool, marker string) (*migrationRig, *projectFixture, error) {
+		t.Helper()
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+		h := newMigrationRig(t, f, &initOptions{})
+		fakeTerminal(t)
+		if marker != "" {
+			t.Setenv("CLAUDECODE", marker)
+		}
+		h.cmd.SetIn(strings.NewReader(""))
+		m, _, err := h.s.plan(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed)
+	}
+	t.Run("a person on a managed project", func(t *testing.T) {
+		h, f, err := run(t, true, "")
+		if err != nil {
+			t.Fatalf("a person on a managed project was asked to confirm: %v\n%s", err, h.out)
+		}
+		if !strings.Contains(h.out.String(), "note: this rewrites the published policy node") {
+			t.Errorf("the note is missing:\n%s", h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got == 3 {
+			t.Errorf("the node was not written (version %d)", got)
+		}
+	})
+	t.Run("an unmanaged project", func(t *testing.T) {
+		_, f, err := run(t, false, "")
+		if err == nil {
+			t.Fatal("an unmanaged project wrote without the typed name")
+		}
+		if got := nodeVersionOn(t, f.db); got != 3 {
+			t.Errorf("the node moved to version %d without a confirmation", got)
+		}
+	})
+	t.Run("a coding agent's session on a managed project", func(t *testing.T) {
+		_, f, err := run(t, true, "1")
+		if err == nil {
+			t.Fatal("a coding agent's session wrote without the typed name")
+		}
+		if got := nodeVersionOn(t, f.db); got != 3 {
+			t.Errorf("the node moved to version %d under a marker", got)
+		}
+	})
 }

@@ -411,12 +411,14 @@ func policyMigrationRefusal(err error) error {
 //
 // managed is whether the project's marks say it is managed, and it is the
 // reading the rest of init makes for that question (initGate.underway, the same
-// answer askBuild's ConfirmsByGate and the gate's own stages take). It reaches
-// no confirmation here: what it changes is the in-flight guard below, and only
-// in the owner's own session — the owner's ruling of 2026-11-06 is that a
-// managed project's policy write is never refused for the runs in flight, so
-// the count becomes a note and the write proceeds. The upgrade door has no gate
-// and passes false.
+// answer askBuild's ConfirmsByGate and the gate's own stages take). It changes
+// two things, both in the owner's own session. The owner's ruling of 2026-11-06
+// is that a managed project's policy write is never refused for the runs in
+// flight, so the in-flight guard's count becomes a note and the write proceeds;
+// and it is that a person at a real terminal is not asked to type the project's
+// name to publish the node, so the typed confirmation below is replaced by a
+// note of what is written. The upgrade door has no gate and passes false, so it
+// keeps both refusals exactly as they were.
 func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool) error {
 	// The in-flight refusal is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
@@ -470,6 +472,20 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		if err := confirmEmptyAllowList(cmd, m.lc, marker); err != nil {
 			return err
 		}
+	} else if managed && marker == "" && !admitted {
+		// The owner's ruling of 2026-11-06: no typed prompt for a person at a
+		// real terminal on a managed project, except data loss and secret
+		// values. Rewriting the node from the person's own local config is
+		// neither, so the person is told what is written and it is written.
+		// marker == "" is the reading the in-flight note above already takes
+		// for the owner's own session — a person's terminal, and equally a run
+		// with no marker and no terminal, which that note already lets through.
+		// A coding agent's session carries a marker and keeps every
+		// confirmation below; an unmanaged project reads managed false and
+		// keeps them too. The gate's own admission (admitted) is untouched:
+		// where the gate judged and admitted the document, the confirmations
+		// below were already the gate's own and were not asked again.
+		fmt.Fprintf(w, "note: %s\n", what)
 	} else if !admitted {
 		// D846 reaches this door too: a publish that raises a ceiling, removes one
 		// or widens the model list is the widening the settings commands reserve for

@@ -828,8 +828,9 @@ var propertyAgentSites = map[string]string{
 	// The policy tail's marker read is the in-flight guard's: the owner's ruling
 	// of 2026-11-06 makes that guard a note in a managed project, and the note is
 	// the owner's own session's alone — a marker keeps the refusal. The same read
-	// is the argument confirmEmptyAllowList's first publish asks for.
-	"init_policy_migrate.go policyMigrationConfirm": "TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal (the marker keeps the in-flight refusal the managed case would turn into a note)",
+	// spares the typed confirmation for a person on a managed project, and is the
+	// argument confirmEmptyAllowList's first publish asks for.
+	"init_policy_migrate.go policyMigrationConfirm": "TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal (the marker keeps the in-flight refusal the managed case would turn into a note) and TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject (the same read spares the typed confirmation only without a marker)",
 }
 
 // outsideAgentSites are the agent-marker sites the property does not cover,
