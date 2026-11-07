@@ -372,10 +372,12 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		}
 		// Every named Claude account this repository may choose (beyond the
 		// bare default, which SecretMounts above already asked for when
-		// agent.auth is oauth) gets its own claude setup-token + secrets set
-		// pair, so init prompts for every account the owner has allowed,
-		// not just the one SecretMounts already knows about per workflow
-		// (design docs/design/named-oauth-tokens.md §3 T3, §4).
+		// agent.auth is oauth) gets its own entry, so init asks for every
+		// account the owner has allowed, not just the one SecretMounts
+		// already knows about per workflow; the line it leaves for one of
+		// them is that account's own `fugaro accounts add` command (Left),
+		// not the default's mint-then-store pair (design
+		// docs/design/named-oauth-tokens.md §3 T3, §4).
 		if cfg.Agent.Auth == "oauth" {
 			for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
 				if n == config.DefaultClaudeAccount {
@@ -590,8 +592,46 @@ func (s *secretsStage) Left() initflow.Left {
 			set += " --repo " + quoteWord(s.tg.repo)
 		}
 		switch {
-		case isClaudeOAuthSecret(name):
+		case name == config.ClaudeOAuthToken:
 			cmds = append(cmds, "claude setup-token", set)
+		case strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix):
+			// A named account's token is the one command that declares the
+			// account, stores the token where the shared job mounts it and
+			// converges the installation (spec accounts-add §8): the pair the
+			// default account above keeps is `claude setup-token` plus a
+			// `secrets set` the owner has to scope by hand, and for a named
+			// account both halves are `accounts add`'s own. "default" is
+			// reserved, so the command below is the only spelling and the
+			// default account has none.
+			account := strings.TrimPrefix(name, config.ClaudeOAuthTokenPrefix)
+			// The profile whose claude_accounts already lists the account: it
+			// leaves that half of the command a no-op. Without it the command
+			// stops in a project with several profiles (accountsAddProfile), and
+			// it would otherwise take the only one there is — serving the account
+			// from a profile that did not, and deploying a job — where storing
+			// the token was the whole step.
+			profile := config.ClaudeAccountProfile(s.e.lc.Profiles, account)
+			if profile == "" {
+				// No profile serves the account, and the account is one this
+				// config already declares (config.AllowedClaudeAccounts above),
+				// so `accounts add` would have nothing to declare and only a
+				// profile to choose for itself: the pair that mints the token and
+				// stores it in the container such a job would mount is the whole
+				// step, as it was before `accounts add` took it over.
+				cmds = append(cmds, "claude setup-token", set)
+				break
+			}
+			// --repos is this checkout's own repository, which is the one the
+			// command is about: accountsAddRepos defaults it to the origin of
+			// whatever checkout the line is pasted into, so the same line run
+			// from another checkout would bind the account to that repository
+			// instead of this one — and the widening the confirmation is meant
+			// to state would be measured against that checkout too, so it would
+			// say nothing. It is a union with the list the account already has
+			// (accountsAddWhat reads it back from the config the command would
+			// write), so naming this repository cannot narrow it.
+			cmds = append(cmds, selfCommand()+" accounts add "+quoteWord(account)+
+				" --repos "+quoteWord(s.tg.repo)+" --profile "+quoteWord(profile))
 		case name == multilineSecret:
 			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:

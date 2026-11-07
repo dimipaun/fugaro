@@ -515,6 +515,20 @@ type RepoSpec struct {
 	// tfvars as repo.project_secrets.
 	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
 
+	// AccountProfiles names, for each named Claude account this repository's
+	// jobs mount, the profile whose claude_accounts already lists it
+	// (config.ClaudeAccountProfile: the first in name order, and no entry when
+	// no profile serves the account). SecretCommands prints `fugaro accounts
+	// add <name>` for such a token, and that command has to say which profile
+	// gains the name: it refuses to pick one in a project with several
+	// (accountsAddProfile), and with exactly one it would add the account to
+	// that profile and deploy a job — a change storing the token never made.
+	// Naming the profile that already serves the account leaves that half of
+	// the command a no-op. A fact of the project's local config, carried here
+	// because the step's command is the one thing that needs it. json:"-":
+	// this map never reaches tfvars.
+	AccountProfiles map[string]string `json:"-"`
+
 	// GCPProject is the GCP project ID. It is not in the tfvars under this
 	// name: the root's own variable is "project".
 	GCPProject   string           `json:"-"`
@@ -1504,6 +1518,17 @@ func Repo(in Inputs) (RepoSpec, error) {
 	}
 	slices.Sort(rs.BuildSecrets)
 	rs.BuildSecrets = slices.Compact(rs.BuildSecrets)
+	// The profile that already serves every named account the workflows above
+	// resolved a token for: SecretCommands' `accounts add` step names it
+	// (RepoSpec.AccountProfiles).
+	rs.AccountProfiles = map[string]string{}
+	for logical := range rs.Secrets {
+		if name, ok := strings.CutPrefix(logical, config.ClaudeOAuthTokenPrefix); ok {
+			if profile := config.ClaudeAccountProfile(lc.Profiles, name); profile != "" {
+				rs.AccountProfiles[name] = profile
+			}
+		}
+	}
 	if len(checked) > 0 {
 		if rs.Check, err = c.check(rs, checked); err != nil {
 			return RepoSpec{}, err

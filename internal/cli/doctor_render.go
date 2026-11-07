@@ -164,6 +164,13 @@ var doctorSecurityPrefixes = []string{
 // must not pick one, and the default view names the command for each choice
 // rather than a single fix.
 var doctorDecisionIDs = map[string]bool{
+	// reviews-due-old is the cadence the user keeps (D965): the newest report
+	// is more than one period old, which is a state that is valid and is the
+	// reader's to choose between writing the period that closed and keeping
+	// the cadence they have. Its sibling, reviews-due, is the state that is
+	// not: a closed period with no report at all is work, and the class is
+	// decided by the ID, which is why the two states carry two IDs.
+	"reviews-due-old":                   true,
 	"secret-scope-shadowed":             true,
 	"project-secret-scope-stale":        true,
 	"project-secret-optional":           true,
@@ -759,6 +766,18 @@ type doctorShort struct {
 // view shows. They say the same thing as the check's own text — the same state,
 // the same command — in the length a person reads, and the full text is
 // unchanged in --json (the check's problem and fix) and under --all.
+//
+// The two account checks' fixes are the commands their own fixes hand over, in
+// the states those fixes cover, and both name a second form because both
+// checks reach a state the first form does not fit. The default account's
+// token is not project-scoped by default (config.ProjectScopeByDefault), so
+// the pair that stores it says --project-wide: a bare
+// `fugaro secrets set claude-oauth-token` from a checkout outside the
+// project_secrets entry stores a repository copy the shared job — which mounts
+// the project-wide one — never sees. And an account no profile's
+// claude_accounts lists has no `accounts add` form to be the whole fix of
+// (doctorAccountStore), so the mint-then-store pair stands beside the one
+// command, which is what those two checks print for it.
 var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
 	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
@@ -788,8 +807,8 @@ var doctorShorts = map[string]doctorShort{
 	"policy-unknown-keys":               {"an unknown key in the published policy stops every reader from reading it.", "remove the key `fugaro project policy show` prints"},
 	"allow-list-empty":                  {"the published policy admits no repository, so every run stops before it starts.", "run `fugaro project repos add owner/name`"},
 	"project-secret-stored":             {"a secret this checkout's jobs mount has no stored version.", "run `fugaro secrets set NAME`"},
-	"project-account-stored":            {"a Claude account job mounts a token the project does not store.", "run `claude setup-token`, then `fugaro secrets set TOKEN --project-wide`"},
-	"claude-accounts-stored":            {"a named Claude account of this repository has no stored token.", "run `claude setup-token`, then `fugaro secrets set claude-oauth-token-NAME`"},
+	"project-account-stored":            {"a Claude account job mounts a token the project does not store.", "run `fugaro accounts add NAME --repos OWNER/NAME --profile PROFILE` (the default account: `claude setup-token`, then `fugaro secrets set claude-oauth-token --project-wide`)"},
+	"claude-accounts-stored":            {"a named Claude account of this repository has no stored token.", "run `fugaro accounts add NAME --repos OWNER/NAME --profile PROFILE` (no profile serving the account: `claude setup-token`, then `fugaro secrets set claude-oauth-token-NAME`)"},
 	"oauth-token-allowed":               {"this checkout's agent.oauth_token names an account it may not use.", "name the repository in that account's allow_data_to, or drop the key"},
 	"project-layer-copy":                {"the repository's own copy of the project layer is not the published one.", "run `fugaro config publish` in this checkout"},
 	"project-secret-extra-accessors":    {"a project-wide secret still grants a job a repository no longer holds.", "run `fugaro update --repo .` in that repository's checkout"},

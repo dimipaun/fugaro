@@ -85,6 +85,17 @@ const (
 	// runs are admitted by, and it is the one stage whose change is a
 	// document rather than an installation.
 	Policy = "policy"
+	// Workspace is the workspace OWNER's published record
+	// (internal/cli/update_workspace.go, D1292): `workspaces/<name>` in the
+	// workspace's own database, built from the record this installation
+	// declares (workspace_members and workspace_cap) and migrated in place
+	// when an older release wrote the node. It comes after the policy stage
+	// and before the layer's: the two are the run's published documents, and
+	// this one decides who is in the group the workspace's own service rolls
+	// up and admits against. A MEMBER's run of the same command registers the
+	// stage and skips it — a member holds no grant on the workspace's project
+	// at all — so it is the owner's installation that publishes.
+	Workspace = "workspace"
 	// Layer is the published project layer and the one local layer file the
 	// owner edits (internal/cli/init_layer_stage.go, D830/D831): the stage
 	// seeds the file from the published object when it is absent, publishes
@@ -147,6 +158,12 @@ var order = []slot{
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
 	{name: Policy, needs: []string{Repository, Rules}},
+	// The workspace record is the owner's own declaration, and the mark that
+	// lets this stage write into that database is the installation's
+	// (budgetDBUnadopted): it comes after the installation's own stages, and
+	// after the policy one because the two are the run's published documents
+	// and the policy node is what every run of the project is admitted by.
+	{name: Workspace, needs: []string{Installation2, Policy}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a

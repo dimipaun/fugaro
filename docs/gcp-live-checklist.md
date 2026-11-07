@@ -812,6 +812,7 @@ probe account carries predefined grants only).
 | 190 | git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy ([`docs/secrets-brokering/`](secrets-brokering/implementation-plan.md), its task **B0.4** and its "Checks 190–192"; the reconciliation's **F13**, **F14**, **U2**, **U7** and **U8**): against a sandbox Bitbucket repository, through a Cloud Run service deployed **with IAM required and no public invoker** — a **full clone** and a **blobless clone** (request count, bytes and time each), a **push above 32 MiB** on HTTP/1.1 (chunked) and what the front end answers, a **small push**, the **cold start** of the first git request after 35 idle minutes (D501: the service keeps scaling to zero), and what the front end does with a push held open past the service's **3600 s** timeout. It is the measurement S1's proxy is designed against: a large push that passes on HTTP/1.1 is what S1 is built on, and one that does not is what makes B1.5 serve h2c end to end | See "Check 190" below; **you** run it, on installation `fugaro` only (project `fugaro-dev`, region `us-east5`, hard-coded — the check refuses another installation), against a sandbox repository only, never `belong`, with the token file at mode `0600` that [secrets-brokering/check190-steps.md](secrets-brokering/check190-steps.md) writes; the script is `scripts/live-checks/check190.sh`, its own test `scripts/live-checks/check190_test.sh`, and **no agent runs any step of it** | One throwaway Cloud Run service with IAM required and no public invoker, the Artifact Registry repository and the image it is built into, the Secret Manager container that holds the sandbox repository's token for the proxy, its own staging bucket for the build's source, two grants to the installation's build account on those two only (registry writer, bucket object viewer), and one branch on the sandbox repository — every one of them deleted by the Restore, which asserts four counts read `0` and reads the bucket back; the installation's own `gs://fugaro-dev_cloudbuild` is not touched. **Wall clock, not money: about two hours at the terminal**, one build and one idle instance billed to the project while it runs. **USER-RUN, NOT RUN.** |
 | 290 | The mixed-credentials run on a real installation (design [`docs/design/mixed-credentials.md`](design/mixed-credentials.md) §5 and §11, the tasks **B1–B6**; the owner's ruling **B0**, 2026-11-04; [`docs/multi-model.md`](multi-model.md) §3): an `api-key` run of the sandbox repository whose **coder** stays on its provider route — a DeepSeek model priced through the budget gateway — while its **senior review** runs inside the same loop, direct to Anthropic on ONE stage-scoped Claude OAuth account and on an **Opus** model. It is the only place the mix meets a real run, and it reads back the seven facts the rule stands on: `stage_accounts.review` naming the account; the `review` stage's `credential: oauth`, its model an Opus one, and no `model call` line for it in the log; the verdict `ship`; no `Invalid API key` anywhere; the account's dollars inside `cost.model_usd` and outside `cost.total_usd`; the coder's stage carrying the gateway's routing and its call count; and the coder's own stage environment holding no token. It is what `docs/multi-model.md` and the design's §9 name as the evidence still missing | See "Check 290" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, with `budget.mode: enforce` (the gateway caps the coder; nobody caps the account's own subscription dollars), and **no agent runs any step of it** | One run of the sandbox repository on a task that changes one line: the coder's gateway-priced calls, one review round on the account, and the run's own report. The run commits that line, pushes its `fugaro/<id>` branch and opens a pull request — a task that changes nothing is no cleaner, since a run whose agent makes no commit is failed, given an empty commit and still pushed and opened as a draft (`internal/runner/runner.go`) — so the Restore closes the pull request, deletes the branch, takes the file back and republishes the policy. **USER-RUN, NOT RUN.** |
 | 291 | What a catalog image's `ENV` does in a run ([`docs/image-env/`](image-env/implementation-plan.md) §6, that work's task **IE4** and its live check; **D1381**; issue #1755; `docs/base-image.md`'s "Bring your own" is the rule it reads back): one catalog entry published on the sandbox whose Dockerfile sets an ordinary marker (`ENV NEXUS_BASEURL=https://example.invalid/repository/maven-public/`) and one reserved name (`ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null`) — **no credential and no secret-shaped value on the image**, which is the point — then `fugaro update --repo` so the job carries the stamp, and `fugaro doctor --all` read for that job's line: it names the catalog entry and the names the job itself sets that a run drops, with **no value printed** — and since an image's own `ENV` lives in the image and no read of a job can list it, the line says so, and the reservation appears in the report only once one reserved name is set on the job by hand (`--update-env-vars`, converged away again in the same step); then one trivial run on the entry's image, from whose transcript the marker is present in the environment of a command the run ran through `fugaro verify`, `GOOGLE_APPLICATION_CREDENTIALS` is absent, and the image's value appears nowhere; and the **refutation step** — the same workflow on a **repository-built** image (`dockerfile:` in the sandbox's `fugaro.yaml`) setting the same marker, whose variable must be **absent** from the run and whose `doctor --all` line must read not catalog-stamped — that is D1370's scope, and the half a code review cannot settle | See "Check 291" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | One catalog entry published and built, one repository-image rebuild, two `fugaro update --repo` runs and two trivial sandbox runs, and the pull requests they open — closed and their branches deleted by the Restore. **USER-RUN, NOT RUN.** |
+| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, makes all fourteen readings and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -11319,7 +11320,7 @@ failure, not a pass. **No agent runs any step of it.**
    ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null
    ```
 
-   Then `fugaro image add <name> --inline <that file> --tags <the tags the sandbox workflow needs>`, which writes the **project's** configuration and builds nothing; `fugaro image build <name>`, which is the Cloud Build (it asks for the project's name typed at your terminal, and a coding-agent session never confirms one); and `fugaro update`, which publishes the catalog. The workflow the run lands on has to be one the entry covers: either that workflow's `image_name:` names the entry, or every tag in its `needs:` is one of the entry's `--tags`. **FACT:** `fugaro image ls`'s line for the entry — its name, its tags and its digest — and the workflow and job the run of step 4 lands on.
+   Then `fugaro image add <name> --inline <that file> --tags <the tags the sandbox workflow needs>`, which writes the **project's** configuration and builds nothing; `fugaro image build <name>`, which is the Cloud Build (it asks for the project's name typed at your terminal, and a coding-agent session never confirms one — except on this installation, whose marks say it is managed: a catalog entry is a row of the managed gate, so the person at that terminal is asked nothing and the printed plan, the gate's verdict on it and the build's record in the project's managed audit are the confirmation); and `fugaro update`, which publishes the catalog. The workflow the run lands on has to be one the entry covers: either that workflow's `image_name:` names the entry, or every tag in its `needs:` is one of the entry's `--tags`. **FACT:** `fugaro image ls`'s line for the entry — its name, its tags and its digest — and the workflow and job the run of step 4 lands on.
 
 3. **The stamp on the job, and what `doctor` names.** `fugaro update --repo <the sandbox repository>` converges that repository's resources, which is what writes the stamp on its workflow job. Then `fugaro doctor --all`. **FACT:** the job's own line, beginning `image-env-<job>: `, naming the **catalog entry** the job's image came from, reading that a run drops none of the names the job sets itself, and carrying its own caveat that an image's own `ENV` is not in that line — the honest state of a stamped job, and the reason the readings below exist. Then set one reserved name **on the job** — `gcloud run jobs update <job> --region <region> --update-env-vars GOOGLE_APPLICATION_CREDENTIALS=/dev/null`, the same name the entry's Dockerfile sets, pointing at a path that is not a credential; use the merge form, because the replace form would take Fugaro's own variables off the job — and read the line again. **FACT:** the same line now naming `GOOGLE_APPLICATION_CREDENTIALS` among the names a run drops, with no value beside it. Then `fugaro update --repo <the sandbox repository>` again, which converges the job back to the deployment's own environment. **FACT:** the converged line, with the name gone from it.
 
@@ -11340,3 +11341,103 @@ failure, not a pass. **No agent runs any step of it.**
 6. **Restore.** Close the pull requests the two runs opened and delete their branches (`gh pr close <n> --delete-branch` in the sandbox checkout), and take their `CHECK291.md` with them. Put the repository's `fugaro.yaml` back — the `commands.test` edit, the `dockerfile:` step 5 added and the covering key it took out go with it, and so does `.fugaro/<name>.Dockerfile` — remove the catalog entry (`fugaro image rm <name>`, the project's own config) and publish with `fugaro update`, then `fugaro update --repo <the sandbox repository>` so its job is redeployed from the restored config; that convergence is also what takes the name step 3 set by hand off the job. Confirm `fugaro doctor --all` reads the job as step 1 recorded it, and that one ordinary sandbox run still succeeds. If the hand-set name is still on the job after that, say so.
 
 **Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, both `doctor --all` readings of the job, the two transcripts' `marker:` and `reserved:` lines, the two run references and the workflow's name — and **never a secret and never a token value**. The one value this check's evidence carries is its own `https://example.invalid/...` marker, which resolves nowhere and is not a credential. Until this check runs, the passthrough is built and **unverified live**: `docs/base-image.md`'s "Bring your own" states the rule a reader acts on, and this check is the evidence `docs/image-env/implementation-plan.md` §6 names. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it — every step is yours.
+
+## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that implemented Check 340 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+§P8 (the plan's **E4**) — §P8 names the number and leaves the row and this section to that task, which is the
+register's own rule for a work that reserved none — **no step of it has been run, and nothing here is a claim that it
+works.** It is the check **R12** waits on: R12's Terraform writes one conditioned binding per prefix for the
+reports job, and each binding's listing half names the `storage.googleapis.com/objectListPrefix` request
+attribute. What that attribute **carries** is unverified in this tree — `docs/design/bucket-iam.md` §4's H3 veto
+and its §11 item **V7** record the value form as unverified, and grepping the tree finds the attribute's name in
+the design alone, read by no code. A listing IAM permits but the clause does not match is a grant that lists
+nothing, which is why this check runs **before** that Terraform lands.
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>
+```
+
+**You** run it, on a **sandbox bucket** only, and **no agent runs any step of it**. A project or a bucket whose
+name contains `belong` is refused before a single call, and the bucket is read back with your own identity first,
+so a mistyped one is a stop rather than a reading. The script is the whole check and asks you for nothing else. It
+creates a throwaway service account of the run's own (`fugaro-chk340-<hex>`, and it never adopts an account that is
+already there); grants it R12's two conditioned bindings — `roles/storage.objectViewer` under the `runs/` clause
+and `roles/storage.objectUser` under the `reports/` clause, each carrying the `resource.name` read half and the
+listing half joined by `||`, written through `--condition-from-file` so the expression's own bytes survive
+gcloud's comma-splitting; seeds four small objects of its own under `runs/<slug>/`, `reports/<slug>/`,
+`tokens/<slug>/` and `cache/<slug>/`; and then, impersonating that account, tries the **relative** form first and
+the **full path** form only if the relative one failed. Each form is read the same seven ways: `runs/<slug>/` must
+list, `reports/` must list, one `runs/` object must read, and the root listing and a `tokens/` read and a `tokens/`
+and a `cache/` listing must all be refused. The two listings and the read that must succeed are **retried** for
+`CHECK340_PROPAGATION_SECONDS` (150 seconds by default) before a failure is recorded, and the four refusals are
+read only once one of those three has held under that form — if none did, they are recorded as **not read**, because
+a refusal then could be the fresh grant simply not being in effect yet. IAM propagates a fresh grant and its
+condition asynchronously (V7's neighbour, §11 item **V5**), and reading one as a refusal would pick the wrong form —
+the one thing this check must not do. A refusal that is **allowed** instead is a grant wider than R12's two prefixes,
+and it fails that form. And a refusal has to **be** a refusal: the four calls are criteria only when the failure is
+the refusal itself, a denial naming the permission the clause would have carried (`storage.objects.list` for the
+root and the two listings, `storage.objects.get` for the read) — a call that did not answer (a 5xx gcloud did not
+retry, an expired session, a killed request, a denial of another kind) stops the run instead, because recorded as a
+refusal it would be a criterion nobody observed passing, and the form it names is one R12 must not write. A **grant the bucket refuses**, and a **removal it refuses** between the two forms, are a
+third thing again: the run stops there, with exit `2` and an `aborted` row naming the binding, rather than reading a
+permission error as "this form does not list". A refused removal has to stop the run all the same — the previous
+form's conditioned binding is still on the bucket, so the next form would list through the **earlier** clause and the
+answer would name the wrong form — and the flag that says a binding of this run's is on the bucket stays set, so the
+Restore tries the removal again and reads the bucket policy back into its own row either way. A removal that
+**succeeds** is not yet a removal that has **taken effect**: IAM propagates a removal asynchronously too, and both
+forms speak for the same throwaway account, so if the relative form failed for a reason of its own — a criterion
+read past its 150-second window — the full-path form would list and read through the still-active relative clause
+and be answered as the form the attribute carries. The second form is therefore not granted until the account is
+**refused** the listing the first form allowed — read as the account's own reach and not yours — **and refused for
+that reason**: the refusal has to be a denial naming `storage.objects.list`, the permission the removed clause
+carried, because that is the reading that says the clause is gone. A listing that failed naming another permission,
+or naming none — an expired session, a 5xx gcloud did not retry, a killed call, and gcloud's own command prefix in
+the message, whose dots read like a permission — is a call that
+did not answer rather than a binding that is gone, so it is retried like a listing that still succeeds: reading it as
+the removal having taken effect is the same wrong answer from the other side, and it is the reading this wait exists
+to refuse. A bucket that has not got there within the same 150-second window — and a call that never answers — stops
+the run with exit `2`, and the `aborted` row quotes whichever of the two it was, because that is a could-not-tell and
+not an answer.
+
+**Reading the `CHECK 340 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
+`FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry
+their own rows — `relative-lists-runs`, `relative-lists-reports`, `relative-reads-runs` and the four refusals, then
+the same seven under `full-` — and the row that matters is **`list-prefix`**: `PASS` names the form that held and
+prints the exact string R12's builder must write, above the block in one line to copy back; `FAIL` says **neither**
+form listed, which is the reading that stops the plan (E4). The bucket-wide `objectViewer` a listing would otherwise
+need is deliberately **not** a fallback here, because it reads `tokens/` and `cache/` too. Exit `0` means a form
+passed every criterion **and** the Restore confirmed it deleted everything this run made; `1` means none did — or a
+form passed and the Restore could not confirm what it deleted, in which case the block's `restore` row names the
+account and the prefixes to remove by hand — so exit `1` reads as **E4** only when that row passed; and `2` means the
+run could not tell (a guard stopped it, a tool is missing, a grant or a removal the bucket refused, a refusal that
+came back as a call that did not answer, a removal that had not taken effect in time, a listing that never answered,
+an internal error ended it) — `2` is not an answer about
+the attribute, and the block's `aborted` row says so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
+
+**Cost.** Nothing billable and no model call: one throwaway service account, two bucket bindings, one impersonation
+grant of yours on that account alone, and four small objects. It never prints a credential, holds none, and the
+`tokens/` object it seeds is a marker this check wrote itself.
+
+**Restore.** The script runs it itself, **from the exit trap too**, so a failed assertion or a Ctrl-C still leaves
+nothing behind: the four slug prefixes are removed, both bucket bindings go with `remove-iam-policy-binding --all`
+(no condition named, so it does not matter which form was granted when the run stopped), your impersonation grant
+goes, and the account is deleted — bindings first, because a deleted account's members read
+`deleted:serviceAccount:…` and the removes then fail. It reads all four prefixes back afterwards, and — whenever it
+made an account — the bucket policy and the account too, and says what it found: the policy read is what the PASS
+row's own sentence ("the policy no longer names the account") rests on, so it is made on every run that created the
+account, not only on the runs where the removals had not already been done. Anything that did not go is a FAILed
+`restore` row that names the slug and the account to delete by hand, never a silent pass. A read-back that cannot be **read** — a refused listing, a
+policy the operator's identity may no longer read, a dropped call — is a FAILed row too, naming what could not be
+confirmed: only the empty listing and the account's own NOT_FOUND count as gone, because an error read as
+"deleted" is the same silent pass from the other side.
+
+**Paste back:** the whole block into row 340 above and to the coordinator, with the `list-prefix` row's string —
+that string is the `<list prefix>` R12's builder writes into the two listing clauses, and it is the only thing
+this check exists to produce.
+
+**What waits on it.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
+own writing to `reports/` (R10, Open item 5 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)):
+neither the Terraform nor anything it enables may land before this check answers.

@@ -70,17 +70,18 @@ import (
 // agent's session runs it with no refusal (a writer is refused for what it
 // changes), and it needs no checkout to answer, since --project and --config
 // name the installation. It writes no cloud object and keeps no cache of its
-// own. It is NOT one of the reads the desktop console spawns, though, and that
-// difference is a file: selectProject resolves the working directory as a
-// checkout on the way to the installation, and the resolution remembers the
-// checkout it ran in (recordCheckout, project.go) unless the command's own
-// path stands on consoleReadPaths. This command joins that list in CM3, with
-// the design's §5.1 rule 6 row it needs there, so until it does a console
-// spawn of it records the checkout exactly as a person's own run does. The
-// roles a request for this document needs are the runs bucket's viewer and
-// the project's viewer, the ones every read of the marks already takes. And
-// it is not a tamper-proof trail: the bucket is unversioned and any
-// project-level storage writer can rewrite an object in it.
+// own. It IS one of the reads the desktop console spawns, and that is a file
+// as much as a row: selectProject resolves the working directory as a checkout
+// on the way to the installation, and the resolution remembers the checkout it
+// ran in (recordCheckout, project.go) unless the command's own path stands on
+// consoleReadPaths — which this command's does, added by the managed screens'
+// CM3 with the design's §5.1 rule 6 row that names this argv, so a console
+// paint of this document records no checkout and the operator's state file
+// keeps the directory a person opened rather than one the console resolved on
+// its way here. The roles a request for this document needs are the runs
+// bucket's viewer and the project's viewer, the ones every read of the marks
+// already takes. And it is not a tamper-proof trail: the bucket is unversioned
+// and any project-level storage writer can rewrite an object in it.
 
 // managedStatusNow is the day the trail is read about and the clock the read's
 // own two-day window is measured from. It is a package variable for the reason

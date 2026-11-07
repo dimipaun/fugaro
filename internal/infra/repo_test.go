@@ -514,6 +514,72 @@ func TestSecretCommands(t *testing.T) {
 	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}, "fugaro", func(s string) string { return s }); len(got) != 0 {
 		t.Fatalf("every secret stored, still: %+v", got)
 	}
+
+	// No profile serves the account, so the step is not `accounts add`: the
+	// account is one the config already declares (config.AllowedClaudeAccounts
+	// is where the name in spec.Secrets came from), and the command would have
+	// nothing to declare and only a profile to choose for itself — refusing in
+	// a project with several profiles (accountsAddProfile) and adopting the
+	// only one otherwise, deploying a job for an account that profile did not
+	// serve. The pair that mints the token and stores it in the container such
+	// a job would mount is the whole step, as it was before `accounts add` took
+	// it over (code review, medium). The default account's own step is
+	// unchanged above, because `fugaro accounts add default` is refused (the
+	// name is reserved).
+	named, err := Repo(sandboxInputs(t, m5Additions+"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
+	got = SecretCommands(named, stored, "fugaro", func(s string) string { return s })
+	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: named.Secrets["claude-oauth-token-acme-personal"],
+		Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token-acme-personal"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands for a named account no profile serves:\n%+v\nwant:\n%+v", got, want)
+	}
+
+	// A profile that already serves the account leaves that half of the
+	// command a no-op, so the step is `accounts add` — the one command that
+	// declares the account, stores its token project-wide and converges the
+	// installation (spec §8) — spelled with --repos with this repository,
+	// because the command would otherwise take the origin of whatever checkout
+	// it is pasted into, and with the profile (code review, medium).
+	served, err := Repo(sandboxInputs(t, m5Additions+
+		"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"+
+		"profiles:\n  alpha: { provider: bitbucket }\n  zeta: { provider: bitbucket, claude_accounts: [acme-personal] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = SecretCommands(served, stored, "fugaro", func(s string) string { return s })
+	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: served.Secrets["claude-oauth-token-acme-personal"],
+		Commands: []string{"fugaro accounts add acme-personal --repos acme/sandbox --profile zeta"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands for a served named account:\n%+v\nwant:\n%+v", got, want)
+	}
+}
+
+// TestSecretCommandsNamesTheRepositoryItIsFor pins the repository the
+// named-account line carries: spec.Name, the one the step's other commands
+// already use (SecretFix), and never a checkout's origin — `fugaro accounts
+// add` defaults --repos to the origin of whatever checkout it is pasted
+// into, so a line that did not name this repository would bind the account
+// to another one.
+func TestSecretCommandsNamesTheRepositoryItIsFor(t *testing.T) {
+	spec, err := Repo(sandboxInputs(t, m5Additions+
+		"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"+
+		"profiles:\n  zeta: { provider: bitbucket, claude_accounts: [acme-personal] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
+	for _, name := range []string{"acme/sandbox", "acme/other"} {
+		spec.Name = name
+		got := SecretCommands(spec, stored, "fugaro", func(s string) string { return s })
+		want := "fugaro accounts add acme-personal --repos " + name + " --profile zeta"
+		if len(got) != 1 || len(got[0].Commands) != 1 || got[0].Commands[0] != want {
+			t.Fatalf("steps for %s:\n%+v\nwant one step %q", name, got, want)
+		}
+	}
 }
 
 func TestRepoStateObjects(t *testing.T) {

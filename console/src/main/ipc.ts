@@ -494,7 +494,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty-two operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty-four operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -543,6 +543,22 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * never table below, the three writers as commands and all four as words of
  * `models`, so this row is the group's whole reachable argv. It takes no
  * argument at all and its child reaches no bucket, no database and no host.
+ *
+ * **The managed screens' two reads are the newest argvs on this surface** (the
+ * managed screens' plan, CM4, D1472 to D1477 and D1480 and D1481): `managed
+ * status --json --project <name> [--config <path>]` and
+ * `project policy show --json --project <name> [--config <path>]`. The first is
+ * one managed project's marks and the bounded subset of its newest audit record
+ * -- never the record's `argv`, which is the disclosure bound the CLI's own
+ * `--json` document keeps (`console/docs/json-contract.md` §6.21) -- and the
+ * second is the published policy node as `{project, policy}` and nothing else.
+ * **Neither takes an argument**, which is the strongest form of this file's
+ * rule, and neither declares a flag a screen could turn off: the two project
+ * flags are the installation's, settled by `src/main/spawn.ts`'s `takesProject`
+ * (rule 3), so no word of either argv comes from a renderer. Both are read-only
+ * -- they are the Project tab's sections, and this work adds no third write
+ * (D1471) -- and both are on `consoleReadPaths`, so neither remembers a
+ * checkout.
  *
  * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
@@ -1105,10 +1121,18 @@ export const CONSOLE_OPERATIONS = [
   // rule: a sensitive row is dropped whole by the read, so it has no pencil and
   // reaches this operation not at all.
   //
-  // **What this operation does not have**: no `--repo` (the edit lands in the
-  // selected installation's own layers, and the layer a repository's own config
-  // file would be is the fourth one the read's `target_layer` would name if that
-  // were the one), no `--add`/`--remove` (a list edit is a form no control can
+  // **What this operation does not have**: no `--repo` (the row whose
+  // `target_layer` is `repo` -- the layer the read names for the keys a
+  // repository's own config file carries -- is edited where the child's own
+  // working directory says, because that is what the CLI resolves `--layer repo`
+  // from with no `--repo`: the one at the checkout `git rev-parse
+  // --show-toplevel` finds for `.`, or its own refusal when that
+  // directory is not one (`internal/cli/settings_set.go`). The child's directory
+  // is the installation's recorded checkout when it has one and
+  // `privateWorkingDirectory` otherwise, so this surface names no repository and
+  // never checks that the directory is one; whether such a row should be refused
+  // instead is the settings write's own open question, not a rule here), no
+  // `--add`/`--remove` (a list edit is a form no control can
   // choose: the read carries no member that says a key is list-shaped), and no
   // third subcommand: `settings get` is a read of one key this screen does not
   // need and `set`/`unset` are this row's own two, so no other word of the group
@@ -1456,6 +1480,62 @@ export const CONSOLE_OPERATIONS = [
     command: 'coordinator intents',
     flags: ['--all', '--json'],
     summary: 'what the fleet’s writers have declared, newest first',
+    args: [],
+  },
+  // The Project tab's managed state and its audit trail (the managed screens'
+  // plan, CM4; D1472 to D1477, and rule 6 carries its row). It is the console's
+  // first read of a **managed** project as such: the two marks and whether they
+  // agree, the read's own reason when they do not, the version and the
+  // generation, and the bounded subset of the newest audit record -- D1476's
+  // list, and **never `argv`**. That bound is the command's, not this file's
+  // (`fugaro managed status --json` prints the subset and nothing more, contract
+  // §6.21), which is the point: a disclosure bound a screen could widen is not a
+  // bound. The screen that draws it also draws no "revoked" state, because the
+  // CLI persists none (D1475).
+  //
+  // **It takes no argument at all.** `fugaro managed status` has no positional
+  // word, and the two project flags are main-process state rather than arguments
+  // (`src/main/spawn.ts`'s `takesProject`, rule 3), so `args` here is empty on
+  // purpose and not for want of a screen: a caller that could name a project, a
+  // generation or a day would be naming where this console reads somebody else's
+  // project.
+  {
+    name: 'managed.status',
+    method: 'managedStatus',
+    command: 'managed status',
+    flags: ['--json'],
+    summary: 'one project’s managed marks, and the newest audit record’s bounded subset',
+    args: [],
+  },
+  // The published policy node (the same plan's CM4; D1480 and D1481, and rule 6
+  // carries its row). The Project tab's policy panel has had no source at all
+  // (F4); this is the read that gives it one, and the panel stops saying it
+  // cannot read when the same plan's CM10 flips it.
+  //
+  // **It is `project policy show --json` and not `project show --json`**, and
+  // the difference is the whole reason for the row: the former prints
+  // `{project, policy}` and nothing else (F18), while the latter also carries
+  // the **installation's** caps -- dollars that belong to the Spend screen and
+  // to the tab's own `caps` panel, and that a decoder here would have to drop
+  // (D1481). What the node does carry is the *project's* own `budget` block, and
+  // that is the project's policy rather than a spend figure: the tab draws it as
+  // the policy it is. **It is a ceiling all the same**, which is what the
+  // reduced mode withholds, so this read is on the tab's own view list
+  // (`REDUCED_VIEW_OPERATIONS`'s `caps`, below) with `budget.show` and
+  // `settings.read` -- the same ruling that puts the settings read there for its
+  // `budget.*` rows. The view entry is untouched: the tab's view is `caps`
+  // already (F9), which is what D1487 decided, and this is the operation's half.
+  //
+  // Like its sibling above it takes no argument at all: no positional word, no
+  // `--gcp-project`, no `--region`. The `project` group's other words --
+  // `policy publish`, `repos add`, `repos rm` and `sync` -- are each on this
+  // file's never table, so this is the group's whole reachable argv.
+  {
+    name: 'policy.show',
+    method: 'policyShow',
+    command: 'project policy show',
+    flags: ['--json'],
+    summary: 'the published policy node the project’s runs read, and nothing else',
     args: [],
   },
 ] as const satisfies readonly ConsoleOperation[]
@@ -3429,7 +3509,19 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *     same kind of figure under a different name: the registry's `budget.*` and
  *     `agent.max_budget_usd` rows are the project's configured caps, and the
  *     reduced mode withholds caps -- a settings table answered here would put a
- *     limit on screen through the third section that the caps panel is refused;
+ *     limit on screen through the third section that the caps panel is refused.
+ *     `policy.show` (the managed screens' plan's CM4) carries the project's own
+ *     `budget` block -- `mode`, `per_run_usd`, `allowed_models`,
+ *     `max_run_tokens` -- which is that same configured ceiling again, published
+ *     rather than resolved, so the read is withheld with them: D1481 picked this
+ *     command over `project show --json` to keep the **installation's** caps off
+ *     this surface, and the node's own block is another document's cap rather
+ *     than no cap at all. D1487 is not contradicted by it: what that decision
+ *     settled is that these *views* add no entry of their own to `VIEWS` -- the
+ *     tab's view is already `caps` (F9) -- while an operation's entry in this
+ *     list is the main process's half of rule 4, a different list; the read
+ *     reaches no screen in a reduced console either way, and the two halves stay
+ *     two rather than one standing in for the other;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -3446,7 +3538,7 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
     spend: Object.freeze(['spend.report', 'runs.stats', 'runs.summary'] as const),
-    caps: Object.freeze(['budget.show', 'settings.read'] as const),
+    caps: Object.freeze(['budget.show', 'settings.read', 'policy.show'] as const),
     kill: Object.freeze([] as const),
   })
 

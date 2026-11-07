@@ -1716,9 +1716,9 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     request read to twenty-seven, console 0.119.0's totals read to
 //     twenty-eight, console 0.119.0's models read to twenty-nine, the
 //     settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and
-//     the graph plan's CG9a to thirty-two; the managed screens' plan's CM4 --
-//     `managed.status` and `policy.show`, whose rule 6 rows CM3 already wrote --
-//     is the next, on thirty-four.
+//     the graph plan's CG9a to thirty-two, and the managed screens' plan's CM4
+//     -- `managed.status` and `policy.show`, whose rule 6 rows CM3 had already
+//     written -- to the thirty-four rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -1733,7 +1733,7 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //
 // The other direction -- a design row the console does not spawn yet -- is
 // deliberately **not** asserted: a fence may be ahead of the surface (that is
-// where rule 6's two managed rows stand until CM4), which is the safe direction
+// where rule 6's two managed rows stood between CM3 and CM4), which is the safe direction
 // for a permission, and the console's own test holds its copy that way.
 //
 // Mutations that prove it: add an entry to `CONSOLE_OPERATIONS` and leave rule 5's
@@ -10089,6 +10089,22 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"it is the console's second",
 		"`settings set|unset KEY --layer <L> --dry-run --json",
 		"retried silently",
+		// The member the section had wrong: `target_layer` was written as
+		// "`project` or `local`, the two the generic path writes, or `""` when
+		// the generic path would not write the key at all", and the read answers
+		// `settingsDefaultLayer` instead -- the narrowest of the three the key may
+		// be set in, which is non-empty for a key the generic path refuses
+		// (`mailbox.keychain_item` is `local` on a `writable: false` row). Of the
+		// two phrases pinned below, the first is the schema's own
+		// (`schemas/settings.schema.json`, `$defs.row.target_layer`) and the
+		// second is this contract's: the schema's description does not carry it,
+		// and no test holds the two descriptions to each other -- the contract's
+		// claim is held to the read by TestSettingsConsoleFixtureOwnerAndWritable
+		// (internal/cli/settings_console_fixture_test.go), which asks
+		// settingsDefaultLayer for the fixture's own rows. The fixture the e2e
+		// draws is a document with it.
+		"the narrowest of `repo`, `project` and `local` the key may be set in",
+		"non-empty on a row the generic path refuses",
 	} {
 		if !strings.Contains(read, want) {
 			t.Errorf("%s's §6.19 does not state %q: the read's section is where a reader learns that the console also writes this group, and the screen C3 shipped does", path, want)

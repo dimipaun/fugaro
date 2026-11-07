@@ -2450,7 +2450,7 @@ registry (D1102).
 | `sensitive` | bool | **yes** | never | `omitempty`, so it appears only on a sensitive row. **The console drops such a row whole** — no key, no value, no control (D1111, the owner's ruling of 2026-11-01) — which is why the `value` member above is absent for one |
 | `writable` | bool | never | never | whether the **generic path** may write this key (`settings set KEY --layer <L> --yes -- <VALUE>`). Written on every row — a consumer branches on the value, never on the member's presence |
 | `owner` | string | never | never | the command family that writes the key when the generic path may not (`settingsFamilyCommands`, `internal/cli/settings_set.go`: `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`), or `""` when there is none. `writable` and `owner` are answers about the same question, and a row with neither is a row no command writes |
-| `target_layer` | string | never | never | the layer an edit would write (`project` or `local`, the two the generic path writes), or `""` when the generic path would not write the key at all. **Empty is a refusal, not a default**: a console offers no pencil for such a row |
+| `target_layer` | string | never | never | the layer a write with **no** `--layer` lands in: the narrowest of `repo`, `project` and `local` the key may be set in (`settingsDefaultLayer`, `internal/cli/settings_set.go`), and the layer the console passes back as `--layer` — what the window showed is what is spawned (D1105). **It is a fact about the key and not about the generic path's allowlist**, so it is **non-empty on a row the generic path refuses**: `mailbox.keychain_item` is `writable: false` with `owner: fugaro secrets` and `target_layer: "local"`. `""` is a key none of the three layers holds, which is a row no edit may target — a document from a CLI older than D1102 carries no such member at all, and it reads the same — and **empty is not a layer a screen can pass**: such a row gains no pencil, whatever `writable` says |
 | `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
 
 **The default block is the built-in default, and exactly one of its two
@@ -2473,12 +2473,17 @@ spellings is set:**
 **The three writability members are the whole point of the console's half**
 (D1102), and they are the reason no list of the generic path's keys is kept in
 `console/`: `writable` says whether the generic path may write the key at all,
-`target_layer` says which layer it would write and is **empty** for a key it
-would not, and `owner` names the family that does write the key when the
-generic path may not — in S5's own words, so the sentence the screen draws
-("`written by <owner>, not by the generic path`") is the CLI's refusal
-sentence and not the console's invention. A screen reads the three and draws a
-control from them; it never decides for itself which keys are editable.
+`target_layer` names the layer a write with no `--layer` lands in — the
+narrowest of `repo`, `project` and `local` the key may be set in, which the
+console passes back as `--layer` — and `owner` names the family that does write
+the key when the generic path may not — in S5's own words, so the sentence the
+screen draws ("`written by <owner>, not by the generic path`") is the CLI's
+refusal sentence and not the console's invention. **The first and the second are
+independent**: `target_layer` is a fact about the key, so a row the generic path
+refuses still names a layer and is refused by `writable: false`; the empty
+`target_layer` is a key none of the three layers holds, and there a screen has
+no layer to pass at all. A screen reads the three and draws a control from them;
+it never decides for itself which keys are editable.
 
 **A `sensitive` row's value is never in this document.** `settingsJSON` writes
 no `value` member for one at all, and the human table prints `set`/`unset`
@@ -2619,9 +2624,11 @@ with no room in it for records, while a screen wants one closed document about
 one project — which is what the coordinator's stored read (§6.13) already is
 for the coordinator. **The console's own rule 6 row for it —
 `managed status --json --project <name> [--config <path>]` — is that plan's
-CM3**, so the console does not spawn it yet; the shape is written down here now
-because CM3's row and CM5's screen are what it is read against, and a shape that
-is not written down is a shape that drifts.
+CM3, and the row is on the table**: the design's §5.1 table carries it, the
+CLI's `consoleReadPaths` carries the command, and the console spawns it as
+`managed.status` (CM4). The shape is written down here because that row and the
+screen built on it (CM5) are what it is read against, and a shape that is not
+written down is a shape that drifts.
 
 **Why the CLI's own facts and never its prose** (D1472). The managed state is
 available today elsewhere only as doctor's `managed-audit` check, whose answer
@@ -2709,20 +2716,19 @@ console's row. The command takes no argument, writes no cloud object and keeps
 no cache of its own, and needs no checkout to answer — so it runs anywhere, a
 coding agent's session included.
 
-**It is not in the console's read set yet, and the difference is one local
-file.** The command resolves the selected project the way every cloud command
-does: `selectProject` resolves the working directory as a checkout on the way to
-the installation, and that resolution remembers the checkout it ran in
-(`recordCheckout`, `internal/cli/project.go`) unless the command's own path
-stands on the read-only list that stops it (`consoleReadPaths`,
-`internal/cli/project.go`, §6.8). `managed status` is **not** on that list: CM3
-is the task that adds its rule 6 row, and that task adds the design §5.1 row
-with it, because a `consoleReadPaths` entry whose argv the design's own table
-does not allow fails the test that reads that table back out of the design. So
-until CM3 lands, a console that spawned it would write
-`$XDG_CONFIG_HOME/fugaro/state/checkouts.json` in an enrolled checkout exactly
-as a person's own run does: local state, the file §6.8's `checkouts` reads, and
-never a cloud object.
+**It is in the console's read set, and that is one local file.** The command
+resolves the selected project the way every cloud command does: `selectProject`
+resolves the working directory as a checkout on the way to the installation, and
+that resolution remembers the checkout it ran in (`recordCheckout`,
+`internal/cli/project.go`) unless the command's own path stands on the read-only
+list that stops it (`consoleReadPaths`, `internal/cli/project.go`, §6.8).
+`managed status` **is** on that list: CM3 added it in the same change as the
+design's §5.1 rule 6 row for it, because a `consoleReadPaths` entry whose argv
+the design's own table does not allow fails the test that reads that table back
+out of the design. So a console that spawns it — and `managed.status` does
+(CM4) — writes no `$XDG_CONFIG_HOME/fugaro/state/checkouts.json` in an enrolled
+checkout: the state file §6.8's `checkouts` reads keeps the directory a person
+opened, and no cloud object is written either.
 
 ### 6.22 `fugaro graph --json` — the dependency graph, and its stream
 
