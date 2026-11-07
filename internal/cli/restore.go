@@ -166,9 +166,10 @@ re-created rather than lost, and the output says so.`,
 // has already decided.
 type restoreRun struct {
 	cmd *cobra.Command
-	// rep is the run's account and log, opened by restoreSteps before the
-	// preflight and shared with the apply the sequence ends in, so this run
-	// prints one line per unit of work and one closing line (D1352, D1354).
+	// rep is the run's account and log, opened by restoreSteps once the
+	// preflight has passed and shared with the apply the sequence ends in, so
+	// this run prints one line per unit of work and one closing line (D1352,
+	// D1354).
 	rep  *report.Reporter
 	o    restoreOptions
 	sel  localcfg.Selection
@@ -216,8 +217,10 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 // root.
 //
 // It is the body rather than the command because a restore's apply is part of
-// the restore's own run: it prints its steps through this run's reporter, in
-// this run's log, under this run's one closing line.
+// the restore's own run: it prints its steps through this run's reporter — the
+// opener it is handed returns the one restoreSteps opened, so the body opens no
+// log of its own and the wrapper that would end the run is not on this path —
+// in this run's log, under this run's one closing line.
 var restoreManagedApply = managedApplyWith
 
 // restoreInitCmd builds the creating path's command: newSetupCmdWith, the
@@ -321,22 +324,25 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 // the cloud is not undone (putBack's message lists it).
 func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (err error) {
 	ctx := cmd.Context()
-	// This run's account and its log (D1352): the log is filed under the
+	rr, c, err := restorePreflight(cmd, o, newID, rootArg)
+	if err != nil {
+		return err
+	}
+	// This run's account and its log (D1352), opened where the restore's own
+	// work starts and not at the command's door: the preflight above is every
+	// refusal this command makes before it changes anything, the ones it
+	// answers without reaching the cloud included (reporterOpener), and a
+	// refused restore files no log — not even an empty one, which would be one
+	// of the fifty the name keeps (CL3's pruneLogs). The log is filed under the
 	// command's own name and holds what the run's stages streamed, and the
 	// closing line is this run's whether it finished, failed or left something
-	// for the operator. It is opened before the preflight because a refused
-	// restore keeps its log too — the refusal prints no step, so the closing
-	// line is not printed either — and it is closed on the way out so the log's
-	// last partial line is written.
+	// for the operator. It is closed on the way out, so a last partial line is
+	// written.
 	rep, sink := reporterFor(cmd, "restore", nil)
 	if sink != nil {
 		defer func() { _ = sink.Close() }()
 	}
 	defer rep.Summary()
-	rr, c, err := restorePreflight(cmd, o, newID, rootArg)
-	if err != nil {
-		return err
-	}
 	rr.rep = rep
 	// The one confirmation, before anything is changed: the local config, the
 	// checkout's file, the project and the apply.
@@ -422,7 +428,12 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 	// The apply: the same function `fugaro managed apply` runs, so the
 	// preflight allowlist, the gate, the plan-hash re-check, the credential
 	// and the confirmation are the same ones and not a second, weaker path.
-	if err := restoreManagedApply(cmd, restoreApplyCloud(o.cloud), rr.root, rep); err != nil {
+	// The opener hands the body this run's own reporter, opened above and
+	// shared with the apply: one run, one log, one closing line. The body opens
+	// nothing of its own here, and closes nothing either.
+	if err := restoreManagedApply(cmd, restoreApplyCloud(o.cloud), rr.root, func() (*report.Reporter, report.Sink) {
+		return rep, nil
+	}); err != nil {
 		return restoreWrap(err, "%s was created and is managed, and the project config names it; the apply did not finish, so run fugaro managed apply %s to finish it (nothing else is left to do but D66's list below, which a finished restore prints)", rr.newID, rr.rootArg)
 	}
 	return rr.report()

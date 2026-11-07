@@ -42,15 +42,6 @@ func newConfigPublishCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			// This run's account and its log (D1352): one line per unit of work
-			// with the reporter's closing line last, and the full output of a
-			// run that printed one kept beside it. It is opened before anything
-			// is read, so a refused publish keeps its log too.
-			rep, sink := reporterFor(cmd, "config-publish", nil)
-			if sink != nil {
-				defer func() { _ = sink.Close() }()
-			}
-			defer rep.Summary()
 			// A coding agent's session may proceed only where the project is
 			// managed and this document passes the gate (D1012). The marker is
 			// read first and a person's own run never consults the gate at all:
@@ -82,6 +73,20 @@ func newConfigPublishCmd() *cobra.Command {
 					return userErr("nothing was published: %v", err)
 				}
 			}
+			// This run's account and its log (D1352): one line per unit of work
+			// with the reporter's closing line last, and the full output of a
+			// run that printed one kept beside it. It is opened where the
+			// publish's own work starts and not at the command's door: the
+			// layer file given on the command line is read above, and a file
+			// that is not there is refused without reaching the cloud
+			// (reporterOpener), so a refused publish files no log, not even an
+			// empty one, which would be one of the fifty this name keeps (CL3's
+			// pruneLogs).
+			rep, sink := reporterFor(cmd, "config-publish", nil)
+			if sink != nil {
+				defer func() { _ = sink.Close() }()
+			}
+			defer rep.Summary()
 			env, err := openCloud(ctx, open)
 			if err != nil {
 				return err

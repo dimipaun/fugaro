@@ -1276,12 +1276,17 @@ func recordRestoreApply(t *testing.T, r *projectRig) *[]restoreApplyCall {
 	t.Helper()
 	var calls []restoreApplyCall
 	old := restoreManagedApply
-	restoreManagedApply = func(cmd *cobra.Command, o cloudOptions, rootArg string, rep *report.Reporter) error {
+	restoreManagedApply = func(cmd *cobra.Command, o cloudOptions, rootArg string, newRep reporterOpener) error {
 		// The apply a restore ends in is this run's own: it prints its step
 		// through the restore's reporter, which is what keeps one log and one
-		// closing line for the whole sequence.
+		// closing line for the whole sequence. The body opens nothing of its
+		// own here, which is why the opener's sink is the restore's to close.
+		rep, sink := newRep()
 		if rep == nil {
 			t.Error("the restore reached the apply with no reporter: its step would print nowhere")
+		}
+		if sink != nil {
+			t.Error("the restore's apply opened a sink of its own: the run would file two logs")
 		}
 		call := restoreApplyCall{cloud: o, root: rootArg}
 		if lc, err := localcfg.Load(r.cfg); err == nil {

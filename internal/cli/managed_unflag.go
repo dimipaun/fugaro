@@ -107,11 +107,6 @@ there is no bulk form, no wildcard and no prefix.`,
 // runs bucket is the one the read uses — and only then what the command does
 // and does not do, the typed confirmation, and the two writes.
 func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
-	rep, sink := reporterFor(cmd, "managed-unflag", nil)
-	if sink != nil {
-		defer func() { _ = sink.Close() }()
-	}
-	defer rep.Summary()
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs and cannot be unset in time (refuseHTTP2Debug).
@@ -166,6 +161,19 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	if err != nil {
 		return err
 	}
+	// This run's account and its log (D1352), opened where the run's own work
+	// starts and not at the command's door: who is running, whether the
+	// argument is a project ID at all, whether it is the project this
+	// installation is in, and whether the marker is read from the bucket the
+	// managed read looks in are all decided above, from the command line and
+	// this installation's config (reporterOpener). A refused unflag therefore
+	// files no log, not even an empty one, which would be one of the fifty this
+	// name keeps (CL3's pruneLogs).
+	rep, sink := reporterFor(cmd, "managed-unflag", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	// The number is what says a bucket name is this project's (a bucket name
 	// is global), and it is what the removal proves the bucket with. It is
 	// read before the confirmation so a project this credential cannot read is

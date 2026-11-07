@@ -527,6 +527,41 @@ func TestManagedApplyDoesNotDrawOverItsOwnOutput(t *testing.T) {
 	}
 }
 
+// TestManagedApplyKeepsNoTerraformTailInItsLog: the line a failed apply's step
+// ends with names the failure and stops there. terraform's own stderr tail is a
+// provider's bytes, and this command has no redaction source, so its log keeps
+// its own lines and never that output (F6, D1352) — while the screen keeps the
+// tail twice over: terraform streamed it as it ran (TF.Out), and the error the
+// command returns carries it into the "Error:" line under the closing one.
+//
+// The tail is a sentence of its own, so "the log does not hold it" is read
+// directly rather than inferred from the absence of terraform's whole stream.
+func TestManagedApplyKeepsNoTerraformTailInItsLog(t *testing.T) {
+	const tail = "Error: creating a bucket: googleapi: Error 403: the provider refused fmgd-data"
+	isolateState(t)
+	r, root, _ := managedOpenGateRig(t)
+	r.script["init"] = map[string]any{"exit": 1, "stderr": tail}
+	r.save(t)
+	out, errOut, err := execute(t, "managed", "apply", root)
+	if err == nil {
+		t.Fatalf("the apply finished though its terraform init failed:\n%s%s", out, errOut)
+	}
+	screen := out + errOut
+	if !strings.Contains(screen, markFailed+" apply") {
+		t.Errorf("the failed apply is not the step that failed:\n%s", screen)
+	}
+	if !strings.Contains(screen, tail) {
+		t.Errorf("terraform's own tail never reached the screen:\n%s", screen)
+	}
+	_, log := onlyLog(t, "managed-apply")
+	if strings.Contains(log, tail) {
+		t.Errorf("terraform's own stderr tail is in the run's log:\n%s", log)
+	}
+	if !strings.Contains(log, "terraform init exited 1") {
+		t.Errorf("the log's line does not name the failure the step ended with:\n%s", log)
+	}
+}
+
 // ----------------------------------------------------------------- restore
 
 func TestRestoreDefaultIsShort(t *testing.T) {

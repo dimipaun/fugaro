@@ -180,11 +180,6 @@ is overwritten blind.`,
 // Every refusal before the write is a hard return, and nothing is written by
 // any of them.
 func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, currency string) error {
-	rep, sink := reporterFor(cmd, "managed-flag", nil)
-	if sink != nil {
-		defer func() { _ = sink.Close() }()
-	}
-	defer rep.Summary()
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs and cannot be unset in time (refuseHTTP2Debug).
@@ -270,6 +265,19 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	if err != nil {
 		return err
 	}
+	// This run's account and its log (D1352), opened where the run's own work
+	// starts and not at the command's door: who is running, whether the
+	// argument is a project ID at all, whether it is this installation's, and
+	// whether the marker and the state are read from a bucket this project can
+	// be managed through are all decided above from the command line and this
+	// installation's own config (reporterOpener), so a refused flag files no
+	// log, not even an empty one, which would be one of the fifty this name
+	// keeps (CL3's pruneLogs).
+	rep, sink := reporterFor(cmd, "managed-flag", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	// The number is what says a bucket name is this project's (a bucket name
 	// is global), and it is what the writer proves the bucket with.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)

@@ -153,18 +153,37 @@ the reason printed first. Nothing is halted and nothing is deleted.`,
 // the closing line is this run's. A restore drives the same body with its own
 // run's reporter instead — one run, one log, one closing line — which is why
 // the body is a function of its own.
+//
+// The body opens the reporter and this wrapper ends the run, because the two
+// are not the same caller's: a run that was refused before the body opened one
+// has no closing line to print, and a restore's apply must not print one
+// halfway through the restore's own run. The deferred call below is that ending,
+// once, for the run this command owns.
 func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
-	rep, sink := reporterFor(cmd, "managed-apply", nil)
-	if sink != nil {
-		defer func() { _ = sink.Close() }()
-	}
-	defer rep.Summary()
-	return managedApplyWith(cmd, o, rootArg, rep)
+	var (
+		rep  *report.Reporter
+		sink report.Sink
+	)
+	defer func() {
+		if rep == nil {
+			return
+		}
+		rep.Summary()
+		if sink != nil {
+			_ = sink.Close()
+		}
+	}()
+	return managedApplyWith(cmd, o, rootArg, func() (*report.Reporter, report.Sink) {
+		rep, sink = reporterFor(cmd, "managed-apply", nil)
+		return rep, sink
+	})
 }
 
 // managedApplyWith is managedApply's body: the whole sequence, printing its one
-// step through rep.
-func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, rep *report.Reporter) error {
+// step through the reporter newRep opens where the apply's own work starts. A
+// nil newRep is a caller with no reporter at all, which prints as this command
+// printed before there was one.
+func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep reporterOpener) error {
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs, so it cannot be unset in time (refuseHTTP2Debug).
@@ -194,6 +213,21 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, rep *r
 	if got := lc.RunsBucketName(); got != bucket {
 		return userErr("project %s names the runs bucket %q, and a managed project's marker and delete list live in %s: a managed apply reads the objects of the project's own runs bucket, so check runs_bucket in the project config", safetext.Field(lc.Name), safetext.Field(got), safetext.Field(bucket))
 	}
+	// This run's account and its log, opened here and not at the command's
+	// door: a GODEBUG credential leak, the project selection, the root argument
+	// and the runs-bucket name are all answered above without reaching the
+	// cloud, and a refused apply files no log, not even an empty one (D1352,
+	// reporterOpener). The empty file would be one of the fifty this command's
+	// name keeps (CL3's pruneLogs) and would evict a real run's.
+	if newRep == nil {
+		newRep = func() (*report.Reporter, report.Sink) { return report.New(report.Options{}), nil }
+	}
+	// The sink the opener hands back is not this body's to close: the run's
+	// closing line comes after this function has returned — the wrapper that
+	// owns the run prints it and closes the log under it, and a restore prints
+	// its own at the end of its whole sequence — so a sink closed here would
+	// lose that line. A caller closes what it opened.
+	rep, _ := newRep()
 	// The project number is what says a bucket name is this project's (a
 	// bucket name is global), and both reads below prove it with.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
@@ -336,9 +370,14 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, rep *r
 	if err != nil {
 		// The step is the account of the apply, so a refused or failed one
 		// ends it with a cross and the error under it (G8) rather than
-		// printing a line the run does not stand behind.
+		// printing a line the run does not stand behind. The line the log keeps
+		// names the same failure without terraform's own stderr tail: this
+		// command has no redaction source, so what its log holds is its stage
+		// lines and never a provider's output (F6, D1352) — while the screen
+		// keeps the tail twice over, once as terraform streamed it (TF.Out) and
+		// once in the error this command returns.
 		werr := managedApplyErr(lc, rootArg, res, err)
-		step.Failed(werr, nil)
+		step.Failed(withoutTerraformTail(werr), nil)
 		return werr
 	}
 	if !res.Changed {
@@ -1082,6 +1121,31 @@ func managedListErr(lc *localcfg.Config, bucket string, err error) error {
 	default:
 		return remote(fmt.Errorf("reading gs://%s/%s for %s: %w", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), safetext.FieldErr(err)))
 	}
+}
+
+// withoutTerraformTail is err's message with the stderr tail of the terraform
+// command inside it cut off, and err itself when no such command carries one.
+// What is kept is everything up to the command's own sentence — a wrapping
+// sentence such as "terraform for the root of …" still reads — and what goes is
+// the provider's own bytes terraform appended to it.
+//
+// It is what ends a failed apply's step, because the step's line is one of the
+// run's own lines and a log is read fourteen days later: this command has no
+// redaction source, so F6 gives its log the stage lines and nothing a provider
+// printed (D1352), and the same bytes reach the screen twice over anyway —
+// terraform streamed them as it ran, and the error the command returns still
+// carries them for the "Error:" line under the closing one.
+func withoutTerraformTail(err error) error {
+	var ee *tf.ExitError
+	if !errors.As(err, &ee) || strings.TrimSpace(ee.Stderr) == "" {
+		return err
+	}
+	head := fmt.Sprintf("terraform %s exited %d", ee.Command, ee.Code)
+	msg := head
+	if i := strings.Index(err.Error(), head); i >= 0 {
+		msg = err.Error()[:i] + head
+	}
+	return errors.New(msg)
 }
 
 // managedApplyErr maps the apply's own refusals to what the reader can do about

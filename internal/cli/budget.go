@@ -1286,6 +1286,16 @@ func namedRepo(ctx context.Context, repo string) (string, error) {
 
 func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	ctx := cmd.Context()
+	p, err := parsePlan(cmd, o)
+	if err != nil {
+		return err
+	}
+	// This run's account and its log (D1352), opened where the run's own work
+	// starts and not at the command's door: parsePlan's refusals — one scope
+	// named, and the flags that go with it — are read off the command line
+	// alone (reporterOpener), and a refused set files no log, not even an
+	// empty one, which would be one of the fifty this name keeps (CL3's
+	// pruneLogs).
 	rep, sink := reporterFor(cmd, "budget-set", nil)
 	if sink != nil {
 		defer func() { _ = sink.Close() }()
@@ -1293,10 +1303,6 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	// The run's closing line, on every way out of it: a step's own line is the
 	// account and the summary is what says how the run ended (G3).
 	defer rep.Summary()
-	p, err := parsePlan(cmd, o)
-	if err != nil {
-		return err
-	}
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -1439,11 +1445,6 @@ func budgetKillLogName(kill bool) string {
 
 func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	ctx := cmd.Context()
-	rep, sink := reporterFor(cmd, budgetKillLogName(kill), nil)
-	if sink != nil {
-		defer func() { _ = sink.Close() }()
-	}
-	defer rep.Summary()
 	// The flag's presence names the scope, not the string it carries: a bare
 	// --repo is a scope with an empty value (see parsePlan).
 	if o.all == cmd.Flags().Changed("repo") {
@@ -1452,6 +1453,16 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	if utf8.RuneCountInString(o.reason) > maxKillReason {
 		return userErr("--reason is %d characters; keep it to %d", utf8.RuneCountInString(o.reason), maxKillReason)
 	}
+	// This run's account and its log (D1352), opened where the run's own work
+	// starts and not at the command's door: the scope and the reason are read
+	// off the command line alone (reporterOpener), and a refused kill files no
+	// log, not even an empty one, which would be one of the fifty this name
+	// keeps (CL3's pruneLogs).
+	rep, sink := reporterFor(cmd, budgetKillLogName(kill), nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
 		return err
