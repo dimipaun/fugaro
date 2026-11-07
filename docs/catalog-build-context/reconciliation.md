@@ -535,10 +535,11 @@ git grep -ohE '^## Check [0-9]+' origin/main -- docs | awk '{print $3}' | sort -
 git grep -l 'Check 291' origin/main -- docs   # docs/image-env's three files
 ```
 
-The highest **written** `## Check` section anywhere is **290** (`docs/gcp-live-checklist.md`). **291**
-is claimed by `docs/image-env` (`README.md`, `implementation-plan.md`, `reconciliation.md`), which
-states the register's rule: a claim above the highest written section is settled at its merge, and
-whichever of two claims merges second renumbers itself. **292–299 are claimed by nobody**, in `main`
+The highest **written** `## Check` section anywhere was **290** at this reading
+(`docs/gcp-live-checklist.md`), and is **291** since `docs/image-env`'s own check was written. **291**
+was claimed by `docs/image-env` (`README.md`, `implementation-plan.md`, `reconciliation.md`) at that
+reading, which states the register's rule: a claim above the highest written section is settled at
+its merge, and whichever of two claims merges second renumbers itself. **292–299 are claimed by nobody**, in `main`
 or in any open pull request. `docs/stateless-orchestrator` claims **300–309** and
 `pr/1780`'s `docs/cli-output-console-graph` claims **310–314**; both are above this block. This work
 therefore takes **Check 292** (with 293–299 available if a task needs a second owner-run check), and

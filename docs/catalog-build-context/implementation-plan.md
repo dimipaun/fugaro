@@ -406,9 +406,11 @@ owner-run by the register's own rule, it needs a real installation and a real re
 **NOT RUN** — nothing in this folder has been executed.
 
 **Number:** **Check 292** — the first number free above the register's highest **written** section,
-**290** (`docs/gcp-live-checklist.md`), read on 2026-11-06 over `main` and every open pull request.
-**291 is claimed** by `docs/image-env`, which states the register's rule: a claim above the highest
-written section is settled at its merge, and whichever of two claims merges second renumbers itself.
+**290** (`docs/gcp-live-checklist.md`), read on 2026-11-06 over `main` and every open pull request,
+and **291** since `docs/image-env`'s own check was written.
+**291 was claimed** by `docs/image-env` at that reading, which states the register's rule: a claim
+above the highest written section is settled at its merge, and whichever of two claims merges second
+renumbers itself.
 **292–299 are claimed by nobody**; `docs/stateless-orchestrator` claims 300–309 and `pr/1780`'s
 `docs/cli-output-console-graph` claims 310–314, both above this block.
 [reconciliation.md](reconciliation.md) §8 is the reading, with its commands.
