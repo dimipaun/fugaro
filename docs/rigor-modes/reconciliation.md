@@ -731,12 +731,12 @@ SECURITY.md, moved the table's row from 99 to 100: it is a ruling's pin rather t
 a folder's, and the figure is the tree's either way. Amended 2026-11-07:
 `internal/cli/docs_cli_output_console_graph_test.go`, the CLI output and console
 graph folder's pin, moved the table's row from 100 to 101. Amended 2026-11-07:
-`internal/cli/docs_check340_test.go`, the periodic-reviews work's pin over its
-Check 340 section of the live checklist, moved the table's row from 101 to 102: it is
-a check's pin rather than a folder's, and the figure is the tree's either way. Amended
-2026-11-07: `internal/cli/docs_check130_test.go`, the licensing folder's pin over the
-register's Check 130 section (plan L1.10, run by L1.11), moved the table's row from 102
-to 103.) They
+`internal/cli/docs_check130_test.go`, the licensing folder's pin over the register's
+Check 130 section (plan L1.10, run by L1.11), moved the table's row from 101 to
+102. Amended 2026-11-07: `internal/cli/docs_check340_test.go`, the periodic-reviews
+work's pin over its Check 340 section of the live checklist, moved the table's row from
+102 to 103: it is a check's pin rather than a folder's, and the figure is the tree's
+either way.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

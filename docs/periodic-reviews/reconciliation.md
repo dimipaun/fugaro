@@ -728,7 +728,13 @@ block **D1310–D1409** is taken by the plans that merged there, the highest bei
 still not touched**: `docs/gcp-live-checklist.md` is another work stream's file, and the task that
 implements each check writes its row and its section under the number free at that merge — the
 register's own rule for a work that reserved none (`docs/gcp-live-checklist.md:586`, the same rule
-`docs/run-limit-carry-over/README.md:55` reads from a work that took none).
+`docs/run-limit-carry-over/README.md:55` reads from a work that took none). **Amended 2026-11-07:**
+the register's highest **written** `## Check` section is **340**, and the register is touched now, by
+Check 340 alone — the task that implemented that check (§P8 of
+[implementation-plan.md](implementation-plan.md)) wrote the register's row and its `## Check 340`
+section, so the census above reads 290 at the reading it was taken at and 340 in the tree, and 341
+and 342 stay claims until their own tasks write them (the `Checks 340–349` row of
+[README.md](README.md)).
 
 ### 6.4 Decisions D1430–D1449
 
