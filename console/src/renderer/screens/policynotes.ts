@@ -24,15 +24,17 @@
 // names -- the accounts (name and the repositories each token may be used by),
 // `allow_repos`, `base_branch`, the routing switch and the image catalog -- are
 // drawn. The node carries more, and this file draws **none** of it: the `budget`
-// block's dollars are the Spend screen's, and `default_claude_account` and
-// `claude_account_stages` are the review account keys, which come from
-// `settings --json` and belong to the settings panel (D1478, CM6). A member the
-// decoder does not know is ignored rather than drawn (reconciliation §5), which
-// is what keeps a newer node's additions off this screen rather than into it.
+// block's ceilings are the `caps` panel's subject and are drawn by no screen of
+// this work (rule 3, D1481 -- the read carries the block, and the section that
+// reads it drops it), and `default_claude_account` and `claude_account_stages`
+// are the review account keys, which come from `settings --json` and belong to
+// the settings panel (D1478, CM6). A member the decoder does not know is ignored
+// rather than drawn (reconciliation §5), which is what keeps a newer node's
+// additions off this screen rather than into it.
 //
 // **Each block says which read its lines came from.** Both reads draw a block of
 // their own, each with the operation as its `data-source` hook, the console's own
-// heading, the argv a reader can run, and its own state. That is the owner's rule
+// heading, the read a person can run, and its own state. That is the owner's rule
 // of 2026-10-31 for the tab: **every section is independent**, with its own read,
 // its own busy state and its own refusal naming its own command -- so a refused
 // `doctor` never takes the node's lines down, and a refused node never hides the
@@ -61,21 +63,30 @@ import type { ElementLike } from '../app'
 // The two reads, the six checks, and the sentences a reader is owed.
 // ---------------------------------------------------------------------------
 
-/** POLICY_NODE_SOURCE is the argv the node's block is drawn with, and the
- * command its refusal names. `fugaro project policy show --json` is rule 6's own
- * row (CM3): `{project, policy}`, and nothing else (F18). */
+/** POLICY_NODE_SOURCE is the read the node's block names, and the command its
+ * refusal names. `fugaro project policy show --json` is rule 6's own row (CM3):
+ * `{project, policy}`, and nothing else (F18). The console's own child carries
+ * more -- the two project flags §3.4 rule 3 gives every cloud command -- and the
+ * line drawn here is the read a person can run, not that argv. */
 export const POLICY_NODE_SOURCE = 'fugaro project policy show --json'
 
-/** POLICY_CHECKS_SOURCE is the argv the checks' block is drawn with. `doctor`
- * takes `--dir` only when the console sets it, and the console never sets it
- * (`spawn.ts`), so the row a reader runs is the two words the table carries. */
+/** POLICY_CHECKS_SOURCE is the read the checks' block names. The console's own
+ * child carries `--dir` (`spawn.ts`'s `dirFlag`, and §5.1's `doctor --json` row
+ * says why: a GUI app's working directory is not a checkout) and the same two
+ * project flags; the line drawn here is the read a person can run, not the argv
+ * the console spawns. */
 export const POLICY_CHECKS_SOURCE = 'fugaro doctor --json'
 
 /** POLICY_NODE_TITLE is the node block's heading, the console's own words. */
 export const POLICY_NODE_TITLE = 'the published policy node'
 
-/** POLICY_CHECKS_TITLE is the checks block's heading. */
-export const POLICY_CHECKS_TITLE = 'what doctor says about the published policy'
+/** POLICY_CHECKS_TITLE is the checks block's heading. It names the six
+ * `policy-*` checks rather than "what doctor says about the published policy":
+ * `doctor` warns about that same node from two checks outside the family
+ * (`allow-list-empty`, `allow-list-uncovered`), which this section counts and
+ * does not draw, and a heading would be claiming coverage the block has not got
+ * (see `POLICY_CHECK_IDS`). */
+export const POLICY_CHECKS_TITLE = 'the six `policy-*` checks doctor reports'
 
 /**
  * POLICY_CHECK_IDS is the closed list of the policy checks this section draws,
@@ -89,6 +100,15 @@ export const POLICY_CHECKS_TITLE = 'what doctor says about the published policy'
  * *not in this document* (`POLICY_CHECK_UNDRAWN_WORD`) rather than omitted --
  * absence is never a pass, and a screen that drew five rows for six checks would
  * be hiding the sixth's absence.
+ *
+ * **The family is the ruling's, and `doctor` warns about this same node from
+ * outside it.** `allow-list-empty` and `allow-list-uncovered`
+ * (`internal/cli/doctor.go`) are warnings about the *published node's
+ * allow-list* -- it admits no repository, or it does not admit one this machine
+ * names -- and they are not `policy-*` checks, so they are counted by the
+ * section's own figure (`POLICY_OTHERS_LEAD`) and not drawn. A later task that
+ * draws them changes D1482's list; widening this one to a prefix or to a
+ * severity would be that change made without the ruling.
  */
 export const POLICY_CHECK_IDS: readonly string[] = Object.freeze([
   'policy-published',

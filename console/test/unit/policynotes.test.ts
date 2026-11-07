@@ -216,11 +216,27 @@ const POLICY_DOC = {
   },
 }
 
+/** OTHER_CHECK_IDS are the checks this document carries that the section must
+ * **not** draw: `managed-audit` and two credential lines, which are not the
+ * policy's at all, and doctor's two allow-list warnings, which are about the
+ * same published node and are still outside the six the ruling names. The two
+ * allow-list ones are here on purpose: a heading or a filter that reached them
+ * would be claiming coverage the ruling did not give (D1482), and the only thing
+ * the section says about any of the five is the figure beside the lead
+ * sentence. */
+const OTHER_CHECK_IDS = [
+  'allow-list-empty',
+  'allow-list-uncovered',
+  'managed-audit',
+  'creds-rules',
+  'creds-broken',
+]
+
 /** DOCTOR is `fugaro doctor --json`: `{ok, checks}`. It carries the five policy
  * checks a project with a fresh node would have, **not** the sixth
- * (`policy-rules-skew`, which a database doctor cannot read), and three checks
- * that are not the policy's at all -- `managed-audit` and two credential lines
- * (reconciliation, "the checks this screen is not about"). */
+ * (`policy-rules-skew`, which a database doctor cannot read), and the five
+ * checks of `OTHER_CHECK_IDS` -- two of which doctor raises about this very node
+ * (`allow-list-empty`, `allow-list-uncovered`, `internal/cli/doctor.go`). */
 const DOCTOR = {
   ok: false,
   checks: [
@@ -258,6 +274,20 @@ const DOCTOR = {
       severity: 'warning',
       problem: 'every job matches the published policy',
       fix: '',
+    },
+    {
+      id: 'allow-list-empty',
+      ok: false,
+      severity: 'warning',
+      problem: 'the policy published at config/policy/shared admits no repository: every run’s repository is refused before it mints a git token',
+      fix: 'fugaro project repos add owner/name enrolls one',
+    },
+    {
+      id: 'allow-list-uncovered',
+      ok: false,
+      severity: 'warning',
+      problem: 'the policy published at config/policy/shared does not admit example-owner/other-repo, which this machine’s config names',
+      fix: 'fugaro project repos add example-owner/other-repo enrolls it',
     },
     { id: 'managed-audit', ok: true, severity: 'info', problem: 'the audit trail is readable', fix: '' },
     { id: 'creds-rules', ok: true, severity: 'info', problem: 'the rules match', fix: '' },
@@ -376,12 +406,18 @@ describe('the policy checks', () => {
     const root = draw()
     const checks = block(root, 'environment.report')
 
+    const others = DOCTOR.checks.filter((check) => !POLICY_CHECK_IDS.includes(check.id))
     expect(POLICY_CHECK_IDS).toHaveLength(6)
+    expect(others.map((check) => check.id)).toEqual([...OTHER_CHECK_IDS])
     expect(texts(checks, 'policy-notes-check-id')).toEqual(POLICY_CHECK_IDS)
+    // Not one of the withheld ids -- nor any sentence of theirs -- reaches a
+    // cell: the figure beside the lead sentence is the whole of what the section
+    // says about them, and it says how many.
     const other = walk(checks)
       .map((leaf) => leaf.textContent ?? '')
-      .filter((text) => /^(?:managed-audit|creds-rules|creds-broken)$/.test(text))
+      .filter((text) => OTHER_CHECK_IDS.includes(text))
     expect(other).toEqual([])
+    expect(texts(checks, 'policy-notes-others')).toEqual([String(others.length)])
     expect(texts(checks, 'policy-notes-others-lead')).toEqual([POLICY_OTHERS_LEAD])
   })
 
