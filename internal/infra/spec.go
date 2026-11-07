@@ -1117,19 +1117,21 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
 	}
-	// The image's origin, written for the run: the catalog entry this job's
-	// image came from, and nothing on a job the catalog did not choose — a
-	// repository-built image, a checkout: clone or shared job (whose entry is
-	// empty, catalog.Applies refusing both), the check jobs. A run whose job
-	// carries no stamp passes none of its image's own variables, which is the
-	// fail-closed direction: an image the catalog did not choose is a
-	// repository's own build file, and a job deployed before this variable
-	// existed behaves as it did until its next `fugaro update --repo .`
-	// redeploys it: the repository stage, which a plain `fugaro update` does
-	// not run (docs/image-env, reconciliation D1371).
-	if entry.Name != "" {
-		ws.Env[ImageEntryEnv] = entry.Name
-	}
+	// The image's origin, written for the run on EVERY workflow job: the
+	// catalog entry this job's image came from, and empty on a job the
+	// catalog did not choose (a repository-built image, a checkout: clone or
+	// shared job, whose entry is empty, catalog.Applies refusing both). The
+	// key is written even when empty because the runner reads os.Environ,
+	// which includes a derived image's own ENV: a repository Dockerfile that
+	// sets FUGARO_IMAGE_ENTRY would otherwise run with a stamp the deploy
+	// never wrote, whereas a key the job sets overrides whatever the image
+	// holds. A run reads an empty stamp as "no entry" and passes none of its
+	// image's own variables, which is the fail-closed direction; a job
+	// deployed before this variable existed behaves as it did, and stays open
+	// to that forgery, until its next `fugaro update --repo .` redeploys it:
+	// the repository stage, which a plain `fugaro update` does not run
+	// (docs/image-env, reconciliation D1371).
+	ws.Env[ImageEntryEnv] = entry.Name
 	// One writer for the job's clone shape: a job whose image holds no
 	// checkout of this repository carries the markers the run needs to fetch
 	// the source itself, and the value of the kind marker is the workflow's

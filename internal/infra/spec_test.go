@@ -239,9 +239,13 @@ func TestSpecMatchesM4JobSpec(t *testing.T) {
 	if ws.ServiceAccount.DisplayName != gcp.JobSADisplayName(ws.Slug, "web") || ws.ServiceAccount.DisplayName == str("service_account_display_name") {
 		t.Errorf("display name = %q; the new mark is JobSADisplayName, the M4 one only its legacy form", ws.ServiceAccount.DisplayName)
 	}
+	// The M4 fixture predates the image's origin stamp, which every workflow
+	// job now carries (empty when the catalog chose no image): compare the rest.
+	m4Env := maps.Clone(ws.Env)
+	delete(m4Env, ImageEntryEnv)
 	for name, c := range map[string]struct{ got, want map[string]string }{
-		"env":          {ws.Env, anyMap(golden["env"].(map[string]any))},
-		"env row":      {ws.Env, pairs(t, strings.TrimPrefix(rows["env"], "^;^"), ";", "")},
+		"env":          {m4Env, anyMap(golden["env"].(map[string]any))},
+		"env row":      {m4Env, pairs(t, strings.TrimPrefix(rows["env"], "^;^"), ";", "")},
 		"secrets":      {envSecretIDs(ws), anyMap(golden["secrets"].(map[string]any))},
 		"secrets row":  {envSecretIDs(ws), pairs(t, rows["secrets"], ",", ":latest")},
 		"secret-names": {ws.SecretIDs, pairs(t, rows["secret-names"], ";", "")},
@@ -762,8 +766,10 @@ func TestSpecStampsNoEntryOnAJobWithNoCatalogEntry(t *testing.T) {
 				if ws.CatalogEntry != "" {
 					t.Fatalf("fixture bug: workflow %s runs entry %q, want none", name, ws.CatalogEntry)
 				}
-				if got, ok := ws.Env[ImageEntryEnv]; ok {
-					t.Errorf("workflow %s carries %s = %q, want no such key", name, ImageEntryEnv, got)
+				// Present and empty: a key the job sets overrides an
+				// image's own ENV of the same name, an absent one does not.
+				if got, ok := ws.Env[ImageEntryEnv]; !ok || got != "" {
+					t.Errorf("workflow %s carries %s = %q (set: %v), want the key present and empty", name, ImageEntryEnv, got, ok)
 				}
 			}
 		})

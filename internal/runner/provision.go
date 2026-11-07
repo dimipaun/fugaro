@@ -25,9 +25,11 @@ import (
 // repository's own derived image, and a registry read at run time would need a
 // credential inside the job.
 //
-// It is absent, not empty, on every job whose image the catalog did not choose
-// (a repository-built image, checkout: clone's base image and its shared
-// sibling, the check jobs), and a run whose job carries no stamp passes none
+// It is set on every workflow job and EMPTY on a job whose image the catalog did
+// not choose (a repository-built image, checkout: clone's base image and its
+// shared sibling): a key the job sets overrides a derived image's own ENV of
+// the same name, an absent one would not, and a repository Dockerfile could
+// forge the stamp. A run whose job carries an empty stamp passes none
 // of the image's own variables: the fail-closed direction, so a job deployed
 // before this constant existed behaves as it did until its next
 // `fugaro update --repo .` redeploys it — the door that rewrites a

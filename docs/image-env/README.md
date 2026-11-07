@@ -32,7 +32,7 @@ sets is printed: the runs report **names, never values**. Per-repository images 
 map on a workflow stay **out** (§"Considered and declined"). The load-bearing fact the reconciliation
 had to settle first is that **nothing in the job tells the runner where its image came from**
 (reconciliation F5) — so the operator's catalog entry is stamped into the job's own environment at
-deploy, where the entry is already known (F6), and a run whose job carries no stamp **passes
+deploy, where the entry is already known (F6), and a run whose job carries no stamp (empty or absent) **passes
 nothing** (D1371).
 
 | File | What it is |
@@ -57,7 +57,7 @@ Three consequences follow, and they are requirements of this design rather than 
 1. **The scope is the catalog, and the code has to prove it.** An image the operator's
    `image_catalog` chose passes its variables; a **per-repository** image does not, and neither does
    `checkout: clone`'s base image. Today nothing in the container distinguishes them (F5), so the
-   distinction has to be **created at deploy** (D1371) — and a job with no stamp passes nothing,
+   distinction has to be **created at deploy** (D1371) — and a job with an empty or absent stamp passes nothing,
    which is the fail-closed direction.
 2. **The denylist is reused, not invented.** `config.ReservedEnv` (`internal/config/validate.go:85-88`)
    is Fugaro's Go implementation of the names a workflow secret's variable may not take; it is

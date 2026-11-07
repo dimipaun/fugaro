@@ -103,8 +103,7 @@ and IE2 says so, `docs/repo-image-removal/**`,
   a name, not a reference, a URL or a digest, and the runner never parses it. **It is written for every
   job whose image the catalog chose**, prebuilt and built alike (`CatalogImageEntry` reads the entry
   back out of a prebuilt reference, `internal/backend/gcp/catalog.go:141-159`), and for no other job:
-  a repository-built job, `checkout: clone`'s base image and the check jobs carry no stamp, which is
-  the fail-closed direction D1371 asks for. It is a new name under a reserved prefix, so no existing
+  a repository-built job and `checkout: clone`'s base image carry the key **empty** (the owner's choice of 2026-11-06 after the security review of IE1: a key the job sets overrides a derived image's own `ENV`, an absent one does not, so a repository Dockerfile could otherwise forge the stamp), which is the fail-closed direction D1371 asks for; IE2 reads an empty stamp as unstamped. It is a new name under a reserved prefix, so no existing
   field changes meaning and the agent's own environment never sees it (D1372). **As landed** (2026-11-06,
   this branch): the constant is `runner.ImageEntryEnv`, aliased `infra.ImageEntryEnv` and assigned in
   `repoCtx.workflow`; the subtraction is `runner.ImageEnvDroppedNames(jobEnv, declared)`, with
@@ -117,7 +116,7 @@ and IE2 says so, `docs/repo-image-removal/**`,
 - **Tests:** `TestSpecStampsTheCatalogEntryOnTheJob` (a job whose workflow runs a built entry and one
   whose workflow runs a prebuilt entry both carry `FUGARO_IMAGE_ENTRY` = the entry's name), and
   `TestSpecStampsNoEntryOnAJobWithNoCatalogEntry` (a repository-built job and a `clone` job carry the
-  name not at all — not empty, absent). Both extend the assertions the existing
+  key present and empty). Both extend the assertions the existing
   `TestSpecRecordsABuiltCatalogEntry` and `TestReadinessDeploysAPrebuiltCatalogEntry`
   (`internal/infra/readiness_catalog_test.go:155-207`) already make about the same spec. The
   subtraction's own tests live beside it (`internal/runner/imageenv_names_test.go`): the names an
