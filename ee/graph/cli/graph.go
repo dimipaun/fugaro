@@ -78,11 +78,10 @@ func NewGraphCmd() *cobra.Command {
 			"repository the sweep has never reconciled is read as its runs alone — the\n" +
 			"half of the view that needs no credential — rather than dropped: the\n" +
 			"document says which of the two halves it is holding.\n\n" +
-			"With --json the document is printed as console/docs/json-contract.md §6.22\n" +
-			"defines it: its version, when it was assembled, one entry per scope in\n" +
-			"sources, the nodes, the edges (the coordinator's view has none) and the\n" +
-			"warnings. Without it, a short table: each scope's state, then its nodes\n" +
-			"grouped by release.\n\n" +
+			"With --json the document is printed as the console reads it: its version,\n" +
+			"when it was assembled, one entry per scope in sources, the nodes, the edges\n" +
+			"(the coordinator's view has none) and the warnings. Without it, a short\n" +
+			"table: each scope's state, then its nodes grouped by release.\n\n" +
 			"Exit codes: 1 for a refused scope or a project with no database, 2 for a\n" +
 			"failure of the database or the runs bucket.",
 		Args: cobra.NoArgs,
