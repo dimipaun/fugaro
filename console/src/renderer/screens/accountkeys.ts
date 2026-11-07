@@ -33,9 +33,12 @@
 // **A key the read does not carry is `unset`, not empty.** The document carries
 // no row for a key whose layer has none, and an empty cell would read as "the
 // value is the empty string" -- a different fact from "the read carries no value
-// for this key". The section always draws both subjects: the project's default
-// row, and the stage rows it found or the registry's own wildcard key when it
-// found none.
+// for this key". The read spells an unset value `unset = <what it means>` too,
+// and that spelling is the same fact again rather than an account: an account is
+// a name, and the sentence is the registry's own words about the key
+// (`UNSET_PREFIX`). The section always draws both subjects: the project's
+// default row, and the stage rows it found or the registry's own wildcard key
+// when it found none.
 
 import { putText } from '../app'
 import type { ElementLike } from '../app'
@@ -103,12 +106,6 @@ export const ACCOUNT_KEYS_UNSET_WORD = 'unset'
  * the wildcard is the registry's, not this module's invention. */
 export const DEFAULT_ACCOUNT_KEY = 'default_claude_account'
 export const STAGE_ACCOUNT_KEY = 'stages.*.claude_account'
-
-/** ACCOUNT_KEYS_THEMES is the set of themes the section is drawn for, and it is
- * the same two every screen names (design section 6.1 rule 5). */
-export const ACCOUNT_KEYS_THEMES = Object.freeze(['light', 'dark'] as const)
-
-export type AccountKeysTheme = (typeof ACCOUNT_KEYS_THEMES)[number]
 
 /** AccountKeyRow is one drawn row: the read's own key, the stage segment the key
  * carries (`null` for the project's default), and the value the read printed or
@@ -192,15 +189,28 @@ function stageOf(key: string): string | null {
  * does not read, which withholds the section. */
 type ValueRead = { readonly kind: 'value'; readonly value: string | null } | { readonly kind: 'shape' }
 
+/** UNSET_PREFIX is how the read spells a value no layer decides: `unset = ` and
+ * the registry's own sentence for what unset means (`unset(what)`,
+ * `internal/settings/registry.go`). **An account is a name**, so a value the
+ * read spells that way is not a value this section draws: it is the same fact as
+ * a row the read carries no value for -- `stages.*.claude_account` unset means
+ * the project's default account decides, which is the registry's sentence about
+ * the key and not an account any stage uses -- and it is drawn as the console's
+ * own word. An empty value is the same fact again: an account is never the empty
+ * string, and an empty cell is what this section may not draw. */
+const UNSET_PREFIX = 'unset = '
+
 /** valueAt reads a row's `value` member: absent is a row the read carries no
  * value for -- which is what a `sensitive` row is, and what a key no layer sets
- * is -- and a member of any other type is a row this console does not read
- * rather than a value it coerces. */
+ * is -- the read's own unset spelling is that same fact written out, and a
+ * member of any other type is a row this console does not read rather than a
+ * value it coerces. */
 function valueAt(row: Record<string, unknown>): ValueRead {
   const raw = row['value']
   if (raw === undefined) return { kind: 'value', value: null }
   const value = textAt(raw)
   if (value === null) return { kind: 'shape' }
+  if (value === '' || value.startsWith(UNSET_PREFIX)) return { kind: 'value', value: null }
   return { kind: 'value', value }
 }
 
@@ -351,7 +361,7 @@ function accountKeysPanel(factory: ScreenFactory, model: AccountKeys): ScreenEle
     // project name is a document string whichever door it arrived by.
     const because = factory.create('p')
     because.setAttribute('class', ACCOUNT_KEYS_BECAUSE_CLASS)
-    putText(because, model.because, 'sentence', 'settings.read')
+    putText(because, model.because, 'sentence', 'because')
     element.append(because)
   }
   if (model.state === 'read') element.append(accountKeysBody(factory, model))
