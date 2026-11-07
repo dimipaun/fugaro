@@ -245,7 +245,6 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image render":           "refuses outside a git checkout, which is what the world is",
 	"fugaro image selftest":         "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":           "prints the no-project-config refusal",
-	"fugaro init":                   "is a pointer: it names setup and update and refuses",
 	"fugaro managed status":         "prints the no-project-config refusal",
 	"fugaro models ls":              "prints the built-in list with no project selected",
 	"fugaro pair ls":                "prints the no-project-config refusal",
@@ -439,6 +438,9 @@ func TestEveryCommandRunsWithClosedStdin(t *testing.T) {
 		path := leaf.CommandPath()
 		_, fixtured := closedStdinFixtures[path]
 		why, exempt := closedStdinNoFixture[path]
+		if closedStdinRetiredLeaf(leaf) {
+			exempt, why = true, closedStdinRetiredWhy
+		}
 		switch {
 		case fixtured && exempt:
 			t.Errorf("%s is fixtured and exempt at once: the fixture is what a bare run cannot do, so one of the two is stale", path)
@@ -515,6 +517,20 @@ func closedStdinAsked(t *testing.T, path, out string) {
 	}
 	t.Errorf("%s printed a question with its stdin closed (%q): a closed stdin is nobody to answer, so the run asks a person who is not there\n%s", path, question, out)
 }
+
+// closedStdinRetiredLeaf reports the tree's one tombstone (retired.go). It is a
+// leaf like any other — the harness runs it and holds it to the deadline and to
+// the question check — but it is exempt from the classification by this rule
+// rather than by its path, because its path is the one string the live-tree
+// census (docs_live_init_census_test.go, W0.2) allows in the files that retire
+// the command and nowhere else, and this is not one of them. Both the sentence
+// it prints and the way it names itself say what it is.
+func closedStdinRetiredLeaf(leaf *cobra.Command) bool {
+	return leaf.Hidden && strings.HasPrefix(leaf.Short, "Retired:")
+}
+
+// closedStdinRetiredWhy is that exemption's reason, beside the same list's rule.
+const closedStdinRetiredWhy = "is the tombstone: it prints the two commands that replaced it and exits non-zero"
 
 // closedStdinSetBaseBranch gives the world's project config a value for the
 // setting the unset's fixture removes: an unset of a key no document sets has
