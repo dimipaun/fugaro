@@ -3635,14 +3635,26 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// the launch rather than carry it (backend.LaunchSpec.SecretEnv).
 		lspec.SecretEnv = []string{sealMarker(sealKey)}
 	}
-	// The credentials service, when the installation has opted into one and
+	// The credentials service, when its switch is on for this repository and
 	// this execution is a repository's own job (job is the shared project job
-	// otherwise, and the service refuses that caller: see the helper).
+	// otherwise, and the service refuses that caller: see the helper). The auth
+	// the switch is judged with is the one the RUN will read — the ref's
+	// fugaro.yaml, else this machine's checkout of it (launchFileConfig, the
+	// same document cascadeLaunchRefusal judged a moment ago) — and never a
+	// copy stored when the record was written: an edit to it takes effect
+	// without another update.
 	jobName := ""
 	if job != nil {
 		jobName = job.Name
 	}
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName)
+	// The read is skipped where there is no block to switch to: the answer is
+	// the same nil, and an installation with no service pays nothing for the
+	// gate it cannot pass.
+	svcAuth := ""
+	if env.lc != nil && env.lc.CredentialsService != nil {
+		svcAuth = checkoutAgentAuth(launchFileConfig(ctx, env, spec))
+	}
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth)
 	if reviewJob {
 		// The marker is the whole fact (internal/runner's EnvReviewJob): the
 		// variant's own deployment carries the credentials service's address,
@@ -3698,16 +3710,29 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // environment for the credentials service (plan task C1.24, D146/D147): the
 // service's URL, under the one name the runner and the keyless GitHub path
 // both read, or nothing at all. job is the shared project job this launch
-// resolved, or "" for a repository's own job.
+// resolved, or "" for a repository's own job, repo is the repository the run
+// works on and auth its agent.auth as the run will read it (the ref's
+// fugaro.yaml, else the checkout's).
 //
-// The block's presence in the selected config IS the opt-in. The config is the
-// published shared one where this machine has no local config of its own
-// (localcfg.Select), and the URL in it is the installation's own record --
-// Cloud Run's assignment for the service the installation root created, which
-// the credentials stage writes and MergeShared never lets a machine that lacks
-// it erase (internal/localcfg/shared.go, the ledger item of PR #903). So a
-// teammate's `fugaro run`, on a machine that never ran the opt-in, still hands
-// the job the installation's service.
+// THE SWITCH DECIDES, and it is the same function the plan decides with
+// (infra.CredentialsServiceServes): the installation has the block, the bundle
+// holds a model credential (the record `fugaro update` writes into the local
+// config's repository entry, published with the rest of it, so a teammate's
+// `fugaro run` on a machine that never ran the update reads it too, internal/
+// localcfg/shared.go), and this repository's agent.auth is one the service
+// serves. All three, because the URL is not a hint: the same variable is what
+// opens the git provider keyless (internal/gitprov/providers/providers.go),
+// which reads no App key at all once it is set. A job that still mounts its
+// own model credential and is handed the address of a service that cannot
+// serve it would lose the credential it has and get nothing in its place.
+//
+// The config is the published shared one where this machine has no local
+// config of its own (localcfg.Select), and the URL in it is the installation's
+// own record -- Cloud Run's assignment for the service the installation root
+// created, which the credentials stage writes and MergeShared never lets a
+// machine that lacks it erase (internal/localcfg/shared.go, the ledger item of
+// PR #903). So a teammate's `fugaro run`, on a machine that never ran the
+// opt-in, still hands the job the installation's service.
 //
 // A SHARED PROJECT JOB IS NOT TOLD, and that is the service's own rule rather
 // than a policy chosen here: its admission refuses an account that belongs to
@@ -3732,15 +3757,23 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // fail to launch, and the one thing this value must not do is depend on which
 // backend a project happens to use.
 //
-// An installation with no block -- every installation until an owner runs
-// `fugaro setup --provision-credentials` -- gets nil, so its launch spec is
-// byte for byte the one it built before this variable existed: no entry, no
-// empty value, nothing for a backend to merge.
-func credentialsServiceLaunchEnv(lc *localcfg.Config, job string) []string {
-	if job != "" {
+// A repository the switch holds off gets nil, so its launch spec is byte for
+// byte the one it built before this variable existed: no entry, no empty
+// value, nothing for a backend to merge. The URL-less block is the same
+// answer for a different reason -- there is no address to hand a job, and the
+// service's revision does not exist yet (fillCredentialsAudience writes it on
+// the apply after the one that created the service).
+func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string) []string {
+	if job != "" || lc == nil {
 		return nil
 	}
-	if lc == nil || lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+	// The URL is part of "installed" here and on this side alone: the
+	// installation's block without it is a service whose revision carries the
+	// module's unassigned placeholder as its audience, and there is no address
+	// to put on a job's environment either.
+	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
+	local, _ := lc.RepoFor(repo)
+	if !infra.CredentialsServiceServes(installed, local.CredentialsServiceReady, auth) {
 		return nil
 	}
 	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}

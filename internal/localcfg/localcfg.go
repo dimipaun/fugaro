@@ -1032,6 +1032,31 @@ type Repo struct {
 	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
 	// enables the Vertex AI API. fugaro update sets it.
 	Vertex bool `yaml:"vertex,omitempty"`
+	// CredentialsServiceReady records that the installation's credentials
+	// service holds a model credential this repository's runs can be served
+	// with — the bundle is not empty — so a job of it may stop mounting one
+	// of its own. fugaro update sets it, from one read of the bundle it
+	// already makes with the operator's identity, and writes it on every
+	// repository entry: a bundle that is later emptied switches the
+	// repository back off on the next update, which is what puts its jobs'
+	// mounts back, and that is the fail-safe direction.
+	//
+	// "Writes it" and not "sets it to true": the write is the value the run
+	// read, so clearing it is a write like any other. The member is then
+	// ABSENT rather than `false` (omitempty, the same shape Repo.Vertex has),
+	// which is the same answer to every reader — an absent member decodes as
+	// false — and it keeps the published shared config of an installation
+	// nothing is ready for byte for byte what it was.
+	//
+	// It is recorded rather than read where it is used because the reader
+	// is internal/infra's spec builder, which reads no cloud: this is the
+	// half of the switch (infra.CredentialsServiceServes) that the local
+	// config is the only source of. The other two halves — the
+	// installation's own block and the repository's agent.auth — are read
+	// where the spec is built, and the auth is deliberately not stored
+	// here: a stored copy could outlive an edit to the fugaro.yaml it
+	// came from.
+	CredentialsServiceReady bool `yaml:"credentials_service_ready,omitempty"`
 }
 
 // UsesVertex reports whether any repository the config records uses
