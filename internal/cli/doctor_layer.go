@@ -35,7 +35,9 @@ import (
 //     read, is current;
 //   - whether each workflow's image was built from the image settings it
 //     resolves to now, and whether a workflow the project's image catalog
-//     gives its image to runs an entry that has been built;
+//     gives its image to runs an entry that has been built — judged against
+//     the catalog the job spec resolves, with an unread line of its own when
+//     that catalog could not be read at all;
 //   - the one local layer file (localLayerFileCheck), which reads no bucket
 //     and so is reported even when none of the above can be.
 //
@@ -88,8 +90,18 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 	out = append(out, layerDrift(ctx, b, slug, l)...)
 	out = append(out, layerCopyCheck(ctx, b, slug, l)...)
 	if rb, err := env.recordBucket(ctx); err == nil {
-		out = append(out, imageConfigChecks(ctx, env, rb, slug, rf.Cfg, rf.Res)...)
-		out = append(out, catalogImageChecks(ctx, env, rb, slug, rf.Cfg)...)
+		// The catalog the deploy-time job spec is computed against and the
+		// launcher judges the deployed job's image by: this checkout's config
+		// when it states one, the published node's otherwise (effectiveCatalog,
+		// the resolution internal/infra's spec and run.go both make). Reading
+		// the local config alone left a machine whose file is silent about the
+		// catalog reading "no catalog" for a project that has one, and its
+		// pinned workflow was then judged by no line at all while its job runs
+		// an entry only the published node holds.
+		cat, catErr := effectiveCatalog(ctx, env)
+		out = append(out, imageCatalogUnreadCheck(lc, rf.Cfg, catErr)...)
+		out = append(out, imageConfigChecks(ctx, env, rb, slug, rf.Cfg, rf.Res, cat)...)
+		out = append(out, catalogImageChecks(ctx, env, rb, slug, rf.Cfg, cat)...)
 	}
 	return out
 }
@@ -312,6 +324,27 @@ func layerCopyCheck(ctx context.Context, b *blobx.Bucket, slug string, l *config
 	return nil
 }
 
+// imageCatalogUnreadCheck is doctor's line for the one state in which the
+// catalog the two checks below judge workflows against was not read: this
+// checkout's config states none of its own, and the published node it would
+// take one from did not answer (effectiveCatalog's error). Every workflow is
+// then judged against a catalog nobody read — a pinned entry is neither
+// compared nor called unbuilt — so the unknown is a line of its own, never
+// silence. It is doctor's unread state (unread, so doctorClassOf counts it as
+// a finding: an unknown is not a measurement).
+//
+// A config that states a catalog of its own is not this state, however the
+// node answered: the local one wins (localcfg's keep rule, D1140), it is what
+// the job spec resolves, and the node's copy cannot change a line below.
+func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr error) []doctorCheck {
+	if catErr == nil || lc.ImageCatalog != nil || len(cfg.Workflows) == 0 {
+		return nil
+	}
+	return []doctorCheck{{ID: "image-catalog", Severity: "info", unread: true,
+		Problem: "whether the project's image catalog decides a workflow's image could not be checked: this config states no catalog of its own, and the published policy node it would take one from could not be read (" + oneLineCLI(catErr.Error()) + "), so a workflow that pins an entry, needs a tag one covers, or runs the project's default is not judged here",
+		Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
+}
+
 // imageConfigChecks names each workflow (with a generated image) whose build
 // record's image-config hash is not the hash of what it resolves to now:
 // typically a profile's base or image settings changed.
@@ -324,9 +357,12 @@ func layerCopyCheck(ctx context.Context, b *blobx.Bucket, slug string, l *config
 // jobs never run. The owner's rule is what that serves: doctor is clean after
 // `fugaro update`, and sending the owner back to it for an image it does not
 // build is a loop they have already run.
-func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, res *config.Resolution) []doctorCheck {
+//
+// cat is the catalog the job spec resolves (doctorLayerChecks), never the
+// local config's alone: a workflow the published node's catalog speaks for is
+// as much the catalog's as one this file's own catalog names.
+func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog) []doctorCheck {
 	var out []doctorCheck
-	cat := env.lc.ImageCatalogEffective(nil)
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		w := cfg.Workflows[name]
 		if _, ok := workflowCatalogEntry(cat, slug, w, catalog.Backend(env.lc.Backend())); ok {
@@ -367,12 +403,12 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slu
 // doctorUpdatePrefixes for the same reason — the default view prints the
 // command that does the work.
 //
-// Best effort, as the layer checks are: what cannot be read says nothing. A
-// machine whose config holds no catalog reads no policy here and so judges
-// only what a pin's name is enough for, and an entry that is a prebuilt image
-// has nothing to build.
-func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config) []doctorCheck {
-	cat := env.lc.ImageCatalogEffective(nil)
+// Best effort, as the layer checks are: what cannot be read says nothing, and
+// cat — the catalog the job spec resolves, handed in — being nil is one of
+// those reads (imageCatalogUnreadCheck is its own line when it was the node
+// that did not answer). An entry that is a prebuilt image has nothing to
+// build.
+func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, cat *config.Catalog) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		e, ok := workflowCatalogEntry(cat, slug, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
@@ -391,9 +427,19 @@ func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, sl
 			if len(slugs) == 0 || e.Source.Kind == "" {
 				continue
 			}
+			// The one command that can build an entry no build has built is a
+			// person's build from the checkout the entry's build has to be
+			// submitted from: the daily image check cannot submit one (its own
+			// line says why — a rebuild is pinned to the commit the last build
+			// recorded, and there is none), so a Fix naming the daily check
+			// would name a run that does nothing.
+			from := "this checkout"
+			if e.Source.Repo != "" {
+				from = e.Source.Repo + "'s checkout"
+			}
 			out = append(out, doctorCheck{ID: "image-catalog-" + name, Severity: "warning",
 				Problem: fmt.Sprintf("workflow %s runs the project image catalog's entry %s, which no build has built: its jobs have no image to start", name, e.Name),
-				Fix:     "the daily image check builds it; to do it now: fugaro image build " + e.Name})
+				Fix:     "fugaro image build " + e.Name + " from " + from + " builds it once, and the daily image check rebuilds it from then on"})
 			continue
 		}
 		key, err := config.CatalogDockerfileKey(e.Name)
@@ -419,16 +465,19 @@ func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, sl
 // workflowCatalogEntry is the catalog entry the workflow w runs, and whether
 // the project's image catalog decides its image at all. It is catalog.Applies
 // — the predicate the deploy-time job spec (internal/infra) and the launch's
-// image rule (run.go) ask — with the entry the rule picks, so doctor and the
-// job that starts agree about which workflows the catalog speaks for.
+// image rule (run.go) ask — asked of the same catalog those two resolve
+// (effectiveCatalog, handed in as cat), so doctor judges the workflows the
+// deployed job's own image came from.
 //
-// cat is this machine's effective catalog, nil when it holds none. A pin is
-// the repository's own claim about its entry and not the algorithm (D1155),
-// so a pinned workflow is answered from its name alone: a machine with no
-// catalog can still say the catalog speaks for the workflow, which is what
-// keeps doctor's comparison off an image the catalog build writes. The entry
-// it returns is then the name by itself (no source), and the caller judges
-// what it can of it.
+// cat is that catalog, nil when the project has none — or when it is a config
+// that states none of its own beside a published node that did not answer,
+// which imageCatalogUnreadCheck reports as its own line. A pin is the
+// repository's own claim about its entry and not the algorithm (D1155), so a
+// pinned workflow is answered from its name alone: with no catalog at all
+// doctor can still say the catalog speaks for the workflow, which is what
+// keeps its comparison off an image the catalog build writes. The entry it
+// returns is then the name by itself (no source), and the caller judges what
+// it can of it.
 func workflowCatalogEntry(cat *config.Catalog, slug string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
 	var c config.Catalog
 	if cat != nil {

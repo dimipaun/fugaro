@@ -16,8 +16,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -649,7 +651,17 @@ func TestDoctorCatalogImageNamesTheBuildCommand(t *testing.T) {
 		if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "go") || !strings.Contains(c.Problem, "no build has built") {
 			t.Fatalf("check %+v", c)
 		}
-		if c.Fix != "the daily image check builds it; to do it now: fugaro image build go" {
+		// The daily image check cannot submit the first build of an entry:
+		// a rebuild is pinned to the commit the last build recorded, and an
+		// entry no build has built has none (image_check_catalog.go says so
+		// in the entry's own decision, NeedsBuild). The fix is therefore the
+		// check's own sentence for that state — a person's build from the
+		// checkout that build has to be submitted from — and naming the daily
+		// check here was a run that does nothing. This fixture's entry is
+		// inline, so no repository owns it and the checkout is this one (the
+		// dockerfile case, which names the entry's own repository, is
+		// TestDoctorImageCatalogFromThePublishedNode).
+		if c.Fix != "fugaro image build go from this checkout builds it once, and the daily image check rebuilds it from then on" {
 			t.Errorf("fix = %q, want the entry's own build", c.Fix)
 		}
 	})
@@ -681,6 +693,129 @@ func TestDoctorCatalogImageNamesTheBuildCommand(t *testing.T) {
 		writeCatalogRecordFrom(t, f, slug, "go", def)
 		if c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog-app"); c != nil {
 			t.Fatalf("a built, current entry must say nothing: %+v", c)
+		}
+	})
+}
+
+// doctorPublishedCatalog puts the project's image catalog in the published
+// policy node and leaves the checkout's own config silent about it: the shape
+// a managed project has, where the catalog is the owner's and a repository's
+// file states none. The entry is a dockerfile one naming acme/app, so the
+// checkout its build has to be submitted from has a name of its own. It
+// returns the database, so a test can break the node the catalog is read from.
+func doctorPublishedCatalog(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
+	t.Helper()
+	db := gcpfake.NewRTDB(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
+		Version:    projectpolicy.Version,
+		Budget:     projectpolicy.Budget{Mode: "off"},
+		AllowRepos: []string{"github/acme/other"},
+		ImageCatalog: &config.Catalog{Entries: []config.Entry{{
+			Name: "go", Tags: []string{"node"},
+			Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: "docker/agent.Dockerfile"},
+		}}},
+	})
+	f.appendConfig(t, "budget: { mode: off, rtdb_url: "+db.URL+" }\n")
+	return db
+}
+
+// TestDoctorImageCatalogFromThePublishedNode: the catalog a workflow's job
+// image comes from is the one the job spec resolves — this checkout's config
+// when it states one, the published node's otherwise (effectiveCatalog, the
+// resolution internal/infra's spec, run.go's launcher and `fugaro image
+// catalog` all make). Doctor read the local config alone, so on a machine
+// whose file states no catalog (the normal case: the catalog is the owner's)
+// it read "no catalog" for a project that has one, took the pinned workflow
+// for a bare pin, skipped the per-workflow comparison and judged no entry
+// either: a workflow whose job runs a stale catalog image was reported by no
+// line at all.
+//
+// Mutation (run, restore): read the local config again in doctorLayerChecks
+// (env.lc.ImageCatalogEffective(nil) for effectiveCatalog) and the first
+// subtest fails, finding neither image-catalog-app nor image-config-app for a
+// workflow whose job is deployed from the node's entry.
+func TestDoctorImageCatalogFromThePublishedNode(t *testing.T) {
+	const yaml = minimalAnchored + "git: { provider: github }\nworkflows:\n  app: { image_name: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+	t.Run("the node's entry is judged, and its build names its checkout", func(t *testing.T) {
+		f := newCloudFixture(t)
+		isolateCache(t)
+		publishedLayer(t, f, testProjectLayer)
+		doctorPublishedCatalog(t, f)
+		dir := layerCheckout(t, f, yaml)
+		slug := mustSlug("github", "acme/other")
+		// A stale per-workflow record, the false positive the catalog guard
+		// exists for: compared, it would fire.
+		data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: "app", ImageConfigHash: strings.Repeat("0", 64)})
+		writeBucketFile(t, f, imagecheck.RecordKey(slug, "app"), string(data))
+		lc := fileEnv(t, f).lc
+		ctx := context.Background()
+		rf := resolvedLayerFixture(t, ctx, lc, dir)
+
+		cs := doctorLayerChecks(ctx, lc, dir, rf)
+		if c := layerCheck(cs, "image-config-app"); c != nil {
+			t.Fatalf("a workflow the published catalog speaks for must not get an image-config check: %+v", c)
+		}
+		if c := layerCheck(cs, "image-catalog"); c != nil {
+			t.Fatalf("the catalog was read: %+v", c)
+		}
+		c := layerCheck(cs, "image-catalog-app")
+		if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "no build has built") {
+			t.Fatalf("check %+v", c)
+		}
+		// The daily image check cannot submit this entry's first build (its
+		// own line says so: a rebuild is pinned to the commit the last build
+		// recorded, and there is none), so the fix is the build the entry's
+		// own repository's checkout submits, and it is named.
+		if c.Fix != "fugaro image build go from acme/app's checkout builds it once, and the daily image check rebuilds it from then on" {
+			t.Errorf("fix = %q, want the entry's own build named with its checkout", c.Fix)
+		}
+	})
+
+	t.Run("a node that could not be read is an unread line", func(t *testing.T) {
+		f := newCloudFixture(t)
+		isolateCache(t)
+		publishedLayer(t, f, testProjectLayer)
+		db := doctorPublishedCatalog(t, f)
+		// The node no reader gets past: a marker that is not a generation
+		// (projectpolicy.Read's MarkerError), which is the state a node
+		// doctor cannot read the catalog out of.
+		db.Set(projectpolicy.PathRulesMarker(), "not-a-generation")
+		dir := layerCheckout(t, f, yaml)
+		lc := fileEnv(t, f).lc
+		ctx := context.Background()
+		rf := resolvedLayerFixture(t, ctx, lc, dir)
+
+		cs := classifyDoctorChecks(doctorLayerChecks(ctx, lc, dir, rf))
+		c := layerCheck(cs, "image-catalog")
+		if c == nil || c.Severity != "info" || !c.unread || c.Fix == "" {
+			t.Fatalf("an unread node must be doctor's unread state, a line of its own: %+v", c)
+		}
+		if !strings.Contains(c.Problem, "could not be read") || !strings.Contains(c.Problem, "states no catalog of its own") {
+			t.Errorf("the unread line does not say what was not read: %q", c.Problem)
+		}
+		if c.Class != doctorClassAudit {
+			t.Errorf("an unread catalog is classed %q, want %q: an unknown is a counted finding, never a measurement", c.Class, doctorClassAudit)
+		}
+	})
+
+	t.Run("a config stating its own catalog is not that state", func(t *testing.T) {
+		f := newCloudFixture(t)
+		isolateCache(t)
+		publishedLayer(t, f, testProjectLayer)
+		db := doctorPublishedCatalog(t, f)
+		db.Set(projectpolicy.PathRulesMarker(), "not-a-generation")
+		dir := doctorCatalogCheckout(t, f, yaml)
+		lc := fileEnv(t, f).lc
+		ctx := context.Background()
+		rf := resolvedLayerFixture(t, ctx, lc, dir)
+
+		// The local catalog wins (localcfg's keep rule, D1140): the node's
+		// copy is not what the job spec resolves, so its unread state cannot
+		// change a line here.
+		if c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog"); c != nil {
+			t.Fatalf("a config that states its own catalog judges against it: %+v", c)
 		}
 	})
 }
