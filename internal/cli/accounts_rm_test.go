@@ -27,6 +27,7 @@ import (
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"gopkg.in/yaml.v3"
 )
 
 // TestAccountsRmRefusesWhileAProfileListsIt is spec §4 step 1, and it is the
@@ -597,93 +598,33 @@ func TestAccountsRmRemovesAnAccountWhoseSecretIsAlreadyGone(t *testing.T) {
 	}
 }
 
-// TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession is the red step of the
-// accounts handoff's inverse: in a managed project's coding agent session the
-// removal goes through, where the same session was refused before the gate
-// existed — because the removal's referrers are checked and clean, which is the
-// one rule this command's own file states for it (managed spec §4.2, D1180).
-//
-// The removal is the step the gate judges, and the converge behind it is add's
-// own runner: its stages are the ones `fugaro update` runs, and a stage with
-// something to apply is a person's step in a session, exactly as it is for
-// `accounts add`. So what this asserts is the removal itself — written, deleted
-// and recorded — and that the command does not claim a converged installation
-// it did not reach.
-//
-// The record is the gate's and it follows the write: one admitted verdict,
-// whose digest is of the document that was applied and whose rules name both
-// halves of the check this command makes.
-func TestAccountsRmManagedAdmitsTheRemovalInAnAgentSession(t *testing.T) {
+// TestAccountsRmManagedRefusesTheRemovalInAnAgentSession is the accounts row's
+// own shape: in a session nothing this command reads is evidence about origin —
+// the ref a clean read resolves lives in the session's own checkout, the record
+// of this machine's checkouts and the installation's list of enrolled
+// repositories are the session's own documents — so the gate refuses the
+// removal outright rather than admitting it on a check the session answered
+// itself, and the rule it refuses by names the owner's own terminal window as
+// the way to remove the account.
+func TestAccountsRmManagedRefusesTheRemovalInAnAgentSession(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
-	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 	before := readFileString(t, r.cfg)
-	lcBefore := r.addLocal(t)
-	_, next, _, err := accountsRmResolve(r.cfg, lcBefore, "team-a", "standard", []byte(before))
-	if err != nil {
-		t.Fatalf("the resolver refused the config this test removes from: %v", err)
-	}
 	t.Setenv(accountsAddAgent, "1")
 
-	out, errOut, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
-	if after := readFileString(t, r.cfg); after == before {
-		t.Fatalf("the removal was not written in a managed project's coding agent session: %v\nstdout:\n%s\nstderr:\n%s", rmErr, out, errOut)
+	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	accountsRmAssertSessionRefused(t, r, before, out, err, accountsRmSessionRule)
+	if err == nil || !strings.Contains(err.Error(), "in your own terminal window") {
+		t.Errorf("the refusal does not leave the removal to the person at their terminal: %v", err)
 	}
-	lc := r.addLocal(t)
-	if _, ok := lc.ClaudeAccounts["team-a"]; ok {
-		t.Errorf("claude_accounts.team-a is still declared: %v", slices.Sorted(maps.Keys(lc.ClaudeAccounts)))
-	}
-	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
-		t.Errorf("the secret deletes were %v, want %v: the admission covers the account's removal, not the declaration alone", got, id)
-	}
-	if rmErr != nil && strings.Contains(rmErr.Error(), "coding agent's session") {
-		t.Errorf("the session was refused a removal the gate admitted: %v", rmErr)
-	}
-	if rmErr != nil && !strings.Contains(rmErr.Error(), "in your own terminal window") {
-		t.Errorf("the run failed for a reason that is not a step left to the person at their terminal: %v", rmErr)
+	if strings.Contains(errOut, "fugaro accounts rm: project ") {
+		t.Errorf("a refused removal ran the converge it was refused for:\nstderr:\n%s", errOut)
 	}
 	if strings.Contains(out, "Nothing else to run") {
-		t.Errorf("the command ended on its ready line, which is only true of a converged installation:\n%s", out)
-	}
-	// The converge is add's own loop, and the door it names has to be this
-	// command's: the header, the result banner and the step left for the person
-	// are what that person reads to finish, and a run of the removal labelled
-	// `fugaro accounts add` hands them the inverse of the command they ran.
-	for _, want := range []string{"fugaro accounts rm: project ", "fugaro accounts rm: result", "left for you", " accounts rm"} {
-		if !strings.Contains(errOut, want) {
-			t.Errorf("the run does not name itself where it prints %q:\nstderr:\n%s", want, errOut)
-		}
-	}
-	if strings.Contains(errOut, "accounts add") || strings.Contains(out, "accounts add") {
-		t.Errorf("the removal run names the inverse command:\nstderr:\n%s\nstdout:\n%s", errOut, out)
-	}
-
-	recs := r.audits(t)
-	if len(recs) != 1 {
-		t.Fatalf("%d gate records, want the one admission of this removal: %+v", len(recs), recs)
-	}
-	rec := recs[0]
-	if !strings.HasSuffix(rec.Command, " accounts rm") {
-		t.Errorf("the record names %q, want the command a person types", rec.Command)
-	}
-	if rec.Verdict != managedmode.AuditAdmitted {
-		t.Errorf("the record's verdict is %q, want %q: the step was applied", rec.Verdict, managedmode.AuditAdmitted)
-	}
-	if want := gateDigest(next); rec.PlanDigest != want {
-		t.Errorf("the record's plan_digest is %q and the removal this command would write hashes to %q: the record does not name the document that was applied", rec.PlanDigest, want)
-	}
-	for _, want := range []string{"no profile lists claude_accounts.team-a", "no repository this machine holds a checkout of names team-a in the committed agent.oauth_token"} {
-		if !slices.ContainsFunc(rec.Rules, func(rule string) bool { return strings.Contains(rule, want) }) {
-			t.Errorf("the record's rules (%v) do not name the rule %q: the record is what an owner reads to see what was judged", rec.Rules, want)
-		}
+		t.Errorf("the command ended on its ready line, which is only true of a converge that ran:\n%s", out)
 	}
 }
 
-// TestAccountsRmNamesItselfOnTheOwnersPath is the other half of that label: the
-// door the converge was given was add's for EVERY run and not only for a
-// session's, so the owner's own removal printed its progress and its result as
-// `fugaro accounts add` too. The run's lines go to stderr, which is where this
-// reads them.
 func TestAccountsRmNamesItselfOnTheOwnersPath(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
@@ -692,8 +633,14 @@ func TestAccountsRmNamesItselfOnTheOwnersPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("accounts rm: %v\nstderr:\n%s", err, errOut)
 	}
-	if !strings.Contains(errOut, "fugaro accounts rm: project ") {
-		t.Errorf("the run does not name the command that was run:\nstderr:\n%s", errOut)
+	// The header and the result banner are what the person reads, and a removal
+	// run labelled `fugaro accounts add` hands them the inverse of the command
+	// they ran. Both are this path's: a session's removal never converges (the
+	// gate refuses it), so this is where the door's own name is pinned.
+	for _, want := range []string{"fugaro accounts rm: project ", "fugaro accounts rm: result"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("the run does not name itself where it prints %q:\nstderr:\n%s", want, errOut)
+		}
 	}
 	if strings.Contains(errOut, "accounts add") || strings.Contains(out, "accounts add") {
 		t.Errorf("the removal run names the inverse command:\nstderr:\n%s\nstdout:\n%s", errOut, out)
@@ -1144,6 +1091,99 @@ func TestAccountsRmManagedRefusesARefTheSessionMoved(t *testing.T) {
 	}
 }
 
+// accountsRmAssertSessionRefused is the shape every removal from a session
+// answers: the gate refused, nothing was written, nothing was deleted, one
+// record carries the refusal, and the refusal names the rule it refused by
+// (want).
+func accountsRmAssertSessionRefused(t *testing.T, r *addRig, before, out string, err error, want string) {
+	t.Helper()
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran on a check the session answered itself (%v):\n%s", got, out)
+	}
+	if err == nil || !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal does not name the value it could not resolve (%q): %v", want, err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the gate records are %+v, want the one refusal", recs)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, want) }) {
+		t.Errorf("the record's rules (%v) do not carry the rule %q", recs[0].Rules, want)
+	}
+}
+
+// accountsRmSessionRule is the sentence a session's removal is refused by,
+// named once here because every test below asserts the same one: the rule is
+// not per move, and a test that pinned it per move would be the per-move
+// rule-making this fix removes.
+const accountsRmSessionRule = "no read a coding agent's session makes is evidence about origin"
+
+// TestAccountsRmManagedRefusesACheckoutTheSessionMovedAway is the first of the
+// moves a rule per document cannot cover: a row whose directory is gone is the
+// owner's warning (accountsRmWarn, D783) — there is no checkout here to read —
+// and a session reaches that state with one mv of the checkout the row names.
+// While "no checkout here" was only ever a warning, the walk asked no question
+// about the repository, the gate found no referrer and no unread document and
+// admitted the removal, and the one-way delete ran with the committed file at
+// origin still naming the account.
+func TestAccountsRmManagedRefusesACheckoutTheSessionMovedAway(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	dir := accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	before := readFileString(t, r.cfg)
+	if err := os.Rename(dir, dir+"-moved-aside"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	accountsRmAssertSessionRefused(t, r, before, out, err, accountsRmSessionRule)
+}
+
+// TestAccountsRmManagedRefusesAMissingCheckoutsRecord is the second, and it is
+// one rm of the document the first move only has to edit: LoadCheckouts answers
+// a file that is not there with an empty record rather than with an error
+// (checkouts.go), so every enrolled repository becomes one this machine holds
+// no checkout of — the warning again, and the same admission and the same
+// one-way delete behind it.
+func TestAccountsRmManagedRefusesAMissingCheckoutsRecord(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	before := readFileString(t, r.cfg)
+	accountsRmForgetCheckouts(t)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	accountsRmAssertSessionRefused(t, r, before, out, err, accountsRmSessionRule)
+}
+
+// TestAccountsRmManagedRefusesARepositoryTheSessionUnenrolled is the third, and
+// it is the one no per-bucket rule reaches at all: the walk is over the
+// installation's own list of enrolled repositories, so a repository the session
+// takes off that list is a repository no question is asked about — the buckets
+// are all empty and every one of them is telling the truth. It is why the rule
+// the two tests above assert is the session's and not "no checkout here": the
+// list, the record and the checkout are one class, and a rule per member of it
+// is a rule for whichever member the next finding names.
+func TestAccountsRmManagedRefusesARepositoryTheSessionUnenrolled(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckout(t, "owner/repo-a", accountsRmRepoYAML)
+	accountsRmUnenroll(t, r, "owner/repo-a")
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	accountsRmAssertSessionRefused(t, r, before, out, err, accountsRmSessionRule)
+}
+
 // TestAccountsRmManagedRefusesAnUnreadablePolicyBaseBranch is the base branch's
 // own unresolved value. The project's default is the policy node's only when
 // neither the installation's config nor the repository's entry names one, and a
@@ -1563,6 +1603,50 @@ func accountsRmBreakPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 	node["base_branch"] = branch
 	node["a_key_this_fugaro_does_not_know"] = true
 	r.db.Set(projectpolicy.PathShared(), node)
+}
+
+// accountsRmForgetCheckouts removes this machine's record of the checkouts it
+// holds. LoadCheckouts answers a document that is not there with an empty one
+// and not with an error, so a session that deletes the file reaches the same
+// state as a machine that never checked the repository out: every enrolled
+// repository is one this machine holds no checkout of.
+func accountsRmForgetCheckouts(t *testing.T) {
+	t.Helper()
+	path, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// accountsRmUnenroll takes repo off the installation, which is the third way a
+// session leaves the check nothing to ask about: the walk is over the enrolled
+// repositories, so a repository the file no longer lists is one no read
+// covers — and the file is the session's to write like the checkout and the
+// record are.
+func accountsRmUnenroll(t *testing.T, r *addRig, repo string) {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(readFileString(t, r.cfg)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	repos, ok := doc["repos"].(map[string]any)
+	if !ok {
+		t.Fatalf("the rig's config enrolls no repository:\n%s", readFileString(t, r.cfg))
+	}
+	if _, ok := repos[repo]; !ok {
+		t.Fatalf("%s is not enrolled in the rig's config:\n%s", repo, readFileString(t, r.cfg))
+	}
+	delete(repos, repo)
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // accountsRmRemember records dir as the project's checkout of repo, which is

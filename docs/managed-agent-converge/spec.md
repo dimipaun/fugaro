@@ -103,7 +103,7 @@ Read over that document, before the write, fail-closed — an unreadable plan, a
 
 **`fugaro rigor set`.** Admitted only for a mode that ranks at or above the resolved mode, never `hotfix` (D834's refusal stands), with no duplicate area glob (D838), and only through the layer write the same run's `update` publishes (the HARD RULE, F14).
 
-**`fugaro accounts add|rm`.** `add` is admitted only for a name that is not reserved and a definition whose `allow_data_to` does not widen; `rm` only when no profile and no repository still references the account. No token value is ever written by either.
+**`fugaro accounts add|rm`.** `add` is admitted only for a name that is not reserved and a definition whose `allow_data_to` does not widen; `rm` **never from a coding agent's session** — the refs it reads and the records it walks are the session's own, so no read is evidence about origin and the removal is refused whatever the walk found ([handoffs.md](handoffs.md)'s accounts row) — and, on the owner's own run, only when no profile and no repository still references the account. No token value is ever written by either.
 
 ### 4.3 The refusal the agent reads
 

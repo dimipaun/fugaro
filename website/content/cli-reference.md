@@ -292,9 +292,10 @@ way it was and the command stops: an account whose declaration is gone while
 its secret is still there is the one state this command may not leave behind.
 
 Run it at your own terminal: this command deletes a credential, so a coding
-agent's session is refused, --yes included, unless a managed project's gate
-admits the removal — which it does only when no profile and no repository still
-names the account.
+agent's session is refused, --yes included — a managed project's gate refuses
+the removal too, because the refs and the checkouts record its referrer check
+reads are documents the session writes, so no read here answers for what origin
+carries.
 
 Usage: `fugaro accounts rm NAME`
 

@@ -395,39 +395,45 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    A name at either ref is the warnable reference, and a read that failed at either is an unresolved
    value. A branch of origin that is neither — one a run reaches only with an explicit `--ref` — is
    not read: what this check answers for is the runs the repository makes by itself.
-   **In a coding agent's session, a checkout this machine holds is not evidence about origin either.**
-   The ref a read here resolves is one that same checkout holds — `refs/remotes/origin/<ref>` first,
-   else the branch of the same name — and a session owns that checkout: `git commit && git update-ref
+   **In a coding agent's session, none of this is evidence, so the removal is refused.** The ref a read
+   here resolves is one that same checkout holds — `refs/remotes/origin/<ref>` first, else the branch of
+   the same name — and a session owns that checkout: `git commit && git update-ref
    refs/remotes/origin/<ref> HEAD` moves the remote-tracking ref onto a commit that hides the name, so
    the clean read and the forged one are the same bytes and the read resolves nothing about what origin
-   carries. A repository whose committed file this machine read is therefore an **unresolved** value in
-   a session — a **refusal** — while the owner's own run keeps the warning and the confirmation: that
-   checkout is the owner's, and its commit is what the runs of the repository resolve their account
-   from. Of the ways the read can come up short,
-   a repository this machine has **no checkout of** is a warning, while a checkout whose committed file
-   **did not resolve** (a document the strict reader refuses, or a ref this checkout does not hold) is
-   a warning for the owner and a **refusal** for a session, because there the answer was asked for and
-   could not be read — and a document that was not read is never scored clean, whichever file sits in
-   the working tree beside it. The third is the widest, and it is not about a repository at all: the
-   **record of which checkouts this machine holds**, when that document cannot be read. A corrupt one
-   is not an empty one (`localcfg.LoadCheckouts` refuses to read its own file that way, and the sibling
-   read in `settings set` is a hard refusal), and taking it for one would report every enrolled
-   repository as one this machine does not hold — the warning — with the question asked of none of
-   them. Nothing was read there, so nothing is scored clean: the same **refusal** for a session, and
-   the warning above for the owner.
+   carries. The other two documents the walk reads are the session's own as well: the **record of which
+   checkouts this machine holds** is a file the session writes, and a *missing* one is read as an empty
+   record rather than refused, so deleting it reports every repository as one this machine has **no
+   checkout of** — which is only a warning — while the committed file that names the account is still
+   on origin; and the **installation's own list of enrolled repositories** is what decides which
+   repositories are asked about at all, so a repository taken off it is never opened. Each of the three
+   was reproduced against the command before the rule was written, so it is written as the class and not
+   one bucket at a time: in a session the `rm` is **refused whatever the walk found** — a value the gate
+   cannot resolve at plan time is a refusal and never a pass (that design's §4.1) — and the refusal
+   names the owner's own terminal window, where the same removal prints every reference it finds and
+   asks to be confirmed. The owner's own run is unchanged: every state below is a warning under the
+   confirmation that already asks about the removal, because that checkout is the owner's and its
+   commit is what the runs of the repository resolve their account from.
+   Of the ways the read can come up short on the owner's path: a repository this machine has **no
+   checkout of** is a warning, while a checkout whose committed file **did not resolve** (a document the
+   strict reader refuses, or a ref this checkout does not hold) is a warning, because the answer was
+   asked for and could not be read — and a document that was not read is never scored clean, whichever
+   file sits in the working tree beside it. The third is the widest, and it is not about a repository at
+   all: the **record of which checkouts this machine holds**, when that document cannot be read. A
+   corrupt one is not an empty one (`localcfg.LoadCheckouts` refuses to read its own file that way, and
+   the sibling read in `settings set` is a hard refusal), and taking it for one would report every
+   enrolled repository as one this machine does not hold — the warning — with the question asked of none
+   of them. In a session all three are the one refusal above.
 3. **Converge.** The same publish and deploy as `add` (§2.5), so the job the account owned is gone from
    the installation.
 
-`rm` is refused in a coding agent's session for the same reason `add` is — the refusal above, kept
-wherever no admission covers the removal. In a managed project the gate admits an `rm` whose referrers
-are checked and clean, which is the accounts row of the managed design's §4.2 and its rule for this
-command: no profile names the account, no enrolled repository this machine holds a checkout of names
-it in the committed `agent.oauth_token`, no checkout's file went unread, no read that answered is a
-session's own checkout's word for what origin carries (above), and the record of the checkouts itself
-was read — a value the gate cannot resolve at plan time is a refusal and never a pass
-(that design's §4.1). A repository this machine has
-no checkout of is the one case no read here can close, and it is the warning above rather than a pass:
-what it would break is a run that stops at launch, which the owner reads about on their own run too.
+`rm` is refused in a coding agent's session — never on the strength of a check that session could
+have answered itself (above). In a managed project the gate therefore **refuses an `rm` from a session
+outright**: it builds the plan, judges it, records the refusal with the rule that fired, and that rule
+names the owner's own terminal window as the way to remove the account. That is the accounts row of the
+managed design's handoffs, and it withdraws the session admission that row first described: the evidence
+that admission rested on — a clean read of a checkout this machine holds — is the session's own word for
+what origin carries, which one move takes away, so the removal waits for the owner's own run, where
+every reference is printed and the confirmation is asked.
 
 ## 5. What the existing commands become
 

@@ -106,9 +106,10 @@ way it was and the command stops: an account whose declaration is gone while
 its secret is still there is the one state this command may not leave behind.
 
 Run it at your own terminal: this command deletes a credential, so a coding
-agent's session is refused, --yes included, unless a managed project's gate
-admits the removal — which it does only when no profile and no repository still
-names the account.`,
+agent's session is refused, --yes included — a managed project's gate refuses
+the removal too, because the refs and the checkouts record its referrer check
+reads are documents the session writes, so no read here answers for what origin
+carries.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAccountsRm(cmd, args[0], o)
@@ -325,6 +326,12 @@ type accountsRmReferrers struct {
 	unresolved []string // read here, and not evidence about origin in a session
 	unread     []string // the committed document, or the ref it lives at, could not be read
 	state      string   // the record of this machine's checkouts could not be read
+	// session is whether the caller is a coding agent's session. Every bucket
+	// above is read the same way either way — the owner's warning is worth
+	// having in a session too — and the rules answer the buckets that are not
+	// the referrer itself differently on the two paths: a person's own run is
+	// the repo's own checkout's word, and a session's is not (accountsRmRules).
+	session bool
 }
 
 // accountsRmRepos is the repository half of the reference check (spec §4 step 2,
@@ -383,7 +390,7 @@ type accountsRmReferrers struct {
 // answer, and a repository whose file leans on the project layer for something
 // else is one this command can still read.
 func accountsRmRepos(ctx context.Context, env *cloudEnv, name string, session bool) accountsRmReferrers {
-	var read accountsRmReferrers
+	read := accountsRmReferrers{session: session}
 	lc := env.lc
 	checkouts, err := localcfg.LoadCheckouts(os.Getenv)
 	if err != nil {
@@ -694,21 +701,26 @@ func accountsRmGate(ctx context.Context, lc *localcfg.Config, plan accountsRmPla
 // The rule is the design's whole content for this command (managed spec §4.2,
 // D1172, D1180's row): a removal is admitted only when no profile names the
 // account and no repository this machine can read names it in its committed
-// agent.oauth_token, and each refusal names the referrer it found rather than
-// the key it would remove. The ways the read can come up short are answered
-// differently on purpose. A repository this machine holds no checkout of is a
-// warning (accountsRmWarn) and not one of these refusals: refusing on it would
-// refuse every project whose checkouts are not all on this machine, and what it
-// would prevent is a run that stops at launch, which is a break the owner reads
-// about rather than a permission. A checkout whose own committed fugaro.yaml
-// does not resolve is a refusal, because there the question WAS asked and the
-// answer could not be read — "a value the gate cannot resolve at plan time" is
-// "a refusal, never a pass" (managed spec §4.1), and a session admitted on an
-// unread file would take the one-way delete while the repository may still name
-// the account. state is that same refusal for the third case: the record of this
-// machine's own checkouts could not be read, so no repository's question was
-// asked at all — the widest form of the value this gate may not resolve, and the
-// one that would otherwise leave a session admitted with nothing read.
+// agent.oauth_token — and never from a coding agent's session, whatever those
+// reads say, for the reason the last rule below gives. Each refusal names the
+// referrer it found rather than the key it would remove, and the ways the read
+// can come up short are answered differently on purpose — all of them on the
+// owner's path, where the buckets and the rules below are read as written.
+//
+// A repository this machine holds no checkout of is a warning (accountsRmWarn)
+// and not one of these refusals: refusing on it would refuse every project whose
+// checkouts are not all on this machine, and what it would prevent is a run that
+// stops at launch, which is a break the owner reads about rather than a
+// permission. A checkout whose own committed fugaro.yaml does not resolve is a
+// refusal, because there the question WAS asked and the answer could not be read
+// — "a value the gate cannot resolve at plan time" is "a refusal, never a pass"
+// (managed spec §4.1) — and a document that was not read is never scored clean,
+// so admitting on it would take the one-way delete while the repository may
+// still name the account. state is that same refusal for the third case: the
+// record of this machine's own checkouts could not be read, so no repository's
+// question was asked at all — the widest form of the value this gate may not
+// resolve, and the one that would otherwise leave a removal admitted with
+// nothing read.
 //
 // unresolved is the fourth, and it is this command's answer to a read the
 // session can write: the committed fugaro.yaml was read here and did not name
@@ -722,6 +734,17 @@ func accountsRmGate(ctx context.Context, lc *localcfg.Config, plan accountsRmPla
 // spec §4.1). The refusal names the repositories, so the owner's own run of the
 // same removal — which reads the same files without this rule, since the checkout
 // is theirs — is still what answers it.
+//
+// Every one of those answers the walk gives is a document the session can write,
+// which is what the last rule says: a session's removal is refused whatever the
+// buckets hold, because a rule per move is a rule per move that comes next — the
+// update-ref of the refs, the checkout moved away, its row taken out of the
+// record, the repository taken off the installation, and whichever of them no
+// version of this file has named yet. All of them write the answer this check
+// reads, so a check that writes its own answer is not a check (managed spec
+// §4.1), and the refusal says which documents those are rather than which one
+// was used. It is the only rule that fires for a session and no other path: the
+// owner reads the same buckets as warnings and a confirmation.
 func accountsRmRules(plan accountsRmPlan, read accountsRmReferrers) (applied, refused []string) {
 	referrers, unread, state := read.referrers, read.unread, read.state
 	if plan.drop {
@@ -741,7 +764,29 @@ func accountsRmRules(plan accountsRmPlan, read accountsRmReferrers) (applied, re
 	if state != "" {
 		refused = append(refused, "this machine's record of its own checkouts could not be read ("+state+"), so no repository's committed fugaro.yaml was checked for "+pluginwire.Printable(plan.name)+": whether any of them names it is a value this step cannot resolve at plan time, and an unresolved value is a refusal and never a pass (managed spec §4.1)")
 	}
-	if len(referrers) == 0 && len(unread) == 0 && len(read.unresolved) == 0 && state == "" {
+	// A session is refused whatever the walk above found, and this rule is the
+	// class the three above are instances of: every document a referrer check
+	// reads is one the session writes — the committed file through the refs the
+	// session's own checkout holds (refs/remotes/origin/<ref>, else the branch
+	// of the same name, project_job.go's checkoutFugaroYAMLAtRef), the record of
+	// which checkouts this machine holds (a missing or emptied one is
+	// EmptyCheckouts, not an error), and the installation's own list of enrolled
+	// repositories, which is what decides which questions are asked at all. Each
+	// move was reproduced before it was answered: `git update-ref` on the
+	// remote-tracking ref, the checkout moved away or its row taken out, and the
+	// repository taken off the installation. Closing them one at a time is what
+	// this rule replaces — the next one would be the one the last fix did not
+	// name — so a session's removal is refused as an unresolved value rather
+	// than admitted on a check that writes its own answer, which is managed spec
+	// §4.1's rule and not an exception to it. The way out — the same removal in
+	// the owner's own terminal window — follows the class statement instead of
+	// closing the rule, because the gate prints each rule through safetext.Field
+	// (512 runes, elided): a session that reads its refusal reads the two things
+	// it acts on, and the sentence the owner reads in full is the record.
+	if read.session {
+		refused = append(refused, "no read a coding agent's session makes is evidence about origin, so run `"+accountsRmCommand(plan)+"` in your own terminal window, where the same removal prints every reference it finds and asks you to confirm it: the committed fugaro.yaml it reads is the copy at refs/remotes/origin/<ref> (else the branch of the same name) in a checkout the session owns, the record of which checkouts this machine holds is a document the session writes, and so is the installation's own list of enrolled repositories — so whether a repository still names "+pluginwire.Printable(plan.name)+" is a value this step cannot resolve at plan time in a session, and an unresolved value is a refusal and never a pass (managed spec §4.1)")
+	}
+	if len(referrers) == 0 && len(unread) == 0 && len(read.unresolved) == 0 && state == "" && !read.session {
 		applied = append(applied, "no repository this machine holds a checkout of names "+pluginwire.Printable(plan.name)+" in the committed agent.oauth_token of its fugaro.yaml")
 	}
 	return applied, refused

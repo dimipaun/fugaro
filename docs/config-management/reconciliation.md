@@ -342,8 +342,10 @@ rather than its conclusion.
   Recommendation: `fugaro accounts rm NAME` removes the account's definition and its
   `claude_accounts.*.allow_data_to` entry (`internal/settings/registry.go:627`), and is admitted by the
   managed gate only when no profile and no repository still names the account (D1180) — a removal whose
-  referrers are checked rather than assumed. `add` with a widening `allow_data_to` stays refused in a
-  coding agent's session.
+  referrers are checked rather than assumed — that is the owner's own run's rule, and in a coding
+  agent's session the removal is refused outright instead: the refs and records that check reads are the
+  session's own, so a clean read is its own word for what origin carries. `add` with a widening
+  `allow_data_to` stays refused in a coding agent's session.
   Cost of the alternative: an account nothing can remove is an allow-list entry that outlives the
   account it was written for, and the person's only repair is an edit of a `fugaro.yaml`-adjacent file —
   the hand edit the ruling removes. Cost of the recommendation: the removal has to know every referrer
