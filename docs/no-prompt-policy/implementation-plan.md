@@ -19,9 +19,10 @@ record hardened (versioned bucket, `doctor` reads it), the rules rewritten to ca
 and the level-3 review of the IAM and cover code the pre-apply control, so **T9 is unblocked**; **T3** and
 **T4** confirmed — the integrity class as listed (the `internal/managed/budget.go` marker checks and the D1551
 classification included), and the owner-session fence a courtesy against the accidental loop, not a barrier
-against a hostile agent; **T6** (b) — `fugaro update` sets the budget mode to enforce on a managed project,
-observe stays an explicit choice, one `doctor` line says so, and the step is its own task (T16) with a converge
-test, T10 following it; **T5** stays open — the D1550 answer is held until the T8 spike (task **T8S**) reports,
+against a hostile agent; **T6** (b) — `fugaro update` raises the budget mode to enforce on a managed project
+wherever the owner has not chosen one (the mode is *seeded* observe, so the trigger is a recorded choice, not an
+absent node), one `doctor` line says so, and the step is its own task (T16) with a converge test, T10 following
+it; **T5** stays open — the D1550 answer is held until the T8 spike (task **T8S**) reports,
 and T8 waits on the spike only.
 
 ## Order against open pull requests
@@ -56,7 +57,7 @@ and T8 waits on the spike only.
 | Over-cap error: estimated cost, cap, spent, the one command, non-zero exit | T8 |
 | A missing or unknown Cloud Billing price **refuses**; a missing machine type refuses; local config cannot supply a rate | T8 |
 | Observe mode: the build proceeds and records; an absent mode is observe; only maxReserve and kill switches bite; `doctor` says so | T8, T9 |
-| `fugaro update` sets the budget mode to enforce on a managed project; observe stays an explicit choice; one `doctor` line says so | T16 |
+| `fugaro update` raises the mode to enforce on a managed project wherever the owner has not chosen one (an additive `config/modeSet` says which); one `doctor` line says so | T16 |
 | The integrity refusals stay (listed in T9) and are in `TestIntegrityRefusalsStillRefuse` | T9 |
 | Out-of-table grants apply, are recorded and warned (session and `doctor`); the record is harder to erase | T9 |
 | The marker and catalog-check spec format changes converge an installation at the previous version | T10 |
@@ -241,20 +242,32 @@ and T8 waits on the spike only.
 
 ### T16 — `fugaro update` sets the budget mode to enforce on a managed project (D1548, D1554, T6(b))
 - **Files:** `internal/cli/update.go` (the hook), `internal/cli/update_budget_mode.go` (new),
+  `internal/infra/firebasedb.go` (the mode write records whether the mode was **asked for** or seeded),
+  `internal/cli/budget.go` (`budget set --global --mode …` records the owner's choice; T3 lands first),
   `internal/cli/doctor_build_budget.go` (one line; T8 lands first), their tests.
-- **The step:** on a managed project `fugaro update` writes `config/mode` = `enforce` when the node is
-  **absent** (the default installation), and leaves an explicit `observe` or `enforce` alone — observe stays an
-  explicit choice, and update never overrides one. It writes the same node `fugaro budget set --global --mode`
-  writes and carries the same precondition (D6: `enforce` needs the project-wide caps); where they are missing
-  the step sets no mode and `doctor` names them.
+- **The trigger is the record of an owner's choice, not the mode's absence.**
+  `internal/infra/firebasedb.go` **seeds** `config/mode` = `observe` at install and keeps it ("changed only on
+  request"), so on every installation that could take a build lease the node is **present**: a step that fired on
+  an absent mode would never fire, and T10 would be removing the build count on the strength of a no-op. So the
+  writers record the choice — an additive `config/modeSet` — and the seed records nothing: the
+  `--budget-mode` flag of `setup`/`update` (the operator asked) and `fugaro budget set --global --mode …` write
+  `config/modeSet`; the seeding of `observe` on a fresh installation does not.
+- **The step:** on a managed project `fugaro update` raises `config/mode` to `enforce` where `config/modeSet` is
+  **absent** (a seeded mode, including an installation from before this change) or says `update`, and leaves
+  `config/modeSet = owner` alone, ever after. It stamps `config/modeSet = update` when it raises, so an `observe`
+  the owner sets afterwards carries `modeSet = owner` and the next update is a no-op. `enforce` still needs the
+  project-wide caps (D6, the refusal `budget set` already carries): where they are missing the step sets no mode
+  and `doctor` names them. No location under `config` is writable by a run token (`internal/budget/rules`), and
+  `modeSet` is written with operator credentials beside `config/mode`, so the rules carry no path for it.
 - **Why:** D1548 makes an absent mode observe, and in observe a lease does not bite, so without this step a
   default installation's nightly catalog-check lease (D1554) and every build are unbounded; this is T6(b), and
   T10 follows it.
-- **Tests:** `TestUpdateSetsEnforceOnAManagedProject`, `TestUpdateLeavesAnExplicitObserveAlone`,
-  `TestPreviousModeConvergesOnUpdate` (HARD RULE: an installation at the previous mode converges),
-  `TestDoctorNamesTheMode`.
-- **Depends on:** T8. **Reviewer:** opus + mandatory independent review (money, the HARD RULE).
-- **Commit:** `managed: update sets enforce on a managed project, and doctor says so (T16)`.
+- **Tests:** `TestUpdateRaisesASeededObserveToEnforce`, `TestAnOwnerChosenObserveIsNeverRaised`,
+  `TestPreviousModeConvergesOnUpdate` (HARD RULE: an installation carrying the seeded `observe` with no
+  `modeSet` converges), `TestUpdateIsANoOpAfterTheRaise`, `TestDoctorNamesTheMode`.
+- **Depends on:** T3, T8 (the shared files above). **Reviewer:** opus + mandatory independent review (money, the
+  HARD RULE).
+- **Commit:** `managed: update sets enforce on a managed project unless its owner chose otherwise (T16)`.
 
 ## Slice 2 — the flags, the class system, the words
 
@@ -301,7 +314,7 @@ and T8 waits on the spike only.
 | --- | --- |
 | 0 | T1, T2, T8S |
 | 1 | T3, T6, T7, T8 (after T8S) |
-| 2 | T4 (after T8), T5 (after T3), T15 (after T3), T16 (after T8) |
+| 2 | T4 (after T8), T5 (after T3), T15 (after T3), T16 (after T3, T8) |
 | 3 | T9 (after T2, T4, T5, T7, #1891, #1804) |
 | 4 | T10 (after T4, T8, T9, T16) |
 | 5 | T11 |
@@ -314,7 +327,7 @@ ruled); T16, the T6(b) step, is off the critical path.
 
 | File | Writers (level) |
 | --- | --- |
-| `budget.go`, `update_managed.go` | T3 (1), T9 (3: the gate call), T11 (5: flags) |
+| `budget.go`, `update_managed.go` | T3 (1), T16 (2: the mode's choice record), T9 (3: the gate call), T11 (5: flags) |
 | `settings_write.go` | T3 (1), T5 (2) |
 | `accounts_rm.go`, `accounts_managed.go`, `config_publish.go` | T5 (2), T9 (3), T11 (5) |
 | `image*.go`, `image_refresh_managed.go`, `image_build_managed.go` | T4 (2), T9 (3: the gate call in `image_refresh_managed.go`), T11 (5) |
@@ -327,7 +340,7 @@ ruled); T16, the T6(b) step, is off the critical path.
 | `managed_gate.go`, `managed_apply.go`, `doctor_managed_audit.go`, `internal/managed/{converge,plan,apply,audit}.go`, `cover.go`, `guard.go` | T9 (3) |
 | `internal/managed/builds.go`, `internal/infra/managed/*`, `internal/infra/catalogcheck.go` | T10 (3) |
 | `internal/budget/*`, Firebase rules, `iam.tf` (billing grant) | T8 (1) |
-| `update.go`, `update_budget_mode.go` (new), `doctor_build_budget.go` | T8 (1: `doctor_build_budget.go`, new), T16 (2: the mode step and one doctor line) |
+| `update.go`, `update_budget_mode.go` (new), `doctor_build_budget.go`, `internal/infra/firebasedb.go` | T8 (1: `doctor_build_budget.go`, new), T16 (2: the mode step, one doctor line, the mode write's choice record) |
 | `internal/initflow/stage.go` | T9 (3: `Removes` only), T12 (6) |
 | `docs/gcp-live-checklist.md`, `SECURITY.md` flag text, plugin skills, console `spawn.ts`/`confirm.ts` | T11 (5); T14 rows and T13 gate text land at level 5 |
 | `CLAUDE.md`, `.claude/rules/*` | T13 (6) |

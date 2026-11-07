@@ -15,5 +15,5 @@ Three answers are not the recommendation: D1544 (keep `--ask`), D1545 (the manag
 audit-only) and D1550 (the build rate is queried from Cloud Billing). They opened tensions T1–T5, and
 D1554 against D1548 opened T6. The owner ruled on 2026-11-07: **T1** `--ask` as proposed, **T2** (a)
 audit-only with a hardened record and the cover-table rule rewritten as a tripwire, **T3** and **T4**
-confirmed, **T6** (b) `fugaro update` sets the budget mode to enforce on a managed project. **T5** stays
-open: the D1550 answer is held until the T8 spike (task T8S) reports.
+confirmed, **T6** (b) `fugaro update` raises the budget mode to enforce on a managed project unless its owner
+chose observe. **T5** stays open: the D1550 answer is held until the T8 spike (task T8S) reports.

@@ -311,7 +311,8 @@ installation the nightly catalog check job (D1554's lease) and every other build
 (b)** — `fugaro update` sets the mode to enforce on a managed project (observe stays an explicit choice), with
 one `doctor` line saying so. T10 and the lease design follow it: the enforce-on-update step is its own task
 (T16, one file group), with a converge test (HARD RULE: `fugaro update` is the whole upgrade; an installation at
-the previous mode converges).
+the previous mode converges). The trigger cannot be an absent mode node: `internal/infra/firebasedb.go` **seeds**
+`config/mode` = `observe` at install, so T16 records the owner's choice instead, and raises where there is none.
 
 **Open items:** T5 above, until the T8S spike reports; whether `doctor`'s observe warning (D1548) is a
 warning or an error; the meta repo's own design (out of this plan). Every decision D1540–D1555 is answered
