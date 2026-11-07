@@ -580,11 +580,12 @@ func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 // every time and left the owner unable to apply a policy at all, so the count
 // becomes a note on the command's output and the write proceeds.
 //
-// The note replaces the refusal and nothing else. The diff and the stage's own
-// confirmation are still asked (the rig's gate is the managed answer alone,
-// whose inner gate admits nothing, so admitted is false here), the node is
-// written, and the generation the write landed is recorded in the file it was
-// built from exactly as a run with nothing in flight records it.
+// The note replaces the refusal and nothing else. The diff is still printed and
+// the stage's own typed confirmation is NOT asked of a person on a managed
+// project (the owner's ruling of 2026-11-06; the rig's gate admits nothing, so
+// admitted is false here, and the person branch is what spares the prompt), the
+// node is written, and the generation the write landed is recorded in the file
+// it was built from exactly as a run with nothing in flight records it.
 func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
@@ -602,8 +603,11 @@ func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d: the note did not let the write through", got, projectpolicy.Version)
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
-		t.Errorf("the note took the stage's own confirmation with it:\n%s", out)
+	if strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("a person on a managed project was asked to type the project's name (the owner's ruling of 2026-11-06):\n%s", out)
+	}
+	if !strings.Contains(out, "note: this rewrites the published policy node in place") {
+		t.Errorf("the write did not say what it does:\n%s", out)
 	}
 	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
 		t.Errorf("the generation the write landed is recorded as %q, want %q: the note changed the record", gen, want)
@@ -648,7 +652,7 @@ func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, h.s.e.r.conditions())
 	if err == nil {
 		t.Fatalf("a coding agent's session wrote a managed project's policy with a run in flight:\n%s", h.out)
 	}
@@ -1355,4 +1359,162 @@ func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject: the owner's ruling
+// of 2026-11-06, no typed prompt for a person at a real terminal on a managed
+// project. The tail is driven directly with admitted false (the gate did not
+// stand in for the confirmation) and nothing on stdin: a person on a managed
+// project proceeds on a note, and every other session keeps the confirmation —
+// an unmanaged project, a coding agent's session, a run with no terminal and a
+// run whose owner asked for the prompts back (--ask) are each refused without
+// the typed name, and the node does not move.
+//
+// The subtests are the mutation check of the condition
+// (managed && initflow.PersonAtTheTerminal(c) && !admitted): dropping any one
+// of its halves lets a session through that must not be, and the first subtest
+// is the positive control for the refusals after it.
+func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
+	run := func(t *testing.T, managed, terminal, ask bool, marker string) (*migrationRig, *projectFixture, error) {
+		t.Helper()
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+		h := newMigrationRig(t, f, &initOptions{ask: ask})
+		if terminal {
+			fakeTerminal(t)
+		} else {
+			noTerminal(t)
+		}
+		if marker != "" {
+			t.Setenv(marker, "1")
+		}
+		h.cmd.SetIn(strings.NewReader(""))
+		m, _, err := h.s.plan(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed, h.s.e.r.conditions())
+	}
+	// refused is the four sessions that keep the confirmation: the run is
+	// stopped with the typed name asked for, and the node does not move.
+	refused := func(t *testing.T, why string, managed, terminal, ask bool, marker string) {
+		t.Helper()
+		h, f, err := run(t, managed, terminal, ask, marker)
+		if err == nil {
+			t.Fatalf("%s wrote without the typed name:\n%s", why, h.out)
+		}
+		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("%s was refused without the confirmation being asked for:\n%s", why, h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got != 3 {
+			t.Errorf("%s moved the node to version %d without a confirmation", why, got)
+		}
+	}
+	t.Run("a person on a managed project", func(t *testing.T) {
+		h, f, err := run(t, true, true, false, "")
+		if err != nil {
+			t.Fatalf("a person on a managed project was asked to confirm: %v\n%s", err, h.out)
+		}
+		if strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("a person on a managed project was asked to type the project's name:\n%s", h.out)
+		}
+		if !strings.Contains(h.out.String(), "note: this rewrites the published policy node") {
+			t.Errorf("the note is missing:\n%s", h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got == 3 {
+			t.Errorf("the node was not written (version %d)", got)
+		}
+	})
+	t.Run("an unmanaged project", func(t *testing.T) {
+		refused(t, "an unmanaged project", false, true, false, "")
+	})
+	t.Run("a coding agent's session on a managed project", func(t *testing.T) {
+		refused(t, "a coding agent's session", true, true, false, "CLAUDECODE")
+	})
+	t.Run("a managed project with no terminal", func(t *testing.T) {
+		// The terminal is the half a session's marker cannot stand in for: a
+		// script, a cron entry, an ssh without a tty and a coding agent's tool
+		// call with its variables stripped all read as the owner's own
+		// otherwise, and the write would land with nothing typed and nobody
+		// there.
+		refused(t, "a managed project with nobody at the terminal", true, false, false, "")
+	})
+	t.Run("a managed project whose owner asked for the prompts back", func(t *testing.T) {
+		refused(t, "a managed project run with --ask", true, true, true, "")
+	})
+	// A project's FIRST node is the note's case too, and the one no other
+	// subtest here reaches: they all drive a node that is already published.
+	// The write replaces nothing and deletes nothing, its document is entirely
+	// the person's own local config, and the diff above the note is the first
+	// publish's own — every member the node is created with, named against the
+	// empty document it is created from. The first publish that does keep the
+	// typed name is the empty allow-list one, which the last subtest here pins.
+	t.Run("a managed project with no node to publish yet", func(t *testing.T) {
+		h, f := firstPublishRig(t, "", true)
+		out := h.out.String()
+		if strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+			t.Errorf("a managed project's first node was asked for by name:\n%s", out)
+		}
+		if !strings.Contains(out, "note: this writes the project's first published policy node") {
+			t.Errorf("the note does not say the node is the project's first:\n%s", out)
+		}
+		if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+			t.Errorf("the first node was not written:\n%s", out)
+		}
+	})
+	// The empty allow-list first publish is the one write of that case that
+	// keeps the confirmation: the node it writes admits no repository, so from
+	// the moment it lands every run of the project stops before it starts.
+	t.Run("a managed project with no node and no repository listed", func(t *testing.T) {
+		h, f := firstPublishRig(t, "no-repos", true)
+		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("a node that admits nothing was written without the confirmation:\n%s", h.out)
+		}
+		if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+			t.Errorf("the node that admits nothing was written: %v", v)
+		}
+	})
+	// The note is the person's, so a first publish reached without one keeps
+	// the typed confirmation like every other write here.
+	t.Run("a managed project with no node and nobody at the terminal", func(t *testing.T) {
+		h, f := firstPublishRig(t, "", false)
+		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("a first node was written with nobody at the terminal:\n%s", h.out)
+		}
+		if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+			t.Errorf("the first node was written with nobody at the terminal: %v", v)
+		}
+	})
+}
+
+// firstPublishRig plans the stage over a project that has never published a
+// node — an image_catalog in the local config is what makes that a first
+// publish rather than nothing to do — and runs the tail over it: managed, a
+// person at the terminal unless terminal is false, and nothing on stdin. extra
+// "no-repos" rewrites the config so the node it would write admits no
+// repository, which is the first publish that keeps the typed name.
+func firstPublishRig(t *testing.T, extra string, terminal bool) (*migrationRig, *projectFixture) {
+	t.Helper()
+	f := newProjectFixture(t, catalogConfigYAML)
+	if extra == "no-repos" {
+		setCatalogConfigWithNoRepos(t, f)
+	}
+	h := newMigrationRig(t, f, &initOptions{})
+	if terminal {
+		fakeTerminal(t)
+	} else {
+		noTerminal(t)
+	}
+	h.cmd.SetIn(strings.NewReader(""))
+	m, _, err := h.s.plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.firstPublish {
+		t.Fatalf("the rig planned a publish of a node that is there, so this is not the first node")
+	}
+	if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions()); err != nil {
+		t.Logf("the tail refused the first publish: %v", err)
+	}
+	return h, f
 }
