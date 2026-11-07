@@ -499,6 +499,18 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				if cmd.Flags().Changed("review-run") {
 					return userErr("--review-run carries a review run's findings into a fix round, and --recipe %s reviews a pull request instead", rr.Name)
 				}
+				// --owner-ruled is refused here for the same reason
+				// --review-run is: the ruling answers findings a run on the
+				// pull request left, the runner appends it to that
+				// follow-up's brief, and task.Validate holds it to a spec
+				// with a branch, a pr and a previous_run — the reviewSpec
+				// below builds none of the three, because a review-mode
+				// launch reviews a pull request rather than continuing one.
+				// Accepted, the flag would write no field anywhere and the
+				// owner's answer would be dropped without a word.
+				if cmd.Flags().Changed("owner-ruled") {
+					return userErr("--owner-ruled answers the findings a run on a pull request left, and --recipe %s reviews a pull request instead of fixing one", rr.Name)
+				}
 				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
 					if n := len(o.pr); n < lo || n > hi {
 						if lo == hi {
