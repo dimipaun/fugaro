@@ -134,8 +134,11 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	// reads as an open question while the code is on `main` is the defect
 	// TestDocsProjectWorkflowSecretsSaysTheBuildLanded fails a document for.
 	for _, want := range []string{
-		"**Status: a design, and its FC1 has shipped; the owner ruled on 2026-11-07, and the rest of §10 is not built.**",
-		"every decision below is answered, as recommended",
+		"**Status: a design, and its FC1 has shipped; the rest of §10 is not built.**",
+		// The design's own decisions stay the owner's: the plan's decisions being
+		// answered is not the design's D1–D9 and O1–O6 being answered, which is
+		// what README.md's and the plan's own notes about this document say.
+		"the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his",
 		// §10's own status, in the shape the coordinator plan's parts use: a
 		// line above the tasks saying how far the plan has got.
 		"**Status: a plan, approved to build on 2026-11-07; FC1 is built and FC2–FC9 are not started.**",

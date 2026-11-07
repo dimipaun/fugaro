@@ -1,12 +1,11 @@
 # The console's managed-project screens: implementation plan
 
-**Nothing here is approved, and nothing here may start.** Unlike a plan whose decisions are answered,
-this one is blocked twice over: **not one of D1470–D1489 has an owner's answer**
-([reconciliation.md](reconciliation.md) §7), and the tasks below are written against the
-recommendations, so a task may not begin before **its own** rows are answered — an answer to a
-neighbouring row is not an approval, and an answer is not an approval either. The plan is here so the
-owner can price the work and answer with the cost in front of him, which is what the folder's status
-line means: **plan only; nothing is implemented; no task approved.**
+**Every task here is approved, and every decision it was written against is answered — 2026-11-07,
+each as recommended.** **D1470–D1489** carry the owner's dated answer
+([reconciliation.md](reconciliation.md) §7), so no task waits on **its own** row any more, and the
+same day's approval covers the plan as a whole (owner: "All tasks approved. Jobmax"). The plan is
+here so the owner can read what he priced and approved; what the folder's status line means now is
+**plan only; nothing is implemented; decisions answered 2026-11-07, all tasks approved 2026-11-07.**
 
 This document adds no code, no schema, no console source, no fixture and no workflow: it names the
 files the tasks will touch and edits none of them.
@@ -470,5 +469,6 @@ them live there (F26, F27) and a document changed without them is a red test on 
 may not merge without that review. CM2 is SEC on its own merits (it bounds a disclosure), and CM3 and
 CM4 are SEC by the console rule: every move of §5.1 rule 5's count or rule 6's table is.
 
-**A task may not start before its own decisions are answered**, and every task here is blocked until
-then (§7 of [reconciliation.md](reconciliation.md), whose owner's-answer cells are empty).
+**A task may not start before its own decisions are answered, and every one of them is** (§7 of
+[reconciliation.md](reconciliation.md), each row carrying the owner's dated answer of 2026-11-07), so
+no task here is blocked by a decision.

@@ -72,7 +72,7 @@
         "remove-entry",
         "remove-secret"
       ],
-      "description": "The edit this document is about, written only by a write that has one of its own and left out of every other document (D1164): add-entry for --add-entry, remove-entry for --remove-entry, and remove-secret for `fugaro secrets rm NAME`, which takes away the whole `project_secrets.NAME` entry *and* the Secret Manager container behind it (D1171) — more than one member of a block, and so not remove-entry. A consumer draws the edit from this member and not from the command line, and the three entry members travel together with the two entry operations: a document carrying one of add-entry/remove-entry carries all of the ones the edit has a value for, while remove-secret carries none of them because what it removes is addressed by `key` alone."
+      "description": "The edit this document is about, written only by a write that has one of its own and left out of every other document (D1164): add-entry for --add-entry, remove-entry for --remove-entry, and remove-secret for `fugaro secrets rm NAME`, which takes away the entry the name has — `project_secrets.NAME` for a reserved name, `workflow_secrets.NAME` for a workflow secret (D1260, which makes the block a fact of the name and not of the command) — *and* the Secret Manager container behind it (D1171) — more than one member of a block, and so not remove-entry. A consumer draws the edit from this member and not from the command line, and the three entry members travel together with the two entry operations: a document carrying one of add-entry/remove-entry carries all of the ones the edit has a value for, while remove-secret carries none of them because what it removes is addressed by `key` alone."
     },
     "entry_key": {
       "type": "string",
@@ -81,7 +81,7 @@
     },
     "entry_value": {
       "type": "string",
-      "description": "The value entry_key holds: the member's value for a map, and for an object list the key field's value, which is what --remove-entry takes. Empty when a map member is removed — the member is gone and its value with it — and left out of a document that is not an entry write."
+      "description": "The value entry_key holds: the member's value for a map, and for an object list the key field's value, which is what --remove-entry takes. Left out when a map member is removed — the member is gone, its value with it, and the member's own field=value pair is what `old` carries — and left out of a document that is not an entry write."
     },
     "entry_fields": {
       "type": "object",

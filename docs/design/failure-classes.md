@@ -1,11 +1,12 @@
 # Failure classes: a closed vocabulary on the run record, and a failures report
 
-**Status: a design, and its FC1 has shipped; the owner ruled on 2026-11-07, and the rest of §10 is not
-built.** This document recommends, and names the alternative and what it costs, for every question it
-takes up; every decision below is answered, as recommended. **FC1** — the vocabulary, the record's
-field and the schema's enum — is on `main`: `internal/failure`, the `failure.Classes()` slice §3 names,
-and `Record.FailureClass`, which no producer writes yet. **FC2–FC9 are not started.** What is written
-here was read against `main` on 2026-11-05, and the line citations are taken from that tree.
+**Status: a design, and its FC1 has shipped; the rest of §10 is not built.** This document recommends,
+and names the alternative and what it costs, for every question it takes up; the owner rules, and the
+design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions, D1450–D1469, are
+answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's field and the schema's
+enum — is on `main`: `internal/failure`, the `failure.Classes()` slice §3 names, and
+`Record.FailureClass`, which no producer writes yet. **FC2–FC9 are not started.** What is written here
+was read against `main` on 2026-11-05, and the line citations are taken from that tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
 [artifact-runs.md](artifact-runs.md) (the report a run writes with the digest), the digest's own

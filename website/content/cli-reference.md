@@ -2402,6 +2402,7 @@ Subcommands:
 
 - `fugaro managed apply` -- Apply the agent-authored Terraform root of a managed project, as the deployer account
 - `fugaro managed flag` -- Flag an existing GCP project as managed (the project's owner)
+- `fugaro managed status` -- Print a managed project's marks and its newest audit record
 - `fugaro managed unflag` -- Remove both marks that make a GCP project managed (the project's owner)
 
 ## `fugaro managed apply`
@@ -2537,6 +2538,58 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for flag |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro managed status`
+
+Print a managed project's marks and its newest audit record
+
+Print whether the selected project is managed, and what its audit trail
+records.
+
+This is the read a screen of a managed project is built on: one closed document
+about one project, holding the two marks' own answer and the bounded subset of
+the newest audit record — never a sentence to be parsed, whose next rewording
+would change what a screen draws.
+
+It reads the same two facts a managed apply reads, and changes no cloud object:
+whether the project is managed is the creation fact in its runs bucket and the
+fugaro_managed label on the project itself, which have to agree, and the trail
+is the records the managed commands file under gs://<runs bucket>/fugaro/managed-audit/.
+
+The trail is the newest record of the current UTC day, and of the previous day
+when today holds nothing, with the day and that day's count beside it. A day
+whose records could not be read is said rather than shown as an empty one: the
+two are different facts and only one of them is a reason to look further. A
+project that is not managed files no record at all, so its trail is not read and
+nothing is reported about it — and a project whose marker or label was removed
+is "not managed", never "revoked", which is a run-time decision of the gate and
+is recorded nowhere.
+
+What it prints is bounded on purpose: the record's time, its command, the gate's
+verdict, the account the write ran as and the plan digest. The record's argv is
+never printed, by this command or by anything that reads this document: it holds
+paths and titles an operator did not mean to publish.
+
+--json prints the document, which the desktop console reads as bytes: see the
+desktop console's JSON contract, section 6.21, for every member and what its
+emptiness means.
+
+Usage: `fugaro managed status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
