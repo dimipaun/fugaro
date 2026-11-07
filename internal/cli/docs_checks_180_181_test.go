@@ -39,6 +39,16 @@ import (
 // block is owed.
 var bitbucketWorkspaceRegisterChecks = []string{"180"}
 
+// bitbucketWorkspaceCheck180Command is the invocation the register documents,
+// argument for argument, in the row and in the section below it. The four
+// arguments after --installation are required — the script refuses to run
+// without the token file, the two repository pairs and the probe repository —
+// so a register that names `check180.sh --installation <sandbox>` alone
+// documents a command that exits 2 with a usage error before it measures
+// anything. The two halves carry the same string, and folding the section's
+// whitespace is what lets one constant pin both.
+const bitbucketWorkspaceCheck180Command = "scripts/live-checks/check180.sh --installation <sandbox> --token-file <the token file> --repo <owner/name>=<checkout path> --repo <owner/name>=<checkout path> --probe-repo <owner/name>"
+
 // bitbucketWorkspaceCheckRowRE matches a whole register summary row: the line
 // whose first cell is the number between two pipes, alone. The `|` after the
 // number is what anchors it, so a number cited inside another row's prose is not
@@ -74,8 +84,9 @@ func TestDocsChecks180181AreRegistered(t *testing.T) {
 				"never `belong`",
 				// Where the owner's one command and its dry driver live: the
 				// row is the half a reader scans, so the script has to be
-				// named there and not only in the section below.
-				"scripts/live-checks/check180.sh",
+				// named there and not only in the section below — and named
+				// with the arguments it refuses to run without.
+				bitbucketWorkspaceCheck180Command,
 				"scripts/live-checks/check180_test.sh",
 			} {
 				if !strings.Contains(flatRow, want) {
@@ -105,7 +116,11 @@ func TestDocsChecks180181AreRegistered(t *testing.T) {
 			// The register's own rule for an owner-run check: no agent runs any
 			// step of it, and the text has to say so.
 			"no agent runs any step of it",
-			"scripts/live-checks/check180.sh",
+			// The command and its dry driver, the command with every argument
+			// the script requires: the section is where the owner copies it
+			// from, so it is the half where a missing argument is a run that
+			// exits 2 instead of measuring.
+			bitbucketWorkspaceCheck180Command,
 			"scripts/live-checks/check180_test.sh",
 			"never `belong`",
 		} {

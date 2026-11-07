@@ -97,6 +97,10 @@ secrets)
 update)
   case "$*" in
   *--plan-only*)
+    # The plan is about the checkout it was given: a plan taken against
+    # whatever directory the check happened to start in is the bug this log is
+    # here to catch.
+    printf 'plan-cwd=%s\n' "$PWD" >>"$log"
     if [ "$mode" = second-plan-hides-the-token ]; then
       echo "plan: nothing is missing for this repository"
     else
@@ -638,11 +642,22 @@ test_rotation() {
 }
 
 test_second_machine() {
+  run180 second-machine
+  expect_status "$status" 0 "the second machine"
+  expect_contains "$out" "FACT second-machine: PASS" "the second machine: the fact"
+  # `update --repo` is a bool whose positional PATH defaults to the current
+  # directory: the plan has to be about the allow-listed checkout, not about
+  # whatever directory the check was launched from.
+  expect_contains "$(cat "$work/second-machine/fugaro.log")" "plan-cwd=$work/second-machine/checkout-a" \
+    "the second machine: the plan's own directory"
+
   RUN180_MODE=second-plan-hides-the-token
   run180 second-hidden
   expect_status "$status" 1 "a second machine whose plan hides the per-repository token"
   expect_contains "$out" "FACT second-machine: FAIL" "a second machine whose plan hides the per-repository token: the fact"
   expect_contains "$out" "D467" "a second machine whose plan hides the per-repository token: the decision it contradicts"
+  expect_contains "$(cat "$work/second-hidden/fugaro.log")" "plan-cwd=$work/second-hidden/checkout-a" \
+    "a second machine whose plan hides the per-repository token: the plan's own directory"
 
   RUN180_MODE=second-seed-fails
   run180 second-seed-fails

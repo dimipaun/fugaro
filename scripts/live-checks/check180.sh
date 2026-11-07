@@ -1026,8 +1026,15 @@ step_second_machine() {
     fact second-machine INFO "the second machine was NOT seeded (fugaro update --gcp-project ... --config-only exited ${rc}): $(last_line "$SCRATCH/second-seed.log"). U5 stays UNVERIFIED for this run; the reading is that a machine seeded from the shared config has NO project_secrets.bitbucket-token entry, which is operator-local by design"
     return 0
   fi
+  # The paths the seeded machine is asked about are the two checkouts this run
+  # uses: `update --repo` is a BOOL, and the checkout it acts on is its
+  # positional PATH — whose default is the current directory, which here is
+  # wherever the owner launched the check. Without the path the plan would be
+  # taken against that directory rather than against an allow-listed checkout,
+  # and the reading below would be about the wrong repository.
   local rc2=0
-  env "${env[@]}" fugaro update --repo --plan-only </dev/null >"$SCRATCH/second-plan.log" 2>&1 || rc2=$?
+  ( cd "$PATH_A" && exec env "${env[@]}" fugaro update --repo "$PATH_A" --plan-only </dev/null ) \
+    >"$SCRATCH/second-plan.log" 2>&1 || rc2=$?
   local plan="$SCRATCH/second-plan.log"
   if grep -qE "secrets set bitbucket-token --repo|per-repository token|bitbucket-token.*--repo" "$plan"; then
     fact second-machine PASS "a machine seeded from the shared config with fugaro update --gcp-project ... --config-only, holding no project_secrets.bitbucket-token entry, plans a PER-REPOSITORY token: 'fugaro update --repo <path> --plan-only' printed a fugaro secrets set bitbucket-token --repo line (D467's sentence is exactly this — copy the project_secrets entry to every operator machine, or that machine types a per-repository token). The whole machine was a scratch home inside this run's scratch directory"
