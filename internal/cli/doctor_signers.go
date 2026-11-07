@@ -10,6 +10,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/shellword"
@@ -23,16 +24,18 @@ const signConsequence = "can sign sign-in tokens with any claims, i.e. act as an
 // account of the Firebase project. Firebase accepts a custom sign-in token
 // signed by ANY service account of the project, so that, and not the signer
 // account's minter role, is the real boundary of the budget database's
-// identity. Four kinds of principal are information: the ones the design
+// identity. Three kinds of principal are information: the ones the design
 // expects (the Firebase Admin SDK account, the minter role on the signer
-// account alone), the managed deployment's own grants (the deployer account's
-// conditioned roles, under exactly the condition the module writes, and the
-// operators' impersonation of the deployer account itself), Google's own
-// service agents of this project (matched by exact email AND this project's
-// number) and the project owners (the trust root); none is ever given a
-// remove command. Every other
-// one is a warning that fails doctor under --strict. Nothing is
-// checked without a budget backend. Read-only.
+// account alone), Google's own service agents of this project (matched by
+// exact email AND this project's number) and the project owners (the trust
+// root); none is ever given a remove command. The managed deployment's own
+// grants are a warning of their own (token-signers-managed): they are the
+// module's bindings, so they carry no remove command either, but in the one
+// layout this check can see them in — the Firebase project is the deployer's
+// own project — the deployer is a signer, through the unconditioned create its
+// other role holds and the account role's condition naming the accounts it
+// creates. Every other one is a warning that fails doctor under --strict.
+// Nothing is checked without a budget backend. Read-only.
 func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service, i *iam.Service) []doctorCheck {
 	if lc.Budget == nil || lc.Budget.FirebaseProject == "" {
 		return nil
@@ -109,9 +112,11 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		for _, m := range managedOrder {
 			parts = append(parts, m+" ("+strings.Join(managedWhy[m], "; ")+")")
 		}
-		info = append(info, doctorCheck{ID: "token-signers-managed", Severity: "info",
-			Problem: "the managed deployment's own grants, which Fugaro's own Terraform makes on purpose: " + strings.Join(parts, ", ") +
-				"; the conditioned roles are the module's own bindings, and the impersonation grant is on the deployer account rather than the signer; what a service makes of the condition is not read here and is Check 68 of docs/gcp-live-checklist.md's to measure (docs/design/managed-deployer-fence.md); no action"})
+		out = append(out, doctorCheck{ID: "token-signers-managed", Severity: "warning",
+			Problem: "the managed deployment's own grants, which Fugaro's own Terraform makes on purpose, and which are a signing path here, because the Firebase project is the deployer's own project: the deployer's other, unconditioned " + tf.DeployerRole +
+				" role holds iam.serviceAccounts.create, so the account creates an " + tf.ManagedPrefix + " account of this project, the conditioned role below names exactly the accounts it creates, and its iam.serviceAccounts.setIamPolicy is how it grants itself the token-creator role on the one it made — and Firebase accepts a token signed by any account of the project. The bindings: " + strings.Join(parts, ", ") +
+				"; what a service makes of the module's condition is not read here and is Check 68 of docs/gcp-live-checklist.md's to measure (docs/design/managed-deployer-fence.md)",
+			Fix: "the same-project layout is what leaves this open, and the choice is the owner's: a Firebase project of the deployer's own keeps the deployer out of the budget database's accounts (docs/design/m9-budget-and-dashboard.md §6.0), and removing either binding stops the managed replacement `fugaro update` runs"})
 	}
 	if len(agentOrder) > 0 {
 		var parts []string

@@ -54,11 +54,22 @@ const (
 	// Terraform makes on purpose (managedGrant): the deployer account holding
 	// one of the seven conditioned custom roles under exactly the condition
 	// the module writes, or an operator the installation names holding the
-	// token-creator role on the deployer account itself, never on the signer.
-	// What the condition then admits is what Check 68 of
-	// docs/gcp-live-checklist.md measures (docs/design/managed-deployer-fence.md),
-	// not something this check reads off the policy; removing either grant
-	// breaks the managed replacement `fugaro update` runs.
+	// token-creator role on the deployer account itself. It is a WARNING, and
+	// it is the layout that makes it one. This check reads the Firebase
+	// project's policy and the policy of each of its accounts, and the two
+	// bindings are in the deployer's own project, so it sees them exactly
+	// where the Firebase project IS the deployer's own project — and there the
+	// deployer is a signer: its other, unconditioned role (tf.DeployerRole)
+	// holds iam.serviceAccounts.create, so the account creates an fmgd- account
+	// of that very project, the condition above names exactly the accounts it
+	// creates, and it can grant itself the token-creator role on the one it
+	// made; Firebase accepts a token signed by ANY account of the project
+	// (live Check 26, step 7). What the condition admits once a service
+	// enforces it is Check 68 of docs/gcp-live-checklist.md's to measure and is
+	// not read here (docs/design/managed-deployer-fence.md) — and a grant whose
+	// harmlessness rests on an unmeasured answer is not an information line.
+	// Removing either binding stops the managed replacement `fugaro update`
+	// runs, so the warning names the path and carries no remove command.
 	SignerManaged
 )
 
@@ -88,8 +99,11 @@ type SignerFinding struct {
 	// Expected is set for what the design expects (Why says what); everything
 	// else is a risk to name.
 	Expected bool
-	// Why says why a finding that is not Expected is not a risk: the class the
-	// policy puts it in (SignerManaged's own words).
+	// Why is the class's own sentence about the finding: why a class that is
+	// not a risk is not one (SignerGoogleAgent, SignerOwner, the designed
+	// cases), and for SignerManaged which of the module's own bindings the
+	// finding is (the signing path is the same for both, so the line says it
+	// once).
 	Why string
 	// Class is SignerRisk for everything that is not Expected and not one of
 	// the inherent or designed cases (set only for findings that sign or
@@ -343,7 +357,7 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 // grant, and "" for every other one. Each of the two is recognised by the
 // exact shape Fugaro's own Terraform writes (internal/infra/tf), never by a
 // name that merely looks like it, so a grant nobody's apply made stays a
-// warning:
+// warning with the command that removes it:
 //
 //   - the deployer account (tf.DeployerAccount) holding one of the seven
 //     conditioned custom roles under exactly that role's own condition
@@ -351,16 +365,21 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 //     title is tf.DeployerConditionTitle and whose clauses test the managed
 //     prefix tf.ManagedPrefix. Recognised byte for byte, so a binding whose
 //     condition is absent, widened or narrowed is a warning like any other.
-//     What the condition admits once a service enforces it is not read here
-//     and not claimed: the design of record leaves it to Check 68 of
-//     docs/gcp-live-checklist.md (docs/design/managed-deployer-fence.md), and
-//     until then the prefix condition is not a boundary.
+//     The condition is not what makes this grant safe, and the line the
+//     caller builds from these whys says why: the deployer's other,
+//     unconditioned role (tf.DeployerRole) creates an fmgd- account of the
+//     project the check is reading — the Firebase project, in the one layout
+//     these bindings are in — and the condition names exactly the accounts the
+//     deployer creates, so the account can grant itself the token-creator role
+//     on the one it made. Whether a service honours the condition at all is
+//     Check 68's to measure (docs/design/managed-deployer-fence.md); nothing
+//     here claims it does.
 //   - an operator the installation names (Managed.Operators) holding
 //     roles/iam.serviceAccountTokenCreator on the deployer account: the managed
 //     mode's one-time impersonation setup (Task 1.5 step 2 of
 //     docs/plans/2026-10-16-managed-projects.md), which is how the person at
 //     the terminal assumes the deployer. The account it is on is the deployer,
-//     never the signer.
+//     and assuming the deployer reaches the create-and-grant path above.
 //
 // A Managed with no project (no local config) or no operators recognises
 // nothing.
@@ -377,11 +396,11 @@ func (e *signerEval) managedGrant(f SignerFinding) string {
 		if !ok || f.Condition.Title != tf.DeployerConditionTitle || f.Condition.Expression != expr {
 			return ""
 		}
-		return "the deployer account's " + f.Role + ", the module's own binding under " + tf.DeployerConditionTitle +
-			" (" + tf.ManagedPrefix + "); its reach is not yet measured (Check 68, managed-deployer-fence.md)"
+		return "the deployer account's " + f.Role + " under " + tf.DeployerConditionTitle + " (" + tf.ManagedPrefix +
+			"): the module's own binding, and a signing path here"
 	}
 	if strings.EqualFold(f.Account, tf.DeployerAccount(e.managed.Project)) && f.Role == tf.DeployerTokenCreatorRole && e.operator(f.Member) {
-		return f.Role + " on the deployer account: the managed mode's one-time setup, how the operators the installation names assume it, not the signer"
+		return f.Role + " on the deployer account: the managed mode's one-time setup, how the operators the installation names assume it"
 	}
 	return ""
 }

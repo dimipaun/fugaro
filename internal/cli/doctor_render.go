@@ -195,16 +195,6 @@ var doctorDecisionIDs = map[string]bool{
 // signer that is not the installation's own account, a bucket grant whose
 // shape is not the one this Fugaro writes — and the severity guard in
 // doctorClassOf is what keeps those in the default view.
-//
-// token-signers-managed is the one ID in the list with no warning variant of
-// its own: it names the managed deployment's own grants (the deployer
-// account's conditioned roles, recognised under exactly the condition the
-// module writes, and the operators the installation names impersonating that
-// account itself), which Fugaro's own Terraform makes on purpose — so it is a
-// measurement, and every other principal on that account still comes through
-// token-signers-<n> as a warning. What the condition admits is not claimed
-// here: the design of record leaves it to Check 68
-// (docs/design/managed-deployer-fence.md).
 var doctorMeasureIDs = map[string]bool{
 	// The update lookup did not answer. Nothing about this installation is
 	// wrong, and the newer-release case is the warning variant of the same ID.
@@ -239,7 +229,6 @@ var doctorMeasureIDs = map[string]bool{
 	"token-signers":                 true,
 	"token-signers-owners":          true,
 	"token-signers-google-agents":   true,
-	"token-signers-managed":         true,
 	"secret-readers-unexpected":     true,
 	"credentials-service-deployers": true,
 	"batch-artifact-boundary":       true,
@@ -860,6 +849,11 @@ var doctorShorts = map[string]doctorShort{
 	"creds-unknown-state":          {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
 	"creds-rules":                  {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
 	"token-signers":                {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	// The managed deployer's own grants, the sweep's one warning that is the
+	// module's own binding: it carries no remove command, so its own sentence
+	// is the one the default view must print, and the sentence above is the
+	// path in the length one screen line allows.
+	"token-signers-managed": {"the managed deployer can sign here: it creates fmgd- accounts of this project and grants itself the token-creator role on them.", ""},
 }
 
 // doctorShortsByPrefix are the short forms for the checks doctor emits once
@@ -882,9 +876,10 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// member.
 	//
 	// A short form is only ever reached from the default view, and the info
-	// lines these prefixes also match (a sweep's own summary, a signer the
-	// installation designed for) are measurements, which that view never prints:
-	// the full text is what --all and --security show either way.
+	// lines these prefixes also match — token-signers-owners and
+	// token-signers-google-agents, the sweep's own measurements — are never
+	// printed by that view: the full text is what --all and --security show
+	// either way.
 	{prefix: "token-signers-", short: doctorShort{problem: "somebody who is not a signer Fugaro designs for can sign sign-in tokens, or the policy could not be read."}},
 	{prefix: "runs-bucket-iam-", short: doctorShort{problem: "a grant on the runs bucket that Fugaro does not write, or one it could not read."}},
 	{prefix: "job-token-grant-", short: doctorShort{problem: "a job account's read grant on the budget token objects is not one Fugaro writes, or could not be read."}},

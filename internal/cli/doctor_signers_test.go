@@ -111,6 +111,15 @@ func (r *signerRig) doctor(t *testing.T, args ...string) (doctorOutput, error) {
 	return o, err
 }
 
+// doctorText is the human view of the same rig, for the one thing --json
+// cannot show: whether a line is on the screen a person reads at all.
+func (r *signerRig) doctorText(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	root, _ := skillCheckout(t, wiredAt("v0.2.0"))
+	out, _, err := execute(t, append([]string{"doctor", "--dir", root}, args...)...)
+	return out, err
+}
+
 // summary is the always-present partial-coverage line; signerChecks are the
 // per-finding warnings.
 func summary(o doctorOutput) (doctorCheck, bool) { return doctorCheckByID(o.Checks, "token-signers") }
@@ -491,25 +500,29 @@ func TestDoctorTokenSignersUnreadProjectNumberIsCounted(t *testing.T) {
 	}
 }
 
-// TestDoctorTokenSignersManagedDeploymentIsInfo: the two grants Fugaro's own
-// Terraform makes on a managed installation are information, not warnings —
-// the false positives an installation that ran `fugaro update` reported.
+// TestDoctorTokenSignersManagedDeploymentWarns: the two grants Fugaro's own
+// Terraform makes on a managed installation are a WARNING, not information.
+// The information class is what hid them: token-signers-managed was a
+// measurement, so the default screen did not print it and --strict stayed
+// green, while the deployer's unconditioned fugaroDeployer role holds
+// iam.serviceAccounts.create (deployer.tf), so the account creates an fmgd-
+// account of the project, the account role's own condition names exactly the
+// accounts it creates, and its iam.serviceAccounts.setIamPolicy is how it
+// grants itself the token-creator role on the one it made — and Firebase
+// accepts a token signed by ANY account of the project (live Check 26, step
+// 7). That the binding is on the deployer account rather than the signer is
+// no defence: in the same-project layout the deployer IS an account of the
+// Firebase project.
 //
-// The deployer account's fugaroDeployerAccount resolves to
-// iam.serviceAccounts.setIamPolicy, but the module binds it under its own
-// condition on the managed prefix, and that exact binding is what this check
-// recognises. What the condition admits once a service enforces it is not read
-// here and not claimed — the line names Check 68, as the design of record
-// requires (docs/design/managed-deployer-fence.md: until it has run, the
-// prefix condition is not a boundary). The operator's
-// roles/iam.serviceAccountTokenCreator is on the deployer account, which is
-// not the signer either.
+// What a service makes of the module's condition is Check 68's to measure and
+// is not claimed here (docs/design/managed-deployer-fence.md: until it has
+// run, the prefix condition is not a boundary).
 //
-// Mutations this test is the guard for: dropping managedGrant's condition
-// comparison (the fence) must turn the first grant into a warning, and
-// dropping the operators the installation names must turn the second one into
-// a warning.
-func TestDoctorTokenSignersManagedDeploymentIsInfo(t *testing.T) {
+// Mutations this test is the guard for: classifying the two as information
+// again must fail the severity, the class and the --strict assertions, and
+// dropping the create-and-grant sentence from the line must fail the text
+// ones.
+func TestDoctorTokenSignersManagedDeploymentWarns(t *testing.T) {
 	r := newSignerDoctorRig(t)
 	r.withDeployer(t)
 	r.withOperators(t, "user:ops@example.com")
@@ -517,18 +530,23 @@ func TestDoctorTokenSignersManagedDeploymentIsInfo(t *testing.T) {
 	r.iam.SetServiceAccountPolicy("proj-1234", dsDeployer, gcpfake.Binding{Role: tf.DeployerTokenCreatorRole, Members: []string{"user:ops@example.com"}})
 
 	o, err := r.doctor(t, "--strict")
-	if err != nil || len(signerChecks(o)) != 0 {
-		t.Fatalf("--strict must stay green: err %v, checks %+v", err, o.Checks)
+	if err == nil {
+		t.Fatalf("--strict must fail on the managed grants: %+v", o.Checks)
+	}
+	if cs := signerChecks(o); len(cs) != 0 {
+		t.Fatalf("the module's own bindings are the class line, not numbered warnings: %+v", cs)
 	}
 	c, ok := checkByID(o, "token-signers-managed")
-	if !ok || c.OK || c.Severity != "info" || c.Fix != "" {
+	if !ok || c.OK || c.Severity != "warning" {
 		t.Fatalf("managed check %+v (found %v)", c, ok)
 	}
 	for _, want := range []string{
 		dsDeployer, dsDeployerRole, tf.DeployerConditionTitle, tf.ManagedPrefix,
-		"user:ops@example.com", tf.DeployerTokenCreatorRole, "no action",
-		// The condition, not what it admits: the line says so and names the
-		// check that measures the rest.
+		"user:ops@example.com", tf.DeployerTokenCreatorRole,
+		// The path, not the condition alone: the deployer's own create, and the
+		// account role's setIamPolicy on the account it made.
+		tf.DeployerRole, "iam.serviceAccounts.create", "iam.serviceAccounts.setIamPolicy",
+		// And the check that measures what the condition is worth.
 		"Check 68",
 	} {
 		if !strings.Contains(c.Problem, want) {
@@ -538,11 +556,46 @@ func TestDoctorTokenSignersManagedDeploymentIsInfo(t *testing.T) {
 	if strings.Contains(c.Problem, "reaches no service account whose name does not carry it") {
 		t.Errorf("the managed line claims the fence's enforcement, which no document may claim before Check 68 runs: %q", c.Problem)
 	}
-	if strings.Contains(c.Problem, "remove-iam-policy-binding") {
-		t.Errorf("a class line carries a remove command: %q", c.Problem)
+	if strings.Contains(c.Problem+c.Fix, "remove-iam-policy-binding") {
+		t.Errorf("the module's own binding is offered a remove command: %q / %q", c.Problem, c.Fix)
 	}
-	if c.Class != doctorClassMeasure {
-		t.Errorf("the managed line is classed %q, want %q: the default screen stays clean", c.Class, doctorClassMeasure)
+	if c.Class != doctorClassActionable {
+		t.Errorf("the managed line is classed %q, want %q: a measurement is the class that hid it", c.Class, doctorClassActionable)
+	}
+	// The default view is the one that has to carry it: a person who runs
+	// doctor after `fugaro update` reads the short line, and --strict fails
+	// there too.
+	text, err := r.doctorText(t, "--strict")
+	if err == nil {
+		t.Error("--strict must fail in the human view as well")
+	}
+	if !strings.Contains(text, "warning token-signers-managed: the managed deployer can sign here") {
+		t.Errorf("the default view does not print the managed line:\n%s", text)
+	}
+}
+
+// TestDoctorTokenSignersManagedBindingsAreInTheDeployerProject: the warning is
+// about the deployer being inside the Firebase project. Doctor reads the
+// Firebase project's policy and the policy of each of its accounts, so an
+// installation whose Firebase project is a project of its own does not show
+// these bindings at all: they are in the deployer's project, and neither is a
+// binding of the project that signs. The same installation with the same two
+// bindings then has nothing to warn about — and nothing hidden either.
+func TestDoctorTokenSignersManagedBindingsAreInTheDeployerProject(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.withDeployer(t)
+	r.project(gcpfake.Binding{Role: dsDeployerRole, Members: []string{"serviceAccount:" + dsDeployer}, Condition: deployerFence(t)})
+	r.iam.SetServiceAccountPolicy("proj-1234", dsDeployer, gcpfake.Binding{Role: tf.DeployerTokenCreatorRole, Members: []string{"user:ops@example.com"}})
+	r.crm.AddProject("fp-5678", 567890123456)
+	r.crm.SetPolicy("fp-5678", gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}})
+	r.withBudget(t, "fp-5678", "fugaro-token-signer@fp-5678.iam.gserviceaccount.com")
+
+	o, err := r.doctor(t, "--strict")
+	if err != nil {
+		t.Fatalf("--strict must stay green: %+v", o.Checks)
+	}
+	if c, ok := checkByID(o, "token-signers-managed"); ok {
+		t.Errorf("the deployer's project is not the Firebase project, so its bindings are not read: %+v", c)
 	}
 }
 
@@ -580,23 +633,33 @@ func TestDoctorTokenSignersManagedDeployerNeedsTheFence(t *testing.T) {
 	}
 }
 
-// TestDoctorTokenSignersOperatorImpersonationIsInfo: the operator's
+// TestDoctorTokenSignersOperatorImpersonationWarns: the operator's
 // token-creator grant on the deployer account is the managed mode's one-time
-// setup (Task 1.5 step 2 of the managed-projects plan), information.
+// setup (Task 1.5 step 2 of the managed-projects plan), and it warns for the
+// same reason the deployer's own binding does: assuming the deployer reaches
+// the create-and-grant path, and this check reads the Firebase project's
+// accounts, so it sees the binding exactly where the Firebase project is the
+// deployer's own project.
 // Mutation: dropping the operator list from what doctor passes the detector
-// must turn it into a warning.
-func TestDoctorTokenSignersOperatorImpersonationIsInfo(t *testing.T) {
+// must turn it into a numbered warning.
+func TestDoctorTokenSignersOperatorImpersonationWarns(t *testing.T) {
 	r := newSignerDoctorRig(t)
 	r.withDeployer(t)
 	r.withOperators(t, "user:ops@example.com")
 	r.iam.SetServiceAccountPolicy("proj-1234", dsDeployer, gcpfake.Binding{Role: tf.DeployerTokenCreatorRole, Members: []string{"user:ops@example.com"}})
 	o, err := r.doctor(t, "--strict")
-	if err != nil || len(signerChecks(o)) != 0 {
-		t.Fatalf("--strict must stay green: err %v, checks %+v", err, o.Checks)
+	if err == nil {
+		t.Fatalf("--strict must fail on the operator's impersonation grant: %+v", o.Checks)
+	}
+	if cs := signerChecks(o); len(cs) != 0 {
+		t.Fatalf("the managed mode's own grant is the class line, not a numbered warning: %+v", cs)
 	}
 	c, ok := checkByID(o, "token-signers-managed")
-	if !ok || c.Severity != "info" || !strings.Contains(c.Problem, "user:ops@example.com") {
+	if !ok || c.OK || c.Severity != "warning" || !strings.Contains(c.Problem, "user:ops@example.com") {
 		t.Fatalf("managed check %+v (found %v)", c, ok)
+	}
+	if strings.Contains(c.Problem+c.Fix, "remove-iam-policy-binding") {
+		t.Errorf("the managed mode's own grant is offered a remove command: %q / %q", c.Problem, c.Fix)
 	}
 }
 
