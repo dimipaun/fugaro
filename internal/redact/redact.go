@@ -154,15 +154,30 @@ var (
 	// key.
 	authHeaderQuoted = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(")((?:\\.|[^"\\\r\n])*)("?)`)
 
-	// authHeader is the same header in plain text, where the value is
-	// whatever follows the colon on the line and there is no record around it
-	// to protect. Its value has to start with a character that is neither
-	// whitespace nor a quote: a quoted value is the form above, already
-	// redacted, and matching it here would take the rest of the line with it.
-	// A leading backslash counts only when what follows it is not a quote,
-	// for the same reason: the escaped form above leaves `\"[REDACTED]\"`
-	// behind, and this rule must not eat the line from there.
-	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(?:[^\s"\\\r\n]|\\[^\s"\r\n])[^\r\n]*`)
+	// authHeader is the same header in plain text, where no closing quote
+	// bounds the value. Three shapes of value, each ending where the text
+	// around it can still be read:
+	//
+	//   - a plain value — a bearer token, a key — ends at a quote as well as
+	//     at the end of the line, because a header also appears inside a
+	//     string value of a record (`{"message":"… Authorization: Bearer
+	//     …","step":"…"}`); a rule that ran to the line would take the fields
+	//     after it, which are the diagnosis the record exists to carry.
+	//   - a container that closes on the line (`{"authorization":{"token":
+	//     "…"}}`) goes whole, brackets included, so a credential nested inside
+	//     one does not survive the rule that stopped at the first quote.
+	//   - a container that never closes takes the rest of the line, having no
+	//     bracket to stop at: a marker that mangles a line is better than a
+	//     credential that survives one.
+	//
+	// The value has to start with a character that is neither whitespace nor a
+	// quote — a quoted value is the form above, already redacted — and a
+	// leading backslash counts only when what follows it is not a quote, or
+	// this rule would eat the line from the escaped form's `\"[REDACTED]\"`.
+	// A bracketed value that closes before any quote ends at its own bracket,
+	// which is also what keeps this rule from matching its own marker a second
+	// time.
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(?:\{[^\r\n]*?\}|\[[^\r\n]*?\]|[\[{][^\r\n]*|(?:[^\s"\\\r\n\[{]|\\[^\s"\r\n])[^"\r\n]*)`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The

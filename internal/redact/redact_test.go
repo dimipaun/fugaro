@@ -128,6 +128,32 @@ var patternCases = []struct {
 		keep: "and then some",
 	},
 	{
+		name: "header inside a json string value",
+		in: `{"severity":"ERROR","message":"Authorization: Bearer ` + fake(strings.Repeat("A1b2C3d4", 3)) +
+			`","step":"terraform apply"}`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+		keep: `","step":"terraform apply"}`,
+	},
+	{
+		name: "plain header value followed by a quote",
+		in:   `Authorization: Bearer ` + fake(strings.Repeat("A1b2C3d4", 3)) + `, retrying "get token" step`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+		keep: `"get token" step`,
+	},
+	{
+		name: "header over a nested object",
+		in: `{"authorization":{"token":"` + fake(strings.Repeat("A1b2C3d4", 3)) +
+			`"},"step":"terraform apply"}`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+		keep: `"step":"terraform apply"}`,
+	},
+	{
+		name: "header quoted inside a shell command",
+		in:   `curl -H "x-api-key: ` + fake(strings.Repeat("Zx9", 8)) + `" https://api.example.com`,
+		leak: strings.Repeat("Zx9", 8),
+		keep: " https://api.example.com",
+	},
+	{
 		name: "bearer without a header name",
 		in:   "retrying with Bearer " + fake(strings.Repeat("A1b2C3d4", 3)) + " now",
 		leak: strings.Repeat("A1b2C3d4", 3),
@@ -287,12 +313,12 @@ func TestRedactKeepsAnEscapedRecordReadable(t *testing.T) {
 	}
 }
 
-// TestReportIsIdempotentWhenAMaskBites: this is the shape that made the
+// TestRedactReportIsIdempotentWhenAMaskBites: this is the shape that made the
 // report change under a second application — a home path inside a quoted
 // value that is never closed, where masking the path is what closes the value
 // and lets the pattern pass see a match it had run past. The masks run before
 // the pass, so Report is idempotent here whatever the mask removes.
-func TestReportIsIdempotentWhenAMaskBites(t *testing.T) {
+func TestRedactReportIsIdempotentWhenAMaskBites(t *testing.T) {
 	in := `authorization: "` + fake("eyJsig=", `\"/root\"`)
 	once := Report(in)
 	if strings.Contains(once, fake("/root")) {
@@ -300,6 +326,36 @@ func TestReportIsIdempotentWhenAMaskBites(t *testing.T) {
 	}
 	if twice := Report(once); twice != once {
 		t.Errorf("Report is not idempotent: once %q, twice %q", once, twice)
+	}
+}
+
+// TestRedactKeepsARecordReadableWhenTheHeaderIsInsideAValue: a record may
+// quote a whole command or an upstream error inside one field, so the header
+// sits inside a string value rather than at the top level, with the record's
+// remaining fields after it. Those fields are the diagnosis: a rule that ran
+// to the end of the line would take them and leave text that no longer parses.
+func TestRedactKeepsARecordReadableWhenTheHeaderIsInsideAValue(t *testing.T) {
+	token := fake(strings.Repeat("A1b2C3d4", 3))
+	in := `{"severity":"ERROR","message":"curl -H 'Authorization: Bearer ` + token +
+		`' https://api.example.com failed","step":"terraform apply"}`
+	got := Text(in, nil)
+	if strings.Contains(got, token) {
+		t.Errorf("Text = %q: the token survived", got)
+	}
+	var rec map[string]string
+	if err := json.Unmarshal([]byte(got), &rec); err != nil {
+		t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+	}
+	for field, want := range map[string]string{
+		"severity": "ERROR",
+		"step":     "terraform apply",
+	} {
+		if rec[field] != want {
+			t.Errorf("Text lost %s: %#v", field, rec)
+		}
+	}
+	if !strings.Contains(rec["message"], "[REDACTED]") {
+		t.Errorf("message = %q, want the marker", rec["message"])
 	}
 }
 
@@ -353,13 +409,19 @@ func TestRedactPassesAreIdempotent(t *testing.T) {
 // same pass costs an order of magnitude more — and it is still far below what
 // a pass that scanned the text again for every position would take.
 func TestRedactPassesAreBounded(t *testing.T) {
+	token := fake(strings.Repeat("A1b2C3d4", 3))
+	sig := fake(strings.Repeat("ab", 16))
+	key := fake("-----BEGIN ", "RSA PRIVATE KEY-----\n", strings.Repeat("b2R5", 8), "\n-----END ", "RSA PRIVATE KEY-----")
+	jwt := fake("eyJ", "hbGciOiJIUzI1NiJ9.", "eyJzdWIiOiIxIn0.", "c2lnbmF0dXJlMTIz")
+	person := fake("dimi", "@", "example.com")
+	home := fake("/home/", "someone")
 	var b strings.Builder
 	for i := 0; i < 500; i++ {
-		b.WriteString("Authorization: Bearer " + strings.Repeat("A1b2C3d4", 3) + "\n")
-		b.WriteString("-----BEGIN RSA PRIVATE KEY-----\n" + strings.Repeat("b2R5", 8) + "\n-----END RSA PRIVATE KEY-----\n")
-		b.WriteString("?sig=" + strings.Repeat("ab", 16) + "&X-Amz-Expires=1\n")
-		b.WriteString("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlMTIz\n")
-		b.WriteString("reached dimi@example.com at /home/someone/.config\n")
+		b.WriteString("Authorization: Bearer " + token + "\n")
+		b.WriteString(key + "\n")
+		b.WriteString("?sig=" + sig + "&X-Amz-Expires=1\n")
+		b.WriteString(jwt + "\n")
+		b.WriteString("reached " + person + " at " + home + "/.config\n")
 	}
 	in := b.String()
 	if len(in) < 1<<17 {
@@ -371,7 +433,7 @@ func TestRedactPassesAreBounded(t *testing.T) {
 	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("redacting %d bytes took %s, which is not a pass over a log", len(in), d)
 	}
-	for _, leak := range []string{"dimi@example.com", "/home/someone", strings.Repeat("A1b2C3d4", 3), strings.Repeat("ab", 16)} {
+	for _, leak := range []string{person, home, token, sig} {
 		if strings.Contains(got, leak) {
 			t.Errorf("%q survived a pass over %d bytes", leak, len(in))
 		}
