@@ -930,8 +930,11 @@ function readsOf(where: string): readonly SpawnLogEntry[] {
 /** SETTINGS_KEY is the row the narrowing below edits, and SETTINGS_WIDENING_KEY
  * the one the widening edits: both are rows of `test/fixtures/settings.json`,
  * whose `target_layer` the console takes the `--layer` word from (D1102). The
- * first writes the layer that wins and the second a layer the CLI's dry run
- * classifies as a widening, which is the whole of the difference between the two
+ * first writes the `repo` layer the read names as that row's target -- narrower
+ * than the `project` layer that wins it, so the window draws the one sentence
+ * the difference earns -- and the second a layer the CLI's dry run classifies as
+ * a widening (`DRY_RUNS` below, which is the stub's answer and not a comparison
+ * this spec makes), which is the whole of the difference between the two
  * windows. */
 const SETTINGS_KEY = 'agent.review_rounds'
 const SETTINGS_WIDENING_KEY = 'claude_account_auto'
@@ -945,8 +948,8 @@ const DRY_RUNS: Readonly<Record<string, JSONDoc>> = {
   [SETTINGS_KEY]: {
     version: 1,
     key: SETTINGS_KEY,
-    layer: 'project',
-    path: '/home/owner/.config/fugaro/projects/example.yaml',
+    layer: 'repo',
+    path: '/home/owner/src/example-project/fugaro.yaml',
     changed: true,
     widening: false,
     why: '',
@@ -1241,7 +1244,7 @@ test.describe('the Projects view in the dashboard', () => {
 
     const shown = await shownArgv(confirm)
     expect(shown.slice(1)).toEqual([
-      'settings', 'set', SETTINGS_KEY, '--layer', 'project', '--yes', '--project', 'e2e', '--', '3',
+      'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--yes', '--project', 'e2e', '--', '3',
     ])
     await pressWhenReady(confirm, SAVE_LABEL)
 
@@ -1255,7 +1258,7 @@ test.describe('the Projects view in the dashboard', () => {
     // carries **no** `--yes`: the CLI's confirmation is its own question and
     // `--yes` is the console's answer to it (D1107).
     const dryLine = [
-      shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'project', '--dry-run', '--json', '--project', 'e2e', '--', '3',
+      shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--dry-run', '--json', '--project', 'e2e', '--', '3',
     ].join(' ')
     await expect
       .poll(() => stubWrites(cli).length, { message: 'the write never reached the stub' })

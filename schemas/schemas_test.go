@@ -4574,6 +4574,87 @@ settings:
 	}
 }
 
+// TestSettingsConsoleFixture: console/test/fixtures/settings.json is the answer
+// the console's hermetic CLI stub gives `fugaro settings --json`, and the e2e
+// spec that drives a setting's edit draws it as the CLI's own read (the
+// settings-edit plan's C4, D1118). A fixture that is not a document this CLI can
+// print would make that spec prove the window draws an impossible read, and the
+// goldens recorded from the same screen would carry its invented words, so the
+// fixture is validated against the schema that documents the document -- the
+// schema the command's own output is held to by TestSettingsJSONMatchesSchema in
+// internal/cli, which is where the command lives.
+//
+// Two facts the schema states in prose are asserted here instead, because a
+// validator cannot read a description: every row's `default` is the registry's
+// own string ($defs.keyDefaults, which TestSettingsSchema above pins to
+// settings.Rows(), and whose unset sentences are the ones `unset()` writes with
+// the `unset = ` prefix, internal/settings/registry.go), and the answer is the
+// one the console's row asks for -- `settings --json` and the two project flags,
+// with no `--repo` (contract §6.19) -- so every row is project-scoped, and the
+// built-in layer is the one every read lists first (a layer that was not read is
+// not listed, and the registry in memory is not a read: settingsRead.sources).
+func TestSettingsConsoleFixture(t *testing.T) {
+	const file = "../console/test/fixtures/settings.json"
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compile(t, "settings.schema.json").Validate(inst); err != nil {
+		t.Errorf("%s is not a document `settings --json` prints:\n%v", file, err)
+	}
+
+	var fixture struct {
+		Sources []struct {
+			Layer string `json:"layer"`
+		} `json:"sources"`
+		Settings []struct {
+			Key     string `json:"key"`
+			Scope   string `json:"scope"`
+			Default struct {
+				Value string `json:"value"`
+				Unset string `json:"unset"`
+			} `json:"default"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	defaults := nodeOf(t, schema, "$defs", "keyDefaults", "properties")
+	for _, row := range fixture.Settings {
+		entry, ok := defaults[row.Key].(map[string]any)
+		if !ok {
+			t.Errorf("%s: the fixture carries a row $defs.keyDefaults has no key for, and no read prints such a row", row.Key)
+			continue
+		}
+		want, _ := entry["default"].(string)
+		got := row.Default.Value
+		if strings.HasPrefix(want, "unset = ") {
+			got = row.Default.Unset
+		}
+		if got != want {
+			t.Errorf("%s: the fixture's default is %q, and the registry's is %q", row.Key, got, want)
+		}
+		if row.Scope != "project" {
+			t.Errorf("%s: scope = %q, and the read the console runs names no --repo, so every row of it is project-scoped", row.Key, row.Scope)
+		}
+	}
+	if len(fixture.Sources) == 0 || fixture.Sources[0].Layer != "default" {
+		t.Errorf("the fixture's sources begin with %v, and every read lists the built-in layer first (settingsRead.sources)", fixture.Sources)
+	}
+}
+
 // TestSettingsWriteSchema holds schemas/settings-write.schema.json to the
 // document `fugaro settings set|unset … --dry-run --json` prints. That document
 // is what the console's confirmation window is drawn from (D1106), so its

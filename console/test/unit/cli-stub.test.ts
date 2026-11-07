@@ -446,7 +446,11 @@ describe('the stub’s settings arms', () => {
     expect(built.panel.source).toContain('settings --json')
     // The rows the tab draws, and the two facts the pencil hangs on: the
     // document's own `writable` **and** a non-empty `target_layer` (D1102,
-    // D1111). The owned row has neither, and the sensitive row is not here at
+    // D1111). The owned row is the one that tells the two apart: its
+    // `target_layer` is the layer its key may be set in -- a fact about the key,
+    // which the read answers for a row the generic path does not write as well
+    // (`settingsDefaultLayer`, `internal/cli/settings_set.go`) -- so what keeps
+    // the pencil off it is `writable: false`. The sensitive row is not here at
     // all -- it is dropped whole rather than drawn without a value.
     expect(built.rows.map((row) => row.key)).toEqual([
       'agent.review_rounds',
@@ -454,8 +458,8 @@ describe('the stub’s settings arms', () => {
       'mailbox.keychain_item',
     ])
     expect(built.rows.map((row) => row.pencil)).toEqual([true, true, false])
-    expect(built.rows.map((row) => row.targetLayer)).toEqual(['project', 'local', ''])
-    expect(built.rows[2]?.owner).toBe('secrets')
+    expect(built.rows.map((row) => row.targetLayer)).toEqual(['repo', 'local', 'local'])
+    expect(built.rows[2]?.owner).toBe('fugaro secrets')
     expect(built.rows.map((row) => row.key)).not.toContain('budget.firebase_api_key')
     // The read is one of the answers `reads.log` records, so a spec that waits on
     // it rather than on a sleep has something to wait for.
