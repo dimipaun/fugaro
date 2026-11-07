@@ -318,9 +318,10 @@ func layerKeyPaths(data []byte) ([][]string, bool) {
 
 // layerKeyValues is one document as the comparison layerAllowlistRules makes
 // reads it: every path the same walk yields, under the key the registry spells
-// it with (layerPathKey), and the value(s) the document holds there. A path
-// written more than once — the `*` of a list of blocks stands for each of its
-// elements — carries one entry per element, in document order.
+// it with (layerPathKey), and the reading layerNodeValue makes of each value
+// the document holds there. A path written more than once — the `*` of a list
+// of blocks stands for each of its elements — carries one entry per element, in
+// document order.
 func layerKeyValues(data []byte) (map[string][]string, bool) {
 	out := map[string][]string{}
 	if !layerWalkKeys(data, func(path []string, value []string) {
