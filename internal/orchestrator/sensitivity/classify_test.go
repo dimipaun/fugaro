@@ -154,6 +154,15 @@ func TestUnlistedPathIsSensitive(t *testing.T) {
 		"docs/Pending-Workflows",
 		"docs/Pending-Workflows/evil.yml",
 		"docs/PENDING-WORKFLOWS/evil.yml",
+		// The docs tree's own exceptions: files under it that are not reading
+		// matter — the release gate's catalogue, an artifact a tool draws, and
+		// two scripts that are committed to be re-runnable. docs/ is the tree a
+		// reader reads, so a file in it that code opens or runs is the same kind
+		// of hole the website's five were.
+		"docs/release-streams.yaml",
+		"docs/console-dependency-graph/implementation-plan.graph.json",
+		"docs/website/redesign/capture-screenshots.mjs",
+		"docs/website/redesign/sample-logo-hue.py",
 		// The website's own exceptions: what a reader installs, runs or verifies
 		// rather than copy the site renders.
 		"website/package.json",
@@ -311,6 +320,10 @@ var (
 	theRoutineTrees      = []string{"docs/**", "website/**"}
 	theRoutineExceptions = []string{
 		"docs/pending-workflows/**",
+		"docs/release-streams.yaml",
+		"docs/console-dependency-graph/implementation-plan.graph.json",
+		"docs/website/redesign/capture-screenshots.mjs",
+		"docs/website/redesign/sample-logo-hue.py",
 		"website/package.json",
 		"website/package-lock.json",
 		"website/content/downloads.json",

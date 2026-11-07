@@ -76,8 +76,22 @@ var routineRules = []rule{
 // policy, which is SECURITY.md byte for byte below a generated header and the
 // one website path .claude/rules/credentials-service.md scopes as
 // security-sensitive.
+//
+// The docs tree's lines are files for the same reason, and the same one that
+// already puts docs/pending-workflows/ on this table: docs is the tree a reader
+// reads, and these are not reading matter. docs/release-streams.yaml is the release
+// gate's own catalogue — internal/streams refuses a file that breaks it,
+// scripts/release.sh takes the CLI stream's name and version from it, and a CI
+// guard fails on a bump that leaves it behind. The two scripts under
+// docs/website/redesign/ are what produced the redesign brief's evidence and are
+// committed to be re-runnable. A `.graph.json` is the artifact a tool draws and
+// the console's plan reader opens beside a plan.
 var sensitiveExceptions = []rule{
 	{name: "CI", prefix: "docs/pending-workflows/"},
+	{name: "the release streams", prefix: "docs/release-streams.yaml"},
+	{name: "the dependency graph artifact", prefix: "docs/console-dependency-graph/implementation-plan.graph.json"},
+	{name: "the screenshot script", prefix: "docs/website/redesign/capture-screenshots.mjs"},
+	{name: "the logo script", prefix: "docs/website/redesign/sample-logo-hue.py"},
 	{name: "the website's dependencies", prefix: "website/package.json"},
 	{name: "the website's dependency lock", prefix: "website/package-lock.json"},
 	{name: "the published downloads", prefix: "website/content/downloads.json"},

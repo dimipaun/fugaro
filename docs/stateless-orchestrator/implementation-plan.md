@@ -183,15 +183,21 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   path, is Sensitive**, so the classifier's own package, the daemon and the guards default to Sensitive. The owner's routing rule (credentials, writes
   and guards, the managed gate, Terraform and IAM, the agent environment and gateway, agent prompts, recipes, `CLAUDE.md`, `AGENTS.md`, `.claude/**`,
   plugin skills, CI) is a test fixture the allowlist must never contradict; the fixture also lists `mobile/src/accounts/secure-store.js`, `mobile/src/mailbox/gate.js`, `mobile/src/mailbox/mac.js` and the console's pairing and write paths, which must never be Routine. No input but paths: a title or description cannot lower it.
-- **The website's exceptions are files, and the review round of 2026-11-07 added them** (the routing rule gives the light reviewer docs, tests and design, and the
-  website is this plan's own allowance for a tree that is mostly rendered copy): `website/package.json` and `website/package-lock.json` (the install scripts CI and
-  the owner's machine run), `website/content/downloads.json` and `website/data/console-sha256sums.txt` (the URLs and the checksums a reader checks a console build
-  against), `website/data/install.yaml` (the install commands a reader pastes) and `website/content/security.md` (the published security policy — `SECURITY.md`
-  byte for byte **below a generated header**, and the one website path `.claude/rules/credentials-service.md` scopes as security-sensitive) are Sensitive inside `website/**`, which otherwise
-  stays routine. Narrowing an allowlist is the direction a review may move it in on its own; **open for the owner is the wider half of that finding** — whether the
-  site's *code* (its layouts, its client scripts and its build config: `website/src/layouts/`, `website/public/scripts/`, `website/astro.config.mjs`) should be
-  Sensitive too, which would take the whole tree off the allowlist. The one security control the site is held to is **already Sensitive and stays so**: the deployed
-  CSP is `firebase.json` at the repository's root, outside `website/**`, and is pinned by `website/test/origins.mjs` and `website/test/brand.mjs`.
+- **The exceptions inside the two routine trees are files, and the review rounds of 2026-11-07 added them.** Both trees are on the allowlist for what a reader reads, so
+  a file under one that is not reading matter is the file an exception names — the same reason `docs/pending-workflows/**` was already one. **In `website/**`** (the
+  routing rule gives the light reviewer docs, tests and design, and the website is this plan's own allowance for a tree that is mostly rendered copy):
+  `website/package.json` and `website/package-lock.json` (the install scripts CI and the owner's machine run), `website/content/downloads.json` and
+  `website/data/console-sha256sums.txt` (the URLs and the checksums a reader checks a console build against), `website/data/install.yaml` (the install commands a
+  reader pastes) and `website/content/security.md` (the published security policy — `SECURITY.md` byte for byte **below a generated header**, and the one website path
+  `.claude/rules/credentials-service.md` scopes as security-sensitive). **In `docs/**`**: `docs/release-streams.yaml` (the release gate's own catalogue —
+  `internal/streams` refuses a file that breaks it, `scripts/release.sh` takes the CLI stream's name and version from it, and a CI guard fails on a bump that leaves
+  its `current` behind), `docs/console-dependency-graph/implementation-plan.graph.json` (the artifact a tool draws and the console's plan reader opens beside a plan;
+  the reader accepts one beside any plan under `docs/`, and **the next artifact a plan writes belongs on this list in the commit that writes it**),
+  `docs/website/redesign/capture-screenshots.mjs` and `docs/website/redesign/sample-logo-hue.py` (scripts, committed to be re-runnable). Narrowing an allowlist is the
+  direction a review may move it in on its own; **open for the owner is the wider half of that finding** — whether the site's *code* (its layouts, its client scripts
+  and its build config: `website/src/layouts/`, `website/public/scripts/`, `website/astro.config.mjs`) should be Sensitive too, which would take the whole tree off
+  the allowlist. The one security control the site is held to is **already Sensitive and stays so**: the deployed CSP is `firebase.json` at the repository's root,
+  outside `website/**`, and is pinned by `website/test/origins.mjs` and `website/test/brand.mjs`.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestPromptPathsAreAlwaysSensitive`, `TestDescriptionCannotLowerTheClass` (the signature has no description argument; a
   reflective test pins it), `TestEmptyPathListIsSensitive` (fail closed), `TestUnlistedPathIsSensitive`, `TestOnlyAllowlistedPathsAreRoutine`,

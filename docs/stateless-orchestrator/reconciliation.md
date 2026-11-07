@@ -177,7 +177,11 @@ website; the website is on the classifier's allowlist because the plan's O1 puts
 reader is sent to, and O1 now classes them Sensitive: the npm manifest and its lock (the install scripts CI and the owner's machine run),
 `website/data/install.yaml` (the install commands a reader pastes), `website/content/downloads.json` and `website/data/console-sha256sums.txt` (the URLs and
 checksums a reader checks a build against), and `website/content/security.md` (**`SECURITY.md`** byte for byte **below a generated header**, the one website path
-`.claude/rules/credentials-service.md` scopes as security-sensitive). The rest of `website/**` stays routine as the plan states it. **Still the owner's to
+`.claude/rules/credentials-service.md` scopes as security-sensitive). **The same sweep was owed to `docs/**`, which the rule does put on the light side**, and a
+later round of the same review found it: `docs/release-streams.yaml` is the release gate's own catalogue (read by `internal/streams`, `scripts/release.sh` and the
+CI guard on a bump), `docs/console-dependency-graph/implementation-plan.graph.json` is an artifact the console's plan reader opens, and
+`docs/website/redesign/capture-screenshots.mjs` and `docs/website/redesign/sample-logo-hue.py` are scripts committed to be re-runnable. They are exceptions now, on
+the plan's own line that a file in a routine tree which is not reading matter is Sensitive. The rest of `website/**` stays routine as the plan states it. **Still the owner's to
 rule:** whether the site's *code* — its layouts, its client scripts and its build config — is Sensitive too, which would take the whole tree off the allowlist. The
 CSP is not part of that question: the deployed policy is the repository root's `firebase.json`, outside `website/**` and Sensitive already.
 
