@@ -77,7 +77,8 @@ not a substitute for reading the code you were given.
   stands, or a local config that has drifted from what the installation expects.
 - **The cloud side.** `fugaro setup` and `fugaro update` apply the Terraform
   roots and modules the released binary carries. The budget lives in a
-  realtime database; the credentials service is optional and ships dormant. A
+  realtime database; the credentials service is deployed by `fugaro update` for
+  every installation, and what is per repository is the switch a run reads. A
   step that needs an account, a billing link, an enabled API or an IAM binding
   is the cloud's answer to read, and its wording is usually in the log.
 - **A task run.** `fugaro run` writes the task and starts the job; inside the
