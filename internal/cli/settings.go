@@ -89,7 +89,7 @@ and rigor.areas are unions: a lower layer only adds.`,
 	}
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
-	f.StringVar(&o.repo, "repo", "", "read this repository's fugaro.yaml (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "read this repository's fugaro.yaml (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.allRepos, "all-repos", false, "read every repository this machine remembers")
 	f.StringSliceVar(&o.layer, "layer", nil, "read only these layers ("+strings.Join(settings.Layers, ", ")+")")
 	f.StringVar(&o.grep, "grep", "", "show only the rows whose key or a rendered column matches this regexp")
@@ -111,6 +111,10 @@ func runSettings(cmd *cobra.Command, args []string, o settingsOptions) error {
 		if !slices.Contains(settings.Layers, l) {
 			return userErr("--layer %s: the layers are %s", l, strings.Join(settings.Layers, ", "))
 		}
+	}
+	var err error
+	if o.repo, err = repoArg(cmd.Context(), o.repo); err != nil {
+		return err
 	}
 	// --repo names a repository the way a scope is spelled — `repo:owner/name`,
 	// the pattern the document's own schema holds the scope to — so a bare name

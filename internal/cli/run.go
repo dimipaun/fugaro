@@ -298,7 +298,7 @@ func newRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
+	f.StringVar(&o.repo, "repo", "", "repository as owner/name, or a path inside its checkout (default: this checkout's origin)")
 	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main))")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
@@ -431,6 +431,17 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	defer env.Close()
 	env.noBudgetCheck = o.noBudgetCheck
+
+	// --repo, resolved once for every launch shape below and written back, so
+	// that a path (`.`, a subdirectory, an absolute one) is the owner/name of
+	// its checkout's origin everywhere the option is read: the review branch,
+	// review-run's findings, and the spec builders (newSpec, prSpec, retrySpec
+	// and reviewSpec each read o.repo for themselves). Not higher, because the
+	// flags above refused the launch before this ever ran, and their sentences
+	// are still the ones a caller gets.
+	if o.repo, err = repoArg(ctx, o.repo); err != nil {
+		return err
+	}
 
 	// --pr's second meaning (design generic-tool §3.6, G12): with an
 	// explicit --recipe naming a mode: review recipe, --pr targets any
@@ -1390,8 +1401,11 @@ type attemptPlan struct {
 // --attempts cannot take the --pr a plain launch's refusal suggests.
 func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total time.Duration, warn io.Writer, forAttempts bool) (*attemptPlan, error) {
 	repo := o.repo
+	var err error
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return nil, err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return nil, err
 		}
@@ -1672,8 +1686,11 @@ func printBatch(w io.Writer, batch string, attempts int, incomplete bool, result
 // never silently ignored.
 func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedRecipe, text string, total time.Duration, warn io.Writer) (string, *task.Spec, error) {
 	repo := o.repo
+	var err error
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return "", nil, err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return "", nil, err
 		}

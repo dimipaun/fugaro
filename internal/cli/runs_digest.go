@@ -198,7 +198,7 @@ func newRunsDigestCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.period, "period", string(digest.ByDay), "the period to report: day, week, month or year")
 	f.StringVar(&o.date, "date", "", "any day inside the period (YYYY-MM-DD); default: the most recent closed period")
-	f.StringVar(&o.repo, "repo", "", "the repository to report (owner/name); default: this checkout's origin")
+	f.StringVar(&o.repo, "repo", "", "the repository to report (owner/name, or a path inside its checkout); default: this checkout's origin")
 	f.StringVar(&o.dir, "dir", digest.Dir, "the folder the reports live in, relative to the working directory")
 	f.BoolVar(&o.stdout, "stdout", false, "print the report instead of writing it")
 	f.BoolVar(&o.asJSON, "json", false, "print the summary block and the patterns as JSON")
@@ -373,8 +373,11 @@ func digestPeriod(dim digest.Dim, date string, now time.Time) (digest.Period, er
 // owner/name a record's own repo field is compared against and the slug the
 // runs bucket keeps that repository's runs under.
 func digestRepo(ctx context.Context, env *cloudEnv, repo string) (string, string, error) {
+	var err error
+	if repo, err = repoArg(ctx, repo); err != nil {
+		return "", "", err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return "", "", err
 		}

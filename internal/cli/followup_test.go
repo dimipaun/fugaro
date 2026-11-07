@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The runs of these tests are on PR 7 of acme/app. seedRoot and seedFollowUp
@@ -108,6 +109,29 @@ func TestRunPRLaunchesFollowUp(t *testing.T) {
 	}
 	if calls := f.run.RunRequests(); len(calls) != 1 || calls[0].Env["FUGARO_RUN"] != appSlug+"/"+fuID {
 		t.Fatalf("jobs.run calls = %+v", calls)
+	}
+}
+
+// TestRunPRTakesACheckoutPath: prSpec reads the flag for itself and holds it
+// to owner/name, so `--repo .` has to be resolved before it gets there --
+// this is the follow-up shape of the launch, and its own red step is the
+// refusal `--repo: the repository must look like owner/name` for a value that
+// is a path. The launch is the same as --repo acme/app's.
+func TestRunPRTakesACheckoutPath(t *testing.T) {
+	testutil.IsolateGit(t)
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	t.Chdir(repoArgCheckout(t, filepath.Join(t.TempDir(), "app"), githubOrigin))
+	out, _, err := execute(t, "run", "--repo", ".", "--pr", "7", "--run-id", fuID, "--json", "also rename x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res launchResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Status != "launched" || res.Repo != "acme/app" {
+		t.Fatalf("result = %+v (%s), %v", res, out, err)
+	}
+	if spec := readSpec(t, f, fuID); spec.Repo != "acme/app" || spec.PR != 7 {
+		t.Fatalf("task = %+v", spec)
 	}
 }
 
