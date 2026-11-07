@@ -363,6 +363,23 @@ func TestRecoveryReissuesUnderTheRecordedRunID(t *testing.T) {
 	if len(o.s.Intents) != 1 || orchestrator.AttemptsUnder(o.s, "wi-1", approvedAt) != 1 {
 		t.Errorf("the re-issue left %+v: one attempt, counted once", o.s.Intents)
 	}
+
+	// A re-issue is checked against the state in hand rather than trusted, and
+	// a start is the one thing here that cannot be taken back: an action built
+	// on another read of the node, naming a run id no intent records, starts
+	// nothing and leaves the attempt as it was.
+	forged := reissue
+	forged.RunID = "20261107-120000-bbbb"
+	asked := len(o.l.asked)
+	if err := o.run(forged); err == nil {
+		t.Error("the starter re-issued a run id the state does not carry")
+	}
+	if len(o.l.asked) != asked {
+		t.Errorf("the launcher was asked for %v, and a start the state does not carry is not one to make", o.l.asked[asked:])
+	}
+	if len(o.s.Intents) != 1 || o.s.Intents[0].Outcome != "" {
+		t.Errorf("the refused re-issue left %+v", o.s.Intents)
+	}
 }
 
 // TestEditedSpecIsNeverLaunched: what the person approved is the spec they
@@ -752,8 +769,52 @@ func TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent(t *testing.T) {
 	if w.Note == "" {
 		t.Error("the abandoned attempt left no note saying why")
 	}
+	editNote := w.Note
 	if next := orchestrator.Plan(o.s, orchestrator.RunView{}, o6Caps(), later.Add(time.Hour)); len(next) != 0 {
 		t.Fatalf("the plan over an abandoned attempt is %+v", next)
+	}
+
+	// The other attempt nothing may start is one whose item a person has
+	// stopped. A cancellation is bookkeeping and not part of the spec, so the
+	// digest a re-issue reads still matches and the approval the attempt spent
+	// is still spent: the phase is what settles it, because a cancelled item is
+	// one somebody called the work off and one that never leaves its phase.
+	spent := o6Item("wi-2", orchestrator.PhaseQueued, approvedAt)
+	spent.RunID = "20261107-120000-cccc"
+	spent.Attempts = 1
+	// What committing a retry's intent leaves behind: the approval spent and
+	// cleared in that same write.
+	spent.Approved = nil
+	spent.SpentApprovalAt = &approvedAt
+	stopped := o6Node(t, now, spent)
+	stopped.Intents = []orchestrator.Intent{{
+		ID:         orchestrator.IntentID("wi-2", 1),
+		RunID:      spent.RunID,
+		SpecDigest: orchestrator.SpecDigest(spent),
+		ApprovalAt: approvedAt.UTC(),
+		At:         now.UTC(),
+	}}
+	cancelled := orchestrator.PhaseCancelled
+	stopped = o6Apply(t, stopped, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: "wi-2", Phase: &cancelled}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: later})
+
+	a = onlyAction(t, orchestrator.Plan(stopped, orchestrator.RunView{}, o6Caps(), later))
+	if a.Kind != orchestrator.ActionAbandon {
+		t.Fatalf("recovery planned %+v for an item a person stopped, and no window makes that a launch", a)
+	}
+	o2 := newO6Starter(t, stopped, later)
+	if err := o2.run(a); err != nil {
+		t.Fatalf("closing the attempt of a cancelled item was refused: %v", err)
+	}
+	if len(o2.l.asked) != 0 {
+		t.Fatalf("the cancelled item asked the launcher for %v", o2.l.asked)
+	}
+	if w, _ := o2.s.Item("wi-2"); w.Phase != orchestrator.PhaseCancelled {
+		t.Errorf("the item is %s after its attempt was closed, and a cancelled item never leaves its phase", w.Phase)
+	} else if w.Note == "" || w.Note == editNote {
+		t.Errorf("the closed attempt of a cancelled item says %q, and why it was closed is not why an edited one was", w.Note)
+	}
+	if o2.s.Intents[0].Outcome != orchestrator.OutcomeAbandoned {
+		t.Errorf("the intent of the cancelled item reads %+v", o2.s.Intents[0])
 	}
 }
 

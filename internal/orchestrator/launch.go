@@ -176,14 +176,20 @@ type Starter struct {
 // refusal — a commit that did not land, a launcher that would not start, an
 // action built on a state somebody else has since changed — is an error, and
 // what it leaves behind is exactly what was committed: an intent for a launch
-// that did not happen is the record recovery re-issues. There is no path
-// through here that starts a run the state does not carry.
+// that did not happen is the record recovery re-issues. A launch and a retry
+// record their attempt before anything starts, and a re-issue is checked
+// against the state in hand before it starts, so nothing here starts a run the
+// state does not carry.
 func (d Starter) Start(ctx context.Context, s State, a Action, now time.Time) (State, error) {
 	switch a.Kind {
 	case ActionLaunch, ActionRetry:
 		return d.begin(ctx, s, a, now)
 	case ActionReissue:
-		return s, d.start(ctx, a.Spec, a.RunID)
+		w, err := reissuable(s, a)
+		if err != nil {
+			return s, err
+		}
+		return s, d.start(ctx, SpecOf(w), a.RunID)
 	case ActionAbandon:
 		return d.abandon(ctx, s, a, now)
 	}
