@@ -4606,6 +4606,24 @@ settings:
 // says `cached <age> ago` and every row it decided carries that age in its state
 // (staleState). Each of the three was wrong in the fixture this test was added
 // for, and the schema validated it anyway.
+//
+// Four more are the members a consumer draws the edit from (D1102), and they
+// are the registry's answer rather than the fixture's: `target_layer` is the
+// narrowest of repo, project and local the key may be set in, which is what
+// settingsDefaultLayer answers for `settings set` and what the read prints, so
+// a row whose write lands in a different layer than the one it names is a row
+// the console would spawn `--layer` from wrongly; `sensitive` is the registry's
+// own flag and the member is written **only when it is true**; and writability
+// follows from the two refusals that come before the generic path's allowlist
+// (settingsWriteRowHinted) -- a sensitive key is never written by it and neither
+// is a key a family owns -- so a row that says `writable` while it carries an
+// owner word, or while the registry marks it sensitive, is a row no write
+// produces. The fixture this branch corrected spelled `target_layer` "project"
+// on the row whose write lands in `repo` and `""` on two rows that each name a
+// layer, and it said `writable` on two rows that carry an owner word -- the
+// drift this half exists for. What it cannot answer is the owner word's own
+// spelling (the read prints a family's name from a map internal/cli holds), and
+// that stays pinned where the drawn rows are, in the console's own tests.
 func TestSettingsConsoleFixture(t *testing.T) {
 	const file = "../console/test/fixtures/settings.json"
 	data, err := os.ReadFile(file)
@@ -4626,12 +4644,16 @@ func TestSettingsConsoleFixture(t *testing.T) {
 			Note  string `json:"note"`
 		} `json:"sources"`
 		Settings []struct {
-			Key     string  `json:"key"`
-			Scope   string  `json:"scope"`
-			Value   *string `json:"value"`
-			Wins    string  `json:"wins"`
-			State   string  `json:"state"`
-			Default struct {
+			Key         string  `json:"key"`
+			Scope       string  `json:"scope"`
+			Value       *string `json:"value"`
+			Wins        string  `json:"wins"`
+			State       string  `json:"state"`
+			Sensitive   *bool   `json:"sensitive"`
+			Writable    bool    `json:"writable"`
+			Owner       string  `json:"owner"`
+			TargetLayer string  `json:"target_layer"`
+			Default     struct {
 				Value string `json:"value"`
 				Unset string `json:"unset"`
 			} `json:"default"`
@@ -4670,6 +4692,46 @@ func TestSettingsConsoleFixture(t *testing.T) {
 		}
 		if row.Scope != "project" {
 			t.Errorf("%s: scope = %q, and the read the console runs names no --repo, so every row of it is project-scoped", row.Key, row.Scope)
+		}
+		// The four members a consumer draws the edit from (D1102): the layer a
+		// write with no --layer lands in, whether the generic path writes the
+		// key, the family that writes one it does not, and whether the row is
+		// sensitive. The registry answers the last three, and the layer rule is
+		// restated because settingsDefaultLayer is internal/cli's and this
+		// guard is the schema package's: the read prints its answer, so the
+		// fixture is held to the same rule -- the narrowest of the three the
+		// key may be set in.
+		reg, known := settings.Lookup(row.Key)
+		if !known {
+			t.Errorf("%s: the registry has no such key, and every row of the read is one of its rows", row.Key)
+			continue
+		}
+		wantLayer := ""
+		for _, l := range []string{settings.LayerRepo, settings.LayerProject, settings.LayerLocal} {
+			if slices.Contains(reg.Layers, l) {
+				wantLayer = l
+				break
+			}
+		}
+		if row.TargetLayer != wantLayer {
+			t.Errorf("%s: target_layer = %q, and the narrowest of repo, project and local the key may be set in is %q, which is what a write with no --layer lands in and what the read prints (settingsDefaultLayer)", row.Key, row.TargetLayer, wantLayer)
+		}
+		if row.Writable {
+			if reg.Sensitive {
+				t.Errorf("%s: the fixture says writable, and a sensitive key is refused before the allowlist is asked (settingsWriteRowHinted): the generic path never writes one", row.Key)
+			}
+			if row.Owner != "" {
+				t.Errorf("%s: the fixture carries the owner word %q and says writable, and the read prints an owner word only for a key the generic path does not write (the family that owns it does, settingsRead.projectRow): no row is both", row.Key, row.Owner)
+			}
+		}
+		switch {
+		case reg.Sensitive && row.Sensitive == nil:
+			t.Errorf("%s: the fixture carries no sensitive member, and the registry marks the key sensitive: the member is written whenever it is true, and this is the row whose value is never printed", row.Key)
+		case !reg.Sensitive && row.Sensitive != nil:
+			t.Errorf("%s: the fixture spells sensitive %v, and the registry's row for it is not sensitive: the member is written only when it is true (settingsJSON's omitempty, and the schema's own \"Absent when false\")", row.Key, *row.Sensitive)
+		}
+		if reg.Sensitive && row.Value != nil {
+			t.Errorf("%s: the fixture carries the value %q, and a sensitive row carries the set/unset fact and never the value: the read writes no value member for it at all", row.Key, *row.Value)
 		}
 		switch {
 		case row.Wins == "default" && len(row.Levels) != 0:

@@ -584,7 +584,9 @@ describe('the committed synthetic fixture', () => {
       // screen draws is spelled the way the CLI spells it, held to
       // `schemas/settings.schema.json`, to the registry's own defaults, and to
       // the rules one member keeps about another (a resolved row's `levels`, the
-      // layer its `state` is the age of) by `TestSettingsConsoleFixture`
+      // layer its `state` is the age of, and the layer a write with no `--layer`
+      // lands in beside the `owner`/`writable`/`sensitive` half the pencil is
+      // decided from) by `TestSettingsConsoleFixture`
       // (`schemas/schemas_test.go`), so the e2e that draws this document draws
       // an answer the CLI could have given -- a fixture with words no read
       // prints, or a value no read renders, would prove the window draws an
