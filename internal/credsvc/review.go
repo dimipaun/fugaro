@@ -96,23 +96,28 @@ func ReviewServiceAccountID(profile, provider, account string) string {
 }
 
 // ReviewJobAccount is one review job: the service account it runs as, and the
-// Claude account a call it makes is served by.
+// credential a call it makes is served by.
 //
 // The two are different names of the same thing. Email is what the caller is
 // verified as — the account Cloud Run minted its ID token for, derived from
 // the (profile, provider, account) triple. Account is what the *published
 // admissions* speak: the name the shared node's accounts block is keyed by,
 // which is the name the pairing looks the caller up under and the name of the
-// tier-A credential a review call is offered. A caller cannot write either.
+// ONE credential a review call is offered — a tier-A account's name, or the
+// sentinel config.AnthropicKeyAccount, which names the project's own Anthropic
+// API key and the bundle's tier-B entry rather than an account
+// (docs/api-key-review, D1417). A caller cannot write either.
 type ReviewJobAccount struct {
 	// Email is the review job's service account, in the spelling the
 	// deployment configured (AuthConfig.ReviewJobAccounts folds it for
 	// matching and keeps this spelling for the identity and the audit line).
 	Email string
-	// Account is the Claude account's name as the policy's accounts block
-	// spells it. It is never empty: the axis spells the default account as the
-	// empty string (config.ProjectJobAccounts) and the admissions spell it
-	// config.DefaultClaudeAccount.
+	// Account is the account-axis value as the policy's accounts block spells
+	// it. It is never empty: the axis spells the default account as the empty
+	// string (config.ProjectJobAccounts) and the admissions spell it
+	// config.DefaultClaudeAccount. It is a Claude account's name, or
+	// config.AnthropicKeyAccount for the project's own key, which is not an
+	// account.
 	Account string
 }
 

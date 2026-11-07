@@ -45,9 +45,13 @@ var githubAPIURL = github.DefaultBaseURL
 // with a timeout). Tests replace it.
 var githubAPIClient *http.Client
 
-// readAppKey reads the PEM of the GitHub App's private key from the secret.
-// Only behind --check-github-app. Tests replace it.
-var readAppKey = func(ctx context.Context, lc *localcfg.Config, secretID string) ([]byte, error) {
+// readSecretValue reads one secret's value with the person's own credentials:
+// the GitHub App's private key behind --check-github-app, and the Bitbucket
+// access token a catalog build opens its provider with
+// (catalogProviderEnv). One read, so the two cannot come to differ about which
+// project's Secret Manager they reach or how they fail; each caller decides
+// what it may do with the bytes. Tests replace it.
+var readSecretValue = func(ctx context.Context, lc *localcfg.Config, secretID string) ([]byte, error) {
 	sm, err := gcp.NewSecrets(ctx, gcpOptions(lc))
 	if err != nil {
 		return nil, err
@@ -85,7 +89,18 @@ func refuseAppKeyReadInAgent(getenv func(string) string, who string) error {
 // way the credentials service's bundle is refused (doctor_brokering.go), which
 // is not the App's key.
 func refuseKeyReadInAgent(getenv func(string) string, flag, what string) error {
-	if agentMarker(getenv, processTerminal()) != "" {
+	return refuseKeyReadAt(getenv, processTerminal(), flag, what)
+}
+
+// refuseKeyReadAt is refuseKeyReadInAgent with the terminal fact passed in
+// rather than read from the process: a caller that holds its own command's
+// stdin -- the catalog build, where the confirmation was typed -- already
+// asked whether a person is at it, and asking the process again could answer
+// differently (a command's stdin is not always the process's). The marker is
+// the same predicate either way (agentenv.Session), so an IDE terminal is
+// refused here exactly as it is everywhere else.
+func refuseKeyReadAt(getenv func(string) string, terminal bool, flag, what string) error {
+	if agentMarker(getenv, terminal) != "" {
 		return userErr("%s reads %s with your own credentials, so it is refused in a coding agent's session (the value must never reach an agent's process): run it in your own terminal window", flag, what)
 	}
 	return nil
@@ -157,7 +172,7 @@ func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string
 			fmt.Fprintln(src.Notice, appKeyReadNotice)
 		}
 		var err error
-		pem, err = readAppKey(ctx, lc, src.SecretID)
+		pem, err = readSecretValue(ctx, lc, src.SecretID)
 		switch {
 		case errors.Is(err, gcp.ErrNoVersion):
 			return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked: its private key is not stored yet (the github-app-key secret has no version)"}

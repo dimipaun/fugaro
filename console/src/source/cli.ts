@@ -1235,8 +1235,10 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * **previous answer of this installation listed it**
      * (`graphScopes` above): the read teaches the surface which scopes exist,
      * and nothing else is ever spawned. `all` is the one value admitted without
-     * being listed, because it is the selector rather than a source and it is the
-     * read a screen opens on. The refusal is `NO_GRAPH_SCOPE`, thrown **before**
+     * being listed, because it is the selector rather than a source -- it is what
+     * a caller that names no scope is answered with, and what the Graph asks for
+     * when the plan scope refuses for want of a checkout, never what a screen
+     * opens on. The refusal is `NO_GRAPH_SCOPE`, thrown **before**
      * `resolve` -- no binary is probed and no child runs. `graph.read` is
      * answered whatever the installation's checkout is: the read needs none.
      *

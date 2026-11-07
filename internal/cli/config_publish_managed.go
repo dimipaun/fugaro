@@ -613,17 +613,18 @@ var layerRoundsKeys = []struct {
 }
 
 // layerFirstLineReviewPath is the second key that turns review level 1 off:
-// the levels block's `l1: { none: true }` is one spelling of a level that does
-// not run, and `first_line_review: off` (config.FirstLineOff) is the one the
-// first-line step itself reads.
+// the levels block's `l1: { none: true }` — and its model named none — is one
+// spelling of a level that does not run, and `first_line_review: off`
+// (config.FirstLineOff) is the one the first-line step itself reads.
 var layerFirstLineReviewPath = []string{"defaults", "agent", "first_line_review"}
 
 // layerRoundsRules names every direction this layer moves the review a run
 // spends, for a coding agent's session and no one else: a round count lowered
-// or removed, a review level turned off (`defaults.agent.levels.*.none`), and
-// review level 1 turned off by the first-line step's own switch
-// (`defaults.agent.first_line_review: off`, whose key is not in the levels
-// block and is refused at the settings door all the same).
+// or removed, a review level turned off (`defaults.agent.levels.*.none`, or a
+// level whose model is named none), and review level 1 turned off by the
+// first-line step's own switch (`defaults.agent.first_line_review: off`, whose
+// key is not in the levels block and is refused at the settings door all the
+// same).
 //
 // Why this door needs the rule and not only the settings door. The two commands
 // write the same published layer — `fugaro settings set` writes one key of it,
@@ -693,7 +694,7 @@ func layerRoundsRules(prev, next *config.ProjectLayer, published []byte, marker 
 		}
 	}
 	for _, l := range layerLevelOff(prev, next) {
-		add("turns the review level defaults.agent.levels."+l+" off (none: true), so a run of the project spends less review", "turns off")
+		add("turns the review level defaults.agent.levels."+l+" off (none: true, or its model named none), so a run of the project spends less review", "turns off")
 	}
 	was, now := settingsValueIn(published, layerFirstLineReviewPath), settingsValueIn(next.Raw, layerFirstLineReviewPath)
 	if (now == config.FirstLineOff && was != config.FirstLineOff) || (was == config.FirstLineOn && now != config.FirstLineOn) {
@@ -789,8 +790,18 @@ func layerAllowlistRules(published, next []byte, marker string) []string {
 // layerLevelOff is the name of every review level next turns off that the layer
 // it replaces had on: l1, l2 and l3, in that order. A level already off stays
 // off without a rule (nothing moved), and a level turned back on is a raise the
-// rule admits.
+// rule admits. A level is off in either spelling — `none: true`, or its model
+// named none (config.NoneModel) — and the rule reads both. Both layers reach it
+// from config.ParseProjectLayer, which validates the block and folds the second
+// spelling into the first, so today the model clause answers for nothing and
+// `next.Defaults.Agent.Levels` carries the switch alone; it is kept because the
+// answer it gives is the fail-closed one, the way layerAllowlistRules keeps its
+// unreadable-document branch, and a caller that handed over a block no decoder
+// had been over would still be judged on what it wrote.
 func layerLevelOff(prev, next *config.ProjectLayer) []string {
+	off := func(s *config.LevelSetting) bool {
+		return s != nil && (s.Off || s.Model == config.NoneModel)
+	}
 	var was config.ReviewLevels
 	if prev != nil {
 		was = prev.Defaults.Agent.Levels
@@ -805,7 +816,7 @@ func layerLevelOff(prev, next *config.ProjectLayer) []string {
 		{"l2", was.L2, now.L2},
 		{"l3", was.L3, now.L3},
 	} {
-		if l.now != nil && l.now.Off && (l.was == nil || !l.was.Off) {
+		if off(l.now) && !off(l.was) {
 			out = append(out, l.name)
 		}
 	}

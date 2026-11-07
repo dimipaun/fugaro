@@ -50,7 +50,7 @@ func TestCancelRunnerFinalizesInGrace(t *testing.T) {
 	})
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
 	var res cancelResult
@@ -317,7 +317,7 @@ func TestCancelToleratesAnExecutionThatJustFinished(t *testing.T) {
 	}}
 	var out strings.Builder
 	o := &cancelOptions{grace: 0, floorSet: true, finalizeWait: time.Second, poll: 10 * time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
 	var res cancelResult
@@ -343,14 +343,14 @@ func TestCancelMarkerFailureLeavesTheExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := &cancelOptions{grace: 0, floorSet: true, finalizeWait: time.Second, poll: 10 * time.Millisecond, asJSON: true}
-	err = cancelRun(context.Background(), env, o, id, io.Discard, io.Discard)
+	err = cancelRun(context.Background(), env, o, id, io.Discard, io.Discard, nil)
 	if ExitCode(err) != ExitRemoteError || f.run.State(exec) != backend.StateRunning {
 		t.Fatalf("err = %v, state %s", err, f.run.State(exec))
 	}
 	o.now = true
 	var out strings.Builder
 	o.asJSON = true
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
 	var res cancelResult
@@ -391,7 +391,7 @@ func TestCancelReportsARunThatEndedUnfinalized(t *testing.T) {
 	env.be = afterEntryRead(base, fail)
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
 	var res cancelResult
@@ -403,7 +403,7 @@ func TestCancelReportsARunThatEndedUnfinalized(t *testing.T) {
 	env.be = afterEntryRead(base, fail)
 	var human strings.Builder
 	o2 := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond}
-	if err := cancelRun(context.Background(), env, o2, id, &human, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o2, id, &human, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(human.String(), "the run ended without finalizing; check fugaro diagnose") || strings.Contains(human.String(), "finalized (") {
@@ -434,7 +434,7 @@ func TestCancelClearsTheLockWhenEndedUnfinalizedAndExecutionIsTerminal(t *testin
 	env.be = afterEntryRead(env.be, func() { f.run.SetState(exec, backend.StateFailed) })
 	var out, errOut strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, &errOut); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, &errOut, nil); err != nil {
 		t.Fatal(err)
 	}
 	var res cancelResult
@@ -481,7 +481,7 @@ func TestCancelToleratesAnExecutionForgottenMidPoll(t *testing.T) {
 	env.be = forgetBackend{Backend: env.be, reads: new(atomic.Int32), after: 2} // entry read, one poll, then gone
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Minute, floorSet: true, finalizeWait: time.Second, poll: 10 * time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatalf("cancel = %v (exit %d)", err, ExitCode(err))
 	}
 	var res cancelResult
@@ -520,7 +520,7 @@ func TestCancelKeepsALiveLockWhenExecutionIsOnlyForgotten(t *testing.T) {
 	env.be = forgetBackend{Backend: env.be, reads: new(atomic.Int32), after: 1} // entry read ok, every poll forgets it
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Minute, floorSet: true, finalizeWait: time.Second, poll: 10 * time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatalf("cancel = %v (exit %d)", err, ExitCode(err))
 	}
 	var res cancelResult
@@ -602,7 +602,7 @@ func TestCancelFollowUp(t *testing.T) {
 	})
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "finalized (draft PR https://github.com/acme/app/pull/7)") || !cancelled(t, f, id) {
@@ -706,7 +706,7 @@ func TestCancelForbiddenDeleteReportsLockHeldAndTheOperatorCommand(t *testing.T)
 	g.DenyWrites("runs", "locks/")
 	var out, errOut strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
-	if err := cancelRun(ctx, env, o, id, &out, &errOut); err != nil {
+	if err := cancelRun(ctx, env, o, id, &out, &errOut, nil); err != nil {
 		t.Fatalf("cancel = %v", err)
 	}
 	var res cancelResult
@@ -762,7 +762,7 @@ func TestCancelAlreadyFinishedToleratesCorruptRecord(t *testing.T) {
 	})
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatalf("cancel = %v", err)
 	}
 	var res cancelResult
@@ -803,7 +803,7 @@ func TestCancelAlreadyFinishedToleratesATransientRecordReadError(t *testing.T) {
 	})
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatalf("cancel = %v", err)
 	}
 	var res cancelResult
@@ -832,7 +832,7 @@ func TestCancelAlreadyFinishedForgottenExecutionNotesLiveLock(t *testing.T) {
 	env.be = forgetBackend{Backend: env.be, reads: new(atomic.Int32), after: 0}
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
 	var res cancelResult
@@ -914,7 +914,7 @@ func TestCancelUnfinalizedForgottenExecutionReportsLiveLock(t *testing.T) {
 	env.be = forgetBackend{Backend: env.be, reads: new(atomic.Int32), after: 0}
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
-	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard, nil); err != nil {
 		t.Fatal(err)
 	}
 	var res cancelResult
