@@ -53,6 +53,7 @@ import {
   POLICY_CHECK_UNDRAWN_WORD,
   POLICY_DEFAULT_WORD,
   POLICY_DIRECT_WORD,
+  POLICY_ENTRY_ABSENT_BECAUSE,
   POLICY_NO_BASE_BRANCH,
   POLICY_NO_DIFF_NOTE,
   POLICY_NO_POLICY,
@@ -387,6 +388,49 @@ describe('the policy notes', () => {
     expect(branch?.textContent).toBe(UNAVAILABLE_MARK)
     expect(branch?.getAttribute('title')).toBe(POLICY_NO_BASE_BRANCH)
     expect(texts(node, 'policy-notes-empty')).toEqual([POLICY_NONE_WORD, POLICY_NONE_WORD, POLICY_NONE_WORD])
+  })
+
+  it('says an entry the document wrote without a name or a kind rather than claiming the wire', () => {
+    const node = block(
+      policyNotesBody(
+        factory,
+        buildPolicyNotes({
+          document: {
+            project: 'p',
+            policy: {
+              version: 1,
+              image_catalog: {
+                entries: [{ source: { kind: 'inline', inline: 'FROM node:22\n' } }, { name: 'agent' }],
+              },
+            },
+          },
+          doctor: DOCTOR,
+        }),
+      ),
+      'policy.show',
+    )
+
+    // Both readers answer `null` for a member the entry does not carry, and the
+    // entry is still an entry: the first has no `name`, the second no `source`
+    // at all, and each draws the reading mark with the console's own sentence
+    // instead of the "…name is a object, not text" title `textCell` made of a
+    // `null` (review of 2026-11-07).
+    const names = all(node, 'policy-notes-entry-name')
+    const kinds = all(node, 'policy-notes-entry-kind')
+    expect(names).toHaveLength(2)
+    expect(kinds).toHaveLength(2)
+    expect(names[0]?.textContent).toBe(UNAVAILABLE_MARK)
+    expect(names[1]?.textContent).toBe('agent')
+    expect(kinds[0]?.textContent).toBe('inline')
+    expect(kinds[1]?.textContent).toBe(UNAVAILABLE_MARK)
+    for (const cell of [names[0], kinds[1]]) {
+      expect(cell?.getAttribute('title')).toBe(POLICY_ENTRY_ABSENT_BECAUSE)
+    }
+    for (const leaf of walk(node)) {
+      expect(leaf.getAttribute('title') ?? '').not.toContain('is a object')
+    }
+    // The entry the document wrote without a name is still counted.
+    expect(texts(node, 'policy-notes-count')).toEqual(['0', '0', '2'])
   })
 
   it('reads a node whose switch is absent or empty as direct, and draws no model list for it', () => {

@@ -190,6 +190,15 @@ export const POLICY_CHECK_UNDRAWN_WORD = 'not in this document'
 export const POLICY_CHECK_ABSENT_BECAUSE =
   'the document this section read carries no such check: a check the document does not carry is not a check that passed'
 
+/** POLICY_ENTRY_ABSENT_BECAUSE is why a catalog entry the document carries
+ * without its `name` or its `source.kind` draws no value there: the same claim as
+ * `POLICY_CHECK_ABSENT_BECAUSE`, about the document rather than about the wire.
+ * `catalogOf` keeps such an entry rather than dropping it -- a list drawn one
+ * shorter than the count beside it is a list that lies about the document -- so
+ * the two cells are what has to say the member is not there. */
+export const POLICY_ENTRY_ABSENT_BECAUSE =
+  'the document this section read carries this entry without the member: a member the document does not carry is not one the console can draw'
+
 /** POLICY_OTHERS_LEAD says what the figure beside it counts: the checks
  * `doctor` returned that this section does not draw. A filter that said nothing
  * would be a filter a reader cannot see. */
@@ -745,7 +754,11 @@ function routingMember(factory: ScreenFactory, routing: PolicyRouting | null): S
  * as `<host><path>:1.2`, a redaction the document does not contain (review of
  * 2026-11-07). An `inline` entry's bytes are the definition itself and are not
  * drawn -- the node holds them, and a screen that printed a Dockerfile would be
- * a screen printing a document rather than a fact about the project. */
+ * a screen printing a document rather than a fact about the project.
+ *
+ * `name` and the source's `kind` are drawn through `absentValueCell` rather than
+ * `textCell`: both readers answer `null` for a member the document does not
+ * carry, and the entry is still an entry (the count above the list counts it). */
 function catalogMember(factory: ScreenFactory, catalog: readonly PolicyCatalogEntry[]): ScreenElement {
   const element = make(factory, 'div', 'policy-notes-member')
   element.setAttribute('data-member', 'image_catalog')
@@ -756,8 +769,8 @@ function catalogMember(factory: ScreenFactory, catalog: readonly PolicyCatalogEn
   for (const entry of catalog) {
     const row = cell(list, factory, 'li', 'policy-notes-entry')
     if (entry.default) literal(cell(row, factory, 'span', 'policy-notes-default'), POLICY_DEFAULT_WORD)
-    textCell(row, factory, 'span', entry.name, 'label', 'policy.image_catalog.entries[].name', 'policy-notes-entry-name')
-    textCell(row, factory, 'span', entry.kind, 'label', 'policy.image_catalog.entries[].source.kind', 'policy-notes-entry-kind')
+    absentValueCell(row, factory, entry.name, POLICY_ENTRY_ABSENT_BECAUSE, 'label', 'policy.image_catalog.entries[].name', 'policy-notes-entry-name')
+    absentValueCell(row, factory, entry.kind, POLICY_ENTRY_ABSENT_BECAUSE, 'label', 'policy.image_catalog.entries[].source.kind', 'policy-notes-entry-kind')
     if (entry.image !== null) {
       textCell(row, factory, 'span', entry.image, 'imageRef', 'policy.image_catalog.entries[].source.image', 'policy-notes-entry-image')
     }
@@ -801,27 +814,30 @@ function checksBlock(factory: ScreenFactory, checks: PolicyChecksBlock): ScreenE
   return element
 }
 
-/** checkValueCell draws one of a row's three values: the document's string
- * through `putText` with the class its key declares, or -- where the document
- * does not carry the member -- the door this file's other absent members go
- * through (`valueCell`): the `n/a` mark with the console's own sentence for why.
+/** absentValueCell draws one member that a document may carry or not: the
+ * document's string through `putText` with the class its key declares, or -- where
+ * the document does not carry the member -- the door this file's other absent
+ * members go through (`valueCell`), the `n/a` mark with the caller's own sentence
+ * for why.
  *
- * A check the document does not carry has no severity, no problem and no fix,
- * and none of the three may be handed a `null`: `putText` drew each of them `n/a`
- * titled "checks[].severity is a object, not text", which is ungrammatical and
- * claims the wire carried a member of the wrong type when it carried none
- * (review of 2026-11-07). */
-function checkValueCell(
+ * A member the document does not carry may not be handed to `putText` as a
+ * `null`: it drew `n/a` titled "checks[].severity is a object, not text", which is
+ * ungrammatical and claims the wire carried a member of the wrong type when it
+ * carried none (review of 2026-11-07). The same defect reached a catalog entry's
+ * `name` and `source.kind`, which is why the sentence is a parameter and not the
+ * checks' one. */
+function absentValueCell(
   parent: ScreenElement,
   factory: ScreenFactory,
   value: string | null,
+  because: string,
   textClass: TextClass,
   field: string,
   ...classes: string[]
 ): ScreenElement {
   if (value === null) {
     const element = cell(parent, factory, 'span', ...classes)
-    putReading(element, unavailable(POLICY_CHECK_ABSENT_BECAUSE), 'count')
+    putReading(element, unavailable(because), 'count')
     return element
   }
   return textCell(parent, factory, 'span', value, textClass, field, ...classes)
@@ -862,8 +878,8 @@ function checkRow(factory: ScreenFactory, row: PolicyCheckRow): ScreenElement {
     literal(state, POLICY_CHECK_FAILING_WORD)
   }
   textCell(element, factory, 'span', row.id, 'label', 'checks[].id', 'policy-notes-check-id')
-  checkValueCell(element, factory, row.severity, 'label', 'checks[].severity', 'policy-notes-check-severity')
-  checkValueCell(element, factory, row.problem, 'sentence', 'checks[].problem', 'policy-notes-check-problem')
-  checkValueCell(element, factory, row.fix, 'sentence', 'checks[].fix', 'policy-notes-check-fix')
+  absentValueCell(element, factory, row.severity, POLICY_CHECK_ABSENT_BECAUSE, 'label', 'checks[].severity', 'policy-notes-check-severity')
+  absentValueCell(element, factory, row.problem, POLICY_CHECK_ABSENT_BECAUSE, 'sentence', 'checks[].problem', 'policy-notes-check-problem')
+  absentValueCell(element, factory, row.fix, POLICY_CHECK_ABSENT_BECAUSE, 'sentence', 'checks[].fix', 'policy-notes-check-fix')
   return element
 }

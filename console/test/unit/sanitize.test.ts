@@ -732,21 +732,40 @@ describe('the class rules', () => {
     expect(text('*', 'repoPattern')).toBe('*')
     expect(text('github/acme/*', 'repoPattern')).toBe('github/acme/*')
     expect(text('*/acme/*', 'repoPattern')).toBe('*/acme/*')
+    // Three segments is the floor, not the count: a repository path nests, and
+    // `ValidPattern` says so in the comment over its own segment loop ("a cap
+    // of three refused an entry that does admit one"). The class read this
+    // value as `n/a` until CM7's third review round.
+    expect(text('bitbucket/acme/group/app', 'repoPattern')).toBe('bitbucket/acme/group/app')
+    // A `..` is refused as a *segment*, which is how the CLI refuses it, and
+    // not as a substring: `ValidPattern` accepts `github/a..b/app`.
+    expect(text('github/a..b/app', 'repoPattern')).toBe('github/a..b/app')
     for (const bad of [
       // `repository`'s own shape is not one: a policy entry is
       // provider-qualified, and a bare `owner/name` in one is a value
       // `Canonical` never wrote.
       'fixture-owner/fixture-repo',
-      'a/b/c/d',
       'a/../../etc',
       'github/acme/',
       'a b/c/d',
+      // Upper case is what `ValidPattern` refuses ("names are lower-case"), and
+      // the canonical form `Canonical` writes is lower-cased.
+      'GitHub/acme/app',
+      // `task.CanonicalRepo` trims a trailing `.git`, so a pattern that ends in
+      // one admits nothing.
+      'github/acme/app.git',
       '',
     ]) {
       expect(refused(bad, 'repoPattern', 'policy.allow_repos[0]'), bad).toContain(
         'policy.allow_repos[0]',
       )
     }
+    // The bound is the CLI's own `projectpolicy.MaxPatternLen`, not
+    // `repository`'s: an entry of exactly that length is one `Decode` admits,
+    // and the class refused it while the bound was 200.
+    const longest = 'github/' + 'a'.repeat(MAX_REPO_PATTERN_LENGTH - 'github/'.length - 4) + '/app'
+    expect(longest.length).toBe(MAX_REPO_PATTERN_LENGTH)
+    expect(text(longest, 'repoPattern')).toBe(longest)
     expect(refused('x'.repeat(MAX_REPO_PATTERN_LENGTH + 1), 'repoPattern')).toContain(
       'not a valid repository pattern',
     )

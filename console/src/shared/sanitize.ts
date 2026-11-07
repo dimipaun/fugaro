@@ -199,10 +199,12 @@ export const MAX_URL_LENGTH = 2048
  * repository argument it accepts. */
 export const MAX_REPOSITORY_LENGTH = 200
 
-/** MAX_REPO_PATTERN_LENGTH bounds a `repoPattern`. It is `repository`'s own
- * bound, for the same reason and with room for the provider segment: a longer
- * value is a document in a cell rather than a repository anybody wrote. */
-export const MAX_REPO_PATTERN_LENGTH = 200
+/** MAX_REPO_PATTERN_LENGTH bounds a `repoPattern`, and it is the CLI's own bound
+ * (`projectpolicy.MaxPatternLen`, which `fugaro project repos add` holds its
+ * argument to as well): a pattern the CLI refused to write is not one a console
+ * should draw, and a bound of this layer's own would refuse an entry a real
+ * node carries -- a 255-character nested path is one Decode admits. */
+export const MAX_REPO_PATTERN_LENGTH = 255
 
 /** MAX_IMAGE_REF_LENGTH bounds an `imageRef`, and it is the CLI's own bound
  * (`maxCatalogImageRefLen`, `internal/config/catalog.go`): a reference the CLI
@@ -2085,20 +2087,37 @@ export function nameableText(text: string): boolean {
 const REPOSITORY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /** REPO_PATTERN_RE is one entry of a published project policy's `allow_repos`:
- * the literal `*` (every repository), or a **provider-qualified** three-segment
- * pattern. The grammar is the CLI's own -- `internal/projectpolicy`'s
- * `MatchRepo` over `internal/config`'s `repoPatternSegmentRE` and
- * `MatchSegment` -- and it is wider than `REPOSITORY_RE` in the two ways the
- * policy is: a segment may carry a `*` wildcard (which never crosses a `/`, so
- * `github/acme/*` admits `github/acme/app` and not `github/acme/a/b`), and the
- * canonical repository a policy writes (`provider/owner/name`, `Canonical`) has
- * three segments rather than two.
+ * the literal `*` (every repository), or a **provider-qualified** pattern of
+ * three segments or more. The grammar is the CLI's own -- `internal/
+ * projectpolicy`'s `ValidPattern` (what `Decode` applies to the node a run
+ * reads) and `MatchRepo` over `internal/config`'s `MatchSegment` -- and it is
+ * wider than `REPOSITORY_RE` in the two ways the policy is: a segment may carry
+ * a `*` wildcard (which never crosses a `/`, so `github/acme/*` admits
+ * `github/acme/app` and not `github/acme/a/b`), and the canonical repository a
+ * policy writes (`Canonical`, `provider/owner/name`) has three segments rather
+ * than two.
  *
- * `..` is refused by the class rather than by the pattern, as it is for
- * `repository`: `CanonicalRepo` refuses both a `.` and a `..` segment, so a
- * value carrying one is not a spelling any reader of the policy accepts. */
-const REPO_PATTERN_RE =
-  /^(?:\*|[A-Za-z0-9._*-]+\/[A-Za-z0-9._*-]+\/[A-Za-z0-9._*-]+)$/
+ * Three segments is a **floor, not a count**: a repository path may nest
+ * (`task.CanonicalRepo` admits `acme/group/app`), and `MatchRepo` compares
+ * segment against segment, so `bitbucket/acme/group/app` admits exactly that
+ * repository. A pattern of exactly three segments refused an entry the node
+ * carries, which is the defect this class exists to remove, so the count is not
+ * bounded here -- and the bound is `MAX_REPO_PATTERN_LENGTH`, the CLI's
+ * `MaxPatternLen`.
+ *
+ * Two of `ValidPattern`'s rules are deliberately **not** mirrored: the first
+ * segment must be one of `config.Providers` there, and a pattern may carry at
+ * most four wildcards. Both are the CLI's *policy* vocabulary rather than a
+ * fact about the value -- the provider kinds a slug may name, and how many
+ * wildcards an intent may carry -- and both are rules a later release may widen.
+ * A console that hard-coded them would refuse an entry a newer CLI writes and
+ * draw `n/a` beside a count that still counts it, which is the defect this class
+ * exists to remove. What *is* mirrored is what makes a value unreadable: the
+ * lower-case segment alphabet (`ValidPattern` refuses upper case), an empty
+ * segment, a `.` or `..` segment (`CanonicalRepo` refuses such a repository, so
+ * a pattern carrying one enrolls nothing), and a last segment ending in `.git`
+ * (a canonical repository never does). */
+const REPO_PATTERN_RE = /^(?:\*|[a-z0-9*._-]+(?:\/[a-z0-9*._-]+){2,})$/
 
 /** IMAGE_REF_RE is a container image reference, and it is `internal/config`'s
  * `catalogImageRE` (`ValidateCatalog`, the rule the local configuration and the
@@ -2647,13 +2666,24 @@ export function sanitizeText(
     // recognises, and refusing one would turn a redacted policy entry into a
     // cell that says the document is broken.
     if (isMarkerText(text)) return ok(text, flags)
-    if (text.includes('..')) return refuse(`${field} is not a valid repository pattern`)
     if (text.length > MAX_REPO_PATTERN_LENGTH) {
       return refuse(`${field} is not a valid repository pattern`)
     }
-    return REPO_PATTERN_RE.test(text)
-      ? ok(text, flags)
-      : refuse(`${field} is not a valid repository pattern`)
+    if (!REPO_PATTERN_RE.test(text)) {
+      return refuse(`${field} is not a valid repository pattern`)
+    }
+    // A `.` or `..` *segment*, exactly as `ValidPattern` refuses it and for its
+    // reason (`CanonicalRepo` refuses such a repository, so the entry admits
+    // nothing). Reading the value whole instead would refuse `github/a..b/app`,
+    // which the CLI admits -- the defect this class was added to remove.
+    for (const segment of text.split('/')) {
+      if (segment === '.' || segment === '..') {
+        return refuse(`${field} is not a valid repository pattern`)
+      }
+    }
+    return text.endsWith('.git')
+      ? refuse(`${field} is not a valid repository pattern`)
+      : ok(text, flags)
   }
 
   if (textClass === 'imageRef') {
