@@ -1021,3 +1021,88 @@ func TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn(t *testing.T) {
 		t.Errorf("the run published a workspace record into a database this installation never adopted: %v", v)
 	}
 }
+
+// TestUpdatePublishesTheWorkspaceRecordInTheRunThatNamesTheBackend: the run
+// that gives the installation a budget backend is the run that gives this stage
+// a database, and the record is published into it in that same run.
+//
+// The stage's first answer is read in the loop's read-only preview pass, which
+// is before the Firebase stage has written budget.firebase_project and
+// budget.rtdb_url into the config — so the answer there is "the config names no
+// Firebase budget backend", and it is true of the file at that moment. What the
+// stage may not do is keep it: initRun.writeConfig drops this stage's read
+// (update_workspace.go's forget), so the pass that publishes asks the config in
+// force and finds the database the run has just named.
+//
+// Red before that: the run printed the "nowhere to publish it" skip over the
+// config it had just written, and the record landed on the next update — the
+// second run of the one documented command, which is what the hard rule forbids.
+func TestUpdatePublishesTheWorkspaceRecordInTheRunThatNamesTheBackend(t *testing.T) {
+	r := newFBRig(t)
+	// The database the door writes: an installation's own, marked as its (the
+	// Firebase stage refuses one that holds data and is not), with the Firestore
+	// database setup already created so the run asks no location question.
+	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	r.fs.SetDatabase("us-east5")
+	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	r.save(t)
+	fakeTerminal(t)
+	// The one thing --yes does not stand in for: the group's first record takes
+	// the project's name typed.
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)
+	}
+	if v := r.db.Value(projectpolicy.PathWorkspace(initProjectName)); v == nil {
+		t.Fatalf("the run that named the budget backend published no workspace record: the record lands on the next update, which is the second run the hard rule forbids\n%s", s)
+	}
+	if got, want := wsMembers(t, r.db, initProjectName), []string{"member-b"}; !slices.Equal(got, want) {
+		t.Errorf("the published record lists %v, want %v:\n%s", got, want, s)
+	}
+	if got, want := wsCeiling(t, r.db, initProjectName), int64(25_000_000); got != want {
+		t.Errorf("the published record's ceiling is %d micro-dollars, want %d:\n%s", got, want, s)
+	}
+}
+
+// TestUpdatePublishesIntoTheDatabaseTheRunHasJustPointedAt: the other half of
+// the same staleness. A config can name a budget backend that the run then
+// corrects — the Firebase project's database was rebuilt and the URL in the file
+// is the old one (`update --firebase-project` rewrites it from the deployment's
+// own outputs), and the stage's read is made in the preview pass, against the
+// URL the file names THEN.
+//
+// What may not survive the run's own write is that read: the record would be
+// published into the old database, which is a document no member's run reads and
+// a write into a database this installation has just stopped using. forget drops
+// it, and the pass that publishes reads the config in force.
+//
+// Red before that: the record landed in the database the config no longer names.
+func TestUpdatePublishesIntoTheDatabaseTheRunHasJustPointedAt(t *testing.T) {
+	r := newFBRig(t)
+	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	r.fs.SetDatabase("us-east5")
+	// The database the config names before the run: this installation's own (its
+	// mark is what the ownership gate reads), so nothing is skipped here — the
+	// stage reads it and would publish into it.
+	old := gcpfake.NewRTDB(t)
+	old.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+old.URL+", firebase_project: \""+fpID+"\" }\n")
+	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	r.save(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)
+	}
+	if v := old.Value(projectpolicy.PathWorkspace(initProjectName)); v != nil {
+		t.Errorf("the record was published into the database the run has just stopped pointing at: %v\n%s", v, s)
+	}
+	if v := r.db.Value(projectpolicy.PathWorkspace(initProjectName)); v == nil {
+		t.Fatalf("the run published no workspace record into the database it now names:\n%s", s)
+	}
+	if got, want := wsMembers(t, r.db, initProjectName), []string{"member-b"}; !slices.Equal(got, want) {
+		t.Errorf("the published record lists %v, want %v:\n%s", got, want, s)
+	}
+}

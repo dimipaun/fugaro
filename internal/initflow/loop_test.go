@@ -188,7 +188,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// owner-run apply (C1.20), the deployed security rules generation
 	// (init_rules_stage.go), the published policy node's migration in place
 	// (init_policy_migrate.go), the workspace record the owner's `fugaro
-	// update` publishes (init_workspace_stage.go / D1292), the project layer
+	// update` publishes (update_workspace.go / D1292), the project layer
 	// and its one local file (init_layer_stage.go), the checkout's own steps
 	// inside fugaro update (init_checkout_upgrade.go) and the compute
 	// backend's provisioning, which the design puts last (compute-backend

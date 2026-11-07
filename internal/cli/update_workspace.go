@@ -190,6 +190,27 @@ func readWorkspaceNode(ctx context.Context, db *rtdb.Client, lc *localcfg.Config
 	return etag, found, raw, nil
 }
 
+// workspaceConfigState is the config's own half of the read: the record this
+// installation declares (nil for one that publishes none), and the skip for one
+// that declares a record and names no database to publish it in.
+//
+// It is a function of its own because the stage asks it EVERY time and caches
+// only what is below it (workspaceStage.plan): the run writes this file under
+// its own stages' feet, and the run that first names a budget backend
+// (--firebase-project) is the run that first has a database for the record. A
+// cached "nowhere to publish it" outliving that write is a sentence the config
+// in force contradicts.
+func workspaceConfigState(lc *localcfg.Config) (*workspace.Record, error) {
+	rec, err := workspaceRecordOf(lc)
+	if err != nil || rec == nil {
+		return nil, err
+	}
+	if policyNodeUnreachable(lc) {
+		return nil, &workspacePublishNotOurs{reason: workspaceNoDBReason}
+	}
+	return rec, nil
+}
+
 // workspacePublicationFor reads the state and works out what this run would
 // write. A nil publication with a nil error is a config that publishes no
 // workspace record at all, which is a skip and not a failure.
@@ -200,13 +221,19 @@ func readWorkspaceNode(ctx context.Context, db *rtdb.Client, lc *localcfg.Config
 // stage that read the node first would reach into a database the installation
 // never adopted just to find out it was not allowed to write there.
 func workspacePublicationFor(ctx context.Context, lc *localcfg.Config) (*workspacePublication, error) {
-	rec, err := workspaceRecordOf(lc)
+	rec, err := workspaceConfigState(lc)
 	if err != nil || rec == nil {
 		return nil, err
 	}
-	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return nil, &workspacePublishNotOurs{reason: workspaceNoDBReason}
-	}
+	return workspacePublicationRead(ctx, lc, rec)
+}
+
+// workspacePublicationRead is workspacePublicationFor past the config's own
+// answers: the database, the ownership gate and the node. This is the half the
+// stage caches, because it is the half that reaches the cloud, and the half a
+// re-pointed or newly named backend invalidates whole — which is what forget is
+// for.
+func workspacePublicationRead(ctx context.Context, lc *localcfg.Config, rec *workspace.Record) (*workspacePublication, error) {
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return nil, err
@@ -292,16 +319,23 @@ func workspacePublicationIn(ctx context.Context, lc *localcfg.Config, db *rtdb.C
 	return p, nil
 }
 
-// workspaceWidening names what this write adds to a group, and it is never
-// empty: what is reserved for the typed name is a write that puts MORE in the
-// group — a project that can now spend against the workspace's credentials, a
-// repository it now covers, a ceiling higher than the one the owner set — which
-// is the policy stage's loosening rule (D846) read on this node, and a FIRST
-// publish is the whole of that rule at once, exactly as the policy stage reads
-// its own first node (M3): the document is chosen where none was, so the member
-// list, the repositories each member contributes and the ceiling the workspace's
-// own credentials are bounded by are all decided here for the first time, and
-// every run of every member reads the record from the moment it lands.
+// workspaceWidening names what this write adds to a group. What is reserved for
+// the typed name is a write that puts MORE in the group — a project that can now
+// spend against the workspace's credentials, a repository it now covers, a
+// ceiling higher than the one the owner set — which is the policy stage's
+// loosening rule (D846) read on this node, and a FIRST publish is the whole of
+// that rule at once, exactly as the policy stage reads its own first node (M3):
+// the document is chosen where none was, so the member list, the repositories
+// each member contributes and the ceiling the workspace's own credentials are
+// bounded by are all decided here for the first time, and every run of every
+// member reads the record from the moment it lands.
+//
+// The list is empty exactly when the write adds nothing to the group: an
+// ordinary rewrite of a node that already carries what the record states, a
+// migration that only moves the version, and a removal — which takes something
+// out of the group rather than putting something in it, and is confirmed by the
+// ordinary y/N (workspaceRemovals, and the branch confirm takes at the empty
+// list).
 //
 // That is what keeps the group's first record out of a coding agent's reach: the
 // class is Typed, and D1026 admits no plan gate's answer for a Typed step. A
@@ -499,14 +533,36 @@ func (workspaceStage) Left() initflow.Left {
 	return initflow.Left{Stage: initflow.Workspace, Kind: initflow.LeftCommand, Text: selfCommand() + " update"}
 }
 
-// plan reads the node once per run: the check, the plan and the apply all ask
-// the same question, and the answer is what the confirmation is made against.
+// plan is what the check, the plan and the apply all answer with: the config's
+// own state and the node this run would write.
+//
+// Only the node is remembered. The config's half is asked every time, for the
+// reason workspaceConfigState gives — the run's own local-config write changes
+// it, and the stage that reads a cached skip there publishes nothing on the run
+// that just named the backend. That is also why the cached half is dropped
+// rather than kept when the file moves: a database this run has just been
+// pointed at is not the database the old read was made in, and the client in
+// that read is not the one the node lives in (forget).
 func (s *workspaceStage) plan(ctx context.Context) (*workspacePublication, error) {
 	if !s.planned {
 		s.planned = true
 		s.p, s.err = workspacePublicationFor(ctx, s.e.lc)
 	}
 	return s.p, s.err
+}
+
+// forget drops the read the check, the plan and the apply share for the rest of
+// the run, so the next of them reads the config and the node again. It exists
+// because a run changes under this stage's feet: the Firebase stage writes
+// budget.firebase_project and budget.rtdb_url into the local config and into
+// the engine's view of it (initRun.writeConfig), which is past the read-only
+// preview pass where this stage's check was made — so without this the run
+// prints "there is no database to publish the workspace record in" over the
+// config it has just written, and the record lands on the next update instead.
+// The policy stage is dropped from the same write, for the same reason and its
+// own half of the config (its members and the verifier account).
+func (s *workspaceStage) forget() {
+	s.planned, s.p, s.err = false, nil, nil
 }
 
 // notOurs is the skip both Check and Plan answer with: the state the stage is
@@ -523,6 +579,7 @@ func workspaceSkip(err error) (string, bool) {
 // document this Fugaro cannot read is not something the operator finishes by
 // hand, and the message says which of the two it is.
 func (s *workspaceStage) Check(ctx context.Context) (initflow.Status, error) {
+	fmt.Fprintf(os.Stderr, "PROBE check: budget-named=%v planned=%v\n", s.e.lc.Budget != nil && s.e.lc.Budget.RTDBURL != "", s.planned)
 	p, err := s.plan(ctx)
 	if reason, skip := workspaceSkip(err); skip {
 		return initflow.Status{State: initflow.Skipped, Detail: reason}, nil
