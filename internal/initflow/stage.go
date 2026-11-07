@@ -3,8 +3,9 @@
 // with a read-only check and plan, a confirmed apply and a verify; a loop
 // that applies the first stage that is not done, stops at the first stage
 // that needs the user or fails, and runs nothing after it save where the row
-// the stage sits on names that stop (pastStops, RunsPastStop); and the plan
-// view and the JSON result that report where the run stands.
+// the stage sits on names that stop (pastStops, RunsPastStop), a stage that
+// splits its own work on one being told which they are (PastStops); and the
+// plan view and the JSON result that report where the run stands.
 //
 // The package knows nothing about Google, Terraform or the CLI: the stages
 // that exist (and the fakes the tests use) plug in through Stage. It does not
