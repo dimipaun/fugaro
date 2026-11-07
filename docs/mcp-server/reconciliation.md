@@ -184,9 +184,11 @@ owner's to create**.
 is the library's own licence file rather than the claim §4's question table recorded — so **the
 library half of §6's first check is closed and M5 may take the dependency**, which is what M5's
 `go.mod` entry does. **What the confirmation does not close is the other half of the same check**:
-**counsel's clearance of the transitive dependencies** the library brings — `zitadel/schema`,
-`muhlemmer/gu`, `kr/text`, `go-jose/v4`, the `otel` modules, `doublestar/v4`, and the `x/text` and
-`x/sync` bumps `go mod tidy` made beside it — and **the M5 gate file the owner is to create**, which
+**counsel's clearance of the transitive dependencies** this branch brings — `zitadel/schema`,
+`muhlemmer/gu` and `kr/text`, which are new, and the version bumps `go mod tidy` made beside the
+library: `go-jose/v4` v4.1.4→v4.1.6, **`go-logr/logr` v1.4.3→v1.4.4**, `doublestar/v4`
+v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with `/metric` and `/trace`, `x/text` v0.42.0→v0.43.0 and
+`x/sync` v0.23.0→v0.24.0 — and **the M5 gate file the owner is to create**, which
 is a file a person writes and which no answer given in this container writes for him. **M5 is built
 in this pull request** against the confirmed library, with those two still open; the first is a
 question for the owner and the second is a file only he can write.
@@ -407,14 +409,25 @@ refuses `r~`/`p~`; and a paired device carries a **viewer role that reaches `tas
 
 **Amended again 2026-11-04** (finding M-a): the device approval is weak for a second, independent
 reason — the "loopback is the attacker's machine" argument in §8 **fails when the approval happens on
-a phone**, where a person cannot see which machine is asking. The owner's answer, written into §3 and
-built by M5 and M6:
+a phone**, where a person cannot see which machine is asking. The owner's answer, written into §3:
 
 - approval requires **QR proximity or number matching**;
 - the phone shows **the client, marked unverified, and the redirect host**;
 - approval is **a single-use POST on a named endpoint**, and **an ID token never travels in a GET
   URL**;
 - **nothing is pushed without a person starting it.**
+
+**M5 and M6 build three of those four, and the first is built only as far as the page.** The approve
+step is a single-use POST on a named endpoint, an ID token never travels in a GET URL, nothing is
+pushed unstarted, and the page shows the client unverified beside the redirect host. But **the number
+is rendered on the same page and posted back by the same form**: the paired device never sees it, so
+a page rendering a flow of its own displays its own number and collects the number and the ID token
+together from whoever fills that form — which is the approval this check is meant to tell apart from
+the real one. **A check on the page is therefore not M-a's device-side approval**, and the half that
+would be — the number shown on, or entered into, the paired device, so the approval is bound there —
+**is not built and is in no task**: it is new behaviour and an owner's decision, and it is raised as
+a finding rather than added by a task that did not ask for it. The token has the same kind of limit
+beside it: nothing spends an ID token, so one that leaks approves flows until it expires.
 
 ### D924 — amended (finding M-b)
 

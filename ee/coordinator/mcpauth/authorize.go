@@ -41,12 +41,25 @@ import (
 // value of its own — a redirect URI of the caller's own choosing beside the
 // binding still goes to the record's URI.
 //
-// **Number matching is M-a's second half.** The flow carries its own six-digit
-// number, the page shows it, and the approval has to present it back. It is
-// checked in constant time and it is deliberately not a credential: it is the
-// thing that ties an approval to a person who was looking at the screen that
-// asked, so an attacker who starts a flow of their own cannot have the person
-// approve *that* one by answering a page belonging to another.
+// **Number matching is M-a's second half, and what is built here is the page
+// half of it, not the device half.** The flow carries its own six-digit number,
+// the page shows it, and the approval has to present it back, compared in
+// constant time. What that establishes is that the answer came from the page
+// that rendered this flow: the number travels from that page to this form
+// beside the binding it was rendered with, and nothing outside the page has to
+// know it.
+//
+// What it does NOT establish is what M-a asks for — that the approval was made
+// on the device paired to the installation. The device never sees the number,
+// so a page rendering a flow of its own displays its own number, and whoever
+// fills that page's form hands over the number and the ID token together: this
+// check cannot tell that approval from the one it is meant to be. **M-a's
+// device-side half — the number shown on, or entered into, the paired device,
+// so the approval is bound there — is not built and is in no task**, because it
+// is new behaviour and a decision of the owner's rather than something a task
+// already answered. The other limit is the token itself: nothing here spends
+// one, so a leaked ID token approves flows until it expires — raised as a
+// finding for the owner beside the device half rather than fixed here.
 //
 // **The client is shown as UNVERIFIED** (M-a, the unverified client name).
 // `client_name` is the client's own assertion about itself — RFC 7591 takes it
@@ -89,10 +102,12 @@ gave when it registered, and nothing in this installation checked it.</p>
 <strong>{{.Host}}</strong>.</p>
 <p>It will be able to:</p>
 <ul>{{range .Scopes}}<li>{{.}}</li>{{end}}</ul>
-<p>This flow's number is <strong>{{.Number}}</strong>. The approval is made on
-the device paired to this installation, and it carries that number and the
-Firebase ID token the device's session produced. A number you had to have seen
-is what ties the approval to this page.</p>
+<p>This flow's number is <strong>{{.Number}}</strong>. Approving sends it back
+with this page's own binding, which is what shows this page answered the
+request.</p>
+<p>The Firebase ID token is what proves the sign-in. This page asks you to paste
+it here: the approval is answered in this browser and not on a device the
+installation paired with you.</p>
 <form method="post" action="{{.Action}}">
 <input type="hidden" name="request_id" value="{{.RequestID}}">
 <p><label>Number <input name="number" inputmode="numeric" autocomplete="off"></label></p>
@@ -281,10 +296,13 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 			"the authorization request expired before it was answered"))
 		return
 	}
-	// The number is compared over the whole value and in constant time. It is
-	// the check that makes the approval an answer to a page a person was
-	// looking at, so it is made before the token is even read: an approval that
-	// did not carry this flow's number has not answered this flow.
+	// The number is compared over the whole value and in constant time, before
+	// the token is even read: an approval that did not carry this flow's number
+	// has not answered this flow. It shows that the answer came back from the
+	// page that rendered the flow and nothing about a paired device — the
+	// number is displayed and echoed on that same page, so the check is a page
+	// binding and not M-a's device-side approval (see the note at the top of
+	// this file).
 	if subtle.ConstantTimeCompare([]byte(form.Get("number")), []byte(pending.Number)) != 1 {
 		refusePage(w, http.StatusBadRequest, "This approval does not carry the number the page showed. Approve from the page that asked, and present the number that page displayed.")
 		return

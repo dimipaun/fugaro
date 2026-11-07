@@ -108,9 +108,8 @@ func (ts *testServer) consent(t *testing.T, form url.Values) *httptest.ResponseR
 }
 
 // approve posts the approval the page above asks for: the binding, the number
-// the page showed, and the Firebase ID token the person's paired device
-// produced — all three in the form body, which is the only place M-a allows the
-// token to be.
+// the page showed, and the Firebase ID token the sign-in produced — all three
+// in the form body, which is the only place M-a allows the token to be.
 func (ts *testServer) approve(t *testing.T, binding, number string) *httptest.ResponseRecorder {
 	t.Helper()
 	return ts.consent(t, url.Values{
@@ -737,14 +736,17 @@ func TestTheApprovalRefusesAnUnverifiedSignIn(t *testing.T) {
 	}
 }
 
-// TestTheApprovalNeedsTheNumberThePageShowed is M-a's number matching at the
+// TestTheApprovalNeedsTheNumberThePageShowed is M-a's number check at the
 // endpoint: an approval that does not present the flow's own number is refused,
 // whatever else it carries.
 //
-// The number is what ties an approval to a person who was looking at the page
-// that asked. Without it, an attacker who starts a flow of their own has only to
-// get the person to approve *something* — and the token the person's device
-// produces is the same token whichever page asked for it.
+// What that holds is the page binding — the number the page rendered has to
+// come back with the approval, so an approval that never saw the page is
+// refused. What it does not hold, and this test does not claim, is M-a's
+// device-side approval: the number is displayed and echoed on the same page, so
+// a page rendering a flow of its own knows its own number too
+// (ee/coordinator/mcpauth/authorize.go's note, and the follow-up's finding for
+// the owner).
 func TestTheApprovalNeedsTheNumberThePageShowed(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)

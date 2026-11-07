@@ -366,6 +366,13 @@ of them the endpoints, all of them what happens at them):
    - approval is **a single-use POST on a named endpoint**, and **an ID token never travels in a GET
      URL**, where it would land in history, logs and referrers;
    - **nothing is pushed without a person starting it.**
+
+   **The first of those is what the flow's implementation does not yet do.** M5's approve step renders
+   the flow's number on the page and posts it back from the same page's form, so the number is a
+   binding between that page and the approval and **not the device-side approval this bullet asks
+   for**: the paired device never sees the number, and a page rendering a flow of its own knows its
+   own number ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment). The half that would
+   bind the approval on the device is unbuilt and is in no task.
 6. The coordinator issues the authorization code, and the exchange at `POST /oauth/token` mints a
    short-lived access token and a refresh token, scoped to the MCP resource URL, carrying the
    identity, the client, the scopes and the limits of §6.

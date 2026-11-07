@@ -114,9 +114,13 @@ it:
 - **D923 — H1 and M-a.** **H1 is the one amendment that is not the recommendation**: a device token
   is a custom token any launcher can mint, so the approval proves nothing against a launcher, and the
   owner **accepted and documented** the residual risk instead of closing it — **it is in
-  [spec.md](spec.md) §3 and §8 and it is built by no task here**. M-a's hardening is built: M5 and M6
-  require QR proximity or number matching, show the client marked unverified and the redirect host,
-  approve by a **single-use POST**, and never put an ID token in a GET URL.
+  [spec.md](spec.md) §3 and §8 and it is built by no task here**. **M-a's hardening is built in
+  part**: M5 and M6 show the client marked unverified and the redirect host, approve by a **single-use
+  POST**, and never put an ID token in a GET URL — **while the first half, QR proximity or number
+  matching, is built only as a page binding**: the number is rendered on the page and posted back by
+  the same form, so it shows the approval came from that page and **not that a paired device approved
+  it**. The device-side half is unbuilt, is in no task, and is raised as a finding for the owner
+  ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment).
 - **D924 — M-b.** The family spend limit is enforced across concurrent runs by reserving
   `min(job cap, remaining)` **atomically against the family counter** at spawn and settling at
   finalize; for `client_credentials` the family is the client. The store half is M2's, the call site
@@ -703,7 +707,9 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   are allowed; the signing material lives in **Secret Manager** or the tokens are **opaque**; both
   metadata paths are served from **one table**; the approval is a **single-use POST** on a named
   endpoint with **no ID token in a GET URL**, showing the client **marked unverified** and the
-  redirect host, and requiring **QR proximity or number matching**; and **pre-registration is refused
+  redirect host, and carrying a flow number the page shows and the approval posts back — **a page
+  binding, and not M-a's device-side approval, which is unbuilt and raised as a finding for the
+  owner** ([reconciliation.md](reconciliation.md) §4a); and **pre-registration is refused
   inside a coding agent's session** with **`client_credentials` off** — this task builds the refusal
   and **not** the grant. Its tests carry the rows for each of those.
 - **What the review settles about the library, and what it does not.** The review found the library's
