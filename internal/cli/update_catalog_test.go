@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -23,9 +24,13 @@ import (
 // there (the state bucket, outputs that read back), a project config with one
 // inline-sourced catalog entry and no base image recorded, and the registries
 // the images stage reads, verifies and reads back through.
-func catalogUpdateRig(t *testing.T) *imagesRig {
+func catalogUpdateRig(t *testing.T) *imagesRig { return catalogUpdateRigAt(t, convergeRelease) }
+
+// catalogUpdateRigAt is the same installation run by the build version (a
+// development build pins nothing, and says so).
+func catalogUpdateRigAt(t *testing.T, version string) *imagesRig {
 	t.Helper()
-	r := newImagesRig(t, convergeRelease)
+	r := newImagesRig(t, version)
 	// Every root matches its plan, so the run is about the pin and the job
 	// alone: what the installation root plans is scripted per pass below.
 	r.script["plan"] = map[string]any{"exit": 0}
@@ -164,5 +169,73 @@ func TestUpdateLeavesAnInstallationWithACurrentCatalogBaseAlone(t *testing.T) {
 	}
 	if _, ok := r.tfvars(t)["catalog_check"].(map[string]any); !ok {
 		t.Errorf("the installation tfvars carry no catalog_check for a project whose catalog has an entry and a current base image: %v", r.tfvars(t))
+	}
+}
+
+// TestUpdatePreviewNamesTheCatalogArmsSecondApply: the run's own preview is
+// what the review screen is built from, and it has to name installation-2 —
+// the stage the run applies the root again in *is* that second apply, and the
+// person's one confirmation covers what the preview said.
+//
+// The state a preview reads is the config the run started with, which never
+// holds the pin the run is about to make: on the first pin there is no
+// base_images.base at all, and on a release upgrade it holds the older
+// release's. So "does the config already record a base the installation's job
+// does not run from" answers false in both, while the images stage's own
+// decision answers true — the preview has to ask the second question.
+func TestUpdatePreviewNamesTheCatalogArmsSecondApply(t *testing.T) {
+	for _, tc := range []struct{ name, ver string }{
+		{"first pin", ""},
+		{"release upgrade", "0.20.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := catalogUpdateRigAt(t, convergeRelease)
+			if tc.ver != "" {
+				// The pin shape is the owner's, so the run has to be told the
+				// owner it pinned under (the state the older release's run
+				// left behind).
+				r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+r.pinnedBase(config.BaseKind, tc.ver)+"}\n")
+			}
+			// An owned project shows the review screen, which is printed from
+			// the preview alone: nothing is applied (--plan-only).
+			r.markedRuns(t, initProjectName, initProject)
+			fakeTerminal(t)
+			r.save(t)
+			out, errOut, err := executeStdin(t, "", "update", "--plan-only")
+			if err != nil {
+				t.Fatalf("update --plan-only: %v\n%s\n%s", err, out, errOut)
+			}
+			if !strings.Contains(out, "Review: project "+initProjectName) {
+				t.Fatalf("the run showed no review screen to read:\n%s", out)
+			}
+			if !regexp.MustCompile(`(?m)^\s+\[will do\]\s+installation-2\b`).MatchString(out) {
+				t.Errorf("the preview does not report installation-2 as work this run will do, so the second apply that deploys the catalog check job is not the one the user's confirmation covers:\n%s", out)
+			}
+			if !strings.Contains(out, "  installation-2: Terraform apply of the installation root again") {
+				t.Errorf("the review screen omits installation-2, the stage whose apply deploys the catalog check job:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestUpdateSaysWhenItCannotPinTheCatalogBase: a run that cannot pin the base
+// image — a development build here, and any run that does not name base — has
+// to say so. The catalog is the user's, its entries are buildable, and nothing
+// deploys the check job that builds them: reporting [skipped] without a word
+// about the base image would be an update that exits 0 in the issue's state.
+func TestUpdateSaysWhenItCannotPinTheCatalogBase(t *testing.T) {
+	r := catalogUpdateRigAt(t, "dev")
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("a development build's run: %v\n%s\n%s", err, out, errOut)
+	}
+	whole := out + errOut
+	for _, want := range []string{"installation-2", "image catalog builds its entries FROM base_images." + config.BaseKind, "this run does not pin"} {
+		if !strings.Contains(whole, want) {
+			t.Errorf("the run left the catalog's entries built by nothing without saying %q:\n%s", want, whole)
+		}
+	}
+	if got := r.localConfig(t).BaseImage(config.BaseKind); got != "" {
+		t.Errorf("a development build recorded base_images.%s = %q", config.BaseKind, got)
 	}
 }

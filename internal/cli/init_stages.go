@@ -703,10 +703,13 @@ func newFirebaseStage(e *initEngine) *engineStage {
 func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
-			if e.r.o.firebase != "" || e.catalogPinAwaitsTheJob() {
+			switch {
+			case e.r.o.firebase != "", e.catalogJobAwaitsItsBase():
 				return ""
+			case e.catalogBaseIsMissing():
+				return "no --firebase-project given, and the project's image catalog builds its entries FROM base_images." + config.BaseKind + ", which this run does not pin: the catalog check job runs FROM that image and nothing else deploys it, so the catalog's entries are checked by nothing until a run that pins it is through"
 			}
-			return "no --firebase-project given and a base image the catalog check job does not run from yet: the first apply deployed everything this stage would"
+			return "no --firebase-project given: nothing to deploy the history job with"
 		},
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {
@@ -734,22 +737,39 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 	}
 }
 
-// catalogPinAwaitsTheJob reports whether this run pinned the base image the
-// project's catalog check job runs FROM and the installation root has yet to be
-// applied with it: the local config records one, the spec the run planned
-// carries no job from it, and the catalog is one this installation builds.
+// catalogJobAwaitsItsBase reports whether the catalog check job is what this
+// stage's apply is for: the images stage is about to move the base image that
+// job runs FROM, or this run has moved it already and the installation root
+// the run planned carries no job from it. The catalog has to be one this
+// installation builds either way — with nothing to check there is no job.
 //
-// It is what makes `fugaro image add <entry>` followed by a plain `fugaro
-// update` the whole of it (#1843): the catalog check job runs FROM
-// base_images.base and every catalog build is built FROM it, nothing else
-// names that kind, and the pin is this run's images stage — behind the
-// installation root — so the root is applied again here.
-func (e *initEngine) catalogPinAwaitsTheJob() bool {
-	img := e.lc.BaseImage(config.BaseKind)
-	if img == "" || (e.spec.CatalogCheck != nil && e.spec.CatalogCheck.Image == img) {
+// The first arm is the images stage's own decision (pinsBase) and not a
+// reading of the local config, which is the whole of #1843: the config a run's
+// preview reads still holds the pin the run started with, so on a release
+// upgrade — not only on the first pin — only the images stage can say whether
+// base_images.base is about to move. The preview, the review screen built from
+// it and the converge all ask this one function, so the second apply the user's
+// confirmation covers is the one the preview said would happen.
+func (e *initEngine) catalogJobAwaitsItsBase() bool {
+	if !infra.CatalogBuilds(e.lc) {
 		return false
 	}
-	return infra.CatalogBuilds(e.lc)
+	if e.images != nil && e.images.pinsBase() {
+		return true
+	}
+	img := e.lc.BaseImage(config.BaseKind)
+	return img != "" && (e.spec.CatalogCheck == nil || e.spec.CatalogCheck.Image != img)
+}
+
+// catalogBaseIsMissing reports the state no stage of this run can fix: the
+// project's catalog is one this installation builds and no base image is
+// recorded for its check job to run FROM, because this run pins none — a
+// development build pins nothing, and neither does a run that names the kinds
+// it handles. Nothing deploys the job, so nothing checks the catalog's entries
+// until a run that pins the base image is through, and the stage that would
+// deploy it says so rather than reporting the run converged.
+func (e *initEngine) catalogBaseIsMissing() bool {
+	return infra.CatalogBuilds(e.lc) && e.lc.BaseImage(config.BaseKind) == ""
 }
 
 // installCatalogCheck applies the installation root again with the catalog

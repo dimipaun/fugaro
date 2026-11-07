@@ -442,19 +442,9 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 		}
 	}
 	_, srcOwner, _ := strings.Cut(allow[0], "/")
-	named := map[string]bool{} // kinds --base-image points elsewhere this run
-	for _, v := range r.o.baseImages {
-		if k, _, err := localcfg.ParseBaseImageFlag(v); err == nil {
-			named[k] = true
-		}
-	}
 	owner := baseOwner(lc)
 	for _, k := range s.kinds(ctx) {
-		if named[k] {
-			notes = append(notes, fmt.Sprintf("base %s: --base-image points it at its own image; nothing mirrored", k))
-			continue
-		}
-		note, pin, err := basePlanItem(lc.BaseImage(k), host, k, owner, ver)
+		note, pin, err := s.basePinItem(lc, host, k, owner, ver)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -483,6 +473,48 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 		})
 	}
 	return items, notes, nil
+}
+
+// basePinItem is items()'s offline decision for one base kind: the note the
+// run prints when it leaves the kind alone, or pin true when this run records
+// base_images.<kind>. It is the one copy of that decision — --base-image
+// pointing the kind at an image of its own, then basePlanItem's reading of
+// what the config records now — so a stage behind the images stage can ask
+// whether this run moves the base image (pinsBase) and act on the answer
+// items() gives.
+func (s *imagesStage) basePinItem(lc *localcfg.Config, host, kind, owner, ver string) (note string, pin bool, err error) {
+	for _, v := range s.e.r.o.baseImages {
+		if k, _, err := localcfg.ParseBaseImageFlag(v); err == nil && k == kind {
+			return fmt.Sprintf("base %s: --base-image points it at its own image; nothing mirrored", kind), false, nil
+		}
+	}
+	return basePlanItem(lc.BaseImage(kind), host, kind, owner, ver)
+}
+
+// pinsBase reports whether this run's images stage records base_images.base:
+// the kind is one this run handles — every base kind, unless the run names its
+// own set (image refresh's workflows') — what the config records is not this
+// release's, and the run is of a release at all, since a development build
+// pins nothing.
+//
+// The installation-2 stage asks it (#1843): the project's catalog check job
+// runs FROM base_images.base and every catalog build is built FROM it, so
+// whether that stage has anything to deploy is a question about what the
+// images stage is about to do, and the config cannot answer it — at preview it
+// still holds the pin the run started with, which is why a release upgrade of
+// a catalog project asks here rather than comparing the installation's spec
+// with the config.
+func (s *imagesStage) pinsBase() bool {
+	ver, lc := releaseVersion(), s.e.lc
+	if ver == "" || lc == nil || (s.only != nil && !slices.Contains(s.only, config.BaseKind)) {
+		return false
+	}
+	host, err := infra.RegistryHost(lc)
+	if err != nil {
+		return false
+	}
+	_, pin, err := s.basePinItem(lc, host, config.BaseKind, baseOwner(lc), ver)
+	return err == nil && pin
 }
 
 func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
