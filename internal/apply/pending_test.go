@@ -247,12 +247,13 @@ func TestPendingRefusesAProjectMismatch(t *testing.T) {
 }
 
 // TestPendingFileVersioned: the document carries its own version, is refused
-// when it is another one's, and is never written over a newer fugaro's. It also
-// pins where the file lives — beside the project config, named so that
-// localcfg.Projects can never read it as a project config — and the state
-// rules the rest of the file follows: no file is an empty document and no
-// error, a write is 0600 in a 0700 directory, and what was written round-trips
-// member for member.
+// when it is another one's, and is written over unless that one is a newer
+// fugaro's. It also pins where the file lives — beside the project config,
+// named so that localcfg.Projects can never read it as a project config — and
+// the state rules the rest of the file follows: no file is an empty document
+// and no error, a write is 0600 in a 0700 directory, what was written
+// round-trips member for member, and a document carrying a member this build
+// does not know is refused (the format decodes strictly, CLAUDE.md).
 func TestPendingFileVersioned(t *testing.T) {
 	getenv := pendingHome(t)
 	path, err := PendingPath(getenv, "workspace-a")
@@ -351,6 +352,43 @@ func TestPendingFileVersioned(t *testing.T) {
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != newer {
 		t.Errorf("the version 2 document is now %q (err %v), want it left alone", data, err)
+	}
+
+	// A version that is not a newer one is not protected, only refused: a
+	// hand-edited or damaged document — this one says -1 — is written over
+	// rather than left refusing every later write, the clear `fugaro update`
+	// does among them (D1567). A writer that refused it would leave the machine
+	// with a file only a person deleting it by hand could get past.
+	damaged := `{"version":-1,"steps":[]}`
+	if err := os.WriteFile(path, []byte(damaged), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPending(getenv, "workspace-a", "proj-1234"); err == nil {
+		t.Error("a version -1 document loaded: the reader refuses a version it does not write")
+	}
+	if err := SavePending(getenv, "workspace-a", EmptyPending()); err != nil {
+		t.Errorf("a version -1 document refused the write: %v", err)
+	}
+	if _, err := LoadPending(getenv, "workspace-a", "proj-1234"); err != nil {
+		t.Errorf("the document written over the version -1 one does not load: %v", err)
+	}
+
+	// The format decodes strictly, so a document carrying a member this build
+	// does not know is refused rather than read with the member dropped
+	// (CLAUDE.md). That is what makes the schema's closed objects the whole of
+	// the document: a value written into a member of its own is an error here,
+	// not something the reader ignores and the next write drops.
+	for _, doc := range []string{
+		`{"version":1,"steps":[],"value":"x"}`,
+		`{"version":1,"steps":[{"step":"policy","project":"workspace-a","gcp_project":"proj-1234",` +
+			`"change":{"kind":"setting","key":"image_catalog.entries.*.name"},"value":"x"}]}`,
+	} {
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadPending(getenv, "workspace-a", "proj-1234"); err == nil {
+			t.Errorf("a document with a member this build does not know loaded: %s", doc)
+		}
 	}
 
 	// A document this build cannot parse is state gone wrong and is rebuilt:

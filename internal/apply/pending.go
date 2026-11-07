@@ -162,16 +162,18 @@ func LoadPending(getenv func(string) string, project, gcpProject string) (*Pendi
 //
 // A document a newer fugaro wrote is refused and left alone — this build cannot
 // read it, and rebuilding it from nothing would drop that fugaro's record of
-// what is owed. A document this build cannot parse is state gone wrong and is
-// written over rather than left refusing every later write: the file is a hint,
-// and what says whether anything was owed is the last_apply stamp `doctor`
-// compares (D1575).
+// what is owed. Everything else the writer finds there is written over: a
+// document this build cannot parse, and one whose version is not a newer one (a
+// hand-edited or damaged file), are state gone wrong, and leaving them would
+// refuse every later write — the clear `fugaro update` does among them — until
+// someone deleted the file by hand. The file is a hint, and what says whether
+// anything was owed is the last_apply stamp `doctor` compares (D1575).
 func SavePending(getenv func(string) string, project string, p *Pending) error {
 	path, err := PendingPath(getenv, project)
 	if err != nil {
 		return err
 	}
-	if v, err := pendingVersion(path); err == nil && v != 0 && v != PendingVersion {
+	if v, err := pendingVersion(path); err == nil && v > PendingVersion {
 		return fmt.Errorf("%s is version %d of the pending steps, and this fugaro writes version %d: %w",
 			path, v, PendingVersion, errPendingVersion)
 	}
