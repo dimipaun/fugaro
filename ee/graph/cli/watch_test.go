@@ -33,6 +33,14 @@ package cli
 //   - TestWatchRefusedReadIsTerminalAndNamesTheCommand: the server withdrawing
 //     the listen is a refusal that ends the child and names the command, which
 //     is what a console reads as "this CLI has no graph" (T3).
+//   - TestWatchFirstSnapshotIsBoundedWhenTheListenIsSilent: the first document
+//     does not wait for a subscription that never speaks, because the read
+//     behind it needs no listen.
+//   - TestWatchAFirstReadThatFailsIsADownScopeWithNoNodes: a child whose first
+//     read failed prints the scope, down, with an empty graph rather than ending
+//     (H3), and that document carries `[]` where §6.22 has a list.
+//   - TestWatchAuthRevokedIsAChangeAndNotAnExit: an expired credential is a
+//     change the child prints, not a refusal: the transport reconnects itself.
 //
 // The tests shorten the stream's clocks (fast) and read the child's stdout line
 // by line (watchSink), because the guarantees are about time and about a reader
@@ -55,6 +63,7 @@ import (
 	"github.com/dimipaun/fugaro/ee/coordinator"
 	"github.com/dimipaun/fugaro/ee/graph"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
+	"github.com/dimipaun/fugaro/internal/coordpath"
 )
 
 // The clocks these tests drive the stream with: a floor of milliseconds rather
@@ -76,6 +85,16 @@ func fast(t *testing.T, floor, keep time.Duration) {
 	prevFloor, prevKeep := graphFloor, graphKeepAlive
 	graphFloor, graphKeepAlive = floor, keep
 	t.Cleanup(func() { graphFloor, graphKeepAlive = prevFloor, prevKeep })
+}
+
+// boundFirst shortens the bound on the first snapshot, for the one test that
+// leaves the subscription silent: the production bound is five seconds, which
+// is a test's whole patience, and the var exists so a test can drive it.
+func boundFirst(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := graphFirstSnapshot
+	graphFirstSnapshot = d
+	t.Cleanup(func() { graphFirstSnapshot = prev })
 }
 
 // watchSink is the child's stdout as a test reads it: every complete line is
@@ -135,16 +154,26 @@ func (s *watchSink) text() string {
 // outside this binary does: strictly, one object per line.
 func (s *watchSink) next(t *testing.T, within time.Duration) graph.Document {
 	t.Helper()
+	line := s.nextLine(t, within)
+	doc, err := graph.ParseDocument([]byte(line))
+	if err != nil {
+		t.Fatalf("the child wrote a line that is not a document: %v: %s", err, line)
+	}
+	return doc
+}
+
+// nextLine is the child's next document as a reader outside this binary gets
+// it: the line itself, for a rule about the JSON rather than about the parsed
+// document — §6.22's table has no null in an empty list, and a strict reader
+// (the console) decodes this exact text.
+func (s *watchSink) nextLine(t *testing.T, within time.Duration) string {
+	t.Helper()
 	select {
 	case line := <-s.ch:
-		doc, err := graph.ParseDocument([]byte(line))
-		if err != nil {
-			t.Fatalf("the child wrote a line that is not a document: %v: %s", err, line)
-		}
-		return doc
+		return line
 	case <-time.After(within):
 		t.Fatalf("no document within %s; the child wrote:\n%s", within, s.text())
-		return graph.Document{}
+		return ""
 	}
 }
 
@@ -291,6 +320,53 @@ func TestWatchFirstSnapshotThenOneDocumentPerChange(t *testing.T) {
 	}
 
 	sink.quiet(t, 20*testFloor, "one change, one document")
+}
+
+// TestWatchFirstSnapshotIsBoundedWhenTheListenIsSilent: the child answers
+// within a bounded time whatever the database does (H3, §6.22). The listen is
+// the only thing it waits for before its first document — the transport's own
+// opening put, which is also what a reconnect delivers — so a subscription the
+// server accepts and then says nothing on would leave a screen with no document
+// and no refusal at all if that wait had no bound. The read behind the first
+// snapshot needs no listen: it is answered here while the subscription is still
+// open and silent.
+func TestWatchFirstSnapshotIsBoundedWhenTheListenIsSilent(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	boundFirst(t, 50*time.Millisecond)
+	fast(t, testFloor, testKeep)
+
+	// The listen is accepted and held before its opening put: the client's
+	// request is stamped and answered with nothing, which is a database that is
+	// reachable, slow to speak and never refused.
+	stamped, release := f.db.HoldNext(coordpath.PathRoot)
+	defer release()
+
+	sink := newWatchSink()
+	child := startWatch(t, sink, "graph", "--watch", "--json")
+	<-stamped
+
+	first := sink.next(t, testPatience)
+	if len(first.Nodes) != 1 || first.Nodes[0].Title != "the stored title" {
+		t.Fatalf("the bounded first snapshot is %+v, want the whole stored graph", first.Nodes)
+	}
+	if len(first.Sources) != 1 || first.Sources[0].State != graph.SourceUp {
+		t.Errorf("the bounded first snapshot's sources are %+v, want the coordinator up: the read answered", first.Sources)
+	}
+	if first.Seq != 1 {
+		t.Errorf("the bounded first snapshot is seq %d, want 1", first.Seq)
+	}
+	child.stillRunning(t, 20*testFloor)
+
+	// And the held listen is the child's own subscription, not a second one:
+	// releasing it delivers the opening put, which the child reads as the change
+	// it is.
+	release()
+	after := sink.next(t, testPatience)
+	if after.StreamID != first.StreamID || after.Seq != first.Seq+1 {
+		t.Errorf("the document after the opening put is %q seq %d, want %q seq %d: one child, one stream",
+			after.StreamID, after.Seq, first.StreamID, first.Seq+1)
+	}
 }
 
 // TestWatchSeqRisesAndStreamIDIsStable: three changes are three documents whose
@@ -550,6 +626,126 @@ func TestWatchTransientReadFailureIsADownScopeAndIsRetried(t *testing.T) {
 	}
 	if len(back.Nodes) != len(first.Nodes) || back.Nodes[0].Title != first.Nodes[0].Title {
 		t.Errorf("the recovered document drew %+v, want the whole stored graph again %+v", back.Nodes, first.Nodes)
+	}
+	child.stillRunning(t, 20*testFloor)
+}
+
+// TestWatchAFirstReadThatFailsIsADownScopeWithNoNodes: a child whose *first*
+// read fails has no last document to keep, and it still prints one: the scope
+// it covers, down, with the read's own words and no nodes — a graph a console
+// draws and explains rather than a child that ended with an error (H3, T3).
+//
+// The document is the one shape in this change that is hand-built, and it is
+// read here as a reader outside this binary reads it — the line itself, through
+// ParseDocument — because §6.22 pins what it carries: the scope this child
+// covers, named, down, with the read's words and no age. Its lists are asserted
+// too, so the wire shape of an empty graph is held at this one place; the `[]`
+// rather than `null` is `Document.MarshalJSON`'s (`Document.normalise`), which
+// is where that guarantee lives, and what this branch contributes is the
+// document existing at all. The failure is a 503 and not a 403: a refusal is
+// still terminal, which is the other test's half.
+func TestWatchAFirstReadThatFailsIsADownScopeWithNoNodes(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	// The listen is refused as well — a database that is not answering answers
+	// nothing — so the first document is the bound's and then the read's.
+	boundFirst(t, 50*time.Millisecond)
+	fast(t, testFloor, 60*time.Millisecond)
+	f.db.Refuse(http.StatusServiceUnavailable, "503", "Service Unavailable", "the database is down")
+
+	sink := newWatchSink()
+	child := startWatch(t, sink, "graph", "--watch", "--json")
+
+	line := sink.nextLine(t, testPatience)
+	first, err := graph.ParseDocument([]byte(line))
+	if err != nil {
+		t.Fatalf("the child wrote a line that is not a document: %v: %s", err, line)
+	}
+	if len(first.Sources) != 1 {
+		t.Fatalf("the first document's sources are %+v, want the scope it covers", first.Sources)
+	}
+	s := first.Sources[0]
+	if s.State != graph.SourceDown {
+		t.Errorf("the scope is %+v, want it down: the read failed and there is no last document", s)
+	}
+	if want := (graph.Scope{Kind: graph.ScopeCoordinator}).String(); s.Source != want {
+		t.Errorf("the down scope is named %q, want the coordinator scope", s.Source)
+	}
+	if !strings.Contains(s.Reason, "503") {
+		t.Errorf("the down scope's reason is %q, want the read's own failure in it", s.Reason)
+	}
+	if s.AsOf != nil {
+		t.Errorf("the down scope claims an age of %s, want none: nothing was re-read", s.AsOf)
+	}
+	// The lists, as the reader gets them: an empty graph, never a null.
+	for _, want := range []string{`"nodes":[]`, `"edges":[]`, `"warnings":[]`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the first document does not carry %s: %s", want, line)
+		}
+	}
+	child.stillRunning(t, 20*testFloor)
+
+	// And it is the same child that comes back up, with the next sequence and
+	// the graph the database is holding again.
+	f.db.Refuse(0, "", "", "")
+
+	var back graph.Document
+	for deadline := time.Now().Add(testPatience); time.Now().Before(deadline); {
+		doc := sink.next(t, testPatience)
+		if len(doc.Sources) > 0 && doc.Sources[0].State == graph.SourceUp {
+			back = doc
+			break
+		}
+	}
+	if len(back.Sources) == 0 {
+		t.Fatalf("the scope never came back up; the child wrote:\n%s", sink.text())
+	}
+	if back.StreamID != first.StreamID {
+		t.Errorf("the recovered document's stream_id is %q, want the first's %q: the child did not restart", back.StreamID, first.StreamID)
+	}
+	if back.Seq <= first.Seq {
+		t.Errorf("the recovered document is seq %d, want later than the first document's %d", back.Seq, first.Seq)
+	}
+	if len(back.Nodes) != 1 || back.Nodes[0].Title != "the stored title" {
+		t.Errorf("the recovered document drew %+v, want the stored graph", back.Nodes)
+	}
+}
+
+// TestWatchAuthRevokedIsAChangeAndNotAnExit: the credential the subscription was
+// made with expires, and the transport mints another and reconnects itself after
+// its minimum delay — a revoke loop it gives up on arrives as a permission error
+// instead, and that is the refusal. So a revoke is a change like any other: the
+// child reads and prints it, and the graph never goes dark for a token refresh.
+//
+// The document the revoke owes is written while the transport is *between*
+// connections, which is what tells it from the reconnected listen's own opening
+// put: no subscription is open at that instant, so nothing could have put it.
+func TestWatchAuthRevokedIsAChangeAndNotAnExit(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	fast(t, testFloor, testKeep)
+
+	sink := newWatchSink()
+	child := startWatch(t, sink, "graph", "--watch", "--json")
+	first := sink.next(t, testPatience)
+
+	f.db.SendAuthRevoked()
+
+	revoked := sink.next(t, testPatience)
+	if got := f.db.Streams(); got != 0 {
+		t.Fatalf("the child wrote with %d subscription(s) open, want the document of the revoke itself, written before the transport reconnected", got)
+	}
+	if revoked.StreamID != first.StreamID {
+		t.Errorf("the revoke's document carries stream_id %q, want the child's own %q", revoked.StreamID, first.StreamID)
+	}
+	if revoked.Seq != first.Seq+1 {
+		t.Errorf("the revoke's document is seq %d, want %d", revoked.Seq, first.Seq+1)
+	}
+	if len(revoked.Sources) != 1 || revoked.Sources[0].State != graph.SourceUp {
+		t.Errorf("the revoke's document is %+v, want the graph up: a token refresh is not an outage", revoked.Sources)
+	}
+	if len(revoked.Nodes) != len(first.Nodes) {
+		t.Errorf("the revoke's document drew %d nodes, want the same graph's %d", len(revoked.Nodes), len(first.Nodes))
 	}
 	child.stillRunning(t, 20*testFloor)
 }
