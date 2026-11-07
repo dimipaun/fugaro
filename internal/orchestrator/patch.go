@@ -2,7 +2,11 @@ package orchestrator
 
 import (
 	"errors"
+	"fmt"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The refusals a patch meets. They are values so a caller can tell the cases
@@ -164,23 +168,380 @@ type Actor struct {
 	Now   time.Time
 }
 
-// Apply returns the state a patch makes of another one, or the error that
-// stops it. It is a pure function: the same state, patch and actor always
-// give the same answer, which is what the money path's tests rest on.
+// Apply returns the state a patch makes of another one, or the refusal that
+// stops it. It is a pure function — the same state, patch and actor always
+// give the same answer — and it is the whole fence: the class of the actor
+// decides which ops may land, what an op carries decides what it changes, and
+// the result is validated before it is handed back, so a caller cannot write
+// a state this release would not read.
 func Apply(s State, p Patch, a Actor) (State, error) {
+	if !a.Class.Known() {
+		return State{}, fmt.Errorf("%w: %q is not a class of actor", ErrActorNotAllowed, safetext.OneLine(string(a.Class)))
+	}
+	if a.Now.IsZero() {
+		return State{}, fmt.Errorf("%w: the actor carries no server time, and every stamp in the document comes from one", ErrActorNotAllowed)
+	}
+	if err := ValidateState(s); err != nil {
+		return State{}, err
+	}
+	if p.BaseRev != s.Rev {
+		return State{}, fmt.Errorf("%w: the patch is built from revision %d and the state is at %d", ErrStaleRev, p.BaseRev, s.Rev)
+	}
+	if err := ValidatePatch(p); err != nil {
+		return State{}, err
+	}
 	next := s.Clone()
-	for _, op := range p.Ops {
-		switch op.Op {
-		case OpDecisionResolve:
-			for i := range next.Decisions {
-				if next.Decisions[i].ID == op.Resolve.ID {
-					at := a.Now
-					next.Decisions[i].Answer = op.Resolve.Answer
-					next.Decisions[i].ResolvedAt = &at
-				}
-			}
+	for i, op := range p.Ops {
+		if err := applyOp(&next, op, a); err != nil {
+			return State{}, fmt.Errorf("op %d: %w", i+1, err)
 		}
 	}
 	next.Rev = s.Rev + 1
+	next.SchemaVersion = SchemaVersion
+	next.Counters = DecisionCalls(next, a.Now)
+	if err := ValidateState(next); err != nil {
+		return State{}, err
+	}
 	return next, nil
+}
+
+func applyOp(s *State, op Op, a Actor) error {
+	switch op.Op {
+	case OpWorkItemUpsert:
+		return applyUpsert(s, *op.WorkItem, a)
+	case OpWorkItemApprove:
+		return applyApprove(s, *op.Approve, a)
+	case OpWorkItemArchive:
+		return applyArchive(s, *op.Archive, a)
+	case OpDecisionAdd:
+		return applyDecisionAdd(s, *op.Decision, a)
+	case OpDecisionResolve:
+		return applyDecisionResolve(s, *op.Resolve, a)
+	case OpFactSet:
+		return applyFactSet(s, *op.Fact, a)
+	case OpFactDelete:
+		return applyFactDelete(s, *op.Fact)
+	case OpGoalSet:
+		return applyGoalSet(s, *op.Goal, a)
+	}
+	return fmt.Errorf("%w: %q", ErrUnknownOp, safetext.OneLine(string(op.Op)))
+}
+
+// applyUpsert changes what the op carries and leaves the rest of the item
+// alone. The declaration is what a session and a person write; the phase, the
+// run id, the spent approval, the attempt count and the intent are the
+// daemon's, and an upsert carrying one of them from any other class is
+// refused — otherwise a session could requeue an approved item, mark a
+// dependency done or forge a spent approval.
+func applyUpsert(s *State, op WorkItemOp, a Actor) error {
+	daemonOnly := op.Phase != nil || op.RunID != nil || op.SpentApprovalAt != nil || op.Attempts != nil || op.Intent != nil
+	if daemonOnly && a.Class != Daemon {
+		return fmt.Errorf("%w: a %s may not write a work item's phase, run id, spent approval, attempts or intent", ErrActorNotAllowed, a.Class)
+	}
+	i, exists := s.indexOf(op.ID)
+	w := WorkItem{ID: op.ID, Phase: PhaseQueued, DependsOn: []string{}}
+	if exists {
+		w = s.WorkItems[i]
+	}
+	before := SpecDigest(w)
+
+	if op.Title != nil {
+		w.Title = cleanLine(*op.Title, MaxTitleRunes)
+	}
+	if op.Repo != nil {
+		repo, err := task.CanonicalRepo(*op.Repo)
+		if err != nil {
+			return fmt.Errorf("%w: the repository %q is not owner/name", ErrInvalid, safetext.OneLine(*op.Repo))
+		}
+		w.Repo = repo
+	}
+	if op.Recipe != nil {
+		w.Recipe = *op.Recipe
+	}
+	if op.RigorTier != nil {
+		w.RigorTier = *op.RigorTier
+	}
+	if op.Brief != nil {
+		w.Brief = cleanText(*op.Brief, MaxBriefRunes)
+	}
+	if op.Note != nil {
+		w.Note = cleanText(*op.Note, MaxNoteRunes)
+	}
+	if op.DependsOn != nil {
+		w.DependsOn = append([]string(nil), (*op.DependsOn)...)
+	}
+
+	if SpecDigest(w) != before {
+		// The person approved the spec they read. An edit makes this another
+		// spec, so the approval is off — one digest covers every declarative
+		// field, and this is the only place that has to remember it.
+		w.Approved = nil
+	}
+
+	if op.Phase != nil {
+		if exists && !w.Phase.CanMoveTo(*op.Phase) {
+			return fmt.Errorf("%w: %s may not move to %s", ErrInvalid, w.Phase, *op.Phase)
+		}
+		w.Phase = *op.Phase
+		if w.Phase.Done() {
+			// A standing approval never outlives the item it approves: a
+			// finished item left with one is one a later tick could relaunch.
+			w.Approved = nil
+		}
+	}
+	if op.RunID != nil {
+		w.RunID = *op.RunID
+	}
+	if op.SpentApprovalAt != nil {
+		at := stamp(*op.SpentApprovalAt)
+		w.SpentApprovalAt = &at
+	}
+	if op.Attempts != nil {
+		w.Attempts = *op.Attempts
+	}
+	if op.Intent != nil {
+		if err := commitIntent(s, &w, *op.Intent, a); err != nil {
+			return err
+		}
+	}
+
+	if exists {
+		s.WorkItems[i] = w
+		return nil
+	}
+	if w.Title == "" || w.Repo == "" || w.Recipe == "" || w.RigorTier == "" || w.Brief == "" {
+		return fmt.Errorf("%w: a new work item carries a title, a repository, a recipe, a rigor tier and a brief", ErrInvalid)
+	}
+	s.WorkItems = append(s.WorkItems, w)
+	return nil
+}
+
+// commitIntent records the attempt a launch is for, or how an attempt ended.
+// The declaration is the whole of intent-first (D1231): the run id is minted
+// before anything starts and committed here with the digest of the spec being
+// launched and the At of the approval it spends, so a daemon that dies before
+// the start re-issues the same launch instead of minting a second one.
+//
+// It is also the whole of the retry rule. An attempt may only be the next one
+// under the standing approval, the launch spec must be the one that approval
+// covers, and the attempt the approval covers last — its retry — spends the
+// allowance: Approved is cleared and SpentApprovalAt is set in this same
+// write, while the first attempt clears nothing, so a second failure needs a
+// person's new approval.
+func commitIntent(s *State, w *WorkItem, op IntentOp, a Actor) error {
+	attempt := IntentAttempt(op.ID)
+	if IntentItem(op.ID) != w.ID || attempt < 1 {
+		return fmt.Errorf("%w: the intent id %q is not \"<item>:<attempt>\" for this item", ErrInvalid, safetext.OneLine(op.ID))
+	}
+	for j := range s.Intents {
+		if s.Intents[j].ID != op.ID {
+			continue
+		}
+		if op.RunID != nil || op.SpecDigest != nil || op.ApprovalAt != nil {
+			return fmt.Errorf("%w: the intent %q is declared once, and re-declaring it would mint a second launch under it", ErrIntentDeclared, safetext.OneLine(op.ID))
+		}
+		if op.Outcome == nil {
+			return fmt.Errorf("%w: the intent %q carries neither a declaration nor an outcome", ErrInvalid, safetext.OneLine(op.ID))
+		}
+		if s.Intents[j].Outcome != "" {
+			return fmt.Errorf("%w: the intent %q already ended %s", ErrIntentDeclared, safetext.OneLine(op.ID), s.Intents[j].Outcome)
+		}
+		s.Intents[j].Outcome = *op.Outcome
+		return nil
+	}
+	if op.RunID == nil || op.SpecDigest == nil || op.ApprovalAt == nil {
+		return fmt.Errorf("%w: a declared intent carries the run id minted for it, the digest of the spec and the At of the approval it spends", ErrInvalid)
+	}
+	if op.Outcome != nil {
+		return fmt.Errorf("%w: an intent is declared before the run reports anything", ErrInvalid)
+	}
+	if w.Approved == nil {
+		return fmt.Errorf("%w: %q has no standing approval, and a cycle launches nothing else", ErrActorNotAllowed, w.ID)
+	}
+	approval := *w.Approved
+	if !approval.At.Equal(*op.ApprovalAt) {
+		return fmt.Errorf("%w: the intent spends the approval from %s and the one standing is from %s", ErrDigestMismatch, stamp(*op.ApprovalAt).Format(time.RFC3339), approval.At.Format(time.RFC3339))
+	}
+	if next := attemptsCommitted(*s, w.ID) + 1; attempt != next {
+		return fmt.Errorf("%w: attempt %d is being declared and the item's next attempt is %d", ErrInvalid, attempt, next)
+	}
+	under := AttemptsUnder(*s, w.ID, approval.At)
+	if under >= approval.Attempts {
+		return fmt.Errorf("%w: the approval covers %d attempt(s) and %d of them are committed", ErrActorNotAllowed, approval.Attempts, under)
+	}
+	if approval.SpecDigest != *op.SpecDigest || SpecDigest(*w) != *op.SpecDigest {
+		return fmt.Errorf("%w: the launch spec is not the one the approval covers, so nothing may start under it", ErrDigestMismatch)
+	}
+	s.Intents = append(s.Intents, Intent{
+		ID:         op.ID,
+		RunID:      *op.RunID,
+		SpecDigest: *op.SpecDigest,
+		ApprovalAt: approval.At,
+		At:         stamp(a.Now),
+	})
+	w.RunID = *op.RunID
+	w.Attempts = attempt
+	w.Phase = PhaseRunning
+	if under+1 >= approval.Attempts {
+		spent := approval.At
+		w.SpentApprovalAt = &spent
+		w.Approved = nil
+	}
+	return nil
+}
+
+// applyApprove is a person's go, and only a person's (G2). The op carries the
+// digest the person was shown and it must be the item's digest now: the
+// approval binds the spec that was read, not whatever the item has become
+// since, and a session — which can read the item and compute a digest — can
+// therefore not forge one through the CLI.
+func applyApprove(s *State, op ApproveOp, a Actor) error {
+	if a.Class != Person {
+		return fmt.Errorf("%w: a %s may not approve a work item", ErrActorNotAllowed, a.Class)
+	}
+	if a.Name == "" {
+		return fmt.Errorf("%w: an approval names the person who gave it", ErrInvalid)
+	}
+	i, ok := s.indexOf(op.ID)
+	if !ok {
+		return fmt.Errorf("%w: no work item %q", ErrNotFound, safetext.OneLine(op.ID))
+	}
+	if got := SpecDigest(s.WorkItems[i]); got != op.SpecDigest {
+		return fmt.Errorf("%w: the item's spec digest is %s and the approval carries %s: read the item again and approve what it says now", ErrDigestMismatch, got, op.SpecDigest)
+	}
+	s.WorkItems[i].Approved = &Approval{
+		By:         cleanLine(a.Name, MaxActorNameRunes),
+		At:         stamp(a.Now),
+		SpecDigest: op.SpecDigest,
+		Attempts:   ApprovalAttempts,
+	}
+	// The spent marker belongs to the approval it was spent on, so a new one
+	// clears it. What a new approval gets is a fresh allowance, which is read
+	// off the intents stamped with its own At (AttemptsUnder) and not off the
+	// item's count, which runs on.
+	s.WorkItems[i].SpentApprovalAt = nil
+	return nil
+}
+
+// applyArchive moves an item out of the work list. It refuses while the item
+// is running — a run in flight must not vanish from under its intent — and
+// while anything live depends on it, because a dependency that is not there
+// is not done, and an item whose approval still stands, which an edit to its
+// spec clears. It cannot start anything: what it can do is stop work, which
+// is the direction a session should be able to push.
+func applyArchive(s *State, op ArchiveOp, a Actor) error {
+	i, ok := s.indexOf(op.ID)
+	if !ok {
+		return fmt.Errorf("%w: no work item %q", ErrNotFound, safetext.OneLine(op.ID))
+	}
+	w := s.WorkItems[i]
+	if w.Phase == PhaseRunning {
+		return fmt.Errorf("%w: %q is running, and a run in flight is not archived", ErrInvalid, safetext.OneLine(w.ID))
+	}
+	if w.Approved != nil {
+		return fmt.Errorf("%w: %q still carries an approval: an edit to its spec revokes it, and then it can be archived", ErrActorNotAllowed, safetext.OneLine(w.ID))
+	}
+	if !archivable(*s, w) {
+		return fmt.Errorf("%w: a live work item depends on %q", ErrInvalid, safetext.OneLine(w.ID))
+	}
+	outcome := cleanLine(op.Outcome, MaxOutcomeRunes)
+	if outcome == "" {
+		return fmt.Errorf("%w: an archived work item carries how it ended", ErrInvalid)
+	}
+	s.Archived = append(s.Archived, Archived{ID: w.ID, Outcome: outcome, At: stamp(a.Now)})
+	s.WorkItems = append(s.WorkItems[:i], s.WorkItems[i+1:]...)
+	return nil
+}
+
+func applyDecisionAdd(s *State, op DecisionOp, a Actor) error {
+	if _, ok := s.Decision(op.ID); ok {
+		return fmt.Errorf("%w: the decision %q is already there", ErrInvalid, safetext.OneLine(op.ID))
+	}
+	question := cleanText(op.Question, MaxQuestionRunes)
+	if question == "" {
+		return fmt.Errorf("%w: a decision carries the question it asks", ErrInvalid)
+	}
+	s.Decisions = append(s.Decisions, Decision{
+		ID:        op.ID,
+		Question:  question,
+		WaitingOn: op.WaitingOn,
+		At:        stamp(a.Now),
+	})
+	return nil
+}
+
+// applyDecisionResolve closes a question. The class the decision waits on is
+// the class that may close it — a person may close any of them, since the
+// others' answers are a person's to overrule — so the answer's actor is
+// checked against the decision rather than taken on the patch's word.
+func applyDecisionResolve(s *State, op ResolveOp, a Actor) error {
+	i := -1
+	for j, d := range s.Decisions {
+		if d.ID == op.ID {
+			i = j
+			break
+		}
+	}
+	if i < 0 {
+		return fmt.Errorf("%w: no decision %q", ErrNotFound, safetext.OneLine(op.ID))
+	}
+	d := s.Decisions[i]
+	if d.Resolved() {
+		return fmt.Errorf("%w: the decision %q was closed at %s", ErrInvalid, safetext.OneLine(d.ID), d.ResolvedAt.Format(time.RFC3339))
+	}
+	if a.Class != Person && a.Class != d.WaitingOn.Class() {
+		return fmt.Errorf("%w: the decision %q waits on a %s and a %s answered", ErrActorNotAllowed, safetext.OneLine(d.ID), d.WaitingOn, a.Class)
+	}
+	answer := cleanText(op.Answer, MaxAnswerRunes)
+	if answer == "" {
+		return fmt.Errorf("%w: a closed decision carries what was decided", ErrInvalid)
+	}
+	at := stamp(a.Now)
+	d.Answer = answer
+	d.By = a.Class
+	d.ResolvedAt = &at
+	s.Decisions[i] = d
+	return nil
+}
+
+func applyFactSet(s *State, op FactOp, a Actor) error {
+	value := cleanLine(op.Value, MaxFactValueRunes)
+	if value == "" {
+		return fmt.Errorf("%w: a fact carries a value, and deleting one is fact_delete", ErrInvalid)
+	}
+	if s.Facts == nil {
+		s.Facts = map[string]Fact{}
+	}
+	s.Facts[op.Key] = Fact{Value: value, By: a.Class}
+	return nil
+}
+
+func applyFactDelete(s *State, op FactOp) error {
+	if _, ok := s.Facts[op.Key]; !ok {
+		return fmt.Errorf("%w: no fact %q", ErrNotFound, safetext.OneLine(op.Key))
+	}
+	delete(s.Facts, op.Key)
+	return nil
+}
+
+func applyGoalSet(s *State, op GoalOp, a Actor) error {
+	if a.Class != Person {
+		return fmt.Errorf("%w: a %s may not set the goal", ErrActorNotAllowed, a.Class)
+	}
+	goal := cleanText(op.Goal, MaxGoalRunes)
+	if goal == "" {
+		return fmt.Errorf("%w: a goal carries what the loop is for", ErrInvalid)
+	}
+	s.Goal = goal
+	return nil
+}
+
+// indexOf finds a work item's place in the state.
+func (s State) indexOf(id string) (int, bool) {
+	for i, w := range s.WorkItems {
+		if w.ID == id {
+			return i, true
+		}
+	}
+	return 0, false
 }

@@ -85,6 +85,7 @@ const (
 	MaxQuestionRunes  = 600
 	MaxAnswerRunes    = 600
 	MaxOutcomeRunes   = 80
+	MaxActorNameRunes = 100
 )
 
 // Phase is where a work item stands. It is the item's own vocabulary and not
@@ -277,10 +278,10 @@ type WorkItem struct {
 	// that says the item already had its retry: recovery reads it to tell a
 	// crashed retry from an attempt that was never approved.
 	SpentApprovalAt *time.Time `json:"spent_approval_at,omitempty"`
-	// Attempts is how many attempts the item has been launched for under its
-	// standing approval, a mirror the daemon writes; the count a planner
-	// decides on is read off the intents (AttemptsUnder), which the caps
-	// count from too.
+	// Attempts is the number of the last attempt committed for this item,
+	// counting every approval it has had. It is a mirror the daemon writes
+	// with the intent; what a planner decides on is read off the intents
+	// (AttemptsUnder), which the caps count from too.
 	Attempts int    `json:"attempts"`
 	Note     string `json:"note,omitempty"`
 }
@@ -444,6 +445,21 @@ func IntentAttempt(id string) int {
 	return n
 }
 
+// attemptsCommitted is the number of the last attempt committed for an item,
+// or 0 when none has been. Attempt numbering runs on across approvals — a
+// re-approved item starts a new allowance, not a new numbering — which is what
+// keeps an intent's id, the item and the attempt, unique for the item's whole
+// life.
+func attemptsCommitted(s State, itemID string) int {
+	n := 0
+	for _, it := range s.Intents {
+		if IntentItem(it.ID) == itemID {
+			n = max(n, IntentAttempt(it.ID))
+		}
+	}
+	return n
+}
+
 // AttemptsUnder is how many attempts have been committed against an item
 // under the approval made at approvalAt. It is the count G4 reads: the first
 // attempt and its retry carry the approval's own At, so a later approval
@@ -566,13 +582,7 @@ func Migrate(s State) (State, bool) {
 // OverCap reports whether the node is over its size target. The daemon fails
 // closed on a true answer (O6 plans no spawn) rather than writing a document
 // the RTDB rules refuse or one a reader cannot afford.
-func OverCap(s State) bool {
-	raw, err := json.Marshal(s)
-	if err != nil {
-		return true
-	}
-	return len(raw) > MaxStateBytes
-}
+func OverCap(s State) bool { return stateBytes(s) > MaxStateBytes }
 
 // The retention rule's own bounds: what is kept of the parts of the node that
 // are history rather than work. They sit below the caps ValidateState refuses
@@ -684,11 +694,7 @@ func retainFacts(facts map[string]Fact) map[string]Fact {
 	if len(facts) <= keptFacts {
 		return facts
 	}
-	keys := make([]string, 0, len(facts))
-	for k := range facts {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
+	keys := sortedKeys(facts)
 	kept := make(map[string]Fact, keptFacts)
 	for _, k := range keys[:keptFacts] {
 		kept[k] = facts[k]
@@ -753,11 +759,7 @@ func shrink(s *State, now time.Time) bool {
 		}
 	}
 	if len(s.Facts) > 0 {
-		keys := make([]string, 0, len(s.Facts))
-		for k := range s.Facts {
-			keys = append(keys, k)
-		}
-		slices.Sort(keys)
+		keys := sortedKeys(s.Facts)
 		delete(s.Facts, keys[len(keys)-1])
 		return true
 	}
