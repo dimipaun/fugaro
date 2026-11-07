@@ -432,6 +432,25 @@ scratch_of() { # dir — the scratch directory the run announced
   sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$1/err" | head -n 1
 }
 
+# expect_store_argv DIR WHAT COUNT — every `secrets set bitbucket-token` call
+# the run made, pinned to the value write the register documents. The fake
+# `fugaro` logs its own argv, so this reads what the check actually ran rather
+# than a string the check printed: `--yes` is the POLICY write's flag and the
+# CLI refuses it on a value write (D1171), so a store carrying it stops the
+# check at that step — and the rotation could then only ever read FAIL.
+expect_store_argv() {
+  local dir=$1 what=$2 want=$3 lines bad
+  lines=$(grep -c '^secrets set bitbucket-token' "$dir/fugaro.log" 2>/dev/null || true)
+  if [ "${lines:-0}" -lt 1 ]; then
+    fail "$what: no 'secrets set bitbucket-token' call was made at all"
+    return 0
+  fi
+  bad=$(grep '^secrets set bitbucket-token' "$dir/fugaro.log" \
+    | grep -v -x -F 'secrets set bitbucket-token --project-wide --project sandbox' | tr '\n' ';' || true)
+  [ -z "$bad" ] || fail "$what: a store call reads '$bad', want exactly 'secrets set bitbucket-token --project-wide --project sandbox': a value write refuses --yes and --dry-run (D1171), and the value goes in on stdin"
+  [ "${lines:-0}" -eq "$want" ] || fail "$what: the run made $lines store call(s), want $want"
+}
+
 # --------------------------------------------------------------- the tests
 test_happy_path() {
   run180 happy
@@ -462,6 +481,7 @@ test_happy_path() {
   # The live test's own contract: the check put the REAL token in that one
   # command's environment.
   expect_contains "$(cat "$work/happy/fugaro.log")" "token=matches" "happy path: the token reached the live test"
+  expect_store_argv "$work/happy" "happy path: the store" 1
 
   assert_no_secret "$work/happy" "happy path"
 
@@ -624,6 +644,9 @@ test_rotation() {
   expect_status "$status" 0 "the rotation"
   expect_contains "$out" "FACT rotation: PASS" "the rotation: the fact"
   expect_contains "$out" "the next run uses the new version" "the rotation: the reading it makes"
+  # Two stores, the original and the rotated value, and both are the same value
+  # write: the rotation's first half is a new version of the same secret.
+  expect_store_argv "$work/rotation" "the rotation: the stores" 2
   assert_no_secret "$work/rotation" "the rotation"
 
   RUN180_MODE=rotation-no-push

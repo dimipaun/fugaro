@@ -731,13 +731,17 @@ step_identity() {
 
 # The store, and the allow-list behind it: accepted here is what says the local
 # config's project_secrets.bitbucket-token entry names the repositories the
-# token is meant for.
+# token is meant for. The command is the one the register documents — a value
+# write, with the value on stdin — and it takes no --yes: --dry-run and --yes
+# are the POLICY write's flags and the CLI refuses them on a value write
+# (D1171), so passing one would stop the check here and leave step_rotation
+# with nothing it could ever read.
 step_store() {
   local rc=0
-  fugaro secrets set bitbucket-token --project-wide --yes --project "$INSTALLATION" \
+  fugaro secrets set bitbucket-token --project-wide --project "$INSTALLATION" \
     <"$TOKEN_FILE" >"$SCRATCH/store.out" 2>"$SCRATCH/store.err" || rc=$?
   if [ "$rc" -eq 0 ]; then
-    fact store PASS "fugaro secrets set bitbucket-token --project-wide accepted the token for installation ${INSTALLATION} (exit 0), reading the value from ${TOKEN_FILE} on stdin — so the local config's project_secrets.bitbucket-token.allow_data_to names these repositories, which is the entry the allow-list is built from. Nothing about the value is printed, and --yes is passed so no prompt can read the token file as its answer"
+    fact store PASS "fugaro secrets set bitbucket-token --project-wide accepted the token for installation ${INSTALLATION} (exit 0), reading the value from ${TOKEN_FILE} on stdin — so the local config's project_secrets.bitbucket-token.allow_data_to names these repositories, which is the entry the allow-list is built from. Nothing about the value is printed, and no confirmation flag is passed: a value write refuses --dry-run and --yes (D1171), and the value path reads stdin to EOF, so no prompt can read the token file as its answer"
   else
     stop "fugaro secrets set bitbucket-token --project-wide was REFUSED (exit ${rc}): $(last_line "$SCRATCH/store.err"). The store is the first half of the path this check measures, and the likely reasons are that the local config has no project_secrets.bitbucket-token.allow_data_to entry (step 1 of docs/git-providers.md's 'One workspace or project token for many repositories') or that --project ${INSTALLATION} is not the installation you meant. Nothing was written and no value is printed"
   fi
@@ -974,7 +978,9 @@ step_rotation() {
   local before_n
   before_n=$(field_of versions "$before")
   local rc2=0
-  fugaro secrets set bitbucket-token --project-wide --yes --project "$INSTALLATION" \
+  # The same store as step_store's, and for the same reason without --yes: the
+  # new value is a new version of the same secret, written by a value write.
+  fugaro secrets set bitbucket-token --project-wide --project "$INSTALLATION" \
     <"$NEW_TOKEN_FILE" >"$SCRATCH/store-new.out" 2>"$SCRATCH/store-new.err" || rc2=$?
   if [ "$rc2" -ne 0 ]; then
     fact rotation FAIL "the new token was NOT stored (fugaro secrets set exited ${rc2}): $(last_line "$SCRATCH/store-new.err"). The rotation's first half is storing the new value as a new version of the same secret; nothing about the next run can be read until it is"
@@ -1101,8 +1107,8 @@ What the run will do, in this order:
      scratch directory, and read the two repositories and the probe with the token;
   3. git ls-remote ${REPO_A} as 'x-token-auth' with the token (U1, a read that changes nothing);
   4. GET /2.0/user with the token (U2, U7);
-  5. 'fugaro secrets set bitbucket-token --project-wide --yes' with the token on stdin (the store,
-     and the allow-list entry behind it);
+  5. 'fugaro secrets set bitbucket-token --project-wide' with the token on stdin (the store, and
+     the allow-list entry behind it) — a value write, which takes no --yes (D1171);
   6. 'fugaro update --repo' in ${PATH_A} and ${PATH_B} with stdin at /dev/null, expecting NO prompt;
   7. one run in ${REPO_A} and one in ${REPO_B}, then each pull request's author and an approve
      (and, with --merge, a merge) on the sandbox repositories;
