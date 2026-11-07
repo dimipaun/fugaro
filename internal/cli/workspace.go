@@ -442,9 +442,17 @@ exchange URL (where the workspace's signer mints a member-bound assertion for).
 --repo names a repository the member contributes to the workspace, and is
 repeatable.
 
+A member the table already declares is replaced whole: the entry ends up
+holding the four values given and the repositories named, and nothing else. A
+re-declaration is therefore how a retired or compromised job service account
+leaves the table, and it asks for the workspace's own project name because what
+it removes is what the workspace trusted. Use fugaro workspace member rm to drop
+the entry altogether.
+
 Only the keys it writes are rewritten: every comment and every other key of the
-file is kept. The write is local; the owner's fugaro update publishes the record
-the table builds.`,
+file is kept, except inside the entry it replaces, which is written fresh. The
+write is local; the owner's fugaro update publishes the record the table
+builds.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWorkspaceMemberAdd(cmd, args[0], args[1], &o)
@@ -492,7 +500,22 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 		return err
 	}
 
+	// An entry the table already declares is replaced WHOLE and not added to:
+	// AddListItem appends and leaves what is there alone, so a second
+	// declaration would keep every account and every repository the first one
+	// named. Re-declaring a member is how a retired or a compromised job
+	// service account leaves the table, and a merge would leave that identity
+	// admitted as a caller of the workspace's credentials while the
+	// confirmation named only the new one. The removal comes first because the
+	// entry is rebuilt from the values given, which is the only reading of the
+	// command's own sentence.
+	declared := lc.WorkspaceMembers != nil && !(*lc.WorkspaceMembers)[project].IsZero()
 	next := old
+	if declared {
+		if next, err = workspaceRemoveKey(path, next, []string{"workspace_members", project}); err != nil {
+			return err
+		}
+	}
 	// The lists first, then the scalars: AddListItem creates the sequence and
 	// the mapping chain it hangs under, and SetScalar then finds the entry
 	// already there rather than creating a second one.
@@ -516,13 +539,24 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 		}
 	}
 
-	if err := workspaceEditLocal(cmd, lc, path, settingsEdit{
+	edit := settingsEdit{
 		Old:     old,
 		New:     next,
-		What:    workspaceMemberAddWhat(workspace, project, o),
+		What:    workspaceMemberAddWhat(workspace, project, o, declared),
 		Command: workspaceMemberAddCommand(workspace, project, o),
 		Yes:     o.yes,
-	}); err != nil {
+	}
+	// A replaced entry widens and narrows at once, and which the owner is doing
+	// is not something this command can tell: the same declaration that adds an
+	// account drops the one it did not name. So it asks for the project's own
+	// name, like every other write that changes what this machine trusts, and
+	// says what the replace does to the values the entry carries today.
+	if declared {
+		edit.Typed = true
+		edit.TypedWhy = fmt.Sprintf("this replaces the entry workspace %s declares for %s: the entry is written whole, so a job service account or a repository it carries today and this declaration does not name is gone from the table; the workspace's own project name confirms it, or --yes outside a coding agent's session",
+			workspace, project)
+	}
+	if err := workspaceEditLocal(cmd, lc, path, edit); err != nil {
 		return err
 	}
 	workspaceHandoff(cmd, old, next)
@@ -530,12 +564,20 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 }
 
 // workspaceMemberAddWhat is the sentence the confirmation shows for one member
-// entry.
-func workspaceMemberAddWhat(workspace, project string, o *workspaceMemberAddOptions) string {
-	what := fmt.Sprintf("declare member %s in workspace %s: job service accounts %s, Firebase project %s, fp %s, exchange URL %s",
-		project, workspace, strings.Join(o.jobServiceAccounts, ", "), o.firebaseProject, o.fp, o.exchangeURL)
+// entry: what the entry will hold afterwards, which is the whole of it when it
+// replaces one.
+func workspaceMemberAddWhat(workspace, project string, o *workspaceMemberAddOptions, replace bool) string {
+	verb := "declare member"
+	if replace {
+		verb = "replace the entry for member"
+	}
+	what := fmt.Sprintf("%s %s in workspace %s: job service accounts %s, Firebase project %s, fp %s, exchange URL %s",
+		verb, project, workspace, strings.Join(o.jobServiceAccounts, ", "), o.firebaseProject, o.fp, o.exchangeURL)
 	if len(o.repos) > 0 {
 		what += ", repositories " + strings.Join(o.repos, ", ")
+	}
+	if replace {
+		what += "; anything the entry holds that is not named here is dropped"
 	}
 	return what
 }

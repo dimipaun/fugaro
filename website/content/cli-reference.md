@@ -5648,9 +5648,17 @@ exchange URL (where the workspace's signer mints a member-bound assertion for).
 --repo names a repository the member contributes to the workspace, and is
 repeatable.
 
+A member the table already declares is replaced whole: the entry ends up
+holding the four values given and the repositories named, and nothing else. A
+re-declaration is therefore how a retired or compromised job service account
+leaves the table, and it asks for the workspace's own project name because what
+it removes is what the workspace trusted. Use fugaro workspace member rm to drop
+the entry altogether.
+
 Only the keys it writes are rewritten: every comment and every other key of the
-file is kept. The write is local; the owner's fugaro update publishes the record
-the table builds.
+file is kept, except inside the entry it replaces, which is written fresh. The
+write is local; the owner's fugaro update publishes the record the table
+builds.
 
 Usage: `fugaro workspace member add <workspace> <project>`
 

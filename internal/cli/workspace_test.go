@@ -324,6 +324,80 @@ func TestMemberAddWritesTheOwnersHalfInTheWorkspacesOwnConfig(t *testing.T) {
 	}
 }
 
+// TestMemberAddReplacesTheEntryItAlreadyDeclares: a member the table already
+// declares is replaced whole, and not added to. AddListItem appends and leaves
+// what it finds alone, so a declaration that merged would keep every account
+// and every repository the earlier one named — and re-declaring a member is how
+// a retired or a compromised job service account leaves the table, so the
+// merged entry would leave that identity admitted as a caller of the
+// workspace's credentials while the confirmation named only the new one.
+func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
+	_, _, owner := workspaceOwnerHome(t)
+	workspaceAppend(t, owner, `workspace_members:
+  aurora:
+    job_service_accounts:
+      - marker-retired@aurora-gcp.iam.gserviceaccount.com
+      - marker-job@aurora-gcp.iam.gserviceaccount.com
+    firebase_project: aurora-fb
+    fp: aurora
+    exchange_url: https://exchange.example.com/v1
+    repos:
+      - owner/repo-old
+`)
+	ours := []string{"workspace", "member", "add", "workspace-alpha", "aurora",
+		"--job-service-account", "marker-new@aurora-gcp.iam.gserviceaccount.com",
+		"--firebase-project", "aurora-fb",
+		"--fp", "aurora",
+		"--exchange-url", "https://exchange.example.com/v2",
+		"--repo", "owner/repo-new",
+		"--yes"}
+	out, _, err := execute(t, ours...)
+	if err != nil {
+		t.Fatalf("workspace member add: %v\n%s", err, out)
+	}
+	after := readFileString(t, owner)
+	// Nothing the replaced entry carried survives it: not the retired account,
+	// not the account that was still live, not the repository.
+	for _, gone := range []string{"marker-retired@", "marker-job@", "owner/repo-old", "exchange.example.com/v1"} {
+		if strings.Contains(after, gone) {
+			t.Errorf("the replaced entry still carries %q:\n%s", gone, after)
+		}
+	}
+	// And the entry is exactly the declaration, not a superset of it.
+	lc, err := localcfg.Parse([]byte(after))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, after)
+	}
+	got := (*lc.WorkspaceMembers)["aurora"]
+	if !slices.Equal(got.JobServiceAccounts, []string{"marker-new@aurora-gcp.iam.gserviceaccount.com"}) {
+		t.Errorf("job service accounts = %v, want the one the declaration named", got.JobServiceAccounts)
+	}
+	if !slices.Equal(got.Repos, []string{"owner/repo-new"}) {
+		t.Errorf("repos = %v, want the one the declaration named", got.Repos)
+	}
+	if got.ExchangeURL != "https://exchange.example.com/v2" {
+		t.Errorf("exchange URL = %q, want the one the declaration named", got.ExchangeURL)
+	}
+	// The confirmation says which of the two it is doing, because the sentence
+	// the owner reads is what tells them the old account is going: a merge that
+	// printed only the new account is what made the old one invisible.
+	if !strings.Contains(out, "this replaces the entry workspace workspace-alpha declares for aurora") ||
+		!strings.Contains(out, "is gone from the table") {
+		t.Errorf("the confirmation does not read as a replacement:\n%s", out)
+	}
+	// The same declaration again is the same file: a replace writes the entry
+	// it is given and nothing else, so a re-run has nothing to do.
+	before := readFileString(t, owner)
+	if out, _, err := execute(t, ours...); err != nil {
+		t.Fatalf("workspace member add (again): %v\n%s", err, out)
+	} else if !strings.Contains(out, "no change") {
+		t.Errorf("a repeated declaration is not a no-op:\n%s", out)
+	}
+	if readFileString(t, owner) != before {
+		t.Errorf("a repeated declaration rewrote the file:\n%s", readFileString(t, owner))
+	}
+}
+
 // TestMemberAddRefusesToDeclareADatabaseURL: the member's database is derived
 // from the Firebase project the verified `iss` names (finding 6), so it is not
 // a value the owner may set -- an owner that could would pair one member's
