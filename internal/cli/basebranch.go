@@ -64,14 +64,31 @@ func checkoutBaseBranch(ctx context.Context, repo string) (branch string, fileSe
 // carry the key is not an error either: BaseBranch is simply empty, which is
 // what every node published before this release says.
 func (e *cloudEnv) projectBaseBranch(ctx context.Context, needed bool) string {
+	b, _ := e.projectBaseBranchErr(ctx, needed)
+	return b
+}
+
+// projectBaseBranchErr is projectBaseBranch with the read's own failure still
+// on it, for the caller whose answer may not have an unresolved value folded
+// into the default: `accounts rm`'s referrer check judges a repository at the
+// base branch a launch of it resolves (accountsRmRefs), and a base read that
+// failed there would point the check at main while every run of the repository
+// is cut from the branch the policy node names — a repository naming the
+// account at that branch scored clean, and a session admitted to a one-way
+// delete. The launcher keeps the swallow above because its own answer is a ref
+// a run is written with; this one is a verdict about a file.
+func (e *cloudEnv) projectBaseBranchErr(ctx context.Context, needed bool) (string, error) {
 	if e.lc.BaseBranch != "" || !needed {
-		return e.lc.BaseBranch
+		return e.lc.BaseBranch, nil
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
-	if err != nil || !found {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return p.BaseBranch
+	if !found {
+		return "", nil
+	}
+	return p.BaseBranch, nil
 }
 
 // layersBaseBranch is the base branch the two layers below the file name: the
@@ -80,12 +97,27 @@ func (e *cloudEnv) projectBaseBranch(ctx context.Context, needed bool) string {
 // decides a base there being the one at that ref (fileSets false: no file of
 // this checkout's is the judge).
 func (e *cloudEnv) layersBaseBranch(ctx context.Context, repo string) string {
+	b, _ := e.layersBaseBranchErr(ctx, repo)
+	return b
+}
+
+// layersBaseBranchErr is layersBaseBranch with the project layer's read failure
+// on the error instead of folded into the default, for the caller that has to
+// score a base it could not read as unresolved rather than as main — the
+// referrer check of `accounts rm` (projectBaseBranchErr says why). The two
+// layers above the project one are local and cannot fail; only the policy node
+// read can.
+func (e *cloudEnv) layersBaseBranchErr(ctx context.Context, repo string) (string, error) {
 	repoBranch := ""
 	if r, ok := e.localRepo(repo); ok {
 		repoBranch = r.BaseBranch
 	}
-	b, _ := config.EffectiveBaseBranch("", false, repoBranch, e.projectBaseBranch(ctx, repoBranch == ""))
-	return b
+	project, err := e.projectBaseBranchErr(ctx, repoBranch == "")
+	if err != nil {
+		return "", err
+	}
+	b, _ := config.EffectiveBaseBranch("", false, repoBranch, project)
+	return b, nil
 }
 
 // baseBranchFugaroYAML reports whether the base branch a per-repository image

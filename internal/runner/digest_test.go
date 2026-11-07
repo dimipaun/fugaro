@@ -151,40 +151,19 @@ func digestDayPath(day time.Time) string {
 }
 
 // digestDuePaths is every path a report run must write when it believes it is
-// now: the seven closed days the step catches up, the week, month or year that
-// closed with yesterday when one did, and the folder's index beside them.
+// now: the periods internal/digest computes as due at that instant, and the
+// folder's index beside them.
 //
-// It is derived here from the calendar rather than read off the step's own
-// commit, so a step that wrote a file for a period that is not due, or left one
-// out, is caught: a comparison against the step's own commit alone would call
-// any file set it committed the right one.
+// The calendar's own cases are pinned in internal/digest's due_test.go, beside
+// the computation both readers share (R0); what is checked here is the step
+// against it -- a step that wrote a file for a period that is not due, or left
+// one out, is caught, where a comparison against the step's own commit alone
+// would call any file set it committed the right one.
 func digestDuePaths(t *testing.T, now time.Time) []string {
 	t.Helper()
-	today := now.UTC()
-	type due struct {
-		dim  digest.Dim
-		date string
-	}
-	dues := make([]due, 0, 8)
-	for i := 1; i <= 7; i++ {
-		dues = append(dues, due{digest.ByDay, today.AddDate(0, 0, -i).Format("2006-01-02")})
-	}
-	yesterday := today.AddDate(0, 0, -1).Format("2006-01-02")
-	if today.Weekday() == time.Monday {
-		dues = append(dues, due{digest.ByWeek, yesterday})
-	}
-	if today.Day() == 1 {
-		dues = append(dues, due{digest.ByMonth, yesterday})
-		if today.Month() == time.January {
-			dues = append(dues, due{digest.ByYear, yesterday})
-		}
-	}
-	paths := make([]string, 0, len(dues)+1)
-	for _, d := range dues {
-		p, err := digest.NewPeriod(d.dim, d.date)
-		if err != nil {
-			t.Fatalf("digest.NewPeriod(%v, %q): %v", d.dim, d.date, err)
-		}
+	periods := digest.DuePeriods(now)
+	paths := make([]string, 0, len(periods)+1)
+	for _, p := range periods {
 		paths = append(paths, digest.Dir+"/"+digest.PeriodPath(p.Key))
 	}
 	return append(paths, digest.Dir+"/"+digest.IndexName)
