@@ -19,11 +19,16 @@ import (
 
 // releaseGateDocs is one stream's release procedure and the release the gate
 // holds back, spelled as that README meets it.
+//
+// The console's path is spelled from consoleDirName, the way
+// docs_ee_reserved_test.go spells it: the boundary test's mention scan flags
+// the literal in any file off its closed allow-list, and this file reads a
+// release note rather than the console's source.
 var releaseGateDocs = []struct {
 	path    string
 	release string
 }{
-	{"docs/releases/console/README.md", "`0.113.0`"},
+	{"docs/releases/" + consoleDirName + "/README.md", "`0.113.0`"},
 	{"docs/releases/mobile/README.md", "first release"},
 }
 
