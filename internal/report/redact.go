@@ -7,10 +7,14 @@ import (
 	"strings"
 )
 
-// Redacted is what every value the run holds is replaced with in the log. It
-// is the agent redactor's spelling (internal/agent/redact.go), so one binary
-// has one word for a value that was removed.
-const Redacted = "[REDACTED]"
+// Redacted is what every value the run holds is replaced with in the log: the
+// spelling the CLI's own output already uses, in the converge's lines
+// (internal/initflow/loop.go) and in the cloud-side redactors (gateway, rtdb,
+// firestore, credsvc, bitbucket). A failed run prints the path of this log, so
+// the person reads the terminal and the log side by side and both have to say
+// the same word. internal/agent's redactor spells it [REDACTED] for the
+// agent's own stream, which is a different surface and not one this writes.
+const Redacted = "[redacted]"
 
 // Redactor is the hook between a run's own output and the log: the lines are
 // made safe before they are kept. It buffers until a newline and redacts

@@ -401,6 +401,16 @@ func TestRetentionMatchesTheExactNamePattern(t *testing.T) {
 	}
 }
 
+func TestTheMarkerIsTheSpellingTheTerminalUses(t *testing.T) {
+	// A failed run prints this log's path, so the person reads the converge's
+	// line on the terminal and the same line in the log: one word for a value
+	// that was removed, and it is the one the CLI already prints
+	// (internal/initflow/loop.go, and the cloud-side redactors).
+	if Redacted != "[redacted]" {
+		t.Errorf("the log's marker is %q, want the CLI's own [redacted]", Redacted)
+	}
+}
+
 func TestRedactsBeforeWrite(t *testing.T) {
 	_, env := logStateDir(t)
 	secrets := []string{"s3cret-token-value"}
@@ -415,7 +425,7 @@ func TestRedactsBeforeWrite(t *testing.T) {
 	if strings.Contains(body, "s3cret-token-value") {
 		t.Errorf("a value the run holds reached the log:\n%s", body)
 	}
-	if !strings.Contains(body, "[REDACTED]") {
+	if !strings.Contains(body, Redacted) {
 		t.Errorf("the line was not redacted, it was dropped:\n%s", body)
 	}
 	if !strings.Contains(body, "terraform: creating the token") || !strings.Contains(body, "now") {
@@ -441,7 +451,7 @@ func TestRedactsASecretSplitAcrossWrites(t *testing.T) {
 	if strings.Contains(body, "s3cret-token-value") || strings.Contains(body, "s3cret-tok") {
 		t.Errorf("a value split across two writes reached the log:\n%s", body)
 	}
-	if !strings.HasPrefix(body, "key: [REDACTED]\n") {
+	if !strings.HasPrefix(body, "key: "+Redacted+"\n") {
 		t.Errorf("the line is not the redacted one:\n%q", body)
 	}
 }
@@ -464,7 +474,7 @@ func TestRedactsTheLongerValueFirst(t *testing.T) {
 	if strings.Contains(body, "secretlong") || strings.Contains(body, "abc") {
 		t.Errorf("the shorter value's redaction left the rest of the longer one in the log:\n%q", body)
 	}
-	if !strings.HasPrefix(body, "v=[REDACTED]\n") {
+	if !strings.HasPrefix(body, "v="+Redacted+"\n") {
 		t.Errorf("the line is not the redacted one:\n%q", body)
 	}
 	// The order is the caller's: the slice is the converge's live slots, and
@@ -493,7 +503,7 @@ func TestRedactsTheLinesOfAMultiLineValue(t *testing.T) {
 	if strings.Contains(body, "MIIabc") {
 		t.Errorf("a line of a held value reached the log:\n%q", body)
 	}
-	if !strings.Contains(body, "-----BEGIN KEY-----\n[REDACTED]\n-----END KEY-----") {
+	if !strings.Contains(body, "-----BEGIN KEY-----\n"+Redacted+"\n-----END KEY-----") {
 		t.Errorf("the value's lines are not the redacted ones:\n%q", body)
 	}
 }
@@ -515,7 +525,7 @@ func TestRedactsTheLineTheRunEndedIn(t *testing.T) {
 	if strings.Contains(body, "s3cret-token-value") {
 		t.Errorf("the value the run ended on reached the log:\n%q", body)
 	}
-	if !strings.Contains(body, "[REDACTED]") {
+	if !strings.Contains(body, Redacted) {
 		t.Errorf("the last line was not redacted, it was dropped:\n%q", body)
 	}
 	if !strings.Contains(body, "token: ") {
@@ -547,7 +557,7 @@ func TestSinkUsesTheHeldSecretsFilledAfterOpen(t *testing.T) {
 	if strings.Contains(body, "filled-later-value") {
 		t.Errorf("a value filled after the sink opened reached the log:\n%s", body)
 	}
-	if !strings.Contains(body, "the key [REDACTED] is set") {
+	if !strings.Contains(body, "the key "+Redacted+" is set") {
 		t.Errorf("the later line was not redacted:\n%s", body)
 	}
 }
@@ -568,13 +578,22 @@ func TestSinkWithoutASecretsSourceKeepsStageLines(t *testing.T) {
 }
 
 func TestLogDirSymlinkOrForeignOwnerMeansNoLog(t *testing.T) {
+	// The links in these two cases point inside the state directory on
+	// purpose, and that is the whole point of them: a link out of the state
+	// directory is refused by the root itself, before any check here runs, so
+	// a test that used one would stay green with every check below removed.
+	// A link that stays inside is followed by os.Root, so what refuses it is
+	// checkLogDir and only checkLogDir.
 	t.Run("the logs directory is a symlink", func(t *testing.T) {
 		state, env := logStateDir(t)
-		elsewhere := t.TempDir()
+		elsewhere := filepath.Join(state, "elsewhere")
 		if err := os.MkdirAll(filepath.Join(state, "fugaro"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(elsewhere, logDirOf(state)); err != nil {
+		if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../elsewhere", logDirOf(state)); err != nil {
 			t.Skipf("this filesystem has no symlinks: %v", err)
 		}
 		sink, err := OpenLog("update", env, "linux", logFixedNow, nil)
@@ -587,6 +606,9 @@ func TestLogDirSymlinkOrForeignOwnerMeansNoLog(t *testing.T) {
 		if names := logNames(t, elsewhere); len(names) != 0 {
 			t.Errorf("the log was written through the symlink: %v", names)
 		}
+		if fi, err := os.Lstat(logDirOf(state)); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("the link was replaced rather than refused: %v %v", fi, err)
+		}
 	})
 
 	t.Run("the directory above the logs is a symlink", func(t *testing.T) {
@@ -595,8 +617,11 @@ func TestLogDirSymlinkOrForeignOwnerMeansNoLog(t *testing.T) {
 		// way, so whoever placed it — in a state directory someone else
 		// pointed the session at — decides where the run's log lands.
 		state, env := logStateDir(t)
-		elsewhere := t.TempDir()
-		if err := os.Symlink(elsewhere, filepath.Join(state, "fugaro")); err != nil {
+		elsewhere := filepath.Join(state, "elsewhere")
+		if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("elsewhere", filepath.Join(state, "fugaro")); err != nil {
 			t.Skipf("this filesystem has no symlinks: %v", err)
 		}
 		sink, err := OpenLog("update", env, "linux", logFixedNow, nil)
@@ -614,6 +639,30 @@ func TestLogDirSymlinkOrForeignOwnerMeansNoLog(t *testing.T) {
 		}
 		if fi, err := os.Lstat(filepath.Join(state, "fugaro")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
 			t.Errorf("the link was replaced rather than refused: %v %v", fi, err)
+		}
+	})
+
+	t.Run("the logs directory is a link out of the state directory", func(t *testing.T) {
+		// The root refuses this one itself, and this case is here to say so:
+		// it is the shape that would keep passing with every check in
+		// checkLogDir deleted, which is why the two cases above do not use it.
+		state, env := logStateDir(t)
+		elsewhere := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(state, "fugaro"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(elsewhere, logDirOf(state)); err != nil {
+			t.Skipf("this filesystem has no symlinks: %v", err)
+		}
+		sink, err := OpenLog("update", env, "linux", logFixedNow, nil)
+		if err == nil {
+			t.Errorf("a logs directory outside the state directory was accepted")
+		}
+		if sink == nil || sink.Path() != "" {
+			t.Errorf("the sink reports a path with no log: %v", sink)
+		}
+		if names := logNames(t, elsewhere); len(names) != 0 {
+			t.Errorf("the log was written outside the state directory: %v", names)
 		}
 	})
 
