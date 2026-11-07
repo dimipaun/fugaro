@@ -4,9 +4,9 @@
 
 Every command and flag `fugaro` ships, generated from the command tree
 (`internal/cli.NewRootCmd`) by `go run ./ee/clidoc`. Cobra's own `help`
-and `completion` commands, the root's `-v, --version` flag, and the
-`-h, --help` flag of every command, are part of what `fugaro --help` lists,
-so they are here too. Commands the CLI
+and `completion` commands, the root's `-v, --verbose` and `--version`
+flags, and the `-h, --help` flag of every command, are part of what
+`fugaro --help` lists, so they are here too. Commands the CLI
 hides are not listed: they are internal, and a hidden command is not user
 documentation.
 
@@ -21,7 +21,8 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for fugaro |
-| `-v`, `--version` | bool | `false` | no | version for fugaro |
+| `-v`, `--verbose` | bool | `false` | no | print the run's full output as it goes, not one line per step |
+| `--version` | bool | `false` | no | version for fugaro |
 
 Subcommands:
 
@@ -65,6 +66,7 @@ Subcommands:
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
 - `fugaro watch` -- Watch the project's spend, repositories and running agents live
+- `fugaro workspace` -- Join this project to a workspace, or declare one
 
 ## `fugaro accounts`
 
@@ -3365,7 +3367,7 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--verbose` | bool | `false` | no | also print each recipe's use_when and steps |
+| `-v`, `--verbose` | bool | `false` | no | also print each recipe's use_when and steps |
 
 Subcommands:
 
@@ -5435,6 +5437,333 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace`
+
+Join this project to a workspace, or declare one
+
+A workspace is a grouping of Fugaro projects. It holds a model spend its own
+credentials pay for, and it admits its members' calls to them.
+
+A membership has two halves, written on two machines. A member's own config
+carries the membership key and its pin: the workspace's Firebase project, the
+issuer its exchange requires, the key it verifies a member-bound assertion
+against, and the workspace service account its own fugaro update binds its grant
+to. The workspace owner's config carries the other half: the member table, which
+is how the workspace reaches each member. This family writes the half that
+belongs to the machine it runs on.
+
+The reads are offline: ls and show read this machine's own project configs, no
+bucket and no cloud node, so they work anywhere, a coding agent's session
+included. The writes are local config edits — the diff, the backup and the
+atomic write the fugaro models commands make — and each ends by naming the one
+command that converges the installation: fugaro update.
+
+Usage: `fugaro workspace`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for workspace |
+
+Subcommands:
+
+- `fugaro workspace add` -- Join the selected project to a workspace, and pin what it trusts
+- `fugaro workspace cap` -- The workspace's own spend ceiling
+- `fugaro workspace ls` -- List the workspaces this machine's project configs name
+- `fugaro workspace member` -- Declare how the workspace reaches one of its members
+- `fugaro workspace rm` -- Leave a workspace: drop this project's membership key and its pin
+- `fugaro workspace show` -- Show one workspace from this machine's own files
+
+## `fugaro workspace add`
+
+Join the selected project to a workspace, and pin what it trusts
+
+Write the membership key and its pin into the selected project's own config.
+
+The four pin values are this project's own. It pins the workspace's Firebase
+project id, the issuer its exchange requires, the key it verifies a member-bound
+assertion against, and the workspace service account its own fugaro update binds
+its read-only database grant to. No code path reads one of them from the
+workspace's record, which carries none of them: a record that could supply them
+would aim this project's exchange and this project's database grant at a party
+of its choosing.
+
+The issuer must be exactly https://securetoken.google.com/<firebase-project>.
+The signature is verified against Google's one published set of Firebase signing
+keys, the same document for every project, so the aud/iss pair is the whole of
+what tells one project's tokens from another's; a mistyped half is refused here
+and refused again at the load.
+
+Only the keys it writes are rewritten: every comment and every other key of the
+file is kept. The write is local, and it reaches the installation through
+fugaro update.
+
+Usage: `fugaro workspace add <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--assertion-key` | string | "" | no | the key this project verifies a member-bound assertion against |
+| `--firebase-project` | string | "" | no | the workspace's Firebase project ID, which the token's aud must be |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--issuer` | string | "" | no | the issuer the exchange requires; must be https://securetoken.google.com/<firebase-project> |
+| `--service-account` | string | "" | no | the workspace service account this project's grant binds to |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace cap`
+
+The workspace's own spend ceiling
+
+The cap bounds the spend of the workspace's own credentials, and nothing else
+(D1300): it is not a bound on a member's total spend, and no member's own cap is
+widened by it. A member that routes every model call through the workspace is
+bounded by it as a consequence of how that member is configured, which is not
+the same thing as the cap being a bound on the member.
+
+It is never spelled globally: a cap belongs to one workspace, and the workspace
+is named by --workspace (F10).
+
+Usage: `fugaro workspace cap`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for cap |
+
+Subcommands:
+
+- `fugaro workspace cap set` -- Record the workspace's own cap in the local config
+
+## `fugaro workspace cap set`
+
+Record the workspace's own cap in the local config
+
+Write the workspace's own cap into the config of the workspace's own project.
+
+The amount is US dollars per month, and it is what the workspace's credentials
+may spend: fugaro update publishes it with the record, and the workspace's own
+service meters and enforces it there. It is more than zero — the smallest cap
+this file can state is 0.000001 — and at most 100000.
+
+Only the key it writes is rewritten: every comment and every other key of the
+file is kept.
+
+Usage: `fugaro workspace cap set --workspace <name> --monthly <amount>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--monthly` | float64 | `0` | no | the cap in US dollars per month, more than zero |
+| `--workspace` | string | "" | no | the workspace whose cap this is (required: a cap is never spelled globally) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace ls`
+
+List the workspaces this machine's project configs name
+
+List, offline, every workspace this machine's own files name.
+
+Two kinds of config name one. A config that carries the membership key names the
+workspace it belongs to, with the pin it trusts; a config that carries a member
+table or a cap is the workspace's own project, named after the workspace. The
+listing says which of the two each workspace is here, how many members this
+machine can see for it, and how many of this machine's configs name it.
+
+A config that could not be read is reported rather than skipped, and so is a
+half-done membership: a project the table lists that names no workspace, and one
+that names the workspace whose table here does not list it. Nothing here opens a
+bucket, calls an API or needs a credential.
+
+Usage: `fugaro workspace ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace member`
+
+Declare how the workspace reaches one of its members
+
+The owner's side of a membership.
+
+The workspace's own config holds one entry per member: the member's job service
+accounts, its Firebase project and fp, and its exchange URL, which is what the
+workspace's own service resolves a caller by (spec §5). The member's database
+URL is not among them: it is derived from the Firebase project the verified iss
+names, so an owner cannot pair one member's accounts with another's database.
+Neither is the runs bucket: the workspace holds no read of a member's runs.
+
+A member is in the workspace when the owner's table lists it AND the member's
+own config names the workspace. These commands write the owner's half, in the
+config of the project the workspace is named after.
+
+Usage: `fugaro workspace member`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for member |
+
+Subcommands:
+
+- `fugaro workspace member add` -- Declare a member: how the workspace reaches it
+- `fugaro workspace member rm` -- Stop declaring a member: drop its entry from the workspace's table
+
+## `fugaro workspace member add`
+
+Declare a member: how the workspace reaches it
+
+Write one member entry into the workspace's own project config.
+
+The four values are the workspace owner's declaration, made once per member: the
+member's job service accounts (the identities the workspace's service resolves a
+caller by), its Firebase project and fp (the project the caller's token is
+issued under, and the Fugaro project the token's fp claim must name), and its
+exchange URL (where the workspace's signer mints a member-bound assertion for).
+--repo names a repository the member contributes to the workspace, and is
+repeatable.
+
+A member the table already declares is replaced whole: the entry ends up
+holding the four values given and the repositories named, and nothing else. A
+re-declaration is therefore how a retired or compromised job service account
+leaves the table, and it asks for the workspace's own project name because what
+it removes is what the workspace trusted. Use fugaro workspace member rm to drop
+the entry altogether.
+
+Only the keys it writes are rewritten: every comment and every other key of the
+file is kept, except inside the entry it replaces, which is written fresh. The
+write is local; the owner's fugaro update publishes the record the table
+builds.
+
+Usage: `fugaro workspace member add <workspace> <project>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--exchange-url` | string | "" | no | the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for |
+| `--firebase-project` | string | "" | no | the member's Firebase project ID, which the caller's token is issued under |
+| `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--job-service-account` | stringArray | `[]` | no | a job service account of the member, which the workspace's service resolves a caller by (repeatable) |
+| `--repo` | stringArray | `[]` | no | a repository the member contributes to the workspace, as owner/name (repeatable) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace member rm`
+
+Stop declaring a member: drop its entry from the workspace's table
+
+Remove one member entry from the workspace's own project config.
+
+The workspace's service can no longer resolve that project as a caller, so its
+shared-credential calls are refused at the front door until it is declared
+again. The member's own config is not this command's to change: a member leaves
+by running its own fugaro workspace rm, and until it does the membership is
+half-done — which is what fugaro workspace show reports.
+
+Only the entry it removes is rewritten: every comment and every other key of the
+file is kept. The owner's fugaro update publishes the record the table builds.
+
+Usage: `fugaro workspace member rm <workspace> <project>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace rm`
+
+Leave a workspace: drop this project's membership key and its pin
+
+Remove the membership key and the pin from the selected project's own config.
+
+The project stops being a member of the workspace on this side. The workspace's
+own record is the owner's to change, and its member table is the owner's config:
+nothing here reaches either, and the owner's next fugaro update publishes the
+record its own table builds.
+
+Only the keys it removes are rewritten: every comment and every other key of the
+file is kept. The removal reaches the installation through fugaro update.
+
+Usage: `fugaro workspace rm <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace show`
+
+Show one workspace from this machine's own files
+
+Show one workspace, offline, from what this machine holds.
+
+This machine's half of a membership is the membership key and the pin, in the
+config of each project that names the workspace. The workspace owner's half is
+the member table and the cap, in the config of the project the workspace is
+named after. Which of the two this machine holds decides what there is to show,
+and the command says which it is rather than printing an empty member list:
+
+  - the workspace's own config here: the member table, the cap, and the drift
+    between the table and the configs that name the workspace;
+  - no such config here: the memberships this machine names, each with the pin
+    it carries, and the statement that the group's own record cannot be read
+    from here — a member holds no grant on the workspace's project at all, so no
+    command of this family reads one.
+
+The pin's assertion key is never printed: the command says it is set. Nothing
+here opens a bucket, calls an API or needs a credential.
+
+Usage: `fugaro workspace show <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
 

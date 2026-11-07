@@ -153,17 +153,20 @@ var consoleBoundaryAllowList = []string{
 // commit's message. A require line that arrives WITHOUT an edit here is the
 // failure this test exists for.
 //
-// Two entries that rule has already been applied to. `spf13/pflag` was
+// Three entries that rule has already been applied to. `spf13/pflag` was
 // promoted from the indirect block to the direct one by `next`'s Task 1.6 work
 // (internal/cli and plugin test files import it directly, so the direct require
 // is what the toolchain asks for), which is why its line here carries no
 // "// indirect" comment. `rsc.io/qr` was a new require of the pairing CLI's
 // T4: `internal/cli/pair.go` draws the QR the operator shows from it, so the
 // module is a direct dependency of the CLI and nothing else in the tree
-// imports it. Neither promotion is the console's: the console still contributes
-// nothing to this module.
+// imports it. `muesli/termenv` was promoted the same way by the CLI output
+// work's CL1 (D1355, the owner's approved dependency): `internal/report`
+// renders its step markers with it, forcing the colour profile the reporter
+// itself decided on. None of the three is the console's: the console still
+// contributes nothing to this module.
 //
-// The third is the MCP server's, and it is the one entry here that is a new
+// The fourth is the MCP server's, and it is the one entry here that is a new
 // dependency rather than a promotion. `zitadel/oidc` is the authorization
 // library the owner answered D921 with (docs/mcp-server/reconciliation.md §4),
 // and its licence -- Apache 2.0 -- is what he confirmed on 2026-11-06 before
@@ -171,8 +174,8 @@ var consoleBoundaryAllowList = []string{
 // ee/coordinator/mcpauth (plan task M5) is built on it. The three indirect
 // entries beside it (`zitadel/schema`, `muhlemmer/gu`, `kr/text`) and the
 // version bumps `go mod tidy` made at the same time are the module graph the
-// new require brings, not decisions of their own. The console contributes nothing to any of
-// them either.
+// new require brings, not decisions of their own. The console contributes
+// nothing to any of them either.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
@@ -217,7 +220,7 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/mattn/go-runewidth v0.0.16",
 	"github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect",
 	"github.com/muesli/cancelreader v0.2.2 // indirect",
-	"github.com/muesli/termenv v0.16.0 // indirect",
+	"github.com/muesli/termenv v0.16.0 // the reporter's steps, with the colour profile forced (D1355)",
 	"github.com/muhlemmer/gu v0.3.1 // indirect",
 	"github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect",
 	"github.com/rivo/uniseg v0.4.7 // indirect",

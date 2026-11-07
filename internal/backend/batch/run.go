@@ -162,10 +162,18 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 	// refused it (the review finding on this change). Reserving a name the map
 	// does not hold costs a launcher nothing it was allowed to set: the bucket
 	// is the installation's configuration either way (backend.PlatformEnvNames).
-	reserved := make([]string, 0, len(vars)+len(backend.PlatformEnvNames))
+	reserved := make([]string, 0, len(vars)+len(backend.PlatformEnvNames)+1)
 	for name := range vars {
 		reserved = append(reserved, name)
 	}
+	// The catalog stamp joins them although no Batch job writes it: this
+	// backend applies every non-secret entry into the task's variables, which
+	// are the run's environment, so an entry naming it would tell a run its
+	// image came from the operator's catalog when it did not — and the runner
+	// reads exactly that name to decide whether the image's own variables reach
+	// the agent (docs/image-env, D1371). Reserving it is what keeps this
+	// backend's set the one Cloud Run asks for (backend.ImageEntryEnv).
+	reserved = append(reserved, backend.ImageEntryEnv)
 	reserved = backend.ReservedEnvNames(reserved...)
 	extra, err := backend.LaunchEnv(spec, reserved...)
 	if err != nil {

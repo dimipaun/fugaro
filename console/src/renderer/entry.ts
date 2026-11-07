@@ -4995,15 +4995,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     /**
      * bindSettingsPencils attaches each pencil the settings panel just drew to
-     * the editor, and hands the focus back to the pencil it was pressed on when
-     * the press settles (D1116). The focus is taken on the node the drawing
-     * answered with and not on a re-drawn one, for `redraw`'s reason: a node
-     * this session has taken down is one a real window has detached, and
-     * focusing it would leave the keyboard behind.
+     * the editor, and puts the focus on the pencil it was pressed on as the
+     * editor is drawn, so a press leaves the keyboard on the control that opened
+     * the row's editor rather than dropping it (D1116). The focus is taken on
+     * the node the drawing answered with and not on a re-drawn one, for
+     * `redraw`'s reason: a node this session has taken down is one a real window
+     * has detached, and focusing it would leave the keyboard behind.
      *
-     * The press settles when the whole edit does -- the dry run, the window and,
-     * on a yes, the write -- so a pencil under an open window is a pencil the
-     * keyboard comes back to when that window is answered or closed.
+     * It is put here rather than at the window's answer because
+     * `openSettingsEdit` returns as soon as the editor is drawn: the dry run,
+     * the window and the write are that editor's own flow from there.
+     *
+     * **D1116's other half is not done.** The rule also asks the keyboard back
+     * on the pencil when the confirmation window closes, and nothing moves the
+     * focus after this call: the editor's own box and its submit control take it
+     * as the operator uses them, and the editor goes when the outcome is drawn,
+     * so a real window can end with the keyboard on `<body>`. Closing that is
+     * the editor flow's (C3) and a product question, not a line here.
      */
     const bindSettingsPencils = (host: Drawn): void => {
       for (const pencil of classed(host, SETTINGS_PENCIL_CLASS)) {

@@ -31,6 +31,19 @@ type EnvVar struct {
 // launch can silently rewrite. Not to be written to.
 var PlatformEnvNames = []string{"FUGARO_BUCKET", "FUGARO_BACKEND", "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION"}
 
+// ImageEntryEnv is the job environment variable internal/infra sets to the name
+// of the project image_catalog entry a job's image was deployed from, on a job
+// whose image the catalog chose and on no other (docs/image-env, D1371): the
+// runner passes an image's own variables to the agent only when it reads a
+// non-empty stamp, so a launch entry naming it must be refused on both backends
+// (Batch applies every non-secret entry into the task's variables, which are
+// the run's environment).
+//
+// The spelling is here, beside PlatformEnvNames, because both backends reserve
+// it and neither may import internal/runner, which owns the reader
+// (runner.ImageEntryEnv aliases this) and imports internal/backend/gcp.
+const ImageEntryEnv = "FUGARO_IMAGE_ENTRY"
+
 // ReservedEnvNames is the reserved list both backends hand LaunchEnv: the
 // names a backend's own job definition writes (own) and the platform's five
 // (PlatformEnvNames). It is one function rather than two lists because the

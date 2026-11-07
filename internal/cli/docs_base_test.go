@@ -392,3 +392,46 @@ func TestBaseImageDocNamesRealKinds(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsBaseImageStatesWhatACatalogImagesEnvDoes: an operator writing `ENV`
+// lines into a catalog image's Dockerfile reads, in the section where they
+// decide what their image carries, what happens to those variables in a run
+// (docs/image-env, reconciliation D1379 and F2). F2 is that today's two
+// sentences -- docs/base-image.md's allowlist clause under the harness table
+// and the design's section 6 -- are both about the *harness's* variables, so
+// the image's own `ENV` is stated nowhere near the reader who sets it.
+//
+// The four facts pinned here are the rule the passthrough and the report
+// implement, and the design's own sentence points at this file: a later edit
+// that dropped the reservation clause would leave the design's allowlist
+// sentence pointing at a claim it contradicts.
+func TestDocsBaseImageStatesWhatACatalogImagesEnvDoes(t *testing.T) {
+	const path = "docs/base-image.md"
+	doc := readDoc(t, path)
+	section := flattenDoc(docSection(t, path, doc, "## Bring your own"))
+	for _, want := range []string{
+		"image_catalog",           // whose image the rule is about
+		"Fugaro reserves",         // what is taken out of it
+		"fugaro doctor --all",     // where a reader sees what a job drops
+		"passes nothing",          // a per-repository image (D1370's scope)
+		"FUGARO_IMAGE_ENTRY",      // the one hole in it: a pre-stamp job reads the name from its image
+		"fugaro update --repo",    // and the redeploy that closes that hole
+		"not a secret",            // what a passed value is
+		"never bake a credential", // and the rule that follows from it
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s's \"Bring your own\" section does not say %q: the rule an image's own ENV is held to has to sit where an operator deciding what their image carries reads (docs/image-env D1379)", path, want)
+		}
+	}
+
+	// One statement, not two: the design's allowlist sentence has to point at
+	// the file that states what an image's ENV does, so the two cannot drift
+	// into contradicting each other (F2).
+	designPath := "docs/design/base-image.md"
+	design := flattenDoc(docSection(t, designPath, readDoc(t, designPath), "## 6. Agent harnesses"))
+	for _, want := range []string{"allowlist", "docs/base-image.md"} {
+		if !strings.Contains(design, want) {
+			t.Errorf("%s section 6 does not say %q: its allowlist sentence is about the harnesses' variables, and without the pointer the design and %s state the image's own ENV nowhere", designPath, want, path)
+		}
+	}
+}

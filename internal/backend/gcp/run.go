@@ -153,7 +153,15 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	// here and refused there — and Batch's map holds no FUGARO_BUCKET at all,
 	// so the parity this comment claimed was not the reservation the two
 	// backends made).
-	reserved := backend.ReservedEnvNames("FUGARO_RUN", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION")
+	//
+	// FUGARO_IMAGE_ENTRY is reserved for the same reason: it is the stamp
+	// internal/infra puts on the deployed job to say the operator's catalog
+	// chose this image, and the runner passes the image's own variables only
+	// when it reads a non-empty stamp (docs/image-env, D1371). A launcher
+	// entry naming it would hand an image the stamp its own catalog never
+	// gave it. backend.ImageEntryEnv is the one spelling, and Batch reserves
+	// it too.
+	reserved := backend.ReservedEnvNames("FUGARO_RUN", "CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION", backend.ImageEntryEnv)
 	extra, err := backend.LaunchEnv(spec, reserved...)
 	if err != nil {
 		// Nothing has been sent, so this is a refusal and not an ambiguity:
