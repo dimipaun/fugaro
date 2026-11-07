@@ -132,20 +132,24 @@ release now") carry the same correction in prose, and the latter gives the one
 **after**:
 
 ```
-# THE REAL CONTROL IS A TAG RULESET AND THE ENVIRONMENT'S BRANCH POLICY, NOT
-# THIS FILE'S GATE. A tag push runs the workflow file *at the tagged commit*, so
-# a tag on a branch whose copy of this file (or of scripts/release-gate.sh) was
-# edited runs the edited copy -- with the gate weakened or removed. What stops
-# that is outside the file: a tag ruleset restricting who may create, update or
-# delete `v*` tags (docs/release.md, "Before you tag"), and the
+# THE REAL CONTROL IS THE ENVIRONMENT'S BRANCH POLICY AND A TAG RULESET, NOT
+# THIS FILE'S GATE -- and the ruleset's creation rule is still owed. A tag push
+# runs the workflow file *at the tagged commit*, so a tag on a branch whose copy
+# of this file (or of scripts/release-gate.sh) was edited runs the edited copy
+# -- with the gate weakened or removed. What stops that outside the file is the
 # `console-release` environment's deployment branch policy, which admits
-# `console-v*` tags and nothing else. **Until 2026-11-07 that environment also
-# required a reviewer (the owner), whose approval is where the tag's commit was
-# confirmed to be on main; the owner removed that click, so the ruleset, the
-# branch policy and the release procedure are what hold a run to a reviewed
-# commit.** The first run step below checks the same thing from inside the job
-# (the tagged commit is an ancestor of origin/main), which catches a mistake,
-# not an attacker who controls the tagged tree.
+# `console-v*` tags and nothing else. The tag ruleset is the other half and it
+# is NOT complete: it restricts updates and deletions of `v*` tags (so a tag
+# cannot be re-pointed after something was built from it) and it does not
+# restrict creations -- anyone who can push tags can create a `console-v*` tag
+# on a commit of their own, whose tree supplies this file and the gate.
+# docs/release.md, "What fences a release now", gives the owner step that closes
+# it (Restrict creations on that ruleset, with the owner in its bypass actors).
+# **Until 2026-11-07 that environment also required a reviewer (the owner),
+# whose approval is where the tag's commit was confirmed to be on main; the
+# owner removed that click.** The first run step below checks the same thing
+# from inside the job (the tagged commit is an ancestor of origin/main), which
+# catches a mistake, not an attacker who controls the tagged tree.
 ```
 
 ## 5. The `environment:` comment on the `release` job

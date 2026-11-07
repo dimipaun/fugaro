@@ -242,12 +242,16 @@ func TestDocsMobileEasRunbookNamesEveryCredentialAndWhereItLives(t *testing.T) {
 // `website-live`, `console-release`, and `mobile-release` from the staged file
 // -- so this test only refuses the stale sentences an earlier revision of the
 // page carried, including the one that read as a description of a workflow
-// nobody had written yet.
+// nobody had written yet. `required reviewer` is pinned as the setting's own
+// name **with the state it is in** (`Required reviewers: none since 2026-11-07`)
+// rather than as the click the page described before that date: the pin and the
+// page have to move together, and a page that stopped naming the setting at all
+// would leave a reader looking for a fence that is not there.
 func TestDocsMobileEasRunbookNamesTheProtectedEnvironmentAndTheTriggerShape(t *testing.T) {
 	doc := runbook(t)
 	for _, want := range []string{
 		"mobile-release",
-		"required reviewer",
+		"Required reviewers: none since 2026-11-07",
 		"environment:",
 		"workflow_dispatch",
 		"pull_request_target",

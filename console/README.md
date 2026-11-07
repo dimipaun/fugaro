@@ -2766,9 +2766,12 @@ every line that calls `xcrun stapler` names the helper.
 
 **The environment is `console-release`, and the owner creates it before the
 copy-in.** Deployment branches restricted to tags, and required reviewers on the
-owner — **until 2026-11-07, when the owner removed the reviewer** (a tag
-ruleset, this branch policy and the release procedure are what hold a signing run
-to a reviewed commit now; `docs/release.md`, "What fences a release now"). A
+owner — **until 2026-11-07, when the owner removed the reviewer** (this branch
+policy and the release procedure are what hold a signing run to a reviewed ref
+now, and the tag ruleset stops a tag moving once it exists — **it does not
+restrict creations**, so the **Restrict creations** step `docs/release.md`,
+"What fences a release now", still owes is what stops a `console-v*` tag being
+created on an unreviewed commit). A
 staging file cannot create an environment, which is why Task 4.5 is the
 copy-in *and* the environment. **That fence is the real control, not the file's
 gate**: a tag push runs the workflow as the *tagged* commit holds it, so a tag on

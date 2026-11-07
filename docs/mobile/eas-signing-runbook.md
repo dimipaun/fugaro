@@ -610,9 +610,15 @@ whatever ref started it, holding the Expo token. Create it, then copy the file
 carries the fences, but it no longer requires a reviewer.** The owner removed the
 approval click, so the deployment branch policy below is the whole of the
 environment's own lock; what holds a build to a reviewed commit is the release
-procedure (§10's release gate, which checks the tagged commit is an ancestor of
-`origin/main`) and the **"protect release tags"** ruleset, which stops a
-`mobile-vX.Y.Z` tag moving after it is pushed. Putting the click back is one
+procedure (§10's release gate, which refuses a tag whose commit is not reachable
+from `origin/main` — a script read from the tagged tree, so it catches a tag on
+the wrong commit rather than someone who controls that tree) and the
+**"protect release tags"** ruleset, which stops a `mobile-vX.Y.Z` tag moving
+after it is pushed. **The ruleset does not restrict creations**: it restricts
+updates and deletions, so anyone who can push tags can create a `mobile-v*` tag
+on a commit of their own, and the job on it runs that tree's copy of the gate —
+which is why `docs/release.md`, "What fences a release now", gives **Restrict
+creations** on that ruleset as an owner step that is still owed. Putting the click back is one
 `gh api` call per environment, and the one `docs/release.md` gives under "What
 fences a release now" is the same call this page's sibling
 [../website/preview-promote.md](../website/preview-promote.md) gives for

@@ -8,9 +8,11 @@ package cli
 // TestFlight's internal testers and to Google Play's internal-testing track. The
 // owner's rulings of 2026-10-19/20 fix the shape: the build runs from GitHub
 // Actions on each tag and by hand; it waits at a `mobile-release` GitHub
-// environment with the owner as its required reviewer (the same click
-// `console-release` and `website-live` wait for); both platforms release, each
-// in its own job, with one repository variable that can turn either off.
+// environment, whose fence is its deployment branch policy -- the owner removed
+// the required reviewer on 2026-11-07, as they did from `console-release` and
+// `website-live`, so no click stands between a trigger and a store submission;
+// both platforms release, each in its own job, with one repository variable that
+// can turn either off.
 //
 // No agent may write or edit `.github/workflows/**` -- GitHub refuses Fugaro's
 // push of a workflow change -- so the file is staged under
@@ -49,7 +51,8 @@ package cli
 //     anywhere in the file**.
 //   - TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn: the
 //     section beside the staged file has to carry what a human cannot guess --
-//     the environment's name and its required reviewer, the secret's name, the
+//     the environment's name and its reviewer state (none since 2026-11-07),
+//     the secret's name, the
 //     order those two have to be created in, the copy-in command, the switch
 //     that turns a platform off, the Android first-release checklist, and the
 //     follow-up edits a copy-in needs.
@@ -220,8 +223,8 @@ const (
 	mobileReleaseGateCondition = "github.event_name == 'push'"
 	// mobileReleaseDispatchGateCondition is the whole `if:` on the **second**
 	// gate step, the one a manual dispatch runs: a dispatch has no `push` event,
-	// and the environment's approval is a person deciding to run the workflow
-	// rather than a review of the commit it would submit. It fires only when the
+	// and a dispatch is a person deciding to run the workflow rather than a
+	// review of the commit it would submit. It fires only when the
 	// dispatch would actually submit, because `dry_run` is what holds the other
 	// path back -- a dry run reaches no store. Compared whole for the same reason
 	// as every other gate here: `github.event.inputs.dry_run != 'true'` alone
@@ -769,10 +772,13 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 	if got := job.If; got != gate {
 		t.Errorf("the %s job's `if` is %q, not exactly %q: `%s` names the platforms to skip, so this job runs unless the variable names %s -- and an unset variable names neither, so both platforms release", platform, got, gate, mobileReleaseDisabledPlatforms, platform)
 	}
-	// The environment is the gate: GitHub holds the job until its only required
-	// reviewer approves it, however the run was started.
+	// The environment is where the job's own locks live: its deployment branch
+	// policy is what admits the refs a store submission may start from, and the
+	// Expo token is readable only through it. Since 2026-11-07 it holds no
+	// reviewer, so the policy, the gate and the tag ruleset are the whole of what
+	// stands between a trigger and a store.
 	if job.Environment != mobileReleaseEnvironment {
-		t.Errorf("the %s job's environment is %q, not %q: the environment's required reviewer is the whole of what stops a store submission, and a job without it starts as soon as its trigger fires", platform, job.Environment, mobileReleaseEnvironment)
+		t.Errorf("the %s job's environment is %q, not %q: the environment carries the deployment branch policy and the only copy of the Expo token a job can read, and a job without it starts as soon as its trigger fires", platform, job.Environment, mobileReleaseEnvironment)
 	}
 	if job.TimeoutMinutes <= 0 {
 		t.Errorf("the %s job has timeout-minutes %d: a run that waits on a remote build without a bound is a job nobody can tell from a hung one", platform, job.TimeoutMinutes)
@@ -874,7 +880,7 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 				// makes the submission a release rather than a build of
 				// whatever branch the dispatcher named.
 				if !strings.Contains(cmd, mobileReleaseDispatchGateMainCheck) || !strings.Contains(cmd, "origin/main") {
-					t.Errorf("the %s job's manual-dispatch gate does not check that the dispatched commit is on main (`%s ... origin/main`): the environment's approval is a person deciding to run this workflow, not a review of the commit it would submit, so an off-main dispatch would submit behind nothing but that click", platform, mobileReleaseDispatchGateMainCheck)
+					t.Errorf("the %s job's manual-dispatch gate does not check that the dispatched commit is on main (`%s ... origin/main`): a dispatch is a person deciding to run this workflow, not a review of the commit it would submit, so an off-main dispatch would submit behind nothing but the environment's branch policy", platform, mobileReleaseDispatchGateMainCheck)
 				}
 				if !strings.Contains(cmd, mobileReleaseMaskExit) {
 					t.Errorf("the %s job's manual-dispatch gate does not stop the job on a commit that is not on main: a check whose failure only prints is a submission that still happens", platform)
@@ -1352,8 +1358,9 @@ func mobileReleaseReadmeSection(t *testing.T) string {
 // file cannot create a GitHub environment or a secret, so the section beside it
 // is where the owner reads what to make and what to run. Everything a human
 // cannot guess from the file is asserted here: the environment's name and its
-// required reviewer, the secret's name, **the order the two have to be created
-// in** (before the copy-in, or GitHub creates the environment with no reviewer),
+// reviewer state (none since 2026-11-07), the secret's name, **the order the two
+// have to be created in** (before the copy-in, or GitHub creates the environment
+// with no policy and no reviewer),
 // the copy-in command, the one switch that can turn either platform off, the
 // Android first-release checklist and the accounts each of its steps belongs to,
 // the two follow-up edits a copy-in needs, and the name of the check that pins
@@ -1369,7 +1376,8 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 
 	for _, want := range []struct{ needle, why string }{
 		{"`" + mobileReleaseEnvironment + "`", "the protected environment both jobs wait at, by name"},
-		{"required reviewer", "the reviewer whose click is the gate, and that there is one"},
+		{"no required reviewer since", "the environment's reviewer state: the click that used to hold these jobs is gone, and the branch policy is what holds them now"},
+		{"2026-11-07", "the date of that change, which every sentence about the environment here carries"},
 		{"Prevent self-review", "the setting that has to stay off, or the owner's own run can never be approved"},
 		{"the file is copied in, not after it", "the order: the environment, the secret and the Android switch exist before the copy-in"},
 		{mobileReleaseAndroidSwitchStep, "the Android switch, with the order it has to be set in: the job is enabled by default, so a copy-in made before it is a file whose first run can submit to Play"},
@@ -1465,8 +1473,9 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 	// And the Android switch before it too, for the reason the environment does:
 	// the Android job is enabled by default -- an unset variable names neither
 	// platform -- so a copy-in that lands first is a workflow whose first run can
-	// build and submit to Play, and the environment's approval click says a
-	// person ran the workflow rather than that the Play side is ready. The step
+	// build and submit to Play, and nothing at the environment asks whether the
+	// Play side is ready (there has been no reviewer to ask since 2026-11-07).
+	// The step
 	// is read against the copy-in's position and not merely as a sentence that
 	// exists somewhere in the section.
 	androidOff := strings.Index(section, mobileReleaseAndroidSwitchStep)
