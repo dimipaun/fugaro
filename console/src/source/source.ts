@@ -326,7 +326,9 @@ export interface FugaroSource {
    * state (rule 3). It is this command rather than `project show --json` because
    * the latter also carries the **installation's** caps, which belong to the
    * Spend screen (F18, D1481); what this document carries is the project's own
-   * `budget` block, which is the project's policy and not a spend figure. The
+   * `budget` block, which is the project's policy and not a spend figure -- and
+   * a ceiling all the same, which is why the reduced mode withholds the read
+   * (`REDUCED_VIEW_OPERATIONS`'s `caps`, `src/main/ipc.ts`). The
    * read is the project's own database node and writes neither it nor the state
    * file. Its document has no section of the contract -- the neighbouring reads'
    * are `managed status`'s (§6.21, this plan's CM2) and the graph's (§6.22, the

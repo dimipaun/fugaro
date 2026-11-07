@@ -1511,8 +1511,12 @@ export const CONSOLE_OPERATIONS = [
   // to the tab's own `caps` panel, and that a decoder here would have to drop
   // (D1481). What the node does carry is the *project's* own `budget` block, and
   // that is the project's policy rather than a spend figure: the tab draws it as
-  // the policy it is, and this operation claims no exemption from the reduced
-  // mode's rule for the rest (the tab's view is `caps`, F9).
+  // the policy it is. **It is a ceiling all the same**, which is what the
+  // reduced mode withholds, so this read is on the tab's own view list
+  // (`REDUCED_VIEW_OPERATIONS`'s `caps`, below) with `budget.show` and
+  // `settings.read` -- the same ruling that puts the settings read there for its
+  // `budget.*` rows. The view entry is untouched: the tab's view is `caps`
+  // already (F9), which is what D1487 decided, and this is the operation's half.
   //
   // Like its sibling above it takes no argument at all: no positional word, no
   // `--gcp-project`, no `--region`. The `project` group's other words --
@@ -3497,7 +3501,19 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *     same kind of figure under a different name: the registry's `budget.*` and
  *     `agent.max_budget_usd` rows are the project's configured caps, and the
  *     reduced mode withholds caps -- a settings table answered here would put a
- *     limit on screen through the third section that the caps panel is refused;
+ *     limit on screen through the third section that the caps panel is refused.
+ *     `policy.show` (the managed screens' plan's CM4) carries the project's own
+ *     `budget` block -- `mode`, `per_run_usd`, `allowed_models`,
+ *     `max_run_tokens` -- which is that same configured ceiling again, published
+ *     rather than resolved, so the read is withheld with them: D1481 picked this
+ *     command over `project show --json` to keep the **installation's** caps off
+ *     this surface, and the node's own block is another document's cap rather
+ *     than no cap at all. D1487 is not contradicted by it: what that decision
+ *     settled is that these *views* add no entry of their own to `VIEWS` -- the
+ *     tab's view is already `caps` (F9) -- while an operation's entry in this
+ *     list is the main process's half of rule 4, a different list; the read
+ *     reaches no screen in a reduced console either way, and the two halves stay
+ *     two rather than one standing in for the other;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -3514,7 +3530,7 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
     spend: Object.freeze(['spend.report', 'runs.stats', 'runs.summary'] as const),
-    caps: Object.freeze(['budget.show', 'settings.read'] as const),
+    caps: Object.freeze(['budget.show', 'settings.read', 'policy.show'] as const),
     kill: Object.freeze([] as const),
   })
 

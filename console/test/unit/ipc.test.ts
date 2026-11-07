@@ -3793,13 +3793,21 @@ describe('the source of the allow-list and the preload', () => {
  * `settings.read` is the same kind of figure again -- the Projects tab's
  * settings table carries the project's configured `budget.*` rows, so the
  * section is refused with the caps panel the tab's own `VIEWS` entry declares
- * (the settings-edit plan's C1) -- and the kill switch has no operation of its
- * own (design C10 -- its fields travel inside `live.watch`, which a reduced
+ * (the settings-edit plan's C1) -- and `policy.show` is the third of that kind
+ * (added 2026-11-07 by the managed screens' plan's CM4, on review): D1481 kept
+ * the *installation's* caps off this surface by choosing `project policy show`
+ * over `project show`, but the published node carries the **project's own
+ * `budget` block** (`mode`, `per_run_usd`, `allowed_models`, `max_run_tokens`),
+ * a configured ceiling of the same class as the settings table's `budget.*`
+ * rows, so a reduced console withholds this read with them rather than
+ * answering a cap it refuses two doors away. The kill switch has no operation of
+ * its own (design C10 -- its fields travel inside `live.watch`, which a reduced
  * console still draws).
  */
 const THE_WITHHELD_OPERATIONS: readonly OperationName[] = [
   'budget.show',
   'settings.read',
+  'policy.show',
   'runs.stats',
   'runs.summary',
   'spend.report',
@@ -3948,17 +3956,17 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // (CG9a) is the twenty-sixth**, and it is here for that same reason: a graph
     // is repository state -- nodes, edges and each scope's own state word -- so
     // there is no figure for the mode to withhold, and its document carries no
-    // money field of any kind. **`managed.status` and `policy.show` (the
-    // managed screens' plan's CM4) are the twenty-seventh and twenty-eighth**,
-    // and they are here for that same reason twice over: the two marks are not
-    // money but state -- and the trail is the audit record's bounded subset,
-    // which carries the command's own name, verdict and identity rather than a
-    // figure -- while the published policy node holds ceilings an operator
-    // published, not what this project spent, so the reduced mode has nothing to
-    // withhold from either. Nothing reaches them there either: the sections that
-    // will draw them are the Project tab's, and CM5 to CM11 are the tasks that
-    // build them.
-    expect(THE_OPEN_OPERATIONS.length).toBe(28)
+    // money field of any kind. **`managed.status` (the managed screens' plan's
+    // CM4) is the twenty-seventh**: the two marks are not money but state, and
+    // the trail is the audit record's bounded subset, which carries the
+    // command's own name, verdict and identity rather than a figure -- so the
+    // reduced mode has nothing to withhold from it. **Its sibling `policy.show`
+    // is not here, and that is the review's finding**: the read is withheld with
+    // the caps reads (`THE_WITHHELD_OPERATIONS`'s comment says why), which is
+    // the one row of this task that a reduced console refuses. Nothing reaches
+    // `managed.status` there either: the section that will draw it is the
+    // Project tab's, and CM5 to CM11 are the tasks that build them.
+    expect(THE_OPEN_OPERATIONS.length).toBe(27)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
@@ -3972,6 +3980,9 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     expect(reached).not.toContain('spend.report')
     expect(reached).not.toContain('runs.stats')
     expect(reached).not.toContain('budget.show')
+    // The caps read this task added: a reduced console refuses it before the
+    // child exists, so the project's own ceiling is not answered here either.
+    expect(reached).not.toContain('policy.show')
   })
 
   it('withholds the by-person read with the spend view, because it reads the same spend figures (D7)', async () => {

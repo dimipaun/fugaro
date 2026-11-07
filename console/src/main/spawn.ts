@@ -1148,7 +1148,9 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // installation's caps, and those are the Spend screen's subject (D1481). The
     // published node's own `budget` block is the project's own ceiling and is
     // drawn as the policy it is, which is the Project tab's business rather than
-    // this row's -- and it claims no exemption from the reduced mode's rule.
+    // this row's -- and a ceiling is what the reduced mode withholds, so the
+    // operation is on that view's list (`REDUCED_VIEW_OPERATIONS`'s `caps`,
+    // `src/main/ipc.ts`) and not exempt from it.
     //
     // It takes no argument either (`src/main/ipc.ts`'s empty `args`): no
     // positional word, no `--gcp-project` and no `--region`, so no word of the
