@@ -1,9 +1,9 @@
 package apply
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -48,14 +48,12 @@ func pendingProjectsDir(t *testing.T, getenv func(string) string) string {
 //
 // Both halves are pinned. The shape: the members of the document, of an entry
 // and of the change are exactly the ones schemas/pending-steps.schema.json
-// declares, and none of them is a member a value could travel in. The
-// behaviour: a document built the way a command builds it, for a change whose
-// value is a distinctive string, is written without that string anywhere in it.
+// declares, and none of them is a member a value could travel in. The write:
+// the document a command's entry produces, read back off disk, holds those
+// members at every level and no string but the change's subject and the
+// entry's binding — a value has no member to ride in, and none appears in the
+// bytes either.
 func TestPendingNeverHoldsAValue(t *testing.T) {
-	// The value a command would have written into the config, and the only
-	// thing that must never reach this file.
-	const setValue = "pending-store-must-not-hold-this"
-
 	want := []string{"change", "gcp_project", "project", "step"}
 	if got := jsonMembers(t, PendingStep{}); !slices.Equal(got, want) {
 		t.Errorf("an entry's members are %v, want %v", got, want)
@@ -101,9 +99,14 @@ func TestPendingNeverHoldsAValue(t *testing.T) {
 	}
 
 	// And the write itself: the entry a command queues for that change, saved,
-	// holds the key and not the value.
+	// read back the way a reader sees it. The members are the schema's at every
+	// level, and the strings are the change's subject and the entry's binding —
+	// which is the whole of what a value could be written as, since every JSON
+	// string sits under a member name. A document that grew a member, or
+	// carried one string more than the change's key, fails here.
 	getenv := pendingHome(t)
 	p := EmptyPending()
+	p.LastApply = "sha256:0"
 	p.Add(PendingStep{
 		Step:       initflow.Policy,
 		Project:    "workspace-a",
@@ -121,12 +124,76 @@ func TestPendingNeverHoldsAValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(data, []byte(setValue)) {
-		t.Errorf("the pending document holds %q, the value of the change: it may hold the change's subject and never its value (D1570)", setValue)
+	doc, entry := writtenDocument(t, data)
+	if got, want := slices.Sorted(maps.Keys(doc)), []string{"last_apply", "steps", "version"}; !slices.Equal(got, want) {
+		t.Errorf("the written document's members are %v, want %v", got, want)
 	}
-	if !bytes.Contains(data, []byte("image_catalog.entries.*.description")) {
-		t.Errorf("the pending document does not name the change that asked for the step:\n%s", data)
+	if got := slices.Sorted(maps.Keys(entry)); !slices.Equal(got, want) {
+		t.Errorf("the written entry's members are %v, want %v", got, want)
 	}
+	change, ok := entry["change"].(map[string]any)
+	if !ok {
+		t.Fatalf("the written entry holds no change object, but %v", entry["change"])
+	}
+	if got, want := slices.Sorted(maps.Keys(change)), []string{"key", "kind"}; !slices.Equal(got, want) {
+		t.Errorf("the written change's members are %v, want %v", got, want)
+	}
+	wantStrings := []string{
+		// The change's subject: the key, and never the value that was set.
+		"image_catalog.entries.*.description",
+		initflow.Policy,
+		"proj-1234",
+		string(Setting),
+		"sha256:0",
+		"workspace-a",
+	}
+	if got := documentStrings(t, doc); !slices.Equal(got, wantStrings) {
+		t.Errorf("the written document holds the strings %v, want %v: an entry names the change that asked for the step and never what was set (D1570)", got, wantStrings)
+	}
+}
+
+// writtenDocument is a saved pending document read back the way a reader sees
+// it: the document and its one entry.
+func writtenDocument(t *testing.T, data []byte) (doc, entry map[string]any) {
+	t.Helper()
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("the written document does not decode: %v", err)
+	}
+	steps, ok := doc["steps"].([]any)
+	if !ok || len(steps) != 1 {
+		t.Fatalf("the written document holds %v as its steps, want the one entry that was added", doc["steps"])
+	}
+	entry, ok = steps[0].(map[string]any)
+	if !ok {
+		t.Fatalf("the written entry is %v, want an object", steps[0])
+	}
+	return doc, entry
+}
+
+// documentStrings is every string a decoded document holds, wherever it sits,
+// sorted. Every JSON string sits under a member name somewhere in the document,
+// so this set is the whole of what the document could have written down.
+func documentStrings(t *testing.T, v any) []string {
+	t.Helper()
+	var out []string
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			for _, child := range v {
+				walk(child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(child)
+			}
+		case string:
+			out = append(out, v)
+		}
+	}
+	walk(v)
+	slices.Sort(out)
+	return out
 }
 
 // TestPendingRefusesAProjectMismatch: every entry is bound to the project name
