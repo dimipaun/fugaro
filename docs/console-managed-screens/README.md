@@ -35,7 +35,8 @@ The owner's ask is about a different set of facts — the ones a **managed proje
 one does not: whether the project is managed and who admitted what, which accounts a run's stages use,
 what the published policy node holds and what the last update changed, what the last plain `fugaro
 update` retired, and (once DON7 lands) what the credentials service is doing. **None of them is on
-that screen, and four of the five are not reachable from the console at all.**
+that screen, and four of the five are not reachable from the console at all** — only the review
+account keys are, through the `settings --json` read the tab already makes.
 
 Three things this design settles that the ask does not:
 
@@ -46,12 +47,15 @@ Three things this design settles that the ask does not:
    **this work adds neither a third write nor a button that edits** (D1471). Nothing here spawns
    `managed apply`, `managed flag`, `managed unflag`, `settings set`, `project policy publish` or
    `update`: **the console never writes the managed marks.**
-2. **Four of the five screens need a CLI field that does not exist yet.** The managed marks and the
-   audit records are read by `doctor` today and printed as **prose** in a check's `problem`/`fix`
+2. **Two of the five screens need a CLI field that does not exist yet, and a third needs a read the
+   console is not allowed to spawn.** The managed marks and the audit records are read by `doctor`
+   today and printed as **prose** in a check's `problem`/`fix`
    (`internal/cli/doctor_managed_audit.go`), never as fields; nothing records the retirement set a
    plain `fugaro update` made, the runs in flight when it ran, or the diff the last policy publish
    carried. Two CLI tasks (**CM1**, **CM2**) add them, as **additions** — a new field is fine, a field
-   never changes meaning, and the console accepts any newer CLI.
+   never changes meaning, and the console accepts any newer CLI. The policy notes need no new CLI
+   field at all: the node is printable today and the console has **no row that reaches it**, which is
+   a fence to move rather than a field to add (F4, D1480).
 3. **One screen is not this work's to build.** The credentials service state is **DON7**
    (`docs/credentials-service/default-on.md`, open pull request **#1816**); the screen draws doctor's
    own line rather than re-deriving the state (D1486), and it waits.

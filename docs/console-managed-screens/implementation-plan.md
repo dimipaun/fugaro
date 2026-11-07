@@ -64,7 +64,7 @@ writer per level**: CM10, alone at level 4.
 
 **Why CM11 is after CM10.** Its end-to-end spec drives the real tab, so it needs the sections wired in.
 Its fixture arms could land earlier, but a fixture arm no test reads is a file with no reviewer, and
-the fixture is one file for all six reads — one writer, one level (§2).
+the fixture is one file for every read the sections spawn — one writer, one level (§2).
 
 **Why CM12 is last.** The release notes name what shipped; `docs/releases/README.md` requires the
 notes in the same pull request as the change they describe, which is CM11's and CM10's.
@@ -81,11 +81,12 @@ of one file** — that is the invariant the levels above exist to hold, and this
 | `docs/design/desktop-console.md` | CM3 (1) | §5.1 rule 6's table gains two rows and rule 5's operation count moves |
 | `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/preload/index.ts` | CM4 (2) | the two spawn rows and the two operations, with the preload's written-out method list |
 | `console/test/unit/spawn.test.ts`, `ipc.test.ts`, `preload-surface.test.ts` | CM4 (2) | the ordered words list, the operations snapshot, the method list |
-| `console/src/renderer/screens/projects.ts`, `console/src/renderer/entry.ts` | CM10 (4) | the six sections' wiring into the Project tab |
+| `console/src/renderer/screens/projects.ts`, `console/src/renderer/entry.ts` | CM10 (4) | the five sections' wiring into the Project tab |
 | `console/test/unit/entry-wiring.test.ts`, `build-files.test.ts` | CM10 (4) | the wiring and the module list |
-| `docs/design/console-styling.md` | CM10 (4) | §2.5 gains the six sections' class hooks |
-| `console/test/fixtures/bin/fugaro` | CM11 (5) | six arms, one per read |
-| `docs/releases/console/v0.121.0.md` | CM12 (6) | the notes |
+| `docs/design/console-styling.md` | CM10 (4) | §2.5 gains the five sections' class hooks |
+| `console/test/fixtures/bin/fugaro` | CM11 (5) | an arm for each of the two reads CM4 added; the fixture already answers `settings --json` for the tab's own panels |
+| `docs/gcp-live-checklist.md` | CM11 (5) | Check 360's own section, and the register's row |
+| `docs/releases/console/v0.121.0.md`, `docs/releases/console/README.md`, `console/package.json` | CM12 (6) | the notes, the next fruit in that directory's own table, and the version line |
 
 **Files a task shares with work outside this design**, so a conflict there is a semantic one:
 `internal/cli/init.go`, `internal/cli/init_retire.go` (the update/init path, touched by every
@@ -287,11 +288,11 @@ reviewable artifacts, touched by every console feature).
 
 ### CM10. The sections join the Project tab (F2, F3, F8, F9, D1470, D1487, D1488). **size S**
 
-- **Files:** `console/src/renderer/screens/projects.ts` (the six sections registered as panels of the
+- **Files:** `console/src/renderer/screens/projects.ts` (the five sections registered as panels of the
   tab, each with its own source line in `PROJECTS_SOURCE_LINES`, and the policy panel's `operation`
   no longer null), `console/src/renderer/entry.ts` (the wiring), `console/test/unit/entry-wiring.test.ts`,
   `console/test/unit/build-files.test.ts`, `docs/design/console-styling.md` (§2.5).
-- **Interface:** the tab's panels gain six, each with its own read, its own busy state and its own
+- **Interface:** the tab's panels gain five, each with its own read, its own busy state and its own
   refusal, started in parallel and painted on arrival — and **jobs are not in the first paint**, which
   is the owner's rule of 2026-10-31. The tab's `view` stays `caps`, and the sections add no
   `REDUCED_VIEWS` entry (D1487).
@@ -306,33 +307,45 @@ reviewable artifacts, touched by every console feature).
 
 ### CM11. The fixture arms and the hermetic end to end (F3). **size M**
 
-- **Files:** `console/test/fixtures/bin/fugaro` (six arms, one per read, each answering the argv CM4
-  allows and nothing else), `console/test/unit/fixture.test.ts`, `console/test/e2e/managed.spec.ts`
-  (new).
-- **Interface:** the fixture answers `managed status --json`, `project policy show --json` and the
-  reads the sections share with the tab, and refuses any argv it was not given — the property that
-  makes the console's hermetic suite a fence rather than a stub.
+- **Files:** `console/test/fixtures/bin/fugaro` (an arm for each of the two reads CM4 added — `managed
+  status --json` and `project policy show --json` — each answering the argv CM4 allows and nothing
+  else; the fixture already answers `settings --json` for the account keys section and the tab's
+  existing panels), `console/test/unit/fixture.test.ts`, `console/test/e2e/managed.spec.ts`
+  (new), `docs/gcp-live-checklist.md` (Check 360's section and the register's row, §6).
+- **Interface:** the fixture answers the two new argvs and refuses any argv it was not given — the
+  property that makes the console's hermetic suite a fence rather than a stub.
 - **Red step:** the spec fails against a fixture with no arm for `managed status`, with the child
   answering a refusal the section draws.
 - **Tests:** `npm run test:unit -- --maxWorkers=2` and `npm run test:e2e`; the spec walks the tab, sees
-  six sections paint independently, and sees one section refuse while its siblings draw.
+  the five sections paint independently, and sees one section refuse while its siblings draw. The
+  check's own document is held by `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Mutation (run, restore):** make the fixture answer a read it was not asked for; `fixture.test.ts`
   fails.
 - **Depends on:** CM10. **Reviewer tier:** standard. **Commit:** `console: the managed sections'
-  fixture arms and end to end`.
+  fixture arms, end to end, and Check 360`.
 
 ### CM12. The release notes, console 0.121.0 (Raspberry) (D1489). **size S**
 
-- **Files:** `docs/releases/console/v0.121.0.md` (new — the notes `docs/releases/README.md` requires,
-  with a `### For operators` section stating **"run `fugaro update`"** and what it will ask, and
-  nothing else: no second command, no deletion, no manual repair), and whatever
-  `docs/releases/README.md` requires beside it for a console release.
-- **Interface:** none — this is the release's own document, and it names the CLI version the screens
-  need (CM1's and CM2's).
-- **Red step:** none: a release note has no failing test, and saying so is the honest form of this
-  line. What it does have is `go test ./internal/cli -run Docs`, which fails if the console release
-  workflow's expectations about the file are not met.
-- **Tests:** `go test ./internal/cli -run Docs -count=1`.
+- **Files:** three, and **`docs/releases/console/README.md` is the one that says so** — a console
+  release is not an entry of the CLI's changelog, and the CLI's `docs/releases/README.md` (whose
+  `### For operators` section this task must **not** copy: the console's format has no such heading)
+  governs the other directory, not this one. The three are:
+  - `docs/releases/console/v0.121.0.md` (new) — the release body of `console-v0.121.0`: its first line
+    is the heading `# Fugaro Console 0.121.0 "Raspberry"`, then one sentence for a user who has read
+    nothing else, then a bullet per thing they can now do, then `### Known limits`. **No
+    `### For operators`** and no `## Highlights` wrapper: that README's format is a heading and a body.
+  - `docs/releases/console/README.md` — the fruit table gains its next row (`0.121.0` / Raspberry),
+    which that README requires **"in the commit that writes its notes file"**.
+  - `console/package.json` — the `version` line to `0.121.0`, the other half that README requires in
+    the same commit, before the tag exists.
+- **Interface:** none — this is the release's own documents. The notes name the CLI version the
+  screens need (CM1's and CM2's), and they say in a user's words what the five sections give them.
+- **Red step:** the reachable one is the docs tests' expectation of the file's shape; the release
+  workflow's own refusals (a missing or empty notes file, a tag whose `X.Y.Z` is not the version
+  line's) happen at the tag, which is after this commit and is `scripts/release.sh`'s.
+- **Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`, and `npm run check` in
+  `website/` — `website/test/console.mjs` reads `docs/releases/console/v<version>.md` against
+  `console/package.json`'s version, which is exactly the pair this task writes.
 - **Depends on:** CM10, CM11. **Reviewer tier:** standard. **Commit:** `docs: console 0.121.0,
   Raspberry`.
 
@@ -357,7 +370,7 @@ reviewable artifacts, touched by every console feature).
 
 **Console 0.121.0 (Raspberry)**, the slot the owner named in the ask (D1489). The CLI half (CM1, CM2)
 ships in the CLI release that precedes it, because the screens read fields that release adds: a console
-that shipped first would draw six empty sections and would be a promise rather than a feature. CM12 is
+that shipped first would draw five empty sections and would be a promise rather than a feature. CM12 is
 the console's own notes; the CLI's notes for CM1 and CM2 belong to the CLI release that carries them
 and are that release's task, not this plan's.
 
@@ -376,7 +389,7 @@ row in the register.
 2. Run `fugaro managed status --json` and `fugaro project policy show --json`, and keep both
    documents.
 3. Open the console, select the project, and open the Project tab.
-4. **Expected:** the six sections appear, each within its own read; the marks and the trail agree with
+4. **Expected:** the five sections appear, each within its own read; the marks and the trail agree with
    the first document, the account keys with `fugaro settings --json`, the policy notes with the
    second document and with `fugaro doctor`'s policy lines, and the retirements with what step 1
    printed. **No section offers a control that changes anything**, and no token appears anywhere.

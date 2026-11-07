@@ -255,7 +255,7 @@ alternative costs.
 | **D1485** | What does a recorded retirement carry, and does it carry `argv` or a secret? | **The fields `infra.Retirement` already has** — `address`, `kind`, `cause`, `kept`, `logical`, `protected` (F21) — and the secret **name** where one is named. Never a value, and never the Terraform plan | The whole plan, or the addresses with their resource bodies | A plan is a document about the operator's whole project, not about the retirements, and it carries values the retirement set does not need. An address is repository-authored text and is sanitized as such | |
 | **D1486** | The credentials-service screen: build it now, or after DON7? | **After DON7 (#1816), and it draws doctor's own line rather than re-deriving the state** (F22). A console that re-derived "is this repository switched on" would be the second answer to a question the CLI answers once, and the first time the two disagreed the console would be the one lying | Read the bundle and the service's configuration directly from the console | A second implementation of the switch's own predicate, a credential-shaped read inside the renderer's process, and a screen that disagrees with `doctor` — which is the one thing the CLI's own design refuses by name | |
 | **D1487** | Does any of these views hide in a reduced console? | **No.** They carry no dollars, no caps and no kill control, so they are `null` in `VIEWS` the way Live, Graph and Coordinator are (F9) | Give the group `caps` | A screen that withholds itself in a reduced console although it has nothing to withhold — and a later spend figure added to it would have to revisit this row rather than being stopped by it | |
-| **D1488** | How many reads, and do they run in parallel? | **One section per read** — the managed state, the audit trail, the account keys, the policy notes, the retirements and the credentials service — each with its own busy state and its own refusal, started in parallel and painted on arrival, which is the owner's rule of 2026-10-31 and what `section.ts` implements (F8). **And one module per section** (`console/src/renderer/screens/managed.ts` beside the tab's own `projects.ts`, which wires them), so that two tasks never write one file and the tab's own file has one writer per level | One combined read, or one spinner for the group | A screen that waits for its slowest child before drawing anything, and a refusal that cannot name its own command — the two things the rule exists to forbid | |
+| **D1488** | How many sections, and do they run in parallel? | **One section per thing the ask names, and so five** — the managed state (whose audit trail is a second block of the same read, not a read of its own), the review account keys, the policy notes, the retirements and the credentials service. Each has its own busy state and its own refusal, starts in parallel with its siblings and paints on arrival, which is the owner's rule of 2026-10-31 and what `section.ts` implements (F8). **And one module per section** (`console/src/renderer/screens/managed.ts` beside the tab's own `projects.ts`, which wires them), so that two tasks never write one file and the tab's own file has one writer per level | One combined read, or one spinner for the group | A screen that waits for its slowest child before drawing anything, and a refusal that cannot name its own command — the two things the rule exists to forbid | |
 | **D1489** | The live check, and the release slot. | **Check 360, owner-run (§8), and console 0.121.0 (Raspberry)**, which is the slot the owner already named in the ask. 360 is a fresh block above every claim in the tree and in every pull-request head | Ship in 0.120.0, the release whose notes are already written | The screens would ship before the CLI fields they read (CM1, CM2), so every screen would draw its empty state and the release would be a promise rather than a feature | |
 
 ## 8. The number block, and how it was read
@@ -299,14 +299,17 @@ done | sort -n | tail -1                                                        
 register's highest written section" for the same reason this work takes 360: a fresh block cannot
 collide with a claim nobody has made. The register's own rule — that a claim above the highest written
 section is settled at its merge, and the later of two colliding claims renumbers itself — is unchanged
-by this folder, and **the register's row and section are written by the task that implements the
-check** (plan CM9).
+by this folder, and **the register's row and section are written by the task that proves the screens
+work** — plan CM11, the hermetic end to end, which lists `docs/gcp-live-checklist.md` among its files
+for exactly this.
 
 ## 9. UNVERIFIED
 
 - **The console 0.121.0 release file does not exist yet.** `docs/releases/console/` holds up to
-  `v0.120.0.md`; the plan names the file the release task writes (CM10), and its title ("Raspberry")
-  is the owner's word from the ask.
+  `v0.120.0.md`, and its own README's fruit table ends at `0.120.0` (Quince). The plan names what the
+  release task writes (CM12): the notes file, the next row of that table, and `console/package.json`'s
+  version line, all three of which that README requires in the one commit that cuts the release. The
+  title is the owner's word from the ask — "Raspberry", the next fruit after Quince.
 - **DON7's exact check ID and severity are read from its design, not from the tree** (F22): the
   design names five service states and a `warning` severity, and the implementing task owns the
   strings. If DON7's line lands with a different ID, the screen follows the CLI rather than the
