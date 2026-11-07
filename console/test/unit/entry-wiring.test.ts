@@ -350,7 +350,12 @@ function classed(root: FakeNode, className: string): readonly FakeNode[] {
 }
 
 /** flush lets the entry's own microtasks run: every read is answered through a
- * promise, and a drawing lands a turn after the call that asked for it. */
+ * promise, and a drawing lands a turn after the call that asked for it. The
+ * turns are counted rather than waited for, as `confirm.test.ts`'s own twelve
+ * are, so an assertion is about order and never about timing -- and there are
+ * twenty-four of them because the deepest chain here is the Graph's: the plan
+ * read refuses for an installation that records no checkout, the coordinator
+ * read follows it, and its drawing lands after that. */
 async function flush(): Promise<void> {
   for (let i = 0; i < 24; i += 1) await Promise.resolve()
 }
