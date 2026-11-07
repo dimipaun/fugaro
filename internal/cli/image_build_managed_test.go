@@ -22,7 +22,7 @@ import (
 
 // image_build_managed.go's tests: a person at their own terminal in a managed
 // project builds an image without typing the project's name (NP3, the owner's
-// ruling of 2026-11-07).
+// ruling of 2026-11-06).
 //
 // What is pinned here, and why each one is a test rather than a comment. The
 // typed prompt this door stands in for is the only thing between a person and a

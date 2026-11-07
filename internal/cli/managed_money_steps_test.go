@@ -21,14 +21,15 @@ import (
 // verdict cannot stand in for.
 //
 // The first step — a billable first image build — is not one of them, and it is
-// the test that says so (NP3, the owner's ruling of 2026-11-07). A build is
+// the test that says so (NP3, the owner's ruling of 2026-11-06). A build is
 // money and neither data nor a secret, which is the whole of the distinction
 // this file exists for: a step that spends is one the gate's read covers, and a
-// step that cannot be undone is not. So the build's test asserts the SAME
-// answer in the two worlds told apart — nothing typed where the marks say the
-// project is managed, the typed name where they do not, nothing submitted
-// without it — and the two tests after it assert one answer in both worlds: the
-// owner's own word, exactly as a project that is not managed is asked for it.
+// step that cannot be undone is not. So the build's test asserts what tells the
+// two worlds apart — nothing typed and the build submitted where the marks say
+// the project is managed, the typed name submitted where they do not, and
+// nothing submitted without it — while the two tests after it assert one answer
+// in both worlds: the owner's own word, exactly as a project that is not
+// managed is asked for it.
 //
 // Two mutations are what this file catches: an arm in askClass or askCovered
 // that returns "confirmed" when gateUnderway() is true (which would answer the

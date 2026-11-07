@@ -18,7 +18,8 @@ import (
 
 // `fugaro image build` under the managed gate: the typed prompt's replacement
 // for a person at their own terminal in a managed project (NP3, the owner's
-// ruling of 2026-11-07).
+// ruling of 2026-11-06, which #1845 and image_refresh_steps.go's askBuild
+// already applied elsewhere).
 //
 // What was wrong. A Cloud Build is billable, so every arm of this command asked
 // for the project's name typed at a real terminal (confirmBuild). In a managed
