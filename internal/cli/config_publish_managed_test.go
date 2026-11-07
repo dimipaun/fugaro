@@ -1339,15 +1339,61 @@ func TestConfigPublishManagedRefusesADottedKeyFlattenedOntoTheAllowlist(t *testi
 	}
 }
 
+// A block with nothing under it is still a key the document writes, and the
+// walk visits it: a document that adds one, or drops one the published layer
+// has, changes the layer even though no leaf under it moved — the hole the
+// security review of this change found, where `profiles: {web: {}}` read as
+// unchanged in both directions. No other rule has anything to say about it: an
+// empty block sets no cap, claim, floor or round.
+func TestConfigPublishManagedRefusesAnEmptyBlockAddedOrDropped(t *testing.T) {
+	withProfile := minimalAnchored + "profiles:\n  web: {}\n"
+	cases := []struct {
+		name      string
+		published string
+		next      string
+		names     string
+	}{
+		{"an empty profile added", minimalAnchored, withProfile, "layer.profiles.web"},
+		{"an empty profile dropped", withProfile, minimalAnchored, "layer.profiles.web"},
+		{"an empty governance block added", minimalAnchored, minimalAnchored + "governance: {}\n", "layer.governance"},
+		{"an empty defaults block dropped", minimalAnchored + "defaults: {}\n", minimalAnchored, "layer.defaults"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			_, _, err := execute(t, "config", "publish", layerFile(t, tc.next))
+			if err == nil {
+				t.Fatalf("%s was published in a coding agent's session", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the refusal does not name %s as the key that changed: %v", tc.names, err)
+			}
+			if !strings.Contains(err.Error(), "allowlist") {
+				t.Errorf("the refusal does not name the allowlist as the rule that refused: %v", err)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.published {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			rec := r.audits(t)
+			if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+				t.Fatalf("the record is %v, want one refusal", rec)
+			}
+		})
+	}
+}
+
 // A value can be spelled so that it renders as another document's value: a
 // list of two scalars and a list of one scalar whose text carries the first
 // list's own punctuation are different documents, and `rebuild.paths:
 // [go.mod, go.sum]` against `rebuild.paths: ["go.mod, !!str go.sum"]` is a
 // change to a key outside the allowlist whichever way round it is written. The
 // comparison reads values as rendered text, so a rendering that is not
-// injective reports the two as the same value and admits the change (found in
-// review of #1809). Both directions are asked, because the collision is
-// symmetric and a fix that only caught one of them would still be a hole.
+// injective reports the two as the same value and admits the change — the hole
+// the first-line review of this change found. Both directions are asked,
+// because the collision is symmetric and a fix that caught only one of them
+// would still be a hole.
 func TestConfigPublishManagedRefusesAValueSpelledAsAnotherValue(t *testing.T) {
 	head := minimalAnchored + "default_profile: web\nprofiles:\n  web:\n    rebuild:\n      paths: "
 	plain := head + "[go.mod, go.sum]\n"
@@ -1393,7 +1439,7 @@ func TestConfigPublishManagedRefusesAValueSpelledAsAnotherValue(t *testing.T) {
 // because a key's own validation refuses the document first (a mise tool
 // version, say, is not a version once a comma is in it). A rendering that is
 // not injective reports a change as no change, which is what admitted the
-// change in review of #1809.
+// change the first-line review of this change found.
 func TestLayerNodeValueTellsValuesApart(t *testing.T) {
 	value := func(t *testing.T, text string) *yaml.Node {
 		t.Helper()

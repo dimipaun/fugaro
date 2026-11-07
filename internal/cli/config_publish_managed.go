@@ -302,10 +302,11 @@ func layerDocumentRules(data []byte) []string {
 	return rules
 }
 
-// layerKeyPaths is the document's key paths, one per leaf and one per key the
-// registry knows: the paths the two rules above are decided over. `*` stands in
-// for an element of a list of blocks, which is how the registry spells one
-// (`defaults.rigor.areas.*.mode`). See layerWalkKeys for the walk itself.
+// layerKeyPaths is the document's key paths, one per leaf, one per key the
+// registry knows and one per empty block: the paths the two rules above are
+// decided over. `*` stands in for an element of a list of blocks, which is how
+// the registry spells one (`defaults.rigor.areas.*.mode`). See layerWalkKeys
+// for the walk itself.
 func layerKeyPaths(data []byte) ([][]string, bool) {
 	var paths [][]string
 	if !layerWalkKeys(data, func(path []string, _ []string) {
@@ -334,8 +335,9 @@ func layerKeyValues(data []byte) (map[string][]string, bool) {
 }
 
 // layerWalkKeys is the walk both readings above are made of: it visits every
-// leaf of a layer document and every key the registry knows, and answers false
-// for a document it cannot follow.
+// leaf of a layer document, every key the registry knows, and every empty block
+// (a block holds no leaf, so nothing else would ever say it was there), and it
+// answers false for a document it cannot follow.
 //
 // The walk stops at a path the registry knows, and that is the whole reason it
 // has to be a walk: `layer.claude_models` is one registry row holding a block
@@ -365,6 +367,14 @@ func layerWalkKeys(data []byte, visit func(path []string, value []string)) bool 
 		}
 		switch n.Kind {
 		case yaml.MappingNode:
+			if len(path) > 0 && len(n.Content) == 0 {
+				// A block with nothing under it is still a key the document
+				// writes, and it is the one node whose visit is not a leaf:
+				// without it a document that adds an empty block — or drops one
+				// the published layer has — would read as unchanged.
+				visit(path, []string{layerNodeValue(n)})
+				return true
+			}
 			for i := 0; i+1 < len(n.Content); i += 2 {
 				k, v := n.Content[i], n.Content[i+1]
 				if k.Kind != yaml.ScalarNode || k.ShortTag() != "!!str" {
@@ -406,7 +416,7 @@ func layerWalkKeys(data []byte, visit func(path []string, value []string)) bool 
 // value's own text is still one piece, and no two different nodes can render to
 // the same string. The rendering is never printed — the rule compares it and
 // nothing else — so it is written to be unambiguous rather than to be read.
-// Writing the pieces bare was a hole, found in review of #1809:
+// Writing the pieces bare was a hole the first-line review of this change found:
 // `rebuild.paths: [a, b]` and `rebuild.paths: ["a, !!str b"]` are different
 // documents and rendered to the same text, so a coding agent's session could
 // change a key outside the allowlist and this comparison would report it
