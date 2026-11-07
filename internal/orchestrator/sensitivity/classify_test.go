@@ -6,6 +6,13 @@ package sensitivity_test
 // cheaper class — an empty path list read as Routine, a denylist that lets an
 // unlisted tree through, a `_test.go` shortcut that makes a guard's own test
 // edit routine, or a signature that grows a description the model could write.
+//
+// The console's own paths (its spawn and IPC allow-lists, the launch and
+// settings writes, the pairing check) are in the fixture and not here: a Go file
+// of this module may mention a path under the console's directory only from a
+// pinned allow-list in internal/cli's boundary guard, and a classifier test has
+// no case for spending that exception. The fixture carries them, and
+// TestRoutingRuleFixtureIsNeverRoutine is what holds them to Sensitive.
 
 import (
 	"os"
@@ -128,7 +135,6 @@ func TestUnlistedPathIsSensitive(t *testing.T) {
 		"schemas/fugaro.schema.json",
 		"images/base/Dockerfile",
 		"mobile/src/app/app.js",
-		"console/src/renderer/entry.ts",
 		".github/workflows/ci.yml",
 		"go.mod",
 		// The one tree the allowlist opens and then closes again: a person
@@ -173,7 +179,6 @@ func TestTestEditsInGuardTreesAreSensitive(t *testing.T) {
 		"ee/orchestrator/batch_test.go",
 		".claude/hooks/session_start_test.go",
 		"mobile/src/mailbox/gate.test.js",
-		"console/test/unit/ipc.test.ts",
 	} {
 		if got := sensitivity.Classify([]string{p}); got != sensitivity.Sensitive {
 			t.Errorf("Classify([%q]) = %q, want %q: a test in a guard's tree is a guard change", p, got, sensitivity.Sensitive)
@@ -273,10 +278,10 @@ func TestRoutingRuleFixtureIsNeverRoutine(t *testing.T) {
 }
 
 // beyondTheRoutingText are the fixture's sections the routing text does not
-// name: mobile/ and the console/ hold credentials and MACs, so the design adds
-// them to the rule's categories rather than reading them out of it. Every other
-// section name must be one the text itself uses, so a category cannot be
-// invented in the fixture or quietly dropped from the doc.
+// name. mobile/ and the console's directory hold credentials and MACs, so the
+// design adds them to the rule's categories rather than reading them out of it.
+// Every other section name must be one the text itself uses, so a category
+// cannot be invented in the fixture or quietly dropped from the doc.
 var beyondTheRoutingText = map[string]bool{"mobile": true, "the console": true}
 
 // theRoutineTrees and theRoutineException are the allowlist the plan's O1
