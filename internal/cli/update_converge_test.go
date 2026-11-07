@@ -224,7 +224,11 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 		}
 	}
 	for _, c := range after.Checks {
-		if strings.HasPrefix(c.ID, "image-config-") && !c.OK {
+		// Both halves of the image rule: the per-workflow settings comparison,
+		// and the catalog entry a workflow's image comes from (image-catalog-).
+		// `fugaro update` is the whole upgrade, so no image line of either kind
+		// may still be firing when it is done.
+		if (strings.HasPrefix(c.ID, "image-config-") || strings.HasPrefix(c.ID, "image-catalog-")) && !c.OK {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s", c.ID, c.Problem)
 		}
 	}
