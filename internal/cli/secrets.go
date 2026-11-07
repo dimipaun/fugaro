@@ -623,7 +623,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		repo = r
 	}
 	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name, repo)) {
-		return secretsStoreStep(run, name, func() (string, error) { return secretsSetProjectWide(run, cmd, env, o, name) })
+		return secretsStoreStep(run, name, func() (string, string, error) { return secretsSetProjectWide(run, cmd, env, o, name) })
 	}
 	r, err := resolveSecretRepo(cmd, env, o.repo)
 	if err != nil {
@@ -713,7 +713,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 			pluginwire.Printable(name), pluginwire.Printable(r.repo))
 	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: r.label, gcp.LabelSecret: name}
-	return secretsStoreStep(run, name, func() (string, error) {
+	return secretsStoreStep(run, name, func() (string, string, error) {
 		return storeSecret(run, cmd, env, o, gcp.SecretID(r.slug, name), labels, name)
 	})
 }
@@ -722,17 +722,20 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 // error. The step is opened here and nowhere else, because two commands reach
 // the store — `fugaro secrets set` and the converge behind `fugaro accounts
 // add` — and a value stored for the same reason is accounted for the same way
-// (CL7a). store answers the version it wrote, which is the step's own detail;
-// a store that fails ends the step with a cross and its error.
-func secretsStoreStep(run *stepRun, name string, store func() (string, error)) error {
+// (CL7a). store answers the container it wrote to and the version it wrote,
+// which is the whole of the step's detail and not decoration: the line this
+// replaces named the container, and the person who stored the value is the one
+// who has to be able to find it in Secret Manager. A store that fails ends the
+// step with a cross and its error.
+func secretsStoreStep(run *stepRun, name string, store func() (id, version string, err error)) error {
 	st := run.rep.Step("Storing " + pluginwire.Printable(name))
 	defer st.Abandon()
-	version, err := store()
+	id, version, err := store()
 	if err != nil {
 		st.Failed(err, nil)
 		return err
 	}
-	st.Done("version " + version)
+	st.Done("version " + version + " in " + id)
 	return nil
 }
 
@@ -1300,9 +1303,9 @@ func projectWideHint(lc *localcfg.Config, name string) string {
 // secretsSetProjectWide stores name's value once for the whole Fugaro
 // project (design docs/design/project-secrets.md §4). Eligibility is
 // projectWideAccepted's decision, and it runs before any value is read.
-func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptions, name string) (string, error) {
+func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptions, name string) (string, string, error) {
 	if !projectWideAccepted(env.lc, name) {
-		return "", projectWideRefusal(env.lc, name)
+		return "", "", projectWideRefusal(env.lc, name)
 	}
 	// Design §5's precedence has no override-the-override, and §6 step 4a is
 	// the state both existing installations are in: a repository copy with an
@@ -1326,9 +1329,10 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o se
 			pluginwire.Printable(name), pluginwire.Printable(strings.Join(repos, ", ")))
 	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: env.lc.Name, gcp.LabelSecret: name}
-	version, err := storeSecret(run, cmd, env, o, gcp.ProjectSecretID(env.lc.Name, name), labels, name)
+	id := gcp.ProjectSecretID(env.lc.Name, name)
+	_, version, err := storeSecret(run, cmd, env, o, id, labels, name)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	// Plan Task 2.1 step 3: the reach is stated where the person storing the
 	// value reads it, in one sentence, because D2 is a default that shares a
@@ -1358,7 +1362,7 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o se
 		note += " A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry, and that entry's allow_data_to is what decides which repositories mount the copy: with no entry, or with an entry that lists nothing, the name stays a repository copy instead."
 	}
 	fmt.Fprintln(cmd.ErrOrStderr(), note)
-	return version, nil
+	return id, version, nil
 }
 
 // projectReach words who may mount a project copy of logical, for the note
@@ -1443,11 +1447,11 @@ func repoCopiesWithVersions(ctx context.Context, env *cloudEnv, logical string) 
 // storeSecret reads name's value (stdin, or a hidden prompt on a terminal)
 // and stores it as a new version of id with labels, printing neither the
 // value nor anything a server echoed back.
-func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptions, id string, labels map[string]string, name string) (string, error) {
+func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptions, id string, labels map[string]string, name string) (string, string, error) {
 	ctx := cmd.Context()
 	sm, err := gcp.NewSecrets(ctx, env.gcp)
 	if err != nil {
-		return "", remote(err)
+		return "", "", remote(err)
 	}
 	// The hidden prompt is read with the line in flight taken down: a frame
 	// drawn on the line the prompt is written on swallows it and the answer
@@ -1459,7 +1463,7 @@ func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptio
 		return rerr
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer clear(value)
 	version, err := sm.Set(ctx, id, value, labels)
@@ -1467,19 +1471,19 @@ func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptio
 		// A server may echo what it received, raw or base64 as sent.
 		msg := agent.Redact(err.Error(), []string{string(value), base64.StdEncoding.EncodeToString(value)})
 		if errors.Is(err, gcp.ErrForeignSecret) {
-			return "", userErr("%s; refusing to add a version to it", msg)
+			return "", "", userErr("%s; refusing to add a version to it", msg)
 		}
-		return "", remote(errors.New(msg))
+		return "", "", remote(errors.New(msg))
 	}
 
 	if o.asJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(map[string]string{"project": env.lc.Name, "secret": id, "version": version}); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
-	return version, nil
+	return id, version, nil
 }
 
 // readSecret reads the value of secret name. From a terminal it prompts on

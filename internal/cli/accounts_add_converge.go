@@ -134,17 +134,15 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 }
 
 // accountsAddStoreSecret runs the project-wide store (secretsSetProjectWide,
-// spec §2.2 step 5) and answers the version it wrote. The store's own line is
-// captured rather than printed: this command answers with one block, and the
-// version belongs on that block's account line. Nothing is swallowed — a line
-// this release cannot read is printed as it came.
+// spec §2.2 step 5) and answers the version it wrote. The store prints its own
+// step and answers the version it wrote, so the version reaches this command's
+// block without a line being read back out of its output (CL7a): the step and
+// the block are two accounts of one store, and neither is parsed out of the
+// other.
 func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, name string) (string, error) {
 	secret := config.ClaudeAccountSecret(name)
-	// The store prints its own step and answers the version it wrote, so the
-	// version reaches this command's block without a line being read back out
-	// of its output (CL7a): the step and the block are two accounts of one
-	// store, and neither is parsed out of the other.
-	return secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
+	_, version, err := secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
+	return version, err
 }
 
 // accountsAddClearMark clears the account's mark (spec §2.2 step 6) and answers
