@@ -316,14 +316,17 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, rep *r
 		Impersonator: imp,
 		// The run's own output — the D59 warning this project's inventory
 		// raised, the gate's verdict and terraform's progress — stays on stderr,
-		// which is where it was before this command had a step of its own. It is
-		// the one stream in this batch that does not move to the log: the gate's
-		// warning is documented as one every session reads (Request.confirm), it
-		// shares this one writer with terraform's progress, and splitting them
-		// would be changing a gate, which this plan does not do. What the step
-		// below adds is the account of the apply, not a second place for its
-		// output.
-		Out: cmd.ErrOrStderr(),
+		// which is where it was before this command had a step of its own: the
+		// gate's warning is documented as one every session reads
+		// (Request.confirm), so it reaches the terminal in every session and not
+		// only under --verbose the way Stream does. It is kept in the run's log
+		// beside that (sayThrough): the log is the run's full output and a
+		// failure prints its path, so terraform's progress has to be in it.
+		// Every write takes the line in flight down around it (G1): the apply's
+		// step is open across the whole of it, and a spinner's carriage return
+		// over this output would mangle exactly the sentences an owner reads to
+		// decide whether a project is still managed.
+		Out: sayThrough(rep, cmd.ErrOrStderr()),
 	})
 	if err != nil {
 		// The step is the account of the apply, so a refused or failed one

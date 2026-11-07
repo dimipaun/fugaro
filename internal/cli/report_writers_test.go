@@ -11,9 +11,14 @@ package cli
 // all (onlyLog finds no directory to read).
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/infra/managed"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
 // closing is the reporter's last line: the three outcomes of G3, with the
@@ -62,14 +67,105 @@ func stepNamed(out, name string) bool {
 
 // writesALog is D1352's half of the batch: the run kept a log filed under its
 // own command name, which is also what a failure's "full output:" line points
-// at. A run that kept no log has no directory to read and fails here.
+// at, and the log holds the run's own account — its step lines and the closing
+// line last. A run that kept no log has no directory to read and fails here; a
+// run that kept an empty one would point a person at nothing, which is what
+// this asserts against rather than merely that a file exists.
 func writesALog(t *testing.T, cmdName string) string {
 	t.Helper()
-	path, content := onlyLog(t, cmdName)
-	if !strings.Contains(content, "\n") && content != "" {
-		t.Errorf("%s's log is not a log of lines: %q", cmdName, content)
+	_, content := onlyLog(t, cmdName)
+	lines := reportLines(content)
+	if len(lines) == 0 {
+		t.Fatalf("%s kept an empty log: the failure block would send a person to a file with nothing in it", cmdName)
 	}
-	return path
+	if !hasAStepLine(content) {
+		t.Errorf("%s's log holds no step line, so the run's own account is not in it:\n%s", cmdName, content)
+	}
+	if !hasAClosingLine(lines) {
+		t.Errorf("%s's log holds no closing line, so the run's own account is not in it:\n%s", cmdName, content)
+	}
+	return content
+}
+
+// hasAClosingLine is whether any of a run's lines is the reporter's closing
+// one.
+func hasAClosingLine(lines []string) bool {
+	for _, l := range lines {
+		if closing.MatchString(l) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAStepLine is whether s carries any step's result line: one of the four
+// marks, a space and a name.
+func hasAStepLine(s string) bool {
+	for _, mark := range []string{markDone, markFailed, markLeft, markSkipped} {
+		if strings.Contains(s, mark+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// screenWatch is a run's screen, watched as it is written: it keeps what was on
+// it just before the first block the run printed itself, once a step's line has
+// been drawn. The line in flight is written with a leading carriage return and
+// a command's own lines are not, so "the first write that is not a frame, after
+// a frame" is that block — and where the frame was left underneath it is
+// exactly what a person would have seen.
+type screenWatch struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	frame  bool
+	before string
+	found  bool
+}
+
+func (w *screenWatch) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case bytes.HasPrefix(p, []byte("\r")):
+		w.frame = true
+	case w.frame && !w.found:
+		w.found, w.before = true, w.buf.String()
+	}
+	return w.buf.Write(p)
+}
+
+func (w *screenWatch) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+// after is everything the run wrote from that block on.
+func (w *screenWatch) after() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()[len(w.before):]
+}
+
+// notDrawnOver is G1's assertion for a block a command prints itself while a
+// step is in flight: what was on the screen just before it has to be the
+// sequence that takes the line in flight down — the reporter's own "\r\x1b[K" —
+// or the end of a line. A frame of the spinner redraws its own line with a
+// carriage return, so anything else means the block was drawn onto it.
+func notDrawnOver(t *testing.T, w *screenWatch, what string) {
+	t.Helper()
+	if !w.found {
+		t.Fatalf("the run never printed %s:\n%q", what, w.String())
+	}
+	if strings.HasSuffix(w.before, "\x1b[K") || strings.HasSuffix(w.before, "\n") {
+		return
+	}
+	before := w.before
+	if len(before) > 60 {
+		before = before[len(before)-60:]
+	}
+	t.Errorf("the line in flight was left on the screen under %s: the screen just before it holds %q", what, before)
 }
 
 // ---------------------------------------------------------------- publish
@@ -119,6 +215,38 @@ func TestAllowDeleteWritesALog(t *testing.T) {
 		t.Fatal(err)
 	}
 	writesALog(t, "allow-delete")
+}
+
+// TestAllowDeleteAFailedWriteIsAFailedStep: the list's write is the run's one
+// step and the step is opened before it, so a bucket that refuses the write
+// ends it with a cross and the run says it failed — the failure is a step on
+// the screen and not an error under a line claiming the list was written (G8).
+// The run's own log holds the same failure, which is what the path under it
+// sends a person to read (D1352).
+//
+// The write is refused the way a real one is: a credential with no write grant
+// at the bucket's root answers 403 (the fake's DenyWrites), which is the shape
+// every launcher's session meets.
+func TestAllowDeleteAFailedWriteIsAFailedStep(t *testing.T) {
+	r := allowDeleteRig(t)
+	r.gcs.DenyWrites(initRunsBucket, managed.AllowDeleteObject)
+	out, errOut, err := execute(t, allowDeleteArgs(webApproval)...)
+	if err == nil {
+		t.Fatalf("the command reported a write the bucket refused:\n%s%s", out, errOut)
+	}
+	if !strings.Contains(out, markFailed+" delete-list:") {
+		t.Errorf("the refused write is not a failed step:\n%s%s", out, errOut)
+	}
+	reported(t, out, "delete-list")
+	if !strings.Contains(out, "full output: ") {
+		t.Errorf("the failure does not say where the run's own output is:\n%s", out)
+	}
+	// And the log is the run the screen shows: the same failed step and the
+	// same closing line (the path above points at it).
+	log := writesALog(t, "allow-delete")
+	if !strings.Contains(log, markFailed+" delete-list:") {
+		t.Errorf("the log does not hold the failed step:\n%s", log)
+	}
 }
 
 // ------------------------------------------------------------ managed flag
@@ -177,6 +305,40 @@ func TestManagedUnflagWritesALog(t *testing.T) {
 	writesALog(t, "managed-unflag")
 }
 
+// TestManagedUnflagPrintsTheHalvesOnTheirOwnLine: what each half of the mark
+// came off as is printed while the unflag's step is in flight, so the line in
+// flight is taken down for it (G1). It is the half of the account an owner
+// cannot lose — "was not there" is the difference between a project this
+// command converged and one it did nothing to — and a spinner's carriage
+// return drawn over it is that difference smeared off the screen. The fixture
+// is a terminal, which is the only place a line in flight is drawn at all
+// (G4).
+func TestManagedUnflagPrintsTheHalvesOnTheirOwnLine(t *testing.T) {
+	managedUnflagRig(t)
+	terminal(t, true)
+	writerAsTerminal(t)
+	// Without this the test would pass on a machine whose TERM happens to be
+	// dumb, where nothing is drawn to draw over (G4).
+	t.Setenv("TERM", "xterm-256color")
+	watch := &screenWatch{}
+	cmd := NewRootCmd()
+	cmd.SetIn(strings.NewReader(initProject + "\n"))
+	// One writer for both, which is what a terminal is: the reporter draws on
+	// stdout and the halves go to the same screen.
+	cmd.SetOut(watch)
+	cmd.SetErr(watch)
+	cmd.SetArgs(NormalizeArgs(managedUnflagArgs()))
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("the unflag: %v\n%s", err, watch.String())
+	}
+	notDrawnOver(t, watch, "what each half of the mark came off as")
+	for _, want := range []string{"removed", "read back", "is not managed"} {
+		if !strings.Contains(watch.String(), want) {
+			t.Errorf("the command does not say %q:\n%s", want, watch.String())
+		}
+	}
+}
+
 // ----------------------------------------------------------- managed apply
 
 func TestManagedApplyDefaultIsShort(t *testing.T) {
@@ -192,6 +354,75 @@ func TestManagedApplyWritesALog(t *testing.T) {
 	_, root, _ := managedOpenGateRig(t)
 	_, _, _ = execute(t, "managed", "apply", root)
 	writesALog(t, "managed-apply")
+}
+
+// managedApplyOnScreen runs `managed apply` with one writer standing in for a
+// person's terminal — stdout and stderr are the same screen there — and returns
+// what it wrote.
+func managedApplyOnScreen(t *testing.T, root string) (*screenWatch, error) {
+	t.Helper()
+	writerAsTerminal(t)
+	// Without this the test would pass on a machine whose TERM happens to be
+	// dumb, where nothing is drawn to draw over (G4).
+	t.Setenv("TERM", "xterm-256color")
+	watch := &screenWatch{}
+	cmd := NewRootCmd()
+	cmd.SetIn(strings.NewReader(initProjectName + "\n"))
+	cmd.SetOut(watch)
+	cmd.SetErr(watch)
+	cmd.SetArgs(NormalizeArgs([]string{"managed", "apply", root}))
+	return watch, cmd.Execute()
+}
+
+// TestManagedApplyAsksOnItsOwnLine: the managed apply's question is asked in
+// the middle of its one step, after the plan has been gated, so the line in
+// flight is taken down before the question is written and drawn again once it
+// is answered (G1). A question a person reads through a spinner is one nobody
+// can answer, and this is the question that decides whether a plan is applied.
+func TestManagedApplyAsksOnItsOwnLine(t *testing.T) {
+	noAgentSession(t)
+	_, root := inventoryApplyRig(t)
+	stubManagedAssets(t, &fakeManagedAssets{assets: []managedmode.Asset{
+		{Name: "//storage.googleapis.com/" + initRunsBucket, Type: "storage.googleapis.com/Bucket"},
+		{Name: "//storage.googleapis.com/fmgd-data", Type: "storage.googleapis.com/Bucket"},
+	}})
+	terminal(t, true)
+	watch, err := managedApplyOnScreen(t, root)
+	notDrawnOver(t, watch, "the question it asks the person at the terminal")
+	if after := watch.after(); !strings.Contains(after, "Type "+initProjectName+" to confirm: ") {
+		t.Fatalf("the command never asked the person at the terminal (err %v):\n%s", err, watch.String())
+	}
+	// The answer puts the line back, so the apply is still the one step the
+	// person is watching while it runs: Resume is the only thing that draws
+	// again — the frames are stopped until it does — so a redraw after the
+	// question is what says it happened.
+	if after := watch.after(); !strings.Contains(after, "\r") {
+		t.Errorf("the answer did not put the line in flight back:\n%q", after)
+	}
+}
+
+// TestManagedApplyDoesNotDrawOverItsOwnOutput: the apply's step is open across
+// everything the apply itself prints — how it is about to apply, and D59's
+// warning when the whole-project read fell back — so each of those writes takes
+// the line in flight down first (G1). The warning is the one this fixture
+// reaches: the run is refused at the confirmation, which is where the fallback
+// is said, and it is a sentence every session reads (Request.confirm).
+func TestManagedApplyDoesNotDrawOverItsOwnOutput(t *testing.T) {
+	noAgentSession(t)
+	_, root := inventoryApplyRig(t)
+	const foreign = "//compute.googleapis.com/projects/" + initProject + "/zones/us-east5-a/instances/somebody-elses"
+	stubManagedAssets(t, &fakeManagedAssets{assets: []managedmode.Asset{
+		{Name: "//storage.googleapis.com/" + initRunsBucket, Type: "storage.googleapis.com/Bucket"},
+		{Name: foreign, Type: "compute.googleapis.com/Instance"},
+	}})
+	watch, err := managedApplyOnScreen(t, root)
+	if err == nil {
+		t.Fatalf("the command applied without a confirmation:\n%s", watch.String())
+	}
+	notDrawnOver(t, watch, "the apply's own output")
+	if !strings.Contains(watch.after(), "this run falls back to confirmations") || !strings.Contains(watch.after(), foreign) {
+		t.Fatalf("the run never said the read fell back (err %v):\n%s", err, watch.String())
+	}
 }
 
 // ----------------------------------------------------------------- restore

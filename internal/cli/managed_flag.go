@@ -361,7 +361,12 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	if replaced {
 		wrote = fmt.Sprintf("replaced the creation fact in gs://%s/%s: %s recorded no budget amount and now records %d %s", safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), amount, safetext.Field(currency))
 	}
-	fmt.Fprintf(w, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
+	// What was written, and the undo, go through the run's own writer: they are
+	// the account the step above ends on, so they are kept in the log beside
+	// the step's line (D1352), and the step is still in flight while the first
+	// of them is written (sayThrough takes the line down for it).
+	out := sayThrough(rep, w)
+	fmt.Fprintf(out, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
 		wrote, amount, safetext.Field(currency))
 	// The undo names both writes, because this command made both (Task 3.0):
 	// the object in the runs bucket and the label on the project. Either one
@@ -371,7 +376,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// not exist. The gcloud line takes the label off on
 	// its own, and no test can run it, so it stays marked UNVERIFIED as the
 	// backfill in docs/design/managed-projects.md is.
-	fmt.Fprintf(w, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — take both off with `fugaro managed unflag %s` in your own terminal, which removes the object gs://%s/%s and the %s=%s label on the project itself; the label alone comes off with `gcloud projects update %s --remove-labels=%s`, which is UNVERIFIED until an operator has run it live (docs/design/managed-projects.md carries the same line)\n",
+	fmt.Fprintf(out, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — take both off with `fugaro managed unflag %s` in your own terminal, which removes the object gs://%s/%s and the %s=%s label on the project itself; the label alone comes off with `gcloud projects update %s --remove-labels=%s`, which is UNVERIFIED until an operator has run it live (docs/design/managed-projects.md carries the same line)\n",
 		safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
 	return nil
 }

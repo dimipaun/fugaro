@@ -1021,9 +1021,44 @@ func (rr *restoreRun) writeConfig() error {
 // step's spinner over the config's diff, the checkout's diff or the list the
 // run ends with would be a block somebody is reading through.
 func (rr *restoreRun) say(format string, args ...any) {
-	rr.rep.Pause()
-	fmt.Fprintf(rr.cmd.OutOrStdout(), format, args...)
-	rr.rep.Resume()
+	fmt.Fprintf(sayThrough(rr.rep, rr.cmd.OutOrStdout()), format, args...)
+}
+
+// sayThrough is the writer a command prints its own lines through: the writer
+// it was given — a person's stdout, or the stderr a warning belongs on — and
+// the run's log beside it (D1352, Reporter.Log), so the log is the run's full
+// output and not only its steps, and a failure's "full output:" path holds the
+// sentences the run printed under its step. Every write takes the line in
+// flight down around it and draws it again after (G1): a spinner redraws its
+// own line with a carriage return, so a block written while a step is open is
+// drawn over — the two halves of an unflag, a managed apply's terraform
+// progress — unless the line comes down first.
+//
+// A nil reporter is a run with no log and nothing drawn: the writer itself.
+func sayThrough(rep *report.Reporter, w io.Writer) io.Writer {
+	if rep == nil {
+		return w
+	}
+	return &throughWriter{rep: rep, w: w}
+}
+
+// throughWriter is sayThrough's writer: one line out to a person, one into the
+// log. It writes through to the log whatever the human write does, and it
+// never fails the command (G5): a closed pipe or a log that cannot be written
+// changes no exit code, and the returned length is the caller's bytes either
+// way, so an io.Writer that checks errors — terraform's — is not stopped by
+// either of them.
+type throughWriter struct {
+	rep *report.Reporter
+	w   io.Writer
+}
+
+func (t *throughWriter) Write(p []byte) (int, error) {
+	_, _ = t.rep.Log().Write(p)
+	t.rep.Pause()
+	_, _ = t.w.Write(p)
+	t.rep.Resume()
+	return len(p), nil
 }
 
 // createArgs is the creating path's flags, and nothing else: `fugaro setup

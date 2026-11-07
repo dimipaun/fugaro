@@ -212,9 +212,15 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 		return fail(remote(fmt.Errorf("removed gs://%s/%s, but not the %s label on GCP project %s (%v): the read requires both, so %s is not managed any more, but the label is still on the project and this command could not take it off. Run it again as the account that owns the project",
 			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name))))
 	}
-	fmt.Fprintf(w, "  marker object gs://%s/%s: %s\n", safetext.Field(bucket), managed.MarkerObject,
+	// What each half of the mark came off as goes out through the run's own
+	// writer: it says which of the two was already gone — the difference
+	// between converging a project and doing nothing to it — and it is printed
+	// while the step above it is still in flight, so the line in flight has to
+	// come down for it rather than be drawn over by the spinner (sayThrough).
+	out := sayThrough(rep, w)
+	fmt.Fprintf(out, "  marker object gs://%s/%s: %s\n", safetext.Field(bucket), managed.MarkerObject,
 		removedOr(objectRemoved, "removed", "was not there"))
-	fmt.Fprintf(w, "  label %s on GCP project %s: %s\n", managed.ProjectLabelKey, safetext.Field(lc.GCPProject),
+	fmt.Fprintf(out, "  label %s on GCP project %s: %s\n", managed.ProjectLabelKey, safetext.Field(lc.GCPProject),
 		removedOr(labelRemoved, "removed", "was not the managed mark, left as it is"))
 	// Read back through the managed read itself, with its project-number
 	// check: the command does not say the project is unmanaged unless the read
@@ -234,9 +240,9 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	// doing nothing to it.
 	step.Done(fmt.Sprintf("read back through the managed read, with the project-number check: %s is not managed", safetext.Field(lc.Name)))
 	if reason != "" {
-		fmt.Fprintf(w, "  the read says: %s\n", safetext.Field(reason))
+		fmt.Fprintf(out, "  the read says: %s\n", safetext.Field(reason))
 	}
-	fmt.Fprintf(w, "unflagged GCP project %s: it is not a managed project any more, and its applies take the typed confirmation again; the deployer fence is untouched\n", safetext.Field(lc.GCPProject))
+	fmt.Fprintf(out, "unflagged GCP project %s: it is not a managed project any more, and its applies take the typed confirmation again; the deployer fence is untouched\n", safetext.Field(lc.GCPProject))
 	return nil
 }
 

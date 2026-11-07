@@ -1378,7 +1378,10 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 		if !stale {
 			return nil
 		}
-		fmt.Fprintln(out, "changed by someone else meanwhile; reading it again")
+		// The retry says so on the screen and in the log (sayThrough): a run
+		// that read the database twice is a run a person may have to explain,
+		// and the log is where they look after it.
+		fmt.Fprintln(sayThrough(rep, out), "changed by someone else meanwhile; reading it again")
 	}
 	return remote(fmt.Errorf("the budget database kept changing under the write (%d attempts); nothing further was written; run it again", setAttempts))
 }
@@ -1488,7 +1491,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 			}
 			return nil
 		},
-		Conflict: func() { fmt.Fprintln(out, "changed by someone else meanwhile; reading it again") },
+		Conflict: func() { fmt.Fprintln(sayThrough(rep, out), "changed by someone else meanwhile; reading it again") },
 		Now:      budgetNow,
 	})
 	var ke *budget.KillError
@@ -1521,7 +1524,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		if !o.all {
 			var g budget.Kill
 			if _, err := db.Get(ctx, budget.PathKillGlobal, &g); err == nil && g.On {
-				fmt.Fprintf(out, "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
+				fmt.Fprintf(sayThrough(rep, out), "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
 			}
 		}
 	}

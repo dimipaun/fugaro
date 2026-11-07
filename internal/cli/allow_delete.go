@@ -336,7 +336,12 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 	}
 	step.Done(fmt.Sprintf("wrote gs://%s/%s: %s may now delete or replace %d object(s), at the addresses below and no others:",
 		safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), len(approved)))
-	printEntries(w, approved)
+	// The addresses the step ends on go through the run's own writer: they are
+	// the list the step's line points at, so they belong in the log beside it
+	// (D1352), not only on the screen. The reader above prints the same list
+	// through the command's writer alone: it is a read, and a read keeps no log
+	// at all (T6).
+	printEntries(sayThrough(rep, w), approved)
 	return nil
 }
 
