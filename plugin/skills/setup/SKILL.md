@@ -29,7 +29,7 @@ Ground rules:
 
 ## 1. Preconditions
 
-From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads and names the one-line fix for each. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
+From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro setup --project <name>
@@ -55,7 +55,7 @@ Also check `fugaro version`, `docker version` and `fugaro backends ls` for where
 
 ### Does the project publish a project layer?
 
-`fugaro config layer --json` takes `project:` and `gcp_project:` from the `fugaro.yaml` of the checkout it runs in, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. `profiles:` and `default_profile:` are keys inside its `yaml` text, not fields of the object. Run it directly; a checkout with no `fugaro.yaml` fails, with a guided sentence naming /fugaro:setup; then ask for the project and its GCP project, write a scratch `fugaro.yaml` with only `version`, `project` and `gcp_project`, and run it.
+`fugaro config layer --json` takes `project:` and `gcp_project:` from the `fugaro.yaml` of the checkout it runs in, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its four keys are `where`, `generation`, `sha256` and `yaml`; `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Run it directly; a checkout with no `fugaro.yaml` fails, with a guided sentence naming /fugaro:setup; then ask for the project and its GCP project, write a scratch `fugaro.yaml` with only `version`, `project` and `gcp_project`, and run it.
 
 **If it prints a layer,** read `profiles:` and `default_profile:` from its `yaml` field, tell the user which profiles it offers and which is the default, and ask only whether the repository fits one. If it does:
 1. Delete any scratch `fugaro.yaml` you wrote above (`fugaro config init` refuses to overwrite a file that is not byte-identical to what it would write), then write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` if it needs one).
@@ -76,8 +76,6 @@ Read, don't run. Take the facts from the files, with their lines: `reference/dis
 - the language versions the repository pins (for `mise.toml`)
 - CI machine size and the test footprint, for `resources`, and how risky the repository is (what a missed bug costs), for `review_rounds`: two separate decisions
 - for a GitHub repository, whether the user has a Fugaro GitHub App (step 5, topic 1)
-
-Tell the user in a few lines what you found and what you couldn't.
 
 ## 3. Choose workflows, services and the image
 
