@@ -9826,6 +9826,11 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		// writes (secretsRmDryRun, D1171).
 		"`operation`",
 		"`remove-secret`",
+		// And the block the entry it takes away lives in: `secrets rm` removes
+		// the entry the NAME has, which is `workflow_secrets.NAME` for a
+		// workflow secret (D1260) — a row that named only `project_secrets`
+		// describes a key the command does not touch (secretsRmWhat).
+		"`workflow_secrets.NAME`",
 		"`entry_key`",
 		"`entry_value`",
 		"`entry_fields`",
