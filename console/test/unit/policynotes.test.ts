@@ -43,10 +43,12 @@ import { describe, expect, it } from 'vitest'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { PATH_PLACEHOLDER } from '../../src/shared/sanitize'
 import {
+  POLICY_CHECK_ABSENT_BECAUSE,
   POLICY_CHECK_IDS,
   POLICY_CHECKS_SOURCE,
   POLICY_CHECKS_TITLE,
   POLICY_CHECK_FAILING_WORD,
+  POLICY_CHECK_NOTED_WORD,
   POLICY_CHECK_OK_WORD,
   POLICY_CHECK_UNDRAWN_WORD,
   POLICY_DEFAULT_WORD,
@@ -185,16 +187,25 @@ function draw(overrides: Partial<PolicyNotesInputs> = {}): ScreenElement {
  * (F18, D1481), with the five members the plan names **and** the members it does
  * not -- a `budget` block with a dollar figure, the two review-account keys of
  * D1478, a price override -- because a screen that drew one of those would pass
- * a test whose fixture carried only what it draws. */
+ * a test whose fixture carried only what it draws.
+ *
+ * The allow-list entries are what the CLI really writes: a canonical
+ * `provider/owner/name` (`projectpolicy.Canonical`), a wildcard pattern of the
+ * same three segments (`projectpolicy.MatchRepo`, `config.MatchSegment`), and
+ * one entry with a wildcard **inside** a segment, which the grammar allows. The
+ * two-segment `owner/name` this fixture carried before is not a value the CLI
+ * ever writes into `allow_repos`, and drawing the list through the `repository`
+ * class -- which is `owner/name` -- refused every real entry (review of
+ * 2026-11-07). */
 const POLICY_DOC = {
   project: 'example-project',
   policy: {
     version: 3,
     base_branch: 'trunk',
-    allow_repos: ['example-owner/example-repo'],
+    allow_repos: ['github/example-owner/example-repo', '*/example-owner/example-*'],
     accounts: {
-      'anthropic-api': { allow_repos: ['example-owner/example-repo', 'example-owner/other-repo'] },
-      'claude-ops': { allow_repos: ['example-owner/example-repo'] },
+      'anthropic-api': { allow_repos: ['github/example-owner/example-repo', 'github/example-owner/other-repo'] },
+      'claude-ops': { allow_repos: ['*/example-owner/example-repo'] },
     },
     routing: { claude: { via: 'openrouter', models: ['claude-sonnet-5-5'] } },
     image_catalog: {
@@ -205,7 +216,11 @@ const POLICY_DOC = {
           source: { kind: 'dockerfile', repo: 'example-owner/example-repo', path: 'images/node.Dockerfile' },
           default: true,
         },
-        { name: 'postgres', tags: ['postgres'], source: { kind: 'image', image: 'postgres:16' } },
+        // A container image reference with a registry host and a path, which is
+        // what `catalogImageRE` (`internal/config/catalog.go`) accepts and what
+        // the `label` class mangled into `<host><path>:1.2` (review of
+        // 2026-11-07).
+        { name: 'agent', tags: ['agent'], source: { kind: 'image', image: 'ghcr.io/example-owner/agent:1.2' } },
         { name: 'tools', tags: [], source: { kind: 'inline', inline: 'FROM node:22\n' } },
       ],
     },
@@ -232,48 +247,50 @@ const OTHER_CHECK_IDS = [
   'creds-broken',
 ]
 
-/** DOCTOR is `fugaro doctor --json`: `{ok, checks}`. It carries the five policy
- * checks a project with a fresh node would have, **not** the sixth
- * (`policy-rules-skew`, which a database doctor cannot read), and the five
- * checks of `OTHER_CHECK_IDS` -- two of which doctor raises about this very node
- * (`allow-list-empty`, `allow-list-uncovered`, `internal/cli/doctor.go`). */
+/** DOCTOR is `fugaro doctor --json`: `{ok, checks}`, carrying the checks a real
+ * installation's `doctor` writes, **with doctor's own `ok` and severity for
+ * each** -- which the fixture got wrong before: it gave `policy-published`
+ * `ok: true`, a state no branch of `doctorPolicyChecks` writes
+ * (`internal/cli/doctor.go`: every emission of that id is an `info` line with
+ * `ok` unset, and `checksFail`/`doctorClassOf` in `internal/cli/doctor_render.go`
+ * are the rule that reads it). Three of the six are carried:
+ *
+ *   - `policy-published`, the one check nearly every installation carries, a
+ *     measurement (`doctorMeasureIDs`) rather than something to do;
+ *   - `policy-unknown-keys` and `policy-vs-jobs`, both real findings.
+ *
+ * `policy-newer-than-binary`, `policy-older-than-binary` and
+ * `policy-rules-skew` are **not** carried: the first two are the two directions
+ * of one version skew and cannot both be in one document, and the third is the
+ * generation the rules marker records, which a database doctor cannot read (the
+ * plan says so). So the document is one installation's, with one exception: the
+ * five checks of `OTHER_CHECK_IDS` are a union rather than one installation's --
+ * doctor raises the two allow-list warnings only about a node whose allow-list is
+ * empty -- and they are here for the filter, which is the only claim this file
+ * makes about them. */
 const DOCTOR = {
   ok: false,
   checks: [
     {
       id: 'policy-published',
-      ok: true,
-      severity: 'info',
-      problem: 'a policy is published at config/policy/shared',
-      fix: '',
-    },
-    {
-      id: 'policy-newer-than-binary',
       ok: false,
-      severity: 'warning',
-      problem: 'the published policy was written by a newer Fugaro',
-      fix: 'upgrade Fugaro',
-    },
-    {
-      id: 'policy-older-than-binary',
-      ok: true,
-      severity: 'warning',
-      problem: 'the published policy is not older than this binary',
-      fix: '',
+      severity: 'info',
+      problem: 'a policy is published at config/policy/shared (version 3, 2 allow-list entries)',
+      fix: 'fugaro project policy show prints it',
     },
     {
       id: 'policy-unknown-keys',
       ok: false,
       severity: 'warning',
-      problem: 'the node carries a key this Fugaro does not know: image_catalog',
-      fix: 'run `fugaro project policy publish`',
+      problem: 'no run is bounded by the policy node: the node carries a key this Fugaro does not know: image_catalog',
+      fix: 'remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro',
     },
     {
       id: 'policy-vs-jobs',
-      ok: true,
+      ok: false,
       severity: 'warning',
-      problem: 'every job matches the published policy',
-      fix: '',
+      problem: 'the jobs are deployed from the runner image ghcr.io/example-owner/runner:1.1, which predates this Fugaro: a policy published at config/policy/shared is one those runs do not read, so they keep the ceiling from their own environment',
+      fix: 'fugaro image refresh moves the jobs to this release’s runner image',
     },
     {
       id: 'allow-list-empty',
@@ -306,26 +323,33 @@ describe('the policy notes', () => {
 
     expect(texts(node, 'policy-notes-branch')).toEqual(['trunk'])
     // The node's own `allow_repos`, then each account's list in name order:
-    // `anthropic-api`'s two, then `claude-ops`'s one.
+    // `anthropic-api`'s two, then `claude-ops`'s one. Every value is drawn as
+    // the document wrote it -- a canonical three-segment repository and both
+    // spellings of a `*` pattern -- and none of them is the `n/a` mark, which is
+    // what the `repository` class drew for all five (review of 2026-11-07).
     expect(texts(node, 'policy-notes-repo')).toEqual([
-      'example-owner/example-repo',
-      'example-owner/example-repo',
-      'example-owner/other-repo',
-      'example-owner/example-repo',
+      'github/example-owner/example-repo',
+      '*/example-owner/example-*',
+      'github/example-owner/example-repo',
+      'github/example-owner/other-repo',
+      '*/example-owner/example-repo',
     ])
     expect(texts(node, 'policy-notes-account-name')).toEqual(['anthropic-api', 'claude-ops'])
     expect(texts(node, 'policy-notes-value')).toContain('openrouter')
     expect(texts(node, 'policy-notes-model')).toEqual(['claude-sonnet-5-5'])
-    expect(texts(node, 'policy-notes-entry-name')).toEqual(['node-22', 'postgres', 'tools'])
+    expect(texts(node, 'policy-notes-entry-name')).toEqual(['node-22', 'agent', 'tools'])
     expect(texts(node, 'policy-notes-entry-kind')).toEqual(['dockerfile', 'image', 'inline'])
     expect(texts(node, 'policy-notes-entry-repo')).toEqual(['example-owner/example-repo'])
-    expect(texts(node, 'policy-notes-entry-image')).toEqual(['postgres:16'])
+    // A registry reference, drawn whole: the `label` class drew this one as
+    // `<host><path>:1.2`, a redaction the document does not carry (review of
+    // 2026-11-07).
+    expect(texts(node, 'policy-notes-entry-image')).toEqual(['ghcr.io/example-owner/agent:1.2'])
     // The catalog entry's own path goes through the `path` class, which this
     // console replaces with its placeholder: a path is where the operator's own
     // machine shows through, and the entry's repository and branch are drawn.
     expect(texts(node, 'policy-notes-entry-path')).toEqual([PATH_PLACEHOLDER])
     expect(texts(node, 'policy-notes-default')).toEqual([POLICY_DEFAULT_WORD])
-    expect(texts(node, 'policy-notes-count')).toEqual(['1', '2', '3'])
+    expect(texts(node, 'policy-notes-count')).toEqual(['2', '2', '3'])
   })
 
   it('draws the members the plan does not name nowhere on the screen', () => {
@@ -421,17 +445,74 @@ describe('the policy checks', () => {
     expect(texts(checks, 'policy-notes-others-lead')).toEqual([POLICY_OTHERS_LEAD])
   })
 
-  it('says a check the document did not carry, rather than drawing five and passing', () => {
+  it('draws each check in the state its own document gives it, and a missing check as missing', () => {
     const checks = block(draw(), 'environment.report')
 
+    // In `POLICY_CHECK_IDS` order. `policy-published` is the one line nearly
+    // every installation carries, and it is `ok: false` with `severity: "info"`:
+    // `noted`, never `failing`, because `doctor` fails on it in no mode
+    // (`checksFail`). The two warning lines are findings. The three the document
+    // does not carry say so.
     expect(texts(checks, 'policy-notes-check-state')).toEqual([
-      POLICY_CHECK_OK_WORD,
+      POLICY_CHECK_NOTED_WORD,
+      POLICY_CHECK_UNDRAWN_WORD,
+      POLICY_CHECK_UNDRAWN_WORD,
       POLICY_CHECK_FAILING_WORD,
-      POLICY_CHECK_OK_WORD,
       POLICY_CHECK_FAILING_WORD,
-      POLICY_CHECK_OK_WORD,
       POLICY_CHECK_UNDRAWN_WORD,
     ])
+    expect(all(checks, 'policy-notes-check').map((row) => row.getAttribute('data-ok'))).toEqual([
+      'false',
+      'unstated',
+      'unstated',
+      'false',
+      'false',
+      'unstated',
+    ])
+  })
+
+  it('draws a check the document says passed as passed', () => {
+    // Not doctor's own output: no branch of `doctorPolicyChecks` writes
+    // `"ok": true` for any of the six (they are emitted only as a finding or as
+    // an `info` measurement). It is the wire's contract -- `checks[].ok` is a
+    // boolean -- and a document that says a check passed may not be drawn as a
+    // failure, so the third state stays reachable and is held here.
+    const document = {
+      ok: true,
+      checks: [{ id: 'policy-published', ok: true, severity: 'info', problem: 'nothing to report', fix: '' }],
+    }
+    const checks = block(draw({ doctor: document }), 'environment.report')
+
+    expect(texts(checks, 'policy-notes-check-state')[0]).toBe(POLICY_CHECK_OK_WORD)
+    expect(texts(checks, 'policy-notes-check-state')[1]).toBe(POLICY_CHECK_UNDRAWN_WORD)
+  })
+
+  it('says a check the document did not carry rather than drawing five and passing', () => {
+    const checks = block(draw(), 'environment.report')
+
+    // The absent check's severity, problem and fix are members the document does
+    // not have: each is the reading mark with the console's own sentence in its
+    // title, and none is a title about the wire (review of 2026-11-07).
+    // The three absent checks are `policy-newer-than-binary`,
+    // `policy-older-than-binary` and `policy-rules-skew`.
+    const absent = [1, 2, 5].map((index) => all(checks, 'policy-notes-check')[index])
+    for (const className of [
+      'policy-notes-check-severity',
+      'policy-notes-check-problem',
+      'policy-notes-check-fix',
+    ]) {
+      const cells = all(checks, className)
+      expect(cells, className).toHaveLength(6)
+      for (const index of [1, 2, 5]) {
+        const cell = cells[index]
+        expect(cell?.textContent, className).toBe(UNAVAILABLE_MARK)
+        expect(cell?.getAttribute('title'), className).toBe(POLICY_CHECK_ABSENT_BECAUSE)
+      }
+    }
+    // The present rows' cells are the document's own strings, not marks.
+    expect(texts(checks, 'policy-notes-check-severity')).toContain('info')
+    expect(texts(checks, 'policy-notes-check-severity')).toContain('warning')
+    for (const row of absent) expect(row?.getAttribute('data-ok')).toBe('unstated')
   })
 
   it('refuses with doctor\'s own command when the checks document did not arrive', () => {

@@ -172,14 +172,23 @@ export const POLICY_NO_REPOSITORY_WORD = 'no repository'
  * so, so a catalog with no default says nothing. */
 export const POLICY_DEFAULT_WORD = 'the default'
 
-/** POLICY_CHECK_OK_WORD, POLICY_CHECK_FAILING_WORD and
- * POLICY_CHECK_UNDRAWN_WORD are a check row's three states, in the console's
- * own words. The third is the one a list of the checks the document carried
- * could not have: a check this section draws and the document does not carry is
- * neither a pass nor a failure, and it says so. */
+/** POLICY_CHECK_OK_WORD, POLICY_CHECK_FAILING_WORD, POLICY_CHECK_NOTED_WORD and
+ * POLICY_CHECK_UNDRAWN_WORD are a check row's four states, in the console's own
+ * words. The last is the one a list of the checks the document carried could not
+ * have: a check this section draws and the document does not carry is neither a
+ * pass nor a failure, and it says so. */
 export const POLICY_CHECK_OK_WORD = 'ok'
 export const POLICY_CHECK_FAILING_WORD = 'failing'
+export const POLICY_CHECK_NOTED_WORD = 'noted'
 export const POLICY_CHECK_UNDRAWN_WORD = 'not in this document'
+
+/** POLICY_CHECK_ABSENT_BECAUSE is why a check the document does not carry draws
+ * no severity, no problem and no fix: the three values are absent, which is what
+ * the `n/a` mark and this sentence say. It is the sentence the cells would draw
+ * for any absent member, and it is a fact about the *document*, never about the
+ * check. */
+export const POLICY_CHECK_ABSENT_BECAUSE =
+  'the document this section read carries no such check: a check the document does not carry is not a check that passed'
 
 /** POLICY_OTHERS_LEAD says what the figure beside it counts: the checks
  * `doctor` returned that this section does not draw. A filter that said nothing
@@ -656,7 +665,13 @@ function baseBranchMember(factory: ScreenFactory, value: PolicyNoteValue): Scree
 
 /** allowReposMember draws the project's allow-list: the repositories the
  * project's runs are admitted to, with the list drawn as its own rows so a
- * reader can count them against the figure beside the heading. */
+ * reader can count them against the figure beside the heading.
+ *
+ * Each entry is drawn through the **`repoPattern`** class, not `repository`:
+ * an entry is `provider/owner/name` or a `*` pattern
+ * (`projectpolicy.MatchRepo`), and `repository` is `owner/name`, one slash --
+ * it refuses every value the CLI writes, so the whole list drew `n/a` beside a
+ * count of its entries (review of 2026-11-07). */
 function allowReposMember(factory: ScreenFactory, repos: readonly string[]): ScreenElement {
   const element = make(factory, 'div', 'policy-notes-member')
   element.setAttribute('data-member', 'allow_repos')
@@ -665,7 +680,7 @@ function allowReposMember(factory: ScreenFactory, repos: readonly string[]): Scr
   if (listOrNone(factory, element, repos.length === 0) !== null) return element
   const list = cell(element, factory, 'ul', 'policy-notes-list')
   for (const repo of repos) {
-    textCell(list, factory, 'li', repo, 'repository', 'policy.allow_repos[]', 'policy-notes-repo')
+    textCell(list, factory, 'li', repo, 'repoPattern', 'policy.allow_repos[]', 'policy-notes-repo')
   }
   return element
 }
@@ -692,7 +707,7 @@ function accountsMember(factory: ScreenFactory, accounts: readonly PolicyAccount
       continue
     }
     for (const repo of account.repos) {
-      textCell(row, factory, 'span', repo, 'repository', 'policy.accounts{}.allow_repos[]', 'policy-notes-repo')
+      textCell(row, factory, 'span', repo, 'repoPattern', 'policy.accounts{}.allow_repos[]', 'policy-notes-repo')
     }
   }
   return element
@@ -723,10 +738,14 @@ function routingMember(factory: ScreenFactory, routing: PolicyRouting | null): S
  * A `dockerfile` entry's path is drawn through the `path` class, which this
  * console replaces with its own placeholder: the class exists because a path is
  * where the operator's own machine shows through, and an entry's repository and
- * branch are what a reader needs to find the file. An `inline` entry's bytes are
- * the definition itself and are not drawn -- the node holds them, and a screen
- * that printed a Dockerfile would be a screen printing a document rather than a
- * fact about the project. */
+ * branch are what a reader needs to find the file. A `dockerfile` entry's
+ * `repo` is an `owner/name` and goes through `repository`; an `image` entry's
+ * reference goes through **`imageRef`**, the class that holds
+ * `internal/config`'s `catalogImageRE` -- `label` drew `ghcr.io/acme/agent:1.2`
+ * as `<host><path>:1.2`, a redaction the document does not contain (review of
+ * 2026-11-07). An `inline` entry's bytes are the definition itself and are not
+ * drawn -- the node holds them, and a screen that printed a Dockerfile would be
+ * a screen printing a document rather than a fact about the project. */
 function catalogMember(factory: ScreenFactory, catalog: readonly PolicyCatalogEntry[]): ScreenElement {
   const element = make(factory, 'div', 'policy-notes-member')
   element.setAttribute('data-member', 'image_catalog')
@@ -740,7 +759,7 @@ function catalogMember(factory: ScreenFactory, catalog: readonly PolicyCatalogEn
     textCell(row, factory, 'span', entry.name, 'label', 'policy.image_catalog.entries[].name', 'policy-notes-entry-name')
     textCell(row, factory, 'span', entry.kind, 'label', 'policy.image_catalog.entries[].source.kind', 'policy-notes-entry-kind')
     if (entry.image !== null) {
-      textCell(row, factory, 'span', entry.image, 'label', 'policy.image_catalog.entries[].source.image', 'policy-notes-entry-image')
+      textCell(row, factory, 'span', entry.image, 'imageRef', 'policy.image_catalog.entries[].source.image', 'policy-notes-entry-image')
     }
     if (entry.repo !== null) {
       textCell(row, factory, 'span', entry.repo, 'repository', 'policy.image_catalog.entries[].source.repo', 'policy-notes-entry-repo')
@@ -782,25 +801,69 @@ function checksBlock(factory: ScreenFactory, checks: PolicyChecksBlock): ScreenE
   return element
 }
 
-/** checkRow draws one of the six: its id, its severity, whether it passes, and
- * the CLI's own two sentences. A check the document does not carry has neither
- * severity nor sentences, and its state word is the one that says so. */
+/** checkValueCell draws one of a row's three values: the document's string
+ * through `putText` with the class its key declares, or -- where the document
+ * does not carry the member -- the door this file's other absent members go
+ * through (`valueCell`): the `n/a` mark with the console's own sentence for why.
+ *
+ * A check the document does not carry has no severity, no problem and no fix,
+ * and none of the three may be handed a `null`: `putText` drew each of them `n/a`
+ * titled "checks[].severity is a object, not text", which is ungrammatical and
+ * claims the wire carried a member of the wrong type when it carried none
+ * (review of 2026-11-07). */
+function checkValueCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  value: string | null,
+  textClass: TextClass,
+  field: string,
+  ...classes: string[]
+): ScreenElement {
+  if (value === null) {
+    const element = cell(parent, factory, 'span', ...classes)
+    putReading(element, unavailable(POLICY_CHECK_ABSENT_BECAUSE), 'count')
+    return element
+  }
+  return textCell(parent, factory, 'span', value, textClass, field, ...classes)
+}
+
+/** checkRow draws one of the six: its state, its id, its severity, and the
+ * CLI's own two sentences.
+ *
+ * The state word is the **CLI's own** classification read out of the document
+ * rather than a second one the console makes: `ok` for a check the document says
+ * passed, and otherwise the weight the document gives it -- `info` is a state
+ * `doctor` prints and does not fail on, and any other severity is a finding it
+ * does (`checksFail` and `doctorClassOf`, `internal/cli/doctor_render.go`;
+ * design `m11-setup-and-skills.md` §4.5: "an informational state never fails
+ * doctor; a warning one fails it only with `--strict`").
+ *
+ * `ok` alone is not that rule. Read alone it drew **`failing` for
+ * `policy-published`**, which is the one check of the six nearly every
+ * installation carries -- the CLI writes it `"ok": false` with
+ * `"severity": "info"` and files it as a measurement (`doctorMeasureIDs`) --
+ * so a healthy installation read as a failing one (review of 2026-11-07). The
+ * `data-ok` attribute stays the document's own boolean, which is a different
+ * fact from the state word beside it. */
 function checkRow(factory: ScreenFactory, row: PolicyCheckRow): ScreenElement {
   const element = make(factory, 'li', 'policy-notes-check')
   const state = cell(element, factory, 'span', 'policy-notes-check-state')
-  if (row.ok === true) {
-    element.setAttribute('data-ok', 'true')
-    literal(state, POLICY_CHECK_OK_WORD)
-  } else if (row.ok === false) {
-    element.setAttribute('data-ok', 'false')
-    literal(state, POLICY_CHECK_FAILING_WORD)
-  } else {
+  if (row.ok === null) {
     element.setAttribute('data-ok', 'unstated')
     literal(state, POLICY_CHECK_UNDRAWN_WORD)
+  } else if (row.ok) {
+    element.setAttribute('data-ok', 'true')
+    literal(state, POLICY_CHECK_OK_WORD)
+  } else if (row.severity === 'info') {
+    element.setAttribute('data-ok', 'false')
+    literal(state, POLICY_CHECK_NOTED_WORD)
+  } else {
+    element.setAttribute('data-ok', 'false')
+    literal(state, POLICY_CHECK_FAILING_WORD)
   }
   textCell(element, factory, 'span', row.id, 'label', 'checks[].id', 'policy-notes-check-id')
-  textCell(element, factory, 'span', row.severity, 'label', 'checks[].severity', 'policy-notes-check-severity')
-  textCell(element, factory, 'span', row.problem, 'sentence', 'checks[].problem', 'policy-notes-check-problem')
-  textCell(element, factory, 'span', row.fix, 'sentence', 'checks[].fix', 'policy-notes-check-fix')
+  checkValueCell(element, factory, row.severity, 'label', 'checks[].severity', 'policy-notes-check-severity')
+  checkValueCell(element, factory, row.problem, 'sentence', 'checks[].problem', 'policy-notes-check-problem')
+  checkValueCell(element, factory, row.fix, 'sentence', 'checks[].fix', 'policy-notes-check-fix')
   return element
 }
