@@ -12,12 +12,13 @@ package cli
 //
 // reporterFor is the one place a command turns its flags, the environment and
 // the package's terminal seam into a report.Reporter, so no command invents its
-// own colour or spinner rule (D1354). CL4 wires no command to it: a command
-// that prints its steps through the reporter does so in a later task, and every
-// command's output is unchanged here.
+// own colour or spinner rule (D1354). The converge is the first command family
+// wired to it (CL5b); the rest follow one batch at a time.
 
 import (
 	"os"
+	"runtime"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -28,24 +29,26 @@ import (
 // by the root (newCoreRoot).
 const verboseFlag = "verbose"
 
-// openLogFor opens the log a run's full output is kept in (D1352). It is a
-// variable because the commands that keep a log hand it a sink carrying the
-// converge's own live redaction slots (CL5b) -- report.OpenLog is the
-// implementation -- and CL4 is the flag plumbing alone: with the default, a run
-// keeps no log, which is what a read command does for good (T6). An opener that
-// fails is "no log" and never a failed command (G5).
-var openLogFor = func(string) (report.Sink, error) { return nil, nil }
-
-// reporterFor builds the reporter for one command's run: the persistent
-// --verbose (a command's own --verbose of the same name shadows it, which is
-// `recipes ls`'s), the environment the colour rule reads, the package's
-// terminal seam, and the command's own writers. name is the command name the
-// run's log is filed under (D1352).
+// reporterFor builds the reporter for one command's run and opens the log its
+// full output is kept in (D1352): the persistent --verbose (a command's own
+// --verbose of the same name shadows it, which is `recipes ls`'s), the
+// environment the colour rule reads, the package's terminal seam, and the
+// command's own writers. name is the command name the log is filed under.
+//
+// secrets is the run's redaction source, read at each line of the log, so a
+// value a stage fills in after the log was opened still applies (F6): the
+// converge hands over its own live slots. A nil one is a run with no value to
+// hide.
 //
 // The reporter's colour and spinner rules read the OUTPUT writer: stdin's
 // terminal-ness is what the confirmation paths ask before they read a line
 // (G1), not something the reporter draws by.
-func reporterFor(cmd *cobra.Command, name string) *report.Reporter {
+//
+// The sink comes back with the reporter because closing it is the caller's: a
+// log that is never closed loses the last partial line of a run that died
+// mid-line. Every failure to open one is "no log" and never a failed command
+// (G5), so the error is not returned and the sink is nil.
+func reporterFor(cmd *cobra.Command, name string, secrets func() []string) (*report.Reporter, report.Sink) {
 	o := report.Options{
 		Out:        cmd.OutOrStdout(),
 		Err:        cmd.ErrOrStderr(),
@@ -56,10 +59,12 @@ func reporterFor(cmd *cobra.Command, name string) *report.Reporter {
 		NoColor:    boolFlag(cmd, "no-color"),
 		ASCII:      boolFlag(cmd, "ascii"),
 	}
-	if sink, err := openLogFor(name); err == nil {
-		o.Sink = sink
+	sink, err := report.OpenLog(name, os.Getenv, runtime.GOOS, time.Now, secrets)
+	if err != nil {
+		return report.New(o), nil
 	}
-	return report.New(o)
+	o.Sink = sink
+	return report.New(o), sink
 }
 
 // boolFlag reads a boolean flag when the command has it, and is false when it

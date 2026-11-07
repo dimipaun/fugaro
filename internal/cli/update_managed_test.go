@@ -802,7 +802,7 @@ func TestUpdateManagedLeavesCredentialsAndComputeOwnerRun(t *testing.T) {
 	if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
 		t.Errorf("the credentials stage was not refused in the agent's own words:\n%s", got)
 	}
-	if !strings.Contains(got, "[needs you]  "+initflow.Credentials) {
+	if !strings.Contains(got, markLeft+" "+initflow.Credentials) {
 		t.Errorf("the run did not reach the credentials stage, so this is another stage's refusal:\n%s", got)
 	}
 	if !strings.Contains(got, "--provision-credentials") {
@@ -1089,7 +1089,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	// The step's own line is what is read here and not the whole account: this
 	// run also notes that the shared config was not published, which is another
 	// step's refusal in the session's words and has nothing to do with the node.
-	head := "[needs you]  " + initflow.Policy
+	head := markLeft + " " + initflow.Policy + ":"
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
 	}
@@ -1151,7 +1151,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session set the accounts the review credential goes out on:\n%s", got)
 	}
-	head := "[needs you]  " + initflow.Policy
+	head := markLeft + " " + initflow.Policy + ":"
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
 	}
@@ -1204,7 +1204,7 @@ func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the first policy node:\n%s", got)
 	}
-	head := "[needs you]  " + initflow.Policy
+	head := markLeft + " " + initflow.Policy + ":"
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not stop at the policy stage, so nothing here was judged:\n%s", got)
 	}

@@ -21,6 +21,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -5000,6 +5001,111 @@ func TestSummarySchema(t *testing.T) {
 	compute := stringsOf(t, doc, "$defs", "figures", "properties", "compute_micros", "type")
 	if !slices.Contains(compute, "null") {
 		t.Errorf("$defs.figures.compute_micros: type is %v, and an unpriced run reads as null rather than 0", compute)
+	}
+}
+
+// TestRunsDigestDueSchema holds schemas/runs-digest-due.schema.json to the
+// document `fugaro runs digest --due --json` prints and to the Go constants
+// its closed vocabulary is written as. The due list is a read of a folder and
+// a clock, so it is not pinned by value; what it can pin, and what this test
+// checks, is that the schema loads (a broken $ref between $defs is exactly
+// where a hand edit breaks), that version is digestDueDocVersion, and that the
+// DIM of a due row is one of internal/digest's four period dimensions -- the
+// four a report is written for -- and not one of the four other dimensions
+// ParseDim also names: `repo`, `model`, `person` and `mode` group a listing,
+// and no period is due for them.
+//
+// The document itself is validated against this schema by
+// TestRunsDigestDueJSONMatchesSchema in internal/cli, which is where the
+// command that writes it lives; the fixtures below are the two shapes a
+// consumer branches on, and neither is a document the command could not write.
+func TestRunsDigestDueSchema(t *testing.T) {
+	raw, err := os.ReadFile("runs-digest-due.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	sch := compile(t, "runs-digest-due.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/runs_digest.go")
+	version := nodeOf(t, doc, "properties", "version")
+	if version["const"] != float64(1) {
+		t.Errorf("version: const = %v, and the document's first version is 1 (D784)", version["const"])
+	}
+	// The $comment is the pointer from the contract to the code: it must name
+	// a constant this file's own parse found, or it points at nothing.
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "digestDueDocVersion") || consts["digestDueDocVersion"] != "1" {
+		t.Errorf("version: $comment = %q, and digestDueDocVersion in internal/cli/runs_digest.go is %q", got, consts["digestDueDocVersion"])
+	}
+	// Every top-level member is required, empty included: a consumer reads
+	// `due` and `newest` on every document, and an empty folder is a `[]` and a
+	// `null` rather than a document that is missing them.
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"version", "dir", "due", "newest"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+	want := []string{string(digest.ByDay), string(digest.ByWeek), string(digest.ByMonth), string(digest.ByYear)}
+	for _, path := range [][]string{
+		{"$defs", "period", "properties", "dim", "enum"},
+		{"$defs", "report", "properties", "dim", "enum"},
+	} {
+		if got := stringsOf(t, doc, path...); !slices.Equal(got, want) {
+			t.Errorf("%v: the enum is %v, and digest's period dimensions are %v", path, got, want)
+		}
+	}
+	// newest is null or a report, and both branches are named: a member the
+	// schema leaves out would be a shape a consumer meets with no key to read.
+	branches, _ := nodeOf(t, doc, "properties", "newest")["oneOf"].([]any)
+	var null, report bool
+	for _, b := range branches {
+		m, _ := b.(map[string]any)
+		if m["type"] == "null" {
+			null = true
+		}
+		if m["$ref"] == "#/$defs/report" {
+			report = true
+		}
+	}
+	if !null || !report {
+		t.Errorf("newest: oneOf is %v, and the member is either null or a report", branches)
+	}
+	// An age is a whole count that never goes backwards: the command clamps a
+	// hand-written report of a period that has not ended to 0, and a schema
+	// that admitted a negative age would let a consumer render one.
+	days := nodeOf(t, doc, "$defs", "report", "properties", "days_ago")
+	if days["type"] != "integer" || days["minimum"] != float64(0) {
+		t.Errorf("$defs.report.days_ago: type = %v, minimum = %v, want a whole count of days at or above 0", days["type"], days["minimum"])
+	}
+
+	for _, tc := range []struct {
+		name string
+		doc  string
+	}{
+		{"an empty folder", `{"version": 1, "dir": "docs/fugaro-reviews", "due": [{"dim": "day", "key": "2026-10-26"}], "newest": null}`},
+		{"a report", `{"version": 1, "dir": "docs/fugaro-reviews", "due": [], "newest": {"key": "2026-10-25", "dim": "day", "days_ago": 2}}`},
+		{"a week and a month at once", `{"version": 1, "dir": "x", "due": [{"dim": "week", "key": "2026-W43"}, {"dim": "month", "key": "2026-09"}, {"dim": "year", "key": "2025"}], "newest": {"key": "2026-10", "dim": "month", "days_ago": 0}}`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Errorf("%s: the schema refuses a document the command writes: %v", tc.name, err)
+		}
+	}
+	// And the enum bites: a dimension no period is due for is refused, which is
+	// what keeps a listing's own grouping out of the due document.
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(`{"version": 1, "dir": "x", "due": [{"dim": "model", "key": "2026-10-25"}], "newest": null}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Error("the schema accepts a due period of dimension `model`, which no report is written for")
 	}
 }
 

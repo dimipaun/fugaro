@@ -613,13 +613,49 @@ type StageTiming struct {
 	// mixed one's two -- so a reader must not read the empty value as "no
 	// credential".
 	Credential string `json:"credential,omitempty"`
+	// ServedBy names the credential this stage's model calls ran on, the run's
+	// own included -- which is the case Credential's stated meaning excludes,
+	// and the reason this is a field of its own rather than a second value
+	// there (F18, D1415): CredentialAPIKey for a stage a metered API key
+	// served, CredentialOAuth for a stage a Claude subscription credential
+	// did. It names the class of credential and never which key: a stage of an
+	// api-key run whose model a provider route carries was served by the
+	// provider's key, and Cost.RouteBy and the gateway's serving_model are
+	// what tell a run's two keys apart (F3). Absent where the stage ran on
+	// neither class -- a vertex run's service account, a cascade run's calls,
+	// which the service's ladder answers one at a time, and a review class
+	// run's -- and in records written before the field existed, so an absent
+	// value is not the statement that a stage had no credential.
+	ServedBy string `json:"served_by,omitempty"`
 }
 
-// CredentialOAuth is StageTiming.Credential for a stage the run's stage-scoped
-// Claude OAuth account served (docs/design/mixed-credentials.md §5): the one
-// value the field carries today, and the word the design's record contract
-// names it by.
+// CredentialOAuth is the word for a Claude OAuth credential in this record:
+// StageTiming.Credential for a stage the run's stage-scoped Claude OAuth
+// account served (docs/design/mixed-credentials.md §5), and
+// StageTiming.ServedBy for any stage one served -- the account's token or the
+// run's own.
 const CredentialOAuth = "oauth"
+
+// CredentialAPIKey is StageTiming.ServedBy for a stage a metered API key
+// served: the run's own Anthropic key, or the key of a provider route this
+// stage's model went to. It is never a value of StageTiming.Credential, whose
+// case is the credential that is not the run's own.
+const CredentialAPIKey = "api-key"
+
+// CredentialForAuth is the credential a run whose agent.auth is auth ran its
+// stages on, as StageTiming.ServedBy names it: the two auths that are one
+// credential class, and "" for the auths that are none -- vertex's service
+// account, and cascade, whose calls the credentials service answers one at a
+// time so no single credential is the stage's.
+func CredentialForAuth(auth string) string {
+	switch auth {
+	case "oauth":
+		return CredentialOAuth
+	case "api-key":
+		return CredentialAPIKey
+	}
+	return ""
+}
 
 // Switch is one entry of a run's switch log (D140, C1.16): the run's cascade
 // moved its calls from one credential to another, and the credentials

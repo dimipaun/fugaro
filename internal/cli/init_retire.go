@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -65,6 +66,11 @@ var (
 // cannot read stops it, and so does a label call that did not answer (M-4,
 // below). An abandoned run is not a degradation either.
 func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.TF, spec infra.RepoSpec) ([]infra.Retirement, error) {
+	// Whether this read saw everything the set is computed from. It is what
+	// keeps "nothing to retire" and "could not look" apart when the set comes
+	// back empty (design §3.1a), which is the one thing the record written
+	// from it may not confuse: see recordUpdate.
+	r.retireLooked = true
 	st, err := t.ShowState(ctx)
 	if err != nil {
 		if r.o.retire || ctx.Err() != nil {
@@ -72,6 +78,7 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 		}
 		r.warn(fmt.Sprintf("could not read %s's Terraform state (%v); a retirement cannot be predicted, so an address the state holds and the configuration no longer produces will not be named. Read it by hand with terraform show -json in the repository root's workdir", spec.Name, err))
 		st = nil
+		r.retireLooked = false
 	}
 	r.retireState = st.Addresses()
 	orphans, notes, warnings, err := infra.Orphans(ctx, c, spec, r.retireState)
@@ -91,6 +98,13 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 	// the flag and read the plan as it is.
 	if len(warnings) > 0 && r.o.retire {
 		return nil, remote(fmt.Errorf("--retire removes protected addresses from Terraform's state, so it will not run on a retirement set read without the labels:\n  %s\nWithout the answer the run cannot tell a live container of this repository from a retired one, and the removal would release the live one from Terraform's management without deleting or saying anything else. Nothing was removed from the state, nothing was deleted and nothing was confirmed. Rerun when the call named above answers, or rerun without --retire to read the plan and the summary as they are", strings.Join(warnings, "\n  ")))
+	}
+	if len(warnings) > 0 {
+		// A label call that did not answer is the same shape of hole: the
+		// state may name a retired address, but a live one the state no
+		// longer holds is invisible, so an empty set is not proof of
+		// nothing (M-4, and the warning above says so in its own words).
+		r.retireLooked = false
 	}
 	for _, w := range warnings {
 		r.warn(w)
@@ -1213,4 +1227,116 @@ func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
 		}
 	}
 	return &out
+}
+
+// recordUpdate writes this run's retirement into the machine's own record of
+// the last update (localcfg's update.json, in the state directory the
+// remembered checkouts live in): the console's Project tab draws what the last
+// plain `fugaro update` retired, and how many runs were in flight while it did,
+// and nothing else on this machine keeps either (F20, F21, D1484, D1485).
+//
+// It is called where the run's retirement is settled and nowhere else, once
+// per run:
+//
+//   - the run found nothing to retire, which is a record of its own: an empty
+//     set replaces the previous update's, so the screen never draws an earlier
+//     update's rows as the last one's. The read arms it (retireNone) and the
+//     run's own plan finishes it -- planRepo's two successful returns -- so an
+//     empty set is written by an update that got through its plan and by no
+//     other. This is also the one site the read has to have *proved*: an empty
+//     set the run could not look for -- a state it could not read, a label call
+//     that did not answer (retireLooked) -- is not "nothing to retire" but the
+//     absence of an answer, and writing it would replace the previous update's
+//     rows, which are kept nowhere else, with a sentence the run has no right
+//     to (design §3.1a's rule for the summary, and D1483's for the count:
+//     unknown is not zero, one member over);
+//   - --retire ran the guarded flow to the end, or a managed project retired
+//     its own derived addresses (retireManaged) -- the two flows that remove
+//     addresses from the state and delete them;
+//   - the run's set was left to the ordinary plan, written after that plan
+//     applied (planRepo's tail), which is the one other way an address of the
+//     set goes away.
+//
+// A run that stops before any of them -- a refusal, a confirmation that was
+// not given, a failed apply, a plan that aborted on prevent_destroy,
+// --plan-only -- records nothing, the empty set included: the last update that
+// settled a retirement is the one the record names, which is a truer sentence
+// than a run that retired nothing overwriting it. `fugaro setup --repo`
+// records nothing either: its door is not the update's, and a first onboarding
+// is not the last update of anything.
+//
+// The record is keyed by project, and an update converges the repository its
+// checkout belongs to (the converge's repository stage runs this engine for
+// "."): what it holds is the retirement of the last update, which is one
+// repository's per run. "The last update retired nothing" is exactly that
+// sentence, and At says which run it was.
+//
+// It is best effort in the direction the whole upgrade depends on (CLAUDE.md's
+// HARD RULE): a state directory that cannot be written warns and the update
+// finishes, because the record is the console's and the installation's update
+// is the user's. The warning is not optional the way recordCheckout's silence
+// is -- "the next command records it again" is true of a checkout, which is
+// recorded by every command that works in one, and false of this: nothing
+// writes this record until the next update.
+func (r *initRun) recordUpdate(ctx context.Context, lc *localcfg.Config, rets []infra.Retirement) {
+	if r.o.door != updateDoor.name || r.o.planOnly {
+		return
+	}
+	if len(rets) == 0 && !r.retireLooked {
+		return
+	}
+	up := localcfg.UpdateProject{At: time.Now(), Retire: updateRecordRows(rets)}
+	// The count is read through the budget database the project publishes to,
+	// the way the policy publish's own refusal counts runs (project_cmd.go's
+	// runsInFlight). A project with no budget backend has no registry to read,
+	// which is not worth a line on every update; a read that fails when there
+	// is one leaves the number absent and says so, because a console that
+	// draws a smaller number than the runs that were really there is what
+	// D1483 is about.
+	if _, db, err := budgetDBFor(ctx, lc); err == nil {
+		if n, err := runsInFlight(ctx, db, lc); err == nil {
+			up.RunsInFlight = &n
+		} else {
+			r.warn(fmt.Sprintf("could not count the runs in flight while %s's retirement was settled (%v); this update's record says nothing about them", lc.Name, err))
+		}
+	}
+	if err := localcfg.RecordUpdate(os.Getenv, r.projectName, up); err != nil {
+		path, _ := localcfg.UpdateRecordPath(os.Getenv)
+		r.warn(fmt.Sprintf("this update's retirement was not recorded in %s (%v): the console's project screen reads that record, so it keeps drawing whatever the previous update left there. The next update writes it again, once that directory can be written", path, err))
+	}
+}
+
+// recordRetiredNothing writes the record of a run that read its retirement set
+// and found it empty (retireNone): this update had nothing to retire, and the
+// screen may not keep drawing the previous update's rows as the last one's. It
+// is called from planRepo's two successful returns and nowhere else -- the
+// no-changes one and the tail after an apply -- so nothing here is written by a
+// run that stopped after the read: an update that was refused, that was not
+// confirmed, that aborted on prevent_destroy or whose apply failed leaves the
+// previous update's rows, which are kept nowhere else, exactly as they were.
+//
+// The flag is cleared with the write, so the plan of a run that built images --
+// which reads no retirement of its own -- does not write the same settlement a
+// second time.
+func (r *initRun) recordRetiredNothing(ctx context.Context, lc *localcfg.Config) {
+	if !r.retireNone {
+		return
+	}
+	r.retireNone = false
+	r.recordUpdate(ctx, lc, nil)
+}
+
+// updateRecordRows is the run's own rows as the record holds them. The record
+// cannot name infra.Retirement (internal/infra imports localcfg), so the two
+// types are kept in step by hand and by TestUpdateRecordRowsAreTheRunsOwn, in
+// which both documents must come out byte for byte the same.
+func updateRecordRows(rets []infra.Retirement) []localcfg.UpdateRetirement {
+	out := make([]localcfg.UpdateRetirement, 0, len(rets))
+	for _, r := range rets {
+		out = append(out, localcfg.UpdateRetirement{
+			Address: r.Address, Kind: r.Kind, Cause: r.Cause, Kept: r.Kept,
+			Logical: r.Logical, SecretID: r.SecretID, Job: r.Job, Region: r.Region, Protected: r.Protected,
+		})
+	}
+	return out
 }
