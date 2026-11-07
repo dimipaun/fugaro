@@ -179,10 +179,11 @@ for it is invented here; and the `budget`-database read the aggregate's figures 
 about R12's grants that is listed under Open items rather than decided.
 
 **The 2026-11-07 plan adds a fourth of the same kind, and it is the failures report's own.**
-`internal/runner/**`,
-`internal/runstore/runstore.go`, `internal/runview/runview.go`, `schemas/result.schema.json` and the
-two documents that describe the record are `docs/design/failure-classes.md`'s to change, and this
-folder's plan cites its **FC1–FC8** rather than restating them ([implementation-plan.md](implementation-plan.md)
-Part II §P1). **The two plans meet in eighteen files — nineteen with the table's one conditional
-row — and Part II §P4 is where that is checked**, so neither folder becomes a second plan for the
-other's feature.
+`internal/runner/runner.go` and the package's other FC2–FC4 files, `internal/runstore/runstore.go`,
+`internal/runview/runview.go`, `schemas/result.schema.json` and the two documents that describe the
+record are `docs/design/failure-classes.md`'s to change — **not the whole package:
+`internal/runner/digest.go` and `internal/runner/digest_test.go` are this folder's own R0, which
+moves the due computation out of them** — and this folder's plan cites its **FC1–FC8** rather than
+restating them ([implementation-plan.md](implementation-plan.md) Part II §P1). **The two plans meet
+in eighteen files — nineteen with the table's one conditional row — and Part II §P4 is where that is
+checked**, so neither folder becomes a second plan for the other's feature.

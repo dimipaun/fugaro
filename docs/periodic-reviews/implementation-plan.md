@@ -888,7 +888,7 @@ all the tasks it depends on; no level holds two writers of one file. The two wor
 | Level | the reports job | the failures report | Why the two can share it |
 | --- | --- | --- | --- |
 | **0** | R0, R12, R13 | FC1 | the reports job writes `internal/digest/due.go`, `internal/backend/gcp/names.go`, `internal/infra/tf/cover.go`, `deploy/terraform/gcp/modules/installation/**` and the setting's own files; FC1 writes `internal/runstore/runstore.go`, `schemas/result.schema.json`, `internal/cli/runs_test.go` and `internal/cli/docs_pr_state_test.go` — no file is both |
-| **1** | R1, R7 | FC2 | R1 holds `internal/cli/runs_digest.go`, which R2 and R10 take at 2 and 5; R7 holds `internal/infra/tfvars.go`, which R13 took at 0; FC2 holds `internal/runner/**` and `internal/cli/docs_pr_state_test.go`, which FC1 took at 0 |
+| **1** | R1, R7 | FC2 | R1 holds `internal/cli/runs_digest.go`, which R2 and R10 take at 2 and 5; R7 holds `internal/infra/tfvars.go`, which R13 took at 0; FC2 holds `internal/runner/runner.go` and the package's other FC2–FC4 files — **not `internal/runner/digest.go` or `digest_test.go`, which R0 took at 0** — and `internal/cli/docs_pr_state_test.go`, which FC1 took at 0 |
 | **2** | R2, R4 | FC3 | R4 holds `internal/digest/patterns.go`, which R11 takes at 3 and FC7 at 4; FC3 holds `internal/runner/runner.go`, which FC2 took at 1 and FC4 takes at 3 |
 | **3** | R3, R11 | FC4, FC5 | R11 holds `internal/cli/runs.go`, which FC6 takes at 4; R3 holds `plugin/skills/working/reference/periodic-reviews.md`, which R6 takes at 4 — and FC8's own skill file, `plugin/skills/working/reference/diagnose.md`, is not one of R3's four; FC5 holds `internal/cli/runs_test.go`, which FC1 took at 0 and FC6 takes at 4 |
 | **4** | R6, R8, R9 | FC6, FC7 | R8 holds `internal/digest/store.go`, which R11 took at 3 and R10 takes at 5; FC7 holds `internal/digest/patterns.go`, which R4 took at 2 and R11 at 3 |
@@ -896,8 +896,10 @@ all the tasks it depends on; no level holds two writers of one file. The two wor
 
 **No task moves a level, and that is a property of the two designs rather than a coincidence.** The
 reports job's tasks live in `internal/infra`, `deploy/terraform/**`, `internal/digest` and
-`internal/cli`; the failures report's live in `internal/runner`, `internal/runstore`,
-`internal/runview`, `schemas/` and the same two packages. The two therefore meet in **eighteen files**
+`internal/cli`; the failures report's live in `internal/runner` — its `runner.go`, `refused.go`,
+`outcome.go`, `halt.go`, `prflow.go` and the FC2–FC4 test files, **not the `digest.go` and
+`digest_test.go` R0 holds** — `internal/runstore`, `internal/runview`, `schemas/` and the same two
+packages. The two therefore meet in **eighteen files**
 (§P4) — nineteen with the table's one conditional row — and every one of the eighteen already had a
 level of its own in one work or the other — which
 is why the union adds **no edge that re-levels anything**: the only cross-work edges are **R11 (3) →
