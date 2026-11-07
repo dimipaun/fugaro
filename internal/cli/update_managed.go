@@ -426,7 +426,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	// leaves open.
 	doc, err := t.ShowJSON(ctx, infra.PlanFile)
 	if err != nil {
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
@@ -438,7 +438,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 		// the gate's words, because a session that read its own refusal here
 		// would be told to hand the step to someone else rather than what
 		// about the plan could not be read.
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	class := gateClass()
 	conv := managedmode.ConvergeRefused(doc, class, refusedRules(verdict))
@@ -447,7 +447,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
-		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	// D55's one rule, asked with this run's conditions — a coding agent's
 	// session or the owner's own terminal, which is the whole of who may
@@ -488,12 +488,12 @@ func (s *rulesStage) gateStep(ctx context.Context) (bool, error) {
 	}
 	doc, err := rules.Generate()
 	if err != nil {
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	class := gateClass()
 	m, err := r.gate.g.admit(ctx, class, managedmode.ConvergeAdmitted(doc, class, rulesAdmittedRules))
 	if err != nil {
-		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	if !initflow.GateConfirms(class, r.conditions(), m) {
 		return false, nil
@@ -554,12 +554,12 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// A node write with no bytes to write is the stage's own contract
 		// broken, and it is refused rather than published: an empty document is
 		// the one thing this gate must never hand to a write.
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty")}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
 	conv := managedmode.ConvergeAdmitted(doc, class, policyAdmittedRules)
 	mg, err := r.gate.g.admit(ctx, class, conv)
 	if err != nil {
-		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
 	if !initflow.GateConfirms(class, r.conditions(), mg) {
@@ -589,7 +589,7 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// inventory is not a verdict about this document either.
 		if class == initflow.Typed && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
 		}
 		return false, nil
 	}
@@ -631,6 +631,27 @@ func (r *initRun) gateApplied(ctx context.Context) error {
 // two judge a document the binary or the database holds, and the sentence a
 // session reads must not name a shape the step never had.
 const gateUnreadable = "the managed gate did not admit this step: the document it was to judge could not be produced, and a document nobody could read is never applied here (D1012)"
+
+// gateRefusalOf is what a step's refusal leaves the person who reads it, read
+// off the error the gate answered with: a verdict against the document
+// (managed.ErrNotConverged, whether the cover, the cost list or a write's own
+// record failed beside it) or a failure with no verdict at all — a plan
+// terraform could not print, a mark that could not be read a second time
+// immediately before the write.
+//
+// The two are different LEFTS and not two spellings of one: a plan the rules
+// would not admit is nobody's to type past (initflow.GateRefusedPlan), while a
+// step the gate never judged says so rather than blaming a cover that read
+// nothing (GateRefusedUnread). It is decided here rather than in the loop
+// because only this side of the seam can match on managed's own sentinel, and
+// a guess would put a wrong sentence — "a person files an issue", or "the plan
+// is fine, the run failed" — in front of the owner.
+func gateRefusalOf(err error) initflow.GateRefusal {
+	if errors.Is(err, managedmode.ErrNotConverged) {
+		return initflow.GateRefusedPlan
+	}
+	return initflow.GateRefusedUnread
+}
 
 // gateClass is the confirmation class of a step the gate judges: these are the
 // ordinary applies of their stages, asked with confirmOrdinary, and an

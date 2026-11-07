@@ -568,7 +568,7 @@ func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retire
 	if err != nil {
 		// A plan nobody can read is a document no rule judged (D1012), which
 		// is the shape gateStep reads as gateUnreadable: nothing is applied.
-		return &initflow.GatedError{Reason: gateUnreadable, Err: err}
+		return &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	conv := managedmode.ConvergeAdmitted(doc, gateClass(), retireAdmittedRules)
 	m, err := g.g.admit(ctx, gateClass(), conv)

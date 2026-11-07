@@ -1142,6 +1142,17 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
 		t.Errorf("the policy step reads the session's own refusal rather than what about the node the gate would not admit: %s", line)
 	}
+	// And what it leaves the owner is the command they run themselves (spec
+	// §4.3): this refusal is about the step's CLASS and not about the plan, so
+	// the step is theirs — at their own terminal, where the publish proceeds on
+	// the note (the ruling of 2026-11-06). A commandless refusal here would
+	// send an owner reading an agent's report to file a Fugaro issue for a
+	// publish that is theirs to make, and would lose the one command the HARD
+	// RULE says must work.
+	want := "left for you (" + initflow.Policy + ", " + string(initflow.LeftCommand) + "): " + selfCommand() + " update"
+	if !strings.Contains(got, want) {
+		t.Errorf("the class refusal does not leave the owner the command they run themselves (%q):\n%s", want, got)
+	}
 	if got := ceilingOn(t, db); got != 3 {
 		t.Errorf("the published ceiling is %v, want the 3 it had: the refused step wrote the local config's 5", got)
 	}
@@ -1282,6 +1293,9 @@ func TestUpdateManagedPolicyStageRefusesAnEmptyNode(t *testing.T) {
 	}
 	if ge.Reason != gateUnreadable {
 		t.Errorf("the refusal reads %q, want %q", ge.Reason, gateUnreadable)
+	}
+	if ge.Refusal != initflow.GateRefusedUnread {
+		t.Errorf("the refusal is classified %v, want %v: there was no document for a cover to refuse, so the left-for-you must not blame one", ge.Refusal, initflow.GateRefusedUnread)
 	}
 	if run.gate.g.judged != nil {
 		t.Errorf("the gate judged a document that does not exist: %+v", *run.gate.g.judged)

@@ -272,36 +272,6 @@ func (l Left) PrintedCommands() []string {
 	return nil
 }
 
-// GateRefused is the left-for-you of a step the managed project's gate refused
-// (D1012), and it is built from the gate's own sentence rather than from the
-// stage's. The stage's Left is the one thing this refusal must not print: it
-// asks the reader to type the project's name at a prompt the gate never
-// reaches, in a run whose whole point is that no typed confirmation overrides
-// a refusal — the reader who followed it would be told to do the one thing
-// that cannot help, and to do it again.
-//
-// So the text says the four things this reader needs and nothing they can act
-// on in this terminal: the step was refused and nothing was written, the
-// gate's own sentence for why (quoted, because that sentence names the
-// resource or the member the cover would not admit, which is what an issue
-// needs), that there is nothing to type and no command that helps, and that
-// the cause is a plan outside what the cover knows — a fact about Fugaro's own
-// tables, fixed by a person filing an issue with that sentence. Commands is
-// empty on purpose: a refused step has no command, and a Left that listed one
-// would be the same mistake in another spelling.
-//
-// This is deliberately a shape of its own (LeftRefused) rather than a
-// command's or a prompt's: the printed line reads "left for you (install,
-// refused)", which is what tells a reader — and a test — that nothing is
-// expected of them here.
-func GateRefused(reason string) Left {
-	return Left{
-		Kind: LeftRefused,
-		Text: "the managed gate refused this step and nothing was written: " + reason +
-			". Nothing here is yours to type or to run, because no confirmation reaches past a refusal: what the gate would not admit is a plan outside what it covers, which is fixed in Fugaro and not in your project — a person files an issue with the sentence above, and the next release reads it",
-	}
-}
-
 // NoTerminalAdvice is what to do when a typed confirmation or a hidden prompt
 // has no real terminal: the one sentence every refusal ends with.
 const NoTerminalAdvice = "run it in your own terminal window, not through a coding agent or a pipe"
@@ -488,25 +458,98 @@ type AgentError struct{ Marker string }
 
 func (e *AgentError) Error() string { return AgentRefusal(e.Marker) }
 
-// GatedError is a step the managed project's gate refused in a coding agent's
-// session (D1012, D1023): the loop reports it as the user's to do, in the
-// gate's own sentence rather than in the session's, because what refused the
-// step is the document the gate read and not the marker the session carries.
-// A session that read AgentRefusal here would be told to leave the run to
-// someone else; a session that reads this one is told what about the document
-// the gate would not admit, which is the account its reader acts on.
+// GatedError is a step the managed project's gate did not admit (D1012,
+// D1023): the loop reports it as the user's to do, in the gate's own sentence
+// rather than in the session's, because what refused the step is the document
+// the gate read and not the marker the session carries. A session that read
+// AgentRefusal here would be told to leave the run to someone else; a session
+// that reads this one is told what about the document the gate would not
+// admit, which is the account its reader acts on.
 //
 // Reason is the gate's sentence as the gate wrote it (managed.NotConverged and
 // the rules that fired, rendered by internal/managed), and Err is that refusal
 // as a value, so a caller can match on it (managed.ErrNotConverged) without
 // reading English.
+//
+// Refusal is what that answer leaves the reader, and it is set where the
+// refusal is built rather than read off Err here: only that caller knows
+// whether the gate judged a document at all. The zero value is the plan
+// refusal, which is the answer that must never hand the reader a confirmation
+// to type (CV1); Left turns the three into the left-for-you.
 type GatedError struct {
-	Reason string
-	Err    error
+	Reason  string
+	Err     error
+	Refusal GateRefusal
 }
 
 func (e *GatedError) Error() string { return e.Reason }
 func (e *GatedError) Unwrap() error { return e.Err }
+
+// GateRefusal is what the gate's answer about a step was, as far as the person
+// who reads the refusal is concerned.
+type GateRefusal uint8
+
+const (
+	// GateRefusedPlan is the gate reading the document and not admitting it:
+	// the cover, the cost list, the delete list. The step is nobody's from
+	// here — the plan is outside what Fugaro's own tables cover, so what fixes
+	// it is a release and not a confirmation — and the reader is told exactly
+	// that instead of being handed the stage's prompt to type the project's
+	// name, which is the deadlock CV1 is about (D1012: no typed confirmation
+	// reaches past a refusal).
+	GateRefusedPlan GateRefusal = iota
+	// GateRefusedClass is the document being admitted and the step's own
+	// confirmation class being one no plan gate covers (D1026: the policy
+	// publish that would loosen the published node, set an account-choice key
+	// or write the project's first node). The step IS the owner's, at their
+	// own terminal, so the stage's own Left — the one command they run
+	// themselves (spec §4.3) — is kept, and an agent's report to its owner
+	// stays actionable.
+	GateRefusedClass
+	// GateRefusedUnread is there being no verdict to act on: a document that
+	// could not be produced or read, a mark that could not be read a second
+	// time immediately before the write. Nothing is known about the plan,
+	// which is what the reader is told rather than that a cover refused a
+	// shape it never saw.
+	GateRefusedUnread
+)
+
+// Left is the left-for-you of this refusal: the stage's own for the step that
+// is the owner's to run themselves, the refusal's own commandless text for
+// every other answer.
+func (e *GatedError) Left(stage Left) Left {
+	switch e.Refusal {
+	case GateRefusedClass:
+		return stage
+	case GateRefusedUnread:
+		return Left{Kind: LeftRefused, Text: gateUnjudged(e.Reason)}
+	default:
+		return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason)}
+	}
+}
+
+// gateOutsideCover is the refusal of a plan the gate's own rules would not
+// admit. It says the four things this reader needs and names nothing they can
+// act on in this terminal: the step was refused and nothing was written, the
+// gate's sentence for why (quoted — it names the resource or the member the
+// cover would not admit, which is what an issue needs), that there is nothing
+// to type and no command that helps, and that the cause is a plan outside what
+// those rules cover, which is a person's issue to file and a Fugaro release to
+// fix.
+func gateOutsideCover(reason string) string {
+	return "the managed gate refused this step and nothing was written: " + reason +
+		". Nothing here is yours to type or to run, because no confirmation reaches past a refusal (D1012): what the gate would not admit is a plan its own tables do not cover, which is fixed in Fugaro and not in your project — a person files an issue with the sentence above, and the next release reads it"
+}
+
+// gateUnjudged is the refusal of a step the gate reached no verdict on, and it
+// is a different sentence on purpose: there is no plan to blame and no shape
+// missing from Fugaro's tables, so blaming the cover here would be the same
+// mistake as handing the reader a prompt, in the other direction. What is left
+// is the run's own failure, named as one.
+func gateUnjudged(reason string) string {
+	return "the managed gate did not judge this step and nothing was written: " + reason +
+		". Nothing here is yours to type or to run: the gate reached no verdict it could act on, so nothing was applied (D1012), and what the sentence above names is a failure of the run rather than of your plan"
+}
 
 // AgentProceeded is the other half of AgentRefusal: the sentence for the one
 // case in which a step in a coding agent's session runs all the same — D55's
