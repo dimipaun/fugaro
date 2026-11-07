@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
 
 // This file is M5's half of the registration endpoint: D928's rule at the
@@ -65,17 +67,26 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder, into any) {
 // TestRegisterIsOpenAndGrantsNothing is D928's first rule: the endpoint takes a
 // registration from anyone, and what it writes reaches nothing.
 //
-// "Grants nothing" is checked as the four things a registration could have
-// granted: a token record, a family, a limit, and a code. A registered client
-// that held any of them would be a client that reached the project's budget
-// before a person signed in, which is the whole of what an open registration
-// endpoint must not do.
+// "Grants nothing" is checked as the three things a registration could have
+// granted: a token record, a family and a code. A registered client that held
+// any of them would be a client that reached the project's budget before a
+// person signed in, which is the whole of what an open registration endpoint
+// must not do.
 func TestRegisterIsOpenAndGrantsNothing(t *testing.T) {
 	ts := newTestServer(t)
 
 	// No credential of any kind: this is the request a standard MCP client
 	// makes, and it is the reason the endpoint is open at all.
-	id, secret := ts.register(t, "an editor", testClientRedirect)
+	rec := ts.postJSON(t, RegisterPath, registrationRequest{RedirectURIs: []string{testClientRedirect}, ClientName: "an editor"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST %s answered %d (%s); want 201 with the registration", RegisterPath, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	var out registrationResponse
+	decodeBody(t, rec, &out)
+	if out.ClientID == "" || out.ClientSecret == "" {
+		t.Fatalf("the registration answered %+v; want a client id and a secret", out)
+	}
+	id, secret := out.ClientID, out.ClientSecret
 
 	client, err := ts.store.GetClient(t.Context(), id)
 	if err != nil {
@@ -84,8 +95,17 @@ func TestRegisterIsOpenAndGrantsNothing(t *testing.T) {
 	if client.Name != "an editor" || len(client.RedirectURIs) != 1 || client.RedirectURIs[0] != testClientRedirect {
 		t.Errorf("the stored record is %+v; want the client the registration described", client)
 	}
-	if len(client.Limits.Scopes) != 0 {
-		t.Errorf("the registration wrote limits (%+v): a stranger's registration chooses no limit and grants none, and a client that arrived with one would be an unattended caller made out of an open endpoint (D929)", client.Limits)
+
+	// The response says what is true of the client it just wrote: the two
+	// grants this server answers, and no authentication method at the token
+	// endpoint, because neither grant requires the secret. Advertising
+	// `client_secret_basic` would be telling a native client to keep a
+	// long-lived value on a device for nothing.
+	if out.TokenEndpointAuthMethod != string(oidc.AuthMethodNone) {
+		t.Errorf("the registration advertises token_endpoint_auth_method %q; want %q: both grants this server answers are proved by the code and its PKCE verifier or by the refresh token itself, so no secret is required and the document has to say so", out.TokenEndpointAuthMethod, oidc.AuthMethodNone)
+	}
+	if len(out.GrantTypes) != 2 || out.GrantTypes[0] != string(oidc.GrantTypeCode) || out.GrantTypes[1] != string(oidc.GrantTypeRefreshToken) {
+		t.Errorf("the registration advertises grant_types %v; want the code and refresh grants alone: the client credentials grant is refused at the token endpoint (D929 amended), so advertising it would be telling a client about a flow that answers unsupported_grant_type", out.GrantTypes)
 	}
 
 	// The secret is returned once and only its hash is at rest (spec.md §3).
@@ -101,15 +121,15 @@ func TestRegisterIsOpenAndGrantsNothing(t *testing.T) {
 		}
 	}
 
-	// And the grant that would turn a registration into spend is refused,
-	// because the record it wrote names no limits.
-	rec := ts.postForm(t, TokenPath, url.Values{
+	// And there is no grant that would turn a registration into spend: the one
+	// that had no person behind it is refused outright (D929 amended, M-f).
+	rec = ts.postForm(t, TokenPath, url.Values{
 		"grant_type":    {string(GrantClientCredentials)},
 		"client_id":     {id},
 		"client_secret": {secret},
 	})
 	if rec.Code == http.StatusOK {
-		t.Errorf("a registered client got a token from the client credentials grant: an unattended token with no limits is the one token §7 refuses to mint (D929)")
+		t.Errorf("a registered client got a token from the client credentials grant: an unattended caller cannot be made out of an open registration endpoint (D929 amended)")
 	}
 }
 

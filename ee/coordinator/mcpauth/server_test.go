@@ -197,8 +197,8 @@ func TestNoRecordIsWrittenOutsideTheStore(t *testing.T) {
 	ts := newTestServer(t)
 
 	clientID, secret := ts.register(t, "an editor", testClientRedirect)
-	binding := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
-	code := codeOf(t, ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}))
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.approve(t, binding, number))
 	rec, tokens := ts.exchange(t, url.Values{
 		"grant_type":    {string(GrantAuthorizationCode)},
 		"code":          {code},

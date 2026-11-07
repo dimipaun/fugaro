@@ -137,15 +137,6 @@ type Client struct {
 	// SecretHash is sha256 of the client secret, hex, empty for a client
 	// that holds none. The secret itself is returned once, at registration.
 	SecretHash string `json:"secret_hash"`
-	// Limits are the limits this client's tokens are held to (D929). They
-	// are empty for a client the registration endpoint wrote — a stranger's
-	// registration chooses no limit and grants none — and they are mandatory
-	// for an unattended caller, which is a client an operator pre-registered
-	// to reach the tools with no person behind it: the token endpoint refuses
-	// the client credentials grant when this is empty, because a token that
-	// can spend the project's budget at whatever mode it likes is the one
-	// token §7 refuses to mint.
-	Limits Limits `json:"limits"`
 	// CreatedAt is when the registration was written. It is the field a
 	// lifecycle reads, and it is deliberately the only thing here that
 	// anticipates one: spec.md §8 bounds an open registration endpoint's
@@ -230,13 +221,23 @@ type TokenRecord struct {
 // stranger can see, and it is spent when the consent is answered
 // (Store.TakeRequest).
 //
-// Everything the consent decides is taken from here and never from the consent
-// itself: the consent carries the binding and the proof of the sign-in, and a
-// consent that could name its own redirect URI would be a consent to send a
-// code somewhere the person was never shown.
+// Everything the approval decides is taken from here and never from the
+// approval itself: the approval carries the binding, the flow's number and the
+// proof of the sign-in, and an approval that could name its own redirect URI
+// would be an approval to send a code somewhere the person was never shown. The
+// identity is the one thing that is not here — it is what the approval's ID
+// token attests, so it is settled when the approval arrives and read by the
+// handler that writes the code.
 type Request struct {
 	// ID is the flow's own id and the binding the consent must carry.
 	ID string `json:"id"`
+	// Number is the flow's own number, and it is M-a's number matching: it
+	// is shown on the screen the authorization request renders and the
+	// approval has to present it back. An approval that carried the binding
+	// alone would be one an attacker who read the id out of a browser's
+	// history could answer, and a number the approver had to have seen is
+	// what ties the approval to a person looking at the screen that asked.
+	Number string `json:"number"`
 	// ClientID is the registration that asked.
 	ClientID string `json:"client_id"`
 	// RedirectURI is the URI the code will be sent to. It was matched
@@ -253,13 +254,6 @@ type Request struct {
 	// D927's vocabulary. They become the token's scopes, narrowed against the
 	// project's.
 	Scopes []string `json:"scopes"`
-	// Identity is the identity the sign-in proved (M6's verifier), written
-	// here when the authorize request was answered with an ID token and read
-	// back when the consent is. It is in this record for the same reason the
-	// redirect URI is: the consent carries the binding and nothing else, so
-	// there is nothing in a consent an attacker could substitute to make the
-	// code act for an identity the person did not sign in as.
-	Identity string `json:"identity"`
 	// ExpiresAt is when the flow stops waiting for its consent.
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -290,6 +284,13 @@ type Code struct {
 	Scopes []string `json:"scopes"`
 	// ExpiresAt is when the code stops being redeemable.
 	ExpiresAt time.Time `json:"expires_at"`
+	// FamilyID is the token family the code's first exchange minted. It is
+	// not written with the code: BindCodeFamily writes it into the spent
+	// marker afterwards, and ConsumeCode answers it on the one path that
+	// reads a spent code — the replay, which revokes that family
+	// (OAuth 2.1 §4.1.3). It is empty on a code that was never exchanged and
+	// on one whose exchange minted nothing.
+	FamilyID string `json:"family_id,omitempty"`
 }
 
 // Store is the token records of D935, wherever the owner's answer to §8 puts
@@ -354,8 +355,17 @@ type Store interface {
 	// ConsumeCode reads an authorization code and spends it in the same act
 	// (spec.md §3, "single-use"): the second redemption of one code is
 	// refused with ErrCodeUsed, and the compare-and-swap is what makes two
-	// simultaneous redemptions one success rather than two.
+	// simultaneous redemptions one success rather than two. On that refusal
+	// it answers the spent record's FamilyID, which is the family the first
+	// exchange minted: the caller is the one that has to take it down
+	// (OAuth 2.1 §4.1.3), and the store does not revoke on its own.
 	ConsumeCode(ctx context.Context, hash string) (Code, error)
+	// BindCodeFamily writes the family a code's first exchange minted into
+	// the code's spent record, so that a replay of the code can revoke it.
+	// It is called once, by the exchange that spent the code and after the
+	// family exists; a code that is not spent is refused rather than
+	// rewritten.
+	BindCodeFamily(ctx context.Context, hash, familyID string) error
 }
 
 // TokenHash is sha256 of a token value, hex: what the store keys a record by
@@ -642,7 +652,7 @@ func (r records) TakeRequest(ctx context.Context, id string) (Request, error) {
 		return Request{}, err
 	}
 	var req Request
-	switch err := r.consume(ctx, requestPrefix+id, &req); {
+	switch _, err := r.consume(ctx, requestPrefix+id, &req); {
 	case errors.Is(err, errMissing):
 		return Request{}, ErrRequestNotFound
 	case errors.Is(err, errConsumed):
@@ -675,15 +685,67 @@ func (r records) ConsumeCode(ctx context.Context, hash string) (Code, error) {
 		return Code{}, err
 	}
 	var c Code
-	switch err := r.consume(ctx, codePrefix+hash, &c); {
+	spent, err := r.consume(ctx, codePrefix+hash, &c)
+	switch {
 	case errors.Is(err, errMissing):
 		return Code{}, ErrCodeNotFound
 	case errors.Is(err, errConsumed):
-		return Code{}, ErrCodeUsed
+		// The code was spent by an earlier exchange. Its marker is read for
+		// the family that exchange minted, which is the whole of what a
+		// replay can act on: the caller revokes it, and the store does not
+		// decide that for it.
+		var marker spentRecord
+		if len(spent) > 0 {
+			if err := json.Unmarshal(spent, &marker); err != nil {
+				return Code{}, fmt.Errorf("mcpauth: decoding the spent code %s: %w", hash, err)
+			}
+		}
+		return Code{FamilyID: marker.FamilyID}, ErrCodeUsed
 	case err != nil:
 		return Code{}, err
 	}
 	return c, nil
+}
+
+// BindCodeFamily writes the family a spent code's first exchange minted into
+// the code's own marker, replacing the plain marker consume left.
+//
+// It is a second write to a record that is already spent, and it is
+// generation-matched against the read for the same reason every other write
+// here is: two exchanges of one code cannot both reach this call — the consume
+// is what makes exactly one of them the winner — but a marker that a caller
+// rewrote under another caller's read would still be one record written from
+// two places.
+func (r records) BindCodeFamily(ctx context.Context, hash, familyID string) error {
+	if err := keySegment(hash); err != nil {
+		return err
+	}
+	if err := keySegment(familyID); err != nil {
+		return err
+	}
+	data, gen, err := r.objs.read(ctx, codePrefix+hash)
+	if err != nil {
+		return err
+	}
+	if !isConsumed(data) {
+		return fmt.Errorf("mcpauth: code %s is not spent, so there is no exchange to bind a family to", hash)
+	}
+	marker, err := json.Marshal(spentRecord{Consumed: true, FamilyID: familyID})
+	if err != nil {
+		return fmt.Errorf("mcpauth: encoding the spent code %s: %w", hash, err)
+	}
+	if _, err := r.objs.replace(ctx, codePrefix+hash, marker, gen); err != nil {
+		return err
+	}
+	return nil
+}
+
+// spentRecord is the marker a single-use record is replaced by when it is spent.
+// FamilyID is empty for every record but a code: it is what BindCodeFamily adds
+// afterwards, and it is the one thing a replay of a spent record is read for.
+type spentRecord struct {
+	Consumed bool   `json:"consumed"`
+	FamilyID string `json:"family_id,omitempty"`
 }
 
 // consumedBytes is what a single-use record is replaced by when it is spent. It
@@ -702,25 +764,26 @@ var errConsumed = errors.New("mcpauth: the record was already spent")
 // consume reads one single-use record and spends it in the same act: the read
 // returns the generation the write below is matched against, so a caller that
 // lost a race is answered errConsumed rather than reading a record the winner
-// already spent.
-func (r records) consume(ctx context.Context, key string, into any) error {
+// already spent. It answers the spent bytes on that refusal, because a caller
+// that lost the race is looking at the winner's marker and not at the record.
+func (r records) consume(ctx context.Context, key string, into any) ([]byte, error) {
 	data, gen, err := r.objs.read(ctx, key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if isConsumed(data) {
-		return errConsumed
+		return data, errConsumed
 	}
 	if err := decode(data, into); err != nil {
-		return fmt.Errorf("%s: %w", key, err)
+		return nil, fmt.Errorf("%s: %w", key, err)
 	}
 	if _, err := r.objs.replace(ctx, key, consumedBytes, gen); err != nil {
 		if errors.Is(err, errChanged) {
-			return errConsumed
+			return nil, errConsumed
 		}
-		return err
+		return nil, err
 	}
-	return nil
+	return nil, nil
 }
 
 // isConsumed reports whether an object is the marker consume leaves. It reads

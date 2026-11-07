@@ -24,13 +24,18 @@ import (
 // being a hole is that a registration grants nothing: the record it writes
 // carries no token, no family and no limits, so a registered client reaches no
 // tool until a person signs in and consents, and an unattended caller cannot be
-// made out of one at all (the client credentials grant refuses a client whose
-// limits are unset — see serveToken).
+// made out of one at all: the client credentials grant is refused outright
+// (D929 amended, M-f), so there is no path from a registration to a token with
+// nobody behind it.
 //
 // **The secret is returned once and only its hash is kept** (spec.md §3, §6).
 // The record is the same shape an operator's pre-registration writes, which is
 // why the field exists at all: D929's unattended caller is a client with a
-// secret, and one record type serves both doors.
+// secret, and one record type serves both doors. What the response advertises is
+// `token_endpoint_auth_method: none` and not `client_secret_basic`, because that
+// is what is true of the two grants this server answers: neither requires the
+// secret, and the document would otherwise tell a native client to keep a
+// long-lived value on a device for nothing.
 //
 // **A redirect URI is checked here and again at authorize, against the same
 // rule** (D928), and this is the earlier of the two doors on purpose: a client
@@ -156,7 +161,7 @@ func (s *Server) serveRegister(w http.ResponseWriter, r *http.Request) {
 		ClientIDIssuedAt:        client.CreatedAt.Unix(),
 		ClientName:              name,
 		RedirectURIs:            client.RedirectURIs,
-		TokenEndpointAuthMethod: string(oidc.AuthMethodBasic),
+		TokenEndpointAuthMethod: string(oidc.AuthMethodNone),
 		GrantTypes:              []string{string(oidc.GrantTypeCode), string(oidc.GrantTypeRefreshToken)},
 		ResponseTypes:           []string{"code"},
 		Scope:                   strings.Join(ScopeVocabulary, " "),

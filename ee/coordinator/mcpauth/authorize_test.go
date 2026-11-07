@@ -17,9 +17,10 @@ import (
 )
 
 // This file is M5's half of the flow: the authorize endpoint's two methods, the
-// token endpoint's two interactive grants, and the four rules the design puts
-// between them — PKCE, single-use codes, exact redirect URIs and D928's CSRF
-// binding.
+// token endpoint's two interactive grants, and the rules the design puts
+// between them — PKCE, single-use codes, exact redirect URIs, D928's CSRF
+// binding, and M-a's approval (a single-use POST carrying the person's Firebase
+// ID token in its body and the number the page showed).
 //
 // Every test here drives the endpoints a real client drives, over the fake
 // bucket, with the ID token M6's own tests sign. Nothing reaches into the
@@ -64,41 +65,60 @@ func authorizeQuery(clientID, redirect string) url.Values {
 	}
 }
 
-// authorizeRequest makes the authorization request, carrying the person's
-// Firebase ID token when there is one.
-func (ts *testServer) authorizeRequest(t *testing.T, q url.Values, token string) *httptest.ResponseRecorder {
+// authorizeRequest makes the authorization request. It carries no credential:
+// M-a's approval is a POST, and the GET is an unauthenticated navigation that
+// renders the page the approval answers.
+func (ts *testServer) authorizeRequest(t *testing.T, q url.Values) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+q.Encode(), nil)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	return ts.do(t, req)
+	return ts.do(t, httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+q.Encode(), nil))
 }
 
-// consentBindingRE reads the binding out of the consent page, which is how a
-// browser would carry it: the test does not know the record's id in advance and
-// must not.
-var consentBindingRE = regexp.MustCompile(`name="request_id" value="([^"]+)"`)
+// The two things the consent page carries and an approval has to present back.
+// They are read out of the page the way a person reads them: the test does not
+// know either value in advance and must not.
+var (
+	consentBindingRE = regexp.MustCompile(`name="request_id" value="([^"]+)"`)
+	consentNumberRE  = regexp.MustCompile(`This flow's number is <strong>([0-9]+)</strong>`)
+)
 
-// startFlow makes one whole authorization request with the person's ID token
-// and answers the binding the consent page carries.
-func (ts *testServer) startFlow(t *testing.T, q url.Values) string {
+// startFlow makes one whole authorization request and answers the binding and
+// the number the consent page carries.
+func (ts *testServer) startFlow(t *testing.T, q url.Values) (binding, number string) {
 	t.Helper()
-	rec := ts.authorizeRequest(t, q, acceptedToken(t))
+	rec := ts.authorizeRequest(t, q)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET %s answered %d (%s); want the consent page: the ID token is valid, the client is registered and the request is complete", AuthorizePath, rec.Code, strings.TrimSpace(rec.Body.String()))
+		t.Fatalf("GET %s answered %d (%s); want the consent page: the client is registered and the request is complete, and the GET verifies nothing about a person", AuthorizePath, rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
-	m := consentBindingRE.FindStringSubmatch(rec.Body.String())
+	page := rec.Body.String()
+	m := consentBindingRE.FindStringSubmatch(page)
 	if m == nil {
-		t.Fatalf("the consent page carries no request_id: without the flow's own binding there is nothing a consent can be checked against, and D928's CSRF rule has nothing to hold")
+		t.Fatalf("the consent page carries no request_id: without the flow's own binding there is nothing an approval can be checked against, and D928's CSRF rule has nothing to hold")
 	}
-	return m[1]
+	n := consentNumberRE.FindStringSubmatch(page)
+	if n == nil {
+		t.Fatalf("the consent page carries no number: M-a's number matching is the check that ties an approval to the page that asked, and a page that shows no number cannot be matched against")
+	}
+	return m[1], n[1]
 }
 
-// consent answers the page above.
+// consent posts one approval to the authorize endpoint.
 func (ts *testServer) consent(t *testing.T, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	return ts.postForm(t, AuthorizePath, form)
+}
+
+// approve posts the approval the page above asks for: the binding, the number
+// the page showed, and the Firebase ID token the person's paired device
+// produced — all three in the form body, which is the only place M-a allows the
+// token to be.
+func (ts *testServer) approve(t *testing.T, binding, number string) *httptest.ResponseRecorder {
+	t.Helper()
+	return ts.consent(t, url.Values{
+		"request_id": {binding},
+		"number":     {number},
+		"id_token":   {acceptedToken(t)},
+		"decision":   {"allow"},
+	})
 }
 
 // codeOf reads the code out of a consent's redirect, which is where a client
@@ -135,8 +155,8 @@ func (ts *testServer) exchange(t *testing.T, form url.Values) (*httptest.Respons
 func (ts *testServer) runFlow(t *testing.T, redirect string) (clientID string, tokens tokenResponse) {
 	t.Helper()
 	clientID, _ = ts.register(t, "an editor", redirect)
-	binding := ts.startFlow(t, authorizeQuery(clientID, redirect))
-	code := codeOf(t, ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}))
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, redirect))
+	code := codeOf(t, ts.approve(t, binding, number))
 	rec, tokens := ts.exchange(t, url.Values{
 		"grant_type":    {string(GrantAuthorizationCode)},
 		"code":          {code},
@@ -185,20 +205,20 @@ func TestPKCEIsRequiredAndPlainIsRefused(t *testing.T) {
 
 	q := authorizeQuery(clientID, testClientRedirect)
 	q.Del("code_challenge")
-	if got := oauthErrorOf(t, ts.authorizeRequest(t, q, acceptedToken(t)), host); got != string(oidc.InvalidRequest) {
+	if got := oauthErrorOf(t, ts.authorizeRequest(t, q), host); got != string(oidc.InvalidRequest) {
 		t.Errorf("an authorization request with no code_challenge was refused with %q; want %q, and it has to be refused rather than answered", got, oidc.InvalidRequest)
 	}
 
 	q = authorizeQuery(clientID, testClientRedirect)
 	q.Set("code_challenge_method", "plain")
-	if got := oauthErrorOf(t, ts.authorizeRequest(t, q, acceptedToken(t)), host); got != string(oidc.InvalidRequest) {
+	if got := oauthErrorOf(t, ts.authorizeRequest(t, q), host); got != string(oidc.InvalidRequest) {
 		t.Errorf("an authorization request with a plain challenge was refused with %q; want %q: a plain challenge is the verifier itself and this server accepts S256 alone", got, oidc.InvalidRequest)
 	}
 
 	// And the exchange is where the challenge is actually checked: a code
 	// issued for one verifier is not redeemable with another.
-	binding := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
-	code := codeOf(t, ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}))
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.approve(t, binding, number))
 	rec, _ := ts.exchange(t, url.Values{
 		"grant_type":    {string(GrantAuthorizationCode)},
 		"code":          {code},
@@ -226,8 +246,8 @@ func TestCodeIsSingleUseAndBoundToTheRedirectURI(t *testing.T) {
 
 	// The same code again. It has to be refused, and the refusal has to name
 	// the rule rather than the value: the code is the caller's own text.
-	binding := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
-	code := codeOf(t, ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}))
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.approve(t, binding, number))
 	form := url.Values{
 		"grant_type":    {string(GrantAuthorizationCode)},
 		"code":          {code},
@@ -250,8 +270,8 @@ func TestCodeIsSingleUseAndBoundToTheRedirectURI(t *testing.T) {
 	}
 
 	// The same code, presented for another redirect URI.
-	binding = ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
-	code = codeOf(t, ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}))
+	binding, number = ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code = codeOf(t, ts.approve(t, binding, number))
 	rec, _ = ts.exchange(t, url.Values{
 		"grant_type":    {string(GrantAuthorizationCode)},
 		"code":          {code},
@@ -261,6 +281,47 @@ func TestCodeIsSingleUseAndBoundToTheRedirectURI(t *testing.T) {
 	})
 	if rec.Code == http.StatusOK {
 		t.Errorf("the exchange accepted a redirect_uri the code was not issued for: the code is bound to the client, the redirect URI and the challenge, and the exchange presents the URI again rather than choosing one")
+	}
+}
+
+// TestAReplayedCodeRevokesWhatItMinted is OAuth 2.1 §4.1.3's SHOULD, built: a
+// code presented twice does not merely get refused, it revokes the token family
+// its first exchange issued.
+//
+// Two parties hold one code only if one of them read it somewhere it should not
+// have been, and the tokens that exchange minted are exactly what must stop
+// working while that is being sorted out. The second half is what makes it a
+// revocation rather than a sentence in a refusal: the refresh token the first
+// exchange handed out is dead afterwards.
+func TestAReplayedCodeRevokesWhatItMinted(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.approve(t, binding, number))
+	form := url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {testVerifier},
+	}
+	rec, tokens := ts.exchange(t, form)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the first exchange answered %d (%s); want a token pair", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	if rec, _ := ts.exchange(t, form); rec.Code == http.StatusOK {
+		t.Fatalf("the replay of the code answered with a token pair")
+	}
+	// The family the first exchange minted is gone, so the refresh token it
+	// handed out no longer rotates.
+	if rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	}); rec.Code == http.StatusOK {
+		t.Errorf("the refresh token the first exchange minted still rotates after the code was replayed: OAuth 2.1 §4.1.3 makes a replay revoke the tokens that exchange issued, because two parties holding one code is the theft the revocation is for")
 	}
 }
 
@@ -277,13 +338,21 @@ func TestRedirectURIMustMatchExactly(t *testing.T) {
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)
 
 	for _, uri := range []string{
+		// A URI that extends the registered one, and one it extends: the two
+		// directions a prefix or a suffix rule would fall into. Both are
+		// loopback, so checkRedirectURI admits them and the registered-list
+		// match is the only thing that can refuse them.
 		"http://127.0.0.1:8976/callback/",
+		"http://127.0.0.1:8976/callback?next=https://evil.example.org",
+		"http://127.0.0.1:8976/callbac",
+		"http://127.0.0.1:8976/callback/../callback",
+		// And URIs that differ in the parts a person does not read.
 		"http://127.0.0.1:8977/callback",
 		"http://127.0.0.1:8976/Callback",
 		"https://client.example.net/callback",
 		"",
 	} {
-		rec := ts.authorizeRequest(t, authorizeQuery(clientID, uri), acceptedToken(t))
+		rec := ts.authorizeRequest(t, authorizeQuery(clientID, uri))
 		if rec.Code == http.StatusOK {
 			t.Errorf("GET %s rendered a consent page for redirect_uri %q, which this client did not register: the match is exact (D928)", AuthorizePath, uri)
 		}
@@ -292,8 +361,72 @@ func TestRedirectURIMustMatchExactly(t *testing.T) {
 		}
 	}
 
-	if rec := ts.authorizeRequest(t, authorizeQuery(clientID, testClientRedirect), acceptedToken(t)); rec.Code != http.StatusOK {
+	if rec := ts.authorizeRequest(t, authorizeQuery(clientID, testClientRedirect)); rec.Code != http.StatusOK {
 		t.Errorf("GET %s refused the URI the client registered (%d): the rule is exactness, not exclusion", AuthorizePath, rec.Code)
+	}
+}
+
+// TestAuthorizeRefusesWhatItCannotAnswer: the three requests this endpoint
+// refuses by name rather than by ignoring — a response type it does not issue, a
+// resource it does not serve, and a state it will not hold.
+//
+// The first two are redirects with the client's own state, because by then the
+// flow is known to be the client's. The third is a page, and that is the point
+// of it: D928 returns the state unaltered, so a state this server will not hold
+// is one it must not echo back either.
+func TestAuthorizeRefusesWhatItCannotAnswer(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	host := redirectHost(testClientRedirect)
+
+	// A response type this server does not issue. The code is RFC 6749
+	// §4.1.2.1's own, and it is not `unsupported_grant_type`: what was asked
+	// for is a response type at the authorization endpoint, and the answer has
+	// to name the thing that was wrong.
+	for _, rt := range []string{"token", "id_token", "code token", ""} {
+		q := authorizeQuery(clientID, testClientRedirect)
+		if rt == "" {
+			q.Del("response_type")
+		} else {
+			q.Set("response_type", rt)
+		}
+		if got := oauthErrorOf(t, ts.authorizeRequest(t, q), host); got != "unsupported_response_type" {
+			t.Errorf("an authorization request with response_type %q was refused with %q; want unsupported_response_type: this server issues authorization codes, and the error has to name the parameter that was wrong", rt, got)
+		}
+	}
+
+	// RFC 8707: a resource this server does not serve is refused with
+	// `invalid_target` rather than ignored. Ignoring it would mint a token for
+	// a resource the client did not ask for and did not get told about.
+	for _, target := range []string{"https://elsewhere.example.org", testIssuer + "/mcp", "not-a-url"} {
+		q := authorizeQuery(clientID, testClientRedirect)
+		q.Set("resource", target)
+		if got := oauthErrorOf(t, ts.authorizeRequest(t, q), host); got != string(oidc.InvalidTarget) {
+			t.Errorf("an authorization request naming the resource %q was refused with %q; want %q: this server mints tokens for its own URL and for nothing else", target, got, oidc.InvalidTarget)
+		}
+	}
+	// The one resource it does serve is answered, so the refusals above are
+	// about the resource and not about the parameter.
+	q := authorizeQuery(clientID, testClientRedirect)
+	q.Set("resource", testIssuer)
+	if rec := ts.authorizeRequest(t, q); rec.Code != http.StatusOK {
+		t.Errorf("an authorization request naming this server's own URL as its resource answered %d (%s); want the consent page: that is the audience every token here carries", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	// A state longer than this server holds. The refusal is a page with no
+	// Location, and the state appears nowhere in it.
+	long := strings.Repeat("s", maxStateBytes+1)
+	q = authorizeQuery(clientID, testClientRedirect)
+	q.Set("state", long)
+	rec := ts.authorizeRequest(t, q)
+	if rec.Code == http.StatusOK {
+		t.Errorf("an authorization request carrying a state of %d bytes rendered the consent page: the state is kept and returned unaltered (D928), so it is bounded rather than accepted", len(long))
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("an authorization request carrying an over-long state answered with a redirect to %q: the bound exists to keep the value out of the answer, and a redirect would put it back in one", loc)
+	}
+	if strings.Contains(rec.Body.String(), long) {
+		t.Error("the refusal echoes the over-long state: the state that was refused is not a value this server holds, and reflecting it is how a bound turns into no bound at all")
 	}
 }
 
@@ -350,11 +483,16 @@ func TestRefreshTokenIsSingleUse(t *testing.T) {
 // TestConsentNamesTheRedirectHost is the owner's tightening of D928: the page a
 // person consents on names the host their code will be sent to, so they consent
 // to somewhere rather than to an opaque client id.
+//
+// It is also where M-a's "the client is shown as unverified" is held: the name
+// beside that host is the client's own assertion about itself, so the page says
+// so. A page that showed `an editor` as though something had checked it would be
+// the page an attacker's client uses to look like one the person trusts.
 func TestConsentNamesTheRedirectHost(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testAllowlistedRedirect)
 
-	rec := ts.authorizeRequest(t, authorizeQuery(clientID, testAllowlistedRedirect), acceptedToken(t))
+	rec := ts.authorizeRequest(t, authorizeQuery(clientID, testAllowlistedRedirect))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s answered %d (%s); want the consent page", AuthorizePath, rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
@@ -365,26 +503,37 @@ func TestConsentNamesTheRedirectHost(t *testing.T) {
 	if !strings.Contains(page, "an editor") {
 		t.Errorf("the consent page does not name the client: the page is what a person reads before allowing it")
 	}
-	if !strings.Contains(page, "user:"+testEmail) {
-		t.Errorf("the consent page does not name the identity the sign-in proved (%q): the person is consenting on behalf of somebody, and the page has to say who", "user:"+testEmail)
+	if !strings.Contains(page, "This client is not verified") {
+		t.Errorf("the consent page shows the client's own name without saying that nothing checked it: client_name is a stranger's assertion, and M-a requires the client to be marked unverified on the page a person approves from")
+	}
+	if strings.Contains(page, "user:"+testEmail) {
+		t.Errorf("the consent page names the identity %q before any approval has arrived: the GET verifies nothing (M-a), so an identity on this page would be one the page invented", "user:"+testEmail)
+	}
+	// The page is not framable: an Allow button in an attacker's iframe is a
+	// click the person meant for something else.
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Errorf("the consent page carries Content-Security-Policy %q; want frame-ancestors 'none', because a consent page an attacker can frame is a page whose Allow button can be placed under somebody else's click", csp)
+	}
+	if xfo := rec.Header().Get("X-Frame-Options"); xfo != "DENY" {
+		t.Errorf("the consent page carries X-Frame-Options %q; want DENY, which is the same rule for a browser that does not read frame-ancestors", xfo)
 	}
 }
 
-// TestConsentIsCSRFBound is D928's third tightening: the consent carries the
-// flow's own binding, a consent that does not is refused, and the state returns
-// on the redirect unaltered.
+// TestConsentIsCSRFBound is D928's third tightening: the approval carries the
+// flow's own binding, an approval that does not is refused, and the state
+// returns on the redirect unaltered.
 //
-// The third assertion is the one that holds the whole rule: a consent that
-// carried the right binding AND a redirect URI of its own choosing still goes
-// where the record says, because the record is the only place any of it is read
-// from. Without that, a binding would be a token an attacker could present
-// beside values of their own.
+// The third assertion is the one that holds the whole rule: an approval that
+// carried the right binding, the right number and a redirect URI of its own
+// choosing still goes where the record says, because the record is the only
+// place any of it is read from. Without that, a binding would be a token an
+// attacker could present beside values of their own.
 func TestConsentIsCSRFBound(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)
 	host := redirectHost(testClientRedirect)
 
-	binding := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
 
 	for _, form := range []url.Values{
 		{"decision": {"allow"}},
@@ -392,33 +541,35 @@ func TestConsentIsCSRFBound(t *testing.T) {
 	} {
 		rec := ts.consent(t, form)
 		if rec.Code == http.StatusFound {
-			t.Errorf("a consent carrying %v was honoured: a consent that does not carry the flow's own binding is refused rather than answered, or an attacker's client finishes a sign-in the person started for another", form)
+			t.Errorf("an approval carrying %v was honoured: one that does not carry the flow's own binding is refused rather than answered, or an attacker's client finishes a sign-in the person started for another", form)
 		}
 		if loc := rec.Header().Get("Location"); loc != "" {
-			t.Errorf("a consent carrying %v answered with a redirect to %q: nothing is known about the flow, so there is nowhere safe to send an answer", form, loc)
+			t.Errorf("an approval carrying %v answered with a redirect to %q: nothing is known about the flow, so there is nowhere safe to send an answer", form, loc)
 		}
 	}
 	if got := ts.store.objects(t); len(got) != 2 {
-		t.Errorf("the store holds %d objects after two refused consents; want the client and the pending request and no code", len(got))
+		t.Errorf("the store holds %d objects after two refused approvals; want the client and the pending request and no code", len(got))
 	}
 
-	// The real consent, with a redirect URI of the caller's own choosing beside
+	// The real approval, with a redirect URI of the caller's own choosing beside
 	// the binding: the code goes to the record's URI, and the state comes back
 	// as the client sent it.
 	rec := ts.consent(t, url.Values{
 		"request_id":   {binding},
+		"number":       {number},
+		"id_token":     {acceptedToken(t)},
 		"decision":     {"allow"},
 		"redirect_uri": {"https://evil.example.org/callback"},
 	})
 	if rec.Code != http.StatusFound {
-		t.Fatalf("the consent answered %d (%s); want a redirect to the client's own URI", rec.Code, strings.TrimSpace(rec.Body.String()))
+		t.Fatalf("the approval answered %d (%s); want a redirect to the client's own URI", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 	u, err := url.Parse(rec.Header().Get("Location"))
 	if err != nil {
 		t.Fatalf("the redirect is not a URL: %v", err)
 	}
 	if u.Host != host {
-		t.Errorf("the code was sent to %q; want the URI the flow was recorded with (%q): everything the consent decides is read out of the record and never out of the consent", u.Host, host)
+		t.Errorf("the code was sent to %q; want the URI the flow was recorded with (%q): everything the approval decides is read out of the record and never out of the approval", u.Host, host)
 	}
 	if got := u.Query().Get("state"); got != testState {
 		t.Errorf("the redirect carries state %q; want %q unaltered (D928)", got, testState)
@@ -428,64 +579,171 @@ func TestConsentIsCSRFBound(t *testing.T) {
 	}
 
 	// And the flow is answered once.
-	if again := ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}); again.Code == http.StatusFound {
-		t.Errorf("the same binding was answered twice: one binding answers one consent, and the second is refused rather than honoured")
+	if again := ts.approve(t, binding, number); again.Code == http.StatusFound {
+		t.Errorf("the same binding was answered twice: one binding answers one approval, and the second is refused rather than honoured")
 	}
 }
 
-// TestAuthorizeRefusesAnUnverifiedSignIn: the authorize endpoint's sign-in step
-// is what the whole consent page rests on, and neither of the two ways it can
-// fail renders one.
+// TestTheApprovalRefusesAnUnverifiedSignIn: the sign-in step is what the whole
+// approval rests on, and neither of the two ways it can fail issues a code.
 //
-// The two ways are the two branches of verifySignIn: a request that carries no
-// Bearer credential at all, and one that carries a credential this installation
-// will not verify — here, a token another project's Firebase signed, which is
-// the refusal M6's own tests hold one layer down. What this test adds is that
-// the endpoint does not go on regardless: an unverified sign-in is a 401 page,
-// never a consent page and never a redirect to the client, because there is no
-// person yet whose consent the page could be about.
-func TestAuthorizeRefusesAnUnverifiedSignIn(t *testing.T) {
+// The two ways are the two branches of verifySignIn: an approval that carries no
+// token at all, and one that carries a token this installation will not verify —
+// here, a token another project's Firebase signed, which is the refusal M6's own
+// tests hold one layer down. What this test adds is that the endpoint does not
+// go on regardless: an unverified sign-in is a 401 page, never a code and never
+// a redirect to the client, because there is no person whose approval this was.
+func TestTheApprovalRefusesAnUnverifiedSignIn(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)
 	otherProjectToken := signJWT(t, testKey(), testKid, "RS256", idTokenClaims(testOtherProject))
 
-	for _, tc := range []struct{ what, header string }{
-		{"no Authorization header at all", ""},
-		{"a scheme that is not Bearer", "Basic cGVyc29uLTE6bWFya2Vy"},
-		{"Bearer with no token after it", "Bearer"},
-		{"Bearer with an empty token", "Bearer "},
-		{"a token another installation's Firebase signed", "Bearer " + otherProjectToken},
+	for _, tc := range []struct{ what, token string }{
+		{"no token at all", ""},
+		{"a token that is not a JWT", "not-a-jwt"},
+		{"a token another installation's Firebase signed", otherProjectToken},
 	} {
-		req := httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+authorizeQuery(clientID, testClientRedirect).Encode(), nil)
-		if tc.header != "" {
-			req.Header.Set("Authorization", tc.header)
-		}
-		rec := ts.do(t, req)
+		binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+		rec := ts.consent(t, url.Values{
+			"request_id": {binding},
+			"number":     {number},
+			"id_token":   {tc.token},
+			"decision":   {"allow"},
+		})
 		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("an authorization request with %s answered %d (%s); want 401: an unverified sign-in is refused rather than rendered as a consent page", tc.what, rec.Code, strings.TrimSpace(rec.Body.String()))
+			t.Errorf("an approval carrying %s answered %d (%s); want 401: an unverified sign-in is refused rather than answered with a code", tc.what, rec.Code, strings.TrimSpace(rec.Body.String()))
 		}
 		if loc := rec.Header().Get("Location"); loc != "" {
-			t.Errorf("an authorization request with %s answered with a redirect to %q: nothing is known about the person yet, so there is no flow to send an answer to", tc.what, loc)
+			t.Errorf("an approval carrying %s answered with a redirect to %q: nothing is known about the person, so there is no flow to send an answer to", tc.what, loc)
 		}
-		if strings.Contains(rec.Body.String(), otherProjectToken) {
+		if tc.token != "" && strings.Contains(rec.Body.String(), tc.token) {
 			t.Errorf("the refusal for %s repeats the token: a token rendered into a page is a token in a browser's history", tc.what)
 		}
 	}
-	// Nothing was recorded for any of them: the pending request is what the
-	// consent page binds to, and a refused sign-in writes none.
-	if got := ts.store.objects(t); len(got) != 1 {
-		t.Errorf("the store holds %d objects after five refused sign-ins; want the one client record and no pending request", len(got))
+	// No code was written for any of them: the client and the three pending
+	// requests are what is in the store, and a refused approval writes no code.
+	at := ts.store.objects(t)
+	if len(at) != 4 {
+		t.Errorf("the store holds %d objects after three refused approvals; want the one client record, the three pending requests and no code", len(at))
+	}
+	for key := range at {
+		if strings.HasPrefix(key, codePrefix) {
+			t.Errorf("%s is a code written by an approval whose sign-in did not verify", key)
+		}
 	}
 
-	// The same request with a token this installation signed is answered — under
-	// either spelling of the scheme, which RFC 7235 §2.1 makes case-insensitive —
-	// so the refusals above are about the token and not about the request.
-	for _, scheme := range []string{"Bearer ", "bearer "} {
-		req := httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+authorizeQuery(clientID, testClientRedirect).Encode(), nil)
-		req.Header.Set("Authorization", scheme+acceptedToken(t))
-		if rec := ts.do(t, req); rec.Code != http.StatusOK {
-			t.Errorf("the same request with %q answered %d (%s); want the consent page", scheme, rec.Code, strings.TrimSpace(rec.Body.String()))
+	// The same approval with a token this installation signed is answered, so the
+	// refusals above are about the token and not about the request.
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.approve(t, binding, number); rec.Code != http.StatusFound {
+		t.Errorf("the same approval with a token this installation signed answered %d (%s); want the code redirect", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestTheApprovalNeedsTheNumberThePageShowed is M-a's number matching at the
+// endpoint: an approval that does not present the flow's own number is refused,
+// whatever else it carries.
+//
+// The number is what ties an approval to a person who was looking at the page
+// that asked. Without it, an attacker who starts a flow of their own has only to
+// get the person to approve *something* — and the token the person's device
+// produces is the same token whichever page asked for it.
+func TestTheApprovalNeedsTheNumberThePageShowed(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+
+	for _, number := range []string{"", "000000", "not-a-number"} {
+		binding, shown := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+		if number == "000000" && shown == "000000" {
+			// A one-in-a-million draw; the control below would then be
+			// indistinguishable from the refusals.
+			t.Skip("the flow's number happened to be the one this case presents")
 		}
+		rec := ts.consent(t, url.Values{
+			"request_id": {binding},
+			"number":     {number},
+			"id_token":   {acceptedToken(t)},
+			"decision":   {"allow"},
+		})
+		if rec.Code == http.StatusFound {
+			t.Errorf("an approval presenting the number %q was answered with a code, and the page showed %q: the approval has to present the number the page showed, or the check is a hidden field's theatre", number, shown)
+		}
+		if loc := rec.Header().Get("Location"); loc != "" {
+			t.Errorf("an approval presenting the number %q answered with a redirect to %q: the number is checked before the flow is answered, so there is nothing to redirect to", number, loc)
+		}
+	}
+
+	// The control: the number the page showed is answered, so the refusals above
+	// are about the number and not about the rest of the approval.
+	binding, shown := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.approve(t, binding, shown); rec.Code != http.StatusFound {
+		t.Errorf("the approval carrying the number the page showed answered %d (%s); want the code redirect", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestAnIDTokenInAQueryStringIsRefused is M-a stated as a fact about the wire:
+// the Firebase ID token is accepted in the body of the approval POST and
+// nowhere else.
+//
+// A query parameter is the shape that matters, because it is the shape that ends
+// up somewhere else: in a proxy's log, in a browser's history, in a Referer
+// header. Both methods refuse one rather than reading past it — the GET because
+// there is nothing on it that could read a token, and the POST because the body
+// is where the token belongs.
+func TestAnIDTokenInAQueryStringIsRefused(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	token := acceptedToken(t)
+
+	q := authorizeQuery(clientID, testClientRedirect)
+	q.Set("id_token", token)
+	rec := ts.authorizeRequest(t, q)
+	if rec.Code == http.StatusOK {
+		t.Errorf("GET %s carrying an ID token in its query string rendered the consent page: a token in a URL reaches a log line and a browser's history, and this endpoint must never accept one that way (M-a)", AuthorizePath)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("GET %s carrying an ID token in its query string answered with a redirect to %q: the refusal has to be a page, because a redirect would put the token in a second place", AuthorizePath, loc)
+	}
+	if strings.Contains(rec.Body.String(), token) {
+		t.Error("the refusal repeats the token: a token rendered into a page is a token in a browser's history")
+	}
+	// A refusal is a page a person reads too, so it is not framable either: the
+	// rule is about every page this endpoint renders and not only the consent.
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Errorf("the refusal page carries Content-Security-Policy %q; want frame-ancestors 'none'", csp)
+	}
+	if xfo := rec.Header().Get("X-Frame-Options"); xfo != "DENY" {
+		t.Errorf("the refusal page carries X-Frame-Options %q; want DENY", xfo)
+	}
+
+	// The approval itself, carrying the token in its query string *and* a valid
+	// one in its body. This is the case that makes the refusal load-bearing: an
+	// endpoint that read the query would answer it with a code, and a URL that
+	// carried the token has already been written to a log line, so the request
+	// is refused rather than answered.
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	req := httptest.NewRequest(http.MethodPost,
+		AuthorizePath+"?id_token="+url.QueryEscape(token),
+		strings.NewReader(url.Values{
+			"request_id": {binding},
+			"number":     {number},
+			"id_token":   {token},
+			"decision":   {"allow"},
+		}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = ts.do(t, req)
+	if rec.Code == http.StatusFound {
+		t.Errorf("an approval carrying an ID token in its query string was answered with a code: the body is the only place the token is read from, and a token that reached a URL has already been written to a log line")
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("an approval carrying an ID token in its query string answered with a redirect to %q", loc)
+	}
+
+	// And the same approval with the token in the body alone is answered, so the
+	// refusal above is about where the token was and not about the token.
+	binding, number = ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.approve(t, binding, number); rec.Code != http.StatusFound {
+		t.Errorf("the same approval with the token in its body alone answered %d (%s); want the code redirect", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }
 
@@ -578,8 +836,8 @@ func TestCodeIsBoundToTheClientThatRequestedIt(t *testing.T) {
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)
 	otherID, _ := ts.register(t, "a second client", testOtherRedirect)
 
-	binding := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
-	code := codeOf(t, ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}))
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.approve(t, binding, number))
 
 	form := url.Values{
 		"grant_type":    {string(GrantAuthorizationCode)},
@@ -629,32 +887,41 @@ func TestRefreshTokenIsBoundToItsClient(t *testing.T) {
 	}
 }
 
-// TestClientCredentialsNeedsTheSecret is D929's other half: the one grant with no
-// person behind it is the one grant proved by the client secret, and a client
-// that presents none is refused before its record is even read for limits.
+// TestClientCredentialsIsRefused is D929 amended (finding M-f): the client
+// credentials grant stays off until it has an owner, so the token endpoint
+// refuses it — and the task builds the refusal, not the grant.
 //
-// The pair below is the whole rule. Without the secret the answer is 401; with
-// it, a registration's own record — which names no limits — answers 400. Neither
-// is a token, and the first is what keeps an unattended caller from being made
-// out of a registration nobody proved.
-func TestClientCredentialsNeedsTheSecret(t *testing.T) {
+// The refusal is `unsupported_grant_type` and it is made before the client is
+// read, which the last case below is what holds: an unknown client id gets the
+// same answer as a registered one, so the refusal is about the grant and not
+// about who asked. An answer that depended on the client would be a way to learn
+// which client ids exist from a public endpoint.
+func TestClientCredentialsIsRefused(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, secret := ts.register(t, "an editor", testClientRedirect)
 
-	rec := ts.postForm(t, TokenPath, url.Values{
-		"grant_type": {string(GrantClientCredentials)},
-		"client_id":  {clientID},
-	})
-	if rec.Code != http.StatusUnauthorized || refusalOf(t, rec).Error != string(oidc.InvalidClient) {
-		t.Errorf("the client credentials grant with no secret answered %d (%s); want 401 %s: this grant is proved by the secret and by nothing else", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidClient)
+	for _, form := range []url.Values{
+		{"grant_type": {string(GrantClientCredentials)}, "client_id": {clientID}},
+		{"grant_type": {string(GrantClientCredentials)}, "client_id": {clientID}, "client_secret": {secret}},
+		{"grant_type": {string(GrantClientCredentials)}, "client_id": {"a-client-this-installation-never-registered"}},
+	} {
+		rec := ts.postForm(t, TokenPath, form)
+		if rec.Code != http.StatusBadRequest || refusalOf(t, rec).Error != string(oidc.UnsupportedGrantType) {
+			t.Errorf("the client credentials grant answered %d (%s); want 400 %s: D929 amended keeps the grant off until it has an owner, and this task builds the refusal rather than the grant", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.UnsupportedGrantType)
+		}
+		if strings.Contains(rec.Body.String(), "access_token") {
+			t.Errorf("the client credentials grant answered with a token: %s", strings.TrimSpace(rec.Body.String()))
+		}
 	}
-
-	rec = ts.postForm(t, TokenPath, url.Values{
-		"grant_type":    {string(GrantClientCredentials)},
-		"client_id":     {clientID},
-		"client_secret": {secret},
-	})
-	if rec.Code != http.StatusBadRequest || refusalOf(t, rec).Error != string(oidc.UnauthorizedClient) {
-		t.Errorf("the client credentials grant with the secret but no limits answered %d (%s); want 400 %s: an unattended token without limits is the one token §7 refuses to mint (D929)", rec.Code, strings.TrimSpace(rec.Body.String()), oidc.UnauthorizedClient)
+	// Nothing was minted: a refused grant writes no family and no token record,
+	// so the store holds the client and nothing else.
+	at := ts.store.objects(t)
+	if len(at) != 1 {
+		t.Errorf("the store holds %d objects after three refused client-credentials requests; want the one client record", len(at))
+	}
+	for key := range at {
+		if strings.HasPrefix(key, familyPrefix) || strings.HasPrefix(key, tokenPrefix) {
+			t.Errorf("%s was written by a grant this server refuses: no token and no family may exist for a client credentials request", key)
+		}
 	}
 }

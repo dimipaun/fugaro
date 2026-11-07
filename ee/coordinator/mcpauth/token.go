@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 
@@ -70,25 +69,32 @@ func (t Token) Validate() error {
 	return t.Limits.Validate()
 }
 
-// This half of the file is POST /oauth/token and POST /oauth/revoke: the three
-// grants D923, D929 and D930 name, and the one delete that ends a token family.
+// This half of the file is POST /oauth/token and POST /oauth/revoke: the two
+// grants D923 and D930 name, and the one delete that ends a token family.
 //
 // **The grant vocabulary is closed** (ParseGrantType): the authorization code a
-// person's consent produced, the rotating refresh token, and a confidential
-// client's own credentials. A Firebase ID token is not among them and never
-// will be — it is consumed at the authorize endpoint and is not a grant
-// anywhere (D923).
+// person's consent produced and the rotating refresh token. A Firebase ID token
+// is not among them and never will be — it is consumed at the authorize
+// endpoint and is not a grant anywhere (D923).
+//
+// **The client credentials grant is refused** (D929 amended, M-f: it stays off
+// until it has an owner). ParseGrantType still names it, because the parser is
+// M6's file and the vocabulary it holds is the specification's; what this
+// endpoint does with it is refuse it, here, before any client is looked up, and
+// the metadata does not advertise it. Nothing in this package mints a token for
+// a client and no person: the limits such a token would carry, the client's own
+// record's, have gone with the grant.
 //
 // **What proves an exchange depends on which grant it is** (spec.md §8: "the
-// token endpoint needs the refresh token or the client secret"). The
-// client credentials grant is proved by the client secret and by nothing else,
-// because there is no person and no code behind it. The other two are public
-// client grants: the code is bound to the client, the redirect URI and the code
-// challenge, and the refresh token is itself a value shown once, so a secret is
-// not required there — a client secret a native client had to keep would be a
-// second long-lived value on a device, which is the thing PKCE exists to avoid.
-// A secret that IS presented is verified on every grant, so a client that sends
-// the wrong one is refused rather than quietly read as a client that sent none.
+// token endpoint needs the refresh token or the client secret"). Both remaining
+// grants are public client grants: the code is bound to the client, the redirect
+// URI and the code challenge, and the refresh token is itself a value shown
+// once, so a secret is not required for either — a client secret a native client
+// had to keep would be a second long-lived value on a device, which is the thing
+// PKCE exists to avoid, and that is why the metadata advertises
+// token_endpoint_auth_method "none". A secret that IS presented is verified on
+// every grant, so a client that sends the wrong one is refused rather than
+// quietly read as a client that sent none.
 
 // tokenResponse is RFC 6749 §5.1's answer. `expires_in` is a number of seconds,
 // and `refresh_token` is absent for the one grant that has no refresh half.
@@ -111,6 +117,15 @@ func (s *Server) serveToken(w http.ResponseWriter, r *http.Request) {
 	grant, err := ParseGrantType(form.Get("grant_type"))
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrUnsupportedGrantType(), err.Error()))
+		return
+	}
+	if grant == GrantClientCredentials {
+		// Refused before the client is read, and refused as an unsupported
+		// grant rather than as a client that may not have one: D929 amended
+		// keeps this grant off, and an answer that depended on which client
+		// asked would be a way to learn which client ids exist.
+		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrUnsupportedGrantType(),
+			"the client credentials grant is not one this authorization server supports: it supports the authorization code grant and the refresh token grant"))
 		return
 	}
 	clientID, secret, err := clientAuth(r, form)
@@ -137,8 +152,6 @@ func (s *Server) serveToken(w http.ResponseWriter, r *http.Request) {
 		s.exchangeCode(w, r, form, client)
 	case GrantRefreshToken:
 		s.exchangeRefresh(w, r, form, client)
-	case GrantClientCredentials:
-		s.mintForClient(w, r, form, client, secret)
 	}
 }
 
@@ -166,6 +179,16 @@ func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request, form url.V
 			"the authorization code is not one this installation issued, or it is no longer redeemable"))
 		return
 	case errors.Is(err, ErrCodeUsed):
+		// OAuth 2.1 §4.1.3: a code presented twice is not merely refused, it
+		// revokes what its first exchange issued. Two parties hold a code only
+		// if one of them read it somewhere it should not have been, and the
+		// family's tokens are the thing that must stop working while that is
+		// being sorted out. A failure to revoke is not reported: the refusal is
+		// the same either way, and a store that answered differently would be
+		// telling the replayer whether the family it wants to kill still lives.
+		if code.FamilyID != "" {
+			_ = s.store.RevokeFamily(r.Context(), code.FamilyID)
+		}
 		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(),
 			"the authorization code was already redeemed: a code is single-use, and the second exchange of one is refused rather than answered twice"))
 		return
@@ -198,12 +221,11 @@ func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request, form url.V
 			"the code_verifier does not match the code_challenge the code was issued against"))
 		return
 	}
-	limits, err := Limits{Scopes: code.Scopes}.Narrow(client.Limits)
-	if err != nil {
-		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(), err.Error()))
-		return
-	}
-	limits, err = limits.Narrow(s.cfg.Limits)
+	// The code's scopes are what the person consented to, narrowed against the
+	// installation's own limits. Nothing else narrows them: the client's record
+	// holds no limits of its own, because the only grant that read them was the
+	// client credentials grant and it is refused.
+	limits, err := Limits{Scopes: code.Scopes}.Narrow(s.cfg.Limits)
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(),
 			"the limits of this authorization are not ones this installation mints a token for: "+err.Error()))
@@ -213,6 +235,26 @@ func (s *Server) exchangeCode(w http.ResponseWriter, r *http.Request, form url.V
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, oauthError(oidc.ErrServerError(),
 			"the token could not be minted"))
+		return
+	}
+	// The code's spent marker learns which family it minted, so that a replay
+	// of the code has something to revoke. It is written after the mint
+	// because the family is the mint's, and a marker written before it would
+	// name a family that a failed mint never created.
+	rec, err := s.store.LookupByHash(r.Context(), TokenHash(access))
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, oauthError(oidc.ErrServerError(),
+			"the token could not be read back"))
+		return
+	}
+	if err := s.store.BindCodeFamily(r.Context(), TokenHash(value), rec.FamilyID); err != nil {
+		// The pair is out but the code cannot be made to answer for it, so a
+		// replay would be a refusal that revokes nothing. The family is
+		// revoked here instead: the token is worthless either way, and a
+		// family that stops working is the fail-closed half of the two.
+		_ = s.store.RevokeFamily(r.Context(), rec.FamilyID)
+		writeOAuthError(w, http.StatusInternalServerError, oauthError(oidc.ErrServerError(),
+			"the authorization code could not be bound to the token it minted"))
 		return
 	}
 	writeToken(w, access, refresh, limits.Scopes)
@@ -277,60 +319,6 @@ func (s *Server) exchangeRefresh(w http.ResponseWriter, r *http.Request, form ur
 		return
 	}
 	writeToken(w, access, refresh, rec.Token.Limits.Scopes)
-}
-
-// mintForClient is the client credentials grant (RFC 6749 §4.4, D929): an
-// unattended caller's own credentials, and the one grant whose proof is the
-// client secret.
-//
-// **Its limits are mandatory** (D929). A client whose record names no scope, no
-// window and no spend limit gets no token at all, because that token could
-// spend the project's budget at whatever mode it liked with no person to
-// notice — which is the one token §7 refuses to mint. The refusal is
-// `unauthorized_client` rather than a bad request: the client is not allowed
-// this grant as it stands, and what an operator changes is the record.
-//
-// The family is minted like any other, so spend is counted the way D924 counts
-// it for every token (per family), and the refresh value is dropped rather than
-// returned: this grant has no refresh half, and a value nobody holds is a value
-// nobody can present.
-func (s *Server) mintForClient(w http.ResponseWriter, r *http.Request, form url.Values, client Client, secret string) {
-	if secret == "" {
-		writeOAuthError(w, http.StatusUnauthorized, oauthError(oidc.ErrInvalidClient(),
-			"the client credentials grant is proved by the client secret, and this request presented none"))
-		return
-	}
-	if err := client.Limits.Validate(); err != nil {
-		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrUnauthorizedClient(),
-			"an unattended caller's token carries limits, and this client's record names none that admit a tool: "+err.Error()))
-		return
-	}
-	limits, err := client.Limits.Narrow(s.cfg.Limits)
-	if err != nil {
-		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrUnauthorizedClient(),
-			"the limits of this client are not ones this installation mints a token for: "+err.Error()))
-		return
-	}
-	if asked := form.Get("scope"); asked != "" {
-		for _, s := range strings.Fields(asked) {
-			if !slices.Contains(limits.Scopes, s) {
-				writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidScope(),
-					"the client asked for a scope its own limits do not grant: a token narrows what the client holds and can never widen it"))
-				return
-			}
-		}
-	}
-	// The identity is the client's own (D929: an unattended caller has no user
-	// behind it). Which identities reach a tool is the front door's list rule
-	// and not this endpoint's — a token says who it acts for, and whether that
-	// identity is admitted is decided where the call is made.
-	access, _, err := MintAt(r.Context(), s.store, client.ID, client, limits, s.now())
-	if err != nil {
-		writeOAuthError(w, http.StatusInternalServerError, oauthError(oidc.ErrServerError(),
-			"the token could not be minted"))
-		return
-	}
-	writeToken(w, access, "", limits.Scopes)
 }
 
 // serveRevoke is RFC 7009's revocation endpoint (D930): one delete of the

@@ -4,9 +4,13 @@
 package mcpauth
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"html/template"
+	"math/big"
 	"net/http"
 	"net/url"
 	"slices"
@@ -15,50 +19,84 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
 
-// This file is the authorization endpoint: GET renders the page a person
-// consents on, POST is that person's answer to it.
+// This file is the authorization endpoint: GET renders the page a person reads
+// and approves from, POST is the approval itself.
 //
-// **The sign-in is verified at the GET, and the ID token is never a grant**
-// (D923). The person approves the sign-in on a device paired to the
-// installation, that device's session produces a Firebase ID token, and the
-// token arrives here in the `Authorization` header and nowhere else — never in
-// a query parameter, because a URL reaches a log line, and never at
-// `POST /oauth/token`, because a token that is never a grant cannot be replayed
-// at one. What the GET verifies is written into the pending request, so the
-// identity the code will act for is settled before the page is drawn and the
-// consent cannot name it.
+// **The GET verifies nothing, and the approval carries the proof** (D923,
+// amended by M-a on 2026-11-04). The Firebase ID token the person's paired
+// device produces arrives in the approval POST's *body* and nowhere else — never
+// in a query parameter of either method, because a URL reaches a log line and a
+// browser's history, and never at `POST /oauth/token`, because a token that is
+// never a grant cannot be replayed at one. The GET is an unauthenticated
+// navigation: it checks what the client asked for, records the flow, and renders
+// the page. Nothing about a person is settled until the approval arrives.
 //
-// **The consent carries the flow's own binding and nothing else.** The pending
-// request is the record of everything the consent decides — the client, the
-// redirect URI, the challenge, the state, the scopes and the identity — and the
-// consent presents the record's own random id. That is D928's CSRF binding
-// stated as a fact about the wire rather than as a check: there is no field in
-// the consent an attacker can substitute to make the code go somewhere else, or
-// act for somebody else, or carry a different state back. A consent that
-// carries no binding, or one that was already answered, is refused
-// (ErrRequestNotFound, ErrRequestUsed).
+// **The approval is single-use and bound to the flow.** The pending request is
+// the record of everything the approval decides — the client, the redirect URI,
+// the challenge, the state and the scopes — and the approval presents the
+// record's own random id. `Store.TakeRequest` spends it, so one binding answers
+// one approval, and an attacker who read the id out of a browser's history
+// cannot answer the flow the person started: the answer also has to carry the
+// token that person's device produced. Nothing in the approval can substitute a
+// value of its own — a redirect URI of the caller's own choosing beside the
+// binding still goes to the record's URI.
 //
-// **The page names the host the code will be sent to** (D928, the owner's
-// answer of 2026-11-04), so a person consents to somewhere rather than to an
-// opaque client id.
+// **Number matching is M-a's second half.** The flow carries its own six-digit
+// number, the page shows it, and the approval has to present it back. It is
+// checked in constant time and it is deliberately not a credential: it is the
+// thing that ties an approval to a person who was looking at the screen that
+// asked, so an attacker who starts a flow of their own cannot have the person
+// approve *that* one by answering a page belonging to another.
+//
+// **The client is shown as UNVERIFIED** (M-a, the unverified client name).
+// `client_name` is the client's own assertion about itself — RFC 7591 takes it
+// from the registration and nothing checks it — so the page renders it escaped
+// and says plainly that nothing checked it, beside the host the code will
+// actually be sent to. A page that showed a self-chosen name as though it were
+// an identity would be the page an attacker's client uses to look like a client
+// the person already trusts.
+
+const (
+	// maxStateBytes bounds the client's own `state`. D928 makes the state a
+	// value this server keeps and returns unaltered, so it is bounded rather
+	// than truncated: a request that carries more than this is refused, because
+	// a state that was cut down would come back altered.
+	maxStateBytes = 512
+	// approvalDigits is how many decimal digits a flow's number carries. Six is
+	// what makes a number a person can read off a screen and type back, and it
+	// is short enough that the page can show it as one word.
+	approvalDigits = 6
+)
+
+// approvalNumberMax is the exclusive bound on a flow's number: the digits above,
+// as 10^n.
+var approvalNumberMax = new(big.Int).Exp(big.NewInt(10), big.NewInt(approvalDigits), nil)
 
 // consentPage is the page a person reads. It is rendered from a constant
 // template, so nothing a caller sent is ever part of the markup: the client's
-// name, the redirect host and the scopes are all values substituted into it,
-// and html/template escapes each in the context it appears in.
+// name, the redirect host, the scopes and the number are all values substituted
+// into it, and html/template escapes each in the context it appears in — which
+// is what makes the client's self-asserted name safe to show at all.
 var consentPage = template.Must(template.New("consent").Parse(`<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Authorize this client</title></head>
 <body>
 <h1>Authorize this client</h1>
-<p><strong>{{.ClientName}}</strong> asks to call this project's MCP endpoint as
-<strong>{{.Identity}}</strong>.</p>
+<p><strong>{{.ClientName}}</strong> asks to call this project's MCP endpoint.</p>
+<p><strong>This client is not verified.</strong> The name above is the one it
+gave when it registered, and nothing in this installation checked it.</p>
 <p>If you allow it, the authorization code will be sent to
 <strong>{{.Host}}</strong>.</p>
 <p>It will be able to:</p>
 <ul>{{range .Scopes}}<li>{{.}}</li>{{end}}</ul>
+<p>This flow's number is <strong>{{.Number}}</strong>. The approval is made on
+the device paired to this installation, and it carries that number and the
+Firebase ID token the device's session produced. A number you had to have seen
+is what ties the approval to this page.</p>
 <form method="post" action="{{.Action}}">
 <input type="hidden" name="request_id" value="{{.RequestID}}">
+<p><label>Number <input name="number" inputmode="numeric" autocomplete="off"></label></p>
+<p><label>Firebase ID token <input name="id_token" autocomplete="off"></label></p>
 <button type="submit" name="decision" value="allow">Allow</button>
 <button type="submit" name="decision" value="deny">Deny</button>
 </form>
@@ -80,8 +118,9 @@ const refusalPage = `<!doctype html>
 `
 
 // serveAuthorizeRequest is the authorization request: it checks what the client
-// asked for, verifies the sign-in the person's paired device produced, and
-// renders the page they consent on.
+// asked for, records the flow, and renders the page the approval answers. It
+// verifies nothing about a person, because a person has not presented anything
+// yet.
 //
 // The order is the order a caller can act on. The client and its redirect URI
 // come first, because until both are the client's own there is no address this
@@ -92,6 +131,23 @@ const refusalPage = `<!doctype html>
 func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	clientID, redirectURI, state := q.Get("client_id"), q.Get("redirect_uri"), q.Get("state")
+
+	// A token in a URL is refused before anything else is read. It is the one
+	// shape this endpoint must never accept, and the refusal is a page rather
+	// than a redirect because what the request carried is a bearer credential:
+	// echoing it back to an address would be the second place it lands.
+	if carried := firstOf(q, "id_token", "access_token"); carried != "" {
+		refusePage(w, http.StatusBadRequest, "This authorization request carries a token in its URL. A token in a query parameter is a token in a log line and in a browser's history, so the Firebase ID token is read from the body of the approval POST and from nowhere else.")
+		return
+	}
+	// The state is bounded and refused rather than truncated, and the refusal is
+	// a page because the bound exists to keep an unbounded value out of the
+	// answer: D928 returns the state unaltered, so a state this server will not
+	// hold is a request it will not answer.
+	if len(state) > maxStateBytes {
+		refusePage(w, http.StatusBadRequest, "This authorization request carries a state longer than this server keeps. The state is returned unaltered (D928), so a state that cannot be kept whole is refused rather than cut down.")
+		return
+	}
 
 	client, err := s.store.GetClient(r.Context(), clientID)
 	if err != nil {
@@ -111,9 +167,25 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rt := q.Get("response_type"); rt != "code" {
-		s.redirectError(w, r, redirectURI, state, oauthError(oidc.ErrUnsupportedGrantType(),
+		// RFC 6749 §4.1.2.1's own code for this refusal. The library carries a
+		// constructor for every error its own flows raise and none for this one,
+		// because a flow it runs does not refuse a response type — so the value
+		// is written here, which is also where the rule it answers lives.
+		s.redirectError(w, r, redirectURI, state, oauthError(&oidc.Error{ErrorType: "unsupported_response_type"},
 			"this authorization server issues authorization codes: response_type has to be code"))
 		return
+	}
+	// RFC 8707: a client may name the resource it wants a token for, and a
+	// resource this server does not serve is refused rather than ignored. The
+	// one resource here is the coordinator's own URL, which is the audience
+	// every token this server mints already carries (spec.md §2), so a request
+	// naming anything else is asking for a token this server cannot issue.
+	for _, target := range q["resource"] {
+		if target != s.cfg.Issuer {
+			s.redirectError(w, r, redirectURI, state, oauthError(oidc.ErrInvalidTarget(),
+				"the resource this authorization request names is not one this authorization server issues tokens for"))
+			return
+		}
 	}
 	challenge := q.Get("code_challenge")
 	if challenge == "" {
@@ -142,28 +214,24 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	identity, err := s.verifySignIn(r)
+	id, err := NewID()
 	if err != nil {
-		// The sign-in step, and it is not the client's failure: a person who
-		// has not approved anything gets a page telling them what to do, and
-		// the client is not told anything that would let it retry in a loop.
-		refusePage(w, http.StatusUnauthorized, "The sign-in was not verified. Approve this client on a device paired to the installation, and present the Firebase ID token that approval produced as a bearer token on this request.")
+		refusePage(w, http.StatusInternalServerError, "This authorization request could not be recorded.")
 		return
 	}
-
-	id, err := NewID()
+	number, err := approvalNumber()
 	if err != nil {
 		refusePage(w, http.StatusInternalServerError, "This authorization request could not be recorded.")
 		return
 	}
 	pending := Request{
 		ID:          id,
+		Number:      number,
 		ClientID:    client.ID,
 		RedirectURI: redirectURI,
 		Challenge:   challenge,
 		State:       state,
 		Scopes:      scopes,
-		Identity:    identity,
 		ExpiresAt:   s.now().Add(RequestTTL),
 	}
 	if err := s.store.PutRequest(r.Context(), pending); err != nil {
@@ -172,38 +240,61 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	writeConsentPage(w, consentView{
 		ClientName: consentClientName(client),
-		Identity:   identity,
 		Host:       redirectHost(redirectURI),
 		Scopes:     scopes,
+		Number:     number,
 		RequestID:  id,
 		Action:     AuthorizePath,
 	})
 }
 
-// serveAuthorizeConsent is the person's answer to the page above.
+// serveAuthorizeConsent is the approval: the person's answer to the page above,
+// carrying the flow's binding, the flow's number and the ID token their paired
+// device produced.
 //
-// It carries the flow's binding and the decision, and nothing else: every value
-// the code is written with comes out of the record the binding names. A consent
-// whose binding is unknown is refused, and one whose binding was already spent
-// is refused with the same page — the flow is answered once.
+// The binding is spent first and everything is judged afterwards, which is the
+// fail-closed direction this endpoint takes on purpose: an approval that fails
+// any of the checks below has still answered the flow, and the alternative — a
+// binding that survives a refused approval — is a page a stranger can keep
+// guessing a number against.
 func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("id_token") != "" {
+		refusePage(w, http.StatusBadRequest, "This approval carries its ID token in the URL. A token in a query parameter is a token in a log line, so the approval reads the token from the form body and refuses one presented any other way.")
+		return
+	}
 	form, err := readForm(w, r)
 	if err != nil {
-		refusePage(w, http.StatusBadRequest, "This consent is not a form this endpoint can read.")
+		refusePage(w, http.StatusBadRequest, "This approval is not a form this endpoint can read.")
 		return
 	}
 	pending, err := s.store.TakeRequest(r.Context(), form.Get("request_id"))
 	switch {
 	case errors.Is(err, ErrRequestNotFound), errors.Is(err, ErrRequestUsed):
-		refusePage(w, http.StatusBadRequest, "This consent does not carry the binding of a flow this installation is waiting for. A flow is answered once, and only from the page it was rendered on.")
+		refusePage(w, http.StatusBadRequest, "This approval does not carry the binding of a flow this installation is waiting for. A flow is answered once, and only from the page it was rendered on.")
 		return
 	case err != nil:
-		refusePage(w, http.StatusInternalServerError, "This consent could not be read.")
+		refusePage(w, http.StatusInternalServerError, "This approval could not be read.")
 		return
 	}
 	if s.now().After(pending.ExpiresAt) {
 		s.redirectError(w, r, pending.RedirectURI, pending.State, oauthError(oidc.ErrAccessDenied(),
 			"the authorization request expired before it was answered"))
+		return
+	}
+	// The number is compared over the whole value and in constant time. It is
+	// the check that makes the approval an answer to a page a person was
+	// looking at, so it is made before the token is even read: an approval that
+	// did not carry this flow's number has not answered this flow.
+	if subtle.ConstantTimeCompare([]byte(form.Get("number")), []byte(pending.Number)) != 1 {
+		refusePage(w, http.StatusBadRequest, "This approval does not carry the number the page showed. Approve from the page that asked, and present the number that page displayed.")
+		return
+	}
+	identity, err := s.verifySignIn(r.Context(), form.Get("id_token"))
+	if err != nil {
+		// The sign-in step, and it is not the client's failure: a person whose
+		// approval did not verify gets a page telling them what to do, and the
+		// client is not told anything that would let it retry in a loop.
+		refusePage(w, http.StatusUnauthorized, "The sign-in was not verified. Approve this client on a device paired to the installation, and present the Firebase ID token that approval produced in this form's body.")
 		return
 	}
 	if form.Get("decision") != "allow" {
@@ -214,7 +305,7 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 
 	code, err := NewValue()
 	if err != nil {
-		refusePage(w, http.StatusInternalServerError, "This consent could not be recorded.")
+		refusePage(w, http.StatusInternalServerError, "This approval could not be recorded.")
 		return
 	}
 	if err := s.store.PutCode(r.Context(), Code{
@@ -222,19 +313,25 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 		ClientID:    pending.ClientID,
 		RedirectURI: pending.RedirectURI,
 		Challenge:   pending.Challenge,
-		Identity:    pending.Identity,
+		Identity:    identity,
 		Scopes:      pending.Scopes,
 		ExpiresAt:   s.now().Add(CodeTTL),
 	}); err != nil {
-		refusePage(w, http.StatusInternalServerError, "This consent could not be recorded.")
+		refusePage(w, http.StatusInternalServerError, "This approval could not be recorded.")
 		return
 	}
 	s.redirectWith(w, r, pending.RedirectURI, pending.State, url.Values{"code": {code}})
 }
 
-// verifySignIn reads the Firebase ID token the person's paired device produced
-// and answers the identity it attests, as the entry the project's own lists are
-// written in.
+// verifySignIn verifies the Firebase ID token an approval carried and answers
+// the identity it attests, as the entry the project's own lists are written in.
+//
+// The token is a parameter and not a request, and that is the point: the one
+// place this endpoint reads it from is the approval POST's body, and a function
+// that took the request would be a function the next caller could hand a header
+// or a query value to. A token that reached a URL has already been written to a
+// log line; the endpoint refuses one that arrives that way rather than
+// accepting it, and this is where "the body and nowhere else" is enforced.
 //
 // The entry is `user:<email>` and it is built from the verifier's own folded
 // address, which is the same spelling `fugaro user` writes and the same fold
@@ -242,21 +339,42 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 // vocabulary, so an identity that signed in here is an identity that command
 // would have accepted. The uid is deliberately not the entry — D933's lists
 // name people by address, and a uid would be an identity no list can hold.
-//
-// The header is the only place the token is read from, and that is the
-// package's own rule rather than a convenience: a token in a query parameter is
-// a token in a log line, and the ID token is a bearer for exactly one endpoint.
-func (s *Server) verifySignIn(r *http.Request) (string, error) {
-	header := r.Header.Get("Authorization")
-	const scheme = "Bearer "
-	if len(header) <= len(scheme) || !strings.EqualFold(header[:len(scheme)], scheme) {
+func (s *Server) verifySignIn(ctx context.Context, raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
 		return "", ErrUnverifiedIDToken
 	}
-	identity, err := s.verifier.VerifyIDToken(r.Context(), strings.TrimSpace(header[len(scheme):]))
+	identity, err := s.verifier.VerifyIDToken(ctx, strings.TrimSpace(raw))
 	if err != nil {
 		return "", err
 	}
 	return "user:" + identity.Email, nil
+}
+
+// approvalNumber is the flow's own number: `approvalDigits` decimal digits, from
+// the system's randomness.
+//
+// It is not a secret and not a credential — it is displayed on the page and
+// presented back — so what it has to be is unpredictable before the page exists,
+// which is what keeps an attacker from committing to a value and then arranging
+// for a person to answer a flow that carries it.
+func approvalNumber() (string, error) {
+	n, err := rand.Int(rand.Reader, approvalNumberMax)
+	if err != nil {
+		return "", fmt.Errorf("mcpauth: reading randomness: %w", err)
+	}
+	return fmt.Sprintf("%0*d", approvalDigits, n.Int64()), nil
+}
+
+// firstOf answers the first of the named parameters that carries a value, which
+// is how a request is refused for carrying a token in its URL without this
+// package ever choosing which parameter to read a token from.
+func firstOf(q url.Values, names ...string) string {
+	for _, name := range names {
+		if value := q.Get(name); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // requestedScopes reads the scope parameter against D927's closed vocabulary,
@@ -287,9 +405,9 @@ func requestedScopes(raw string) ([]string, error) {
 // consentView is what the consent template is rendered with.
 type consentView struct {
 	ClientName string
-	Identity   string
 	Host       string
 	Scopes     []string
+	Number     string
 	RequestID  string
 	Action     string
 }
@@ -320,18 +438,32 @@ func redirectHost(raw string) string {
 
 // writeConsentPage renders the page above. A template that cannot render is a
 // bug in the constant above rather than a caller's mistake, and the answer is a
-// refusal rather than a half-written page: a person must never consent on a
-// page that does not say what they are consenting to.
+// refusal rather than a half-written page: a person must never approve on a
+// page that does not say what they are approving.
 func writeConsentPage(w http.ResponseWriter, view consentView) {
 	var body strings.Builder
 	if err := consentPage.Execute(&body, view); err != nil {
 		refusePage(w, http.StatusInternalServerError, "The consent page could not be rendered.")
 		return
 	}
+	noFraming(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	_, _ = w.Write([]byte(body.String()))
+}
+
+// noFraming refuses to be framed, on every page a person reads.
+//
+// A consent page is the one page in this flow a person acts on, and a page an
+// attacker can put in an iframe is a page whose Allow button can be placed
+// under a click the person meant for something else. `frame-ancestors 'none'`
+// is the rule and `X-Frame-Options: DENY` is the same rule for a browser that
+// reads the older header; both are set because the set of browsers that read
+// only one of them is not empty.
+func noFraming(w http.ResponseWriter) {
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+	w.Header().Set("X-Frame-Options", "DENY")
 }
 
 // redirectError answers an authorization request that got as far as being the
@@ -378,6 +510,7 @@ func (s *Server) redirectWith(w http.ResponseWriter, r *http.Request, redirectUR
 // text says which rule was hit and nothing about the installation, the client
 // or the identity, because this endpoint answers strangers.
 func refusePage(w http.ResponseWriter, status int, message string) {
+	noFraming(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
