@@ -1,6 +1,9 @@
 package policy
 
 import (
+	"errors"
+	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -113,6 +116,22 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		// policy node (Layer.ReviewFloor).
 		if len(l.ReviewFloor) > 0 {
 			e.unionReviewFloor(l.ReviewFloor)
+		}
+
+		// The orchestrator's guardrails (D1239) are the caps rule over one
+		// more block of counts: a layer that writes none of them tightens
+		// nothing, and the daemon's ceiling is the guardrails Fugaro ships
+		// (WithDefaults) with every layer under them applied in turn. The
+		// model of a decision class is the one key of the block that is not a
+		// count, and it tightens by the tier order instead (D1234).
+		o := l.Orchestrator
+		e.tightenInt(&e.Orchestrator.MaxRunning, o.MaxRunning, KeyOrchestratorMaxRunning, src)
+		e.tightenInt(&e.Orchestrator.BatchSize, o.BatchSize, KeyOrchestratorBatchSize, src)
+		e.tightenInt(&e.Orchestrator.SpawnPerMinute, o.SpawnPerMinute, KeyOrchestratorSpawnPerMinute, src)
+		e.tightenInt(&e.Orchestrator.SpawnPerHour, o.SpawnPerHour, KeyOrchestratorSpawnPerHour, src)
+		e.tightenInt(&e.Orchestrator.SpawnPerDay, o.SpawnPerDay, KeyOrchestratorSpawnPerDay, src)
+		for _, class := range DecisionClasses {
+			e.tightenDecisionModel(class, o.DecisionModelPerClass[class], src)
 		}
 
 		if r := modeRank(l.Mode); r > 0 {
@@ -260,6 +279,275 @@ func toSet(s []string) map[string]bool {
 		m[v] = true
 	}
 	return m
+}
+
+// The orchestrator's keys, as Effective.Sources and Ignored.Key spell them:
+// the block the published policy node and the local config both carry under
+// orchestrator: (D1239). Each class's own model key is built by
+// DecisionModelKey, so the class vocabulary and the key spelling are one
+// thing.
+const (
+	KeyOrchestratorMaxRunning     = "orchestrator.max_running"
+	KeyOrchestratorBatchSize      = "orchestrator.batch_size"
+	KeyOrchestratorSpawnPerMinute = "orchestrator.spawn_per_minute"
+	KeyOrchestratorSpawnPerHour   = "orchestrator.spawn_per_hour"
+	KeyOrchestratorSpawnPerDay    = "orchestrator.spawn_per_day"
+)
+
+// DecisionModelKey is the policy key of one decision class's model, as
+// Effective.Sources and Ignored.Key spell it
+// ("orchestrator.decision_model_per_class.routine").
+func DecisionModelKey(class DecisionClass) string {
+	return "orchestrator.decision_model_per_class." + string(class)
+}
+
+// The guardrail counts Fugaro ships (D1239): what a person and a project that
+// write no orchestrator: block run under. They are the conservative end on
+// purpose — the spec's batch of 50 lets one looping cycle launch 50 real runs
+// before anyone is asked — and they enter as the ceiling (WithDefaults), which
+// is why each of them is a bound every layer under it may only lower: a default
+// nobody wrote is not a decision a layer may loosen.
+//
+// The running cap has no constant here. Its default is the person's own
+// max_parallel — the launch limit `fugaro run` already counts active runs
+// against, so the daemon and the CLI share one number — which is a fact about
+// the installation and not a figure of this package; WithDefaults takes it as
+// its argument.
+const (
+	DefaultBatchSize      = 10
+	DefaultSpawnPerMinute = 2
+	DefaultSpawnPerHour   = 12
+	DefaultSpawnPerDay    = 60
+)
+
+// DecisionClass is the security-sensitivity class a decision is made under.
+// Which class a decision belongs to is decided by code over the paths the
+// change touches and never by a config key, a model's judgement or how the
+// change describes itself (D1234): the blocks that carry DecisionClass say
+// which MODEL a class runs on, and nothing here can move a decision between
+// the two classes.
+type DecisionClass string
+
+const (
+	// DecisionRoutine is a decision whose paths are all on the routine
+	// allow-list.
+	DecisionRoutine DecisionClass = "routine"
+	// DecisionSensitive is a decision that touches a path the allow-list does
+	// not cover, and the class whose model may never be lowered.
+	DecisionSensitive DecisionClass = "sensitive"
+)
+
+// DecisionClasses is the closed vocabulary of the two classes, in the order a
+// reader prints it.
+var DecisionClasses = []DecisionClass{DecisionRoutine, DecisionSensitive}
+
+// DecisionModels is the models a decision may run on, from the least to the
+// most capable. That order is the whole of the tightening rule for
+// decision_model_per_class: a layer may move a class's model up it and never
+// down, and the Sensitive class may not move at all, because its floor is the
+// top of the order (D1234, G6). The names are the ones Claude Code's own
+// --model takes (internal/pricing's aliases), because the value is handed to
+// `claude -p` as it stands.
+var DecisionModels = []string{"haiku", "sonnet", "opus"}
+
+// Orchestrator is one layer's block of the orchestrator's guardrails: how many
+// runs the daemon may have running, how many one cycle may launch and how fast,
+// and the model each decision class runs on (D1239, D1234).
+//
+// Every key's zero value means "unset", the rule every other field of a Layer
+// follows, so a layer that writes no orchestrator: block tightens nothing. The
+// five counts are positive numbers whose smaller value is the stricter one and
+// are merged as caps; DecisionModelPerClass is the one key of the block that is
+// not a count, and a class's model tightens by the tier order (DecisionModels)
+// — a layer may name a more capable model for a class and never a less capable
+// one.
+//
+// It carries the tags of both documents that hold this block: the published
+// policy node's (JSON) and the local config's (YAML). That is deliberate — the
+// two are one block of one set of rules, and a second carrier spelled beside
+// this one would be a copy that could drift from it silently, which is the same
+// reason internal/projectpolicy embeds config.ModelProvider rather than
+// respelling it.
+type Orchestrator struct {
+	MaxRunning     int64 `json:"max_running,omitempty" yaml:"max_running,omitempty"`
+	BatchSize      int64 `json:"batch_size,omitempty" yaml:"batch_size,omitempty"`
+	SpawnPerMinute int64 `json:"spawn_per_minute,omitempty" yaml:"spawn_per_minute,omitempty"`
+	SpawnPerHour   int64 `json:"spawn_per_hour,omitempty" yaml:"spawn_per_hour,omitempty"`
+	SpawnPerDay    int64 `json:"spawn_per_day,omitempty" yaml:"spawn_per_day,omitempty"`
+	// DecisionModelPerClass is the model a class's decisions run on, keyed by
+	// the class's own name. A class the map does not carry is at its floor;
+	// a name that is not a model is refused where the block is written
+	// (ValidOrchestrator) and read as unset by the merge.
+	DecisionModelPerClass map[DecisionClass]string `json:"decision_model_per_class,omitempty" yaml:"decision_model_per_class,omitempty"`
+}
+
+// WithDefaults is o with every key it leaves unset replaced by the guardrail
+// Fugaro ships (D1239): the four counts are the constants above, the running
+// cap is personMaxRunning, and each class's model is its floor — the bottom of
+// the class's own range, which is haiku for a routine decision and opus for a
+// sensitive one.
+//
+// The result is a ceiling layer: it is merged first, so a project and a person
+// who write blocks may only tighten what this returned, and a key the layer did
+// set is kept exactly as written. The map it returns is its own, so a caller
+// that writes to the result does not write into the receiver.
+//
+// personMaxRunning is the person's own launch limit — the max_parallel the CLI
+// counts a person's active runs against — and it reaches this package as an
+// argument because it is a fact about the installation. A caller with no limit
+// to give passes 0 or less, which leaves the running cap unset; Merge reads an
+// unset cap as no cap, so the caller that has the config file in hand is the
+// one that must pass the value (localcfg.Parse holds it to 1 or more).
+func (o Orchestrator) WithDefaults(personMaxRunning int64) Orchestrator {
+	if o.MaxRunning == 0 {
+		o.MaxRunning = personMaxRunning
+	}
+	if o.BatchSize == 0 {
+		o.BatchSize = DefaultBatchSize
+	}
+	if o.SpawnPerMinute == 0 {
+		o.SpawnPerMinute = DefaultSpawnPerMinute
+	}
+	if o.SpawnPerHour == 0 {
+		o.SpawnPerHour = DefaultSpawnPerHour
+	}
+	if o.SpawnPerDay == 0 {
+		o.SpawnPerDay = DefaultSpawnPerDay
+	}
+	models := make(map[DecisionClass]string, len(DecisionClasses))
+	for _, class := range DecisionClasses {
+		if name := o.DecisionModelPerClass[class]; name != "" {
+			models[class] = name
+			continue
+		}
+		models[class] = classFloorModel(class)
+	}
+	o.DecisionModelPerClass = models
+	return o
+}
+
+// ValidOrchestrator holds a written block to its rules. It is the one door for
+// both writers — the published policy node's decoder and the local config's
+// loader — so the two cannot disagree about what a block may say, the way
+// ParseFloor and ValidVerifierAccounts are one door for their own keys.
+//
+// The refusals are a count that is not positive, a class that is not one of
+// DecisionClasses, a class written with no model at all, and a model that is
+// outside DecisionModels or under the floor of the class it is written for.
+// They live here rather than in the merge because Merge is total: it reads any
+// value it cannot place as unset, so a block that skipped this check would
+// tighten nothing rather than be refused, silently, and the guardrail would
+// read as the default.
+//
+// A nil or empty block is valid: an absent block and one written empty are the
+// same document, and they set nothing.
+func ValidOrchestrator(o *Orchestrator) error {
+	if o == nil {
+		return nil
+	}
+	var errs []error
+	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("orchestrator."+f, a...)) }
+	for _, count := range []struct {
+		key string
+		v   int64
+	}{
+		{"max_running", o.MaxRunning},
+		{"batch_size", o.BatchSize},
+		{"spawn_per_minute", o.SpawnPerMinute},
+		{"spawn_per_hour", o.SpawnPerHour},
+		{"spawn_per_day", o.SpawnPerDay},
+	} {
+		if count.v < 0 {
+			bad("%s: %d is not a number of runs: a guardrail is a positive count, and a key left out takes the default", count.key, count.v)
+		}
+	}
+	for _, class := range slices.Sorted(maps.Keys(o.DecisionModelPerClass)) {
+		name := o.DecisionModelPerClass[class]
+		switch {
+		case name == "":
+			bad("decision_model_per_class.%s: no model is named; remove the class to leave it at its default", class)
+		case !slices.Contains(DecisionClasses, class):
+			bad("decision_model_per_class.%s: is not a decision class (%s)", class, vocabulary(DecisionClasses))
+		default:
+			switch rank, ok := modelRank(name); {
+			case !ok:
+				bad("decision_model_per_class.%s: %q is not a model this Fugaro knows (%s)", class, name, strings.Join(DecisionModels, ", "))
+			case rank < classFloor(class):
+				bad("decision_model_per_class.%s: %q is below the floor of this class (%s): a security-sensitive decision is never run on a cheaper model (D1234)", class, name, classFloorModel(class))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// modelRank is v's position in the tier order (DecisionModels), and false for a
+// name the order does not hold. A name with no rank carries no value at all —
+// the answer Merge gives a mode that is not one of the three — while a name
+// that has a rank but is under its class's floor is a value the merge compares
+// and drops like any other loser, because it is on the order and lost.
+func modelRank(v string) (int, bool) {
+	i := slices.Index(DecisionModels, v)
+	return i, i >= 0
+}
+
+// classFloor is the rank a class may never go under. The Sensitive class is
+// floored at opus, the most capable model of the order, so no layer can lower
+// it — and no name above it exists to raise it to either (D1234, G6). The
+// Routine class has no floor of its own and starts at haiku, the bottom of the
+// order, where every layer can only raise it.
+func classFloor(class DecisionClass) int {
+	if class == DecisionSensitive {
+		return len(DecisionModels) - 1
+	}
+	return 0
+}
+
+// classFloorModel is the model a class starts at and may never go under: the
+// bottom of its own range (WithDefaults, ValidOrchestrator).
+func classFloorModel(class DecisionClass) string { return DecisionModels[classFloor(class)] }
+
+// tightenDecisionModel applies one layer's model for a class to the running
+// one. The comparison is the tier order — a more capable model is the stricter
+// one — so the higher rank wins and a lower one is recorded, which is a cap's
+// rule over a different scale; each class is compared with its own running
+// value and never with the other class.
+//
+// A name with no rank carries no value at all: it is refused where the layer is
+// written (ValidOrchestrator) and read as unset here, the way Merge reads a
+// mode that is not one of the three. A name that has a rank and loses — under
+// the class's floor included, which only a layer built by hand can carry, since
+// the writers refuse the block — is a value the merge did read and drop, so it
+// is recorded in Ignored like any other loser.
+//
+// The class's floor is not this function's rule, and it does not need to be:
+// no layer can lower the running value, and the running value starts at the
+// floor (WithDefaults), so the Sensitive class cannot be lowered from opus by
+// any sequence of layers — the floor holds in the merge's own direction, while
+// ValidOrchestrator is what refuses a block that wrote it lower.
+func (e *Effective) tightenDecisionModel(class DecisionClass, v, src string) {
+	if v == "" {
+		return
+	}
+	rank, ok := modelRank(v)
+	if !ok {
+		return
+	}
+	key := DecisionModelKey(class)
+	cur := e.Orchestrator.DecisionModelPerClass[class]
+	curRank := -1
+	if r, ok := modelRank(cur); ok {
+		curRank = r
+	}
+	switch {
+	case cur == "" || rank > curRank:
+		if e.Orchestrator.DecisionModelPerClass == nil {
+			e.Orchestrator.DecisionModelPerClass = make(map[DecisionClass]string, len(DecisionClasses))
+		}
+		e.Orchestrator.DecisionModelPerClass[class] = v
+		e.Sources[key] = src
+	case rank < curRank:
+		e.Ignored = append(e.Ignored, Ignored{key, v, cur, e.Sources[key]})
+	}
 }
 
 // dedupe returns a copy of s without repeats, order kept; non-nil for non-nil s.

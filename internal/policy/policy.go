@@ -460,6 +460,10 @@ type Layer struct {
 	// can add a level and never remove one; the merge is what makes that
 	// direction a property of this package rather than of its callers.
 	ReviewFloor map[rigor.Mode][]Level
+	// Orchestrator is this layer's block of the orchestrator's spawn
+	// guardrails and decision models (D1239, D1234); the zero value sets none,
+	// which leaves the ceiling's own alone (see Orchestrator).
+	Orchestrator Orchestrator
 }
 
 // ReviewFloor is the levels the owner requires a run of mode to run, in the
