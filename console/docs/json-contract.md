@@ -2667,9 +2667,18 @@ one entry of `sources`:
 exit** (H3): the read answered, and this entry is its answer.
 
 - `up` — the source was read and its data is what it is. `reason` is `""`.
-- `down` — the source could not be reached: a withdrawn RTDB stream, a local
-  orchestrator whose node is gone. The other scopes keep their figures, and a
-  stream keeps streaming.
+- `down` — the source answered and has nothing stored. **The coordinator's
+  scope is down when the project lists repositories and the sweep has stored a
+  view for none of them** (CG2; `CoordinatorSource.Nodes`): the read succeeded,
+  so this is neither a refusal nor `unreadable`, and what the document still
+  carries is the half that needs no stored view — each repository's runs — so
+  `nodes` is **not** empty and `reason` is the read's own sentence, `the
+  coordinator has no stored view for any of the project's repositories`. A
+  screen draws those nodes with the state beside them, never an empty graph.
+  The other scopes are down when they cannot be reached at all: a withdrawn
+  RTDB stream, a local orchestrator whose node is gone. Either way the state is
+  one scope's: the other scopes keep their figures, and a stream keeps
+  streaming.
 - `stale` — the source answered with data known to be old. The coordinator's
   scope is stale when the sweep's own marker stands beside a view it could not
   recompute (CG2's `RepoView.Stale`): that marker is the age fact the stored read
@@ -2698,9 +2707,9 @@ answers by keeping the plan scope and a refusal sentence (T3, CG10). A repositor
 whose `repos` entry names no provider is refused the same way (above), and so is
 a database the scope's read could not reach — an IAM refusal, a connection that
 failed: those reads made no answer at all, where `unreadable` is an answer this
-build cannot read and a `down` source is one with nothing in it. A refusal and a
-`down` source are told apart by exactly that: one is a process that printed
-nothing and failed, the other is a document with the state in it.
+build cannot read and a `down` source is one that answered with nothing stored.
+A refusal and a `down` source are told apart by exactly that: one is a process
+that printed nothing and failed, the other is a document with the state in it.
 
 one entry of `nodes`:
 
