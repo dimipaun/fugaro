@@ -44,8 +44,8 @@ that decides where a repository's code may go or what a run may cost:
   **do not exist**; `secrets` has no `rm` and no policy flags; `accounts` has no `rm`.
 
 `fugaro settings set` already writes scalars and string lists
-(`internal/cli/settings_set.go:81`): the allowlist carries **164 of the registry's 325 rows** (88 by name
-and 76 through its prefixes), and the remaining **161 rows have no generic writer**
+(`internal/cli/settings_set.go:81`): the allowlist carries **164 of the registry's 336 rows** (88 by name
+and 76 through its prefixes), and the remaining **172 rows have no generic writer**
 ([reconciliation.md](reconciliation.md) §1, F1). The root cause is one sentence: **the
 generic writer handles scalars and string lists only**, and every gap above is a map, an object list, or
 a key the allowlist does not carry.
