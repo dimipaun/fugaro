@@ -1571,6 +1571,167 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	}
 }
 
+// consoleIpcPath is the main process's IPC module, which carries
+// `CONSOLE_OPERATIONS` -- the constant §5.1 rule 5's count is the count of --
+// and the operations `SPAWN_COMMANDS` spawns. Reading it from Go is the
+// boundary exception this file holds (consoleBoundaryAllowList), not a habit:
+// no test below imports anything from console/, and the two halves here are
+// strings read off the source.
+const consoleIpcPath = "console/src/main/ipc.ts"
+
+// consoleSpawnRow is one row of spawn.ts's `SPAWN_COMMANDS`: the operation it
+// spawns for and the fixed words its argv begins with.
+type consoleSpawnRow struct {
+	operation string
+	words     []string
+}
+
+// consoleSpawnRows reads spawn.ts's `SPAWN_COMMANDS` rows. The table is split on
+// its own two-space `{` lines and each entry's two fields are read inside it,
+// rather than pairing `operation:` and `words:` with one pattern across the
+// whole constant: a row whose fields a comment separates is otherwise paired
+// with the next row's words, and both halves of this file's check would be
+// quietly about the wrong row.
+func consoleSpawnRows(t *testing.T, src string) []consoleSpawnRow {
+	t.Helper()
+	at := strings.Index(src, "export const SPAWN_COMMANDS")
+	if at < 0 {
+		t.Fatalf("%s no longer declares SPAWN_COMMANDS, the spawn table the design's §5.1 rule 6 is written against", consoleSpawnPath)
+	}
+	block := src[at:]
+	if next := strings.Index(block[len("export const SPAWN_COMMANDS"):], "\nexport const "); next >= 0 {
+		block = block[:len("export const SPAWN_COMMANDS")+next]
+	}
+	var out []consoleSpawnRow
+	for _, entry := range regexp.MustCompile(`(?m)^  \{$`).Split(block, -1)[1:] {
+		op := regexp.MustCompile(`operation: '([^']+)'`).FindStringSubmatch(entry)
+		words := regexp.MustCompile(`words: \[([^\]]*)\]`).FindStringSubmatch(entry)
+		if op == nil || words == nil {
+			t.Fatalf("%s's SPAWN_COMMANDS carries an entry with no `operation: '…'` or no `words: [...]` beside it, so this test cannot read the rows: %q", consoleSpawnPath, strings.TrimSpace(strings.SplitN(entry, "\n", 2)[0]))
+		}
+		var list []string
+		for _, raw := range strings.Split(words[1], ",") {
+			if v := strings.Trim(strings.TrimSpace(raw), "'\""); v != "" {
+				list = append(list, v)
+			}
+		}
+		out = append(out, consoleSpawnRow{operation: op[1], words: list})
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s's SPAWN_COMMANDS carries no rows this test could read, and a table with nothing in it is nothing for the design to admit", consoleSpawnPath)
+	}
+	return out
+}
+
+// consoleArgvWords is one of §5.1 rule 6's argvs without the placeholders an
+// operation's own schema fills: the design spells those in capitals (`RUN`,
+// `KEY`) or in angle brackets (`<name>`, `--title=<T>`), which is what makes
+// them arguments rather than words of the command, so what is left is the argv's
+// fixed words in the order the row states them.
+func consoleArgvWords(argv string) []string {
+	var out []string
+	for _, tok := range strings.Fields(argv) {
+		if strings.ContainsAny(tok, "<>") {
+			continue
+		}
+		if tok == strings.ToUpper(tok) && strings.ToLower(tok) != tok {
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
+// TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource: §5.1 rule 5's count and
+// §5.1 rule 6's table are the design's two claims about what the console can do,
+// and no test in either job read them against the console's source. The
+// console's own copies (spawn.test.ts's ordered list and ipc.test.ts's
+// `DESIGN_ARGV`) are held in step with the document **by hand**, as their own
+// comment says, and the console's job reads no document at all -- so a task that
+// moved one side and not the other left the design describing a console this
+// tree does not have, with every test in both jobs green. That is not
+// hypothetical: the managed screens' plan puts rule 6's two managed rows and the
+// console's `managed.status`/`policy.show` entries in two tasks (CM3 and CM4),
+// so between them the two disagree by construction, and the disagreement has to
+// be a test's business rather than a reviewer's memory. This test is the two
+// directions the design can be wrong:
+//
+//   - **rule 5's count is `CONSOLE_OPERATIONS`'s length.** A count of operations
+//     the constant does not carry is a hole a reader cannot close, so the task
+//     that lands an operation moves rule 5's count with it -- CM4's own move of
+//     this count is why the plan marks it SEC.
+//   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
+//     the row's own words lead some row of the design's table, so a spawn the
+//     design does not allow is a failure here and not only in the console's copy
+//     of the list.
+//
+// The other direction -- a design row the console does not spawn yet -- is
+// deliberately **not** asserted: a fence may be ahead of the surface (that is
+// where rule 6's two managed rows stand until CM4), which is the safe direction
+// for a permission, and the console's own test holds its copy that way.
+//
+// Mutations that prove it: add an entry to `CONSOLE_OPERATIONS` and move rule 5's
+// count with it (green), then put the count back (this test fails naming the
+// constant's length); and add a row to `SPAWN_COMMANDS` whose words no row of
+// the table leads (this test fails naming the operation).
+func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+	ipc := readDoc(t, consoleIpcPath)
+	spawn := readDoc(t, consoleSpawnPath)
+
+	// The design's own words: §5.1 rule 5's count, and the table's argvs.
+	rule := consoleNumberedRule(t, consoleReadmeSection(t, doc, "### 5.1 The hard rules"), 5)
+	const claims = "**The dashboard's surface is thirty-two operations**"
+	if !strings.Contains(rule, claims) {
+		t.Errorf("%s's §5.1 rule 5 no longer says %q. The count is the constant's: it moves in the commit that adds the entries to CONSOLE_OPERATIONS (%s), and the managed screens' plan's CM4 -- the task that lands `managed.status` and `policy.show`, whose rule 6 rows are already on the table -- is the next one", path, claims, consoleIpcPath)
+	}
+	var admitted []string
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		if argv := firstBacktick(cells[0]); argv != "" {
+			admitted = append(admitted, argv)
+		}
+	}
+	if len(admitted) == 0 {
+		t.Fatalf("%s: no row follows §5.1 rule 6's allow-list header; update this test's marker", path)
+	}
+
+	// The constant's own length, and the rows spawn.ts spawns.
+	at := strings.Index(ipc, "export const CONSOLE_OPERATIONS")
+	if at < 0 {
+		t.Fatalf("%s no longer declares CONSOLE_OPERATIONS, the surface §5.1 rule 5's count is the count of", consoleIpcPath)
+	}
+	block := ipc[at:]
+	if next := strings.Index(block[len("export const CONSOLE_OPERATIONS"):], "\nexport const "); next >= 0 {
+		block = block[:len("export const CONSOLE_OPERATIONS")+next]
+	}
+	// The entries' own `name: '…'` lines, at the entries' own indent: the
+	// surface's members are declared at four spaces and nothing nested in an
+	// entry carries a `name:` of its own (`args` entries carry `key:`).
+	names := regexp.MustCompile(`(?m)^    name: '([^']+)',$`).FindAllStringSubmatch(block, -1)
+	if len(names) == 0 {
+		t.Fatalf("%s's CONSOLE_OPERATIONS carries no `name: '…'` entry this test could read; the entries' shape moved", consoleIpcPath)
+	}
+	if len(names) != 32 {
+		t.Errorf("%s's CONSOLE_OPERATIONS carries %d operations and %s's §5.1 rule 5 says the surface is thirty-two: the count is the constant's, so the two move together -- and a task that lands an operation without moving the count leaves the design describing a console this tree does not have", consoleIpcPath, len(names), path)
+	}
+
+	rows := consoleSpawnRows(t, spawn)
+	for _, row := range rows {
+		found := false
+		for _, argv := range admitted {
+			words := consoleArgvWords(argv)
+			if len(words) >= len(row.words) && slices.Equal(words[:len(row.words)], row.words) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s spawns %s's argv as %q, and no row of %s's §5.1 rule 6 allow-list leads with those words: every spawn is an argv the design admits, and a row added to SPAWN_COMMANDS is a rule 6 row (with consoleReadPaths' command, if it is a read) in the same commit", consoleSpawnPath, row.operation, strings.Join(row.words, " "), path)
+		}
+	}
+}
+
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
 // than as a hole: the writers the console spawns are deliberately absent from
 // consoleReadPaths -- a write is not a read and must not be -- and this map is
@@ -9663,8 +9824,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is thirty-four operations**") {
-		t.Errorf("%s no longer says the surface is thirty-four operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, the graph plan's CG9a to thirty-two, and the managed screens' CM3 to thirty-three and thirty-four: the policy node's read and the managed state's), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is thirty-two operations**") {
+		t.Errorf("%s no longer says the surface is thirty-two operations: rule 5's count is the count of `CONSOLE_OPERATIONS`, and it moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and the graph plan's CG9a to thirty-two). The managed screens' plan designs two more and adds them in its CM4, and TestDocsDesktopConsoleDesignOperationCountIsTheConsoleSurface is where the count is held to the constant itself", path)
 	}
 
 	var neverRows [][]string
