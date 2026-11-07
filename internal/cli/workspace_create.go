@@ -30,8 +30,8 @@ import (
 // (internal/budget/rules/workspace.go).
 //
 // So this stage converges `deploy/terraform/gcp/roots/workspace`: the
-// workspace's own service account and the ONE grant that reaches the
-// workspace's database, in a workdir of its own (infra.WorkspaceWorkdir, state
+// workspace's own service account, the one custom role that names what it
+// reaches and the ONE grant that binds them, in a workdir of its own (infra.WorkspaceWorkdir, state
 // fugaro/workspace) so the installation's saved plan is never gated and applied
 // as this root's.
 //
@@ -50,7 +50,10 @@ import (
 // one grant on a member takes). A plan that is not exactly the account and its
 // one grant is refused before it is applied (tf.WorkspaceNotCovered), which is
 // this root's whole cover: the installation's tables deliberately do not admit
-// these resources.
+// these resources. The role is the database's two DATA permissions and no
+// lifecycle permission — the account holds the workspace's record and the
+// hashes of its admitted tokens, and it must not be able to destroy the
+// database they live in.
 type workspaceProjectStage struct {
 	e       *initEngine
 	t       *tf.TF
@@ -63,6 +66,21 @@ func newWorkspaceProjectStage(e *initEngine) *workspaceProjectStage {
 }
 
 func (workspaceProjectStage) Name() string { return initflow.WorkspaceProject }
+
+// SelfConfirming is what lets the loop look at this stage in a run that cannot
+// confirm anything at all: the stage shows its own plan and takes its own typed
+// word, so the loop plans it read-only rather than leaving it for the user
+// unseen (initflow's own definition of the marker). An EMPTY plan is the stage
+// being done — the account and its one grant are already there — and the run
+// goes on to the record stage after it; anything else is a step only the owner
+// can take, in the terminal they are not at, which is the loop's own refusal.
+//
+// Every other engine stage that asks its own confirmation declares it (the
+// images, rules, policy, layer and record stages), and on a workspace's own
+// project it is what keeps a coding agent's session from stopping here with
+// nothing to do: without it the record the run publishes behind this stage
+// would never be published by that session.
+func (workspaceProjectStage) SelfConfirming() {}
 
 func (s *workspaceProjectStage) Left() initflow.Left {
 	return promptLeft(initflow.WorkspaceProject, "type the project's name at the workspace's confirmation", s.e.r.o.doorName())
@@ -111,12 +129,26 @@ func (s *workspaceProjectStage) declared() (bool, error) {
 	return true, nil
 }
 
-// Check cannot know without planning whether the account and the grant are
-// there, so it says what it will do; Plan does the reading, and a Plan that
-// finds nothing is the stage being done. A config that declares no workspace is
-// a SKIP with the reason, never a failure: it is every installation that is not
-// a workspace's own, which is most of them.
-func (s *workspaceProjectStage) Check(context.Context) (initflow.Status, error) {
+// Check reads the root's plan, because the plan is the only thing that knows
+// whether the account and the grant are there: an empty one is the stage being
+// DONE — the workspace's own service is already what the root says it is — and
+// only a plan with changes in it is a step somebody has to confirm. Saying "I
+// would create the account" without looking is what every run that does not
+// reach an apply would answer with, including the converged one: a coding
+// agent's session and a `--json` run would stop at this stage for the owner's
+// word they do not need, and the record stage behind it would never run.
+//
+// It does NOT hold the plan to this root's cover: the cover belongs to the two
+// paths that lead to an apply (Plan and Apply), which is where a plan that is
+// not this root's is refused by name. A read that fails is not this stage's
+// answer either — the run has not been told there is something to do, and it
+// has not been told there is not: it is a Todo, and the read is made again on
+// the apply path, whose own failure is the run's.
+//
+// A config that declares no workspace is a SKIP with the reason, never a
+// failure, and it reaches no terraform at all: it is every installation that is
+// not a workspace's own, which is most of them.
+func (s *workspaceProjectStage) Check(ctx context.Context) (initflow.Status, error) {
 	ok, err := s.declared()
 	if err != nil {
 		return initflow.Status{}, userErr("%v", err)
@@ -124,7 +156,20 @@ func (s *workspaceProjectStage) Check(context.Context) (initflow.Status, error) 
 	if !ok {
 		return initflow.Status{State: initflow.Skipped, Detail: workspaceProjectSkip(s.e.lc)}, nil
 	}
-	return initflow.Status{State: initflow.Todo, Detail: "the workspace's own service account and its one grant on the workspace's database are planned when applied"}, nil
+	plan, _, err := s.readPlan(ctx, false)
+	if err == nil && plan == nil {
+		project := s.e.lc.GCPProject
+		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the workspace's own service account %s holds %s on %s", workspaceAccount(project), tf.WorkspaceDatabaseRole(project), project)}, nil
+	}
+	return initflow.Status{State: initflow.Todo, Detail: workspaceProjectTodo(s.e.lc)}, nil
+}
+
+// workspaceProjectTodo is what the stage says when it has something to do, in
+// Check and in the plan view: the account and the grant, with the root's own
+// name for what reaches what.
+func workspaceProjectTodo(lc *localcfg.Config) string {
+	return fmt.Sprintf("the workspace's own service account %s and its one grant %s on %s are planned when applied",
+		workspaceAccount(lc.GCPProject), tf.WorkspaceDatabaseRole(lc.GCPProject), lc.GCPProject)
 }
 
 // workspaceProjectSkip is why this installation has no workspace's own project
@@ -144,7 +189,7 @@ func (s *workspaceProjectStage) Plan(ctx context.Context, _ initflow.Env) (initf
 	if !ok {
 		return initflow.Plan{NothingToDo: true, Detail: workspaceProjectSkip(s.e.lc)}, nil
 	}
-	plan, counts, err := s.readPlan(ctx)
+	plan, counts, err := s.readPlan(ctx, true)
 	if err != nil {
 		return initflow.Plan{}, err
 	}
@@ -165,18 +210,18 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	if !ok {
 		return initflow.Outcome{Detail: workspaceProjectSkip(s.e.lc)}, nil
 	}
-	plan, counts, err := s.readPlan(ctx)
+	plan, counts, err := s.readPlan(ctx, true)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
 	project := s.e.lc.GCPProject
 	account := workspaceAccount(project)
 	if plan == nil {
-		fmt.Fprintf(s.e.r.w, "No changes: the workspace's own service account %s holds %s on %s.\n", account, tf.WorkspaceDatabaseRole, project)
+		fmt.Fprintf(s.e.r.w, "No changes: the workspace's own service account %s holds %s on %s.\n", account, tf.WorkspaceDatabaseRole(project), project)
 		return initflow.Outcome{Detail: "the workspace's own service account and its one grant are already there"}, nil
 	}
 	fmt.Fprint(s.e.r.w, tf.Summary(plan))
-	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s): the account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so --yes never confirms it; %s)", account, project, tf.WorkspaceDatabaseRole, counts.String(), initflow.AgentAdvice))
+	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s): the account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so --yes never confirms it; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), initflow.AgentAdvice))
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -191,7 +236,7 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	}
 	s.applied = true
 	s.e.r.res.Applied = true
-	fmt.Fprintf(s.e.r.w, "created the workspace's own service account %s and its one grant (%s on %s)\n", account, tf.WorkspaceDatabaseRole, project)
+	fmt.Fprintf(s.e.r.w, "created the workspace's own service account %s and its one grant (%s on %s)\n", account, tf.WorkspaceDatabaseRole(project), project)
 	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("applied: %s (the workspace's own service account %s)", counts.String(), account)}, nil
 }
 
@@ -214,8 +259,10 @@ func (s *workspaceProjectStage) Verify(ctx context.Context) error {
 }
 
 // readPlan prepares the root and reads its plan: nil when there is nothing to
-// do, and the plan and its counts when there is.
-func (s *workspaceProjectStage) readPlan(ctx context.Context) (*tf.Plan, *infra.PlanCounts, error) {
+// do, and the plan and its counts when there is. guard is whether the plan is
+// held to this root's cover — the two callers that lead to an apply hold it,
+// and Check reads the same plan without the cover (its own comment says why).
+func (s *workspaceProjectStage) readPlan(ctx context.Context, guard bool) (*tf.Plan, *infra.PlanCounts, error) {
 	if err := s.prepare(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -231,19 +278,22 @@ func (s *workspaceProjectStage) readPlan(ctx context.Context) (*tf.Plan, *infra.
 	if err != nil {
 		return nil, nil, remote(err)
 	}
-	if err := s.guard(plan); err != nil {
-		return nil, nil, err
+	if guard {
+		if err := s.guard(plan); err != nil {
+			return nil, nil, err
+		}
 	}
 	counts := infra.CountPlan(plan)
 	return plan, &counts, nil
 }
 
-// guard is this root's cover: the plan is the workspace's own service account
-// and its one grant, and nothing else. tf.WorkspaceNotCovered answers what of
+// guard is this root's cover: the plan is the workspace's own role, its
+// service account and that account's one grant, and nothing else.
+// tf.WorkspaceNotCovered answers what of
 // the plan is not, so the message can name it rather than say "refused".
 func (s *workspaceProjectStage) guard(plan *tf.Plan) error {
 	if why := tf.WorkspaceNotCovered(plan, s.e.lc.GCPProject, tf.WorkspaceServiceAccountID); len(why) > 0 {
-		return userErr("the workspace root's plan is not the workspace's own service account and its one grant on the workspace's database (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s", strings.Join(why, "; "), s.dir)
+		return userErr("the workspace root's plan is not the workspace's own role, its service account and that account's one grant on the workspace's database (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s", strings.Join(why, "; "), s.dir)
 	}
 	return nil
 }

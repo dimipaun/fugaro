@@ -8,13 +8,18 @@ import (
 )
 
 // The workspace root's plan cover, tested over plan JSON the way
-// deploy/terraform/gcp/roots/workspace plans it: the workspace's own service
-// account, and the one grant that reaches the workspace's own database
+// deploy/terraform/gcp/roots/workspace plans it: the workspace's own role, the
+// service account that holds it, and the one grant that binds them
 // (workspace.go, docs/workspaces/implementation-plan.md W3).
 const (
 	wsProject = "workspace-alpha-1234"
 	wsEmail   = WorkspaceServiceAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
 )
+
+// wsRole is the role path the root's grant names, which is what a plan of it
+// carries: the cover builds it from the project it was given rather than
+// reading it out of the plan, so the two are separate here for the same reason.
+var wsRole = WorkspaceDatabaseRole(wsProject)
 
 // wsPlan is a plan of the resource changes below, in terraform's own JSON
 // shape including the mode a change carries.
@@ -52,6 +57,23 @@ func wsComputedGrant(project, role string, acts ...string) string {
 		wsActions(acts...) + `,"after":{"project":"` + project + `","role":"` + role + `"},"after_unknown":{"member":true}}}`
 }
 
+// wsRoleChange is the root's custom role as the root plans it: the project, the
+// id and the permission list all literal, which is why this cover can hold the
+// role to the pinned id and the pinned two.
+func wsRoleChange(project, id string, perms ...string) string {
+	q := make([]string, 0, len(perms))
+	for _, p := range perms {
+		q = append(q, `"`+p+`"`)
+	}
+	return `{"address":"google_project_iam_custom_role.workspace_database","mode":"managed","type":"google_project_iam_custom_role","change":{"actions":["create"],"after":{"project":"` +
+		project + `","role_id":"` + id + `","permissions":[` + strings.Join(q, ",") + `]}}}`
+}
+
+// wsPinnedRole is the root's own role, as the root declares it.
+func wsPinnedRole() string {
+	return wsRoleChange(wsProject, WorkspaceDatabaseRoleID, WorkspaceDatabasePermissions...)
+}
+
 func wsWhy(t *testing.T, p *Plan) string {
 	t.Helper()
 	return strings.Join(WorkspaceNotCovered(p, wsProject, WorkspaceServiceAccountID), "; ")
@@ -63,24 +85,30 @@ func TestWorkspacePlanIsTheServiceAndItsOneGrant(t *testing.T) {
 		changes []string
 	}{
 		{"the root's own plan, with the member terraform computes", []string{
+			wsPinnedRole(),
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-			wsComputedGrant(wsProject, WorkspaceDatabaseRole, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
+		}},
+		{"the root's own plan converged: the role, the account and the grant are all no-ops", []string{
+			wsPinnedRole(),
+			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
+			wsComputedGrant(wsProject, wsRole, "no-op"),
 		}},
 		{"the same plan converged: both resources are no-ops", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "no-op"),
-			wsComputedGrant(wsProject, WorkspaceDatabaseRole, "no-op"),
+			wsComputedGrant(wsProject, wsRole, "no-op"),
 		}},
 		{"the member known, bare", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-			wsKnownGrant(wsProject, wsEmail, WorkspaceDatabaseRole, "create"),
+			wsKnownGrant(wsProject, wsEmail, wsRole, "create"),
 		}},
 		{"the member known, as the root writes it", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-			wsKnownGrant(wsProject, "serviceAccount:"+wsEmail, WorkspaceDatabaseRole, "create"),
+			wsKnownGrant(wsProject, "serviceAccount:"+wsEmail, wsRole, "create"),
 		}},
 		{"the account's display name updated, the grant held", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "update"),
-			wsComputedGrant(wsProject, WorkspaceDatabaseRole, "update"),
+			wsComputedGrant(wsProject, wsRole, "update"),
 		}},
 	}
 	for _, c := range covered {
@@ -113,7 +141,7 @@ func TestWorkspacePlanRefusesAJobABucketAndARepository(t *testing.T) {
 		t.Run(c.typ, func(t *testing.T) {
 			p := wsPlan(t,
 				wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-				wsComputedGrant(wsProject, WorkspaceDatabaseRole, "create"),
+				wsComputedGrant(wsProject, wsRole, "create"),
 				`{"address":"`+c.addr+`","mode":"managed","type":"`+c.typ+`","change":{"actions":["create"],"after":{}}}`)
 			why := wsWhy(t, p)
 			if why == "" {
@@ -144,7 +172,7 @@ func TestWorkspacePlanRefusesAGrantToAnotherPrincipal(t *testing.T) {
 		t.Run(member, func(t *testing.T) {
 			p := wsPlan(t,
 				wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-				wsKnownGrant(wsProject, member, WorkspaceDatabaseRole, "create"))
+				wsKnownGrant(wsProject, member, wsRole, "create"))
 			why := wsWhy(t, p)
 			if why == "" {
 				t.Fatalf("a grant of the workspace's database role to %s must be refused", member)
@@ -165,25 +193,25 @@ func TestWorkspacePlanRefusesASecondRoleAnotherProjectAndAKey(t *testing.T) {
 		{"another role on the workspace's account", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
 			wsKnownGrant(wsProject, wsEmail, "roles/editor", "create"),
-		}, "holds " + WorkspaceDatabaseRole + " and nothing else"},
+		}, "holds " + wsRole + " and nothing else"},
 		{"the database role in another project", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
-			wsKnownGrant("member-project-5678", wsEmail, WorkspaceDatabaseRole, "create"),
+			wsKnownGrant("member-project-5678", wsEmail, WorkspaceDatabaseRole("member-project-5678"), "create"),
 		}, "the workspace's own database is"},
 		{"the account in another project", []string{
 			wsSA("member-project-5678", WorkspaceServiceAccountID, "create"),
-			wsComputedGrant(wsProject, WorkspaceDatabaseRole, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
 		}, "an account in another project"},
 		{"another account id", []string{
 			wsSA(wsProject, "fugaro-runner", "create"),
-			wsComputedGrant(wsProject, WorkspaceDatabaseRole, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
 		}, "the workspace's own service account is"},
 		{"a service account key", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "create"),
 			`{"address":"google_service_account_key.workspace","mode":"managed","type":"google_service_account_key","change":{"actions":["create"],"after":{}}}`,
 		}, "a service account key"},
 		{"an authoritative binding", []string{
-			`{"address":"google_project_iam_binding.workspace_database","mode":"managed","type":"google_project_iam_binding","change":{"actions":["create"],"after":{"role":"` + WorkspaceDatabaseRole + `"}}}`,
+			`{"address":"google_project_iam_binding.workspace_database","mode":"managed","type":"google_project_iam_binding","change":{"actions":["create"],"after":{"role":"` + wsRole + `"}}}`,
 		}, "an authoritative IAM resource"},
 		{"a delete of the workspace's account", []string{
 			wsSA(wsProject, WorkspaceServiceAccountID, "delete"),
@@ -195,12 +223,59 @@ func TestWorkspacePlanRefusesASecondRoleAnotherProjectAndAKey(t *testing.T) {
 			`{"address":"data.google_project.this","mode":"data","type":"google_project","change":{"actions":["read"],"after":{}}}`,
 		}, "a data source"},
 		{"the member computed with no account in the plan", []string{
-			wsComputedGrant(wsProject, WorkspaceDatabaseRole, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
 		}, "does not create the workspace's own service account"},
 		{"the member computed while another account is created", []string{
 			wsSA(wsProject, "fugaro-runner", "create"),
-			wsComputedGrant(wsProject, WorkspaceDatabaseRole, "create"),
+			wsComputedGrant(wsProject, wsRole, "create"),
 		}, "the workspace's own service account is"},
+	}
+	for _, c := range refused {
+		t.Run(c.name, func(t *testing.T) {
+			why := wsWhy(t, wsPlan(t, c.changes...))
+			if why == "" {
+				t.Fatalf("this plan must be refused: %s", c.name)
+			}
+			if !strings.Contains(why, c.want) {
+				t.Errorf("the refusal must say why, want a sentence with %q, got: %s", c.want, why)
+			}
+		})
+	}
+}
+
+// TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndAnotherProject is the
+// other half of the grant's reach: the plan that grants the role is also the
+// plan that can WIDEN it, and Realtime Database IAM having no path-level scope
+// makes the permission list the whole of the decision (spec §8). A third
+// permission — the lifecycle admin carries, or the list — an update that adds
+// one, another id and another project are all refused by name.
+func TestWorkspacePlanRefusesAnotherRoleAThirdPermissionAndAnotherProject(t *testing.T) {
+	refused := []struct {
+		name    string
+		changes []string
+		want    string
+	}{
+		{"the instance lifecycle added to the role", []string{
+			wsRoleChange(wsProject, WorkspaceDatabaseRoleID, append(append([]string{}, WorkspaceDatabasePermissions...), "firebasedatabase.instances.delete")...),
+		}, "holds exactly two"},
+		{"one permission dropped", []string{
+			wsRoleChange(wsProject, WorkspaceDatabaseRoleID, WorkspaceDatabasePermissions[0]),
+		}, "holds exactly two"},
+		{"the read replaced by the viewer's list", []string{
+			wsRoleChange(wsProject, WorkspaceDatabaseRoleID, "firebasedatabase.instances.list", "firebasedatabase.instances.update"),
+		}, "does not hold firebasedatabase.instances.get"},
+		{"another role id", []string{
+			wsRoleChange(wsProject, "fugaroWorkspaceAdmin", WorkspaceDatabasePermissions...),
+		}, "and no other role"},
+		{"the role in another project", []string{
+			wsRoleChange("member-project-5678", WorkspaceDatabaseRoleID, WorkspaceDatabasePermissions...),
+		}, "a role in another project"},
+		{"a role whose permissions terraform computes", []string{
+			`{"address":"google_project_iam_custom_role.workspace_database","mode":"managed","type":"google_project_iam_custom_role","change":{"actions":["create"],"after":{"project":"` + wsProject + `","role_id":"` + WorkspaceDatabaseRoleID + `"},"after_unknown":{"permissions":true}}}`,
+		}, "knows only at apply"},
+		{"a delete of the role", []string{
+			`{"address":"google_project_iam_custom_role.workspace_database","mode":"managed","type":"google_project_iam_custom_role","change":{"actions":["delete"],"after":{"project":"` + wsProject + `","role_id":"` + WorkspaceDatabaseRoleID + `","permissions":["` + strings.Join(WorkspaceDatabasePermissions, `","`) + `"]}}}`,
+		}, "actions delete"},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {
@@ -224,10 +299,16 @@ func TestWorkspacePlanRefusesNoPlan(t *testing.T) {
 }
 
 // TestWorkspaceRootDeclaresTheTypesTheCoverHolds reads the root itself and
-// holds its resources to the cover's two types: the file is what the embed
-// ships and what an operator applies, so a third resource added there is a
+// holds its resources to the cover's three types: the file is what the embed
+// ships and what an operator applies, so a fourth type added there is a
 // workspace holding something else, and it fails here rather than in a plan the
 // cover would have refused anyway.
+//
+// It also reads the root's two literals — the role id and the grant's role path
+// — against the Go side, because the cover builds the path from the project it
+// was given and compares the id it pins: a root that renamed either would leave
+// every plan of it refused, and this is where that is said in one sentence
+// rather than as a plan that will not confirm.
 func TestWorkspaceRootDeclaresTheTypesTheCoverHolds(t *testing.T) {
 	raw, err := os.ReadFile("../../../deploy/terraform/gcp/roots/workspace/main.tf")
 	if err != nil {
@@ -237,7 +318,18 @@ func TestWorkspaceRootDeclaresTheTypesTheCoverHolds(t *testing.T) {
 	for _, m := range regexp.MustCompile(`(?m)^resource "([a-z0-9_]+)" "([a-z0-9_]+)" \{`).FindAllStringSubmatch(string(raw), -1) {
 		types[m[1]] = true
 	}
-	if len(types) != 2 || !types[workspaceAccountType] || !types[workspaceGrantType] {
-		t.Fatalf("the workspace root must declare exactly the workspace's account and its one grant, got %v", types)
+	if len(types) != 3 || !types[workspaceRoleType] || !types[workspaceAccountType] || !types[workspaceGrantType] {
+		t.Fatalf("the workspace root must declare exactly the workspace's role, its account and that account's one grant, got %v", types)
+	}
+	if m := regexp.MustCompile(`(?m)^\s*role_id\s*=\s*"` + WorkspaceDatabaseRoleID + `"\s*$`); !m.Match(raw) {
+		t.Errorf("the root does not declare the role id the cover pins (%s)", WorkspaceDatabaseRoleID)
+	}
+	if m := regexp.MustCompile(`(?m)^\s*role\s*=\s*"projects/\$\{var\.project\}/roles/` + WorkspaceDatabaseRoleID + `"\s*$`); !m.Match(raw) {
+		t.Errorf("the root's grant does not name the role as the literal path the cover reads out of a plan (WorkspaceDatabaseRole): a role it cannot read is a role it cannot hold to the pinned id")
+	}
+	for _, p := range WorkspaceDatabasePermissions {
+		if !strings.Contains(string(raw), `"`+p+`"`) {
+			t.Errorf("the root's role does not hold %s, which the cover pins", p)
+		}
 	}
 }

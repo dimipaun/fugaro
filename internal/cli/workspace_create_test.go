@@ -161,7 +161,7 @@ func wsGrantChange(actions ...string) planChange {
 	return planChange{
 		"address": "google_project_iam_member.workspace_database", "mode": "managed", "type": "google_project_iam_member",
 		"change": map[string]any{"actions": actions,
-			"after":         map[string]any{"project": wsProject, "role": tf.WorkspaceDatabaseRole},
+			"after":         map[string]any{"project": wsProject, "role": tf.WorkspaceDatabaseRole(wsProject)},
 			"after_unknown": map[string]any{"member": true}},
 	}
 }
@@ -253,7 +253,7 @@ func TestWorkspaceProjectStageConvergesTheWorkspacesOwnProject(t *testing.T) {
 	}
 	out := g.out.String()
 	account := tf.WorkspaceServiceAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
-	for _, want := range []string{account, tf.WorkspaceDatabaseRole, "GRANT", initflow.AgentAdvice} {
+	for _, want := range []string{account, tf.WorkspaceDatabaseRole(wsProject), "GRANT", initflow.AgentAdvice} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the confirmation the operator reads does not name %q:\n%s", want, out)
 		}

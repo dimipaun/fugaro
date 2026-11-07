@@ -70,9 +70,19 @@ func isolateGateCredentials(t *testing.T) {
 // updating makes the run behave as an update of an installation that has work
 // to do: the plan reports changes, which is what puts a step in front of the
 // gate at all.
+//
+// The workspace's own root is the one exception, and it is scripted apart. The
+// changes above are the INSTALLATION's plan, and that is the fixture this rig
+// scripts for every root; the workspace root's own cover refuses it by name
+// (tf.WorkspaceNotCovered, workspace_create.go). What that root answers here is
+// the converged state — the account and its one grant are already there — so a
+// run whose config declares a workspace passes the stage and reaches the
+// stages behind it, which is what the tests this rig serves are about. A test
+// that is about that root builds its own rig (workspace_create_test.go).
 func updating(t *testing.T, r *initRig) {
 	t.Helper()
 	r.script["plan"] = map[string]any{"exit": 2}
+	r.script["plan@workspace"] = map[string]any{"exit": 0}
 	r.save(t)
 }
 

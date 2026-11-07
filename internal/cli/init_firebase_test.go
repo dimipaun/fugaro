@@ -86,6 +86,16 @@ func newFBRigFor(t *testing.T, fp string) *fbRig {
 	}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil})}
 	r.script["output@firebase"] = map[string]any{"stdout": r.firebaseOutputs(t)}
+	// The workspace's own project's root plans too in a run whose config
+	// declares a workspace (init_stages.go, W3), and its cover is its OWN and
+	// not the installation's (internal/infra/tf's WorkspaceNotCovered): the
+	// fixture this rig scripts for every root is the installation's plan,
+	// which that cover refuses by name. What is answered here is the converged
+	// state — the workspace's own service account and its one grant already
+	// exist — because the tests built on this rig are about the record, the
+	// rules and the gate, and not about that root. A test that is about the
+	// root builds its own rig (workspace_create_test.go's newWSCreateRig).
+	r.script["plan@workspace"] = map[string]any{"exit": 0}
 	r.save(t)
 	return r
 }

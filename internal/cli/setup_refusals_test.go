@@ -102,7 +102,7 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newRulesStage(e) }},
 	{stage: initflow.Policy, ctor: "newPolicyMigrateStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newPolicyMigrateStage(e) }},
-	{stage: initflow.WorkspaceProject, ctor: "newWorkspaceProjectStage(", noYes: true,
+	{stage: initflow.WorkspaceProject, ctor: "newWorkspaceProjectStage(", noYes: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceProjectStage(e) }},
 	{stage: initflow.Workspace, ctor: "newWorkspaceStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceStage(e) }},

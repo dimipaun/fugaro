@@ -13,12 +13,17 @@ import (
 const workspaceGoldenPath = "testdata/workspace.golden.json"
 
 // workspaceDatabaseRole is the role the workspace's own service account holds on
-// the workspace's own database. It is the whole-database role and not a narrower
-// one, because Realtime Database IAM has no path-level scope (spec §8), and it
-// is spelled here rather than read from internal/infra/tf so that the rules
+// the workspace's own database, as the root's one grant names it: the custom
+// role the root creates, holding the instance's two DATA permissions and nothing
+// else. Realtime Database IAM has no path-level scope (spec §8), so the
+// whole-database REACH is what any grant of it gives — and the operations are
+// the only thing left to narrow, which is why it is not roles/firebasedatabase
+// .admin (that adds the instance lifecycle: list, create, delete, disable,
+// reenable, undelete, none of which the workspace's own service ever makes).
+// It is spelled here rather than read from internal/infra/tf so that the rules
 // package's test says what it holds the root to without depending on another
 // package's table.
-const workspaceDatabaseRole = `roles/firebasedatabase.admin`
+const workspaceDatabaseRole = `projects/${var.project}/roles/fugaroWorkspaceDatabase`
 
 // rulesTreeOf decodes a generated document into maps, the way rulesTree does
 // for the budget family: the tests below read a document as a tree of locations
@@ -342,18 +347,28 @@ func TestWorkspaceRulesAllowTheServicesOwnAccount(t *testing.T) {
 
 	// The root's half: exactly one database grant, bound to the workspace's own
 	// service account, and that account holds nothing else.
+	//
+	// What counts as binding the account is the block's own member ATTRIBUTE
+	// and not a mention of it: the custom role's description says which account
+	// holds it, and a sentence is not a grant. Every member resource the root
+	// declares is the role's, and its member is that one account.
 	blocks := workspaceResourceBlocks(t, workspaceRootText(t))
-	const accountRef = "google_service_account.workspace.email"
+	const accountRef = "google_service_account.workspace.member"
+	memberAttr := regexp.MustCompile(`(?m)^\s*member\s*=\s*` + accountRef + `\s*$`)
 	grants, naming := 0, 0
 	for _, b := range blocks {
+		binds := memberAttr.MatchString(b.Body)
 		if !strings.HasSuffix(b.Type, "_iam_member") {
+			if binds {
+				t.Errorf("%s.%s binds the workspace's own service account outside a member resource: its reach is the one database grant", b.Type, b.Name)
+			}
 			continue
 		}
 		grants++
 		if !strings.Contains(b.Body, workspaceDatabaseRole) {
 			t.Errorf("%s.%s binds a role that is not the workspace database role (%s): every grant this root makes is that role's, because Realtime Database IAM has no path-level scope", b.Type, b.Name, workspaceDatabaseRole)
 		}
-		if !strings.Contains(b.Body, accountRef) {
+		if !binds {
 			t.Errorf("%s.%s does not bind %s: the workspace's own service account is the one identity that reaches the workspace database, and a grant to anything else is a principal that can read the record and the admitted-token hashes", b.Type, b.Name, accountRef)
 		}
 	}
@@ -361,12 +376,8 @@ func TestWorkspaceRulesAllowTheServicesOwnAccount(t *testing.T) {
 		t.Fatal("the workspace root binds the database role to nobody: the workspace's own service has no way to read the record it rolls up and admits against")
 	}
 	for _, b := range blocks {
-		if !strings.Contains(b.Body, accountRef) {
-			continue
-		}
-		naming++
-		if !strings.HasSuffix(b.Type, "_iam_member") {
-			t.Errorf("%s.%s names the workspace's own service account outside a member resource: its reach is the one database grant", b.Type, b.Name)
+		if memberAttr.MatchString(b.Body) {
+			naming++
 		}
 	}
 	if naming == 0 {
