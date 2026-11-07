@@ -1272,8 +1272,20 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 // all (a state directory that is a link, foreign-owned or read-only, G5): the
 // stream goes nowhere else, and the output that explains a failure is the last
 // thing a run may swallow (G8).
+//
+// --plan-only keeps stderr besides the log, which is the path it took before the
+// converge had a reporter: the plan the run prints IS what the command is for,
+// and a plan-only run that succeeds names no log path the way a failure does, so
+// the stream alone would put the one thing somebody asked for out of reach
+// (CL5b: --plan-only takes the path it takes today). The log is written all the
+// same, so a plan-only run that fails still points at a log that holds what it
+// printed.
 func (r *initRun) progress() io.Writer {
-	if r.rep != nil && (r.repLog != nil || boolFlag(r.cmd, verboseFlag)) {
+	verbose := boolFlag(r.cmd, verboseFlag)
+	if r.rep != nil && (r.repLog != nil || verbose) {
+		if r.o.planOnly && !verbose {
+			return io.MultiWriter(r.cmd.ErrOrStderr(), r.rep.Stream())
+		}
 		return r.rep.Stream()
 	}
 	return r.cmd.ErrOrStderr()

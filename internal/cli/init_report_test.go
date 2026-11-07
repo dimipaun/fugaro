@@ -198,6 +198,40 @@ func TestUpdateDefaultOutputIsShort(t *testing.T) {
 	}
 }
 
+// TestUpdatePlanOnlyKeepsThePlanOnTheTerminal: --plan-only takes the path it
+// took before the converge's reporter (the spec's "the paths they take today").
+// The plan's own text is the one thing the command exists to show, and a
+// plan-only run that succeeds names no log path the way a failure does — a
+// failure names the log, and that log has to hold the plan — so the reporter's
+// stream alone would leave the plan's text out of reach.
+func TestUpdatePlanOnlyKeepsThePlanOnTheTerminal(t *testing.T) {
+	applyingRig(t)
+	out, errOut, err := executeStdin(t, "", "update", "--plan-only")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	if !strings.Contains(out, "--plan-only: nothing applied") {
+		t.Errorf("the run did not stop on its plan-only line:\n%s%s", out, errOut)
+	}
+	if !strings.Contains(errOut, convergeNoise) {
+		t.Errorf("--plan-only swallowed the run's own output:\n%s%s", out, errOut)
+	}
+	// The plan view is the whole of what a plan-only run accounts for — the
+	// steps are the converge's, and this run never converges — and the run's
+	// own stream does not leak into it.
+	if strings.Contains(out, convergeNoise) {
+		t.Errorf("--plan-only put the run's own output in its account:\n%s", out)
+	}
+	if rows := planViewRows(out); rows < 6 {
+		t.Errorf("--plan-only printed %d plan-view rows, want update's own list:\n%s", rows, out)
+	}
+	// A failure names the log, and the log holds the output it names: the plan
+	// is in both places for a run that stopped on one.
+	if _, log := onlyLog(t, "update"); !strings.Contains(log, convergeNoise) {
+		t.Errorf("the log does not hold the output a failure would point at:\n%s", log)
+	}
+}
+
 // TestUpdateFailurePrintsContextAndLogPath: a failed step prints its name, the
 // error, the lines of context behind it and the path of the log the rest is in
 // — on the screen, because an agent's session with a read-only home cannot
@@ -755,6 +789,19 @@ func stepNames(out string) []string {
 		}
 	}
 	return names
+}
+
+// planViewRows counts the plan view's own rows: the indented "[state] stage"
+// lines a plan-only run ends on, which are not steps (nothing was opened for
+// them) and so are not counted by stepNames.
+func planViewRows(out string) int {
+	n := 0
+	for _, l := range reportLines(out) {
+		if strings.HasPrefix(l, "  [") {
+			n++
+		}
+	}
+	return n
 }
 
 // TestUpdateUnderAgentMarkerPrintsTheSameSteps: a coding agent's session sees
