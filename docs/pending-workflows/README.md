@@ -1825,6 +1825,9 @@ tag pattern `mobile-v*`), or with the API:
 ```sh
 REPO=dimipaun/fugaro   # the repository the workflow runs in
 
+# No `reviewers` key: this creates the environment with none, which is what it
+# has had since 2026-11-07. The paragraph below says what putting one back
+# takes, and why the policy has to travel in that body with it.
 gh api --method PUT "repos/$REPO/environments/mobile-release" --input - <<JSON
 {
   "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}
@@ -1872,8 +1875,12 @@ TestFlight and Play submission rather than unreviewed code — each job's dispat
 step holds the ref to `main`, or to a tag already on `origin/main` and green —
 but it is a submission behind nothing except write access. `docs/release.md`,
 "What fences a release now", gives the owner both steps that close it: the
-reviewer back on this environment alone (the call above, with no file change), or
-the same actor guard on this file's two jobs (staged here and copied in, since
+reviewer back on this environment alone, which is one API call and no file change
+— **that section's** environment `PUT`, not the one above it, with `<name>` as
+`mobile-release` and **the `deployment_branch_policy` above carried back in the
+same body**, because a `PUT` body is the whole environment and a body carrying
+only `reviewers` would clear the policy this section has just set — or the same
+actor guard on this file's two jobs (staged here and copied in, since
 `.github/workflows/` is never edited from an agent run). Until one of the two is
 done, that path rests on the repository having a single writer.
 
