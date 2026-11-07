@@ -419,7 +419,14 @@ func policyMigrationRefusal(err error) error {
 // name to publish the node, so the typed confirmation below is replaced by a
 // note of what is written. The upgrade door has no gate and passes false, so it
 // keeps both refusals exactly as they were.
-func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool) error {
+//
+// c is the run's own conditions, the reading initRun.conditions hands every
+// other confirmation in this package (the marker and the terminal among them):
+// it is passed rather than read here so that the session the note is scoped to
+// and the session the refusals below are scoped to are one reading and cannot
+// disagree. `fugaro upgrade`, which has no initRun, passes the same two facts
+// its own agent refusal was made from.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool, c initflow.Conditions) error {
 	// The in-flight refusal is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
 	// (confirmReseed writes the re-seeded file and then the migrated node), and a
@@ -428,13 +435,12 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	// write this refusal exists to stop — and would ask the operator to confirm
 	// the re-seed of a run that a plain --yes cannot then finish.
 	//
-	// The marker is read once, here, and used twice: a coding agent's session is
-	// not widened by the managed case, so the note is the owner's own session's
-	// alone — a marker keeps the refusal below exactly as it was — and the first
-	// publish's empty-allow-list confirmation asks for the same marker further
-	// down.
-	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
-	if err := m.refuseRunsInFlight(ctx, yes, managed && marker == "", w); err != nil {
+	// The marker is read once, in the run's conditions, and used twice: a coding
+	// agent's session is not widened by the managed case, so the note is the
+	// owner's own session's alone — a marker keeps the refusal below exactly as
+	// it was — and the first publish's empty-allow-list confirmation asks for
+	// the same marker further down.
+	if err := m.refuseRunsInFlight(ctx, yes, managed && c.Agent == "", w); err != nil {
 		return err
 	}
 	if m.generations != nil {
@@ -469,17 +475,24 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// in, and a session with no terminal or a coding agent's is refused), and
 		// a document this node's confirmation already covers needs no second
 		// question.
-		if err := confirmEmptyAllowList(cmd, m.lc, marker); err != nil {
+		if err := confirmEmptyAllowList(cmd, m.lc, c.Agent); err != nil {
 			return err
 		}
-	} else if managed && marker == "" && !admitted {
+	} else if managed && initflow.PersonAtTheTerminal(c) && !admitted {
 		// The owner's ruling of 2026-11-06: no typed prompt for a person at a
 		// real terminal on a managed project, except data loss and secret
 		// values. Rewriting the node from the person's own local config is
 		// neither, so the person is told what is written and it is written.
-		// marker == "" is the reading the in-flight note above already takes
-		// for the owner's own session — a person's terminal, and equally a run
-		// with no marker and no terminal, which that note already lets through.
+		//
+		// The condition is the gate's own reading of who is there
+		// (initflow.PersonAtTheTerminal, ConfirmsByGate's condition half): a
+		// real terminal, no marker, and none of --ask, --non-interactive and
+		// --json. The terminal is the load-bearing half, because a pipe and a
+		// coding agent's tool call carry no marker and a managed project is
+		// reached by scripts, cron and ssh without a tty as well as by a
+		// person; --ask is the owner asking for the confirmations back, which
+		// is never a licence to skip one.
+		//
 		// A coding agent's session carries a marker and keeps every
 		// confirmation below; an unmanaged project reads managed false and
 		// keeps them too. The gate's own admission (admitted) is untouched:
@@ -1057,7 +1070,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		}
 	}
 	cmd := s.e.r.cmd
-	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted, s.e.r.gateUnderway()); err != nil {
+	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted, s.e.r.gateUnderway(), s.e.r.conditions()); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if admitted {

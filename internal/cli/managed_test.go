@@ -825,13 +825,17 @@ var propertyAgentSites = map[string]string{
 	// The layer stage refuses a marker itself for the same reason: it is
 	// SelfConfirming, so the loop would call it.
 	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
-	// The policy tail's marker read is the in-flight guard's: the owner's ruling
-	// of 2026-11-06 makes that guard a note in a managed project, and the note is
-	// the owner's own session's alone — a marker keeps the refusal. The same read
-	// spares the typed confirmation for a person on a managed project, and is the
-	// argument confirmEmptyAllowList's first publish asks for.
-	"init_policy_migrate.go policyMigrationConfirm": "TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal (the marker keeps the in-flight refusal the managed case would turn into a note) and TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject (the same read spares the typed confirmation only without a marker)",
 }
+
+// The policy tail (init_policy_migrate.go policyMigrationConfirm) is not in
+// propertyAgentSites: it reads no marker of its own, it takes the run's
+// conditions — init.go conditions's read, listed above — and decides on
+// Conditions.Agent, which this scan does not see. Two tests drive its side of
+// that read: TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal (a
+// marker keeps the in-flight refusal that the owner's ruling of 2026-11-06
+// turns into a note in a managed project, and keeps the typed confirmation the
+// ruling spares there) and TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject
+// (the same conditions, marker by marker).
 
 // outsideAgentSites are the agent-marker sites the property does not cover,
 // each with the reason.

@@ -569,7 +569,7 @@ func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, h.s.e.r.conditions())
 	if err == nil {
 		t.Fatalf("a coding agent's session wrote a managed project's policy with a run in flight:\n%s", h.out)
 	}
@@ -1282,34 +1282,58 @@ func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
 // of 2026-11-06, no typed prompt for a person at a real terminal on a managed
 // project. The tail is driven directly with admitted false (the gate did not
 // stand in for the confirmation) and nothing on stdin: a person on a managed
-// project proceeds on a note, an unmanaged project and a coding agent's session
-// still need the typed name and are refused without it.
+// project proceeds on a note, and every other session keeps the confirmation —
+// an unmanaged project, a coding agent's session, a run with no terminal and a
+// run whose owner asked for the prompts back (--ask) are each refused without
+// the typed name, and the node does not move.
 //
-// The person condition is the session being the owner's own (no coding-agent
-// marker, which is the same reading the in-flight note takes), and the three
-// subtests are its mutation check: flipping either half — an unmanaged project,
-// or a marker on the managed one — must bring the refusal back.
+// The subtests are the mutation check of the condition
+// (managed && initflow.PersonAtTheTerminal(c) && !admitted): dropping any one
+// of its halves lets a session through that must not be, and the first subtest
+// is the positive control for the refusals after it.
 func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
-	run := func(t *testing.T, managed bool, marker string) (*migrationRig, *projectFixture, error) {
+	run := func(t *testing.T, managed, terminal, ask bool, marker string) (*migrationRig, *projectFixture, error) {
 		t.Helper()
 		f := newProjectFixture(t, "")
 		f.db.Set(projectpolicy.PathShared(), v3Node(nil))
-		h := newMigrationRig(t, f, &initOptions{})
-		fakeTerminal(t)
+		h := newMigrationRig(t, f, &initOptions{ask: ask})
+		if terminal {
+			fakeTerminal(t)
+		} else {
+			noTerminal(t)
+		}
 		if marker != "" {
-			t.Setenv("CLAUDECODE", marker)
+			t.Setenv(marker, "1")
 		}
 		h.cmd.SetIn(strings.NewReader(""))
 		m, _, err := h.s.plan(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed)
+		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed, h.s.e.r.conditions())
+	}
+	// refused is the four sessions that keep the confirmation: the run is
+	// stopped with the typed name asked for, and the node does not move.
+	refused := func(t *testing.T, why string, managed, terminal, ask bool, marker string) {
+		t.Helper()
+		h, f, err := run(t, managed, terminal, ask, marker)
+		if err == nil {
+			t.Fatalf("%s wrote without the typed name:\n%s", why, h.out)
+		}
+		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("%s was refused without the confirmation being asked for:\n%s", why, h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got != 3 {
+			t.Errorf("%s moved the node to version %d without a confirmation", why, got)
+		}
 	}
 	t.Run("a person on a managed project", func(t *testing.T) {
-		h, f, err := run(t, true, "")
+		h, f, err := run(t, true, true, false, "")
 		if err != nil {
 			t.Fatalf("a person on a managed project was asked to confirm: %v\n%s", err, h.out)
+		}
+		if strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
+			t.Errorf("a person on a managed project was asked to type the project's name:\n%s", h.out)
 		}
 		if !strings.Contains(h.out.String(), "note: this rewrites the published policy node") {
 			t.Errorf("the note is missing:\n%s", h.out)
@@ -1319,21 +1343,20 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		}
 	})
 	t.Run("an unmanaged project", func(t *testing.T) {
-		_, f, err := run(t, false, "")
-		if err == nil {
-			t.Fatal("an unmanaged project wrote without the typed name")
-		}
-		if got := nodeVersionOn(t, f.db); got != 3 {
-			t.Errorf("the node moved to version %d without a confirmation", got)
-		}
+		refused(t, "an unmanaged project", false, true, false, "")
 	})
 	t.Run("a coding agent's session on a managed project", func(t *testing.T) {
-		_, f, err := run(t, true, "1")
-		if err == nil {
-			t.Fatal("a coding agent's session wrote without the typed name")
-		}
-		if got := nodeVersionOn(t, f.db); got != 3 {
-			t.Errorf("the node moved to version %d under a marker", got)
-		}
+		refused(t, "a coding agent's session", true, true, false, "CLAUDECODE")
+	})
+	t.Run("a managed project with no terminal", func(t *testing.T) {
+		// The terminal is the half a session's marker cannot stand in for: a
+		// script, a cron entry, an ssh without a tty and a coding agent's tool
+		// call with its variables stripped all read as the owner's own
+		// otherwise, and the write would land with nothing typed and nobody
+		// there.
+		refused(t, "a managed project with nobody at the terminal", true, false, false, "")
+	})
+	t.Run("a managed project whose owner asked for the prompts back", func(t *testing.T) {
+		refused(t, "a managed project run with --ask", true, true, true, "")
 	})
 }

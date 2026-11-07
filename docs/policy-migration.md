@@ -55,7 +55,13 @@ deleting it:
    is the node every run of the project is admitted by: the stage asks for the
    project's name typed at a real terminal, names the member that loosens, and
    refuses a script or a coding agent's session with the command to run at a
-   terminal instead (`fugaro update`). The comparison `settings set` makes
+   terminal instead (`fugaro update`). **In a managed project a person at a real
+   terminal is not asked for it**: the stage prints one line saying what the
+   write does and the member that loosens is read in the diff above it, because
+   the project manages itself without these prompts — the owner's ruling of
+   2026-11-06. Every other session keeps the typed name, `--ask` (the flag that
+   puts the prompts back) and a coding agent's session among them, and a run
+   with no terminal is refused as it always was. The comparison `settings set` makes
    decides it, so a ceiling raised is asked about the same way whichever of the
    two doors writes it — and `settings set|unset` themselves take `--yes` for
    that widening outside a coding agent's session, the owner's ruling of
