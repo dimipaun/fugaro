@@ -432,15 +432,21 @@ func IntentItem(id string) string {
 }
 
 // IntentAttempt is the attempt an intent's id names, or 0 when the id carries
-// no attempt at all.
+// no attempt at all. The digits are read one by one rather than scanned: an id
+// like "wi-1:1x" is not attempt 1, because two ids that mean one attempt would
+// have the count an approval is spent against count it twice (the patch schema
+// spells the same rule as a pattern).
 func IntentAttempt(id string) int {
 	_, rest, ok := strings.Cut(id, ":")
-	if !ok {
+	if !ok || rest == "" || len(rest) > 9 {
 		return 0
 	}
-	var n int
-	if _, err := fmt.Sscanf(rest, "%d", &n); err != nil || n < 1 {
-		return 0
+	n := 0
+	for i := range len(rest) {
+		if c := rest[i]; c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(rest[i]-'0')
 	}
 	return n
 }
@@ -556,26 +562,22 @@ var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // Load and the daemon's start-up — so an installation that upgrades once
 // (the HARD RULE: `fugaro update` is the whole upgrade) keeps working without
 // an operator step. Every step keeps the fields it does not understand: v0
-// was the node before the schema carried a version, and spent_approval_at may
-// already be in one, so nothing here clears a field.
+// was the node before the schema carried a version, so a v0 document that
+// already carries a later field is stamped, not rewritten, and nothing here
+// clears a field.
 //
 // A state newer than this release is left exactly as it is and reported as
 // unchanged: the caller's validator refuses it, which is the fail-closed
 // answer for a document a later release wrote.
 func Migrate(s State) (State, bool) {
-	if s.SchemaVersion >= SchemaVersion {
+	if s.SchemaVersion != 0 {
+		// This release's version, a later one, or a number that is not a
+		// version at all: either there is nothing to raise or the number is
+		// one this release must refuse rather than guess at, and the validator
+		// is what refuses it.
 		return s, false
 	}
-	switch s.SchemaVersion {
-	case 0:
-		// v0 carried the same fields with no version stamp; the archived
-		// list and the counters were simply always written, empty included.
-		s.SchemaVersion = 1
-	default:
-		// An older version this release has no step for is still stamped:
-		// the shape checks in ValidateState are what stands behind it.
-		s.SchemaVersion = SchemaVersion
-	}
+	s.SchemaVersion = SchemaVersion
 	return s, true
 }
 

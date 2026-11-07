@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // TestAgentActorCannotResolveAPersonDecision is G2's fence inside the state
@@ -176,6 +177,11 @@ func TestFactValuesAreCappedAndCleaned(t *testing.T) {
 	long := "\x1b[31m" + strings.Repeat("v", orchestrator.MaxFactValueRunes+50) + "\nsecond line"
 	kept := mustApply(t, s, orchestrator.Session, "session:20260707-090000-abcd", now, factOp("sweep.state", long))
 	got := kept.Facts["sweep.state"].Value
+	// The house cleaning, not an ad-hoc one: the same two calls every other
+	// surface puts a string through on its way into a document or a terminal.
+	if want := safetext.Clip(safetext.OneLine(long), orchestrator.MaxFactValueRunes); got != want {
+		t.Fatalf("the stored fact is %q and the house cleaning of what was sent is %q", got, want)
+	}
 	if len([]rune(got)) > orchestrator.MaxFactValueRunes {
 		t.Fatalf("a fact of %d runes was stored", len([]rune(got)))
 	}
@@ -211,7 +217,12 @@ func TestFactValuesAreCappedAndCleaned(t *testing.T) {
 // is edited into work nobody approved, still carrying its go.
 func TestEditAfterApprovalRevokes(t *testing.T) {
 	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
-	approved := mustApprove(t, now)
+
+	// The state carries a second item so that a dependency can name one, which
+	// is what makes the DependsOn case an edit rather than a no-op.
+	s := stateWithAQueuedItem(t, now)
+	s.WorkItems = append(s.WorkItems, workItemOf("wi-2"))
+	approved := mustApply(t, s, orchestrator.Person, "owner", now, approveOp("wi-1", orchestrator.SpecDigest(s.WorkItems[0])))
 
 	for _, tc := range []struct {
 		name string
@@ -224,6 +235,7 @@ func TestEditAfterApprovalRevokes(t *testing.T) {
 		{"the repository", upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Repo = ptr("owner/other") })},
 		{"the recipe", upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Recipe = ptr("thorough") })},
 		{"the rigor tier", upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.RigorTier = ptr("large") })},
+		{"a dependency", upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.DependsOn = &[]string{"wi-2"} })},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			next := mustApply(t, approved, orchestrator.Session, "session:20261107-090000-abcd", now, tc.op)

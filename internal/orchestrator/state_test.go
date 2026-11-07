@@ -102,8 +102,22 @@ func TestOversizeOrMalformedStateIsRefusedClientSide(t *testing.T) {
 		{"a fact key that is not a name", func(_ *testing.T, m map[string]any) {
 			m["facts"].(map[string]any)["a:key"] = map[string]any{"value": "x", "by": "daemon"}
 		}, orchestrator.ErrInvalid},
+		{"a fact with no value at all", func(_ *testing.T, m map[string]any) {
+			// A fact is written with a value and removed without one; empty
+			// is neither, and a session that reads a fact which is there and
+			// says nothing takes the emptiness for an answer.
+			m["facts"].(map[string]any)["empty"] = map[string]any{"value": "", "by": "daemon"}
+		}, orchestrator.ErrInvalid},
+		{"an archived item with no outcome", func(t *testing.T, m map[string]any) {
+			listAt(t, m, "archived")[0].(map[string]any)["outcome"] = ""
+		}, orchestrator.ErrInvalid},
 		{"an intent id that names no attempt", func(t *testing.T, m map[string]any) {
 			listAt(t, m, "intents")[0].(map[string]any)["id"] = "wi-1"
+		}, orchestrator.ErrInvalid},
+		{"an intent id with something after the attempt", func(t *testing.T, m map[string]any) {
+			// "wi-1:1x" is not attempt 1: two ids that read as one attempt
+			// would have the count an approval is spent against count it twice.
+			listAt(t, m, "intents")[0].(map[string]any)["id"] = "wi-1:1x"
 		}, orchestrator.ErrInvalid},
 		{"a document over the size target with every field inside its cap", func(_ *testing.T, m map[string]any) {
 			// Nothing here breaks a cap of its own: sixty-four facts of the
@@ -172,6 +186,15 @@ func TestMigrateFromThePreviousSchemaVersion(t *testing.T) {
 	}
 	if decoded.SchemaVersion != orchestrator.SchemaVersion {
 		t.Fatalf("the decoded document says version %d, want %d", decoded.SchemaVersion, orchestrator.SchemaVersion)
+	}
+
+	// A version that is not a version is left where it is rather than stamped
+	// forward: the validator is what refuses it, and it is a number this
+	// release has no step for.
+	negative := current
+	negative.SchemaVersion = -1
+	if again, changed := orchestrator.Migrate(negative); changed || again.SchemaVersion != -1 {
+		t.Fatalf("Migrate raised a version that is not one: changed = %v, version = %d", changed, again.SchemaVersion)
 	}
 
 	future := current
