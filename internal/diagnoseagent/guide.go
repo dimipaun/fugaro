@@ -36,9 +36,9 @@ var guideHeaderBlock = guideHeader + "\n<!-- source: " + guideSource + " -->\n\n
 // byte. Nothing is reworded and nothing is added, so the agent reading the
 // guide reads the document a reviewer read.
 func renderGuideCopy(source []byte) []byte {
-	copy := make([]byte, 0, len(guideHeaderBlock)+len(source))
-	copy = append(copy, guideHeaderBlock...)
-	return append(copy, source...)
+	out := make([]byte, 0, len(guideHeaderBlock)+len(source))
+	out = append(out, guideHeaderBlock...)
+	return append(out, source...)
 }
 
 //go:embed guide.md

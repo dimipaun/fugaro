@@ -91,13 +91,13 @@ func promptBody(e Evidence) string {
 	var b strings.Builder
 	b.WriteString("You are explaining one failed Fugaro command to the person who ran it, on their own machine. " +
 		"A diagnosis runs locally because the cloud setup is often what is broken, so work from what is on this disk.\n\n")
-	fmt.Fprintf(&b, "The command that failed: `fugaro %s`, local run ID %s.\n", flat(e.Command), flat(e.RunID))
-	fmt.Fprintf(&b, "The version that failed: %s.\n", flat(e.Version))
-	if note := flat(e.SourceNote); note != "" {
+	fmt.Fprintf(&b, "The command that failed: `fugaro %s`, local run ID %s.\n", oneLine(e.Command), oneLine(e.RunID))
+	fmt.Fprintf(&b, "The version that failed: %s.\n", oneLine(e.Version))
+	if note := oneLine(e.SourceNote); note != "" {
 		fmt.Fprintf(&b, "The source tree: %s\n", note)
 	}
-	fmt.Fprintf(&b, "The evidence folder: %s\n", flat(e.EvidenceDir))
-	fmt.Fprintf(&b, "The source tree at that version, read-only: %s\n", flat(e.SourceDir))
+	fmt.Fprintf(&b, "The evidence folder: %s\n", oneLine(e.EvidenceDir))
+	fmt.Fprintf(&b, "The source tree at that version, read-only: %s\n", oneLine(e.SourceDir))
 
 	b.WriteString("\n" + posture + "\n\n" + untrusted + "\n\n")
 	b.WriteString("Decide which one thing this is:\n\n")
@@ -116,9 +116,9 @@ func promptBody(e Evidence) string {
 	return b.String()
 }
 
-// flat collapses the whitespace of a Fugaro-supplied field, so a value that
+// oneLine collapses the whitespace of a Fugaro-supplied field, so a value that
 // arrived with a line break in it (a path, a note) cannot add a line of the
 // prompt's own.
-func flat(s string) string {
+func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
