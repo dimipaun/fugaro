@@ -110,14 +110,15 @@ keys (slice 3). A reader who ships slice 1 and stops has a working command, a wo
 working escalation, all over the engine's own list.
 
 **Files a task shares with work outside this plan**, so a conflict there is a semantic one:
-`internal/cli/doctor.go` (SC4's one registration line, beside eight other check-providing files),
-`internal/cli/run.go` (SC10's flag, beside every other launch flag, whose list `taskFlags` also
-pins), `internal/config/config.go` and `internal/config/scope.go` (SC7's key and its scope row, the two
-files every config change touches), `internal/runstore/runstore.go` (SC6's record member, a wire shape
-the console, mobile and history read — **additive, never a retype**), `schemas/fugaro.schema.json` and
-`schemas/project-layer.schema.json` (SC7 and SC8, each pinned to the Go decoder by
-`internal/config/schema_test.go` and `schemas/schemas_test.go`), and `docs/rigor-modes/reconciliation.md`
-(SC2's census row, which four other folders' pins re-check — F17).
+`internal/cli/doctor.go` and `internal/cli/doctor_render.go` (SC4's one registration line and one ID
+prefix, beside eight other check-providing files and the two class tables the whole `doctor` view is
+classified by), `internal/cli/run.go` (SC10's flag, beside every other launch flag, whose list
+`taskFlags` also pins), `internal/config/config.go` and `internal/config/scope.go` (SC7's key and its
+scope row, the two files every config change touches), `internal/runstore/runstore.go` (SC6's record
+member, a wire shape the console, mobile and history read — **additive, never a retype**),
+`schemas/fugaro.schema.json` and `schemas/project-layer.schema.json` (SC7 and SC8, each pinned to the Go
+decoder by `internal/config/schema_test.go` and `schemas/schemas_test.go`), and
+`docs/rigor-modes/reconciliation.md` (SC2's census row, which four other folders' pins re-check — F17).
 
 ## 3. The slices
 
@@ -225,17 +226,23 @@ the security-pattern floor, the matcher and the union merge`.
 
 - **Files:** `internal/cli/doctor_security.go` (new — the check, following
   `doctor_managed_audit.go`'s `doctorManagedAudit`), `internal/cli/doctor_security_test.go` (new),
-  `internal/cli/doctor.go` (one registration).
+  `internal/cli/doctor_render.go` (`doctorSecurityPrefixes` gains the check's ID prefix, so
+  `fugaro doctor --security` carries it), `internal/cli/doctor.go` (one registration).
 - **Interface:** one `doctorCheck` whose `problem`/`fix` name the list in force — how many rows come
   from the floor and how many from each layer — and, for **D1503**'s second half, one row for a pattern
   that matched nothing in the base. **In slice 1 there are no layers, so it counts the floor alone**;
   **SC9 re-points it at the one resolution** so the two layer counts appear. It prints **counts and
-  names, never a value**, and it is `class` `measure` where nothing is wrong and `decision` where a
-  pattern matches nothing (the two classes `doctorClassOf` already resolves).
+  names, never a value**. Its class follows `doctorClassOf`: an **info** line where the list is only
+  measured (a `measure`, so the default view does not print it and `--security` does, which is why the
+  ID joins `doctorSecurityPrefixes`), and a **finding** (`actionable`, and the reader's to fix) where a
+  pattern matched nothing in the base — because a pattern that matches nothing is a list that does not
+  do what its author thinks, which is the one thing this check exists to say.
 - **Red step:** `TestDoctorNamesTheSecurityListInForce` fails on today's tree — the check does not exist.
 - **Tests:** `TestDoctorNamesTheSecurityListInForce`,
-  `TestDoctorSaysWhenAPatternMatchedNothingInTheBase`, `TestDoctorSecurityCheckIsAMeasureWhenOK`,
-  `TestDoctorSecurityCheckAppearsInJSON`. Command:
+  `TestDoctorSaysWhenAPatternMatchedNothingInTheBase`,
+  `TestDoctorSecurityCheckIsAMeasureWhenTheListIsSound`,
+  `TestDoctorSecurityCheckIsAFindingWhenAPatternMatchedNothing`,
+  `TestDoctorSecurityCheckIsOnTheSecuritySweep`, `TestDoctorSecurityCheckAppearsInJSON`. Command:
   `GOFLAGS=-p=2 go test ./internal/cli -run 'Doctor.*Security|Docs' -count=1`.
 - **Mutation (run, restore):** drop the "matched nothing" row; its case fails.
 - **Reviewer tier:** standard. **Owner-run:** no. **Depends on:** SC1.
@@ -250,10 +257,9 @@ the security-pattern floor, the matcher and the union merge`.
   `### For operators` entry, which for slice 1 is the honest one — **nothing to run**: the command is a
   reader and no run's cost changes (D1519). It is written even when it is one sentence, because F13's
   rule is that a release whose operator story is "nothing" says so rather than leaving the section out.
-- **Red step:** `TestCLIReferenceMatchesTheCommandTree` (the pin behind `docs_website_cliref_test.go`,
-  F18) fails while the tree has `security paths` and the reference does not — the red step is SC3
-  landing first.
-- **Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'WebsiteCliRef|Docs' -count=1` and
+- **Red step:** `TestCliReferenceNamesEveryCommandAndFlag` (`docs_website_cliref_test.go`, F18) fails
+  while the tree has `security paths` and the reference does not — the red step is SC3 landing first.
+- **Tests:** `go test ./internal/cli -run 'CliReference|Docs' -count=1` and
   `cd website && npm run check`.
 - **Mutation (run, restore):** remove the generated section; the reference pin fails.
 - **Reviewer tier:** standard. **Owner-run:** no. **Depends on:** SC3.
