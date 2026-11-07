@@ -2577,7 +2577,7 @@ than a document. The command is the same pair §6.19's paragraph describes, so t
 `--`-terminated value, the two phase words and the layer's provenance are
 written down there and not twice here.
 
-### 6.21 `fugaro graph --json` — the dependency graph, and its stream
+### 6.22 `fugaro graph --json` — the dependency graph, and its stream
 
 **Command:** `ee/graph/cli/graph.go`, registered through `RegisterCommand`
 (`ee/register/graph.go`) — the graph plan's CG3. It is a **paid command** like
@@ -2595,6 +2595,11 @@ own read (CG9a, CG9b) are the tasks that follow, in that order. Every field
 below is read off `ee/graph/document.go`'s struct tags and every rule off the
 plan's H1 to H5, so a later task that finds the code disagreeing with this
 section has found a defect in one of the two.
+
+**The section is numbered §6.22, and that is not a typo.** §6.21 is already
+claimed for another command's document: `docs/console-managed-screens/implementation-plan.md`
+gives it to `fugaro managed status --json` (its CM2 writes it), so the graph's
+takes the next number free rather than the claim written down first.
 
 **It needs no checkout, and that is the point of the read.** `plan status`
 (§6.12) and `plan graph` (§6.9) read the plans of the installation's checkout and
