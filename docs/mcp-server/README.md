@@ -62,10 +62,11 @@ decisions on 2026-11-04** — D920's public endpoint, D923's paired-device sign-
 lists, D930's rotating tokens, D931's single launch path, D934's off-by-default front door, D921's
 library **with its licence still UNCONFIRMED** — **confirmed by the owner on 2026-11-06, which is
 when `zitadel/oidc`'s own licence file was read and found to be Apache 2.0; the transitive
-dependencies and the gate file of §6's first check are still the owner's** — **and those two are the
-condition on merging the pull request that builds M5, not work a later release catches up on: §6's
-gate says M5 does not start before them, and a clearance that does not come sends D921 back to its
-alternatives rather than shipping the dependency** — and D922's separate
+dependencies and the gate file of §6's first check are still the owner's** — **so that check is unmet
+while M5 is built, and the pull request that builds it does not merge until the owner writes the gate
+file and counsel clears the transitive set, or the owner writes the relaxation of the check himself;
+a clearance that does not come sends D921 back to its alternatives rather than shipping the
+dependency** — and D922's separate
 **`mcpauth`** subtree, closed to
 every client. **And answered one more on 2026-11-05 (D935)**, on the independent review of PR
 #1715's M3: those records do not live in the project's shared Realtime Database at all, but in a

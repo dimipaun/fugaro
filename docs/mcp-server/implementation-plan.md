@@ -713,10 +713,11 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   entry is taken against, with the transitive dependencies' clearance and the gate file still the
   owner's** (the paragraph in §3 above, [reconciliation.md](reconciliation.md) §6 check 1).
   **The pull request that builds this task is built while those two are still open**, which the gate
-  in §6 forbids and which is therefore the owner's decision taken knowingly rather than an
-  accident: **the two are that pull request's condition on merging and not work a later release
-  catches up on**, and a clearance that does not come sends D921 back to its alternatives — the
-  library out of `go.mod` and this task rebuilt without it
+  in §6 forbids; the branch records that as the check being unmet rather than as a decision of the
+  owner's, because nothing he has recorded relaxes it. **That pull request does not merge until the
+  owner writes the gate file and counsel clears the transitive set, or the owner writes the
+  relaxation of the check himself** — and a clearance that does not come sends D921 back to its
+  alternatives: the library out of `go.mod` and this task rebuilt without it
   ([reconciliation.md](reconciliation.md) §6 check 1).
 
 ### M6 — Firebase at the authorize endpoint
