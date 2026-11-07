@@ -6,7 +6,7 @@
 // obeys — that a token may only narrow what the project already allows.
 //
 // The design is docs/mcp-server/spec.md and the decisions are
-// docs/mcp-server/reconciliation.md D920–D934; this package is the front
+// docs/mcp-server/reconciliation.md D920–D936; this package is the front
 // door's half of the implementation plan's M1 onward. It is a business
 // feature by the owner's ruling of 2026-10-27 (A6, docs/ee-reorg/spec.md):
 // the hosted MCP server, like the coordinator it is served by, starts under
@@ -18,10 +18,15 @@
 //     spend limit and the scopes merge by taking the tighter side against the
 //     project's policy, so a wrong number or a wishful client cannot widen a
 //     cap (Limits.Narrow).
-//   - **Hashes only** (the mint and the store, a later task). No token value,
-//     no refresh token and no client secret is ever written: the records live
-//     in a subtree of the project's database that no client reads or writes
-//     (D922, D930).
+//   - **Hashes only** (the mint and the store). No token value, no refresh
+//     token and no client secret is ever written: a record holds a hash and
+//     nothing a reader could act with (D922), and the records live in the store
+//     of their own that the front door's account alone writes (D935) rather
+//     than in a node of the project's database, which a rule closes to every
+//     client and to nobody else (H3). **The hash is not keyed yet**: it is a
+//     plain sha256 (store.go's TokenHash) and no record carries a MAC, which is
+//     the row M2's own entry names and which is reported rather than closed
+//     here.
 //
 // What the limits mean is spec.md §6, and each field points at the decision
 // that shaped it: the window and its mint-time refusal (D925, D926), the
