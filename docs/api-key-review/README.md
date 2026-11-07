@@ -12,8 +12,10 @@ this folder, by this repository's rule. The ask is reproduced verbatim in [spec.
 
 **What it is.** The tree has **two** independent reviews, and both run on a Claude **subscription**
 account today. The **in-job** one is the mixed run's stage-scoped account
-(`docs/design/mixed-credentials.md` §11, `internal/runner/agentenv.go` `resolveMixedStages`, proven
-by **Check 290** on 2026-11-06): an `api-key` run whose coder is on a provider route, whose
+(`docs/design/mixed-credentials.md` §11, `internal/runner/agentenv.go` `resolveMixedStages`, whose
+live check is **Check 290** — written, and **not run**: the register records it as "USER-RUN, NOT
+RUN" and `docs/multi-model.md` and `docs/releases/v0.20.0.md` agree, so the configuration is
+designed and built, never measured): an `api-key` run whose coder is on a provider route, whose
 `review`/`adversarial` stages are handed a Claude OAuth account and go **straight to Anthropic**,
 bypassing the gateway — so their dollars are **notional** (`runstore.StageTiming.ModelNotionalUSD`,
 `Credential: "oauth"`) and nothing caps them but `agent.max_budget_usd` and the stage timeout. The
@@ -65,8 +67,8 @@ that may offer one and no upstream to send it to" — is **true of an OpenRouter
 Anthropic one** (**F12**), which splits the slice in two.
 
 **`docs/design/mixed-credentials.md` §3 already designs the in-job half.** It is merged on `main`, it
-is titled "Path A: Claude through an Anthropic API key, behind the gateway", and its own words are
-**"Works today with the code as it is"**. Its "Missing" list — the user docs, the cost guidance, a
+is headed "Path A: Claude through an Anthropic API key", and §1's own words for it are **"Works
+today with the code as it is"**. Its "Missing" list — the user docs, the cost guidance, a
 gateway test with both upstreams in one run, and one sandbox live check — is **partly stale**:
 `internal/runner/routing_e2e_test.go`'s `TestRoutedSwitchKeepsTheFirstLineLoop` already runs both
 upstreams in one run and asserts the reviewer's call reached Anthropic (**F4**).
@@ -94,7 +96,7 @@ upstreams in one run and asserts the reviewer's call reached Anthropic (**F4**).
 | Block | State |
 | --- | --- |
 | **D1410–D1429** | this work's block, read on 2026-11-07 over `origin/main` (`aa26f322f`) and every open pull request's head. The highest decision written anywhere on `main` is **D1409** (`docs/catalog-build-context`, merged as #1805), and a `git grep` for the decision numbers in the `D141x` and `D142x` ranges over `main` and over all open heads returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1410–D1429 are all written** in [reconciliation.md](reconciliation.md) §7 and **not one is answered**; none is reserved unused. The reading, with its commands, is §8 |
-| **Check 330** | this work's live check (implementation-plan §5), far above the register's highest **written** `## Check` section, **290** (`docs/gcp-live-checklist.md`, the mixed-credentials run). **291 is claimed** by `docs/image-env`; **292–299** are claimed by nobody; `docs/stateless-orchestrator` claims 300–309 and `docs/cli-output-console-graph` claims 310–314, both below this block. Like every claim above the highest written section, 330 is **claimed, not reserved**: the register's rule is that a claim is settled at its merge, and whichever of two claims merges second renumbers itself. The register's own row and section are written by the task that implements the check, under the number free **at that merge** |
+| **Check 330** | this work's live check (implementation-plan §5), far above the register's highest **written** `## Check` section, **290** (`docs/gcp-live-checklist.md`, the mixed-credentials run, itself **NOT RUN**). **291 is claimed** by `docs/image-env` and **292 by `docs/catalog-build-context`** (merged on `main` as #1805); **293–299** are claimed by nobody; `docs/stateless-orchestrator` claims 300–309 and `docs/cli-output-console-graph` claims 310–314, both below this block. Like every claim above the highest written section, 330 is **claimed, not reserved**: the register's rule is that a claim is settled at its merge, and whichever of two claims merges second renumbers itself. The register's own row and section are written by the task that implements the check, under the number free **at that merge** |
 | **Findings F1–F24** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §1 and §2, taking no number any other work reads |
 | **AK1–AK8** | this folder's task series, in [implementation-plan.md](implementation-plan.md). Distinct from `docs/cloud-senior-review`'s **CSR1–CSR18** and from `docs/in-job-review`'s **Q1–Q17** on purpose: two series in one tree that share letters would be read as one |
 
@@ -123,6 +125,7 @@ These are the owner's, and none is decided here. The full text, with the reason 
 5. **D1414 — the `oauth` run.** Under `agent.auth: oauth` the gateway is refused
    (`internal/runner/routing.go` `GatewayOn`), so a subscription-coder run can never have an api-key
    review (**F8**). Whether that stays is the owner's.
-6. **D1415 — the record.** `runstore.StageTiming.Credential` has one non-empty value
-   (`CredentialOAuth`); an api-key review stage records `""` (**F18**). A new value is additive and
-   changes a schema enum another reader consumes.
+6. **D1415 — the record.** `runstore.StageTiming.Credential`'s stated meaning is "the credential
+   that served this stage **when it was not the run's own**", so recording one for a stage the run's
+   own key served is a meaning change under an existing name — which CLAUDE.md forbids — and the
+   honest shapes are a new field or nothing at all (**F18**).

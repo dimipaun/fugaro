@@ -19,7 +19,7 @@ and a slice the owner does not want is simply not started.
 
 | Level | Tasks | What it is | Why these can run together |
 | --- | --- | --- | --- |
-| **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), the record's credential value (**F18**) | no shared file, no service change, no ordering between them |
+| **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
 | **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it and the variant is launchable with no Claude account (**F11**, **F17**) | AK4 is `internal/credsvc` and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share no file |
 | **L3** | **AK6**, **AK7** | the OpenRouter half: the bundle holds a provider key (**F15**, **F16**, **F24**), and the review run's model path reaches a provider's endpoint | AK6 is `internal/credsvc` and `schemas/`; AK7 is `internal/runner` and `internal/gateway` |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
@@ -160,40 +160,49 @@ which is the whole reason it is written.
 
 **Commit:** `docs(multi-model): the review on the run's own Anthropic key`
 
-### AK3 — the record says which credential served a stage
+### AK3 — the record names the credential a stage ran on, under a name of its own
 
-**Slice:** in-job (L1). **Depends on:** **D1415** answered as "add the value".
+**Slice:** in-job (L1). **Depends on:** **D1415** answered as "a new field". **If the owner answers
+D1415 as "nothing at all", this task is not started and L1 is AK1 and AK2.**
 
 **Files (5):** `internal/runstore/runstore.go`, `internal/runstore/runstore_test.go`,
 `internal/runner/cost.go`, `internal/runner/provider_run_test.go`, `schemas/result.schema.json`.
 
-**Interfaces:** `runstore.StageTiming.Credential` gains a second non-empty constant beside
-`CredentialOAuth` (`internal/runstore/runstore.go`), written by the runner's stage-recording path
-(`internal/runner/cost.go`) for a stage the run's own **api-key** credential served, and
-`schemas/result.schema.json`'s `credential` enum — today `["oauth"]` — gains the value. The field
-keeps its meaning: it names the credential that served a stage **when it was not the run's own**,
-and an api-key stage is one where the run's own key is what served it — so the value's description
-says exactly that, and the field's `omitempty` shape is unchanged.
+**Interfaces:** `runstore.StageTiming` gains a **new** field — the name is the task's to settle, and
+it must not be `credential` — naming the credential that served the stage **including** the case the
+existing field excludes, written by the runner's stage-recording path (`internal/runner/cost.go`) for
+a stage the run's own **api-key** credential served, and `schemas/result.schema.json` gains the field
+beside `credential`.
+
+**`StageTiming.Credential` is not touched, and this is the point of the task.** Its stated meaning —
+*the credential that served this stage **when it was not the run's own*** — excludes exactly the case
+this task records (**F18**), so a `"api-key"` value there would be a meaning change under an existing
+name, which CLAUDE.md forbids (*a field whose meaning must change gets a new name*). The new field is
+additive: an absent value means what absence means today, and the old field's enum stays `["oauth"]`.
 
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/runstore/ ./internal/runner/ -run 'TestStageCredentialNamesTheKeyThatServedIt|TestStageCredentialIsAbsentForAnOrdinaryStage|TestAPIKeyReviewRecordsItsCredential' -count=1`
+`GOFLAGS=-p=2 go test ./internal/runstore/ ./internal/runner/ -run 'TestStageNamesTheCredentialThatServedIt|TestStageCredentialKeepsItsMeaning|TestAPIKeyReviewRecordsItsCredential' -count=1`
 
-- `TestStageCredentialNamesTheKeyThatServedIt` — a stage on the run's own api-key credential records
-  the new value; a stage an account served records `CredentialOAuth`, unchanged.
-- `TestStageCredentialIsAbsentForAnOrdinaryStage` — the second direction: a coding stage's
-  `credential` is still absent, so the field's one meaning is not widened.
+- `TestStageNamesTheCredentialThatServedIt` — a stage on the run's own api-key credential carries the
+  new field; a stage an account served carries it too, beside `credential: "oauth"`.
+- `TestStageCredentialKeepsItsMeaning` — the second direction, and the one the review asked for: a
+  coding stage's `credential` is still **absent** and the enum is still `["oauth"]`, so the change is
+  additive rather than a widening.
 - `TestAPIKeyReviewRecordsItsCredential` — the review stage of AK1's fixture carries it, end to end.
 
-**Red step:** `TestAPIKeyReviewRecordsItsCredential` fails today: the field records `""` (**F18**).
+**Red step:** `TestAPIKeyReviewRecordsItsCredential` fails today: no field names the credential a
+stage the run's own key served ran on (**F18**).
 
-**Mutation:** record the value for every stage instead of only an api-key one —
-`TestStageCredentialIsAbsentForAnOrdinaryStage` goes red.
+**Mutation:** write the new value into `credential` instead of the new field —
+`TestStageCredentialKeepsItsMeaning` goes red, which is exactly the mistake D1415's recommendation
+exists to prevent.
 
-**Reviewer tier:** standard, with the schema change called out in the review: the record is a wire
+**Reviewer tier:** standard, with the record contract called out in the review: the record is a wire
 shape the console, the mobile app, the history and the plugin read, and `schemas/result.schema.json`
-is the contract.
+is the contract. An **additive** field is what CLAUDE.md allows there; a retyped or renamed one is
+not.
 
-**Commit:** `runstore: a stage's credential names the key that served it`
+**Commit:** `runstore: a stage names the credential it ran on`
 
 ### AK4 — the review class can be served by the project's Anthropic key (SEC)
 
@@ -393,8 +402,8 @@ register.
 - **No second Anthropic key secret** (**D1412**), and no second secret name in
   `internal/config/config.go`'s `ReservedSecrets` or `internal/infra/spec.go`'s `SecretMounts`.
 - **No per-key attribution.** `runstore.Cost.ModelBy` and `RouteBy` are what the tree has and what
-  the ask's clause 1 means by "attributed"; AK3's `credential` value is the narrower thing the record
-  can honestly say.
+  the ask's clause 1 means by "attributed"; AK3's new field is the narrower thing the record can
+  honestly say, and **`StageTiming.Credential` is not repurposed to say it** (**F18**).
 - **No change to the OAuth path.** The mixed run's stage account (**F7**) and the cloud class's
   tier-A credential (**F10**) are what they are; this plan adds a second way to be served and takes
   nothing away.
@@ -451,7 +460,8 @@ any installation whose budget mode is `off` — the review class refuses a run w
    more started than the ones in `docs/cloud-senior-review` are.
 4. **AK4 and AK5 gated on D1416, D1417 and D1422; AK6 and AK7 on D1418, D1419 and a reconciliation
    with §6.7's CSR17–CSR18**, which own the sketch this plan reads.
-5. **AK3 gated on D1415** — the record's value, because the record is a wire shape another reader
-   consumes.
+5. **AK3 gated on D1415** — whether the record names the credential at all, and if it does, that it
+   is a **new field** and not a new value on `credential` (**F18**): the record is a wire shape
+   another reader consumes, and CLAUDE.md allows an additive field there but not a changed meaning.
 6. **The security review owed before AK4–AK7 land**, not after: each is SEC, and the review is
    mandatory rather than advisory.

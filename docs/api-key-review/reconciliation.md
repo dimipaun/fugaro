@@ -22,10 +22,10 @@ reviews, each with its own machinery, its own credential and its own record:
 | | The in-job review | The cloud review run |
 | --- | --- | --- |
 | What it is | the `review` / `adversarial` stages of the same Cloud Run job that coded the change | a separate job, `fugaro run --review-run`, launched for a repository the project admits |
-| Where it is | `internal/runner` (`resolveMixedStages`, `stageAgentEnv`) | `internal/credsvc` (the review class) + `internal/runner/routing.go` (`reviewClassRun`) |
+| Where it is | `internal/runner` (`resolveMixedStages`, `stageAgentEnv`) | `internal/credsvc` (the review class) + `internal/runner/gateway.go` (`reviewClassRun`) |
 | What credential it uses today | a **Claude OAuth account** scoped to the stage, held in the runner's own environment | the credentials service's **review class**, from the installation's Claude OAuth account, held by the service and never by the job |
 | Where its dollars are | **notional** (`runstore.StageTiming.ModelNotionalUSD`, `Credential: "oauth"`), uncapped by the gateway | **real**, charged by the gateway from the service's answer |
-| Who proved it | **Check 290**, 2026-11-06 | the class's own tests, and the owner's live checks of 0.20.0 |
+| What proves it | **Check 290**, written and **NOT RUN** (**U5**) | the class's own tests |
 
 So the ask is one name for two paths. §1 and §2 read each of them; §4 states the reading this design
 takes and the decision that settles it (**D1410**).
@@ -39,16 +39,17 @@ the ask describes: `internal/runner/gateway.go`'s `gatewayUpstream` takes the `"
 builds `gateway.Upstream{Kind: "anthropic", APIKey: <the job's ANTHROPIC_API_KEY>}`, so the review
 stage's calls go through the gateway to **Anthropic's own API** on the run's own key, beside the
 coder's calls going through the same gateway to the provider. This is
-`docs/design/mixed-credentials.md` **§3**, "Path A: Claude through an Anthropic API key, behind the
-gateway", and its own words are *"Works today with the code as it is"*. The configuration is
+`docs/design/mixed-credentials.md` **§3**, headed "Path A: Claude through an Anthropic API key",
+and §1's own words for the path are *"Works today with the code as it is"*. The configuration is
 documented for users in `docs/multi-model.md` §4, whose example writes `agent.auth: api-key` with
 `reviewer:` a Claude ID and an `agent.levels` block.
 
 **F2 — Exists. The dollars are real, capped and priced, and the ask's clause 1 is satisfied by the
 existing machinery.** The gateway's `StageReport.Used` is the real figure
 (`internal/gateway/gateway.go`), the run records it as `runstore.Cost.ModelUSD` and per stage as
-`runstore.StageTiming.ModelUSD`, and the cap is enforced by `internal/gateway/gateway.go`'s
-`haltedMessage`, whose halt reason for a cap is `"run_cap"`. Nothing about the review stage is
+`runstore.StageTiming.ModelUSD`, and the cap is enforced by `internal/gateway/ledger.go`: the
+`"run_cap"` halt is the one the reservation path builds, `haltedMessage` is the getter the request
+path asks, and a halted run is answered from it rather than forwarded. Nothing about the review stage is
 special: it is a stage, and a stage's calls are the gateway's.
 
 **F3 — Exists, and it is not what the ask asks for. Attribution is by model and by route, not by
@@ -58,12 +59,14 @@ key and one provider key has no field anywhere that says which of the two paid a
 the model the stage ran. The ask's clause 1 says "attributed by the gateway like every other call",
 which the tree already does — but a reader who takes "attributed" to mean *attributed to a key* will
 not find it, and this design does not propose to add it (**D1415** is about the narrower question of
-the record's `credential` value).
+whether the record names the credential a stage the run's own key served, and the answer may well be
+that it should not — see **F18**).
 
 **F4 — Exists. Both upstreams in one run is already exercised.** `internal/runner/routing_e2e_test.go`'s
 `TestRoutedSwitchKeepsTheFirstLineLoop` runs a provider-coder api-key run whose senior review is on a
 Claude ID no route claims, and asserts both directions: `g.compat.Count() == 3` for the coder's
-stages and `g.fake.Count() == 1` — "Anthropic saw 1 call, want the senior review alone".
+stages and `g.fake.Count() == 1`, whose failure message is `Anthropic saw %d calls, want the senior
+review alone: an unrouted pin must keep its Claude ID`.
 `internal/runner/layer_claim_test.go`'s `TestLayerClaimLeavesADirectCoderStageAlone` is the mirror
 image (`fake == 1 && compat == 1`). So `docs/design/mixed-credentials.md` §3's "Missing: … a gateway
 test with both upstreams in one run" is **stale** (**F9**).
@@ -84,7 +87,7 @@ gateway's single `Upstream.APIKey` (`internal/gateway/gateway.go`'s `Options.Ups
 `gateway.Route` carries a **provider's** key, not Anthropic's (`internal/gateway/route.go`'s
 `Route.Credential`). So "the key can be a separate secret from the coder's provider key" (the ask's
 clause 4) is already true — the provider's key is a different secret, mounted under a different
-variable (`internal/config/providers.go`'s `ModelProvider.SecretEnv`) — but a **second Anthropic
+variable (`internal/config/providers.go`'s `ModelProvider.SecretEnv` method) — but a **second Anthropic
 key**, one that pays for the review and nothing else, does not exist and cannot be selected per
 stage.
 
@@ -118,7 +121,7 @@ value will size the in-job half too large.
 ## 2. The cloud half
 
 **F10 — Exists. The review class is real, merged, and it is the OAuth path.**
-`internal/runner/routing.go`'s `reviewClassRun` is the conjunction of the run's mode being `review`
+`internal/runner/gateway.go`'s `reviewClassRun` is the conjunction of the run's mode being `review`
 (`r.runClass`) and the job it was admitted to being the review-only variant (`r.job.Class`); when it
 is true, `internal/runner/gateway.go`'s `modelAuth` returns `config.AuthCascade` — so the class is
 spelled as the cascade and every arm the path needs already exists — and `gatewayUpstream`'s cascade
@@ -170,9 +173,11 @@ candidate list that may offer it, no upstream to send it to.
 
 **F16 — Exists. `TierC` is already the reserved third-party tier.** `internal/creds/select.go`:
 "TierC is reserved and never selected. It is the third-party route (an OpenRouter key) this release
-does not build", and `internal/credsvc/cascade.go`'s `wireTier` maps it so that a caller offering one
-is refused rather than quietly served by something else. The OpenRouter half therefore has a tier
-constant to land on and no other part of the apparatus.
+does not build". `internal/credsvc/cascade.go`'s `wireTier` is what spells it on the wire, and the
+**refusal** is the selector's: `internal/creds/select.go`'s tier switch admits `TierA` and `TierB`
+and returns an error for `TierC`, so a caller offering one is refused rather than quietly served by
+something else. The OpenRouter half therefore has a tier constant to land on and no other part of
+the apparatus.
 
 **F17 — Gap. A project with no Claude account has no review job to launch.** The review variant is
 one job per `(profile, provider, account)` of the published policy
@@ -184,20 +189,31 @@ nothing to resolve. The ask's clause 2 ("a project with only an Anthropic API ke
 Opus-class independent review") is this gap, and it is a deployment-shape gap and not a model-path
 one.
 
-**F18 — Gap. The record has no value for a credential that is not the subscription.**
-`internal/runstore/runstore.go`'s `StageTiming.Credential` is documented for the stage-scoped OAuth
-account, and `CredentialOAuth` (`"oauth"`) is its **only** non-empty constant. An api-key review
-stage — in either half — records `""`, the same value every ordinary stage records, so the record
-cannot tell a review on the key from a coder call on the key. Adding a value is additive on the
-record, but the record is a wire shape the console, the mobile app, the history and the plugin read,
-and `Credential`'s schema enum is part of that contract (**D1415**).
+**F18 — Gap, and it is narrower than it looks. The record cannot name a credential the run's own
+key served — and the field cannot be widened to let it.** `internal/runstore/runstore.go`'s
+`StageTiming.Credential` is documented as *the credential that served this stage **when it was not
+the run's own***, `CredentialOAuth` (`"oauth"`) is its only non-empty constant, and
+`schemas/result.schema.json` fixes the enum at `["oauth"]` with the same sentence. An api-key review
+stage — in either half — records `""`, the same value every ordinary stage records.
+
+So recording `"api-key"` there is **not additive**: it puts a value in a field whose stated meaning
+excludes exactly that case, which is the thing CLAUDE.md forbids — *a field whose meaning must change
+gets a new name*. Two honest shapes exist (**D1415**): a **new field** on `StageTiming`, which is
+additive and keeps `credential` at one meaning; or **nothing at all**, which is defensible because
+the record already answers the question this design exists to ask. For the **review** stage the two
+configurations are already distinguishable without any new field — the account path records
+`credential: "oauth"` with `model_notional_usd == model_usd`, and the key path records neither — and
+for any stage the model and the route (`route_by`, the gateway's `serving_model` and `priced_as`)
+name what served it. What a new field would buy is the join, in one place, rather than a reader
+combining three.
 
 ## 3. The ask's own clauses, one by one
 
 **F19 — Rule. Clause 1 ("the review's dollars are real … not notional") is true exactly when no
 stage account is published.** For the in-job half it is **already true** (**F1**, **F2**) and it
 becomes **false** the moment a project publishes a stage account for `review` (**F7**) — which is
-the configuration the owner's own Check 290 proves. So the clause is not a request to build
+the configuration Check 290 is written for — and, since Check 290 is **not run** (**U5**), a
+configuration nothing has yet measured on a real installation. So the clause is not a request to build
 something; it is a request to *stop* the account path from being the only one, or to make the key
 path selectable. For the cloud half the dollars are already real (**F10**): the class's calls are
 the service's, carried by the gateway.
@@ -215,10 +231,11 @@ citation to D894 will find a different subject.
 
 **F21 — Exists. Clause 4 ("the key can be a separate secret") is already true, and it is a
 property, not a task.** The Anthropic key is `config.AnthropicSecret` under its own environment
-variable; the coder's provider key is the route's own secret (`ModelProvider.SecretEnv`), mounted
-separately and read by `internal/runner`'s provider-credential path. `internal/infra/spec.go`'s
-`SecretMounts` mounts them independently, and only the Anthropic key may be absent from an
-installation (`OptionalSecret`, the #371 rule). The one thing the clause could mean beyond this is a
+variable; the coder's provider key is the route's own secret (the `ModelProvider.SecretEnv`
+method), mounted separately and read by `internal/runner`'s provider-credential path.
+`internal/infra/spec.go`'s `SecretMounts` mounts them independently, and only the Anthropic key may
+be absent from an installation (`internal/infra/readiness.go`'s `OptionalSecret`, the #371 rule).
+The one thing the clause could mean beyond this is a
 **second Anthropic key for the review alone** (**F6**), which is **D1412**.
 
 **F22 — Rule. Clause 2's "only OpenRouter" is not automatic.** A project with no Anthropic key and
@@ -322,6 +339,7 @@ the class's own credential*, never to let the repository supply one.
 | U2 | The real per-review cost of an Opus-class review on the Anthropic key | No price is quoted here, by the repository's rule; the owner's own figures live in the private business repository |
 | U3 | Whether the review variant's job can be deployed for an installation that publishes **no** Claude account at all | Read only from `internal/credsvc/review.go`'s name derivations and `config.ProjectJobAccounts`; no live installation was inspected |
 | U4 | Whether the credentials service's review class has been exercised live for a repository whose `agent.auth` is `api-key` | The refusal is pinned by a unit test; no live run of the refused shape was found in the register |
+| **U5** | **Whether the mixed run works on a real installation at all** — the in-job account path this design reads as the state of the art | **The owner's ask says Check 290 proved it on 2026-11-06, and the register says otherwise.** `docs/gcp-live-checklist.md`'s summary row for 290 ends "**USER-RUN, NOT RUN**" and its own section is headed "NOT RUN"; `docs/design/mixed-credentials.md` §3, §9 and §11, `docs/multi-model.md` §3 and `docs/releases/v0.20.0.md` all say the check "has not been measured live". So the rule is **built** (tasks B1–B6, 0.19.0) and **unmeasured**: every statement in §1 about the account path's behaviour rests on the code and its tests, and none on a run. This is also why the design's own live check (**Check 330**, implementation-plan §5) carries the contrast case — the same task run with and without a stage account — rather than assuming Check 290's numbers exist |
 
 ## 7. Owner decisions D1410–D1429
 
@@ -336,7 +354,7 @@ approval.** **D1410–D1429 are this work's block** (§8).
 | **D1412** | Does the review get an Anthropic key of its **own** — a second secret, separate from the run's? | **No, in the first slice.** The run already has one key and the provider's key is already a different secret (**F21**); a second Anthropic key buys separation the record cannot even express (**F18**) | **A second secret** (a name, a `SecretMounts` entry, a gateway upstream selected per stage). Its cost is that `gateway.Upstream` is one value for the whole run, so the gateway would need a per-stage key — machinery nothing else needs | |
 | **D1413** | When a project publishes **both** an Anthropic key and a stage account for `review`, which wins? | **The key, when the owner asks for it explicitly** — but the spelling is the decision. Today the account wins silently (**F7**) and no key says otherwise | **Leave the account winning.** Zero cost, and it keeps one rule — but an owner who adds a key expecting the review to use it gets notional dollars with no warning, which is the shape of bug Check 290's own configuration would hide | |
 | **D1414** | May an `oauth` run's review move onto an API key? | **No.** The gateway is what holds a key, `GatewayOn` refuses `oauth` (**F8**), and an oauth run holds no key to move onto — the request is incoherent without a second credential | **A second key for an oauth run's review.** Its cost is the machinery D1412 rejects, plus a run that holds two credentials of two kinds at once — the thing `docs/design/mixed-credentials.md` §11's "never a second provider's key" was written to prevent | |
-| **D1415** | Does `runstore.StageTiming.Credential` gain a value for an api-key stage? | **Yes, additively** (`"api-key"`), so the record can tell a stage the run's own key served from one an account served. Adding a value is additive on a wire shape, and the field already exists for exactly this distinction | **Leave it empty.** Zero cost, and the field keeps one meaning — but the record then cannot answer "did this review run on the key or the account", which is the question this whole design exists to make answerable | |
+| **D1415** | Does the record name the credential a stage the run's **own** key served? | **A new field, or nothing — never a new value on `credential`.** `credential`'s stated meaning is "the credential that served this stage when it was not the run's own" (**F18**), so `"api-key"` there is a meaning change under an existing name, which CLAUDE.md forbids; a new field is additive and keeps both meanings intact | **Nothing at all**, which is the cheaper and defensible answer: the review's two configurations are already distinguishable (`credential: "oauth"` with `model_notional_usd == model_usd` for the account, neither for the key) and the model and the route name what served any stage. Its cost is that a reader must combine three fields to answer one question. **A new value on `credential`** is the third shape and is not available: it changes a meaning on a wire shape the console, the mobile app and the history read | |
 | **D1416** | Does the cloud half land both keys at once, or the Anthropic key first? | **The Anthropic key first.** It needs no base URL, no auth shape and no new upstream (**F12**); the provider key needs all three and a bundle that is not a credential (**F15**) | **Both at once**, as §6.7's CSR17 sketches. Its cost is one SEC task that carries the whole provider apparatus and the bundle-contract question together | |
 | **D1417** | For the cloud half, does the pairing name the **project's own** `anthropic-api-key`, or a review-scoped secret? | **The project's own key**, which is what the service already holds at tier B (**F12**). A review is a call the project pays for, exactly as a cascade coding run is | **A review-scoped secret** in the bundle. Its cost is a second entry in a closed key set (**F24**) plus a mount, for a distinction the accounting does not make | |
 | **D1418** | Does the bundle grow a section for a provider's base URL and auth shape, or does the published policy carry them? | **Defer until D1416 is answered** — this is §6.7's own "design point this task must settle first", and it is a change to a contract another reader consumes | Either way: a bundle section that is not a credential, or a policy node that carries routing facts. Both are contract changes and both are priced in §6.7 | |
@@ -369,7 +387,9 @@ open pull request's head:
 
 **The check block.** The register's highest **written** `## Check` section on `main` is **290**
 (`docs/gcp-live-checklist.md`, the mixed-credentials run). **291 is claimed** by `docs/image-env`;
-**292–299 are claimed by nobody**; `docs/stateless-orchestrator` claims **300–309** and
+**292 is claimed by `docs/catalog-build-context`** (merged on `main` as #1805, at its own README's
+numbers table and its implementation-plan's §6, both read for this folder's D1409 above);
+**293–299 are claimed by nobody**; `docs/stateless-orchestrator` claims **300–309** and
 `docs/cli-output-console-graph` claims **310–314**. This work takes **Check 330**, well above every
 one of them, so no renumbering is owed whichever order the claims merge in. Like every claim above
 the highest written section, it is **claimed and not reserved**: the register's rule is that a claim
@@ -394,8 +414,9 @@ the reason each one exists.
    wins (**F7**).
 4. **D1414 — the `oauth` run.** A subscription-coder run can never have an api-key review today
    (**F8**), and the ask does not say whether it should.
-5. **D1415 — the record.** `StageTiming.Credential` has one non-empty value (**F18**), and the
-   record is a wire shape the console, the mobile app and the history read.
+5. **D1415 — the record.** `StageTiming.Credential` cannot name a credential the run's own key
+   served without changing a meaning on a wire shape the console, the mobile app and the history
+   read (**F18**), so the answer is a new field or nothing.
 6. **D1416, D1417, D1418 and D1419 — the cloud fork, and the one that decides the slice's size.**
    The Anthropic-key half needs a pairing that may name the project's key (**F12**, **F13**); the
    OpenRouter half needs the provider-key apparatus §6.7 describes (**F15**).
