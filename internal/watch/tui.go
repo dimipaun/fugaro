@@ -10,6 +10,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // The Bubble Tea model of `fugaro watch` (plan W14, D13). It is a thin shell:
@@ -611,12 +613,12 @@ func UseASCII(flag bool, getenv func(string) string) bool {
 	return false // no locale set: assume a modern terminal
 }
 
-// UseNoColor is true for --no-color, NO_COLOR (any value) and TERM=dumb.
+// UseNoColor is true for --no-color, NO_COLOR (any value) and TERM=dumb. The
+// rule itself is the reporter's (T4(a)): the watch screen and a converge
+// command must not answer the colour question differently, and this keeps the
+// name the watch callers already use.
 func UseNoColor(flag bool, getenv func(string) string) bool {
-	if flag || getenv("NO_COLOR") != "" || getenv("TERM") == "dumb" {
-		return true
-	}
-	return false
+	return report.NoColor(flag, getenv)
 }
 
 // RunTUI runs the interactive screen until the user leaves, ctx ends or the
