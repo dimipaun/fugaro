@@ -495,6 +495,22 @@ func TestReviewCandidateListIsExactlyOneCredential(t *testing.T) {
 	if len(cands) != 1 || cands[0].Name != config.AnthropicSecret || cands[0].Tier != creds.TierB {
 		t.Fatalf("the sentinel pairing was offered %v, want exactly the project's key %q at tier B", cands, config.AnthropicSecret)
 	}
+	// And the rule matches the pair and not the name: a credential that goes by
+	// the key's own name at another tier is not the key. This is the one half
+	// the set above cannot pin — a bundle holds one credential per name, so the
+	// bare name is unambiguous there — and it is the half that would offer a
+	// credential the key is not: dropping the tier test offers every entry
+	// below, three where the caller may be served by one.
+	byName := []creds.Credential{
+		{Name: config.AnthropicSecret, Tier: creds.TierA},
+		{Name: config.AnthropicSecret, Tier: creds.TierC},
+		{Name: config.AnthropicSecret, Tier: creds.TierB},
+	}
+	offered, _ := reviewCandidates(byName, config.AnthropicKeyAccount)
+	if len(offered) != 1 || offered[0].Tier != creds.TierB {
+		t.Fatalf("the sentinel pairing was offered %v, want only the project's key at tier B: the offering rule matches the name and the tier together", offered)
+	}
+
 	reported := reportedNotAdmitted(t, skipped)
 	for _, c := range all {
 		if c.Name == config.AnthropicSecret && c.Tier == creds.TierB {

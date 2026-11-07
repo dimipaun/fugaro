@@ -25,8 +25,10 @@ import (
 type Account struct {
 	// AllowRepos are the canonical repositories (Canonical) whose runs may use
 	// this account's token. Never empty, never a wildcard: the list is derived
-	// from the account's own allow_data_to in the project's local config, and
-	// a wildcard would make the subset rule below undecidable.
+	// from the account's own allow_data_to in the project's local config — or,
+	// for the project's own Anthropic API key, from the profiles that name it
+	// (DeriveAccounts) — and a wildcard would make the subset rule below
+	// undecidable.
 	AllowRepos []string `json:"allow_repos"`
 }
 
@@ -216,8 +218,8 @@ func validProfileAccounts(at string, pr Profile, accounts map[string]Account) er
 			return fmt.Errorf("%s.claude_accounts[%d]: %s", at, i, msg)
 		}
 		if _, ok := accounts[ref]; !ok {
-			return fmt.Errorf("%s.claude_accounts[%d]: the policy defines no account %q: accounts.<name> is what says which repositories that account's token may be used by, and a profile may serve only an account the policy defines (one job is deployed per (profile, provider, account), so this entry names a job whose account nothing describes). Publish derives the block from the project's local config — claude_accounts.%s.allow_data_to, or project_secrets for the default account — so this node was hand-written, or published from a config whose account was removed since",
-				at, i, ref, ref)
+			return fmt.Errorf("%s.claude_accounts[%d]: the policy defines no account %q: accounts.<name> is what says which repositories that account's token may be used by, and a profile may serve only an account the policy defines (one job is deployed per (profile, provider, account), so this entry names a job whose account nothing describes). Publish derives the block from the project's local config — %s — so this node was hand-written, or published from a config whose account was removed since",
+				at, i, ref, accountSourcePhrase(ref))
 		}
 		if seen[ref] {
 			return fmt.Errorf("%s.claude_accounts[%d]: an account is listed twice; list each account once", at, i)
@@ -246,8 +248,8 @@ func validProfileAccounts(at string, pr Profile, accounts map[string]Account) er
 		acct := accounts[ref]
 		for _, repo := range pr.AllowRepos {
 			if !AdmitRepo(acct.AllowRepos, repo) {
-				return fmt.Errorf("%s.claude_accounts: the profile admits %s, and the account %q does not: accounts.%s.allow_repos is %s and profiles.%s.allow_repos is %s, so %s is on the profile's list and not on the account's. An account's list is derived from the project's local config (claude_accounts.%s.allow_data_to, or project_secrets for the default account) — add the repository there and publish again, or take it off the profile's allow_repos",
-					at, repo, ref, ref, strings.Join(acct.AllowRepos, ", "), profileNameOf(at), strings.Join(pr.AllowRepos, ", "), repo, ref)
+				return fmt.Errorf("%s.claude_accounts: the profile admits %s, and the account %q does not: accounts.%s.allow_repos is %s and profiles.%s.allow_repos is %s, so %s is on the profile's list and not on the account's. An account's list is derived from the project's local config (%s) — add the repository there and publish again, or take it off the profile's allow_repos",
+					at, repo, ref, ref, strings.Join(acct.AllowRepos, ", "), profileNameOf(at), strings.Join(pr.AllowRepos, ", "), repo, accountSourcePhrase(ref))
 			}
 		}
 	}
@@ -288,11 +290,20 @@ func profileNameOf(at string) string {
 // repositories published on the readable node for no reason (§5(2): the node
 // is read by every run).
 //
-// The default account (D5) is the one case where the source is not
+// The default account (D5) is one case where the source is not
 // claude_accounts: "default" is reserved there (it is the unsuffixed
 // claude-oauth-token every repository already uses), so its list comes from
 // the project_secrets entry that already decides whether its project-wide copy
 // exists at all.
+//
+// The project's own Anthropic API key (config.AnthropicKeyAccount, AK4) is the
+// other, and the only value whose source is a profile rather than a block of
+// the local config: its list is the naming profiles' own allow_repos, kept
+// where the key itself reaches the repository (anthropicKeySlugs says why).
+// Publishing that list is what makes the sentinel usable at all — the accounts
+// block is what the credentials service intersects a repository's admission
+// with (credsvc's admittedAccounts), so a sentinel with no entry here is one no
+// review call could ever be served by.
 //
 // Every refusal names the profile that lists the account and the block the
 // operator edits (design §4.4 rows 1 and 2): this runs at publish and at
@@ -311,6 +322,24 @@ func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.Clau
 	for _, ref := range sortedStringKeys(named) {
 		if msg := config.ValidClaudeAccountRef(ref); msg != "" {
 			return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: %s", named[ref][0], msg)
+		}
+		if ref == config.AnthropicKeyAccount {
+			// The sentinel's list is the one this block does not read out of a
+			// block of the local config (anthropicKeySlugs says why), so it is
+			// built here rather than through accountSlugs below: those slugs
+			// are the config's own spelling of a repository and are qualified
+			// with the naming profile's provider here, while the sentinel's
+			// list is already this block's.
+			list, err := anthropicKeySlugs(ref, named[ref], profiles, projectSecrets)
+			if err != nil {
+				return nil, err
+			}
+			if len(list) == 0 {
+				return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: the project's own Anthropic API key may serve no repository, and an account's policy list cannot be empty: accounts.%s.allow_repos is profiles.%s.allow_repos — the repositories the profiles naming the key admit — kept where project_secrets.%s.allow_data_to reaches them, and that list is empty. Write the repositories this profile admits, or take the key off the profile",
+					named[ref][0], ref, named[ref][0], config.AnthropicSecret)
+			}
+			out[ref] = Account{AllowRepos: list}
+			continue
 		}
 		slugs, source, err := accountSlugs(ref, accounts, projectSecrets, named[ref][0])
 		if err != nil {
@@ -360,12 +389,78 @@ func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.Clau
 	return out, nil
 }
 
+// anthropicKeySlugs is the policy list of the project's own Anthropic API key
+// (config.AnthropicKeyAccount): the repositories the profiles naming the key
+// admit — their own allow_repos, which is already canonical — kept only where
+// the key itself reaches them (config.ProjectSecretReaches).
+//
+// The profiles are the source, and this is the only axis value whose source is
+// not a block of the local config. The key is stored project-wide with no list
+// of repositories to serve (D2's sweep: ProjectSecretReaches answers "every
+// repository" for a name with no project_secrets entry), and where there is
+// such an entry it decides reach — it may carry a segment wildcard, which a
+// published accounts list may not (D3), so it is a gate here and never the
+// list itself. The profile is where a repository says its reviews are served
+// by the project's own key, and a profile's own allow_repos is exact, so
+// reading the list off the profiles is the one reading that is both exact and
+// answerable from a document a run holds.
+//
+// A repository the key does not reach is left off and never admitted: this
+// list is what a review call of that repository may be served by, and a
+// repository the key's own entry excludes is one the operator said the key is
+// not for. D3 then refuses the pair (validProfileAccounts), which is the
+// operator's answer — narrow the profile, or list the repository in the key's
+// entry.
+func anthropicKeySlugs(ref string, named []string, profiles map[string]Profile, projectSecrets map[string]config.ProjectSecret) ([]string, error) {
+	var list []string
+	for _, profileName := range named {
+		// A profile's own allow_repos is already the spelling this block
+		// carries (canonical: "github/acme/app", the node holds every entry to
+		// it below), so it is read as it stands and is never qualified with the
+		// profile's provider the way an account's allow_data_to is — and the
+		// provider is not needed for it, which is why a profile that names none
+		// is refused by the node's own rule (providerRequired, validProfiles)
+		// and not here.
+		for _, canonical := range profiles[profileName].AllowRepos {
+			if strings.Contains(canonical, "*") {
+				// A profile that lists accounts must write exact repositories
+				// (validProfileAccounts), and it is refused there too; refused
+				// here first, because this is where the list is built and a
+				// pattern that reached the block would make the subset rule
+				// undecidable.
+				return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: profiles.%s.allow_repos holds %q, a pattern, and the project's own key's list is published as accounts.%s.allow_repos, which is exact: a wildcard there makes the subset rule undecidable (D3). Name the repositories themselves, or take the key off the profile",
+					profileName, profileName, canonical, ref)
+			}
+			if err := ValidPattern(canonical); err != nil {
+				return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: profiles.%s.allow_repos holds %q, which is not a repository as this block spells one: %v — accounts.%s.allow_repos is derived from this list",
+					profileName, profileName, canonical, err, ref)
+			}
+			// The reach question is asked in the spelling the key's own entry
+			// is written in, which is the repository as owner/name with no
+			// provider (ProjectSecret.AllowsData, and every caller of
+			// ProjectSecretReaches passes that spelling): the provider is the
+			// first segment of a canonical name.
+			_, repo, _ := strings.Cut(canonical, "/")
+			if !config.ProjectSecretReaches(projectSecrets, config.AnthropicSecret, repo) {
+				continue
+			}
+			if !slices.Contains(list, canonical) {
+				list = append(list, canonical)
+			}
+		}
+	}
+	slices.Sort(list)
+	return list, nil
+}
+
 // accountSlugs is the owner/name list an account's policy entries are derived
 // from, and the name of the block it came from (for a refusal to name). The
 // default account reads project_secrets — the entry that stores the reserved
 // claude-oauth-token project-wide — and every other account reads its own
-// claude_accounts entry. A missing one is a refusal, not an empty list: the
-// two states have different fixes, and the operator reads which one it is.
+// claude_accounts entry (the project's own Anthropic API key is
+// anthropicKeySlugs above, and DeriveAccounts answers it before this
+// function). A missing one is a refusal, not an empty list: the two states
+// have different fixes, and the operator reads which one it is.
 func accountSlugs(ref string, accounts map[string]config.ClaudeAccount, projectSecrets map[string]config.ProjectSecret, profileName string) ([]string, string, error) {
 	if ref == config.DefaultClaudeAccount {
 		secret := config.ClaudeAccountSecret(config.DefaultClaudeAccount)
@@ -382,6 +477,23 @@ func accountSlugs(ref string, accounts map[string]config.ClaudeAccount, projectS
 			profileName, ref, ref)
 	}
 	return acct.AllowDataTo, "claude_accounts." + ref + ".allow_data_to", nil
+}
+
+// accountSourcePhrase is the "where this account's list comes from" clause the
+// refusals above share, so one names the block the operator can actually edit:
+// a named account's own allow_data_to, the default account's project_secrets
+// entry, or — for the project's own Anthropic API key — the profiles that name
+// it. The last two are NOT claude_accounts entries, and naming that block for
+// them would send the operator to write a key this configuration refuses
+// (config.ValidateClaudeAccounts).
+func accountSourcePhrase(ref string) string {
+	switch ref {
+	case config.AnthropicKeyAccount:
+		return "the profiles that name the project's own Anthropic API key (their own allow_repos, kept where project_secrets." + config.AnthropicSecret + " reaches them)"
+	case config.DefaultClaudeAccount:
+		return "project_secrets for the default account"
+	}
+	return "claude_accounts." + ref + ".allow_data_to"
 }
 
 // AccountNames is the policy's accounts block keys, sorted: what a reader

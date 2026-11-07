@@ -59,6 +59,11 @@ levels has to say so here first.
 | `internal/credsvc/cascade.go` | L2 | AK4, then AK6 |
 | `internal/credsvc/cascade_test.go` | L2 | AK4 |
 | `internal/config/claude_accounts.go` | L2 | AK4 |
+| `internal/config/claude_accounts_test.go` | L2 | AK4 |
+| `internal/config/project_secrets.go` | L2 | AK4 (the project's own key's reach) |
+| `internal/config/project_secrets_test.go` | L2 | AK4 (the same) |
+| `internal/projectpolicy/accounts.go` | L2 | AK4 (the sentinel's `accounts` entry) |
+| `internal/projectpolicy/accounts_test.go` | L2 | AK4 (the same) |
 | `internal/runner/routing.go` | L2 | AK5, then AK7 |
 | `internal/runner/routing_internal_test.go` | L2 | AK5, then AK7 |
 | `internal/cli/run.go` | L2 | AK5 |
@@ -210,22 +215,32 @@ not.
 **Slice:** cloud, Anthropic key (L2). **Depends on:** AK1's slice decided (**D1410**), **D1416** as
 "Anthropic key first", **D1417** as "the project's own key".
 
-**Files (5):** `internal/credsvc/review.go`, `internal/credsvc/review_test.go`,
+**Files (8):** `internal/credsvc/review.go`, `internal/credsvc/review_test.go`,
 `internal/credsvc/cascade.go`, `internal/credsvc/cascade_test.go`,
-`internal/config/claude_accounts.go`.
+`internal/config/claude_accounts.go`, `internal/config/project_secrets.go`,
+`internal/projectpolicy/accounts.go` and the test file of each — the last four because the sentinel has
+to be **publishable**, which no task booked: `projectpolicy.DeriveAccounts` writes the `accounts` block
+every publish, `fugaro update` and the deployer derive from, and the credentials service intersects a
+repository's admission with it (`credsvc`'s `admittedAccounts`), so a sentinel the block cannot carry
+is a class no installation could ever be served by, however AK4 builds the candidate list.
 
 **Interfaces:** the pairing's account axis gains one value that is **not** a Claude account — the
 sentinel the admissions spell for "the project's own Anthropic API key" — resolved in
 `internal/config/claude_accounts.go` beside the names the axis already derives; and
 `internal/credsvc/cascade.go`'s `reviewCandidates` offers the bundle's tier-B entry
 (`config.AnthropicSecret`, `CredentialKey`) when the pairing names it, **and still exactly one
-credential and no fallback** (**F13**). Nothing in `internal/credsvc/forward.go` changes: the
+credential and no fallback** (**F13**). The sentinel is published like every other axis value and by
+the same function: `DeriveAccounts` derives its entry from the profiles that name it (their own
+`allow_repos`, kept to the reach the key itself has, `config.ProjectSecretReaches`), refuses the pair
+where that list is empty, and the child admissions are the same block inverted — so a policy naming
+the sentinel is writable, and **AK5**'s deployment claim (**F17**) rests on a path that exists.
+Nothing in `internal/credsvc/forward.go` changes: the
 tier-B arm already builds `gateway.Upstream{Kind: upstreamKindAnthropic, APIKey: e.Value()}` and
 attaches it with `gateway.UpstreamHeaders` (**F12**), and that is the whole reason this task is
 small.
 
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/config/ -run 'TestReviewPairingMayNameTheProjectsAnthropicKey|TestReviewCandidateListIsExactlyOneCredential|TestReviewCallerIsNeverOfferedAProviderKey|TestReviewCandidateListStillOffersThePairingAccount' -count=1`
+`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/config/ ./internal/projectpolicy/ -run 'TestReviewPairingMayNameTheProjectsAnthropicKey|TestReviewCandidateListIsExactlyOneCredential|TestReviewCallerIsNeverOfferedAProviderKey|TestReviewCandidateListStillOffersThePairingAccount|TestAnthropicKeyAccountIsAReferenceAndNotADefinition|TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt|TestProjectSecretReaches|TestDeriveAccountsPublishesTheProjectsAnthropicKey' -count=1`
 
 - `TestReviewPairingMayNameTheProjectsAnthropicKey` — a review caller whose pairing names the
   sentinel is served by the bundle's `config.AnthropicSecret` entry, and the forwarded call carries
@@ -236,6 +251,13 @@ small.
   AK6: a bundle holding a provider key offers it to no review caller.
 - `TestReviewCandidateListStillOffersThePairingAccount` — the second direction: a pairing that names
   a Claude account is served exactly as it is today.
+- `TestDeriveAccountsPublishesTheProjectsAnthropicKey` — the publish half, and the one the plan
+  itself did not book: the sentinel's `accounts` entry is derived from the profiles that name it, kept
+  to the key's own reach, and the derived block is a node the policy's own rules accept.
+- `TestAnthropicKeyAccountIsAReferenceAndNotADefinition`, `TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt`
+  and `TestProjectSecretReaches` — the config half: the sentinel is spelled where an account is
+  referenced, refused where one is defined with its own sentence, needs no local entry behind it, and
+  the reach the derive reads is the deployer's own eligibility rule.
 
 **Red step:** `TestReviewPairingMayNameTheProjectsAnthropicKey` fails today, for the reason **F13**
 names: `reviewCandidates` offers the pairing's tier-A account and nothing else, so a pairing naming

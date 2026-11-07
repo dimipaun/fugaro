@@ -67,7 +67,14 @@ const MaxClaudeAccountNameLen = 31
 // claude_accounts entry under it would be an account no bundle could ever
 // hold. A profile that lists it is served, on the review path, by the bundle's
 // tier-B entry — the review-only variant mounts nothing at all (O1), which is
-// why the value rides the account axis rather than a profile's secrets:.
+// why the value rides the account axis rather than a profile's secrets.
+//
+// Which repositories it may serve is decided where every other axis value's is
+// (projectpolicy's accounts block, D3), and its own source is the profiles that
+// name it: the key is stored project-wide rather than for a list of
+// repositories (D2's sweep, so ProjectSecretReaches answers for it the way it
+// answers for any reserved name), and a profile's allow_repos is where a
+// repository says its reviews are served by the project's own key.
 const AnthropicKeyAccount = AnthropicSecret + "--project"
 
 // ClaudeOAuthTokenPrefix is ClaudeAccountSecret's prefix for every name but
@@ -429,6 +436,15 @@ func MountsAnthropicKey(secret string) bool {
 // credential the platform holds, so an installation states it and never
 // defines it — a file that demanded a claude_accounts entry for it would
 // refuse the one shape the sentinel exists for.
+//
+// What it does NOT check is the key's reach, and that is deliberate: the key
+// is stored project-wide (D2's sweep) rather than for a list of repositories,
+// so there is no entry here for a repository to be missing from. Which
+// repositories it may serve on the review path is the policy's accounts list,
+// derived from the profiles that name the sentinel and kept to the reach
+// ProjectSecretReaches answers for the key
+// (projectpolicy.DeriveAccounts) — a refusal of this file's would be a second
+// copy of that rule, and the two would disagree.
 //
 // It resolves each entry against the two blocks an account can be defined in,
 // because that is the question this document alone can answer: "default" is
