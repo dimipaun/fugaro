@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -526,7 +528,7 @@ func TestPromptsSkippedWhenConfigExists(t *testing.T) {
 		t.Fatalf("err %v, read %v", err, spy.read)
 	}
 	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
-	if err != nil || strings.Contains(out, "first run") || strings.Contains(out, "Region [") {
+	if err != nil || strings.Contains(out, "first run") || strings.Contains(out, questionFor("--region").label+" [") {
 		t.Fatalf("err %v\n%s", err, out)
 	}
 }
@@ -670,4 +672,131 @@ func TestReadInstallationName(t *testing.T) {
 	if got := readInstallationName(t.Context(), lc3); got != "" {
 		t.Errorf("an invalid name: %q", got)
 	}
+}
+
+// updateRegionGolden rewrites testdata/region_prompts.golden. It is a flag of
+// its own: the package's other goldens already own -update, -update-review,
+// -update-retire, -update-cloudrun and -update-diagnose, and a second
+// flag.Bool of the same name panics.
+var updateRegionGolden = flag.Bool("update-region", false, "rewrite testdata/region_prompts.golden")
+
+// TestRegionDefaultIsUsEast5: the region question keeps its own constant as
+// the default — us-east5 (D4, answered 2026-10-20 as recommended) — the wizard
+// asks it once, and Enter takes the suggestion. A region that is not one is
+// asked again rather than taken.
+func TestRegionDefaultIsUsEast5(t *testing.T) {
+	if defaultRegion != "us-east5" {
+		t.Fatalf("defaultRegion = %q, want us-east5 (D4)", defaultRegion)
+	}
+	if !regionRE.MatchString(defaultRegion) {
+		t.Errorf("defaultRegion = %q, which is not the shape a region has", defaultRegion)
+	}
+	// Everything else this first run needs came from a flag, so the region is
+	// the one question it has, and Enter answers it.
+	first := func(stdin string) (*initRun, *strings.Builder) {
+		return wizardRun(t, stdin, &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}})
+	}
+	r, out := first("\n")
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := r.o.cloud.region; got != defaultRegion {
+		t.Errorf("Enter took %q, want the suggestion %s\n%s", got, defaultRegion, out)
+	}
+	if !strings.Contains(out.String(), "["+defaultRegion+"]") {
+		t.Errorf("the question does not show %s as its suggestion:\n%s", defaultRegion, out)
+	}
+	if n := strings.Count(out.String(), questionFor("--region").label); n != 1 {
+		t.Errorf("the wizard asked the region %d times, want once:\n%s", n, out)
+	}
+	r, out = first("Not A Region\n" + defaultRegion + "\n")
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := r.o.cloud.region; got != defaultRegion || !strings.Contains(out.String(), "a region looks like us-east5") {
+		t.Errorf("a region that is not one: %q\n%s", got, out)
+	}
+}
+
+// TestRegionQuestionIsNotTheFirestoreQuestion: where the installation's jobs
+// and the scheduler run and where the Firestore database is created are two
+// separate things (reconciliation C1). The first is a question `fugaro setup`
+// asks once and a value a later run may change; the second is permanent, its
+// own typed confirmation, and never derived from the first. Both prompts are
+// pinned here in one golden, so the two labels cannot converge: an edit that
+// made the wizard ask for the database's location, or made the database's
+// confirmation read like the region question, moves this file.
+func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
+	// The wizard's first run chdirs into a temporary directory, so the
+	// golden's path is taken first (as init_retire_test.go's does).
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRunEnv(t)
+	regionRun, out := wizardRun(t, "\n", &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}})
+	if err := regionRun.gatherInputs(t.Context()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if regionRun.o.cloud.region != defaultRegion {
+		t.Fatalf("Enter took the region %q, want the question's own default %q\n%s", regionRun.o.cloud.region, defaultRegion, out)
+	}
+	region := promptLine(t, out.String(), questionFor("--region").label)
+
+	// The database's location, as the Firebase step prints it: the harness
+	// init_confirm_test.go uses, at a terminal, with the location typed.
+	c := condition{name: "a terminal", opts: initOptions{door: setupDoor.name}, terminal: true}
+	location, _, locationOut := c.run(t, infra.FirestoreLocation+"\n")
+	if err := location.confirmLocation(); err != nil {
+		t.Fatalf("%v\n%s", err, locationOut)
+	}
+
+	var b strings.Builder
+	b.WriteString("== the region question: fugaro setup's own, asked once\n" + region + "\n")
+	b.WriteString("== the Firestore location: the database's own, permanent, typed\n" + trimTrailingSpaces(locationOut.String()) + "\n")
+
+	path := filepath.Join(wd, "testdata", "region_prompts.golden")
+	if *updateRegionGolden {
+		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("no golden file: run go test ./internal/cli -run TestRegionQuestionIsNotTheFirestoreQuestion -update-region")
+		}
+		t.Fatal(err)
+	}
+	if string(want) != b.String() {
+		t.Fatalf("a prompt moved, and the region question and the Firestore location's must stay apart (go test -update-region to accept):\n%s\nwant:\n%s", b.String(), want)
+	}
+}
+
+// promptLine is the prompt itself: the label, the suggestion in brackets, and
+// the colon the prompt stops at. A run goes on writing on the same line (the
+// billing note, here), and a golden holds the question rather than that.
+func promptLine(t *testing.T, out, label string) string {
+	t.Helper()
+	i := strings.Index(out, label)
+	if i < 0 {
+		t.Fatalf("no prompt %q in:\n%s", label, out)
+	}
+	rest := out[i:]
+	j := strings.Index(rest, ": ")
+	if j < 0 {
+		t.Fatalf("the prompt %q does not end at a colon in:\n%s", label, out)
+	}
+	return rest[:j+1]
+}
+
+// trimTrailingSpaces is out without the spaces a prompt writes after its colon
+// (the cursor's place, not the question): a golden carries no trailing
+// whitespace.
+func trimTrailingSpaces(out string) string {
+	lines := strings.Split(out, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " ")
+	}
+	return strings.Join(lines, "\n")
 }
