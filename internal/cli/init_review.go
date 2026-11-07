@@ -596,8 +596,19 @@ func (r *initRun) firebaseReason() string {
 
 // notCoveredFirebase is notCovered for a plan of the Firebase root, which is
 // also not covered when the Firebase project is not verified as Fugaro's.
+//
+// The two reasons read differently on purpose: the cover's is a sentence about
+// the plan and the addresses it names, while an unverified Firebase project is
+// the step's own fact about the project the root would write into — "the plan
+// is outside what the review announced (the Firebase project is not verified as
+// Fugaro's)" says a thing about the cover that is not so. The gate is handed
+// coverReasonsFirebase, whose items are that answer unwrapped; what a prompt
+// shows is this.
 func (r *initRun) notCoveredFirebase(p *tf.Plan, imports []tf.ImportKey) string {
-	return coverSentence(r.coverReasonsFirebase(p, imports))
+	if why := r.firebaseReason(); why != "" {
+		return why
+	}
+	return r.notCovered(p, imports)
 }
 
 // coverReasonsFirebase is coverReasons for that root, and the reason is one
