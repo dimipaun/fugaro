@@ -23,6 +23,15 @@ happens, the copy below is a snapshot of the 2026-11-07 document and
 [reconciliation.md](reconciliation.md) §1 says so. The design document itself is never edited by this
 folder.
 
+**Two relative links in the copy below were written for `docs/design/` and do not resolve from this
+folder.** The body stays byte for byte, so they are named here rather than edited in it:
+`[v1.md](v1.md)` is `docs/design/v1.md` (`../design/v1.md` from this folder) and
+`[artifact-runs.md](artifact-runs.md)` is `docs/design/artifact-runs.md` (`../design/artifact-runs.md`).
+Every other relative link in the copy — `../releases/README.md`, `../backlog/FORMAT.md`,
+`../task-governance/reconciliation.md`, `../rigor-modes/reconciliation.md`,
+`../periodic-reviews/README.md` and `../binary-allow-rule/spec.md` — resolves from this folder exactly
+as the design wrote it, because this folder sits beside `docs/design/`.
+
 ---
 
 # Failure classes: a closed vocabulary on the run record, and a failures report

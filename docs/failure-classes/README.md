@@ -44,9 +44,11 @@ three sites that overwrite the record's reason after them, the phrase-table clas
 `oauthLimitPhrases`, the six digest flags, the four pattern rules, the additive-schema precedent —
 **exists, by name, where the design says it does**. What the reconciliation adds is five things the
 design does not hold: **its line citations above `runner.go:3700` are four lines short** (F19) and the
-`finalize` switch's range is wrong (F18); **the plugin does enumerate `runview.Row`'s per-run keys**
-(`plugin/skills/working/reference/status.md:31`), so the design's §6.3 sentence that says otherwise is
-wrong and its §10 FC8 file list is one file short (F13); **the phone reads `lsDoc` embedded and refuses
+`finalize` switch's range is wrong (F18); **the plugin's own status reference does name `runview.Row`'s keys** — fourteen of the
+row's forty-four, in one sentence, as a selection and not as the set
+(`plugin/skills/working/reference/status.md:31`) — so the design's §6.3 sentence that says nothing in
+`plugin/` does is wrong, its §10 FC8 file list is one file short, and the task it adds is one key and
+one clause (F13); **the phone reads `lsDoc` embedded and refuses
 an unknown key in it**, which makes the report's new block a mobile question and not only a console one
 (F14); **one test the design names does not exist** (F15); and **the vocabulary's import direction
 decides where three functions can live**, a rule the design leaves implicit (F21).

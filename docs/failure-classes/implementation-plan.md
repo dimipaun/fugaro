@@ -54,7 +54,7 @@ owner's-answer cell is empty.
 | **L4** | FC6 — `runs ls --group-by failure_class` | FC5, and **D1458** (the `groups` key is `omitempty`, and the phone's document never carries it) and **D1465** (`share` is a share of runs) |
 | **L4** | FC7 — the Failures table and the two rules | FC5, and **D1463** (which document owns the rules' prose) and **D1466** (the table ships; the rules are the half that may be dropped) |
 | **L5** | FC8 — the documents, the contract and the skills | FC6 and FC7, and **D1460** (diagnose prints and carries the class), **D1468** (`docs/design/v1.md` §4.6) and **D1469** (the slot). It writes no behaviour: its red step is the Docs run |
-| **L5** | FC9 — the plugin's own enumeration of the row's keys | FC6. F13: `plugin/skills/working/reference/status.md:31` lists every per-run key `runs ls --json` carries, and the design's §6.3 says nothing in `plugin/` does. **D1457** |
+| **L5** | FC9 — the status reference names the failure class | FC6. F13: `plugin/skills/working/reference/status.md:31` names fourteen of `runview.Row`'s forty-four keys in prose, and the design's §6.3 says nothing in `plugin/` names any of them. **D1457** |
 
 **Edges** (from each "Depends on"): FC1 → FC2; FC1 → FC5; FC2 → FC3; FC2 → FC4; FC3 → FC5;
 FC5 → FC6; FC5 → FC7; FC6 → FC8; FC6 → FC9; FC7 → FC8.
@@ -105,7 +105,7 @@ which is harmless and true), and FC3–FC9 simply start later.
 | `internal/cli/runs.go`, `internal/cli/runs_group.go`, `internal/cli/runs_group_test.go`, `internal/cli/testdata/runs_group.golden`, `website/content/cli-reference.md` | FC6 (L4) | the flag, its closed value list, `lsDoc.Groups`, the helper, the tests and the regenerated reference (`go run ./ee/clidoc`) |
 | `internal/digest/*.go`, `internal/digest/testdata/digest.golden.md` | FC7 (L4) | `Failures`, `FailuresTable`, the two rules and their constants, and the golden report |
 | `docs/design/v1.md`, `docs/periodic-reviews/spec.md`, `docs/periodic-reviews/implementation-plan.md`, `plugin/skills/working/reference/diagnose.md`, `internal/cli/docs_desktop_console_test.go` | FC8 (L5) | §4.6's sentence, the rule list in the document that owns it (**D1463**), the one sentence that tells a person to use the grouping, and the contract's pins if a row moves |
-| `plugin/skills/working/reference/status.md`, `plugin/routing_skill_test.go` | FC9 (L5) | the key list and its pin (F13) |
+| `plugin/skills/working/reference/status.md`, `plugin/routing_skill_test.go` | FC9 (L5) | the sentence and its pin (F13) |
 
 **Not touched by this plan, and named so it is not discovered later:** `internal/userstats/**` and
 `internal/cli/runs_summary.go` (the history census and the summary keep their status vocabularies,
@@ -407,28 +407,39 @@ standard, with the digest's own pins and the weekly-report golden in the same pu
 `plugin/skills_lint_test.go` refuses a skill naming a flag that does not exist). **Reviewer tier:**
 standard, with `go test ./plugin/` in the same pull request. **SEC:** no. **Owner-run:** no.
 
-- **Files (2):** `plugin/skills/working/reference/status.md` (`:31` — the enumeration of every
-  per-run key `runs ls --json` carries, which is where `failure_class` belongs, in the same PR as the
-  row that adds it: CONTRIBUTING's rule is that a CLI change touching a documented command changes
-  the skill in the same PR), and `plugin/routing_skill_test.go`, the pin: the file's
-  `TestWorkingSkillStatusNamesWhoStartedEachRun` (`:86`) holds **one** key (`launched_by`) to the
-  code, and the task adds the pin the list never had: every json key of `runview.Row{}` is named in
-  `status.md`, in the code's own order. That test is the correction the design needs and does not
-  have — the design's §6.3 sentence, "nothing in `plugin/` enumerates `runview.Row`'s keys except
-  `plugin/routing_skill_test.go:86`, which pins `launched_by` alone", is false about the skill
-  (F13) — and without it the list drifts in silence, which is exactly what CONTRIBUTING's rule
-  exists to prevent.
+- **Files (2):** `plugin/skills/working/reference/status.md` (`:31` — the sentence that names the
+  run keys a reader of the status screen is given, which is where `failure_class` belongs, in the same
+  PR as the row that adds it: CONTRIBUTING's rule is that a CLI change touching a documented command
+  changes the skill in the same PR), and `plugin/routing_skill_test.go`, the pin.
+  **The sentence names fourteen of `runview.Row`'s forty-four json keys, in an order of its own; it
+  is a selection and claims nothing more** (§2.7 of the reconciliation, and F13): the row is
+  `internal/runview/runview.go:74` and `lsDoc.Runs` is `[]runview.Row` (`internal/cli/runs.go:216`).
+  So this task adds **one key and one clause**, and the pin it adds holds the two things the sentence
+  really does claim: that it names `failure_class`, and that **every key it names is a key of
+  `runview.Row{}`**. **It asks for neither completeness nor the row's order** — a pin written for the
+  whole row would fail on the thirty keys the skill deliberately leaves out, and could not be greened
+  by this task's edit. The file's own `TestWorkingSkillStatusNamesWhoStartedEachRun` (`:86`) holds
+  **one** key (`launched_by`) to the code; this is the same discipline over the rest of the sentence,
+  and it is what the design's §6.3 sentence ("nothing in `plugin/` enumerates `runview.Row`'s keys
+  except `plugin/routing_skill_test.go:86`, which pins `launched_by` alone") misses: the names are
+  there, and nothing holds them.
 - **Interfaces:** none — prose and a pin. The skill's sentence says `failure_class` is the closed
   cause `runs ls --json` carries for a run that did not succeed, and points at
   `--group-by failure_class` for the window's grouping; it names no value of the vocabulary, so a
   value added later does not stale it (F27's property, applied to prose).
-- **Tests:** `TestWorkingSkillStatusNamesEveryRunRowKey` (new), plus the existing
+- **Tests:** `TestWorkingSkillStatusNamesTheFailureClass` (new). It has two halves: it **reads the
+  keys out of the sentence itself** and asserts each one is a json key of `runview.Row{}` (so the pin
+  follows the prose instead of keeping a second copy of it — a key the skill invents or a name the
+  CLI no longer emits is red), and it asserts that the sentence names `failure_class`, **that one
+  name a literal**, because it is D1457's claim and the reason this task exists. Plus the existing
   `TestWorkingSkillStatusNamesWhoStartedEachRun` and `skills_lint_test.go`'s resolution of
   `--group-by`.
-- **Red step:** `TestWorkingSkillStatusNamesEveryRunRowKey` fails against today's skill with
-  `failure_class` absent from the list — after FC6 the row carries it and the skill does not.
-- **Mutation to hold it:** drop one key from the skill's list → the pin fails, which is the mutation
-  that proves the list is now held rather than trusted.
+- **Red step:** `TestWorkingSkillStatusNamesTheFailureClass` fails against today's sentence because
+  `failure_class` is none of the keys it names — after FC6 the row carries the field and the skill's
+  own sentence does not name it.
+- **Mutation to hold it:** misspell a key in the sentence (`failure_classs`) → the first half fails;
+  drop the clause that names `failure_class` → the second half fails, which is the mutation that
+  proves the sentence is now held rather than trusted.
 - **Command:** `go test ./plugin/ -run 'WorkingSkillStatus' -count=1`
 - **Commit:** `plugin: the working skill's status reference names the failure class`.
 

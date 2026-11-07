@@ -139,18 +139,26 @@ Two files read the row's key set, and the design names only one of them:
 - `plugin/skills_lint_test.go` resolves every `fugaro …` a skill names — commands *and* flags —
   against the CLI's own cobra tree, so a skill that names `--group-by` before the flag exists fails.
   The design says exactly this, and it is the reason the flag and its skill sentence land together.
-- `plugin/skills/working/reference/status.md:31` **enumerates `runs ls --json`'s per-run keys
-  verbatim**: "Each run has `run`, `repo`, `status`, `stage`, `reason`, `halt` (when halted), `pr_url`,
-  `branch`, `outcome`, `created`, `cost`, `terminal`, `settled` and `launched_by`".
+- `plugin/skills/working/reference/status.md:31` **names fourteen of `runs ls --json`'s per-run keys**
+  in one sentence: "Each run has `run`, `repo`, `status`, `stage`, `reason`, `halt` (when halted),
+  `pr_url`, `branch`, `outcome`, `created`, `cost`, `terminal`, `settled` and `launched_by`". **It is
+  a selection, not the set**: the row is `runview.Row` (`internal/runview/runview.go:74`), it carries
+  **44** json keys (none `json:"-"`), and `lsDoc.Runs` is `[]runview.Row`
+  (`internal/cli/runs.go:216`), so the sentence names fourteen of forty-four — in an order of its
+  own, which is not the row's (the row's order puts `launched_by` before `pr_url`; the sentence puts
+  it last). Nothing in the sentence claims completeness, and no test could ask for it.
   `TestWorkingSkillStatusNamesWhoStartedEachRun` (`plugin/routing_skill_test.go:86`) is the test that
-  ties that list to the code — it reads `runview.Row`'s own json tag for `LaunchedBy`, the listing's
-  header for the `BY` column, and the cobra tree for the command, and requires the skill to name all
-  three. It holds one key, not the list.
+  ties one of those names to the code — it reads `runview.Row`'s own json tag for `LaunchedBy`, the
+  listing's header for the `BY` column, and the cobra tree for the command, and requires the skill to
+  name all three. It holds one key, not the list.
 
 **The design's §6.3 sentence — "nothing in `plugin/` enumerates `runview.Row`'s keys except
 `plugin/routing_skill_test.go:86`, which pins `launched_by` alone" — is wrong** (F13): the *skill*
-enumerates them, CONTRIBUTING's rule is that a CLI change touching a documented command changes the
-skill in the same PR, and the design's §10 FC8 file list does not include `status.md`.
+names fourteen of the row's keys in prose, CONTRIBUTING's rule is that a CLI change touching a
+documented command changes the skill in the same PR, and the design's §10 FC8 file list does not
+include `status.md`. **The correction is one key and one clause, and its pin may not ask for more**:
+the sentence is a selection, so a pin requiring every key of `runview.Row{}` would fail on the thirty
+the skill deliberately leaves out (F13).
 
 ### 2.8 `watch`
 
@@ -261,11 +269,17 @@ be held to it) or **Open** (the design leaves it to the owner).
 
 ### Wrong
 
-- **F13 — the plugin's key list.** Design §6.3: "nothing in `plugin/` enumerates `runview.Row`'s keys
-  except `plugin/routing_skill_test.go:86`, which pins `launched_by` alone." The tree:
-  `plugin/skills/working/reference/status.md:31` enumerates all fourteen per-run keys verbatim, and
-  `TestWorkingSkillStatusNamesWhoStartedEachRun` (`plugin/routing_skill_test.go:86`) holds *one* of them
-  to the code. CONTRIBUTING's rule reaches the skill, and §10 FC8's file list does not. → **FC9**.
+- **F13 — the plugin names fourteen of the row's keys, not none and not all.** Design §6.3: "nothing
+  in `plugin/` enumerates `runview.Row`'s keys except `plugin/routing_skill_test.go:86`, which pins
+  `launched_by` alone." The tree: `plugin/skills/working/reference/status.md:31` **names fourteen of
+  the row's forty-four keys** in one sentence (a *selection*, in an order of its own — §2.7), and
+  `TestWorkingSkillStatusNamesWhoStartedEachRun` (`plugin/routing_skill_test.go:86`) holds *one* of
+  them to the code. So the design's sentence is false about the skill, CONTRIBUTING's rule reaches it,
+  and §10 FC8's file list does not include `status.md`. **Stated precisely, because the correction is
+  small and easy to overstate**: the sentence is not an enumeration of the row, so FC9 adds one key
+  (`failure_class`) and one clause, and the pin it adds holds the keys the sentence *does* name to the
+  row — never completeness (the thirty unnamed keys) and never the row's order (the sentence's order
+  differs). → **FC9**.
 - **F14 — the phone.** Design §7: "`mobile/` and `shared/` do not read `runs ls` at all." The tree:
   the phone reads `watch --json`'s degraded document, which **embeds `lsDoc`**
   (`internal/cli/watch.go:518`), and refuses an unknown key in it
@@ -410,7 +424,7 @@ be held to it) or **Open** (the design leaves it to the owner).
 | the digest's committed report and its `summary` block | the Failures table, `failures` in the block, two rules | `docs/periodic-reviews/`'s rule list and D326's document (F24) | the block is read key by key; the two rules read only blocks that carry the key |
 | `console/docs/json-contract.md` | the rows above | — | the contract's own version constant is the console's; a row is additive |
 | the console's redactor | `failure_class` in `CONTRACT_KEYS` (`console/src/source/redact.ts:1159`) | — | console-internal (F22) |
-| the plugin's status reference | `failure_class` among `runs ls --json`'s per-run keys (`plugin/skills/working/reference/status.md:31`) | — | the skill is prose, held by CONTRIBUTING's rule (F13) |
+| the plugin's status reference | `failure_class` among the fourteen per-run keys that sentence names (`plugin/skills/working/reference/status.md:31`) | — | the skill is prose, held by CONTRIBUTING's rule (F13); the sentence is a selection of the row's 44 keys, so the pin holds what it names, not the set |
 | `mobile/`, `shared/` | **nothing** — and `groups` must not reach the phone's document | — | — |
 
 **What does not move, and is named so it is not discovered later:** `result.json`'s `version`, `reason`
@@ -439,7 +453,7 @@ design's own numbering.
 | **D1454** | Where does the legacy reader live, and under which of the design's two names (F20)? | **`internal/runview.ClassOf`, exported, called by the digest** — the name FC5 gives it, not §5's `legacyClass`, because it is the one function both readers call and a reader in another package cannot call an unexported one. It cannot live in `internal/failure`, which §D1453 forbids importing `runstore` (F21) | `failure.ClassOf(status, outcome, reason string, halt string)`, taking the four scalars instead of the record | the reader's signature has to grow every time a legacy pattern needs a fifth input, and two call sites build the same four values by hand | |
 | **D1455** | Where does the `runstore.HaltReason` → class translation live, so a legacy halted row and a new one cannot disagree? | **Two thin switches over one table of names**: `haltClass` in `internal/runner` for the writer, and the same mapping read by `internal/runview` for old records, with a test that walks `runstore.GovernanceHaltReasons()` plus the budget and credential families and asserts both agree. It cannot be one function in `internal/failure` for the same import reason (F21) | one switch in `internal/failure` over the halt reason's **string** value | the string form is the one thing the closed type exists to avoid: a halt reason renamed would compile everywhere and read as a budget halt, and the reader's table would be the only place that noticed | |
 | **D1456** | Is FC2 one task (11 files, `runner.go` plus eight sibling files) or two? | **One task, with `recordend.go`** (D1452). The change is mechanical and the guard test is what makes it safe; splitting it leaves one half of the tree writing a status directly, which is the state the guard fails on | Split into "the writer and the helpers" and "the deferred and bootstrap sites" | the first half cannot land green (the guard sees the second half's statements) unless the guard is weakened to a list, which is the pin the design rejects | |
-| **D1457** | Does `plugin/skills/working/reference/status.md` gain `failure_class` in the same PR as the row (F13)? | **Yes — FC9, in the same PR as the row.** CONTRIBUTING's rule is that a CLI change touching a documented command changes the skill in the same PR, the skill enumerates the keys verbatim, and the key is the answer to the question the skill's own "Needs attention" section tells a user to ask | leave the skill to a later PR | `runs ls --json` carries a key the skill never names, and a user asking "why did this fail?" is told to run `diagnose`, which is the state the design exists to leave | |
+| **D1457** | Does `plugin/skills/working/reference/status.md` gain `failure_class` in the same PR as the row (F13)? | **Yes — FC9, in the same PR as the row.** CONTRIBUTING's rule is that a CLI change touching a documented command changes the skill in the same PR, the skill names fourteen of the row's keys in prose (§2.7), and the key is the answer to the question the skill's own "Needs attention" section tells a user to ask | leave the skill to a later PR | `runs ls --json` carries a key the skill never names, and a user asking "why did this fail?" is told to run `diagnose`, which is the state the design exists to leave | |
 | **D1458** | Is `lsDoc.Groups` `omitempty`, and does anything hold it out of the watch document (F14)? | **Yes, and a test.** The phone's reader refuses an unknown key in the degraded document (`mobile/src/feed/document.js:122`, `:358`) and `watchDegradedDoc` embeds `lsDoc` (`internal/cli/watch.go:518`), so an emitted `groups` breaks the app; `--group-by` is never a watch flag, so `omitempty` is enough, and a test that decodes the watch document's key set holds it | emit `groups: {}` always | the phone refuses the whole degraded document — the app renders degraded-as-nothing — for a block it does not read | |
 | **D1459** | Does the console task add `failure_class` to `CONTRACT_KEYS` in `console/src/source/redact.ts:1159` (F22)? | **Yes, and the console task names the file.** The set is the keys whose values the console reads as a CLI-made enumeration and never rewrites as a person; a class value not in it is a value the person pass may rewrite, i.e. a figure drawn wrong with no error | the chip or column alone | the redactor treats a class value as a possible person's name, and a recording's class can come back as a pseudonym | |
 | **D1460** | Does `fugaro diagnose` print the class, and does `Diagnosis` carry it (F23)? | **Both, one field and one line** — the design's D9 recommends the line and the shape half is what makes it honest: diagnose's `--json` is a contract (`console/docs/json-contract.md:748`) and a text-only answer would leave the console able to print the class for `runs ls` and not for the one run a person is looking at | the printed line only | the two documents disagree about one run: the listing says `review_not_converged` and diagnose, the command that explains it, cannot | |
