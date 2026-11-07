@@ -29,7 +29,7 @@ with it, **reconciliation wins**.
 
 The Project tab draws five panels today, from three commands: `budget show --json`,
 `accounts ls --json` and `secrets ls --json` (`PROJECTS_SOURCE_LINES`,
-`console/src/renderer/screens/projects.ts:92`). What it shows is caps, kill switches, repositories,
+`console/src/renderer/screens/projects.ts:108`). What it shows is caps, kill switches, repositories,
 accounts and a secrets inventory — and two panels that say they have no command at all. The owner's
 ask is about **those values**: the settings of this one project, each of them editable from the
 console behind a little pencil.
@@ -45,7 +45,7 @@ which shows **what will be spawned** and spawns it verbatim on a yes from **its 
 Three things this design settles that the ask does not:
 
 1. **Which rows get a pencil is the CLI's answer, never the console's.** S5 keeps the allow-list of
-   writable rows (`settingsGenericKeys` and `settingsGenericPrefixes`, `internal/cli/settings_set.go:64`, `:83`) and
+   writable rows (`settingsGenericKeys` and `settingsGenericPrefixes`, `internal/cli/settings_set.go:83`, `:197`) and
    the registry's `Owner` and `Sensitive` facts (`internal/settings/registry.go:80`). The console
    reads them and keeps no list of its own; the read's own field is the subject of **D1102** and the
    prerequisite **P2**. A row the read marks `sensitive: true` is **hidden** — no key, no value, no
@@ -55,7 +55,7 @@ Three things this design settles that the ask does not:
    re-derive (**D1106**, prerequisite **P3**).
 3. **A widening is confirmed by `--yes`, and the agent-session fence is untouched.** D846 reserves a
    widening for the project's name typed at a terminal, and no flag answers it today
-   (`confirmTypedStrict`, `internal/cli/budget.go:239`) — which the console, with no terminal, cannot
+   (`confirmTypedStrict`, `internal/cli/budget.go:251`) — which the console, with no terminal, cannot
    do. **D1107** is the owner's answer of 2026-11-01: "I don't see why `--yes` doesn't work, we
    should allow it." `settings set|unset` **consult `--yes`** on that path **outside an agent
    session**, the agent-session refusal coming **first** so `--yes` never lifts it, and `fugaro
