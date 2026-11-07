@@ -482,13 +482,25 @@ func (e *Exchange) Admit(ctx context.Context, raw string) (Session, error) {
 	// expired is refused, one issued in the future is refused, and one whose
 	// whole life is longer than maxAssertionLifetime is refused because a
 	// "short-lived" assertion is what bounds a stolen one (spec.md §8).
+	//
+	// The lifetime is taken in uint64 and the sign of the window is checked
+	// beside it, because the member is verifying a document whose two claims are
+	// chosen by whoever holds the workspace's signing key: `exp - iat` in int64
+	// wraps to a negative number for a pair of extremes, so a hostile signer that
+	// put iat at the bottom of int64 and exp far above it would have a lifetime
+	// that is "less than fifteen minutes" and an assertion that outlives every
+	// reader of this member's database. uint64 subtraction is exact for any
+	// exp >= iat, and the other order is refused on its own line.
 	now := e.now()
+	lifetime := uint64(a.ExpiresAt) - uint64(a.IssuedAt)
 	switch {
 	case now.Unix() >= a.ExpiresAt:
 		return Session{}, refusef("the assertion has expired")
 	case time.Unix(a.IssuedAt, 0).After(now.Add(assertionClockSkew)):
 		return Session{}, refusef("the assertion is issued in the future")
-	case a.ExpiresAt-a.IssuedAt > int64(maxAssertionLifetime/time.Second):
+	case a.ExpiresAt < a.IssuedAt:
+		return Session{}, refusef("the assertion's window ends before it starts")
+	case lifetime > uint64(maxAssertionLifetime/time.Second):
 		return Session{}, refusef("the assertion's lifetime is longer than this member accepts")
 	}
 	// The two facts the signer stated and this member re-checks rather than

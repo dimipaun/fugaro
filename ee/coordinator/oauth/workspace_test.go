@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -512,5 +513,40 @@ func TestExchangeTakesTheFrontDoorsShapes(t *testing.T) {
 		if mine.Field(i).Name != theirs.Field(i).Name || mine.Field(i).Type != theirs.Field(i).Type {
 			t.Errorf("limits field %d is %s %s here and %s %s at the front door", i, mine.Field(i).Name, mine.Field(i).Type, theirs.Field(i).Name, theirs.Field(i).Type)
 		}
+	}
+}
+
+// TestExchangeRefusesAWindowThatWouldOverflowTheLifetimeBound is the hostile
+// signer at the one piece of arithmetic the window check does. A workspace holds
+// the assertion key, so it chooses both claims, and the bound on the assertion's
+// lifetime — the member's own protection, since a pin says what a key may be used
+// for and not that its holder is careful — is a subtraction of two values that
+// hostile. Computed in int64 it wraps for a pair of extremes, and an assertion
+// whose lifetime is "negative" is one that never expires: it would be admitted
+// here, its jti would be held until an expiry far beyond any reader, and a stolen
+// copy would be a bearer for as long as the member's database exists.
+func TestExchangeRefusesAWindowThatWouldOverflowTheLifetimeBound(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+	now := time.Now().UTC()
+
+	for what, window := range map[string]struct{ iat, exp int64 }{
+		// The pair that wraps: a lifetime of five minutes minus two to the
+		// sixty-third is a negative number, and every other check passes.
+		"an iat at the bottom of int64":       {math.MinInt64, now.Add(5 * time.Minute).Unix()},
+		"a window from the bottom to the top": {math.MinInt64, math.MaxInt64},
+		// Not an overflow, and refused by the same bound: an assertion that really
+		// does live for centuries.
+		"an exp at the top of int64": {now.Add(-time.Minute).Unix(), math.MaxInt64},
+	} {
+		t.Run(what, func(t *testing.T) {
+			raw := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+				a.IssuedAt, a.ExpiresAt = window.iat, window.exp
+			})
+			refuse(t, mustErr(member.ex.Admit(context.Background(), raw)), what)
+			if len(jtisSpent(member)) != 0 {
+				t.Fatalf("the refused assertion spent a jti, and a refusal must not burn an id")
+			}
+		})
 	}
 }

@@ -358,14 +358,19 @@ func TestSignerVerifiesWhatTheFrontDoorVerifies(t *testing.T) {
 	}
 
 	honest := firebaseIDToken(t, idKey, defaultIDToken(testProject))
-	// One base64url character of the signature changed for another: the payload is
-	// untouched, so the only thing that can refuse this token is the signature.
-	last := honest[len(honest)-1]
-	swapped := byte('A')
-	if last == swapped {
-		swapped = 'B'
+	// The signature's first byte, with one bit flipped, and the token re-encoded:
+	// the payload is untouched, so the only thing that can refuse this token is
+	// the signature. It is done on the DECODED bytes rather than on the base64url
+	// text on purpose — the last character of a 342-character encoding of a
+	// 256-byte signature carries only two significant bits, so a different last
+	// character can decode to the very same bytes and leave the token verifiable.
+	parts := strings.Split(honest, ".")
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("decoding a test ID token's signature: %v", err)
 	}
-	tampered := honest[:len(honest)-1] + string(swapped)
+	sig[0] ^= 1
+	tampered := parts[0] + "." + parts[1] + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	cases := map[string]struct {
 		token     string
