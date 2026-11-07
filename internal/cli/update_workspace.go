@@ -273,9 +273,13 @@ func workspacePublicationIn(ctx context.Context, lc *localcfg.Config, db *rtdb.C
 		// keys it cannot read. Tolerating them in the reader is what keeps a
 		// newer node readable; it is not a licence to write one this binary does
 		// not understand, and the count is the whole of what the refusal says
-		// about them (a node may hold anything under those keys).
+		// about them (a node may hold anything under those keys). The names
+		// themselves are the node's own, so they are printed through
+		// unknownKeysText like every name of that provenance in this package: a
+		// key carrying a bidi override or a separator is a legal JSON member
+		// name, and printed raw it would rewrite the line of a refusal.
 		return nil, userErr("%s carries %d key(s) this Fugaro does not know (%s), and publishing the record from here would write a document without them: nothing was written; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run %s again",
-			p.path, len(node.UnknownKeys), strings.Join(node.UnknownKeys, ", "), selfCommand()+" update")
+			p.path, len(node.UnknownKeys), unknownKeysText(node.UnknownKeys), selfCommand()+" update")
 	}
 	written, err := projectpolicy.WorkspaceNode(rec)
 	if err != nil {

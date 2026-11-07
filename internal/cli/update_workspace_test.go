@@ -243,6 +243,17 @@ func wsNumber(t *testing.T, v any) int64 {
 	}
 }
 
+// wsCeiling is the workspace's own ceiling as the node carries it, 0 when the
+// node states none.
+func wsCeiling(t *testing.T, db *gcpfake.RTDB, name string) int64 {
+	t.Helper()
+	cap, ok := wsNode(t, db, name)["cap"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	return wsNumber(t, cap["monthly_micros"])
+}
+
 // wsPublishedNode seeds a node at the workspace's own path, as a release before
 // this one wrote it: version 1 with the members and the cap the caller names.
 // It is how a test says what is already published, which is the other half of
@@ -754,5 +765,120 @@ func TestUpdateRefusesANodeCarryingAKeyThisFugaroDoesNotKnow(t *testing.T) {
 	}
 	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-c"}) {
 		t.Errorf("the refused write changed the published members: %v", got)
+	}
+}
+
+// TestUpdateARaisedCeilingIsAWidening: the other half of the cap classifier,
+// with the higher ceiling on the record's side. A record that states MORE than
+// the node does raises what the group may spend through the workspace's own
+// credentials, so it is a widening and takes the owner's typed word — which is
+// what keeps a plan gate from publishing it (the class rule, D1026). Inverting
+// the comparison, or dropping the branch, would report it as nothing and let
+// --yes through.
+func TestUpdateARaisedCeilingIsAWidening(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap) // $25 a month
+	p := h.project(t, "workspace-alpha")
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+	}, 10_000_000) // $10, the ceiling this record raises
+
+	r := newWSUpdateRig(t, h)
+	_, out, err := r.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes raised the workspace's own ceiling:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "the workspace's own ceiling rises from $10 to $25 a month") {
+		t.Errorf("the refusal does not name the ceiling this write raises: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "added: the workspace's own ceiling rises from $10 to $25 a month") {
+		t.Errorf("the diff does not show the raised ceiling:\n%s", out)
+	}
+	if got := wsCeiling(t, p.db, "workspace-alpha"); got != 10_000_000 {
+		t.Errorf("the published ceiling is %d micro-dollars, want the 10 the node stated: nothing was confirmed", got)
+	}
+	// And the owner's own word completes it, which is what makes the typed
+	// branch a way through rather than a wall.
+	fakeTerminal(t)
+	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
+	if _, out, err := r.apply(t, false); err != nil {
+		t.Fatalf("the typed project name did not raise the ceiling: %v\n%s", err, out)
+	}
+	if got := wsCeiling(t, p.db, "workspace-alpha"); got != 25_000_000 {
+		t.Errorf("the published ceiling is %d micro-dollars, want 25000000 ($25)", got)
+	}
+}
+
+// TestUpdateANewRepositoryOnAListedMemberIsAWidening: the third branch of the
+// classifier, and the smallest one — a member the node already carries, with a
+// repository the record adds to it. Every run of that repository reads the
+// record, so a repository is as much of an admission as the member itself is,
+// and it takes the same typed word. Disabling the branch reports the write as
+// nothing and lets --yes through.
+func TestUpdateANewRepositoryOnAListedMemberIsAWidening(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap) // member-b with repo-a and repo-b
+	p := h.project(t, "workspace-alpha")
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a"),
+	}, 0)
+
+	r := newWSUpdateRig(t, h)
+	_, out, err := r.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes added a repository to a listed member:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "member-b contributes owner/repo-b") {
+		t.Errorf("the refusal does not name the repository this write adds: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "added: member-b contributes owner/repo-b") {
+		t.Errorf("the diff does not show the repository this write adds:\n%s", out)
+	}
+	if got := wsRepos(t, p.db, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a"}) {
+		t.Errorf("member-b's published repositories are %v, want the one the node carried: nothing was confirmed", got)
+	}
+	fakeTerminal(t)
+	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
+	if _, out, err := r.apply(t, false); err != nil {
+		t.Fatalf("the typed project name did not add the repository: %v\n%s", err, out)
+	}
+	if got := wsRepos(t, p.db, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
+		t.Errorf("member-b's published repositories are %v, want the two the table declares", got)
+	}
+}
+
+// TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn: the stage's own
+// D1017 read, which is the FIRST thing after the record is built from the
+// config and the reason it is there rather than after the node read — this
+// stage's whole work (the read, the ETag and the conditional write) lands in the
+// workspace's database, and a config naming another Firebase project whose
+// database carries another installation's mark is a database this stage must not
+// touch. Disabling the predicate publishes this record into a stranger's
+// database, over whatever node it holds; the policy stage's version of this test
+// exercises its own call and not this one.
+func TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn(t *testing.T) {
+	r, db := updateBudgetRigFor(t, "other-project")
+	// Another installation's database: its mark names a Fugaro project and a
+	// GCP project that are not this installation's.
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
+	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Workspace); got != "skipped" {
+		t.Errorf("the workspace stage is %q, want skipped:\n%s", got, out)
+	}
+	detail := res.stageDetail(t, initflow.Workspace)
+	for _, want := range []string{"workspace-a", "proj-9999"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the skip does not name the installation whose database this is (%q): %q", want, detail)
+		}
+	}
+	if v := db.Value(projectpolicy.PathWorkspace(initProjectName)); v != nil {
+		t.Errorf("the run published a workspace record into a database this installation never adopted: %v", v)
 	}
 }
