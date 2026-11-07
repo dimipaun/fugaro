@@ -20,16 +20,16 @@ DON7 lands. His words are [spec.md](spec.md), verbatim, and they are the only te
 | --- | --- |
 | [spec.md](spec.md) | The owner's ask, verbatim, with a header naming him by role |
 | [reconciliation.md](reconciliation.md) | Findings **F1–F27** against the console and the CLI on this tree, read by path and symbol; the security analysis as an attacker would see it (§5); what the screens may not do (§6); the decisions **D1470–D1489**, each a table row with a recommendation, an alternative, its cost and an **empty owner's-answer cell** (§7); the number block and how it was read (§8); **UNVERIFIED** (§9) |
-| [implementation-plan.md](implementation-plan.md) | The CLI tasks **CM1–CM2**, the fence tasks **CM3–CM4** and the console tasks **CM5–CM12**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), the tasks in detail (§3), what is deliberately not in the plan (§4), the release slot (§5), the owner-run live check **Check 360** (§6) and the gates a task may not start without (§7). **Nothing in it is approved** |
+| [implementation-plan.md](implementation-plan.md) | The CLI tasks **CM1–CM2**, the fence tasks **CM3–CM4** and the console tasks **CM5–CM13**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), the tasks in detail (§3), what is deliberately not in the plan (§4), the release slot (§5), the owner-run live check **Check 360** (§6) and the gates a task may not start without (§7). **Nothing in it is approved** |
 
 ## What it is
 
 The console draws **five tabs** — Live, Graph, Spend, Project, Coordinator (`VIEWS`,
-`console/src/renderer/entry.ts:2462`) — and the Project tab is the project's own screen: **nine panels
-from four reads**, seven in `PROJECT_PANEL_KEYS` (`console/src/renderer/screens/projects.ts:166`) plus
-the models panel and the settings panel. Its sources are five command lines in `PROJECTS_SOURCE_LINES`
-(`projects.ts:107`): `budget show --json`, `accounts ls --json`, `secrets ls --json`, `models ls
---json` and `settings --json`.
+`console/src/renderer/entry.ts:2461`) — and the Project tab is the project's own screen: **nine panels
+from three reads**, seven in `PROJECT_PANEL_KEYS` (`console/src/renderer/screens/projects.ts:166`) plus
+the models panel and the settings panel, the second and third read's. Its sources are five command
+lines in `PROJECTS_SOURCE_LINES` (`projects.ts:108`): `budget show --json`, `accounts ls --json`,
+`secrets ls --json`, `models ls --json` and `settings --json`.
 
 The owner's ask is about a different set of facts — the ones a **managed project** has and an ordinary
 one does not: whether the project is managed and who admitted what, which accounts a run's stages use,
@@ -77,7 +77,7 @@ Three things this design settles that the ask does not:
   over `docs/` in `internal/cli`, so a folder may be documents alone, and `docs/image-env/` is the
   precedent this folder follows. The plan's tasks name their own pins.
 - It implements neither **DON7** (pull request **#1816**) nor any part of the credentials-service
-  work; it depends on DON7 and says so (D1486, plan CM8).
+  work; it depends on DON7 and says so (D1486, plan CM9).
 - It adds no dependency and proposes none.
 - It **invents no role**: "administrator" is not a role this design creates. Who may change a setting
   is the CLI's own permission outcome, and these screens are read-only for everyone.

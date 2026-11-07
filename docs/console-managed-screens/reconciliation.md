@@ -38,17 +38,19 @@ and a new IPC operation, and a write is not on the table** (F5, F6).
 
 ## 2. The console on this tree
 
-- **Five tabs, one of which is the project.** `VIEWS` (`console/src/renderer/entry.ts:2462`) is
+- **Five tabs, one of which is the project.** `VIEWS` (`console/src/renderer/entry.ts:2461`) is
   frozen and holds Live, Graph, Spend, Project and Coordinator. The Project tab carries
   `view: 'caps'`, which is what makes it hide its figures in a reduced console (F9).
-- **The Project tab is nine panels from four reads.** `PROJECT_PANEL_KEYS`
+- **The Project tab is nine panels from three reads.** `PROJECT_PANEL_KEYS`
   (`console/src/renderer/screens/projects.ts:166`) is the seven-panel model — `caps`, `kill`,
-  `repositories`, `accounts`, `secrets`, `policy`, `enrollment` — and the models panel and the
-  settings panel are the eighth and ninth, each a read of its own.
+  `repositories`, `accounts`, `secrets`, `policy`, `enrollment` — and its own comment says what the
+  other two panels are: the models panel is the eighth and a second read's, the settings panel the
+  ninth and a third read's. The three reads are the tab's own: `showBudget` (`entry.ts:5050`),
+  `listModels` (`entry.ts:5087`) and `readSettings` (`entry.ts:5115`).
 - **Every panel names its source, and where there is no source the panel says so.**
-  `PROJECTS_SOURCE_LINES` (`projects.ts:107`) is that table: `budget show --json`,
+  `PROJECTS_SOURCE_LINES` (`projects.ts:108`) is that table: `budget show --json`,
   `accounts ls --json`, `secrets ls --json`, `models ls --json`, `settings --json`.
-- **The policy panel is the one with no source.** `POLICY_SOURCE_LINE` (`projects.ts:120`) names the
+- **The policy panel is the one with no source.** `POLICY_SOURCE_LINE` (`projects.ts:122`) names the
   command the panel *would* read, and **no row of `CONSOLE_OPERATIONS` carries it**: the panel's
   `operation` is null and it draws the sentence saying it cannot read (F4).
 - **The surface and the fence.** `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`) is the whole
@@ -163,10 +165,10 @@ one as the other (D1483).
 
 | # | Finding | Class | Where it lands in the tree |
 | --- | --- | --- | --- |
-| **F1** | The console draws five tabs, and none of them is a managed screen | **Exists** | `VIEWS` (`console/src/renderer/entry.ts:2462`): Live, Graph, Spend, Project, Coordinator |
-| **F2** | The Project tab is the project's own screen: nine panels from four reads | **Exists** | `PROJECT_PANEL_KEYS` (`console/src/renderer/screens/projects.ts:166`) is the seven-panel model; the models panel and the settings panel are each a read of their own |
-| **F3** | Its sources are five command lines, and every panel must trace to one | **Exists** | `PROJECTS_SOURCE_LINES` (`projects.ts:107`); the design's review criterion for the screen is that every field traces to a rule 6 row |
-| **F4** | The policy panel has no operation, so the console cannot read the policy node at all | **Gap** | `POLICY_SOURCE_LINE` (`projects.ts:120`) names the command and no `CONSOLE_OPERATIONS` row carries it; the panel's `operation` is null and it says what it cannot read |
+| **F1** | The console draws five tabs, and none of them is a managed screen | **Exists** | `VIEWS` (`console/src/renderer/entry.ts:2461`): Live, Graph, Spend, Project, Coordinator |
+| **F2** | The Project tab is the project's own screen: nine panels from three reads | **Exists** | `PROJECT_PANEL_KEYS` (`console/src/renderer/screens/projects.ts:166`) is the seven-panel model, the first read's; the models panel and the settings panel are a second and a third read's (`showBudget`, `listModels`, `readSettings`, `entry.ts:5050`, `:5087`, `:5115`) |
+| **F3** | Its sources are five command lines, and every panel must trace to one | **Exists** | `PROJECTS_SOURCE_LINES` (`projects.ts:108`); the design's review criterion for the screen is that every field traces to a rule 6 row |
+| **F4** | The policy panel has no operation, so the console cannot read the policy node at all | **Gap** | `POLICY_SOURCE_LINE` (`projects.ts:122`) names the command and no `CONSOLE_OPERATIONS` row carries it; the panel's `operation` is null and it says what it cannot read. The fallback it would otherwise take is `PROJECTS_SOURCE_LINES[operation] ?? \`fugaro ${operation}\`` (`projects.ts:567`, `:587`), which for an operation named `policy.show` spells `fugaro policy.show` — an argv no CLI answers, which is why CM10 settles the row rather than letting the fallback draw one |
 | **F5** | The console's surface is a closed list and its spawn allow-list is exact argv | **Rule** | `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`), `argvFor` (`console/src/main/spawn.ts:1334`), rule 6's table (`docs/design/desktop-console.md` §5.1) |
 | **F6** | Exactly two operations write, and neither is this work's | **Rule** | `run.launch` (rule 11) and `settings.edit` (rule 12); `console/docs/json-contract.md` §9 states the rule and both exceptions |
 | **F7** | Every string from a document is drawn as text, through a class the wire key declares | **Rule** | `TEXT_CLASSES` (`console/src/shared/sanitize.ts:84`), `putText`; rule 7 forbids `innerHTML` |
@@ -201,7 +203,7 @@ untrusted (`SECURITY.md`).
 | --- | --- |
 | **Can a screen write a managed mark?** | No. There is no operation for it and no spawn row that reaches one: the marks are written by `fugaro managed flag\|unflag` (the owner at a terminal) and by `fugaro setup`/`update --managed`, and **none of those argv is on rule 6's table** (F5, F14). The screens add reads, and rule 6's never-table already refuses `project policy publish` and every writer (F6) |
 | **Can a button on these screens edit anything?** | Not if D1471 is answered as recommended: every control is a read, a refresh or an expand. The one row the ask names that `settings set` *could* write — `default_claude_account` — is drawn without a control (D1471) |
-| **Does an account name reach the renderer as a secret?** | No. An account is a name by construction (`internal/config/claude_accounts.go`, and `accounts ls --json` "has no access call, so it can't print a value"), the settings read omits a `sensitive` row's value entirely (F17), and no screen asks for a secret. **A name is still untrusted text** — it comes from a config file — so it is drawn through `putText` with its own class like every other document string (F7) |
+| **Does an account name reach the renderer as a secret?** | No. An account is a name by construction — `accounts ls`'s own help says the lookup "never calls Secret Manager, never reads or prints a token value, only names" (`internal/cli/accounts.go`), and the list is `config.AllowedClaudeAccounts` (`internal/config/claude_accounts.go`) — the settings read omits a `sensitive` row's value entirely (F17), and no screen asks for a secret. (`secrets ls` carries the same promise in its own words — `newSecretsLsCmd`, `internal/cli/secrets.go`: "it has no access call, so it can't print a value" — but that is the secrets read's sentence, not the accounts one.) **A name is still untrusted text** — it comes from a config file — so it is drawn through `putText` with its own class like every other document string (F7) |
 | **Does the policy node's text reach the renderer as markup?** | No. The node carries operator- and repository-authored strings — `allow_repos`, `clone_urls`, the stage names in `claude_account_stages`, the routing and catalog blocks — and every one of them is a string in a document, drawn through `putText` with the class its wire key declares, never through `innerHTML` and never into an `href` (F7, rule 7) |
 | **Can a hostile CLI make the screen render something it did not expect?** | At most text and numbers. The decoders are closed and strict, a member the decoder does not know is ignored rather than drawn, and a document the screen cannot decode is a refusal naming its own command rather than a partial draw (F8) |
 | **Does the audit record leak anything the operator did not mean to publish?** | It can: `AuditRecord.Argv` is the argv the write ran as (F12). That is why D1476 recommends a bounded subset — the time, the command, the verdict, the identity and the plan digest — and never `argv` |
@@ -300,14 +302,14 @@ register's highest written section" for the same reason this work takes 360: a f
 collide with a claim nobody has made. The register's own rule — that a claim above the highest written
 section is settled at its merge, and the later of two colliding claims renumbers itself — is unchanged
 by this folder, and **the register's row and section are written by the task that proves the screens
-work** — plan CM11, the hermetic end to end, which lists `docs/gcp-live-checklist.md` among its files
-for exactly this.
+work** — plan CM12, the fixture arms and the end to end, which lists `docs/gcp-live-checklist.md` among
+its files for exactly this.
 
 ## 9. UNVERIFIED
 
 - **The console 0.121.0 release file does not exist yet.** `docs/releases/console/` holds up to
   `v0.120.0.md`, and its own README's fruit table ends at `0.120.0` (Quince). The plan names what the
-  release task writes (CM12): the notes file, the next row of that table, and `console/package.json`'s
+  release task writes (CM13): the notes file, the next row of that table, and `console/package.json`'s
   version line, all three of which that README requires in the one commit that cuts the release. The
   title is the owner's word from the ask — "Raspberry", the next fruit after Quince.
 - **DON7's exact check ID and severity are read from its design, not from the tree** (F22): the

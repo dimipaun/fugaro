@@ -30,12 +30,15 @@ against `origin/main` at `56c91f66` as it stands.
   CM5         CM6          CM7         CM8          CM9          ← level 3, five independent sections
    │           │            │           │            │              (CM9 also waits on DON7, #1816)
    └───────────┴────────────┴───────────┴────────────┘
+          ┌────────────┴────────────┐
+        CM10  the sections join      CM11  the sections' styles  ← level 4, two writers of no one file
+              the Project tab
+          └────────────┬────────────┘
                        │
-                     CM10  the sections join the Project tab      ← level 4
+                     CM12  the fixture arms, the frames, the end ← level 5
+                           to end, and Check 360
                        │
-                     CM11  the fixture arms and the end to end     ← level 5
-                       │
-                     CM12  the release notes, console 0.121.0      ← level 6
+                     CM13  the release notes, console 0.121.0    ← level 6
 ```
 
 **Why CM1 and CM2 are level 0 and independent.** They share no file: CM1 writes the installation's own
@@ -62,12 +65,21 @@ there.
 none of them writes `projects.ts` or any other file a sibling writes. The tab's own file has **one
 writer per level**: CM10, alone at level 4.
 
-**Why CM11 is after CM10.** Its end-to-end spec drives the real tab, so it needs the sections wired in.
-Its fixture arms could land earlier, but a fixture arm no test reads is a file with no reviewer, and
-the fixture is one file for every read the sections spawn — one writer, one level (§2).
+**Why CM10 and CM11 are level 4 and both after the sections.** CM10 registers the sections and settles
+the **source line each panel draws**; CM11 writes the classes those panels are drawn with. They share
+no file, and neither waits for the other: the console renders unstyled markup without the stylesheet —
+that is what `docs/design/console-styling.md` §1.3 records about the golden frames — so a level that
+lands the wiring without the classes is a level of correct, plain markup rather than a broken screen.
+They are two tasks rather than one because the tab's own three tests and the policy panel's flip come
+with the wiring, which is six files already (§2).
 
-**Why CM12 is last.** The release notes name what shipped; `docs/releases/README.md` requires the
-notes in the same pull request as the change they describe, which is CM11's and CM10's.
+**Why CM12 is after CM10 and CM11.** Its end-to-end spec drives the real tab, so it needs the sections
+wired in and the panels drawn; and the fixture is one file for every read the sections spawn — one
+writer, one level (§2).
+
+**Why CM13 is last.** The release notes name what shipped, and `docs/releases/console/README.md`
+requires them, the next row of its own fruit table and `console/package.json`'s version line in the
+one commit that cuts the release.
 
 ## 2. Shared files
 
@@ -81,19 +93,21 @@ of one file** — that is the invariant the levels above exist to hold, and this
 | `docs/design/desktop-console.md` | CM3 (1) | §5.1 rule 6's table gains two rows and rule 5's operation count moves |
 | `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/preload/index.ts` | CM4 (2) | the two spawn rows and the two operations, with the preload's written-out method list |
 | `console/test/unit/spawn.test.ts`, `ipc.test.ts`, `preload-surface.test.ts` | CM4 (2) | the ordered words list, the operations snapshot, the method list |
-| `console/src/renderer/screens/projects.ts`, `console/src/renderer/entry.ts` | CM10 (4) | the five sections' wiring into the Project tab |
-| `console/test/unit/entry-wiring.test.ts`, `build-files.test.ts` | CM10 (4) | the wiring and the module list |
-| `docs/design/console-styling.md` | CM10 (4) | §2.5 gains the five sections' class hooks |
-| `console/test/fixtures/bin/fugaro` | CM11 (5) | an arm for each of the two reads CM4 added; the fixture already answers `settings --json` for the tab's own panels |
-| `docs/gcp-live-checklist.md` | CM11 (5) | Check 360's own section, and the register's row |
-| `docs/releases/console/v0.121.0.md`, `docs/releases/console/README.md`, `console/package.json` | CM12 (6) | the notes, the next fruit in that directory's own table, and the version line |
+| `console/src/renderer/screens/projects.ts`, `console/src/renderer/entry.ts` | CM10 (4) | the four new panels, the policy panel's flip, and the wiring |
+| `console/test/unit/projects.test.ts`, `entry-wiring.test.ts`, `build-files.test.ts`, `console/test/e2e/projects.spec.ts` | CM10 (4) | the source line the policy panel draws, the wiring, the panel list, and the frames |
+| `console/src/renderer/theme/screens.css`, `docs/design/console-styling.md` | CM11 (4) | the panels' class hooks and the document that names them (§2.5) |
+| `console/test/fixtures/bin/fugaro` | CM12 (5) | an arm for each of the two reads CM4 added; the fixture already answers `settings --json` for the account keys section and the tab's existing panels |
+| `docs/gcp-live-checklist.md` | CM12 (5) | Check 360's own section, and the register's row |
+| `docs/releases/console/v0.121.0.md`, `docs/releases/console/README.md`, `console/package.json` | CM13 (6) | the notes, the next fruit in that directory's own table, and the version line |
 
 **Files a task shares with work outside this design**, so a conflict there is a semantic one:
 `internal/cli/init.go`, `internal/cli/init_retire.go` (the update/init path, touched by every
-installation change), `internal/localcfg` (the installation's own state, beside
-`checkouts.go`), `internal/cli/project.go` (`consoleReadPaths`, beside the resolver every cloud
-command goes through), and `console/src/main/ipc.ts` and `spawn.ts` (the console's two largest
-reviewable artifacts, touched by every console feature).
+installation change), `internal/localcfg` (the installation's own state, beside `checkouts.go`),
+`internal/cli/project.go` (`consoleReadPaths`, beside the resolver every cloud command goes through),
+`console/src/main/ipc.ts` and `spawn.ts` (the console's two largest reviewable artifacts, touched by
+every console feature), and `console/test/unit/projects.test.ts` and
+`console/test/e2e/projects.spec.ts` — the Project tab's own two tests, which pin the source line each
+panel draws and the frames it draws them in, and which move with any panel anyone adds.
 
 ## 3. The tasks
 
@@ -222,7 +236,7 @@ reviewable artifacts, touched by every console feature).
   `stages.*.claude_account` with the stage each belongs to. A row the read marks `sensitive` is
   dropped whole; a key the read does not carry is drawn as unset, not as empty.
 - **Red step:** the test fails with the module absent; with the module present and the sensitive-row
-  guard removed, `TestAccountKeysDropASensitiveRow` fails.
+  guard removed, the guard's case fails.
 - **Tests:** `console/test/unit/accountkeys.test.ts` — both keys drawn with their values, the stage
   mapping, a sensitive row dropped, a missing key drawn as unset, and no control on any row.
 - **Mutation (run, restore):** draw the sensitive row with an empty value instead of dropping it; the
@@ -234,11 +248,13 @@ reviewable artifacts, touched by every console feature).
 
 - **Files:** `console/src/renderer/screens/policynotes.ts` (new),
   `console/test/unit/policynotes.test.ts` (new).
-- **Interface:** one section, two reads that already have rows — `policy.show` for the node (the
-  members the screen draws: the accounts, `allow_repos`, `base_branch`, the routing and the image
-  catalog) and `doctor --json` filtered to the six `policy-*` checks for what is wrong with it. The
-  section says which of the two a line came from, and it claims no diff: the last publish's change is
-  printed by `fugaro update` and recorded nowhere (D1482).
+- **Interface:** one section, two reads — `policy.show` for the node (the members the screen draws: the
+  accounts, `allow_repos`, `base_branch`, the routing and the image catalog) and the six `policy-*`
+  checks of `doctor --json` for what is wrong with it, the second through the `doctor --json` row rule
+  6 already carries. The section says which of the two a line came from, and it claims no diff: the
+  last publish's change is printed by `fugaro update` and recorded nowhere (D1482). **It is this
+  module, not this task, that CM10 wires into the policy panel** — the panel keeps saying it cannot
+  read until CM10 flips it.
 - **Red step:** the test fails with the module absent; with the module present and the check filter
   removed, `TestPolicyNotesDrawOnlyThePolicyChecks` fails on a `managed-audit` line.
 - **Tests:** `console/test/unit/policynotes.test.ts` — the node's members drawn, the six checks drawn
@@ -258,7 +274,7 @@ reviewable artifacts, touched by every console feature).
   causes and flags, the time, and the runs in flight, and it says **"nothing retired by the last
   update"** and **"no update recorded yet"** as two different sentences.
 - **Red step:** the test fails with the module absent; with the module present and the empty-record
-  case merged into the empty-set case, `TestRetirementsTellNoRecordFromNoRetirements` fails.
+  case merged into the empty-set case, the two-empty-states case fails.
 - **Tests:** `console/test/unit/retirements.test.ts` — the set drawn with its flags, the two empty
   states distinguished, a record older than the installation's CLI refused, and no Terraform plan
   anywhere in the section.
@@ -275,8 +291,8 @@ reviewable artifacts, touched by every console feature).
   drawn as the CLI wrote it (its severity, its problem and its fix) and **re-derived nowhere**. An
   installation whose CLI predates DON7 carries no such check, and the section says exactly that
   rather than drawing "off".
-- **Red step:** the test fails with the module absent; with the module present and the
-  missing-check case drawn as a state, `TestCredentialsServiceSaysWhenTheCheckIsAbsent` fails.
+- **Red step:** the test fails with the module absent; with the module present and the missing-check
+  case drawn as a state, the absent-check case fails.
 - **Tests:** `console/test/unit/credentialsservice.test.ts` — the five service states drawn as the CLI
   words them, the per-repository held-off rows, the absent-check sentence, and no credential-shaped
   read anywhere in the module.
@@ -286,32 +302,69 @@ reviewable artifacts, touched by every console feature).
   exist before that. **Reviewer tier:** standard. **Commit:** `console: the credentials service state,
   as a section`.
 
-### CM10. The sections join the Project tab (F2, F3, F8, F9, D1470, D1487, D1488). **size S**
+### CM10. The sections join the Project tab, and the policy panel stops saying it cannot read (F2, F3, F4, F8, F9, D1470, D1481, D1487, D1488). **size M**
 
-- **Files:** `console/src/renderer/screens/projects.ts` (the five sections registered as panels of the
-  tab, each with its own source line in `PROJECTS_SOURCE_LINES`, and the policy panel's `operation`
-  no longer null), `console/src/renderer/entry.ts` (the wiring), `console/test/unit/entry-wiring.test.ts`,
-  `console/test/unit/build-files.test.ts`, `docs/design/console-styling.md` (§2.5).
-- **Interface:** the tab's panels gain five, each with its own read, its own busy state and its own
-  refusal, started in parallel and painted on arrival — and **jobs are not in the first paint**, which
-  is the owner's rule of 2026-10-31. The tab's `view` stays `caps`, and the sections add no
-  `REDUCED_VIEWS` entry (D1487).
-- **Red step:** `entry-wiring.test.ts` fails while a module exists and the tab does not mount it.
-- **Tests:** `console/test/unit/entry-wiring.test.ts`, `console/test/unit/build-files.test.ts`,
-  `npm run typecheck`, and the golden frames are **not** re-recorded here (they are skipped in CI and
-  the coordinator re-records them on the owner's machine).
-- **Mutation (run, restore):** mount the sections inside the tab's first paint; the wiring test's
-  first-paint case fails.
+- **Files:** `console/src/renderer/screens/projects.ts`, `console/src/renderer/entry.ts`,
+  `console/test/unit/projects.test.ts`, `console/test/unit/entry-wiring.test.ts`,
+  `console/test/unit/build-files.test.ts`, `console/test/e2e/projects.spec.ts`.
+- **Interface:** the tab gains **four sibling panels** — the managed state, the account keys, the
+  retirements and the credentials service — drawn the way the models and settings panels already are
+  (`PROJECT_PANEL_KEYS` is untouched: it is the first read's seven, and a panel another read builds is
+  a sibling, not a member), each with its own read, its own busy state and its own refusal, started in
+  parallel and painted on arrival, and **jobs are not in the first paint**, which is the owner's rule
+  of 2026-10-31. **And the policy panel stops being a not-built one**: it gains `operation:
+  'policy.show'` and a **source line that is settled here, not left to the fallback** —
+  `PROJECTS_SOURCE_LINES` gains `'policy.show': 'fugaro project policy show --json'`, the exact argv
+  rule 6's new row allows (D1481), and `POLICY_SOURCE_LINE` and its `POLICY_BECAUSE` sentence are
+  retired with the not-built panel. Left to `source ?? PROJECTS_SOURCE_LINES[operation] ?? \`fugaro
+  ${operation}\`` (`projects.ts:567`, `:587`) the panel would draw **`fugaro policy.show`**, an argv no
+  CLI answers. The tab's `view` stays `caps`, and the sections add no `REDUCED_VIEWS` entry (D1487).
+- **The three tests this moves, and why they are this task's:** `projects.test.ts` asserts the source
+  each panel draws — `fugaro project show --json` for the policy panel today, which is the string the
+  flip changes — and `projects.spec.ts` asserts the frames: the panel list, the per-panel states (the
+  policy panel's `not-built` becomes `read`) and that every panel's source is non-empty. A task that
+  flipped the panel without them would commit a red tree, so they move here.
+- **Red step:** `entry-wiring.test.ts` fails while a module exists and the tab does not mount it, and
+  `projects.test.ts` fails while the policy panel's source is still the not-built sentence.
+- **Tests:** `console/test/unit/projects.test.ts`, `console/test/unit/entry-wiring.test.ts`,
+  `console/test/unit/build-files.test.ts`, `npm run typecheck`, and the golden frames are **not**
+  re-recorded here (they are skipped in CI and the coordinator re-records them on the owner's machine).
+- **Mutation (run, restore):** drop the `'policy.show'` row from `PROJECTS_SOURCE_LINES`; the panel
+  draws `fugaro policy.show` and `projects.test.ts` fails.
 - **Depends on:** CM5–CM9. **Reviewer tier:** standard. **Commit:** `console: the managed sections join
   the Project tab`.
 
-### CM11. The fixture arms and the hermetic end to end (F3). **size M**
+### CM11. The sections' styles, and the document that names them (F7, F8, D1488). **size S**
+
+- **Files:** `console/src/renderer/theme/screens.css` (the four new panels' class hooks and the policy
+  panel's read state), `docs/design/console-styling.md` (§2.5, the same classes).
+- **Interface:** the class names CM5–CM9's modules draw with, defined once — no module writes the
+  stylesheet, which is why this is one task and not five.
+- **The licence these two files are written under,** and why they are one commit: `console-styling.md`
+  §2 opens with the rule that a stylesheet rule **may only select a hook that section names**, and that
+  a hook a rule wants is "added **here first**, in the PR that wants it, so the test's list and the
+  stylesheet's selectors move together". `console/test/unit/theme-selectors.test.ts` is that test: it
+  reads §2 out of the document and refuses a selector the document does not license. It therefore
+  needs **no edit here** — a derived list is the point of it — and it is named because a task that
+  styled the panels without licensing them would leave it red.
+- **Red step:** the styling task's red step is the licence's own order, written the other way round:
+  add a selector to `screens.css` first and `theme-selectors.test.ts` fails naming the hook §2 does not
+  carry. (A class the stylesheet merely *lacks* renders as plain markup — the state
+  `console-styling.md` §1.3 records the golden frames in — and is not a failure.)
+- **Tests:** `npm run test:unit -- --maxWorkers=2` (including `theme-selectors.test.ts`), and
+  `npm run typecheck` for the modules' class constants.
+- **Mutation (run, restore):** remove a hook from `console-styling.md` §2.5 while `screens.css` selects
+  it; `theme-selectors.test.ts` fails.
+- **Depends on:** CM5–CM9 (the class names are theirs). **Reviewer tier:** standard. **Commit:**
+  `console: the managed sections' styles`.
+
+### CM12. The fixture arms, the frames, the end to end, and Check 360 (F3, D1489). **size M**
 
 - **Files:** `console/test/fixtures/bin/fugaro` (an arm for each of the two reads CM4 added — `managed
   status --json` and `project policy show --json` — each answering the argv CM4 allows and nothing
   else; the fixture already answers `settings --json` for the account keys section and the tab's
-  existing panels), `console/test/unit/fixture.test.ts`, `console/test/e2e/managed.spec.ts`
-  (new), `docs/gcp-live-checklist.md` (Check 360's section and the register's row, §6).
+  existing panels), `console/test/unit/fixture.test.ts`, `console/test/e2e/managed.spec.ts` (new),
+  `docs/gcp-live-checklist.md` (Check 360's section and the register's row, §6).
 - **Interface:** the fixture answers the two new argvs and refuses any argv it was not given — the
   property that makes the console's hermetic suite a fence rather than a stub.
 - **Red step:** the spec fails against a fixture with no arm for `managed status`, with the child
@@ -321,10 +374,10 @@ reviewable artifacts, touched by every console feature).
   check's own document is held by `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Mutation (run, restore):** make the fixture answer a read it was not asked for; `fixture.test.ts`
   fails.
-- **Depends on:** CM10. **Reviewer tier:** standard. **Commit:** `console: the managed sections'
+- **Depends on:** CM10, CM11. **Reviewer tier:** standard. **Commit:** `console: the managed sections'
   fixture arms, end to end, and Check 360`.
 
-### CM12. The release notes, console 0.121.0 (Raspberry) (D1489). **size S**
+### CM13. The release notes, console 0.121.0 (Raspberry) (D1489). **size S**
 
 - **Files:** three, and **`docs/releases/console/README.md` is the one that says so** — a console
   release is not an entry of the CLI's changelog, and the CLI's `docs/releases/README.md` (whose
@@ -346,7 +399,7 @@ reviewable artifacts, touched by every console feature).
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`, and `npm run check` in
   `website/` — `website/test/console.mjs` reads `docs/releases/console/v<version>.md` against
   `console/package.json`'s version, which is exactly the pair this task writes.
-- **Depends on:** CM10, CM11. **Reviewer tier:** standard. **Commit:** `docs: console 0.121.0,
+- **Depends on:** CM10, CM11, CM12. **Reviewer tier:** standard. **Commit:** `docs: console 0.121.0,
   Raspberry`.
 
 ## 4. What is deliberately not in this plan
@@ -370,7 +423,7 @@ reviewable artifacts, touched by every console feature).
 
 **Console 0.121.0 (Raspberry)**, the slot the owner named in the ask (D1489). The CLI half (CM1, CM2)
 ships in the CLI release that precedes it, because the screens read fields that release adds: a console
-that shipped first would draw five empty sections and would be a promise rather than a feature. CM12 is
+that shipped first would draw five empty sections and would be a promise rather than a feature. CM13 is
 the console's own notes; the CLI's notes for CM1 and CM2 belong to the CLI release that carries them
 and are that release's task, not this plan's.
 
@@ -379,8 +432,8 @@ and are that release's task, not this plan's.
 The live check this work claims ([reconciliation.md](reconciliation.md) §8). It is **owner-run**: no
 test in this repository may run it, because it needs an installation, a managed project and an
 account — the three things the hermetic suite exists to avoid. It is written here as the register
-expects, and the task that implements it writes the section in `docs/gcp-live-checklist.md` and the
-row in the register.
+expects, and the task that proves the screens work writes the section in `docs/gcp-live-checklist.md`
+and the register's row (CM12).
 
 **Check 360 — the managed screens show what the CLI says, on a managed project.**
 
@@ -405,13 +458,13 @@ task's named tests with `GOFLAGS=-p=2 go test ./internal/cli -run '<names>' -cou
 contract or a `--json` shape changed. **Never the whole `internal/cli` package** — it takes about
 twenty-five minutes.
 
-**Console tasks (CM4–CM11):** `npm run typecheck`; `npm run test:unit -- --maxWorkers=2`; `npm run
-test:e2e` for CM11. Goldens are **skipped in CI** and are re-recorded only by the coordinator on the
+**Console tasks (CM4–CM12):** `npm run typecheck`; `npm run test:unit -- --maxWorkers=2`; `npm run
+test:e2e` for CM12. Goldens are **skipped in CI** and are re-recorded only by the coordinator on the
 owner's machine — **no task here re-records one**.
 
-**Every task that touches `docs/design/desktop-console.md` or `console/docs/json-contract.md`** runs
-the `Docs` filter in the same commit, because the Go tests that pin both live there (F26, F27) and a
-document changed without them is a red test on `main`.
+**Every task that touches `docs/design/desktop-console.md`, `console/docs/json-contract.md` or
+`docs/gcp-live-checklist.md`** runs the `Docs` filter in the same commit, because the Go tests that pin
+them live there (F26, F27) and a document changed without them is a red test on `main`.
 
 **Security flag.** A task marked **SEC** carries `SECURITY-SENSITIVE: independent review mandatory` and
 may not merge without that review. CM2 is SEC on its own merits (it bounds a disclosure), and CM3 and
