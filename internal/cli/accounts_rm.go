@@ -170,7 +170,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// managed spec §4.2). The marker is read once and decides both what the walk
 	// answers about a checkout this machine read here (accountsRmRepos) and the
 	// gate's own call below.
-	marker := agentMarker(os.Getenv)
+	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	read := accountsRmRepos(cmd.Context(), &cloudEnv{lc: lc}, plan.name, marker != "")
 
 	// The managed gate, before anything is screened and written
@@ -180,7 +180,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// and refusing one whose are not — before the diff is shown, so a refusal
 	// leaves the file and the secret exactly as they were. Everywhere else it
 	// answers the zero Managed, which is every fence below unchanged.
-	m, gate, err := accountsRmGate(cmd.Context(), lc, plan, next, read)
+	m, gate, err := accountsRmGate(cmd.Context(), cmd, lc, plan, next, read)
 	if err != nil {
 		return err
 	}
@@ -640,8 +640,8 @@ func accountsRmSession(marker string, plan accountsRmPlan, command string) error
 //
 // doc is the file as this command would write it, and it is the same bytes the
 // rules were read from and the same bytes the caller applies.
-func accountsRmGate(ctx context.Context, lc *localcfg.Config, plan accountsRmPlan, doc []byte, read accountsRmReferrers) (initflow.Managed, managedGate, error) {
-	marker := agentMarker(os.Getenv)
+func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, plan accountsRmPlan, doc []byte, read accountsRmReferrers) (initflow.Managed, managedGate, error) {
+	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	if marker == "" {
 		return initflow.Managed{}, managedGate{}, nil
 	}

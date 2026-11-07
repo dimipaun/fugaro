@@ -1589,20 +1589,68 @@ func accountsRmPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 	t.Helper()
 	node := addPolicyNode()
 	node["base_branch"] = branch
-	r.db.Set(projectpolicy.PathShared(), node)
+	accountsRmPublishPolicyNode(t, r, node)
 }
 
 // accountsRmBreakPolicyBaseBranch publishes branch as the project's base branch
-// beside a key this Fugaro's reader refuses, so the node a launch's layer 3
-// comes from is one this machine cannot read at all: the base branch is then
+// in a node this Fugaro's reader refuses, so the node a launch's layer 3 comes
+// from is one this machine cannot read at all: the base branch is then
 // unresolved rather than the default, which is the value a verdict about a file
 // may not resolve (basebranch.go's projectBaseBranchErr).
+//
+// The version is the one that is refused and no stage of the same run repairs
+// in the other direction: a node of an OLDER version is the state the update's
+// own instrumentation stage tolerates (init.go's effectiveVerifiers answers a
+// node older than this binary with the config's own list, and the policy stage
+// migrates it in place afterwards), while a node with a key this Fugaro does
+// not know is refused there too — and then the run stops at the installation
+// with a sentence about verifier accounts, never reaching the referrer read
+// this fixture is about.
 func accountsRmBreakPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 	t.Helper()
 	node := addPolicyNode()
+	node["version"] = projectpolicy.Version - 1
 	node["base_branch"] = branch
-	node["a_key_this_fugaro_does_not_know"] = true
+	accountsRmPublishPolicyNode(t, r, node)
+}
+
+// accountsRmPublishPolicyNode puts node at config/policy/shared the way another
+// machine's publish would: the node, and the generation this machine's config
+// was written from recorded beside it (localcfg.PolicyGeneration, D854). A
+// fixture that writes the node alone leaves the config's record at the ETag of
+// the node the rig's own converge published, and the next converge reads that as
+// a policy that "moved past the generation this machine's config was written
+// from" and offers a re-seed of the file instead of finishing the run under
+// test.
+func accountsRmPublishPolicyNode(t *testing.T, r *addRig, node map[string]any) {
+	t.Helper()
 	r.db.Set(projectpolicy.PathShared(), node)
+	db, err := newBudgetClient(t.Context(), r.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	etag, found, _, err := readPolicyNode(t.Context(), db, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatalf("no policy node at %s", projectpolicy.PathShared())
+	}
+	text := readFileString(t, r.cfg)
+	line := "policy_generation: " + etag
+	if i := strings.Index(text, "policy_generation: "); i >= 0 {
+		end := i + strings.IndexByte(text[i:], '\n')
+		text = text[:i] + line + text[end:]
+	} else {
+		text += line + "\n"
+	}
+	if err := os.WriteFile(r.cfg, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // accountsRmForgetCheckouts removes this machine's record of the checkouts it
