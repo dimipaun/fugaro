@@ -108,6 +108,17 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.ImageCatalog != nil {
 		add("image_catalog", lc.ImageCatalogEffective(nil), p.ImageCatalog, false)
 	}
+	// The orchestrator block is compared by the publisher's own keep rule
+	// (D1239, D1234): a config that states a block that sets a key differs from
+	// a node carrying another — or none — so a guardrail-only edit reaches the
+	// node through `fugaro update` with no second command. The node's own block
+	// is handed to the rule here, where the catalog's line passes nil: a written
+	// block that sets no key is not a statement but the absent one
+	// (OrchestratorEffective, SetsNothing), so comparing against nil would
+	// report a difference a publish does not close.
+	if lc.Orchestrator != nil {
+		add("orchestrator", lc.OrchestratorEffective(p.Orchestrator), p.Orchestrator, false)
+	}
 	// The members a publish DERIVES from the local config are compared too, by
 	// their own derivation: the accounts block, which is the operator's
 	// claude_accounts.<name>.allow_data_to qualified with the provider of the
