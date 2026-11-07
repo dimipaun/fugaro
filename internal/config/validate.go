@@ -62,7 +62,7 @@ var (
 	ReservedEnvPrefixes = []string{
 		"FUGARO_", "ANTHROPIC_", "CLAUDE_CODE_", "GIT_", // Fugaro, Claude Code and git
 		"LD_", "DYLD_", "PYTHON", "BASH", "LC_", // the loader, Python and the shell
-		"DOCKER_", "BUILDKIT_", "CLOUDSDK_", "CLOUD_RUN_", "VERTEX_REGION_", // the build, gcloud and the job
+		"DOCKER_", "BUILDKIT_", "CLOUDSDK_", "CLOUD_RUN_", "BATCH_", "VERTEX_REGION_", // the build, gcloud, and the job's own variables on either compute backend
 		"GOOGLE_", "GCE_", "GRPC_", "STORAGE_EMULATOR_", // the Google clients: credentials, metadata server, gRPC, storage endpoint
 	}
 	ReservedEnvNames = []string{
