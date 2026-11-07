@@ -835,12 +835,15 @@ func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry,
 	if err != nil {
 		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
 	}
-	// The checkout kind is stated here and not inherited from catalog.Applies:
-	// a clone-shaped job — clone, and shared after it — carries no baked
-	// checkout for a prebuilt image to be missing, so a workflow of that kind
-	// that the predicate later admits to the catalog is not refused by this
-	// rule.
-	if w.Checkout == config.CheckoutBaked && !slices.Contains(builtSourceKinds, choice.Entry.Source.Kind) {
+	// Which jobs carry a baked checkout is asked as the pair's complement and
+	// not as equality with baked: clone and shared are the two kinds whose
+	// image holds no repository source — the same pair the clone shape's own
+	// writer asks below — and every other value, the empty one a config that
+	// never met the loader's defaults carries included, is a job the runner
+	// provisions as baked. Asking it as equality would leave that value
+	// unjudged here and deploy the job this rule exists to stop.
+	bakedCheckout := w.Checkout != config.CheckoutClone && w.Checkout != config.CheckoutShared
+	if bakedCheckout && !slices.Contains(builtSourceKinds, choice.Entry.Source.Kind) {
 		return config.Entry{}, nil, false, unbuiltOnBaked(name, choice.Entry)
 	}
 	var warnings []string
@@ -863,9 +866,13 @@ var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.Sourc
 // by the job (F14). It names the entry, what it is built from and the two ways
 // out, because that is the choice the person reading it is making: run a
 // clone-shaped job, which clones the repository at launch instead of carrying
-// it, or give the workflow an entry this installation can build.
+// it, or give the workflow an entry this installation can build. The clone half
+// says which keys it costs — a clone workflow may carry neither image_name: nor
+// needs: (internal/config's own refusal) — and the entry half says the workflow
+// has to be pointed at the entry, because a pin or the project's default would
+// keep choosing the one being refused.
 func unbuiltOnBaked(workflow string, e config.Entry) error {
-	return userErr("workflow %s: the catalog entry %s has source kind %s, which Fugaro builds no image from, so its image holds no checkout of this repository — and a checkout: %s job runs an image that holds one; use checkout: %s, or a catalog entry Fugaro builds (fugaro image add <name> --dockerfile <owner/name:path> --tags <tags>)",
+	return userErr("workflow %s: the catalog entry %s has source kind %s, which Fugaro builds no image from, so its image holds no checkout of this repository — and a checkout: %s job runs an image that holds one; use checkout: %s, which cannot carry image_name: or needs:, or point the workflow at a catalog entry Fugaro builds (fugaro image add <name> --dockerfile <owner/name:path> --tags <tags>)",
 		workflow, e.Name, e.Source.Kind, config.CheckoutBaked, config.CheckoutClone)
 }
 

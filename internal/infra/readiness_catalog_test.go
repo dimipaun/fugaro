@@ -140,9 +140,11 @@ const prebuiltRef = "us-east5-docker.pkg.dev/proj/fugaro-shared-images-0123/team
 // prebuiltCatalogBlock is a catalog whose one entry is the default, so the
 // webapp's workflows name nothing of their own and the entry is what their
 // jobs run. Its source is one this installation builds, because the two tests
-// below state the prebuilt reference on the spec themselves: the deploy path
-// refuses a prebuilt entry on a baked workflow (D1191), and readiness's branch
-// for one is still the branch a job is read by until that field is removed.
+// below do not build the state they read through Repo: readiness reads the mark
+// a spec's image carries when a prebuilt entry gave it one (CatalogPrebuilt),
+// and the deploy path now refuses a prebuilt entry on a baked workflow before
+// it gets that far (D1191), so prebuiltSpec states the mark on the spec itself
+// — the state a job deployed before that refusal reads as.
 const prebuiltCatalogBlock = `
 image_catalog:
   entries:
@@ -154,7 +156,11 @@ image_catalog:
 
 // prebuiltSpec is the webapp ready in every way but the entry's own image,
 // with the workflows' specs marked as running the prebuilt reference above:
-// the two fields workflowCatalogEntry and the image gate read.
+// the two fields workflowCatalogEntry and the image gate read. The mark is
+// stated on a spec the catalog gave its entry to — the guard below is
+// catalogSpec's, for the same reason: a workflow the catalog does not speak
+// for would be marked as one it does, and the tests below would pass while
+// covering a shape no repository has.
 func prebuiltSpec(t *testing.T) (*cloud, RepoSpec) {
 	t.Helper()
 	f := newCloud(t)
@@ -163,6 +169,9 @@ func prebuiltSpec(t *testing.T) (*cloud, RepoSpec) {
 		t.Fatal(err)
 	}
 	for name, ws := range spec.Workflows {
+		if !strings.Contains(ws.Image, "/"+catalogImagePrefix+"team:latest") {
+			t.Fatalf("workflow %s's image is %s, want the catalog entry's: the fixture must take the entry first", name, ws.Image)
+		}
 		ws.Image = prebuiltRef
 		ws.CatalogPrebuilt = true
 		spec.Workflows[name] = ws

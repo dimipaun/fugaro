@@ -3522,15 +3522,26 @@ func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
 // pin, the tag-cover rule and the project's default — because the refusal reads
 // the entry the selection chose and not the key the workflow wrote: an entry
 // the catalog gains after this refusal was written is refused by it too.
+//
+// The fourth states the checkout kind as the empty value, which is the reading
+// the refusal has to take: every workflow a config file produces carries
+// baked, clone or shared by the time it is validated (applyDefaults writes
+// baked for an empty one), so the empty value is what a config that never met
+// the loader's defaults carries — and it is a job the runner provisions as
+// baked, which is why a guard asking equality with baked would deploy the very
+// job this rule exists to stop.
 func TestBakedWorkflowRefusesAPrebuiltCatalogEntry(t *testing.T) {
-	for _, tt := range []struct{ name, workflow, entry string }{
-		{"a pinned entry", "pinned", "minimal"},
-		{"an entry the tags chose", "api", "minimal"},
-		{"the project's default", "bare", "standard"},
+	for _, tt := range []struct{ name, workflow, entry, checkout string }{
+		{"a pinned entry", "pinned", "minimal", config.CheckoutBaked},
+		{"an entry the tags chose", "api", "minimal", config.CheckoutBaked},
+		{"the project's default", "bare", "standard", config.CheckoutBaked},
+		{"a checkout the loader's defaults never filled in", "bare", "standard", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
-			in.Cfg.Workflows = map[string]config.Workflow{tt.workflow: in.Cfg.Workflows[tt.workflow]}
+			w := in.Cfg.Workflows[tt.workflow]
+			w.Checkout = tt.checkout
+			in.Cfg.Workflows = map[string]config.Workflow{tt.workflow: w}
 			_, err := Repo(in)
 			if err == nil {
 				t.Fatalf("the workflow %s runs the prebuilt entry %s and was accepted, so its job would deploy on an image that holds no checkout", tt.workflow, tt.entry)
@@ -3544,6 +3555,12 @@ func TestBakedWorkflowRefusesAPrebuiltCatalogEntry(t *testing.T) {
 				"the catalog entry " + tt.entry,
 				"source kind image",
 				"checkout: clone",
+				// The clone half has to name the keys it costs: a workflow the
+				// refusal sends to clone may be carrying image_name: or needs:,
+				// and checkout: clone refuses both, so a refusal that did not
+				// say so would send its reader to a config validate: refuses
+				// next.
+				"image_name: or needs:",
 				"a catalog entry Fugaro builds",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -3556,24 +3573,62 @@ func TestBakedWorkflowRefusesAPrebuiltCatalogEntry(t *testing.T) {
 
 // TestCloneWorkflowAcceptsAPrebuiltCatalogEntry is the control for the refusal
 // above, and the reason it is not "prebuilt entries are refused": what the
-// refusal is about is the baked checkout kind. A clone workflow's job runs the
-// installation's base image and the catalog does not speak for it at all
-// (catalog.Applies), so the entry the test above refuses is inert for the same
-// configuration here and the spec is built.
+// refusal is about is the baked checkout kind. The workflow is `bare` — one
+// that names no entry and needs nothing — because checkout: clone and a catalog
+// reference are refused together (internal/config), so a control built on the
+// pinned or tag-covering workflow the refusal above covers would be refused
+// before the catalog was asked. The check below holds that: the configuration
+// this control runs on is one a repository can write, and the same one with a
+// reference added is not. Its job runs the installation's base image and the
+// catalog does not speak for it at all (catalog.Applies), so the entry the test
+// above refuses is inert here and the spec is built.
 func TestCloneWorkflowAcceptsAPrebuiltCatalogEntry(t *testing.T) {
 	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
-	w := in.Cfg.Workflows["pinned"]
+	w := in.Cfg.Workflows["bare"]
 	w.Checkout = config.CheckoutClone
-	in.Cfg.Workflows = map[string]config.Workflow{"pinned": w}
+	in.Cfg.Workflows = map[string]config.Workflow{"bare": w}
+	if ps := config.Validate(in.Cfg); len(ps) > 0 {
+		t.Fatalf("the control's own configuration is refused before it reaches the catalog, so it proves nothing about a clone job: %v", ps)
+	}
+	refused := *in.Cfg
+	withRef := refused.Workflows["bare"]
+	withRef.Needs = []string{"jvm"}
+	refused.Workflows = map[string]config.Workflow{"bare": withRef}
+	if ps := config.Validate(&refused); len(ps) == 0 {
+		t.Fatal("checkout: clone alongside needs: is accepted, so the check above cannot tell a clone shape from one a repository cannot write")
+	}
 	rs, err := Repo(in)
 	if err != nil {
 		t.Fatalf("Repo = %v, want no error: the refusal is a baked workflow's (D1191)", err)
 	}
-	if got, want := rs.Workflows["pinned"].Image, in.LC.BaseImage(config.BaseKind); got != want {
+	if got, want := rs.Workflows["bare"].Image, in.LC.BaseImage(config.BaseKind); got != want {
 		t.Errorf("the clone workflow's image = %q, want the installation's base image %q", got, want)
 	}
-	if got := rs.Workflows["pinned"].CatalogEntry; got != "" {
+	if got := rs.Workflows["bare"].CatalogEntry; got != "" {
 		t.Errorf("the clone workflow runs catalog entry %q, want none: the catalog does not speak for a clone workflow", got)
+	}
+}
+
+// TestBuiltSourceKindsClassifyEveryCatalogSourceKind holds the fail-closed
+// half of D1191's rule to the kinds that exist: builtSourceKinds is what a
+// build writes rather than what it does not, which is only safe while every
+// kind the catalog offers is decided somewhere, so a kind added to
+// config.SourceKinds has to be classified here in the same change. Without
+// this, the new kind would be refused as prebuilt on every baked workflow —
+// a false refusal of a configuration the rest of the tree builds — until
+// somebody noticed.
+func TestBuiltSourceKindsClassifyEveryCatalogSourceKind(t *testing.T) {
+	for _, k := range config.SourceKinds {
+		kind := config.SourceKind(k)
+		built := slices.Contains(builtSourceKinds, kind)
+		if want := kind != config.SourceImage; built != want {
+			t.Errorf("builtSourceKinds holds %s = %v, want %v: a kind the catalog gains is classified as built or as prebuilt in the same change, or every baked workflow on an entry of that kind is refused (D1191)", k, built, want)
+		}
+	}
+	for _, kind := range builtSourceKinds {
+		if !slices.ContainsFunc(config.SourceKinds, func(k string) bool { return config.SourceKind(k) == kind }) {
+			t.Errorf("builtSourceKinds holds %q, which is no kind of config.SourceKinds: the list is read as a classification of the kinds the catalog has", kind)
+		}
 	}
 }
 
