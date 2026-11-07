@@ -47,9 +47,10 @@ func TestNoGCPCommand(t *testing.T) {
 // is dead code: no tree the CLI builds reaches it, and the refusal the design
 // leans on is a sentence nothing can print.
 //
-// Registering the name changes nothing else: the launch is refused exactly as
-// it is until the credentials service admits a review caller (reviewJobAdmitted,
-// E7's second half), which is CSR11's constant and not this registration's.
+// Registering the name changes nothing else: whether a launch is admitted at
+// all is reviewJobAdmitted's (E7's second half, true from 0.21.0) and not this
+// registration's, and an installation still has to enable the credentials
+// service for a launch to reach its job.
 func TestReviewIsRegisteredInTheCoreRoot(t *testing.T) {
 	root := NewRootCmd()
 	for _, c := range []struct {
