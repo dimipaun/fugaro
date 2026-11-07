@@ -1083,7 +1083,7 @@ func TestCascadeRefusedWithoutService(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("a cascade launch without a service: err = %v, want a refusal", err)
 	}
-	for _, want := range []string{"cascade", "credentials service", "--provision-credentials"} {
+	for _, want := range []string{"cascade", "credentials service", "--firebase-project"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

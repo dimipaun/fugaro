@@ -1,7 +1,8 @@
 # A closed failure class on every run record, and a failures report: implementation plan
 
 **Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); of them, FC1 is built on `main` and FC2–FC9 are not started.**
+(owner: "All tasks approved. Jobmax"); of them, FC1 and FC2 are built on `main` and FC3–FC9 are not
+started.**
 Nine tasks, **FC1–FC9** — the design's own FC1–FC8 (its §10, kept by name, by order and by edge — its
 **task** names, that is: one
 of the tests §10 names cannot be written as named, F35) plus **FC9**, which the plugin
@@ -23,9 +24,9 @@ reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the 
 
 **Every task here is approved, and what each one's gate named is settled.** The design stays a design
 and this stays a plan (§10 of the design and [README.md](README.md) say so); each task's gate is in
-§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **One of the
-nine is built** — FC1, which its own heading below says — and **FC2–FC9 are not started**: an approved
-task is still built on its own, in its own run, in the order §1 fixes.
+§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Two of the
+nine are built** — FC1 and FC2, which their own headings below say — and **FC3–FC9 are not started**:
+an approved task is still built on its own, in its own run, in the order §1 fixes.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -211,7 +212,7 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   unmatched reason reading `unclassified` — is the reader's, FC5's
   `TestLegacyUnmatchedReasonIsUnclassified` (F35). Also `TestHaltedRunCarriesItsHaltsClass` (a
   failure then a halt ends `halted` with the halt's class). And the **rewritten**
-  `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:303`): its
+  `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:329`): its
   `statements == 0` fatal is the state this task produces, so the pin turns from *a census of 36
   statements* into *no statement outside `recordend.go` writes a status*, and the design's §1 sentence
   it holds is rewritten in the same commit (F25).
@@ -634,12 +635,13 @@ sentence and nothing else moves. **If D1460 = no**, FC5's diagnose field and FC8
 fall away. **If FC2 slips**, FC1 ships alone — a field nothing writes, which is harmless and true —
 and FC3–FC9 start when it lands.
 
-**FC1's row is answered in full.** The plan was approved, **D1453** is answered as recommended
-(`internal/failure`), and FC1 is merged — so FC2's first gate (FC1 merged) is met as well. Every other
-row waits on its own run, in the order §1 fixes.
+**FC1's and FC2's rows are answered in full.** The plan was approved; **D1453** is answered as
+recommended (`internal/failure`) and **D1452** and **D1456** for FC2, and both tasks are merged, so
+FC3's and FC4's first gate (FC2 merged) is met as well. Every other row waits on its own run, in the
+order §1 fixes.
 
 **And the plan's own status:** a plan, **every task of it approved on 2026-11-07** (owner: "All
 tasks approved. Jobmax"); the dated answer this plan's decisions share is in
-[reconciliation.md](reconciliation.md) §6; **FC1 is built and FC2–FC9 are not started**, which FC1's
-heading above says. The design's §10 status records the same one fact and answers none of the
-design's own decisions, which are D1–D9 and O1–O6 of that document and not this folder's.
+[reconciliation.md](reconciliation.md) §6; **FC1 and FC2 are built and FC3–FC9 are not started**,
+which their own headings above say. The design's §10 status records the same fact and answers none of
+the design's own decisions, which are D1–D9 and O1–O6 of that document and not this folder's.

@@ -2,8 +2,10 @@
 // (design doc m11-setup-and-skills.md §3.1): an ordered list of stages, each
 // with a read-only check and plan, a confirmed apply and a verify; a loop
 // that applies the first stage that is not done, stops at the first stage
-// that needs the user or fails, and runs nothing after it; and the plan view
-// and the JSON result that report where the run stands.
+// that needs the user or fails, and runs nothing after it save where the row
+// the stage sits on names that stop (pastStops, RunsPastStop), a stage that
+// splits its own work on one being told which they are (PastStops); and the
+// plan view and the JSON result that report where the run stands.
 //
 // The package knows nothing about Google, Terraform or the CLI: the stages
 // that exist (and the fakes the tests use) plug in through Stage. It does not
@@ -11,12 +13,15 @@
 // Options.Program, never a verb of its own. What a stage must never be able to
 // do is enforced here, not in the stage: --yes does not reach a stage that
 // creates a project, links billing or takes a secret, no stage runs before
-// the ones ahead of it are done, and a run that cannot prompt never prompts.
+// the ones ahead of it are done or skipped unless its own row says it runs
+// past that stop (pastStops, RunsPastStop), and a run that cannot prompt
+// never prompts.
 package initflow
 
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -78,16 +83,6 @@ const (
 	// whole upgrade for a second command (the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade).
 	Rules = "rules"
-	// Credentials is the owner-run stage that applies the credentials service
-	// (docs/credentials-service, D146; C1.20). It is the only writer of the
-	// installation's credentials_service variable, it is always typed at a
-	// real terminal (--yes never covers it), and it comes BEFORE the
-	// repository stage: a repository root reads the installation's
-	// credentials_service output to decide whether its jobs mount a model
-	// credential at all, and it grants each job account run.invoker on the
-	// service — an apply that ran first would plan that grant against a
-	// resource that is not there yet.
-	Credentials = "credentials"
 	// Policy is the published policy node's migration in place
 	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade). It comes after the repository
@@ -139,11 +134,41 @@ type slot struct {
 	// billing linkage (own flags and typed confirmations) and a secret (a
 	// hidden prompt, never a flag).
 	noYes bool
+	// pastStops names the stages whose needs-you stop this stage still runs
+	// past (RunsPastStop): the stages that stopped with something only the
+	// user can give, and only over a subject this stage does not read at all.
+	// Nothing else is one of them — a failure left a state nothing is known
+	// about, a block a stage's own Check reported is not the user's to clear,
+	// and a stage that writes installation state is not one of them whatever
+	// the stop is about.
+	pastStops []string
+}
+
+// RunsPastStop reports whether the stage name still runs when the stage
+// stopped stopped with a step only the user can give (NeedsYou) and the loop
+// has nothing else to go on. It is the one place that answers it, and the
+// answer is a property of the stage: every row of order is empty but the
+// checkout's, whose pin and plugin read no repository state, because the
+// user's fix for a stopped stage can be weeks away and the door the run's
+// lines name is `fugaro update` (the owner's rule of 2026-10-30: one fugaro
+// update is the whole upgrade) — a door that must not be left unable to clear
+// the one line it is the remedy for (#1836). Which steps of a tolerant row may
+// not run past the stop is the row's own business, and the stage is told what
+// it is running past for it (PastStops).
+func RunsPastStop(name, stopped string) bool {
+	for _, s := range order {
+		if s.name == name {
+			return slices.Contains(s.pastStops, stopped)
+		}
+	}
+	return false
 }
 
 // Gating is linear: a stage runs only when every registered stage before it
-// is done or skipped. needs records why the order is what it is, and the
-// tests check it against the order; it does not gate anything itself.
+// is done or skipped, save for the tolerance pastStops states (RunsPastStop),
+// which is the stages whose needs-you stop this one still runs past. needs
+// records why the order is what it is, and the tests check it against the
+// order; it does not gate anything itself.
 //
 // order is the dependency order the dogfooding run discovered by hand:
 // installation, Firebase, images, the history job, secrets, repository.
@@ -157,11 +182,6 @@ var order = []slot{
 	{name: Installation2, needs: []string{Firebase, Images}},
 	{name: Secrets, needs: []string{Installation2}, noYes: true},
 	{name: Plugin, needs: []string{Preflight}},
-	// The credentials service is the owner's step (money, permanent, and the
-	// identity the repository jobs' model credentials move to), so --yes never
-	// covers it; it is applied before the repository roots, which read its
-	// output and grant each job's account an invoker on it.
-	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
 	// The rules generation is what the policy node is READ under, so it is
 	// deployed before the node that depends on it: the policy stage's write
@@ -189,7 +209,22 @@ var order = []slot{
 	// run after the repository stage: the images the cloud step refreshes are
 	// that repository's, and the onboarding the repository stage does is what
 	// the refresh builds for.
-	{name: Checkout, needs: []string{Repository, Layer}},
+	//
+	// pastStops: the one row that has it. Its two local steps — the pin in
+	// the checkout's settings and the plugin in the user's own Claude Code —
+	// read no repository fugaro.yaml, and the plugin is what clears the
+	// staleness line every command prints ("run fugaro update"): a repository
+	// stage that stopped needs-you over a file these steps never read may not
+	// take them with it, or the door that line names is the one door that
+	// cannot clear it and the user is left in a loop with no way out (#1836).
+	// The three stages before it publish the installation every run of the
+	// project is admitted by, which is why none of them is here: a run with a
+	// stage left for the user does not write that (accounts_add_converge_test.go
+	// is the door that says so). The cloud step does need the repository the
+	// stop is about — its job images are built from it — so it is dropped
+	// rather than run past that stop, and the loop tells the stage the stops
+	// it is running past for exactly that (PastStops).
+	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.
@@ -381,6 +416,24 @@ type SelfConfirming interface {
 // the cloud half of that stage keeps its refusal, in the step that makes it.
 type LocalUnderAgent interface{ LocalUnderAgent() }
 
+// PastStops is implemented by a stage whose own steps are not all alike about
+// the stop its row tolerates (pastStops, RunsPastStop): the loop hands it the
+// stops it is running past before it checks, plans and applies it. They are
+// the run's own stops and not a reading of the world — a stage that asked the
+// world instead would be answering with its own guess at a verdict the loop
+// already has, and would be wrong about it wherever the state moved after the
+// stopped stage answered (the run's own writes move it: the repository stage's
+// anchor edits the checkout's fugaro.yaml in the run that onboarded it).
+//
+// It exists for one stage: the checkout's inside fugaro update (internal/cli/
+// init_checkout_upgrade.go). Its pin and its plugin read no repository file and
+// run past a repository stop, which is what its row is for; its cloud step
+// builds the job images from the very repository that stop is about, so it is
+// dropped rather than run past it, and it is every needs-you stop of that stage
+// the cloud step is dropped for — the repository stage's are not all about its
+// file (#1836).
+type PastStops interface{ PastStops(stops []string) }
+
 // StageError is a failure that carries the one-line fix.
 type StageError struct {
 	Err error
@@ -532,6 +585,25 @@ func GateProceeded() string {
 // refuses to take.
 func GateOrdinary() string {
 	return "this project is managed, so this step takes no confirmation: the marks were read, the step is one the run announced, and what it changes is printed above (the owner's ruling of 2026-11-01)"
+}
+
+// OwnerProceeded is the sentence for the same reader as GateOrdinary — the
+// person whose prompt the step would have been — at the steps the gate has no
+// document for and no verdict about: a policy whose next generation loosens
+// what the project may spend, a project layer this run republishes, the local
+// config. Nothing about them is judged plan by plan, so this sentence claims
+// no verdict; what it says is the owner's ruling of 2026-11-06, that a person
+// at their own terminal on a managed project is not asked to type a
+// confirmation for a step that loses no data and takes no secret value, and
+// that the line above is the note of what changed.
+//
+// It follows GateOrdinary's own rule about what it may name — no flag, no
+// variable, no marker a reader could set — and it is a third sentence rather
+// than that one's words because the reader of this one is owed the difference:
+// GateOrdinary speaks for a step the run announced and the gate let through,
+// this one for a step no rule judged at all.
+func OwnerProceeded() string {
+	return "this project is managed and this is the owner's own terminal: the marks were read, what this step changes is printed above, and nothing is typed for it here (the owner's ruling of 2026-11-06)"
 }
 
 // AskRestored is the line a managed project's own terminal reads when --ask
@@ -839,10 +911,19 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 // It is ConfirmsByGate's condition half, named once so that a caller asking
 // the same question about a document the gate's verdict does not cover — the
 // policy node a managed project rewrites, whose loosening takes the Typed
-// class and is admitted by no plan gate — asks it the same way. The terminal
-// is the load-bearing half and the one a caller writing this out again would
-// drop: a pipe carries no marker, so a session nobody is at reads exactly like
-// the owner's own.
+// class and is admitted by no plan gate; the ordinary steps of the converge
+// the run's one confirmation covered, the owner's ruling of 2026-11-06 — asks
+// it the same way. A caller asks this beside its own read of the marks (the
+// gate's own read, never a second one) and prints OwnerProceeded's sentence;
+// it is not a verdict about any plan, and it admits nothing on its own.
+//
+// The terminal is the load-bearing half and the one a caller writing this out
+// again would drop: a pipe carries no marker, so a session nobody is at reads
+// exactly like the owner's own, and a coding agent's session is at a terminal
+// too. --yes is deliberately not part of it, in both directions: a managed
+// project must not need a flag the owner has to remember, and a run that
+// passed it reads the managed sentence rather than "confirmed by --yes" for a
+// step the project asks nothing about anyway.
 func PersonAtTheTerminal(c Conditions) bool {
 	return !c.Ask && c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
 }

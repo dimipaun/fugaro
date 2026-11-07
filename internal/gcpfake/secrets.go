@@ -105,6 +105,11 @@ type Secrets struct {
 	destroys    []string // the version names a destroy or a version delete took
 	disables    []string // the version names a versions/N:disable took, in order
 	versionList int      // the version lists served, successful or failed
+	// versionLists is the same count per secret ID: VersionsListCalls answers
+	// for the whole run, which cannot say whether ONE container was listed —
+	// a run lists the versions of many — and a test asking whether a secret
+	// was touched at all asks the other question.
+	versionLists map[string]int
 }
 
 type fakeSecret struct {
@@ -173,6 +178,18 @@ func (f *Secrets) VersionsListCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.versionList
+}
+
+// VersionsListedFor is VersionsListCalls for ONE secret, successful or failed.
+// It is the per-container answer, and the two are not interchangeable: a run
+// lists the versions of several secrets, so the run-wide count cannot say that
+// one of them was left alone. The list is the first call a store over a
+// container makes once it has the container itself, which is what a test
+// asserting that a secret was never opened reads.
+func (f *Secrets) VersionsListedFor(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.versionLists[id]
 }
 
 // DisableVersions marks every version of secret id DISABLED, as
@@ -465,9 +482,13 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], n, s.created, s.state(n)))
 	case r.Method == http.MethodGet && versionsPathRE.MatchString(p):
 		m := versionsPathRE.FindStringSubmatch(p)
-		// handle holds f.mu for the whole switch, so the counter is touched
+		// handle holds f.mu for the whole switch, so the counters are touched
 		// directly here.
 		f.versionList++
+		if f.versionLists == nil {
+			f.versionLists = map[string]int{}
+		}
+		f.versionLists[m[2]]++
 		if f.FailVersionsAfter > 0 && f.versionList > f.FailVersionsAfter {
 			// 403, not 5xx: the client retries a 500 on its own, so the
 			// caller would never see it.

@@ -74,6 +74,7 @@ The local config <tmp> changes:
   +         base_branch: master
   +         workflows:
   +             - app
+  +         credentials_service_ready: false
   -   acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
   - base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0}
 backed up the old local config to <tmp>
