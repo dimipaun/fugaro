@@ -82,5 +82,10 @@ whose `X.Y.Z` is not the version line's, and refuses to build without the notes 
 up to and including `0.112.0` stays under the MIT licence it was released under. So the notes of
 `0.113.0` say it in their summary line or first bullet, in a user's words: the release is the first
 under the new licence, production use needs a subscription, and the earlier releases stay MIT.
-The licence text is counsel's, and it names Subscription Terms that are not published yet: the release waits until the owner has published those terms or replaced that
-sentence, because until then a production user has no way to comply.
+The licence text is counsel's, and the first release under it waits for counsel's sign-off:
+console `0.113.0` and the mobile app's first release are the first of their streams
+under a business licence, and neither ships until counsel has signed off the three rulings the
+licence and its pricing rest on — the free evaluation seat (D432), a seat as anyone who launches
+jobs (D433) and the read-only state after the grace period (D436), which is S8.4's round. Both are
+**honour-based**: the release states what the licence requires and checks no key, and key
+enforcement arrives with the key service in a later release, not with `0.113.0`.
