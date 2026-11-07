@@ -239,9 +239,13 @@ func TestSpecMatchesM4JobSpec(t *testing.T) {
 	if ws.ServiceAccount.DisplayName != gcp.JobSADisplayName(ws.Slug, "web") || ws.ServiceAccount.DisplayName == str("service_account_display_name") {
 		t.Errorf("display name = %q; the new mark is JobSADisplayName, the M4 one only its legacy form", ws.ServiceAccount.DisplayName)
 	}
+	// The M4 fixture predates the image's origin stamp, which every workflow
+	// job now carries (empty when the catalog chose no image): compare the rest.
+	m4Env := maps.Clone(ws.Env)
+	delete(m4Env, ImageEntryEnv)
 	for name, c := range map[string]struct{ got, want map[string]string }{
-		"env":          {ws.Env, anyMap(golden["env"].(map[string]any))},
-		"env row":      {ws.Env, pairs(t, strings.TrimPrefix(rows["env"], "^;^"), ";", "")},
+		"env":          {m4Env, anyMap(golden["env"].(map[string]any))},
+		"env row":      {m4Env, pairs(t, strings.TrimPrefix(rows["env"], "^;^"), ";", "")},
 		"secrets":      {envSecretIDs(ws), anyMap(golden["secrets"].(map[string]any))},
 		"secrets row":  {envSecretIDs(ws), pairs(t, rows["secrets"], ",", ":latest")},
 		"secret-names": {ws.SecretIDs, pairs(t, rows["secret-names"], ";", "")},
@@ -671,6 +675,104 @@ func TestSpecCloneSetsRemoteEnv(t *testing.T) {
 	}
 	if _, ok := rs.Workflows["api"].Env[RemoteEnv]; ok {
 		t.Errorf("api (baked) carries %s = %q, want no such key", RemoteEnv, rs.Workflows["api"].Env[RemoteEnv])
+	}
+}
+
+// TestSpecStampsTheCatalogEntryOnTheJob: a job whose image the project's
+// image_catalog chose carries the entry's own name in FUGARO_IMAGE_ENTRY
+// (runner.ImageEntryEnv), which is the one fact that tells a run its image is
+// an operator's and not a repository's (docs/image-env, reconciliation F5/F6,
+// D1371). It is written for a built entry and a prebuilt one alike:
+// CatalogImageEntry reads the entry back out of a prebuilt reference, so both
+// are the catalog's and both stamp. The value is a name — the text
+// config.ValidateCatalog checked — and never the reference the job's Image
+// holds, which is what a report prints and a reader recognises.
+//
+// Mutation (run, restore): write ws.Image in place of entry.Name in
+// workflow() — this test then fails on a reference where the entry's name is
+// wanted.
+func TestSpecStampsTheCatalogEntryOnTheJob(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		spec  func(t *testing.T) RepoSpec
+		entry string
+	}{
+		{"built", func(t *testing.T) RepoSpec {
+			_, spec := catalogSpec(t)
+			return spec
+		}, "base"},
+		{"prebuilt", func(t *testing.T) RepoSpec {
+			spec, err := Repo(budgetInputs(t, prebuiltCatalogBlock))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return spec
+		}, "team"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			spec := c.spec(t)
+			if len(spec.Workflows) == 0 {
+				t.Fatal("fixture bug: no workflows")
+			}
+			for name, ws := range spec.Workflows {
+				if ws.CatalogEntry != c.entry {
+					t.Fatalf("fixture bug: workflow %s runs entry %q, want %q", name, ws.CatalogEntry, c.entry)
+				}
+				if got := ws.Env[ImageEntryEnv]; got != c.entry {
+					t.Errorf("workflow %s: %s = %q, want the entry's own name %q", name, ImageEntryEnv, got, c.entry)
+				}
+			}
+		})
+	}
+}
+
+// TestSpecStampsNoEntryOnAJobWithNoCatalogEntry: a job whose image the catalog
+// did not choose carries no stamp at all — the key is absent, not empty — so a
+// run on it passes none of its image's own variables. That is D1371's
+// fail-closed direction, and it is what makes the scope D1370 rules
+// enforceable: a repository-authored Dockerfile is repository text, and the
+// repository's own image is the one a run must not take its variables from.
+//
+// Mutation (run, restore): write the key outside the `entry.Name != ""` guard
+// in workflow() — this test then fails: every job carries it, empty where the
+// catalog chose nothing, and an empty stamp is a job a run would treat as
+// stamped.
+func TestSpecStampsNoEntryOnAJobWithNoCatalogEntry(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		spec func(t *testing.T) RepoSpec
+	}{
+		{"a repository-built job", func(t *testing.T) RepoSpec {
+			spec, err := Repo(webappInputs(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return spec
+		}},
+		{"a checkout: clone job", func(t *testing.T) RepoSpec {
+			spec, err := Repo(cloneInputs(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return spec
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			spec := c.spec(t)
+			if len(spec.Workflows) == 0 {
+				t.Fatal("fixture bug: no workflows")
+			}
+			for name, ws := range spec.Workflows {
+				if ws.CatalogEntry != "" {
+					t.Fatalf("fixture bug: workflow %s runs entry %q, want none", name, ws.CatalogEntry)
+				}
+				// Present and empty: a key the job sets overrides an
+				// image's own ENV of the same name, an absent one does not.
+				if got, ok := ws.Env[ImageEntryEnv]; !ok || got != "" {
+					t.Errorf("workflow %s carries %s = %q (set: %v), want the key present and empty", name, ImageEntryEnv, got, ok)
+				}
+			}
+		})
 	}
 }
 
