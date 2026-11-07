@@ -1,7 +1,8 @@
 # The hosted MCP server: implementation plan
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The design is [spec.md](spec.md), the findings and the fifteen decisions are
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
+merged on `main`; the rest is not started; this folder approves no task.** The design is
+[spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
 plan is written to those answers: the "Answered" column below is what the tasks build, and the last
@@ -14,8 +15,8 @@ hold `roles/firebasedatabase.admin`, so the rules cannot keep them out. They mov
 IAM names only the front door's own account (`mcp_server`), and §1's last subsection records the
 answer, M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidates for that store —
 **and the answer of the same day that picked the bucket**, which closes the Open item that section
-carried: **nothing waits on it any more, and no task names a store it is not written to.** **No task
-here is approved, and two things gate the whole plan:** the
+carried: **nothing waits on it any more, and no task names a store it is not written to.** **This plan
+approves no task, and two things gate the whole plan:** the
 independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
 **unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7).
 
@@ -73,13 +74,102 @@ M2's `Store` interface, which never named a store. Nothing else about the design
 hashes only, shown once at mint — stands, D930's rotation and one-delete revocation stand, and D933's
 operator read of the audit record stands, because it is served by a tool and never by a node.
 
-**spec.md is not edited, and this plan wins where the two disagree.** [spec.md](spec.md) §6 and §8
-still say the records live in the `mcpauth` subtree of the project's database: that file carries the
-owner's spec and the answers of 2026-11-04, and this round amends the plan rather than rewriting the
-spec. Where the two part — the store the records are at rest in, and whether the closed node is the
-barrier or the second barrier — **this document is the one the tasks build**, and the difference is
-recorded in [reconciliation.md](reconciliation.md) §3 (F32) and §4 (the answer) so that a reader of
-either file cannot meet it on their own.
+**The store answer is carried here and in [reconciliation.md](reconciliation.md) §4, and this plan
+wins where the two files part.** [spec.md](spec.md) §6 and §8 carry the answers of 2026-11-04 with
+the amendment of the same day written **beside** them as dated notes rather than over them, so the
+paragraphs a reader meets first still say the records live in the `mcpauth` subtree of the project's
+database, and the note under each is where they leave it. Where the two part — the store the records
+are at rest in, and whether the closed node is the barrier or the second barrier — **this document
+is the one the tasks build**, and the difference is recorded in
+[reconciliation.md](reconciliation.md) §3 (F32) and §4 (the answer) so that a reader of either file
+cannot meet it on their own.
+
+### The amendment of 2026-11-04, decision by decision
+
+**Every answer above stands; the note below is what the review moved beside it, and the note is
+dated because the answer is not.** The full note for each decision, with the code it cites, is
+[reconciliation.md](reconciliation.md) §4a beside that decision; what follows is which task carries
+it:
+
+- **D920 — M-e.** A public service is public **per route, not per feature**: every tool maps to a
+  scope and an unmapped tool is refused (M7), `max-instances` and a request-body cap are set (M4),
+  and an unauthenticated refusal is logged and **never written to the database** (M7).
+- **D921 — M-c.** The library's defaults contradict the design (PKCE optional, an empty challenge
+  method meaning `plain`, unknown scopes silently dropped, extra grants, a signing key with no home,
+  discovery at `openid-configuration` rather than RFC 8414's path). M5 refuses a missing or
+  non-`S256` challenge and an unknown scope **before the library sees them**, allows only the code
+  and refresh grants, keeps its signing material in Secret Manager or uses opaque tokens, and serves
+  both metadata paths from one table. **The licence is still UNCONFIRMED** — nothing in that review
+  could settle it — so **the owner or counsel confirms it, and counsel's clearance of the transitive
+  dependencies** is part of that, with **the M5 gate file the owner is to create**.
+- **D922 — H3.** Keyed hashes and MACs, no database admin on the public service, and the records
+  outside the main database (**D935**, the store of §8). M2, M3 and M4 carry it.
+- **D923 — H1 and M-a.** **H1 is the one amendment that is not the recommendation**: a device token
+  is a custom token any launcher can mint, so the approval proves nothing against a launcher, and the
+  owner **accepted and documented** the residual risk instead of closing it — **it is in
+  [spec.md](spec.md) §3 and §8 and it is built by no task here**. M-a's hardening is built: M5 and M6
+  require QR proximity or number matching, show the client marked unverified and the redirect host,
+  approve by a **single-use POST**, and never put an ID token in a GET URL.
+- **D924 — M-b.** The family spend limit is enforced across concurrent runs by reserving
+  `min(job cap, remaining)` **atomically against the family counter** at spawn and settling at
+  finalize; for `client_credentials` the family is the client. The store half is M2's, the call site
+  is M9's — **and M9 is deferred, so until it lands nothing calls it**.
+- **D929 — M-f.** An unattended client is not a `user:` entry, so D933 refuses it, and **no task owned
+  pre-registration**: `client_credentials` stays **off until it has an owner**, and pre-registration
+  is **refused inside a coding agent's session**. M5 and M7 carry the refusal; **neither builds the
+  grant**.
+- **D930 — M-d.** Rotation is a check-then-write race: M2 conditions it on **the generation of the
+  same read** — the generation-matched replace `internal/blobx` gives the bucket D935 moved the
+  records to (`internal/blobx/blobx.go:1`) — with a small grace window, and a replay outside the
+  window still revokes the family.
+- **D931 — H2 — see D936.** The original answer is the **shape `spawn_task` must take when it is
+  built**; the finding is that it must not be built in the first slice.
+- **D932 — M-g.** A recorded transcript can hold a credential the agent printed, so the read tools
+  serve the progress record **redacted through `internal/safetext`** (M8).
+- **D933 — M-f.** The lists are read from **a source only an operator can write** — the
+  installation's own published state, not one machine's local config (M7).
+- **D934 — M-e.** **"Off" is the absence of the `allUsers` binding**, and the installer's own cover
+  rule refuses `allUsers`, so M4's stage asks its **own typed confirmation** and **M4 must not widen
+  `tf.Cover`**.
+- **D925, D926, D927 and D928** were not touched by the review.
+
+**What the amendment does to the tasks that were already running.** **M1 and M3 may continue** — M3
+is unchanged, and **M1's spend-type finding is M9's to close**, which is where the review of
+2026-11-05 found the same defect from the other end
+(`ee/coordinator/mcpauth/limits.go:298`) — and **M4 and M6 were cancelled** and were to be rerun from
+this amended plan, because M4's draft predates the D934 and M-e answers and M6's predates M-a and H1.
+**Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first
+half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
+public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
+`:527`) — **and M4's store half, M5 and M7–M10 are not started**. **What each built task still owes is
+named in its own section below**
+([reconciliation.md](reconciliation.md) §4a, "What has happened since").
+
+### The decision the amendment added
+
+It was taken on 2026-11-04, out of this folder's block: **D936**, whose full question-and-answer
+shape is [reconciliation.md](reconciliation.md) §4b. **The other decision-shaped finding, H3, is
+D935** — the answer of 2026-11-05 recorded in §1 above — and the store it names is the one M2 and M4
+build.
+
+| D | The question | The answer | What it moves here |
+| --- | --- | --- | --- |
+| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**; `spawn_task` (and `cancel_task`, whose marker is an object in the runs bucket — the second privilege the coordinator does not hold) is its own **later design item** | **M9 leaves the first slice**, and the M10 rows that depend on it leave with it; §2's order, §4's table and §5's slot are re-cut |
+| **D935** | Where do the token records live, now that IAM bypasses the rules? | **Outside the main database** — the store §1's answer of 2026-11-05 picked: the bucket `fugaro-mcpauth-<gcp-project>`, whose only member is the front door's own account `mcp_server`, with the `mcpauth` node a **tripwire** in the rules and **no database admin** on the public service | **M2** builds the store, **M3**'s node becomes a tripwire, and **M4** creates the bucket and its one grant |
+
+**Why `spawn_task` is deferred, in one paragraph.** It needs **three privileges, not one**:
+`signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not
+hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override
+**container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an
+override can run **any command beside the job's mounted git and model credentials**. That contradicts
+the answer's own "the coordinator mints nothing" (D923) and M6's
+`TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing
+`spawn_task` at all. **What a later `spawn_task` design item has to answer** is written in
+[reconciliation.md](reconciliation.md) §4b and in §7 below; the four requirements are: no
+`runWithOverrides` (use `run.jobs.run` with per-run input under a bucket prefix only the coordinator
+writes); run-token minting moved out of the public service; an argument allowlist (no
+`--no-budget-check` at `internal/cli/run.go:325`, no `--token` at `internal/cli/run.go:313`, no
+free-form `--run-id`); and `mode = max(requested, the token's minimum)` always.
 
 ## 2. The edges, the levels and the critical path
 
@@ -134,6 +224,32 @@ path, which is why it takes the third slot rather than the second. **M4 → M5 �
 writers of the service's own entry point (`ee/coordinator/service.go`). **M9** waits for a release
 window in which `internal/runner/spend.go` has no other writer (§4), which no level can schedule.
 
+**The two slices, drawn (D936).**
+
+```
+first slice:
+
+M1 ──▶ M2 ──▶ M5 ──▶ M7 ──▶ M8
+        │      ▲      │
+M3 ─────┘      │      └──▶ M10 (the read half)
+               │
+M4 ────────────┘        (M4 and M6 are the two that need a live installation)
+M6 ────────────┘
+
+deferred slice:
+
+M7 ──▶ M9 ──▶ M10 (its spawn half)
+```
+
+**The deferred slice is one task plus one half-task, and it is cut on purpose.** **M9 leaves the
+first slice**, and with it the parts of M10 that name a spawned or cancelled run; nothing in the
+first slice starts a run, holds the launch grant or changes `internal/runner`. That is D936's whole
+point: the first slice **answers strangers and reads** — the authorization server, the tool registry
+and the four read tools — and the sentence "the coordinator mints nothing" stays true while it does.
+**Of §2's levels, L5 is the deferred slice's and L6 loses its spawn half; every other row and every
+other edge above stands as written.**
+
+
 ## 3. The tasks
 
 Every task is written to be mergeable on its own. **SEC** marks a task whose diff an independent
@@ -150,6 +266,16 @@ privileges this design asks for (M9's launch grant, and M4's single binding on t
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
 D921 back to its alternatives before any code exists rather than after.
 
+**That review has run, on 2026-11-04, and the gate from here on is per task**: its findings and the
+owner's answers to them are [reconciliation.md](reconciliation.md) §4a, every document in this folder
+is written to them, and **a task starts only when the finding that names it is answered in the task
+it builds** — which is what §3 says of each task below. Its scope was §8, every SEC-marked task (the
+five whose marker says **mandatory** are **M3, M4, M5, M7 and M9**, **with M9 keeping the marker in
+the deferred slice**), and the two new privileges the design asks for. **D921's licence** is the half
+of the second gate that no review could settle: it is **UNCONFIRMED**, so what stands is **the owner
+or counsel confirming it — counsel's clearance of the transitive dependencies included — before any
+build**, with **the M5 gate file the owner is to create** ([reconciliation.md](reconciliation.md) §6,
+check 1).
 **A third gate stood in front of M2 and M4, and it has been answered rather than left standing.**
 D935 moved the records out of the project's database and left **which** separate store to the owner
 (§8), so M2's backend file and M4's Terraform were both written against an answer nobody had given
@@ -177,6 +303,14 @@ Terraform file rather than any interface any other task builds against.
 - **SEC:** no grant changes; reviewed with the threat model because it is the rule the whole folder
   rests on.
 - **Depends on:** nothing.
+- **The amendment's low finding, and where its fix lands (2026-11-04).** The field the review found
+  is `SpendUSD float64`, which cannot tell an unset limit from a limit of zero — and the review of
+  2026-11-05 found the same defect from the other end, where `tighterSpend`
+  (`ee/coordinator/mcpauth/limits.go:298`) treats `+Inf` as a value. **Refusing that ceiling is
+  M9's** ([reconciliation.md](reconciliation.md) §4a, "the low findings"), and the **optional
+  integer in micros** the finding asked for is that fix's own decision rather than a second one. An
+  unknown rigor-mode string is **refused** rather than read as the loosest mode. **Nothing above
+  changes, and this task may continue.**
 
 ### M2 — Minting and the store: hashes only, in a store of their own (D935)
 
@@ -220,6 +354,11 @@ Terraform file rather than any interface any other task builds against.
   worth anything if the store is the store and not the database under another name.
 - **Depends on:** M1. **Nothing else** — §8's open item was answered on 2026-11-05 (the bucket), and
   this task is written to that answer rather than waiting on it.
+- **The amendment's marks, which this task carries too (2026-11-04, H3).** Beyond "hashes only":
+  **the hash is keyed** — an HMAC under a **pepper held in Secret Manager**, which is not in the
+  store — and **every record's identity, its limits and its revocation state are MAC'd**, so a reader
+  who is not the store's one member learns nothing and a record written by anybody else is **refused
+  rather than honoured**. `TestAKeyedRecordTheStoreDidNotWriteIsRefused` is that row.
 
 ### M3 — The rules name the token records' old home, and keep it closed (D935)
 
@@ -302,8 +441,27 @@ Terraform file rather than any interface any other task builds against.
   other.
 - **Do not touch:** `internal/budget/rules/rules.go` is shared with every other rules work; the
   change is one constant and one template key, and a conflict there is a rebase, not a redesign.
+- **The amendment's finding, and what this task does with it (2026-11-04, H3).** **Its finding was
+  H3** — a closed rule is not a closed node, because `roles/firebasedatabase.viewer`
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`) is an IAM read every launcher and operator
+  holds and `roles/firebasedatabase.admin` (`:53-58`, `:81-84`) is a write several accounts hold —
+  and the answer is D935's (the records leave) with the marks D922's amendment adds. **Nothing in
+  this task's diff changes because of it**: the node, the constant and the red step stay as written,
+  and the comment above the node must say it holds nothing. **May continue**, unchanged.
 
 ### M4 — The coordinator's public service, its own account, its grants and the store (D935)
+**Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates the D934 and
+M-e answers — the meaning of "off" and the collision with the installer's own cover rule — and the
+store D935 moves the records into, which this task creates as a bucket of its own. **Its first half
+landed as #1716** — the account, the front door service and its public invoker binding
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — and **its store
+half, `mcpauth_store.tf` with the bucket and its one grant, is not started.**
+
+- **The amendment's findings (2026-11-04). The review's findings were H3, M-e and D934's cover
+  collision; all three are answered above**: the account holds no `firebasedatabase.admin` over
+  anything (H3), **"off" is the absence of the `allUsers` binding** and the stage that adds it asks
+  its **own typed confirmation** (`internal/infra/tf/cover.go:911`), and **M4 must not widen
+  `tf.Cover`** to make its own plan covered (`:913` refuses `allUsers`).
 
 - **Files (8):** `deploy/terraform/gcp/modules/installation/coordinator.tf`,
   `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` (new: the store and its one grant),
@@ -526,8 +684,37 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
 - **Depends on:** M2, M4, D921, D928 — **and on D921's licence being confirmed**, by the owner or by
   counsel, before the dependency is added ([reconciliation.md](reconciliation.md) §6, check 1). This
   is the one task the licence gates directly.
+- **The amendment's findings, and what this task carries (2026-11-04).** **M-a, M-c, M-f and the
+  unverified client name**, all answered here: **a missing challenge, a challenge that is not `S256`
+  and an unknown scope are refused before the library sees them**; only the code and refresh grants
+  are allowed; the signing material lives in **Secret Manager** or the tokens are **opaque**; both
+  metadata paths are served from **one table**; the approval is a **single-use POST** on a named
+  endpoint with **no ID token in a GET URL**, showing the client **marked unverified** and the
+  redirect host, and requiring **QR proximity or number matching**; and **pre-registration is refused
+  inside a coding agent's session** with **`client_credentials` off** — this task builds the refusal
+  and **not** the grant. Its tests carry the rows for each of those.
+- **What the review settles about the library, and what it does not.** The review found the library's
+  defaults are the opposite of this design's rules in five named ways, and that half is settled by
+  the constraints above; **the licence is not, and stays UNCONFIRMED** (the paragraph in §3 above).
 
 ### M6 — Firebase at the authorize endpoint
+**Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates M-a and H1,
+and both change what this task must say and where its verifier is called from. **What merged as
+#1714 is that draft**: the verifier is in the tree and the token endpoint refuses an ID token, while
+**M-a's change is still to be built** — the approve step's single-use POST and
+`TestAnIDTokenInAQueryStringIsRefused` — because nothing calls the verifier from an approve step yet
+and M5, which defines that step, is not started.
+
+- **M-a and H1 (2026-11-04).** The verifier is called from **the approve step** — a **single-use
+  POST** that carries the ID token in its body and never in a URL — and
+  `TestAnIDTokenInAQueryStringIsRefused` is that row. **H1 is documented here and built nowhere**: a
+  device token is a custom token **any launcher can mint**, the review's recommendation was a
+  device-held signing key, and the owner **accepted and documented the residual risk instead**. So
+  this verifier does **not** require a live device node, does **not** refuse `r~`/`p~` tokens and does
+  **not** give a paired device a viewer role; the risk, its three consequences and the change that
+  would close it are [spec.md](spec.md) §3 and §8 and
+  [reconciliation.md](reconciliation.md) §4a, and **no task in this plan may quietly build a piece of
+  it**.
 
 - **Files (4):** `ee/coordinator/mcpauth/firebase.go`, `firebase_test.go`,
   `ee/coordinator/mcpauth/firebase_keys.go`, `ee/coordinator/testdata/mcpauth/jwks.json`.
@@ -589,6 +776,14 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   IAM policy, and no hermetic test can stand in for the reading `tokensigners.go` performs live.
 - **SEC:** **yes, mandatory.**
 - **Depends on:** M2, M5, D933.
+- **The amendment's findings, and what this task carries (2026-11-04).** **M-e and M-f**: **every tool
+  maps to a scope and a tool with no mapping is refused** — the coordinator's own `report_intent` and
+  `record_override` are what makes that concrete — and D933's lists are read from **a source only an
+  operator can write** (the installation's own published state), never from one machine's local
+  config (`internal/cli/user.go:32-34`), with **an unauthenticated refusal logged and never written
+  to the database**. Its tests carry `TestAToolWithNoScopeIsRefused`,
+  `TestTheListsComeFromTheInstallationsOwnState` and
+  `TestAnUnauthenticatedRefusalIsNotWrittenToTheDatabase`.
 
 ### M8 — The read tools
 
@@ -603,8 +798,20 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   `TestLogsComeFromTheRunsOwnArtefacts`, `TestResultNeverQuotesAToken`.
 - **SEC:** yes — read reach.
 - **Depends on:** M7.
+- **The amendment's finding (2026-11-04, M-g).** The artefacts are the run's own session transcript
+  (`internal/runner/session.go:185`), and **a transcript can hold a credential the agent printed** —
+  a log line, an echoed environment, a command it ran. The front door serves **the progress record
+  redacted through `internal/safetext`** (`internal/safetext/safetext.go:17`) and **never the raw
+  file**: `TestLogsAreRedactedAndTheRawTranscriptIsNeverServed`.
 
-### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling
+### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling — **DEFERRED (D936)**
+**Out of the first slice (D936).** The first slice is **the authorization server plus the read
+tools**, and **M9 leaves the first slice**: it is the task that starts a run from the front door, and
+it needs three privileges — `signJwt`, write on the runs bucket, and
+`run.jobs.runWithOverrides`, which can run any command beside the job's mounted credentials. **What a
+later `spawn_task` design item has to answer is written in §1 and §7 below**, and **nothing in the
+first slice starts a run, holds the launch grant or changes `internal/runner`**. The task is written
+here, unchanged, as the plan for when it is designed and the owner approves it.
 
 - **Files (8):** `ee/coordinator/mcpauth/tool_spawn.go`, `tool_spawn_test.go`,
   `ee/coordinator/mcpauth/tool_cancel.go`, `tool_cancel_test.go`,
@@ -685,6 +892,11 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
 - **SEC:** yes — it decides who can read the audit record and what revocation destroys, and both are
   now decided by an IAM binding rather than by a rule.
 - **Depends on:** M5, M7.
+- **The amendment's findings (2026-11-04).** The record is written **into the store of D935** through
+  M2's `Store` and **not** into the `mcpauth` node, which is the tripwire; a client's chosen name is
+  shown **marked unverified** (M5); and the bounded per-identity record **can be flushed by spam**,
+  so **the Cloud Logging line is the durable copy** and the per-identity record is the readable
+  view — `TestTheLoggingLineIsTheDurableCopy` is the row that says so.
 
 ## 4. The shared-files table
 
@@ -692,6 +904,10 @@ Files more than one task touches, with the level each writer is in (§2). **No l
 one file** — that is what the level column is for, and it is why four tasks that share one registry sit
 four levels apart. A task that finds one of these already changed reads the change before writing, and
 a planner who finds two tasks in the same row in one release serialises them.
+
+**The deferred slice changes this table rather than adding to it (D936)**: M9 is in rows it shares
+with M1, M2, M7 and M10, so a planner who takes the first slice alone takes none of them, and what
+leaves the first slice is M9's own work and the half of M10's that names a spawned or cancelled run.
 
 | File | Writers (level) | What each does to it |
 | --- | --- | --- |
@@ -706,6 +922,8 @@ a planner who finds two tasks in the same row in one release serialises them.
 | `internal/runner/spend.go` | M9 (L5) alone, but **shared with every other runner task in its release** | one variable and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
 | `SECURITY.md` | M4 (L0), M9 (L5), M10 (L6) | a public endpoint, the store and the single grant that keeps it private, a launch grant, and what the audit does not record — **the repository's standing rule is that a security-relevant change updates it in the same PR** |
 
+| `ee/coordinator/mcpauth/authorize.go` | M5 (L2), M6 (L4) | M5 defines the authorize and approve steps; M6 verifies the ID token the approve step carries |
+
 **Files deliberately not in this table**, because one writer is not a shared file and a row for one
 would read as a conflict: `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` and
 `internal/infra/tf/cover.go` are M4's alone, `ee/coordinator/mcpauth/store_bucket.go` is M2's alone,
@@ -714,14 +932,14 @@ in the schedule rather than at a level.
 
 ## 5. The release slot
 
-**The implementation targets 0.20.0 "Quokka" or later.** The design's own window is spent: **0.15.0,
-0.16.0 and 0.17.0 have all shipped** since this folder was written (`docs/release-streams.yaml`'s cli
-stream: `current: "0.17.0"`, `next: Ocelot`, so 0.18.0 is Ocelot and **0.20.0 is Quokka**), and the
-0.18.0 and 0.19.0 windows are already spoken for. This is a re-slot, not a preference: the three
-reasons the first version of this section gave were right about *why* the work needs a window of its
-own and wrong only about *which*.
+**The implementation targets 0.21.0 "Rhino" or later.** The design's own window is long spent:
+**0.15.0, 0.16.0, 0.17.0, 0.18.0, 0.19.0 and 0.20.0 have all shipped** since this folder was
+written (`docs/release-streams.yaml`'s cli stream: `current: "0.20.3"`, `next: Rhino`, so **0.21.0
+is Rhino**). This is a re-slot, not a preference: the reasons the first version of this section gave
+were right about *why* the work needs a window of its own and wrong only about *which* — and the
+amendment's own cut moves it again, for a reason of its own.
 
-Why the implementation is **0.20.0 or later**, and not the next minor:
+Why the implementation is **0.21.0 or later**, and not the next minor:
 
 1. **The coordinator's own front door is still not built.** P7 and P8 still wait on this design
    (`docs/coordinator/README.md`:26), so the service M4 creates and the account M5 runs on do not
@@ -747,6 +965,13 @@ Why the implementation is **0.20.0 or later**, and not the next minor:
    That is a heavier migration than it was, and it belongs in a release that is not already carrying
    the same work for three other features.
 
+**What the deferral buys, and what it does not (D936).** **The first slice is smaller than the
+whole**: it starts no run, asks for **no new privilege**, changes **nothing under
+`internal/runner`**, and adds no grant beyond the store's own one — so it is a candidate for an
+earlier window than the one above, and this section does not choose that for the owner. A planner who
+takes it into an earlier release has to say in the release notes that **the front door is read-only
+until M9 ships**, which is a sentence the owner should read before it is written.
+
 **What would move it earlier:** if the owner answers D920 the other way (P8's IAM invoker), M5's
 OAuth half disappears, and M1–M3 plus a small M7 fit into whatever release is next. Nothing else
 here is small enough to pull forward.
@@ -763,6 +988,13 @@ here is small enough to pull forward.
   is not the project's policy. **The second is the one the correction of 2026-11-05 turned on**: a
   name and a binding can be read off the plan, and whether *another* identity — an operator acting as
   the deployer — reaches the store is a fact about the project's IAM and can only be read there.
+- **The amendment's own rule (2026-11-04).** **No real Secret Manager either**: the pepper D922's
+  amendment puts in Secret Manager is a **marker pepper** in every test and fixture, so a store whose
+  tests need a live project, or a fixture carrying key material, is a store this repository cannot
+  merge. **A citation the amendment adds is a citation to `main`**: every path and line this folder
+  cites is checked by `internal/cli`'s docs tests, and the amendment's new ones were verified at the
+  commit the README names; a task that finds a line moved re-verifies it rather than moving the
+  number.
 - **Named tests, never whole packages.** `internal/cli` and `internal/runner` are never run whole;
   every command is `GOFLAGS=-p=2 go test ./<package>/ -run 'Name|Name' -count=1`.
 - **A test that reads a changed file runs.** For every file a task touches, the implementing run
@@ -795,6 +1027,18 @@ here is small enough to pull forward.
   the gate should cover is a managed-mode change, not this work's — and M4's `#### For operators`
   block already routes the switch through `fugaro update` rather than through a second command, which
   is the same rule the gate exists to enforce.
+- **The later `spawn_task` design item.** **D936** defers it out of the first slice, and §3's M9
+  keeps the shape and the four requirements the deferral decided; **how a run is started from outside
+  the CLI is not this plan's to write**, and it is not a task here until it is designed and the owner
+  approves it. Anything that starts a run from the front door before then is a finding.
+- **The workspaces exchange.** `docs/workspaces` (a parallel run's amendment, merged as **#1711**)
+  requires a **member-bound assertion and an exchange at `/oauth/authorize` that keeps the
+  paired-device approval**, so its exchange and M5's authorize step meet at one endpoint; **this plan
+  does not own
+  that decision and does not edit that folder** — [spec.md](spec.md) §10 states the dependency and
+  the **identity mismatch** (a workspace identity is a verified email; this front door's is a device
+  uid read back to an email), and it stays a dependency until the workspaces work lands.
+
 - **A local stdio MCP server.** The owner's non-goal, and this plan does not creep into it.
 - **Any change to `SECURITY.md`, `README.md`, `website/**`, `plugin/**` or `.github/workflows/**`
   made by the run that writes *this* document** — those belong to other works, and the run that
