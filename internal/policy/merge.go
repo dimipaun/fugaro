@@ -441,9 +441,11 @@ func (o Orchestrator) SetsNothing() bool {
 // loader — so the two cannot disagree about what a block may say, the way
 // ParseFloor and ValidVerifierAccounts are one door for their own keys.
 //
-// The refusals are a count that is not positive, a class that is not one of
-// DecisionClasses, a class written with no model at all, and a model that is
-// outside DecisionModels or under the floor of the class it is written for.
+// The refusals are a count below zero — 0 is the zero value and means the key
+// is not written, so it is not a value to refuse, and WithDefaults fills it —
+// a class that is not one of DecisionClasses, a class written with no model at
+// all, and a model that is outside DecisionModels or under the floor of the
+// class it is written for.
 // They live here rather than in the merge because Merge is total: it reads any
 // value it cannot place as unset, so a block that skipped this check would
 // tighten nothing rather than be refused, silently, and the guardrail would

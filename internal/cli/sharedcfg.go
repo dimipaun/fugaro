@@ -223,10 +223,9 @@ type SharedAnchor struct {
 //
 // orchestrator is the floor's case once more (D1239, D1234): Shared nils it,
 // and it is published through the policy node the runner fails closed on,
-// because the block is the daemon's own guardrails — the
-// running cap and the spawn rates a looping cycle is held to — and a launcher
-// who could write it into the shared file would be raising the guardrails that
-// exist to bound it.
+// because the block is the daemon's own guardrails — the running cap and the
+// spawn rates a looping cycle is held to — and a launcher who could write it
+// into the shared file would be raising the guardrails that exist to bound it.
 //
 // default_claude_account, stages and claude_account_auto are the
 // account-choice keys, and they are operator-only for claude_accounts' own

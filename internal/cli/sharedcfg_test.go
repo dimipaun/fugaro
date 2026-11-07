@@ -663,12 +663,11 @@ func TestSharedConfigRefusesImageCatalog(t *testing.T) {
 // policy too (D1239, D1234) and travels the floor's way into the policy node —
 // the daemon reads the caps there — rather than being read from the shared
 // config, which any launcher with objectAdmin on the runs bucket can write. A
-// block there would
-// let a launcher raise the guardrails that exist to bound it: the running cap
-// and the per-minute, hourly and daily spawn rates are what a looping cycle is
-// held to, and one who could write them could run the loop it was written to
-// stop. The reader refuses the key by name before the file is parsed, the way
-// review_floor and the catalog are refused.
+// block there would let a launcher raise the guardrails that exist to bound it:
+// the running cap and the per-minute, hourly and daily spawn rates are what a
+// looping cycle is held to, and one who could write them could run the loop it
+// was written to stop. The reader refuses the key by name before the file is
+// parsed, the way review_floor and the catalog are refused.
 func TestSharedConfigRefusesOrchestrator(t *testing.T) {
 	if !slices.Contains(sharedForbidden, "orchestrator") {
 		t.Fatal("sharedForbidden does not name orchestrator, so a published block would be read")
