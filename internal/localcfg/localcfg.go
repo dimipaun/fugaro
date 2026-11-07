@@ -317,9 +317,10 @@ type Config struct {
 	// name only").
 	Mailbox *Mailbox `yaml:"mailbox,omitempty"`
 	// CredentialsService is the installation's credentials service
-	// (docs/credentials-service, D146/D147), or nil while the installation has
-	// not opted into one — which is every installation until an owner runs
-	// `fugaro setup --provision-credentials`. It is what `fugaro run` reads to
+	// (docs/credentials-service, D146/D147), or nil on an installation whose
+	// `fugaro update` could not deploy one — no Firebase backend for the
+	// service to read, or no repository job for it to admit
+	// (credentials-service/default-on.md). It is what `fugaro run` reads to
 	// put the service's URL on the job's environment, which is the one fact the
 	// runner's cascade upstream and the keyless GitHub path are built on
 	// (internal/runner/gateway.go's credentialsServiceURLEnv,
@@ -1226,7 +1227,96 @@ type Repo struct {
 	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
 	// enables the Vertex AI API. fugaro update sets it.
 	Vertex bool `yaml:"vertex,omitempty"`
+	// CredentialsServiceReady records that this repository's root has been
+	// applied with the installation's credentials service ON — its bundle
+	// held a model credential AND the agent.auth the runs read was the
+	// cascade — so a job of it may stop mounting a credential of its own and
+	// be handed the service's address instead. It is the switch's own answer
+	// as the plan that applied the root was built with it — the writer is
+	// internal/cli's recordCredentialsServiceReady, over
+	// infra.CredentialsServiceServes.
+	//
+	// fugaro update sets it, from one read of the bundle it already makes
+	// with the operator's identity, and writes it on the entry of the
+	// repository whose root IT applies: the grant that makes the service
+	// usable to a repository is made by that root's own apply
+	// (deploy/terraform/gcp/modules/workflow/sa.tf), so a record written for
+	// a repository this run does not apply would vouch for a service its jobs
+	// have no grant to knock with — a `cascade` run has no credential of its
+	// own to fall back to. A bundle that is later emptied, or a checkout
+	// edited back to an auth the service does not serve, switches the
+	// repository off again on the next update, which is what puts its jobs'
+	// mounts back, and that is the fail-safe direction.
+	//
+	// A read that FAILED writes nothing here at all, in either direction: the
+	// record is published for the whole installation
+	// (internal/localcfg/shared.go), and one refused read — an operator whose
+	// identity lost the bundle's accessor role — would switch the service off
+	// for every other machine's cascade runs, whose jobs have nothing left to
+	// run on (internal/cli/init_credentials.go).
+	//
+	// The auth is folded in rather than judged again by each reader, and that
+	// is the one state it closes: an owner who fills the bundle and applies
+	// the root while the checkout still says `agent.auth: oauth` gets a
+	// held-off root — mounts kept, no roles/run.invoker — and a record that
+	// said ready over it would make the next launch, on the cascade the owner
+	// commits afterwards, hand that job an address the service refuses for a
+	// grant nobody made. A record is a statement about an apply, so it
+	// carries the auth that apply was made for; the launch still reads the
+	// live auth for the other direction, a cascade repository edited back to
+	// `oauth` being withheld whatever the record says.
+	//
+	// "Writes it" and not "sets it to true": the write is the value the run
+	// read, so clearing it is a write like any other.
+	//
+	// It is a POINTER because "no record" and a recorded `false` are two
+	// different documents, and the difference decides what publishing does
+	// (the review of 2026-11-07's fourth round). Nil is "no machine has
+	// applied this repository's root with the service on as far as this
+	// config knows" — a machine that onboarded the repository with `fugaro
+	// update --repo` under a release before this field, a teammate who never
+	// applied that root, a CI box whose file came from the published one —
+	// and a written `false` is "the apply I made said off". Only the second
+	// may answer for the installation: the record travels in the published
+	// shared config, so a machine whose own entry has no record would
+	// otherwise publish `false` over another machine's `true` and switch a
+	// `cascade` repository — whose jobs have already given their model
+	// mounts up — off for everyone, with nothing in its own config to repair
+	// it from (MergeShared carries the published record over a nil one, and
+	// the upgrade backfill re-reads the root's own apply).
+	//
+	// `omitempty` then means what it says: a nil record is absent from the
+	// file, and a recorded false is written as `false`. A recorded false is
+	// what an emptied bundle, or an auth the service does not serve, leaves
+	// behind (see the fail-safe direction above) — and it must be written, or
+	// the switch-off could never travel to a machine that reads the published
+	// config. Every reader judges the field the same way through
+	// CredentialsServiceOn; only the merge tells the two apart.
+	//
+	// It is recorded rather than read where it is used because the reader
+	// is internal/infra's spec builder, which reads no cloud: this is the
+	// half of the switch (infra.CredentialsServiceServes) that the local
+	// config is the only source of. The installation's own block is read
+	// where the spec is built, and the repository's agent.auth is read there
+	// too, live from the fugaro.yaml the runs read.
+	CredentialsServiceReady *bool `yaml:"credentials_service_ready,omitempty"`
 }
+
+// CredentialsServiceOn is the record as every reader of the switch judges it:
+// true exactly where a run recorded this repository's root as applied with the
+// service on. A nil record (no machine wrote one) and a recorded false are the
+// same answer here, which is the switch's own answer
+// (infra.CredentialsServiceServes' second condition); the two differ in one
+// place only, MergeShared, where a nil record must not erase the record
+// another machine wrote.
+func (r Repo) CredentialsServiceOn() bool {
+	return r.CredentialsServiceReady != nil && *r.CredentialsServiceReady
+}
+
+// RecordSwitch is the record a run writes for one repository entry: a pointer
+// to its own copy of on, so two entries never share one record — the field is a
+// pointer only so that "no record at all" is a document a config can hold.
+func RecordSwitch(on bool) *bool { return &on }
 
 // UsesVertex reports whether any repository the config records uses
 // Vertex AI.

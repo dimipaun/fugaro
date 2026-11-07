@@ -778,43 +778,34 @@ func TestUpdateManagedNeverAdmitsTheSecretsStage(t *testing.T) {
 	}
 }
 
-// The two stages that create an identity and provision money-bearing
-// infrastructure stay the owner's: both are `noYes` in the stage table, neither
-// is in the gate's own set, and on this door the compute stage is not even
-// reachable — `fugaro update` does not take --provision-batch at all. A clean
-// plan verdict cannot reach either of them (D1026: the gate narrows, and a
-// stage --yes never covered has nothing to narrow).
-func TestUpdateManagedLeavesCredentialsAndComputeOwnerRun(t *testing.T) {
-	for _, name := range []string{initflow.Credentials, initflow.Compute} {
-		if initflow.YesCovers(name) || initflow.RunCovers(name) {
-			t.Errorf("--yes covers the %s stage: it is money or permanent", name)
-		}
-		if gatedStages[name] {
-			t.Errorf("the gate names the %s stage: a step with no plan and no confirmation class the gate covers is never an agent-runnable one", name)
-		}
+// The stage that provisions money-bearing infrastructure stays the owner's: it
+// is `noYes` in the stage table, it is not in the gate's own set, and on this
+// door it is not even reachable — `fugaro update` does not take
+// --provision-batch at all. A clean plan verdict cannot reach it (D1026: the
+// gate narrows, and a stage --yes never covered has nothing to narrow).
+//
+// The credentials service's own stage is gone (DON1, the owner's ruling of
+// 2026-11-05): the deploy is part of every installation's own confirmed apply
+// now, so there is no stage and no flag for an agent's session to be refused
+// at. What keeps it out of a session is pinCredentialsImage's own guard, which
+// is tested where it lives (init_credentials_test.go,
+// TestUpdateInAnAgentSessionPinsNoCredentialsImage).
+func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
+	name := initflow.Compute
+	if initflow.YesCovers(name) || initflow.RunCovers(name) {
+		t.Errorf("--yes covers the %s stage: it is money or permanent", name)
+	}
+	if gatedStages[name] {
+		t.Errorf("the gate names the %s stage: a step with no plan and no confirmation class the gate covers is never an agent-runnable one", name)
 	}
 
 	r := updateManagedRig(t)
 	updating(t, r)
-	got, err := updateRun(t, r, "update", "--yes", "--provision-credentials")
-	if err == nil {
-		t.Fatalf("a coding agent's session provisioned the credentials service:\n%s", got)
-	}
-	if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the credentials stage was not refused in the agent's own words:\n%s", got)
-	}
-	if !strings.Contains(got, markLeft+" "+initflow.Credentials) {
-		t.Errorf("the run did not reach the credentials stage, so this is another stage's refusal:\n%s", got)
-	}
-	if !strings.Contains(got, "--provision-credentials") {
-		t.Errorf("the step left for the owner does not name the flag that runs it:\n%s", got)
-	}
-
 	// The compute stage is not this door's to reach at all: the flag is
 	// setup's, and the refusal says so before anything runs.
 	r2 := updateManagedRig(t)
 	updating(t, r2)
-	got, err = updateRun(t, r2, "update", "--yes", "--provision-batch")
+	got, err := updateRun(t, r2, "update", "--yes", "--provision-batch")
 	if err == nil || !strings.Contains(got, "fugaro update does not take --provision-batch") {
 		t.Errorf("this door took --provision-batch (err %v):\n%s", err, got)
 	}

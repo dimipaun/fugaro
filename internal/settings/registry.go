@@ -827,6 +827,16 @@ var localRows = []Row{
 	loc("repos.*.workflows", "every workflow the repository defines", "project", docSetup),
 	loc("repos.*.github_app_id", "none", "project", docSetup),
 	loc("repos.*.vertex", "false", "project", docSetup),
+	// The credentials service's switch, as `fugaro update` recorded it:
+	// written from the bundle it read AND the agent.auth the plan was built
+	// for, on the entry of the repository whose root the run applies, and
+	// read back by the switch to decide whether this repository's runs may go
+	// through the service (localcfg.Repo.CredentialsServiceReady,
+	// docs/credentials-service/default-on.md §3 DON8). It is a
+	// machine-written value like repos.*.vertex beside it, and a row here for
+	// the same reason: every key a config file can hold is one a settings
+	// read has to be able to name.
+	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
 
 	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
 	// them local-only: the pin is the member's own trust and the member table

@@ -83,16 +83,6 @@ const (
 	// whole upgrade for a second command (the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade).
 	Rules = "rules"
-	// Credentials is the owner-run stage that applies the credentials service
-	// (docs/credentials-service, D146; C1.20). It is the only writer of the
-	// installation's credentials_service variable, it is always typed at a
-	// real terminal (--yes never covers it), and it comes BEFORE the
-	// repository stage: a repository root reads the installation's
-	// credentials_service output to decide whether its jobs mount a model
-	// credential at all, and it grants each job account run.invoker on the
-	// service — an apply that ran first would plan that grant against a
-	// resource that is not there yet.
-	Credentials = "credentials"
 	// Policy is the published policy node's migration in place
 	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade). It comes after the repository
@@ -192,11 +182,6 @@ var order = []slot{
 	{name: Installation2, needs: []string{Firebase, Images}},
 	{name: Secrets, needs: []string{Installation2}, noYes: true},
 	{name: Plugin, needs: []string{Preflight}},
-	// The credentials service is the owner's step (money, permanent, and the
-	// identity the repository jobs' model credentials move to), so --yes never
-	// covers it; it is applied before the repository roots, which read its
-	// output and grant each job's account an invoker on it.
-	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
 	// The rules generation is what the policy node is READ under, so it is
 	// deployed before the node that depends on it: the policy stage's write

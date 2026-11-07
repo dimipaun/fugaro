@@ -1124,6 +1124,9 @@
         "repos.*.vertex": {
           "default": "unset = false"
         },
+        "repos.*.credentials_service_ready": {
+          "default": "unset = false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade"
+        },
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
         },
