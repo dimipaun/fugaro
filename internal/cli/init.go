@@ -595,6 +595,7 @@ type initRun struct {
 	retireNotes   []infra.Retirement
 	retired       bool     // the flow was entered (a later plan must not re-enter it)
 	retireLooked  bool     // the read saw the state and the labels: an empty set is "nothing to retire" (see readRetirements)
+	retireNone    bool     // the read found nothing to retire: recorded when this run's own plan is through (recordRetiredNothing)
 	retireApplied bool     // it applied: the jobs it removed from state still need deleting
 	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
 	retireClean   bool     // the resume's plan changed nothing: no apply is left, only the API delete
@@ -4125,8 +4126,13 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			// Nothing to retire is the run's own settlement, and the record
 			// says so: an empty set replaces a previous update's, so the
 			// console's project screen never draws the older set as the last
-			// update's own (recordUpdate).
-			r.recordUpdate(ctx, lc, rets)
+			// update's own. It is written when this run's plan is through and
+			// not here: a run that stops after this line -- a guard refusal, a
+			// confirmation that was not given, a plan that aborted on
+			// prevent_destroy, a failed apply -- has read the same empty set
+			// and settled nothing, and the previous update's rows, which are
+			// kept nowhere else, stand (recordRetiredNothing, recordUpdate).
+			r.retireNone = true
 		}
 		if len(rets) > 0 {
 			r.retired = true
@@ -4177,6 +4183,11 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if !changed {
 		r.res.Changes = &infra.PlanCounts{}
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+		// Nothing was applied, so nothing was retired: only a set the read
+		// proved empty is settled by a plan that changed nothing, because a
+		// non-empty one is settled by the apply below, which is what deletes
+		// it (recordUpdate).
+		r.recordRetiredNothing(ctx, lc)
 		return ready, missing, nil
 	}
 	plan, err := t.Show(ctx, infra.PlanFile)
@@ -4229,9 +4240,13 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	// here exactly for that case -- the two flows that retire by themselves
 	// returned long before this line, and the later plan of a run that built
 	// images has no read of its own -- so the record is written from the same
-	// read (recordUpdate).
+	// read (recordUpdate). A run that had nothing to retire is the other half
+	// of the same moment: its plan is through too, and that is what its empty
+	// set was waiting for (recordRetiredNothing).
 	if len(rets) > 0 {
 		r.recordUpdate(ctx, lc, rets)
+	} else {
+		r.recordRetiredNothing(ctx, lc)
 	}
 	return ready, missing, nil
 }

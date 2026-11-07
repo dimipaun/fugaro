@@ -2575,9 +2575,6 @@ func TestTheUpdateRecordIsTheLastRunsAndNotAMerge(t *testing.T) {
 // those rows are kept nowhere else. So an update that could not look leaves
 // the record exactly as it found it, and says so in the run.
 func TestAnUpdateThatCouldNotLookDoesNotRecordNothing(t *testing.T) {
-	previous := localcfg.UpdateProject{At: time.Date(2026, 11, 6, 9, 30, 0, 0, time.UTC), Retire: []localcfg.UpdateRetirement{
-		{Address: retireJobAddr, Kind: "workflow job", Cause: "the workflow's default variant is app", Protected: true},
-	}}
 	cases := []struct {
 		name string
 		// said is the warning the run has to have printed: the sentence it
@@ -2603,10 +2600,7 @@ func TestAnUpdateThatCouldNotLookDoesNotRecordNothing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRetireRig(t, tc.o)
-			// The update before this one left its set here.
-			if err := localcfg.RecordUpdate(os.Getenv, initProjectName, previous); err != nil {
-				t.Fatal(err)
-			}
+			previous := recordPreviousUpdate(t)
 			// A plan that deletes nothing: what this test is about is the set
 			// the run could not read, not what a plan does with one.
 			b, err := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": []planChange{
@@ -2632,6 +2626,113 @@ func TestAnUpdateThatCouldNotLookDoesNotRecordNothing(t *testing.T) {
 				t.Errorf("an update that could not look replaced the record: %+v, want the previous update's %+v", after, previous)
 			}
 		})
+	}
+}
+
+// recordPreviousUpdate leaves a previous update's rows in the record: what the
+// run under test either replaces with its own settlement or leaves alone. It is
+// the only place those rows are kept, which is what makes replacing them
+// something a run has to have earned.
+func recordPreviousUpdate(t *testing.T) localcfg.UpdateProject {
+	t.Helper()
+	prev := localcfg.UpdateProject{At: time.Date(2026, 11, 6, 9, 30, 0, 0, time.UTC), Retire: []localcfg.UpdateRetirement{
+		{Address: retireJobAddr, Kind: "workflow job", Cause: "the workflow's default variant is app", Protected: true},
+	}}
+	if err := localcfg.RecordUpdate(os.Getenv, initProjectName, prev); err != nil {
+		t.Fatal(err)
+	}
+	return prev
+}
+
+// TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows: an empty set is
+// recorded where the run's own plan is through and nowhere else, so an update
+// that stops after reading it -- a plan that aborted on prevent_destroy, a
+// confirmation the user did not give, an apply that failed -- leaves the
+// previous update's rows where they are. Each of these runs read the same empty
+// set, and none of them settled anything: writing "the last update retired
+// nothing" for them would say the last update finished, and would delete the
+// only copy of the rows it did retire.
+func TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows(t *testing.T) {
+	// Read before any rig: the rig's checkout is a chdir, and this is a path
+	// into the package's own testdata.
+	aborted := fixture(t, "prevent_destroy_wrapped.txt")
+	cases := []struct {
+		name string
+		// args and stdin are the run: one that asks for the delete and is not
+		// confirmed, one that is confirmed, one whose plan never gets that far.
+		args  []string
+		stdin string
+		stop  func(r *retireRig)
+	}{
+		{
+			name: "the plan aborted on prevent_destroy",
+			args: []string{"update", "--repo", "--no-build"},
+			stop: func(r *retireRig) {
+				r.script["plan"] = map[string]any{"exit": 1, "stderr": aborted}
+			},
+		},
+		{
+			name: "the confirmation was not given",
+			args: []string{"update", "--repo", "--no-build", "--allow-delete", retireSvcAddr},
+		},
+		{
+			name: "the apply failed",
+			args: []string{"update", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr},
+			stop: func(r *retireRig) {
+				r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The state is empty and the cloud holds no orphan, so the run
+			// reads an empty retirement set the labels answered for: this is
+			// about where that set may be written, not about reading it.
+			r := newRetireRig(t, retireOpts{protection: true, stateEmpty: true, keptAsNote: true, noOrphanJob: true})
+			previous := recordPreviousUpdate(t)
+			if tc.stop != nil {
+				tc.stop(r)
+				r.save(t)
+			}
+			out, errOut, err := executeStdin(t, tc.stdin, tc.args...)
+			text := out + errOut
+			if err == nil {
+				t.Fatalf("the update finished where it had to stop:\n%s", text)
+			}
+			after := updateRecordFor(t, initProjectName)
+			if !slices.Equal(recordedAddresses(after), recordedAddresses(previous)) || !after.At.Equal(previous.At) {
+				t.Errorf("an update that stopped after the read replaced the record: %+v, want the previous update's %+v", after, previous)
+			}
+		})
+	}
+}
+
+// TestAnUpdateWithNothingToRetireRecordsItWhenItsPlanIsThrough: the other half
+// of the same rule. A run that read nothing to retire and then found its plan
+// changed nothing has finished -- there was no apply to wait for -- and the
+// record says so: "the last update retired nothing" replaces the previous
+// update's rows, so the screen does not draw them as the last one's for the
+// rest of the installation's life.
+func TestAnUpdateWithNothingToRetireRecordsItWhenItsPlanIsThrough(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, stateEmpty: true, keptAsNote: true, noOrphanJob: true, planClean: true})
+	previous := recordPreviousUpdate(t)
+	out, errOut, err := executeStdin(t, "aurora\n", "update", "--repo", "--no-build")
+	text := out + errOut
+	if err != nil && !strings.Contains(text, firstBuildHold) {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
+	}
+	if got := r.applies(t); len(got) != 0 {
+		t.Fatalf("a plan with no changes applied: %v", got)
+	}
+	if !strings.Contains(text, "No changes") {
+		t.Errorf("the run did not read its plan as unchanged:\n%s", text)
+	}
+	after := updateRecordFor(t, initProjectName)
+	if len(after.Retire) != 0 {
+		t.Errorf("the record still names %v, want the empty set this update settled", recordedAddresses(after))
+	}
+	if !after.At.After(previous.At) {
+		t.Errorf("the record's time did not move: %s, want after %s", after.At, previous.At)
 	}
 }
 

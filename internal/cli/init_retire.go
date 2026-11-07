@@ -1240,13 +1240,16 @@ func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
 //
 //   - the run found nothing to retire, which is a record of its own: an empty
 //     set replaces the previous update's, so the screen never draws an earlier
-//     update's rows as the last one's. This is the one site the read has to
-//     have *proved*: an empty set the run could not look for -- a state it
-//     could not read, a label call that did not answer (retireLooked) -- is not
-//     "nothing to retire" but the absence of an answer, and writing it would
-//     replace the previous update's rows, which are kept nowhere else, with a
-//     sentence the run has no right to (design §3.1a's rule for the summary,
-//     and D1483's for the count: unknown is not zero, one member over);
+//     update's rows as the last one's. The read arms it (retireNone) and the
+//     run's own plan finishes it -- planRepo's two successful returns -- so an
+//     empty set is written by an update that got through its plan and by no
+//     other. This is also the one site the read has to have *proved*: an empty
+//     set the run could not look for -- a state it could not read, a label call
+//     that did not answer (retireLooked) -- is not "nothing to retire" but the
+//     absence of an answer, and writing it would replace the previous update's
+//     rows, which are kept nowhere else, with a sentence the run has no right
+//     to (design §3.1a's rule for the summary, and D1483's for the count:
+//     unknown is not zero, one member over);
 //   - --retire ran the guarded flow to the end, or a managed project retired
 //     its own derived addresses (retireManaged) -- the two flows that remove
 //     addresses from the state and delete them;
@@ -1254,12 +1257,13 @@ func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
 //     applied (planRepo's tail), which is the one other way an address of the
 //     set goes away.
 //
-// A run that stops before any of them -- a refusal, a failed apply, a plan
-// that aborted on prevent_destroy, --plan-only -- records nothing: the last
-// update that settled a retirement is the one the record names, which is a
-// truer sentence than a run that retired nothing overwriting it. `fugaro
-// setup --repo` records nothing either: its door is not the update's, and a
-// first onboarding is not the last update of anything.
+// A run that stops before any of them -- a refusal, a confirmation that was
+// not given, a failed apply, a plan that aborted on prevent_destroy,
+// --plan-only -- records nothing, the empty set included: the last update that
+// settled a retirement is the one the record names, which is a truer sentence
+// than a run that retired nothing overwriting it. `fugaro setup --repo`
+// records nothing either: its door is not the update's, and a first onboarding
+// is not the last update of anything.
 //
 // The record is keyed by project, and an update converges the repository its
 // checkout belongs to (the converge's repository stage runs this engine for
@@ -1300,6 +1304,26 @@ func (r *initRun) recordUpdate(ctx context.Context, lc *localcfg.Config, rets []
 		path, _ := localcfg.UpdateRecordPath(os.Getenv)
 		r.warn(fmt.Sprintf("this update's retirement was not recorded in %s (%v): the console's project screen reads that record, so it keeps drawing whatever the previous update left there. The next update writes it again, once that directory can be written", path, err))
 	}
+}
+
+// recordRetiredNothing writes the record of a run that read its retirement set
+// and found it empty (retireNone): this update had nothing to retire, and the
+// screen may not keep drawing the previous update's rows as the last one's. It
+// is called from planRepo's two successful returns and nowhere else -- the
+// no-changes one and the tail after an apply -- so nothing here is written by a
+// run that stopped after the read: an update that was refused, that was not
+// confirmed, that aborted on prevent_destroy or whose apply failed leaves the
+// previous update's rows, which are kept nowhere else, exactly as they were.
+//
+// The flag is cleared with the write, so the plan of a run that built images --
+// which reads no retirement of its own -- does not write the same settlement a
+// second time.
+func (r *initRun) recordRetiredNothing(ctx context.Context, lc *localcfg.Config) {
+	if !r.retireNone {
+		return
+	}
+	r.retireNone = false
+	r.recordUpdate(ctx, lc, nil)
 }
 
 // updateRecordRows is the run's own rows as the record holds them. The record
