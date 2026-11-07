@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
 // envJob is a Cloud Run job of the rig's installation carrying env, as
@@ -203,5 +205,39 @@ func TestDoctorImageEnvUnreadWarns(t *testing.T) {
 	}
 	if !strings.Contains(c.Problem, "could not read") {
 		t.Errorf("the warning does not say the read failed: %s", c.Problem)
+	}
+}
+
+// The other half of the same failure: the listing answers and a job's own read
+// does not. A job nobody could read is named in the warning and carries no
+// per-job line of its own — a report for it would have to invent the names it
+// drops, and the empty list that inventing produces is "drops nothing", which
+// is the one answer this line must never give for a read that failed.
+//
+// Mutation (verified, run and restored): file the unread state as a measurement
+// (OK, Severity "info") instead of a warning — the check classifies as a
+// measurement and prints beside "everything checked is ok", and this test and
+// TestDoctorImageEnvUnreadWarns both fail on it.
+func TestDoctorImageEnvUnreadNamesTheJobItCouldNotRead(t *testing.T) {
+	r := newDoctorRig(t)
+	r.envJob(t, "fugaro-acme-app-web", map[string]string{
+		"FUGARO_IMAGE_ENTRY": "acme-base",
+		"JAVA_TOOL_OPTIONS":  "-Dorg.gradle.daemon=false",
+	})
+	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500})
+
+	o := r.runDoctorJSON(t)
+	c, found := doctorCheckByID(o.Checks, doctorImageEnvUnreadID)
+	if !found || c.OK || c.Severity != "warning" {
+		t.Fatalf("check = %+v (found %v), want the warning a job nobody could read is", c, found)
+	}
+	if !strings.Contains(c.Problem, "fugaro-acme-app-web") {
+		t.Errorf("the warning does not name the job it could not read: %s", c.Problem)
+	}
+	if !strings.Contains(c.Problem, "unknown, not none") {
+		t.Errorf("the warning does not say the answer is unknown rather than none: %s", c.Problem)
+	}
+	if _, found := doctorCheckByID(o.Checks, "image-env-fugaro-acme-app-web"); found {
+		t.Error("a job whose read failed carries a per-job report anyway: it would have to invent the names it drops")
 	}
 }
