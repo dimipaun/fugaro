@@ -161,7 +161,7 @@ func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {
 // step the review did not cover reads the note and proceeds — with
 // OwnerProceeded's sentence, which claims no verdict, because no rule judged
 // this step. The marker is refused above either way: a coding agent's session
-// is not this case (OwnerAtTerminal reads the marker).
+// is not this case (PersonAtTheTerminal reads the marker).
 func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
@@ -181,7 +181,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			return true, nil
 		}
 	}
-	if r.gateStandsIn() && initflow.OwnerAtTerminal(r.conditions()) {
+	if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
 		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 		if notCovered != "" && r.review != nil && r.review.state == reviewTaken {
 			fmt.Fprintf(r.w, "  note: this step is not covered by the run confirmation: %s\n", notCovered)
@@ -490,7 +490,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			sep = append(sep, "the checkout's image refresh, which asks nothing here either: the base image it pins by digest, the daily image check job's config and the checkout: clone workflow's job move are answered by the gate's own read of the marks (each still prints its diff), and each billable build of the checkout's job images goes through the gate's own per-build verdict and its bound (D1013) instead of a typed name")
 		}
 		if e.previewState(initflow.Policy) == initflow.Todo {
-			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling: this terminal types nothing for it either (a ceiling is not data and not a secret value), and what the publish changes is printed above; a coding agent's session is refused it, because a Typed step is money or permanence and no plan gate admits one (D1026)")
+			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: a Typed step is money or permanence, and no plan gate admits one (D1026)")
 		}
 	}
 	if len(sep) == 0 {

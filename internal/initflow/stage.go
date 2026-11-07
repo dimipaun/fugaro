@@ -831,28 +831,29 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 	return ConfirmsByGate(class, c, m)
 }
 
-// OwnerAtTerminal reports whether this session is the owner's own, at a real
-// terminal: a person is there to read what the step prints, and the session is
-// none of the shapes a confirmation cannot be taken in — a pipe, --json,
-// --non-interactive — and not one whose owner asked for the prompts back
-// (--ask).
+// PersonAtTheTerminal reports whether the conditions put a person at the
+// project's own terminal, there to read what a step prints and answer for it:
+// the owner's own session (no marker), a real terminal, and none of the three
+// things that say nobody can answer a prompt — --ask (the owner asking to be
+// asked again is a question to put, never a licence to skip one),
+// --non-interactive and --json.
 //
-// It is the half of ConfirmsByGate that is about WHO is there, named on its
-// own because the owner's ruling of 2026-11-06 reaches steps the gate has no
-// document for: a person at their own terminal on a managed project types
-// nothing for a step that loses no data and takes no secret value, whether the
-// gate judged its plan or the run only announced it. A caller asks this beside
-// its own read of the marks (the gate's own read, never a second one) and
-// prints OwnerProceeded's sentence; it is not a verdict about any plan, and it
-// admits nothing on its own.
+// It is ConfirmsByGate's condition half, named once so that a caller asking
+// the same question about a step the gate's verdict does not cover — the
+// owner's ruling of 2026-11-06 reaches steps the gate has no document for, a
+// step that loses no data and takes no secret value — asks it the same way. A
+// caller asks this beside its own read of the marks (the gate's own read,
+// never a second one) and prints OwnerProceeded's sentence; it is not a
+// verdict about any plan, and it admits nothing on its own.
 //
-// --yes is deliberately not part of it, in both directions: a managed project
-// must not need a flag the owner has to remember, and a run that passed it
-// reads the managed sentence rather than "confirmed by --yes" for a step the
-// project asks nothing about anyway. A coding agent's session is not this case
-// either — the marker is read here, and what replaces the confirmation there
-// is the gate's own verdict, with AgentProceeded's sentence (ConfirmsByGate).
-func OwnerAtTerminal(c Conditions) bool {
+// The terminal is the load-bearing half and the one a caller writing this out
+// again would drop: a pipe carries no marker, so a session nobody is at reads
+// exactly like the owner's own, and a coding agent's session is at a terminal
+// too. --yes is deliberately not part of it, in both directions: a managed
+// project must not need a flag the owner has to remember, and a run that
+// passed it reads the managed sentence rather than "confirmed by --yes" for a
+// step the project asks nothing about anyway.
+func PersonAtTheTerminal(c Conditions) bool {
 	return !c.Ask && c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
 }
 
@@ -862,7 +863,7 @@ func OwnerAtTerminal(c Conditions) bool {
 // branch CanConfirmManaged decides on, named so that a caller which is about
 // to show a prompt asks the same question the rule asks rather than writing
 // the conditions out again — a caller that re-derived them is a caller that
-// could drop one, and the one it would drop is the terminal.
+// could drop one, and the one it would drop is the terminal (PersonAtTheTerminal).
 //
 // A coding agent's session is not this case, and deliberately: what replaces
 // the confirmation there is CanConfirmManaged's first branch (Removes), whose
@@ -870,7 +871,7 @@ func OwnerAtTerminal(c Conditions) bool {
 // The two are told apart by the marker, because this branch is about who is
 // there to read the document the gate read.
 func ConfirmsByGate(class ConfirmClass, c Conditions, m Managed) bool {
-	return OwnerAtTerminal(c) && m.Removes(class)
+	return PersonAtTheTerminal(c) && m.Removes(class)
 }
 
 // CanConfirm reports whether a step of the class can be confirmed under the

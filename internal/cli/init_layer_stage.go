@@ -58,7 +58,7 @@ const (
 // none, and a coding agent's session never reaches Apply at all.
 func (s *layerStage) confirmWrite(lc *localcfg.Config, env initflow.Env, what string) error {
 	r := s.e.r
-	if r.gateStandsIn() && initflow.OwnerAtTerminal(r.conditions()) {
+	if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
 		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 		return nil

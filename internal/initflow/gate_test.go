@@ -282,7 +282,7 @@ func TestManagedConfirmsByGateIsTheOwnerAtARealTerminal(t *testing.T) {
 	}
 }
 
-// TestOwnerAtTerminalIsTheOwnerAndNothingElse is the predicate the ruling of
+// TestPersonAtTheTerminalIsTheOwnerAndNothingElse is the predicate the ruling of
 // 2026-11-06 is decided under, and it is the half of ConfirmsByGate that is
 // about WHO is there rather than about what a document said: the owner's own
 // session, at a real terminal, with no coding agent's marker in the
@@ -299,22 +299,22 @@ func TestManagedConfirmsByGateIsTheOwnerAtARealTerminal(t *testing.T) {
 // decide, so a row with it is the same row without it (the mutation caught is
 // `!c.Yes` in this predicate, which would leave the owner of a managed project
 // prompted for exactly the run the ruling is about).
-func TestOwnerAtTerminalIsTheOwnerAndNothingElse(t *testing.T) {
+func TestPersonAtTheTerminalIsTheOwnerAndNothingElse(t *testing.T) {
 	for _, c := range allConditions() {
 		want := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
-		if got := OwnerAtTerminal(c); got != want {
-			t.Errorf("OwnerAtTerminal(%s) = %v, want %v", conditionsName(c), got, want)
+		if got := PersonAtTheTerminal(c); got != want {
+			t.Errorf("PersonAtTheTerminal(%s) = %v, want %v", conditionsName(c), got, want)
 		}
 		flipped := c
 		flipped.Yes = !c.Yes
-		if OwnerAtTerminal(flipped) != OwnerAtTerminal(c) {
-			t.Errorf("OwnerAtTerminal(%s) and (%s) disagree: --yes is not asked for and does not decide", conditionsName(c), conditionsName(flipped))
+		if PersonAtTheTerminal(flipped) != PersonAtTheTerminal(c) {
+			t.Errorf("PersonAtTheTerminal(%s) and (%s) disagree: --yes is not asked for and does not decide", conditionsName(c), conditionsName(flipped))
 		}
 		// And the predicate is exactly the owner half of ConfirmsByGate: the
 		// document's own facts are Removes' and nothing else's.
 		for _, class := range allClasses() {
 			for _, m := range allManaged() {
-				if got, want := ConfirmsByGate(class, c, m), OwnerAtTerminal(c) && m.Removes(class); got != want {
+				if got, want := ConfirmsByGate(class, c, m), PersonAtTheTerminal(c) && m.Removes(class); got != want {
 					t.Errorf("ConfirmsByGate(%s, %s, %s) = %v, want %v", className(class), conditionsName(c), managedName(m), got, want)
 				}
 			}

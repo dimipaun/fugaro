@@ -1836,7 +1836,7 @@ func TestConfirmEmptyAllowListRefusesAnAgentSessionBeforeAnyPrompt(t *testing.T)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader("aurora\n"))
-	err := confirmEmptyAllowList(cmd, &localcfg.Config{Name: "aurora"}, "CLAUDECODE", false)
+	err := confirmEmptyAllowList(cmd, &localcfg.Config{Name: "aurora"}, "CLAUDECODE")
 	if err == nil {
 		t.Fatal("an agent session's typed name confirmed an empty allow-list")
 	}

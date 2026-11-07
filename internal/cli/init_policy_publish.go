@@ -14,7 +14,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -446,16 +445,21 @@ func (m *policyMigration) loosening() []policyCeiling {
 	return append(policyLoosening(m.node, m.pub.pol), policyAccountWidening(m.node, m.pub.pol)...)
 }
 
-// looseningChange is the half of looseningWhy that says what changes: the
-// member that loosens, from what to what — or, for the first publish, that
-// there is no node yet and this run writes the one every run of the project is
-// admitted by. It is the note the owner's own terminal reads in a managed
-// project, where the tail below is exactly what is not happening (the ruling of
-// 2026-11-06), and it is one function with looseningWhy so the two cannot say
-// different things about the same publish.
-func (m *policyMigration) looseningChange(loosening []policyCeiling) string {
+// looseningWhy is the sentence the typed confirmation shows and the refusal
+// gives: which member loosens, from what to what, and the command that reaches
+// the same publish at the operator's own terminal. --yes is named as the thing
+// that does not stand in rather than passed over, because the operator reading
+// this from a script has just passed it and would otherwise take it for the
+// answer.
+//
+// The first publish has no member to compare and no value to name on either
+// side, so it says what it widens instead: a project with nothing published is
+// a project every run reaches through its job's environment, and the node
+// written now is the one every run of the project is admitted by from here on.
+func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
 	if m.firstPublish {
-		return fmt.Sprintf("the project has no published policy node at %s, and this run writes the one every run of the project is admitted by — its allow-list, its ceilings and its catalog are chosen here for the first time", projectpolicy.PathShared())
+		return fmt.Sprintf("the project has no published policy node at %s, and this run writes the one every run of the project is admitted by — its allow-list, its ceilings and its catalog are chosen here for the first time. The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s",
+			projectpolicy.PathShared(), selfCommand()+" update")
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "this publish loosens %s, which every run of the project is admitted by: ", projectpolicy.PathShared())
@@ -465,22 +469,8 @@ func (m *policyMigration) looseningChange(loosening []policyCeiling) string {
 		}
 		fmt.Fprintf(&b, "%s %s -> %s", c.Member, c.Was, c.Now)
 	}
+	fmt.Fprintf(&b, ". The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s", selfCommand()+" update")
 	return b.String()
-}
-
-// looseningWhy is looseningChange plus the tail the typed confirmation shows and
-// the refusal gives: which member loosens, from what to what, and the command
-// that reaches the same publish at the operator's own terminal. --yes is named
-// as the thing that does not stand in rather than passed over, because the
-// operator reading this from a script has just passed it and would otherwise
-// take it for the answer.
-//
-// The first publish has no member to compare and no value to name on either
-// side, so it says what it widens instead: a project with nothing published is
-// a project every run reaches through its job's environment, and the node
-// written now is the one every run of the project is admitted by from here on.
-func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
-	return m.looseningChange(loosening) + ". The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: " + selfCommand() + " update"
 }
 
 // printPolicyPublishDiff is what the operator confirms: which members this
@@ -765,23 +755,12 @@ func policyEmptyAllowListWarning() string {
 // allow-list is never written on the operator's behalf by something that cannot
 // have read the consequence (#1674). The same wording is both the confirmation
 // and the refusal, so the two cannot drift.
-//
-// owner is the owner's own terminal on a managed project (the ruling of
-// 2026-11-06): the warning is printed as the note and nothing is typed, because
-// the person who reads it there is the person the confirmation was for, and the
-// step loses no data and takes no secret value. The marker is refused first and
-// the explicit door passes false, so a coding agent's session and a publish run
-// outside the converge keep the typed name exactly as they had it.
-func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, agent string, owner bool) error {
+func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, agent string) error {
 	why := policyEmptyAllowListWarning()
 	// A coding agent's session is refused before any prompt: a terminal it can
 	// give itself (a pty wrapper) is not a person reading the consequence.
 	if agent != "" {
 		return userErr("%s", why)
-	}
-	if owner {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\n  %s\n", why, initflow.OwnerProceeded())
-		return nil
 	}
 	return confirmTypedStrict(cmd, lc, why, why)
 }

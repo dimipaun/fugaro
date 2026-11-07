@@ -573,12 +573,10 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// passed.
 		//
 		// The marker is asked for beside the class, and it is what keeps this
-		// inside the session the gate is about: in a coding agent's session a
-		// publish that loosens is refused in the class rule's own words. The
-		// owner's own terminal is not refused there either: it reaches the tail
-		// below with the gate's answer, and the ruling of 2026-11-06 has that
-		// tail print the note of what loosens and write, because a ceiling is
-		// not data and not a secret value (policyMigrationConfirm).
+		// inside the session the gate is about: in an owner's own terminal a
+		// publish that loosens keeps exactly what it has today — the typed
+		// confirmation this class asks for, which --yes does not stand in for —
+		// and the gate is nobody's answer there.
 		//
 		// Every other not-admitted answer keeps the caller's refusal, because
 		// the gate has no sentence for it: a mark revoked between the two reads

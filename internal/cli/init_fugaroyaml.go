@@ -223,7 +223,7 @@ func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (b
 	case planOnly:
 		fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
 		return false, nil
-	case r.gateStandsIn() && initflow.OwnerAtTerminal(r.conditions()):
+	case r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()):
 		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 	case env.Yes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")
