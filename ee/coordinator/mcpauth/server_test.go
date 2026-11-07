@@ -71,7 +71,17 @@ func newTestServerWith(t *testing.T, cfg Config) *testServer {
 // one; every other test takes the pinned one above.
 func newTestServerClock(t *testing.T, cfg Config, now func() time.Time) *testServer {
 	t.Helper()
-	fs := newFakeStore(t)
+	return newTestServerOver(t, cfg, now, nil)
+}
+
+// newTestServerOver is newTestServerClock with one more seam: wrap sits between
+// the bucket and the record layer, so a test that needs a competing writer to
+// land inside a store operation the server is running can interleave one. Every
+// other test passes nil, and the server's store is the counting store over a
+// plain bucket below it.
+func newTestServerOver(t *testing.T, cfg Config, now func() time.Time, wrap func(objects) objects) *testServer {
+	t.Helper()
+	fs := newFakeStoreOver(t, wrap)
 	counting := &countingStore{Store: fs.Store, keys: map[string]bool{}}
 	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
 	srv, err := NewServer(cfg, counting, v, WithServerClock(now))

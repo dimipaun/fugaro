@@ -666,6 +666,105 @@ func TestRefreshTokenIsSingleUse(t *testing.T) {
 	}
 }
 
+// racingFamilyObjects is a bucket whose first replace of a family runs another
+// writer to completion before the bytes asked for are written. It puts a
+// competing rotation in the one window a rotation has: after the family has
+// been read and before it is written, which is where racingObjects puts it too
+// — the difference is the caller, which is the endpoint here rather than the
+// store, so the race is entered through a request.
+type racingFamilyObjects struct {
+	objects
+	race  func()
+	fired bool
+}
+
+func (o *racingFamilyObjects) replace(ctx context.Context, key string, data []byte, gen int64) (int64, error) {
+	if !o.fired && strings.HasPrefix(key, familyPrefix) {
+		o.fired = true
+		o.race()
+	}
+	return o.objects.replace(ctx, key, data, gen)
+}
+
+// TestARefreshThatLosesItsRaceIsRefusedWithoutRetryAdvice is the answer a
+// double-submit gets, which is the whole of what stands where spec.md §6's
+// grace window would be.
+//
+// Two exchanges of one refresh token land at once and the store's swap makes
+// the second one the loser. The loser holds a token the winner has already
+// rotated away, so the two answers it may not have are the two that turn one
+// double-submit into a logout: a 5xx, which an ordinary HTTP client retries by
+// default, and any 4xx that reads as "try again" — both invite a request that
+// presents the spent token, and a presentation of a spent token is D930's
+// theft signal, which revokes the family the winner is now holding. So the
+// loser is refused `invalid_grant`, and the last assertion is the point of the
+// test: the winner's own pair still works afterwards.
+func TestARefreshThatLosesItsRaceIsRefusedWithoutRetryAdvice(t *testing.T) {
+	ctx := context.Background()
+
+	// The token the competing rotation presents, and the pair it wins with.
+	// Both are filled in after the flow, because the flow is what mints the
+	// token and the race is what rotates it.
+	var presented, winnerRefresh string
+	var raced *racingFamilyObjects
+	ts := newTestServerOver(t, testConfig(), func() time.Time { return testNow }, func(objs objects) objects {
+		raced = &racingFamilyObjects{objects: objs}
+		raced.race = func() {
+			// The other client, doing nothing wrong: it holds the same
+			// refresh token, it got there first, and it rotates it. It runs
+			// against the plain bucket below the wrapper, so its own write is
+			// the store's real conditional replace and not a hook.
+			_, refresh, err := RotateAt(ctx, newRecords(objs), presented, testNow)
+			if err != nil {
+				t.Errorf("the competing rotation: %v", err)
+				return
+			}
+			winnerRefresh = refresh
+		}
+		return raced
+	})
+
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+	presented = tokens.RefreshToken
+
+	rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	})
+	if !raced.fired {
+		t.Fatal("the competing rotation never ran, so nothing below is about a lost race")
+	}
+
+	// Not a 5xx: that is the status an HTTP client retries on its own, and the
+	// retry presents the token the winner rotated away.
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("the exchange that lost its race answered %d (%s); want 400 invalid_grant: a server error is what a client retries, and the retry is what revokes the winner's family",
+			rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, string(oidc.InvalidGrant)) {
+		t.Errorf("the loser was refused %d (%s); want invalid_grant: the token it holds really is spent, and the refusal is terminal", rec.Code, strings.TrimSpace(body))
+	}
+	for _, advice := range []string{"retried", "retry", "try again"} {
+		if strings.Contains(body, advice) {
+			t.Errorf("the refusal says %q: the loser may not be told to come back, because coming back presents a token the winner has rotated away and D930 reads that presentation as the theft it is — the whole family goes, the winner's new pair with it", advice)
+		}
+	}
+
+	// The point: the client that won keeps working. Nothing about the loser's
+	// request revoked the family, so the winner's pair is a pair.
+	rec, _ = ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {winnerRefresh},
+		"client_id":     {clientID},
+	})
+	if rec.Code != http.StatusOK {
+		t.Errorf("the winner's own pair was refused after the loser's exchange: %d (%s); want a rotation — a lost race is not a replay, and the family the winner holds is alive",
+			rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
 // TestConsentNamesTheRedirectHost is the owner's tightening of D928: the page a
 // person consents on names the host their code will be sent to, so they consent
 // to somewhere rather than to an opaque client id.

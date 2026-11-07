@@ -133,8 +133,10 @@ it:
   grant**.
 - **D930 — M-d.** Rotation is a check-then-write race: M2 conditions it on **the generation of the
   same read** — the generation-matched replace `internal/blobx` gives the bucket D935 moved the
-  records to (`internal/blobx/blobx.go:1`) — with a small grace window, and a replay outside the
-  window still revokes the family.
+  records to (`internal/blobx/blobx.go:1`) — **with a small grace window, which is not built**: the
+  loser of the race is refused `invalid_grant` without retry advice rather than answered with the
+  winner's pair, so a replay outside the window still revokes the family and the window is the half
+  that is missing.
 - **D931 — H2 — see D936.** The original answer is the **shape `spawn_task` must take when it is
   built**; the finding is that it must not be built in the first slice.
 - **D932 — M-g.** A recorded transcript can hold a credential the agent printed, so the read tools

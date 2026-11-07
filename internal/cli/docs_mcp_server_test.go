@@ -285,19 +285,22 @@ func TestDocsMCPServerNamesWhatItDesigns(t *testing.T) {
 	}
 }
 
-// TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo: the two places where this
+// TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo: the places where this
 // folder's documents state a control or a bound that no code in the tree
 // carries say so in their own words.
 //
-// Both were raised by the review of this branch and both are disclosures rather
+// All were raised by the review of this branch and all are disclosures rather
 // than fixes: the store is specified to write HMAC-keyed hashes and a MAC over
 // each record, and it hashes with a plain unkeyed sha256 and writes no MAC
-// (M2's row, merged on `main` before this branch), and the open registration
+// (M2's row, merged on `main` before this branch); the open registration
 // endpoint is accepted under a per-source rate limit and a sweep that no task of
-// the plan carries. A document that asserted either as a fact would be a
-// security document promising an integrity control the code does not perform --
-// so what is pinned is the caveat itself, in the file a reader meets first, and
-// the section that carries each as a finding.
+// the plan carries; the loser of a rotation race is answered inside a grace
+// window, and the endpoint refuses it instead; and the approve step is meant to
+// read an identity out of the launcher and operator lists, and M7 has not
+// started. A document that asserted any of them as a fact would be a security
+// document promising a control the code does not perform -- so what is pinned is
+// the caveat itself, in the file a reader meets first, and the section that
+// carries each as a finding.
 func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 	spec := flattenDoc(readDoc(t, mcpSpec))
 	for _, want := range []string{
@@ -311,9 +314,18 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		"Who owns the two bounds the open registration endpoint is accepted under",
 		"What is owed is the owner's assignment",
 		"the task that mounts this package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`",
+		// And the two halves of the flow the review of this branch found
+		// promised: the grace window a lost rotation race is answered in, and
+		// the launcher and operator lists the approve step is supposed to read
+		// an identity out of. What is built answers neither, so the sentence
+		// that would read as the control says instead that it is missing.
+		"answer's second half is not built",
+		"no grace window exists in the tree",
+		"The last of the bounds this paragraph used to state is not built",
+		"M5's approve step mints a code and a family for any verified Firebase address",
 	} {
 		if !strings.Contains(spec, want) {
-			t.Errorf("%s does not state %q: the keyed hash and the MAC, and the two bounds the open registration endpoint is accepted under, are specified in this folder and built nowhere, so a document that dropped the caveat would read as a control the tree performs", mcpSpec, want)
+			t.Errorf("%s does not state %q: the keyed hash and the MAC, the two bounds the open registration endpoint is accepted under, the grace window a lost rotation race is answered in and the launcher and operator lists the approve step would read an identity out of are all specified in this folder and built nowhere, so a document that dropped the caveat would read as a control the tree performs", mcpSpec, want)
 		}
 	}
 

@@ -683,9 +683,15 @@ requests presenting the same refresh token both read it as live and both rotate,
 double-submit reads as theft and a theft reads as a double-submit. The amended answer, built by M2:
 **the rotation is conditioned on the generation of the same read** — the generation-matched replace
 `internal/blobx` gives the bucket the records live in (`internal/blobx/blobx.go:1`, M2), which is the
-condition an `ETag` PUT gave a store inside the database — so exactly one rotation wins; and the
-loser inside a **small grace window** is answered with the same new pair rather than being read as a
-replay, so a client on a slow link is not logged out by its own retry. A replay **outside** the window revokes the family, exactly as above.
+condition an `ETag` PUT gave a store inside the database — so exactly one rotation wins. **The
+answer's second half is not built**: the loser inside a **small grace window** is meant to be
+answered with the winner's own new pair rather than read as a replay, so a client on a slow link is
+not logged out by its own retry — and no grace window exists in the tree. What the loser gets
+instead is `invalid_grant` (`ee/coordinator/mcpauth/token.go:309`), which is terminal and carries no
+invitation to try again, because the retry that a 5xx invites presents the spent token and that
+presentation is the theft signal itself: it revokes the family the winner is holding, so one
+double-submit would become a logout. A client that re-authorizes instead loses nothing but a page;
+the window is what a client that retries the exchange would need. A replay **outside** the window revokes the family, exactly as above.
 
 **Only narrowing** (the second rule of this folder). Scopes, the rigor window, the Hotfix flag and
 the spend limit all merge by taking the tighter side against the project's policy, the repository's
@@ -773,7 +779,13 @@ rather than silent.
 **What a stolen Firebase ID token reaches.** One thing: **the approve step's `POST /oauth/authorize`**
 — the single endpoint that consumes one (the owner's answer of 2026-11-04, amended the same day by
 M-a; an earlier draft had it at `POST /oauth/token`) — and only while it is unexpired and only if its
-issuer and audience match the project, and only for an identity the project's own lists admit. It is
+issuer and audience match the project. **The last of the bounds this paragraph used to state is not
+built**: an identity has to be one the project's own lists admit, and **M5's approve step mints a
+code and a family for any verified Firebase address** — resolving an identity through the launcher
+and operator lists is **M7** (`ee/coordinator/mcpauth/identity.go`, `TestIdentityOffTheListsIsRefused`,
+`TestOnlyExactUserEntriesAreRead`), which is not started. So until M7 lands, what stands between a
+verified Firebase identity and a token family is that sign-in and nothing else, and the lists narrow
+it afterwards rather than M5 keeping the rule. It is
 never a bearer for the MCP endpoint and it is never a grant at the token endpoint, which is the whole
 reason the coordinator mints its own tokens, and it is why the design will not accept a Firebase
 token as an access token

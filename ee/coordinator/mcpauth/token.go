@@ -307,11 +307,19 @@ func (s *Server) exchangeRefresh(w http.ResponseWriter, r *http.Request, form ur
 			"the refresh token was already rotated away: the family is revoked and the client has to authorize again"))
 		return
 	case errors.Is(err, ErrConflict):
-		// Two rotations of one family landed at once. The store's swap is what
-		// makes exactly one of them the winner, and the loser is told to try
-		// again rather than told its token is bad.
-		writeOAuthError(w, http.StatusInternalServerError, oauthError(oidc.ErrServerError(),
-			"the token family changed under this exchange: the request can be retried"))
+		// Two exchanges of one refresh token landed at once — a double-submit,
+		// or a client that retried — and the store's swap made the other one
+		// the winner. The loser holds a token the winner has already rotated
+		// away, so a 5xx here is the wrong answer twice over: it is what an
+		// ordinary HTTP client retries, and the retry presents that spent
+		// token, which is D930's theft signal — the answer would revoke the
+		// family the winner is holding, and one double-submit would be a
+		// logout. invalid_grant is terminal and carries no invitation to try
+		// again, and the token the loser holds really is spent. What would keep
+		// the loser working is spec.md §6's grace window, in which the loser is
+		// answered with the winner's own new pair; no grace window is built.
+		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidGrant(),
+			"the refresh token was rotated away by a concurrent exchange of the same token: this token is spent, and the client has to authorize again"))
 		return
 	case err != nil:
 		writeOAuthError(w, http.StatusInternalServerError, oauthError(oidc.ErrServerError(),
