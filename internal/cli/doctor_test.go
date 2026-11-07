@@ -2593,6 +2593,46 @@ func TestDoctorAccountFixesNameTheProfileThatServesIt(t *testing.T) {
 	}
 }
 
+// TestDoctorProjectAccountFixNamesTheJobsOwnProfile: the check is per account
+// JOB, and one account can be served by several profiles, so the fix has to
+// name the profile of the job its line follows rather than the first profile in
+// name order that happens to list the account — the Problem beside it names the
+// job and the profile, and a fix pointing at another profile's job reads as a
+// different problem. Both are no-ops on that half of the command (each profile
+// already lists the account), which is the property that matters: whichever
+// line the owner runs, the account is declared, the token is stored, and no job
+// set changes.
+func TestDoctorProjectAccountFixNamesTheJobsOwnProfile(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n"+
+		"profiles:\n"+
+		"  alpha: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [github/acme/app], claude_accounts: [acme-personal] }\n"+
+		"  zeta: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [github/acme/app], claude_accounts: [acme-personal] }\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: no account job's token is stored")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-account-stored")
+	if !ok || c.OK {
+		t.Fatalf("project-account-stored = %+v", c)
+	}
+	for _, profile := range []string{"alpha", "zeta"} {
+		want := "accounts add acme-personal --repos acme/app --profile " + profile
+		if !strings.Contains(c.Fix, want) {
+			t.Errorf("the fix %q does not spell %q: every job whose token is missing gets its own line, and that line names the job's own profile", c.Fix, want)
+		}
+		if !strings.Contains(c.Problem, "profile "+profile) {
+			t.Errorf("the problem %q does not name profile %s, whose job's token is missing", c.Problem, profile)
+		}
+	}
+}
+
 // TestDoctorProjectAccountStoredPresent: with both containers stored the
 // check passes, and it reports each account job's reach — the job, the
 // account, the container it mounts and the repositories that token may be

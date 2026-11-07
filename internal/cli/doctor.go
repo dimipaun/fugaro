@@ -1419,20 +1419,24 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 // the token would not fire, and the fix would have widened the account by
 // nothing more than the directory doctor was run from.
 //
-// --profile is the profile whose claude_accounts already lists the account
-// (config.ClaudeAccountProfile), which leaves that half of the command a no-op.
-// Without it accountsAddProfile refuses outright in a project with several
-// profiles, and with exactly one profile that does not serve the account the
-// command adds the account to it and deploys a job — a change the
-// store-the-token step this replaced never made. It is left off only when no
-// profile serves the account at all, which is a state of the project rather
-// than a choice this line can make.
-func doctorAccountsAdd(lc *localcfg.Config, account string) string {
+// --profile is a profile whose claude_accounts already lists the account, which
+// leaves that half of the command a no-op: the caller's own when it knows which
+// profile's job the check is about (project-account-stored names one), and
+// config.ClaudeAccountProfile's answer otherwise. Without it accountsAddProfile
+// refuses outright in a project with several profiles, and with exactly one
+// profile that does not serve the account the command adds the account to it and
+// deploys a job — a change the store-the-token step this replaced never made. It
+// is left off only when no profile serves the account at all, which is a state of
+// the project rather than a choice this line can make.
+func doctorAccountsAdd(lc *localcfg.Config, account, profile string) string {
+	if profile == "" {
+		profile = config.ClaudeAccountProfile(lc.Profiles, account)
+	}
 	parts := []string{selfCommand(), "accounts", "add", quoteWord(account)}
 	if repos := lc.ClaudeAccounts[account].AllowDataTo; len(repos) > 0 {
 		parts = append(parts, "--repos", quoteWord(strings.Join(repos, ",")))
 	}
-	if profile := config.ClaudeAccountProfile(lc.Profiles, account); profile != "" {
+	if profile != "" {
 		parts = append(parts, "--profile", quoteWord(profile))
 	}
 	return strings.Join(parts, " ")
@@ -1511,7 +1515,7 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		secret := config.ClaudeAccountSecret(n)
 		if !have[secret] {
 			missing = append(missing, pluginwire.Printable(n))
-			cmds = append(cmds, doctorAccountsAdd(lc, n))
+			cmds = append(cmds, doctorAccountsAdd(lc, n, ""))
 		}
 	}
 	if len(missing) == 0 {
@@ -1737,7 +1741,7 @@ func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, pr
 			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(j.Token)+" --project-wide")
 			continue
 		}
-		cmds = append(cmds, doctorAccountsAdd(lc, j.Account))
+		cmds = append(cmds, doctorAccountsAdd(lc, j.Account, j.Profile))
 	}
 	if len(missing) == 0 {
 		return &doctorCheck{ID: "project-account-stored", OK: true, Severity: "info",
