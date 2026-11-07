@@ -39,6 +39,7 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro logs` -- Print a run's logs from Cloud Logging
@@ -1887,6 +1888,56 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro graph`
+
+Print the project's dependency graph
+
+Print the project's dependency graph as one versioned document.
+Every scope is read from the project's database through the caller's own
+credential: the coordinator's stored view is what the coordinator's sweep
+already wrote, so this command needs no checkout and opens no host, and it
+works in a directory that is not a checkout at all.
+
+--source selects the scope, and the set is closed: all (the default) is
+every scope that exists, which today is the coordinator's stored view;
+coordinator is that view alone; orchestrator:<id> and local:<id> name scopes
+this build has no reader for yet and are refused rather than answered with an
+empty graph. An id is one lower-case letter or digit, then up to 39 more of
+those or a hyphen, and nothing else: anything that does not match is refused
+before anything is read.
+
+The coordinator's scope is every repository the local config lists, and a
+repository the sweep has never reconciled is read as its runs alone — the
+half of the view that needs no credential — rather than dropped: the
+document says which of the two halves it is holding.
+
+With --json the document is printed as console/docs/json-contract.md §6.22
+defines it: its version, when it was assembled, one entry per scope in
+sources, the nodes, the edges (the coordinator's view has none) and the
+warnings. Without it, a short table: each scope's state, then its nodes
+grouped by release.
+
+Exit codes: 1 for a refused scope or a project with no database, 2 for a
+failure of the database or the runs bucket.
+
+Usage: `fugaro graph`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for graph |
+| `--json` | bool | `false` | no | print the graph document as JSON |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--source` | string | `all` | no | the scope to read: all, coordinator, orchestrator:<id> or local:<id> |
 
 Subcommands:
 

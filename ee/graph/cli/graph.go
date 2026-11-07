@@ -65,8 +65,8 @@ func NewGraphCmd() *cobra.Command {
 		Long: "Print the project's dependency graph as one versioned document.\n" +
 			"Every scope is read from the project's database through the caller's own\n" +
 			"credential: the coordinator's stored view is what the coordinator's sweep\n" +
-			"already wrote, so this command opens no checkout and no host, and it works\n" +
-			"in a directory that is not a checkout at all.\n\n" +
+			"already wrote, so this command needs no checkout and opens no host, and it\n" +
+			"works in a directory that is not a checkout at all.\n\n" +
 			"--source selects the scope, and the set is closed: all (the default) is\n" +
 			"every scope that exists, which today is the coordinator's stored view;\n" +
 			"coordinator is that view alone; orchestrator:<id> and local:<id> name scopes\n" +
