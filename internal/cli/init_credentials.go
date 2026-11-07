@@ -246,13 +246,27 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 // off for every machine of the installation. This repository keeps the record
 // the last reading left on it either way.
 //
-// outs is the installation's own record of the service, used when the local
-// config does not carry the block yet: on the run that deploys it the config
-// is written by the very step this precedes, and the outputs are the only
-// place the service's existence is known. Only the block's PRESENCE is read
-// here — the bundle's container is derived from the project and the
-// installation's name (openBundleStore) — so a URL the first apply could not
-// know yet is not a reason to answer false.
+// outs is the installation root's own outputs, and it is TWO things here.
+//
+// It is the first condition of the switch, read from the same source the spec
+// beside this reads it from (infra.Inputs.Installation, which withDefaults
+// never fills from the local config), so a record cannot say on for a root the
+// spec held off. The two part company where the local config is the stale one:
+// an owner who takes the service out leaves a config still carrying the block
+// and its URL (docs/credentials-service/runbook.md §9), and a `fugaro update
+// --repo` in a checkout then reads outputs with no service at all while
+// planning that repository's root held off. The bundle's reading alone would
+// record true there, and the next launch — which reads the config's block —
+// would hand the job the address of a service that no longer exists: mounts
+// kept, no roles/run.invoker, and a provider opened keyless for a mint nothing
+// answers (D143).
+//
+// And it is the fallback for the bundle read: on the run that deploys the
+// service the config is written by the very step this precedes, so the outputs
+// are the only place the service's existence is known. Only the block's
+// PRESENCE is read for that — the bundle's container is derived from the
+// project and the installation's name (openBundleStore) — so a URL the first
+// apply could not know yet is not a reason to answer false.
 func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, auth string) {
 	if lc == nil || len(lc.Repos) == 0 {
 		return
@@ -269,7 +283,16 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 		// would be a record of a grant this run never made.
 		return
 	}
-	ready, record := r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
+	installed := outs.CredentialsService != nil
+	ready, record := false, true
+	if installed {
+		// The bundle is read only where the installation HAS the service: the
+		// container is the installation's, so a read on an installation
+		// without one would be a cloud call about a resource that does not
+		// exist — and its answer could not move the record anyway, the plan
+		// this run applies being held off by the same outputs.
+		ready, record = r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
+	}
 	if !record {
 		// Nowhere the bundle was not read — a coding agent's session, a run's
 		// own process, or a read that failed — is there a reading to write, so
@@ -278,12 +301,12 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 		// would make is the installation-wide one the doc above refuses.
 		return
 	}
-	// The one predicate, not a second copy of its conjunction: `installed` is
-	// the probe's own answer — a config with no block makes credentialsBundle-
-	// Ready answer false without a read — so what the call adds is exactly the
-	// third condition, and the record cannot come out differently from the
+	// The one predicate, not a second copy of its conjunction: installed is
+	// read here exactly as the spec reads it, and ready is this run's reading
+	// of the bundle — which the probe answers false for, without a read, when
+	// no block is known — so the record cannot come out differently from the
 	// plan it is the record of.
-	entry.CredentialsServiceReady = infra.CredentialsServiceServes(true, ready, auth)
+	entry.CredentialsServiceReady = infra.CredentialsServiceServes(installed, ready, auth)
 	lc.Repos[key] = entry
 }
 

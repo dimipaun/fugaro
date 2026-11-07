@@ -45,6 +45,7 @@ that finds every place it is written and every test that pins it.
 | **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it, because the drop it triggers is auth-blind (§1.4) |
 | **Amended after review** | 2026-11-07 — the readiness record is a **per-repository fact written by the door that applies that repository's root**, and it is written as the value that root's **plan was built with**: a record vouches for a grant, only a root's own apply makes one, and the same rule runs the other way (§3 DON8) — and **neither door writes one in a coding agent's session or in a run's own process**, where the bundle is not read at all |
 | **Amended after review** | 2026-11-07 — the record is the **switch itself**, not the reading of the bundle: the auth its plan was built for is **folded into it** (`infra.CredentialsServiceServes`, not a second copy of its conjunction), so a root applied before its owner committed the cascade is recorded held off and no launch is handed an address whose `roles/run.invoker` grant no apply made. The auth stays **read live** at every build and every launch, which is what honours an edit in the other direction |
+| **Amended after review** | 2026-11-07 — **the record carries the plan's FIRST condition as well as its third**: `installed` is read from the installation root's **outputs** — the source the spec reads it from — and not from the local config's block, which is what an owner's opt-out leaves behind while the outputs carry no service, so a `fugaro update --repo` can no longer record `true` for a root it applied held off (§3 DON8) |
 | **Amended after review** | 2026-11-07 — **a read that failed is not a reading and therefore not an answer.** The three states that answer are facts about the bundle, true for every reader (no version, a newest version that is `DISABLED`, a document that parses without a `KindModel` entry); an error is a fact about **this machine's identity**, and the record travels in the local config `fugaro update` publishes, so a `false` written from it switches the service off for every machine of the installation — including the jobs whose mounts the last apply dropped. A failed read leaves the record as the last reading wrote it (§3 DON8) |
 | **The Open item, answered** | **2026-11-05: DEPLOY NOW, SWITCH LATER.** The service deploys everywhere; the switch happens **per repository** and only where the service can serve that repository's runs — its auth mode must be one the service serves **and** the bundle must hold what that mode needs. §1.5 states what the switch flips; §3 DON8 is the task |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
@@ -675,7 +676,9 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
 - **Tests:** the pinned sentences themselves are the tests, and the task adds the two that did not exist:
   `TestNoDocumentCallsTheCredentialsServiceOptional` (a repository-wide scan for the retired phrases —
   "ships dormant", "optional credentials service", "opt-in" applied to *this* service — over `docs/`,
-  `website/`, `SECURITY.md`, `CLAUDE.md`, `.claude/rules/` and the release notes, with the same
+  `website/`, `SECURITY.md`, `CLAUDE.md`, `.claude/rules/`, the release notes and `.goreleaser.yaml`,
+  whose footer is the body published with **every** GitHub release and which the fifth review round
+  found still naming the retired flag, with the same
   false-positive discipline `internal/cli/docs_live_init_census_test.go` uses for the roots it exempts:
   the coordinator's and the accounts' own "dormant" uses are **not** this service's and are named in the
   test as excluded) and `TestTheCredentialsServiceIsDeployedForEveryInstallation` (the sentence this
@@ -683,7 +686,8 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
 - **Red step:** `TestNoDocumentCallsTheCredentialsServiceOptional` fails on today's tree with the full
   list above. It is written first and its failure is the task's work list.
 - **Mutation to hold it:** restore one retired sentence in any of the documents → the first test fails
-  and names the file; delete the new required sentence from `SECURITY.md` → the second fails.
+  and names the file — the release template included, which is why its footer is a scan root; delete the
+  new required sentence from `SECURITY.md` → the second fails.
 - **Reviewer tier:** **B** (a docs-and-pins task, with the SECURITY.md half reviewed as a security
   claim — `SECURITY.md`'s statements about what a job holds are claims, and D148 is why they move
   deliberately).
@@ -991,6 +995,17 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   one that applies the root with the switch on — is the one that records `true`. The auth is judged as
   the RUNS read it (`deploymentConfig`: the `fugaro.yaml` at the default branch, else this working
   tree), the same document the plan above is built from, or the record and the plan are one edit apart.
+  **And the plan's FIRST condition is in it too** (the header's fifth 2026-11-07 row): `installed` is
+  read from the **installation root's own outputs**, the source the spec reads it from
+  (`infra.Inputs.Installation`, which `withDefaults` never fills from the local config) — not from the
+  local config's block, which is the stale half in the state an owner's opt-out leaves
+  ([runbook.md](runbook.md) §9): the config still carrying the block and its URL, the installation's
+  outputs carrying no service at all, and a `fugaro update --repo` in a checkout, which applies no
+  installation root. The bundle's reading alone would record `true` there, for a root this run applies
+  held off, and the next launch — which reads the config's block — would put the address of a service
+  that is not there on a job whose mounts are still in place: the provider opens keyless for a mint
+  nothing answers, and the run halts at the service's door (D143) while the credential it needed is
+  still mounted and unread.
   The backfill needs no such fold: its evidence is the deployed root's own tfvars, which carry the
   service exactly when that apply dropped the mounts and made the grant, so the auth of that apply is
   already in the document it reads. A bundle that is later emptied switches the
@@ -1053,7 +1068,11 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   launch: a cascade document, the block present, no record, and the job is handed no address);
   `TestAnUnreadableBundleLeavesTheRecordAlone` (the fourth review round: over a bundle the record was
   written from, the version list starts answering 403, and the record is still `true` in the entry
-  **and in the file `fugaro update` publishes** — the write a failed read may not make); and
+  **and in the file `fugaro update` publishes** — the write a failed read may not make);
+  `TestAnOptedOutInstallationRecordsNoSwitch` (the fifth: one rig and one ready bundle, and the
+  installation's outputs move from carrying the service to carrying none — the config's block stays,
+  which is the opt-out — and the record has to go with the plan, `false` and absent from the file);
+  and
   `TestNoRepositoryRootGainsAServiceTheBundleCannotServe` (the whole-predicate guard: **no** repository
   root in the fixtures plans `installation.credentials_service` set unless all three conditions hold).
 - **Red step:** `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone` fails the moment DON1 lands and
@@ -1068,7 +1087,9 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   drop condition 3 → the `oauth` test fails, which is the review's finding reintroduced; store the auth
   mode in the record instead of reading it live → the edit-the-`fugaro.yaml` test fails; record the
   bundle's reading alone and leave the auth to the launch → `TestTheRecordFollowsTheAuthTheRunsRead`
-  fails, the `oauth` apply recorded ready over a root it planned held off; answer a failed read with
+  fails, the `oauth` apply recorded ready over a root it planned held off; read `installed` from the
+  local config's block instead of the outputs → `TestAnOptedOutInstallationRecordsNoSwitch` fails, the
+  record vouching for a service the installation does not have; answer a failed read with
   `false` rather than with no answer → `TestAnUnreadableBundleLeavesTheRecordAlone` fails, and one
   refused listing publishes the switch off for the whole installation; make
   `repoCredentialsService` return the block regardless → the no-repository-gains test fails and `sa.tf`

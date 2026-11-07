@@ -25,7 +25,9 @@ import (
 // postureScanRoots is where the posture is read from: the documents a person
 // reads before deciding anything about the service — the security document and
 // its generated mirror under website/, the repository's own guidance, the rules
-// that load when a path is touched, and every living document under docs/.
+// that load when a path is touched, the release template whose footer is the
+// body published with every GitHub release, and every living document under
+// docs/.
 //
 // It is deliberately the same walk as docs_live_init_census_test.go's, reusing
 // its two boundary helpers: `censusOutput` steps over the build outputs and
@@ -39,6 +41,7 @@ import (
 var postureScanRoots = []string{
 	"SECURITY.md",
 	"CLAUDE.md",
+	".goreleaser.yaml",
 	".claude/rules",
 	"docs",
 	"website",
@@ -136,7 +139,9 @@ var postureRetirementText = []string{"no longer an opt-in", "retired", "is gone"
 //
 // Mutation (verified, run and restored): put "the service ships dormant" back
 // into SECURITY.md → FAIL, naming the file; put the retired
-// `fugaro update --provision-credentials` back into the live checklist → FAIL;
+// `fugaro update --provision-credentials` back into the live checklist → FAIL,
+// and into .goreleaser.yaml's footer → FAIL, which is the release body itself
+// and the reason that root is in the list;
 // and delete the accounts' exemption's guard by writing a sentence about *this*
 // service into docs/accounts-add/spec.md → FAIL, which is what the guard is for.
 func TestNoDocumentCallsTheCredentialsServiceOptional(t *testing.T) {

@@ -583,10 +583,11 @@ type initRun struct {
 
 	// credsRead and credsReady are the credentials service's bundle as this
 	// run read it (credentialsBundleReady, init_credentials.go): whether it
-	// holds a model credential, read once and recorded on every repository
+	// holds a model credential, read once and recorded on the repository
 	// entry the run writes. Read once because it is one installation's
-	// bundle and one secret read; false for a read that failed is the
-	// fail-safe direction, and the warning it prints is why.
+	// bundle and one secret read; a read that FAILED answers nothing at all
+	// — the entry keeps the record the last reading left on it — and the
+	// warning it prints is why.
 	credsRead  bool
 	credsReady bool
 

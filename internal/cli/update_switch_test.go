@@ -494,8 +494,7 @@ func TestTheRootIsDeployedForTheAuthTheRunsRead(t *testing.T) {
 //
 // The ORDER the real door keeps — bundle read and record refreshed before the
 // root's spec is built — is pinned by TestTheRepositoryDoorReadsTheBundle-
-// BeforeItPlansItsRoot above, which drives the door itself. The outs value is
-// empty because the rigs here carry the block in the local config already.
+// BeforeItPlansItsRoot above, which drives the door itself.
 //
 // auth is the repository's agent.auth as the door passes it, cfg.Agent.Auth of
 // the document a RUN reads (deploymentConfig): the third condition of the
@@ -503,14 +502,35 @@ func TestTheRootIsDeployedForTheAuthTheRunsRead(t *testing.T) {
 // the same string in the checkout's fugaro.yaml, since a door that judged one
 // document and planned the root from another is what
 // TestTheRootIsDeployedForTheAuthTheRunsRead pins.
+//
+// switchOutputs is the installation root's own outputs as the repository door
+// reads them, and it is where the local config's block comes FROM (init.go's
+// install writes the config's block out of these): a rig carrying the block in
+// its config carries it here too, or the two say different things about the
+// installation, which is the state the door below is judged against.
+func switchOutputs() infra.InstallationOutputs {
+	return infra.InstallationOutputs{CredentialsService: &infra.CredentialsService{
+		Name:   infra.CredentialsServiceName,
+		Region: "us-east5",
+		URL:    credentialsServiceURL,
+	}}
+}
+
 func recordForRepo(t *testing.T, r *initRig, auth string) *localcfg.Config {
+	return recordForRepoOutputs(t, r, auth, switchOutputs())
+}
+
+// recordForRepoOutputs is recordForRepo over outputs a test chooses, which is
+// what pins the record's first condition: the installation the SPEC is built
+// for is the one these outputs describe.
+func recordForRepoOutputs(t *testing.T, r *initRig, auth string, outs infra.InstallationOutputs) *localcfg.Config {
 	t.Helper()
 	e := rigEngine(t, r, &initOptions{yes: true})
 	cfg, problems := config.Parse([]byte(checkoutYAML("bitbucket", auth, "aurora", "")))
 	if cfg == nil {
 		t.Fatalf("the fixture's fugaro.yaml does not parse: %v", problems)
 	}
-	e.r.recordCredentialsServiceReady(t.Context(), e.lc, infra.InstallationOutputs{}, "acme/sandbox", cfg.Agent.Auth)
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, outs, "acme/sandbox", cfg.Agent.Auth)
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	if err := e.r.writeRepoConfig(t.Context(), e.lc, spec, cfg, r.cfg, e.old); err != nil {
 		t.Fatalf("the repository stage's config write failed: %v", err)
@@ -690,6 +710,45 @@ func TestTheRecordFollowsTheAuthTheRunsRead(t *testing.T) {
 	// what every earlier release's config already said.
 	if raw := readFileString(t, r.cfg); strings.Contains(raw, "credentials_service_ready") {
 		t.Errorf("the local config still carries the record after the oauth apply:\n%s", raw)
+	}
+}
+
+// TestAnOptedOutInstallationRecordsNoSwitch is the record's first condition,
+// and the state that makes it matter: the local config still carries the
+// service's block and its URL — an owner who takes the service out leaves them
+// there, and the config is rewritten only by the next ordinary update
+// (docs/credentials-service/runbook.md §9) — while the installation root's
+// OUTPUTS carry no service at all, which is what the spec reads installed from
+// (infra.Inputs.Installation, withDefaults never filling it from the config).
+// `fugaro update --repo`, which applies no installation root, is the door that
+// meets this state.
+//
+// The plan that door builds is held off: mounts kept, no roles/run.invoker. A
+// record written from the bundle's reading alone would say ready anyway, and
+// the next launch — which reads the config's block — would hand the job the
+// address of a service that no longer exists, opening the git provider keyless
+// for a mint nothing answers while the job still mounts the credential it
+// needed (D143). The record is the plan's own first condition, so it says what
+// the plan did.
+//
+// Both halves run over ONE rig and ONE ready bundle: what moves is the
+// installation's outputs, which is the whole of the first condition.
+//
+// Mutation (verified, run and restored): pass true for installed again
+// (infra.CredentialsServiceServes(true, ready, auth)) and the second half fails
+// with the record set over a root the plan held off.
+func TestAnOptedOutInstallationRecordsNoSwitch(t *testing.T) {
+	r := switchRig(t)
+	putSwitchBundle(t, r, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+
+	if got := recordForRepo(t, r, config.AuthCascade).Repos["acme/sandbox"].CredentialsServiceReady; !got {
+		t.Fatalf("the fixture is not the state the opt-out half moves away from: over an installation whose outputs carry the service, a readable bundle and a cascade document, the record has to say the service is ready — that is the plan this run applied")
+	}
+	if got := recordForRepoOutputs(t, r, config.AuthCascade, infra.InstallationOutputs{}).Repos["acme/sandbox"].CredentialsServiceReady; got {
+		t.Errorf("the record says the service is ready on an installation whose outputs carry no service: the spec this same run built read installed from those outputs, so the root was applied held off — mounts kept, no roles/run.invoker — while the record would hand the next launch an address for a service that is not there, which opens the git provider keyless for a mint nothing answers (D143). The config's stale block is not evidence that a root was applied with the service on")
+	}
+	if raw := readFileString(t, r.cfg); strings.Contains(raw, "credentials_service_ready") {
+		t.Errorf("the local config still carries the record after the installation's service was taken out, and this file is the one `fugaro update` publishes for the installation:\n%s", raw)
 	}
 }
 
