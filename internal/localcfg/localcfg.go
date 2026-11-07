@@ -503,6 +503,15 @@ type WorkspaceMember struct {
 	ExchangeURL string `yaml:"exchange_url,omitempty"`
 }
 
+// IsZero reports whether the entry declares nothing at all, which is the state
+// validateWorkspace refuses and `fugaro workspace member rm` reads as "there is
+// no entry to remove". It is one rule with two readers, so the loader and the
+// command cannot come to different answers about an entry that is there and
+// says nothing.
+func (m WorkspaceMember) IsZero() bool {
+	return len(m.Repos) == 0 && len(m.JobServiceAccounts) == 0 && m.FirebaseProject == "" && m.FP == "" && m.ExchangeURL == ""
+}
+
 // WorkspaceCap is a workspace's own spend ceiling, as the file writes it: a
 // dollar amount, converted once by whatever builds the record the workspace
 // publishes (workspace.Parse's pricing.FromUSD), so nothing below that point
@@ -1982,7 +1991,7 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 			// rule is uniqueness and not order: yamledit appends, so the order
 			// is the order they were declared in, and the record that is
 			// published is sorted where it is built (W2).
-			if len(m.Repos) == 0 && len(m.JobServiceAccounts) == 0 && m.FirebaseProject == "" && m.FP == "" && m.ExchangeURL == "" {
+			if m.IsZero() {
 				bad("workspace_members.%s declares nothing: an entry carries the member's job_service_accounts, firebase_project, fp and exchange_url, which is what the workspace's own service resolves a caller by", name)
 				continue
 			}
