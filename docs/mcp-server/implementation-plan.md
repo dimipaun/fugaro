@@ -199,7 +199,7 @@ them and is not any more**: the owner gave it on 2026-11-05, so M2 and M4 wait o
 tasks and the review below.
 
 **M1** ← nothing. **M2** ← M1. **M3** ← nothing: it is a rules file and
-its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence (the owner cleared it on 2026-11-07). **M5b** ← M4, M5, and the verifier M6 carries (it spends the
+its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence (the owner cleared it on 2026-11-07). **M5b** ← M4, M5 (it spends the
 ID token the approve step verifies and binds the approval to the flow that token names; **the owner
 ruled on 2026-11-07 that it is a task of its own and a hard prerequisite before any binary links the
 front door**). **M6** ← M4, M5 (it wires a
@@ -797,8 +797,10 @@ tree does not carry:
   property of the review that has already run: the independent SECURITY review of 2026-11-04 read §8
   and M3, M4, M5, M7 and M9, and M5b did not exist then. **Its diff therefore carries its own
   independent SECURITY reading when it is built**, on the same terms.
-- **Depends on:** M4, M5, and the verifier M6 carries — the ID token this task spends is the one that
-  verifier checks. **It gates the wiring rather than a task**: no task of this plan waits on M5b, and
+- **Depends on:** M4 and M5 — **the verifier is not a task this one waits for**: the ID token it
+  spends is checked by `ee/coordinator/mcpauth/firebase.go`, which merged on `main` as #1714 and is
+  called from the approve step M5 builds, so what M6 still owes is its own rerun and no part of this
+  task's order. **It gates the wiring rather than a task**: no task of this plan waits on M5b, and
   **the task that wires the front door into a binary waits on it and on the two bounds spec.md §8
   relies on** ([reconciliation.md](reconciliation.md) §4a, the two bounds no task carries).
 - **What this task does not change.** It adds no bound to the open registration endpoint and no

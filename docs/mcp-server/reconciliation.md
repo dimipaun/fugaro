@@ -199,9 +199,12 @@ new, and the version bumps `go mod tidy` made beside the library: `go-jose/v4` v
 
 The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file
-now carries — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are
-built and merged on `main`; M5 is built except the paired device M-a asks for, which is
-pending the owner; the rest is not started; this folder approves no task.**
+took up that day — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are
+built and merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
+owner; the rest is not started; this folder approves no task.** **That quotation is the line as it
+stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and the line every
+file carries today reads "...which is M5b and is a hard prerequisite before any binary links the
+front door (the owner's ruling of 2026-11-07)" (§4a).
 
 ### The answer of 2026-11-05
 
