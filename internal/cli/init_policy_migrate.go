@@ -470,6 +470,14 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		if err := confirmEmptyAllowList(cmd, m.lc, marker); err != nil {
 			return err
 		}
+	} else if managed && marker == "" && !admitted {
+		// The owner's ruling of 2026-11-06 (no typed prompt for a person at a
+		// real terminal on a managed project, except data loss and secret
+		// values): rewriting the policy node from the person's own local config
+		// is neither, so the person is told what is written and it is written.
+		// A coding agent's session carries a marker and keeps every confirmation
+		// below; an unmanaged project reads managed false and keeps them too.
+		fmt.Fprintf(w, "note: %s\n", what)
 	} else if !admitted {
 		// D846 reaches this door too: a publish that raises a ceiling, removes one
 		// or widens the model list is the widening the settings commands reserve for
