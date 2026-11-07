@@ -23,12 +23,14 @@ const signConsequence = "can sign sign-in tokens with any claims, i.e. act as an
 // account of the Firebase project. Firebase accepts a custom sign-in token
 // signed by ANY service account of the project, so that, and not the signer
 // account's minter role, is the real boundary of the budget database's
-// identity. Three kinds of principal are information: the ones the design
+// identity. Four kinds of principal are information: the ones the design
 // expects (the Firebase Admin SDK account, the minter role on the signer
-// account alone), Google's own service agents of this project (matched by
-// exact email AND this project's number) and the project owners (the trust
-// root); none is ever given a remove command. Every other one is a warning
-// that fails doctor under --strict. Nothing is
+// account alone), the managed deployment's own grants (the deployer account's
+// conditioned roles, fenced to the managed prefix, and the operators'
+// impersonation of the deployer account), Google's own service agents of this
+// project (matched by exact email AND this project's number) and the project
+// owners (the trust root); none is ever given a remove command. Every other
+// one is a warning that fails doctor under --strict. Nothing is
 // checked without a budget backend. Read-only.
 func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service, i *iam.Service) []doctorCheck {
 	if lc.Budget == nil || lc.Budget.FirebaseProject == "" {
@@ -46,7 +48,12 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	if nerr != nil {
 		number = 0
 	}
-	fs, err := infra.TokenSigners(ctx, c, i, fp, signer, number)
+	// The installation's own managed deployment, as its local config records
+	// it: its GCP project (the deployer account is there) and the operators it
+	// names. Both empty recognises nothing, so a grant nobody's apply made
+	// still warns.
+	managed := infra.Managed{Project: lc.GCPProject, Operators: lc.Terraform.Operators}
+	fs, err := infra.TokenSigners(ctx, c, i, fp, signer, number, managed)
 	if err != nil {
 		// A warning: with nothing read, --strict must not go green.
 		return []doctorCheck{{ID: "token-signers", Severity: "warning",
@@ -59,11 +66,21 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	var agentOrder []string
 	owners := map[string]bool{}
 	var ownerOrder []string
+	managedWhy := map[string][]string{} // member -> why its grant is the design's
+	var managedOrder []string
 	n := 0
 	for _, f := range fs {
 		switch {
 		case f.Expected:
 			expected = append(expected, pluginwire.Printable(f.Member)+condSuffix(f.Condition))
+		case f.Class == infra.SignerManaged:
+			m := pluginwire.Printable(f.Member) + condSuffix(f.Condition)
+			if _, ok := managedWhy[m]; !ok {
+				managedOrder = append(managedOrder, m)
+			}
+			if why := pluginwire.Printable(f.Why); !slices.Contains(managedWhy[m], why) {
+				managedWhy[m] = append(managedWhy[m], why)
+			}
 		case f.Class == infra.SignerGoogleAgent:
 			m := pluginwire.Printable(strings.TrimPrefix(f.Member, "serviceAccount:"))
 			if _, ok := agents[m]; !ok {
@@ -86,6 +103,15 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		}
 	}
 	var info []doctorCheck
+	if len(managedOrder) > 0 {
+		var parts []string
+		for _, m := range managedOrder {
+			parts = append(parts, m+" ("+strings.Join(managedWhy[m], "; ")+")")
+		}
+		info = append(info, doctorCheck{ID: "token-signers-managed", Severity: "info",
+			Problem: "the managed deployment's own grants, which Fugaro's own Terraform makes on purpose: " + strings.Join(parts, ", ") +
+				"; neither the fenced roles nor the impersonation grant reaches the signer account; no action"})
+	}
 	if len(agentOrder) > 0 {
 		var parts []string
 		for _, m := range agentOrder {
