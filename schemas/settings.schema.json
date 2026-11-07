@@ -1013,6 +1013,9 @@
         "repos.*.vertex": {
           "default": "unset = false"
         },
+        "repos.*.credentials_service_ready": {
+          "default": "unset = false: the service's bundle holds no model credential for this repository"
+        },
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
         },
