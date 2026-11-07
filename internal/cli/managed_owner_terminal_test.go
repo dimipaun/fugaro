@@ -8,27 +8,84 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // managed_owner_terminal_test.go is the owner's ruling of 2026-11-06: a person
 // at a real terminal on a managed project is never asked to type a
 // confirmation, except for data loss and secret values.
 //
-// Each test below is one of the ruling's cases, and each is run in the two
-// worlds that have to be told apart — the same run with a coding agent's
-// marker in the environment, and the same run on a project that is NOT managed
-// — because the exception is about WHO is at the terminal and never about what
-// the gate admitted. The mutation the file exists to catch is the tempting one:
-// reading "a terminal" as "the owner" (a coding agent's session has a terminal
-// too, and its own refusal is the whole of what keeps an agent out of these
-// writes), or reading the exception as one about the project rather than about
-// the session (a project that is not managed keeps every prompt it had).
+// Each test below is one of the ruling's cases, and each is run in the worlds
+// that have to be told apart — the same run with a coding agent's marker in the
+// environment, the same run on a project that is NOT managed, and the same run
+// with nobody at the terminal at all (stdin a pipe, managed marks and no
+// --yes) — because the exception is about WHO is at the terminal and never
+// about what the gate admitted. The mutations the file exists to catch are the
+// tempting ones: reading "a terminal" as "the owner" (a coding agent's session
+// has a terminal too, and the marker read in PersonAtTheTerminal is the whole
+// of what keeps an agent out of these writes), reading the exception as one
+// about the project rather than about the session (a project that is not
+// managed keeps every prompt it had), and dropping the terminal itself out of
+// the predicate — a pipe carries no marker, so a run nobody is at reads exactly
+// like the owner's own, and an arm that asked only the marker would write
+// there.
 //
 // The rigs are managed_money_steps_test.go's managedTerminalUpdate (the gate
-// read once, beside the loop, in the owner's own session) and updateRig's own
-// helpers; the data-loss case is asserted through the very call the --forget
-// rollback makes, because what the ruling leaves asked is that call and not a
-// step's.
+// read once, beside the loop, in the owner's own session), its no-terminal
+// sibling below, and updateRig's own helpers; the data-loss case is asserted
+// through the very call the --forget rollback makes, because what the ruling
+// leaves asked is that call and not a step's.
+
+// managedUpdateNoTerminal is managedTerminalUpdate's rig in the world a person
+// is not in: the same managed marks, the same one read beside the loop, and
+// stdin a pipe instead of a fake terminal, so the gate stands in for the run
+// and PersonAtTheTerminal is false for the half of it that is not about the
+// marker. No --yes is passed: a flag is what a run nobody is at must not be
+// able to lean on, and this rig is what says so.
+func managedUpdateNoTerminal(t *testing.T) (*initRig, *initEngine, *syncBuf) {
+	t.Helper()
+	r := updateRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	noAgentSession(t)
+	e := rigEngine(t, r, &initOptions{door: updateDoor.name})
+	out := atNoTerminal(e)
+	e.gateRun(t.Context())
+	if !e.r.gateStandsIn() {
+		t.Fatalf("the rig's gate did not stand in for the run:\n%s", out)
+	}
+	return r, e, out
+}
+
+// TestManagedOwnerTerminalOrdinaryStepRefusesWithNobodyAtTheTerminal is the
+// other half of the owner's own sentence, and the half a reader of it gets
+// wrong: the ruling is about a PERSON at the terminal, so a managed run whose
+// stdin is a pipe is asked for the name exactly as before — the gate's read
+// says who may act, and this run has nobody there to act. It is asserted with
+// a step the review did not cover, because that is the one whose note the arm
+// prints beside the sentence, and the note has to come back with the prompt.
+func TestManagedOwnerTerminalOrdinaryStepRefusesWithNobodyAtTheTerminal(t *testing.T) {
+	_, e, out := managedUpdateNoTerminal(t)
+	const notCovered = "the plan is outside what the review announced (a destroy of one resource)"
+	e.r.review = &runReview{state: reviewTaken}
+
+	ok, err := e.r.askOrdinary("writes the Terraform state bucket (cents a month)", notCovered)
+	if err != nil {
+		t.Fatalf("a run nobody is at was refused with an error rather than asked: %v\n%s", err, out)
+	}
+	if ok {
+		t.Fatalf("a step of a managed run nobody is at proceeded with nothing typed:\n%s", out)
+	}
+	if !strings.Contains(out.String(), notCovered+"; it asks for its own") {
+		t.Errorf("the step's own confirmation was not the one asked:\n%s", out)
+	}
+	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a run nobody is at read the sentence written for the owner's own terminal:\n%s", out)
+	}
+	if strings.Contains(out.String(), "confirmed by --yes") {
+		t.Errorf("a run nobody is at was told a flag it did not pass confirmed the step:\n%s", out)
+	}
+}
 
 // TestManagedOwnerTerminalOrdinaryStepTypesNothing: the ordinary steps of the
 // converge — the state bucket, the Viewer-read removal, a step the review did
@@ -277,6 +334,46 @@ func TestManagedOwnerTerminalAnchorWritesWithoutAsking(t *testing.T) {
 	}
 }
 
+// TestManagedOwnerTerminalAnchorWritesNothingWithNobodyAtTheTerminal is the
+// anchor's other half: the same line, the same managed project, and stdin a
+// pipe. The arm is the owner's own terminal's, so a run nobody is at writes
+// nothing and is handed the line to add instead — the diff is printed either
+// way, and the write the ruling makes for the owner is not one a pipe gets.
+// Nothing needs a marker to be refused here: with no terminal, writeAnchor's
+// own default arm leaves the file alone, which is the behaviour an arm that
+// asked only about the marker would have replaced.
+func TestManagedOwnerTerminalAnchorWritesNothingWithNobodyAtTheTerminal(t *testing.T) {
+	_, e, out := managedUpdateNoTerminal(t)
+	path := filepath.Join(t.TempDir(), "fugaro.yaml")
+	old := []byte("name: aurora\n")
+	if err := os.WriteFile(path, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &anchorEdit{path: path, id: initProject, old: old,
+		out: []byte("name: aurora\ngcp_project: " + initProject + "\n"), changed: true}
+
+	written, err := e.r.writeAnchor(a, initflow.Env{}, false)
+	if err != nil {
+		t.Fatalf("the anchor's write failed: %v\n%s", err, out)
+	}
+	if written {
+		t.Errorf("the line was written with nobody at the terminal:\n%s", out)
+	}
+	got, rerr := os.ReadFile(path)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(got) != string(old) {
+		t.Errorf("the file changed with nobody at the terminal:\n%s", got)
+	}
+	if !strings.Contains(out.String(), "to let teammates use this installation without setup, add this line to "+path) {
+		t.Errorf("a run nobody is at was not handed the line to add:\n%s", out)
+	}
+	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a run nobody is at read the sentence written for the owner's own terminal:\n%s", out)
+	}
+}
+
 // TestManagedOwnerTerminalLayerWritesWithoutAsking: the project layer stage's
 // three writes — seeding the local file from the published layer, publishing
 // the file, and D854's re-seed — are the stage's own confirmations, and a
@@ -343,20 +440,34 @@ func TestManagedOwnerTerminalLayerWritesWithoutAsking(t *testing.T) {
 // TestManagedOwnerTerminalLayerRefusesAnAgentSession is the layer stage's own
 // half of the same case, driven at its own call: a coding agent's session
 // writes nothing there and reads no sentence of the owner's, and the
-// confirmation it meets is the typed one it has always met. The loop refuses an
-// agent's session before a stage of this door applies at all (initflow's
-// agentStage), so what this holds is the arm itself — the marker read inside
-// PersonAtTheTerminal is the whole of what keeps a session out of a write the
-// gate stands in for.
+// confirmation it meets is the typed one it has always met. The gate is read
+// first, so the arm is reachable at all — readUpdateGate answers the marks
+// whoever is sitting there, and only PersonAtTheTerminal's marker is what
+// keeps the session out. Apply refuses a marker on its own before any of this
+// (the loop's agentStage does the same), so the arm itself is asked directly:
+// the marker read inside PersonAtTheTerminal is the whole of what stands
+// between an agent's session and a write the gate stands in for.
 func TestManagedOwnerTerminalLayerRefusesAnAgentSession(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)
-	t.Setenv(agentMarkers[0], "1")
+	noAgentSession(t)
 	e := rigEngine(t, r.initRig, &initOptions{door: updateDoor.name})
 	out := atTerminal(t, e, "")
 	e.r.cmd.SetOut(out)
+	e.gateRun(t.Context())
+	if !e.r.gateStandsIn() {
+		t.Fatalf("the rig's gate did not stand in for the run:\n%s", out)
+	}
+	// The marker goes in after the read, as in every other test here: it is
+	// what a run's session is, and the gate's read is not a second one.
+	t.Setenv(agentMarkers[0], "1")
 
+	// A config with the rig's own project name is all the arm reads (the name
+	// is what confirmRemoval compares and prints).
+	if err := newLayerStage(e).confirmWrite(&localcfg.Config{Name: initProjectName}, initflow.Env{Interactive: true}, layerSeedWhat); err == nil {
+		t.Fatalf("a coding agent's session on a managed project confirmed the layer's write:\n%s", out)
+	}
 	if _, err := newLayerStage(e).Apply(t.Context(), initflow.Env{Interactive: true}); err == nil {
 		t.Fatalf("a coding agent's session on a managed project seeded the layer with nothing typed:\n%s", out)
 	}
@@ -365,6 +476,37 @@ func TestManagedOwnerTerminalLayerRefusesAnAgentSession(t *testing.T) {
 	}
 	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
 		t.Errorf("a coding agent's session read the owner's own sentence:\n%s", out)
+	}
+}
+
+// TestManagedOwnerTerminalLayerRefusesWithNobodyAtTheTerminal is the layer
+// stage's own half of the other case, and it is the one that matters most: a
+// pipe carries no marker, so a managed update nobody is watching reads exactly
+// like the owner's own session, and the terminal is the whole of what tells
+// them apart. The step keeps the confirmation it always had — the name typed
+// at a terminal, or --yes — and the file is not written.
+func TestManagedOwnerTerminalLayerRefusesWithNobodyAtTheTerminal(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	noAgentSession(t)
+	e := rigEngine(t, r.initRig, &initOptions{door: updateDoor.name})
+	out := atNoTerminal(e)
+	e.r.cmd.SetOut(out)
+	e.gateRun(t.Context())
+	if !e.r.gateStandsIn() {
+		t.Fatalf("the rig's gate did not stand in for the run:\n%s", out)
+	}
+
+	_, err := newLayerStage(e).Apply(t.Context(), initflow.Env{})
+	if err == nil {
+		t.Fatalf("a managed run nobody is at seeded the layer with nothing typed:\n%s", out)
+	}
+	if _, rerr := os.Stat(localLayerPath(t)); !errors.Is(rerr, os.ErrNotExist) {
+		t.Errorf("the local layer file was seeded with nobody at the terminal: %v", rerr)
+	}
+	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a run nobody is at read the sentence written for the owner's own terminal:\n%s", out)
 	}
 }
 
