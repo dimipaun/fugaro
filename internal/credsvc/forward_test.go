@@ -361,6 +361,17 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 		{http.MethodGet, VerifyPath},
 		{http.MethodPost, VerifyPath + "/"},
 		{http.MethodPost, VerifyPath + "/x"},
+		// The Bitbucket prefix serves GET, POST and PUT (git's own calls and
+		// the REST allow-list's), so a DELETE or a PATCH under it is a route
+		// this service does not have. These two rows are what holds that gate:
+		// the prefix is admitted by a method switch, and a switch that admitted
+		// every method would let a DELETE in, where the classification — which
+		// is about which CALL a path names, not about which requests have a
+		// route — would answer it as the caller's own malformed call instead of
+		// as no route at all. HEAD is left out on purpose: the answer to it
+		// carries no body, and this table reads the refusal's JSON.
+		{http.MethodDelete, BitbucketProxyPrefix + proxyGitPath("git-receive-pack")},
+		{http.MethodPatch, BitbucketProxyPrefix + proxyRESTPath("/pullrequests/7")},
 	}
 	for _, tc := range paths {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
