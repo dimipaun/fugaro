@@ -264,9 +264,9 @@ small.
 
 **What AK4 does not make possible — the sentinel's deployment route.** Publishing is not deploying,
 and every reader of the account axis on the way to a job reads a profile's `claude_accounts` as *the
-Claude OAuth tokens this profile's jobs mount*. The sentinel is no job's token, so each of them needs
-an answer this plan has to write somewhere — the two that are claims about a credential AK4 writes
-here, and the two that are the deployment route itself are AK5's:
+Claude OAuth tokens this profile's jobs mount*. The sentinel is no job's token, so each of the four
+readers below needs an answer this plan has to write somewhere: AK4 writes the two that are claims
+about a credential, and AK5 owns the two that are the route itself.
 
 - `internal/infra/projectjobs.go`'s `projectAccountMount` refuses an account whose project-wide
   container the installation does not create — for the sentinel with a sentence prescribing
@@ -586,5 +586,5 @@ any installation whose budget mode is `off` — the review class refuses a run w
    the review variant's account segment is. An installation that publishes a profile naming the
    sentinel is refused by `fugaro update` — fail-closed, and with AK4's own sentence in
    `internal/infra/projectjobs.go` that names the move that works (take the key off the profile),
-   which AK5 replaces with the route's own answer — so the state is safe and honest, but it is not a state to
-   ship a release on.
+   which AK5 replaces with the route's own answer — so the state is safe and honest, but it is not a
+   state to ship a release on.
