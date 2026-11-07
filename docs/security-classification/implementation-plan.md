@@ -6,11 +6,13 @@ each with an empty owner's-answer cell), and the two slices this plan orders are
 (**D1519**) rather than a schedule. This document adds no code, no schema, no config, no fixture and no
 workflow: it names the files the tasks will touch and edits none of them.
 
-**What "parallel by construction" means here.** Every task names **at most six files**, not counting the
-`testdata/` fixtures its refusals need — the tree's own convention is **one fixture file per refusal
-case** (`testdata/config/invalid/` holds one small YAML per case, `agent-compression-headroom.yaml`,
-`budget-mode.yaml` and the rest), so a task that refuses two things names two of them and SC7 is the one
-task whose path list therefore reaches seven. **No level has two writers of one file** — that is the
+**What "parallel by construction" means here.** Every task names **at most six files**. Two kinds of
+path are not counted, because they are written but carry no behaviour to review: the `testdata/`
+fixtures a refusal needs, which the tree writes **one file per case** (`testdata/config/invalid/` holds
+one small YAML per case, `agent-compression-headroom.yaml`, `budget-mode.yaml` and the rest), and the
+one **live-check document** an owner-run check writes into (`docs/gcp-live-checklist.md`, §6). On the
+first count **SC7** is the task that reaches seven paths, and on the second **SC6** is (**Check 370**'s
+section and the register's row). **No level has two writers of one file** — that is the
 invariant §1's levels exist to hold, and §2's table is the proof. A task that shares a file with another
 task is in a different level, and the table says which level each writer is at.
 
@@ -126,8 +128,13 @@ classified by), `internal/cli/run.go` (SC10's flag, beside every other launch fl
 scope row, the two files every config change touches), `internal/runstore/runstore.go` (SC6's record
 member, a wire shape the console, mobile and history read — **additive, never a retype**),
 `schemas/fugaro.schema.json` and `schemas/project-layer.schema.json` (SC7 and SC8, each pinned to the Go
-decoder by `internal/config/schema_test.go` and `schemas/schemas_test.go`), and
-`docs/rigor-modes/reconciliation.md` (SC2's census row, which four other folders' pins re-check — F17).
+decoder by `internal/config/schema_test.go` and `schemas/schemas_test.go`),
+**`docs/gcp-live-checklist.md`** (SC6's Check 370 section and the register's row, §6 — the same file and
+the same two places `docs/console-managed-screens/implementation-plan.md` gives to its own **CM12**, which
+writes **Check 360** there, so the register is what a merge conflict in this file is about: the register's
+own rule is that a claim is settled at its merge and whichever of two claims merges second renumbers
+itself), and `docs/rigor-modes/reconciliation.md` (SC2's census row, which four other folders' pins
+re-check — F17).
 
 ## 3. The slices
 
@@ -148,7 +155,8 @@ a level: slice 1 spans levels 0–2, slice 2 is level 3, slice 3 is levels 4–7
 - **Files:** `internal/orchestrator/sensitivity/pattern.go` (new — `Pattern{Name, Match, Category}`,
   `Match(paths, list)`, `Union(lists ...[]Pattern)`, the three bounds and the load-time validation),
   `internal/orchestrator/sensitivity/pattern_test.go` (new), `internal/orchestrator/sensitivity/floor.go`
-  (new — the six category rows of reconciliation §6, each a named doublestar glob, and `Floor() []Pattern`),
+  (new — the **35 rows** of reconciliation §6, each a name, one of the six labels and a doublestar glob,
+  and `Floor() []Pattern`),
   `internal/orchestrator/sensitivity/floor_test.go` (new), `internal/orchestrator/sensitivity/export_test.go`
   (the existing export seam gains `Match` and `Union` for the corpus test).
 - **Interface:** `func Match(paths []string, list []Pattern) []Pattern` — the rules that matched, so the
@@ -163,8 +171,12 @@ a level: slice 1 spans levels 0–2, slice 2 is level 3, slice 3 is levels 4–7
   the fail-closed direction whole.
 - **Red step:** `TestAProjectPatternCannotRemoveAFloorRow` fails to build (package surface absent), then
   fails when `Union` lets a later list drop a floor row of the same name.
-- **Tests:** `TestFloorIsAtLeastWhatTheRoutingRuleNames` (every path the reviewer-routing fixture holds
-  sensitive matches a floor row), `TestAProjectPatternCannotRemoveAFloorRow`,
+- **Tests:** `TestFloorIsAtLeastWhatTheRoutingRuleNames` (it reads
+  `internal/orchestrator/sensitivity/testdata/paths.txt` — the **32 paths across 15 categories** the
+  classifier's own routing pin holds, which is the tree's one machine-readable statement of what is
+  sensitive — and fails on any path **no floor row matches**; it is the test that makes reconciliation
+  §6's table checkable rather than a promise), `TestFloorRowsAreNamedAndBounded`,
+  `TestAProjectPatternCannotRemoveAFloorRow`,
   `TestUnionKeepsEveryLayersAdditions`, `TestUnionDeduplicatesByNameKeepingTheFirst`,
   `TestPatternMustBeARelativeDoublestarGlob` (the four checks, one case each),
   `TestPatternThatMatchesEverythingIsRefused` (D1503), `TestPatternThatMatchesNothingIsNotRefused`
@@ -283,7 +295,10 @@ the security-pattern floor, the matcher and the union merge`.
   two calls — the post-`implement` window and the post-`fix` seam beside `roundRigor`),
   `internal/runner/plan.go` (a re-resolution beside `(*run).resolveLevels`),
   `internal/runstore/security.go` (new — the record's member and its constructor),
-  `internal/runstore/runstore.go` (the field on `Record`).
+  `internal/runstore/runstore.go` (the field on `Record`) — plus the live-check document this task's
+  owner-run check writes into, which the header's bound does not count: **`docs/gcp-live-checklist.md`
+  (Check 370's own section, and the register's row, §6)**, and it is this task's because a task that
+  lands a check without the behaviour is a check nobody can run.
 - **Interface:** the escalation reads the diff the way `roundRigor` already does —
   **`(*Repo).ChangedFiles(ctx, r.workBase())`** (`internal/gitops/changedfiles.go`, the read in
   `internal/runner/rigor.go`) — and **not** through `runstore.Record.ChangedFiles`. That field is written
@@ -335,8 +350,7 @@ the security-pattern floor, the matcher and the union merge`.
   `internal/config/scope_test.go` (the golden `want` table), `schemas/fugaro.schema.json` (the property
   and its `$defs`), `docs/project-layer.md` (the row in §5's scope table) — **plus the fixture pair** the
   header's bound does not count, one file per case as the tree writes them:
-  `testdata/config/valid/security.yaml` (new) and `testdata/config/invalid/security.yaml` (new). This is
-  the one task here whose path list reaches seven, which is why the bound is stated as it is.
+  `testdata/config/valid/security.yaml` (new) and `testdata/config/invalid/security.yaml` (new).
 - **Interface:** `security:` on `config.Config`, the **same** shape the layer will carry (D1500): a list
   of `{name, match, category}`, decoded strictly, each row validated by SC1's `Pattern` rules — **so a
   pattern the matcher cannot read is a configuration error at load, not a rule that silently never
@@ -460,9 +474,11 @@ the security-pattern floor, the matcher and the union merge`.
 | **6** | SC10 | The forced row needs what SC6 escalates to and what SC9 resolves into |
 | **7** | SC11 | The skill may name the command only once it exists |
 
-**Critical path: SC1 → SC7 → SC8 → SC9 → SC10 → SC11** — six edges, seven tasks. The other branch
-(SC1 → SC3 → SC5, and SC1 → SC6) is shorter and is what makes the plan two-wide at four of its eight
-levels: a pair at levels 0, 1 and 3, and a single task at 2, 4, 5, 6 and 7.
+**Critical path: SC1 → SC7 → SC8 → SC9 → SC10 → SC11** — **six tasks and five edges**, and six is the
+most a chain can be when the plan has eight levels and its first holds two tasks side by side. The
+other branch (SC1 → SC3 → SC5, and SC1 → SC6) is shorter and is what makes the plan two-wide at
+**three** of its eight levels: a pair at levels 0, 1 and 3 (six tasks), and a single task at 2, 4, 5, 6
+and 7 (five) — eleven in all.
 
 **Two long tasks carry the risk**, and both are **SEC**: SC1 (the floor every layer is measured against)
 and SC6 (the escalation, which changes what a run spends). They are not on the same branch of the path,
@@ -480,10 +496,14 @@ Claimed in [reconciliation.md](reconciliation.md) §9, above every claim on `mai
 section written is 291, the highest number cited is 360). It is **owner-run** because two of its three
 parts are only true on a real installation, and one of them spends real money:
 
-1. **The reader, on a project with no key.** `fugaro security paths --json` prints the floor, and
-   `fugaro security paths --check internal/creds/gate.go --json` answers `sensitive: true` from a
-   `floor` row and `--check docs/recipes.md` answers `sensitive: true` from a floor row too, if D1505's
-   table covers it — which is the reading the owner settles.
+1. **The reader, on a project with no key.** `fugaro security paths --json` prints the floor's 35 rows.
+   `--check internal/creds/state.go` answers `sensitive: true` from the `credentials` floor row, and
+   `--check docs/recipes.md` answers `sensitive: false` — the pair that shows the floor is a **positive
+   list and not the classifier's complement** (F1, F22): `docs/` is a routine tree, and only the two
+   `docs/` rows the routing text's own exceptions name are on the floor. The interesting case in
+   between is `--check docs/pending-workflows/console-tests.yml`, which answers `true` from
+   `pending-workflows`: a routine tree with a listed exception, which is the shape a project's own list
+   will have.
 2. **The escalation, on a real run.** A run whose diff touches a floor path **runs the adversarial step**
    and its record names the pattern and the category; a run whose diff touches nothing on the list does
    not, and its record carries no escalation member. **This is the part that costs money and the part
@@ -493,10 +513,12 @@ parts are only true on a real installation, and one of them spends real money:
    exists for, and the one a reviewer cannot check by reading.
 
 **The file this task writes** is `docs/gcp-live-checklist.md`'s Check 370 section and its register row,
-and it is written by the task that proves the behaviour — SC6 — which lists that document among its files
-in the plan's §4 above only as "the owner-run check is where this is proved". A task that lands a check
-without the behaviour is a check nobody can run; the register's own rule (a claim above the highest
-written section is settled at its merge) is what makes 370 this work's to claim now and to prove later.
+and in §4 above it sits in **SC6**'s file list — the task that proves the behaviour, because a task that
+lands a check without it is a check nobody can run. §2 carries it as one of the files shared with work
+outside this plan: `docs/console-managed-screens/implementation-plan.md` gives the same file and the same
+two places to its own **CM12** for **Check 360**, so the register's rule (a claim above the highest
+written section is settled at its merge, and the second of two claims renumbers itself) is what makes 370
+this work's to claim now and to prove later.
 
 ## 7. What is deliberately not in this plan
 

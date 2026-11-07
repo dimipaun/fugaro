@@ -2,7 +2,7 @@
 
 **The owner, 2026-11-07.** He is the spec's owner: the block below is his, verbatim, and it is the
 only text in this folder he wrote. An answer he gives to a decision is recorded in
-[reconciliation.md](reconciliation.md) §7, in that decision's own row; this file stays his words.
+[reconciliation.md](reconciliation.md) §8, in that decision's own row; this file stays his words.
 
 **Task SC0**, queued 2026-11-07 (it is the design half of a security-classification family whose
 implementation half is not in this repository — [reconciliation.md](reconciliation.md) F15).
