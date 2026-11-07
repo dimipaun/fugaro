@@ -265,9 +265,11 @@ func TestConsoleContractNamesOnlyRealReportFlags(t *testing.T) {
 // command by path and by symbol, so a citation left pointing at the command's
 // old file, internal/cli/report.go, is a reader sent to a file that no longer
 // exists, and a symbol renamed here is a citation that reads as checked and is
-// not. The old library's directory is not refused: internal/report is a core
-// package again, the CLI's step reporter (CL1 of the CLI output work), so a
-// citation of it is somebody else's file and not a stale one of ours.
+// not. A citation of the old library's directory is refused for the sharper
+// version of that reason: internal/report is the CLI's step reporter now (CL1
+// of the CLI output work), so a citation of it in a document about the report
+// library resolves, to the wrong package, which is a citation that reads as
+// checked and is not.
 func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 	var decls []string
 	reportDecls(t, "../.", &decls)
@@ -296,6 +298,8 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 			switch {
 			case strings.HasPrefix(cite, "internal/cli/report.go"):
 				t.Errorf("%s cites %q, which the move left behind: the report command is under ee/report/cli now", doc.path, cite)
+			case strings.HasPrefix(cite, "internal/report/"):
+				t.Errorf("%s cites %q: the report library these documents document is ee/report's, and internal/report is the CLI's step reporter (CL1)", doc.path, cite)
 			case strings.HasPrefix(cite, "ee/report/") && strings.HasSuffix(cite, ".go"):
 				cited++
 				if _, err := os.Stat(filepath.Join("../../..", cite)); err != nil {
