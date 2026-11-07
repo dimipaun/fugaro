@@ -146,6 +146,19 @@ func providerFirstLine(t *testing.T, mode string) string {
 	return strings.Replace(providerPinned(t), "  first_line_review: off\n", extra, 1)
 }
 
+// apiKeyReviewRun is the ask's own configuration (docs/api-key-review §1, F1):
+// providerPinned's repository — agent.auth: api-key, the coder on the
+// provider's route and the reviewer on a Claude ID no route claims — with the
+// review's replies scripted on ANTHROPIC's fake, which the provider's fake is
+// never asked for. A test that publishes a review stage account passes none:
+// that stage's calls do not reach the gateway at all (F7).
+func apiKeyReviewRun(t *testing.T, mode, capUSD string, coderReplies, reviewReplies []anthropicfake.Reply) *gw {
+	t.Helper()
+	g := providerRun(t, providerPinned(t), mode, capUSD, coderReplies, "acme/app")
+	g.fake.Script = reviewReplies
+	return g
+}
+
 // claimedPinned is providerPinned with the reviewer on the claimed Claude ID
 // instead of Claude's own: the coder stays the route's deepseek model, and
 // the background stays the explicit Claude haiku -- if it were unset it would

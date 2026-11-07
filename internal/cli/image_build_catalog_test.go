@@ -224,11 +224,16 @@ func catalogBuildStep(t *testing.T, fb *gcpfake.Build, id string) map[string]any
 // Without a name every entry that has a Dockerfile is built, and one that is a
 // prebuilt image is named and passed over rather than failing the others.
 func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
-	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{
 		".fugaro/base.Dockerfile":  catalogBuildFetched,
 		".fugaro/other.Dockerfile": catalogBuildFetched,
 	})
+	// The copy of a repository-sourced entry reads the project's own
+	// credential before it opens the provider, so the fixture holds one: the
+	// stubbed provider is the only part of the copy a test has no account for.
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
 
 	out, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
 	if err != nil {

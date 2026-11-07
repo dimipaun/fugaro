@@ -1,7 +1,9 @@
 # A closed failure class on every run record, and a failures report: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** Nine tasks, **FC1–FC9** — the
-design's own FC1–FC8 (its §10, kept by name, by order and by edge — its **task** names, that is: one
+**Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
+(owner: "All tasks approved. Jobmax"); of them, FC1 is built on `main` and FC2–FC9 are not started.**
+Nine tasks, **FC1–FC9** — the design's own FC1–FC8 (its §10, kept by name, by order and by edge — its
+**task** names, that is: one
 of the tests §10 names cannot be written as named, F35) plus **FC9**, which the plugin
 finding F13 adds — each with its files, its interfaces, its named tests **and the command that runs
 them**, its **red step**, the mutation that holds it, its **reviewer tier**, its **SEC** and
@@ -19,9 +21,11 @@ docs-pin census — is re-read in the reconciliation's §7 and F28.
 [reconciliation.md](reconciliation.md). **Where a task below and the reconciliation disagree, the
 reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the task is wrong.**
 
-**Nothing here is an approval.** The design is a design and this is a plan (§10 of the design and
-[README.md](README.md) say so); each task's gate is in §7, and most of them name a decision row whose
-owner's-answer cell is empty.
+**Every task here is approved, and what each one's gate named is settled.** The design stays a design
+and this stays a plan (§10 of the design and [README.md](README.md) say so); each task's gate is in
+§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **One of the
+nine is built** — FC1, which its own heading below says — and **FC2–FC9 are not started**: an approved
+task is still built on its own, in its own run, in the order §1 fixes.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -99,7 +103,7 @@ which is harmless and true), and FC3–FC9 simply start later.
 | File | Writers (level) | Note |
 | --- | --- | --- |
 | `internal/failure/failure.go`, `internal/failure/failure_test.go` | FC1 (L0) | new: the class type, `Classes()`, the one table and its properties |
-| `internal/runstore/runstore.go` | FC1 (L0) | `Record.FailureClass` beside `Reason` (`:684`), and nothing else |
+| `internal/runstore/runstore.go` | FC1 (L0) | `Record.FailureClass` beside `Reason` (`:721`), and nothing else |
 | `schemas/result.schema.json` | FC1 (L0) | the property and its enum, in the commit that adds the Go field (the schema is `additionalProperties: false`, F8) |
 | `internal/cli/docs_pr_state_test.go` | FC1 (L0), FC2 (L1) | FC1 adds the vocabulary's sentence to the design's pin; FC2 **rewrites the census pin**, which reaches its `statements == 0` fatal the moment `recordEnd` takes the status (F25) |
 | `internal/runner/recordend.go` | FC2 (L1) | new, if **D1452** answers the recommendation: the one writer |
@@ -135,13 +139,17 @@ reference FC6 regenerates, and `.github/workflows/**`.
 
 ### FC1. The vocabulary, the field and its schema
 
+**Status: built.** The six files below are on `main` as `feat(failure): the failure_class vocabulary
+and the record's field`; FC1's gate (D1453, and the plan's own approval) is answered, and FC1 was built
+alone, before any task that depends on it.
+
 **Decisions:** D1453 (the vocabulary's package), D1462 (no new pin file). **Findings:** F2, F8, F15,
 F21, F27, F28. **Depends on:** nothing. **Reviewer tier:** standard. **SEC:** no. **Owner-run:** no.
 
 - **Files (6):** `internal/failure/failure.go` and `internal/failure/failure_test.go` (new — a new
   package, because `runstore` must import the type that its `Record` field carries and therefore
   cannot host it, F21), `internal/runstore/runstore.go` (`Record.FailureClass failure.Class` with
-  `json:"failure_class,omitempty"`, beside `Reason` at `:684`), `schemas/result.schema.json`,
+  `json:"failure_class,omitempty"`, beside `Reason` at `:721`), `schemas/result.schema.json`,
   `schemas/schemas_test.go`, `internal/cli/docs_pr_state_test.go`.
 - **Interfaces:** `type Class string`; `failure.Classes() []Class` — **the one slice**, in the
   document's own order, from which the schema's enum and the report's table are read;
@@ -150,9 +158,9 @@ F21, F27, F28. **Depends on:** nothing. **Reviewer tier:** standard. **SEC:** no
   The record's field is **not** in the schema's `required` (a succeeded record carries none, F8), and
   `result.json`'s `"version"` stays `const 1` (`schemas/result.schema.json:10`).
 - **Tests:** `TestResultSchemaFailureClassesAgreeWithGo` — **the shape `TestResultSchemaHaltReasonsAgreeWithGo`
-  uses (`schemas/schemas_test.go:1978`), not the `…StatusesAgreeWithGo` the design names, which does
+  uses (`schemas/schemas_test.go:1985`), not the `…StatusesAgreeWithGo` the design names, which does
   not exist** (F15): the schema's enum is `failure.Classes()`, in order. `TestFailureClassesAreClosedAndPropertyComplete`
-  (every class has its row, every row its class). `TestResultSchemaAcceptsRunnerRecords` (`:694`,
+  (every class has its row, every row its class). `TestResultSchemaAcceptsRunnerRecords` (`:696`,
   re-run: the fully-populated record carries the field).
 - **Red step:** write the schema's enum from the Go slice before the slice exists — the test fails
   because the two lists disagree (an empty slice against a written enum), which is the failure the
@@ -203,7 +211,7 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   unmatched reason reading `unclassified` — is the reader's, FC5's
   `TestLegacyUnmatchedReasonIsUnclassified` (F35). Also `TestHaltedRunCarriesItsHaltsClass` (a
   failure then a halt ends `halted` with the halt's class). And the **rewritten**
-  `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:250`): its
+  `TestDocsFailureClassCensusMatchesTheRunner` (`internal/cli/docs_pr_state_test.go:303`): its
   `statements == 0` fatal is the state this task produces, so the pin turns from *a census of 36
   statements* into *no statement outside `recordend.go` writes a status*, and the design's §1 sentence
   it holds is rewritten in the same commit (F25).
@@ -232,12 +240,12 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   `outcome.Decide` already returns at `internal/runner/outcome.go:46`, beside it) and
   `haltClass(h runstore.HaltReason) failure.Class`. **The halt table is the load-bearing one**
   (D1455): the writer's `haltClass` and the reader's legacy mapping (FC5) must agree halt reason by
-  halt reason, including `HaltBudgetUnavailable` (`internal/runstore/runstore.go:53`), which the
-  design's `halted_credential` range `:54–70` misses (F17) and which is a **budget** halt. The one
-  slice is `runstore.GovernanceHaltReasons()` (`:103`) plus the budget and credential families, and
+  halt reason, including `HaltBudgetUnavailable` (`internal/runstore/runstore.go:54`), which the
+  design's `halted_credential` range `:55–71` misses (F17) and which is a **budget** halt. The one
+  slice is `runstore.GovernanceHaltReasons()` (`:104`) plus the budget and credential families, and
   the agreement test walks it.
 - **Tests:** `TestDecideRefusalsCarryTheirClass`, `TestHaltReasonsMapToTheirFamily` (every value of
-  the closed `HaltReason` set, including `:53`), `TestConfigRefusalIsConfigInvalid`, and
+  the closed `HaltReason` set, including `:54`), `TestConfigRefusalIsConfigInvalid`, and
   `TestHaltClassesAgreeWithTheReadersTable` — the test D1455 exists for: the same walk over the same
   slice, asserted against the reader's mapping, so a rename in one place and not the other is red.
 - **Red step:** every class assertion fails against a tree where the class is `unclassified` — the
@@ -592,20 +600,23 @@ and it is not one of FC1–FC9.
 
 ## 7. Gates, and what a task may not start without
 
-**No task is approved.** Every row below needs the owner's explicit go, and the plan as a whole needs
-**D1450** answered (keep FC1–FC8 and add FC9) before any of it starts.
+**Every task is approved, and every decision every row below names is answered — 2026-11-07, each as
+recommended.** The rows keep the shape they were written in; what each one's decisions settled is in
+[reconciliation.md](reconciliation.md) §6. **D1450** included: FC1–FC8 stay and FC9 is added, so the
+plan as a whole starts. **A met gate is not a schedule**: the tasks are still built one at a time, in
+the order §1 fixes, each in its own run.
 
 | Task | Gate |
 | --- | --- |
-| **FC1** | the owner's approval of this plan, and **D1453** (the vocabulary's package — the runner, the reader and the digest all need the type, and `runstore` must import it, F21) |
-| **FC2** | FC1 merged, and **D1452** (`recordEnd`'s home: a file of its own, or `runner.go` beside `finalize`) and **D1456** (that FC2 stays one task) answered |
-| **FC3** | FC2 merged, and **D1455** (where the halt table lives, so the writer and the reader cannot disagree — F21's import direction is what makes this a question) |
+| **FC1** | the owner's approval of this plan — **given 2026-11-07** — and **D1453** (the vocabulary's package — the runner, the reader and the digest all need the type, and `runstore` must import it, F21) |
+| **FC2** | FC1 merged, and **D1452** (`recordEnd`'s home: a file of its own, or `runner.go` beside `finalize`) and **D1456** (that FC2 stays one task) — **answered 2026-11-07** |
+| **FC3** | FC2 merged, and **D1455** (where the halt table lives, so the writer and the reader cannot disagree — F21's import direction is what makes this a question) — **answered 2026-11-07** |
 | **FC4** | FC2 merged. No decision gates it |
-| **FC5** | FC1 and FC3 merged, and **D1454** (`ClassOf`'s home and its name — F20's two names). The contract's row rides this commit (F32) |
-| **FC6** | FC5 merged, and **D1458** (`groups` is `omitempty`, and the phone's document never carries it) and **D1465** (`share` follows the runs) answered |
-| **FC7** | FC5 merged, and **D1463** (which document owns the two rules' prose) and **D1466** (the table ships, the rules are the droppable half) answered |
-| **FC8** | FC6 and FC7 merged, and **D1460** (diagnose prints *and* carries the class), **D1468** (`docs/design/v1.md` §4.6) and **D1469** (the slot) answered |
-| **FC9** | FC6 merged, and **D1457** (the skill names the key) answered |
+| **FC5** | FC1 and FC3 merged, and **D1454** (`ClassOf`'s home and its name — F20's two names) — **answered 2026-11-07**. The contract's row rides this commit (F32) |
+| **FC6** | FC5 merged, and **D1458** (`groups` is `omitempty`, and the phone's document never carries it) and **D1465** (`share` follows the runs) — **answered 2026-11-07** |
+| **FC7** | FC5 merged, and **D1463** (which document owns the two rules' prose) and **D1466** (the table ships, the rules are the droppable half) — **answered 2026-11-07** |
+| **FC8** | FC6 and FC7 merged, and **D1460** (diagnose prints *and* carries the class), **D1468** (`docs/design/v1.md` §4.6) and **D1469** (the slot) — **answered 2026-11-07** |
+| **FC9** | FC6 merged, and **D1457** (the skill names the key) — **answered 2026-11-07** |
 | **FC2 and FC4** (the SEC half) | their own gates, **plus an independent review that is not waived**: these are the two tasks that touch model output and the one writer, and the design's §10 flags them for exactly that |
 | **Check 350** | FC6 and FC7 deployed on the sandbox; **owner-run, and it gates only the claim that the owner can see the failure classes**, never the release |
 
@@ -615,7 +626,7 @@ pinned); D1462 is a rule every task above obeys — the pins go into the existin
 `internal/cli/docs_*_test.go` files, and no task adds one, because the docs-pin census counts them in
 one row (`ls internal/cli/docs_*_test.go | wc -l`, `docs/rigor-modes/reconciliation.md:752`, **101**
 on `main` today) that four folders' pins re-read: `internal/cli/docs_rigor_modes_test.go:388` runs the
-row's own command, and `docs_config_management_test.go:397`, `docs_managed_agent_converge_test.go:160`
+row's own command, and `docs_config_management_test.go:403`, `docs_managed_agent_converge_test.go:190`
 and `docs_repo_image_removal_test.go:525` compare the row against the tree's glob (F28, D1462).
 
 **If FC7's second half is dropped** (D1466 = the table alone), FC8 loses one document and one
@@ -623,6 +634,12 @@ sentence and nothing else moves. **If D1460 = no**, FC5's diagnose field and FC8
 fall away. **If FC2 slips**, FC1 ships alone — a field nothing writes, which is harmless and true —
 and FC3–FC9 start when it lands.
 
-**And the plan's own status, unchanged:** a plan; **no task is approved**; the design's own §10 status
-and every empty owner's-answer cell in [reconciliation.md](reconciliation.md) §6 stand beside every
-row above.
+**FC1's row is answered in full.** The plan was approved, **D1453** is answered as recommended
+(`internal/failure`), and FC1 is merged — so FC2's first gate (FC1 merged) is met as well. Every other
+row waits on its own run, in the order §1 fixes.
+
+**And the plan's own status:** a plan, **every task of it approved on 2026-11-07** (owner: "All
+tasks approved. Jobmax"); the dated answer this plan's decisions share is in
+[reconciliation.md](reconciliation.md) §6; **FC1 is built and FC2–FC9 are not started**, which FC1's
+heading above says. The design's §10 status records the same one fact and answers none of the
+design's own decisions, which are D1–D9 and O1–O6 of that document and not this folder's.

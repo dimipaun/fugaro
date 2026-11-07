@@ -75,6 +75,18 @@ type refreshOptions struct {
 	// buffered — an interactive run's typed-ahead input, which is exactly what
 	// a build's confirmation reads. Nil for the command, which makes its own.
 	in *bufio.Reader
+	// out is the writer the calling run already prints through, when one drives
+	// this refresh: the checkout stage passes its own run's writer
+	// (init_checkout_upgrade.go). The refresh is a run of its own here
+	// (newInitRun), whose writer is the command's — a writer that draws nothing
+	// and asks under a screen somebody else owns — so every line this refresh
+	// prints would be written while the converge's spinner kept redrawing the
+	// step in flight, over the line just printed and over the prompt under it
+	// (G1), a billable build's confirmation included. Given the caller's
+	// writer, each line takes that step down and puts it back, exactly as the
+	// stage's own lines do. Nil for the command, whose own writer the refresh
+	// uses.
+	out io.Writer
 }
 
 // checkoutName is how a message names the checkout: "this checkout" when
@@ -536,6 +548,10 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		// The caller's reader, not a second one over the same stdin: see
 		// refreshOptions.in.
 		r.in = o.in
+	}
+	if o.out != nil {
+		// The caller's writer, not the command's own: see refreshOptions.out.
+		r.w = runWriter{r: r, out: o.out}
 	}
 	p, err := refreshPreflight(ctx, o, iopts)
 	if err != nil {

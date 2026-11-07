@@ -1,12 +1,17 @@
 # The api-key review path — implementation plan
 
-**Status: one task implemented — AK4, and no other started.** AK4 lets the review class's one
-credential be the project's own Anthropic API key: a policy naming the sentinel is publishable and the
-credentials service serves it, and **no installation can deploy it yet** (AK4's own section and
-**§6.8** — an installation that publishes a profile naming the sentinel is refused by `fugaro update`,
-fail-closed, until **AK5** deploys the route). Nothing else in this file has moved: every other task
-below still needs the owner's own explicit go, and every task still carries its own gate — see §6 and
-[reconciliation.md](reconciliation.md) §9. Where this file and
+**Status: AK4 is implemented on this branch, and no other task is started; D1410–D1429 are answered
+2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** AK4 lets the
+review class's one credential be the project's own Anthropic API key: a policy naming the sentinel is
+publishable and the credentials service serves it, and **no installation can deploy it yet** (AK4's own
+section and **§6.8** — an installation that publishes a profile naming the sentinel is refused by
+`fugaro update`, fail-closed, until **AK5** deploys the route). Every gate this plan carried that a
+decision or an approval could settle is satisfied: the answers are in
+[reconciliation.md](reconciliation.md) §7 and §9, and §6 below records what each one settled. **Two
+gates in that list are not of that kind and still stand** — the mandatory security review owed before
+AK4–AK7 land (item 6, which AK4's own change is under rather than past) and **E7**, which item 7 states
+is not met — so **the cloud path is not launchable**, and the one task taken here was taken under the
+owner's go for it alone. Where this file and
 [reconciliation.md](reconciliation.md) disagree about the code, the reconciliation wins.
 
 **Read with:** [spec.md](spec.md) (the owner's ask) and [reconciliation.md](reconciliation.md) (what
@@ -18,8 +23,8 @@ the tree does today, and **D1410–D1429**). Every path and symbol cited here ex
 The plan is **three slices that can be taken independently**, plus the live check. The slices follow
 the reconciliation's §4: the in-job half needs no service change, the cloud Anthropic-key half is the
 cheap half of `docs/cloud-senior-review/implementation-plan.md` §6.7, and the OpenRouter half is
-§6.7 as written. **D1410 decides which of them the owner wants**; nothing here presumes the answer,
-and a slice the owner does not want is simply not started.
+§6.7 as written. **D1410 answered both of them** (2026-11-07), so the plan keeps all three slices;
+a slice the owner does not want is simply not started.
 
 | Level | Tasks | What it is | Why these can run together |
 | --- | --- | --- | --- |
@@ -35,10 +40,11 @@ is the provider key the OpenRouter half needs, AK7 is the runner's path to it, a
 result on a real installation. **AK2 and AK3 are off the critical path** — AK2 is documentation and
 AK3 is the record — and either may land at any point in L1 without moving it.
 
-**D1410, D1421 and the gates in §6 are answered before a task starts, not during one.** If the owner
-takes **D1410** as "the in-job half alone", L2 and L3 are not started and the plan ends after AK3.
-If the owner takes **D1416** as "both keys at once", AK6 and AK7 become one SEC task and the plan
-grows a level.
+**D1410, D1421 and the gates in §6 that a decision settles are settled as of 2026-11-07, before any
+task starts; §6's items 6 and 7 are not decisions and still stand.** **D1410**
+is answered **both slices**, so L1, L2 and L3 all stand and the plan does not end after AK3.
+**D1416** is answered **the Anthropic key first**, so AK6 and AK7 stay two tasks rather than one SEC
+task.
 
 ## 2. The shared-files table
 
@@ -119,7 +125,8 @@ names its tests**; the whole package is run only when a change is broad enough t
 
 ### AK1 — the in-job api-key review is a pinned path
 
-**Slice:** in-job (L1). **Depends on:** **D1410** answered as the in-job half or as both.
+**Slice:** in-job (L1). **Depends on:** **D1410** — answered **both slices**, so the in-job half is
+in the plan, and it is the first of them.
 
 **Files (2):** `internal/runner/review_key_test.go` (new), `internal/runner/provider_policy_test.go`
 (one fixture if the existing ones do not already give a provider-coder run with a Claude reviewer).
@@ -189,8 +196,8 @@ which is the whole reason it is written.
 
 ### AK3 — the record names the credential a stage ran on, under a name of its own
 
-**Slice:** in-job (L1). **Depends on:** **D1415** answered as "a new field". **If the owner answers
-D1415 as "nothing at all", this task is not started and L1 is AK1 and AK2.**
+**Slice:** in-job (L1). **Depends on:** **D1415** — answered **a new field**, so this task stands and
+L1 is AK1, AK2 and AK3; the "nothing at all" shape it was priced against is not the answer.
 
 **Files (5):** `internal/runstore/runstore.go`, `internal/runstore/runstore_test.go`,
 `internal/runner/cost.go`, `internal/runner/provider_run_test.go`, `schemas/result.schema.json`.
@@ -233,8 +240,8 @@ not.
 
 ### AK4 — the review class can be served by the project's Anthropic key (SEC)
 
-**Slice:** cloud, Anthropic key (L2). **Depends on:** AK1's slice decided (**D1410**), **D1416** as
-"Anthropic key first", **D1417** as "the project's own key".
+**Slice:** cloud, Anthropic key (L2). **Depends on:** AK1 (**D1410**), and the pairing it needs:
+**D1416** answered "the Anthropic key first" and **D1417** answered "the project's own key".
 
 **Files (14):** `internal/credsvc/review.go`, `internal/credsvc/review_test.go`,
 `internal/credsvc/cascade.go`, `internal/credsvc/cascade_test.go`,
@@ -420,8 +427,11 @@ which runs a credential-bearing variant is launched for.
 
 ### AK6 — the bundle holds a provider key, and the service forwards to a provider's endpoint (SEC)
 
-**Slice:** cloud, OpenRouter (L3). **Depends on:** AK5, **D1416** as "both keys", **D1418** and
-**D1419** answered. **This task is `docs/cloud-senior-review/implementation-plan.md` §6.7's CSR17,
+**Slice:** cloud, OpenRouter (L3). **Depends on:** AK5, and the answers it was priced against:
+**D1416** — the Anthropic key first, so this half follows AK4–AK5 — **D1418** — deferred to the
+reconciliation with §6.7 below — and **D1419**, answered "not at all in the Anthropic-key slice",
+which leaves the provider endpoint to this task. **This task is
+`docs/cloud-senior-review/implementation-plan.md` §6.7's CSR17,
 and it must be reconciled with it before it starts** — §6.7 owns the sketch and this task owns the
 reconciliation's reading of it.
 
@@ -520,9 +530,12 @@ register.
 
 ## 4. What is deliberately not in this plan
 
-- **No new config key.** The ask's own instruction — "decide how it fits the existing machinery
-  rather than adding a parallel one" — rules out a key of its own. **D1413** is the one decision
-  that could add one (how a project says "the key, not the account"), and the plan waits for it.
+- **No new config key, except the one D1413's answer may need for its spelling.** The ask's own
+  instruction — "decide how it fits the existing machinery rather than adding a parallel one" —
+  rules out a key of its own for the credential. **D1413** is the one decision that could add a key
+  (how a project says "the key, not the account"), and it is **answered: the key wins when the owner
+  asks for it explicitly** — the spelling of that request is this plan's to design, and no task here
+  names it yet, which **§6 records as work this plan still owes** rather than leaving it unsaid.
 - **No second Anthropic key secret** (**D1412**), and no second secret name in
   `internal/config/config.go`'s `ReservedSecrets` or `internal/infra/spec.go`'s `SecretMounts`.
 - **No per-key attribution.** `runstore.Cost.ModelBy` and `RouteBy` are what the tree has and what
@@ -535,9 +548,10 @@ register.
 - **No change to `internal/agent`'s environment allow-list.** `agent.BuildEnv` and
   `agent.OAuthStageEnv` are not this plan's files; the credential never reaches the agent in either
   slice, and that is the property the tasks assert rather than change.
-- **No release notes.** The owner cut the path from 0.20.0 on 2026-11-06, and **D1421** is where a
-  release is chosen; a `docs/releases/` file written before that answer would be a release note for
-  a release nobody picked (CLAUDE.md: the `### For operators` entry ships in the same PR as the
+- **No release notes in this folder.** The owner cut the path from 0.20.0 on 2026-11-06, and
+  **D1421** is where a release is chosen: answered **after 0.20.0**, the release after it, which
+  nobody has scheduled yet. A `docs/releases/` file written now would be a release note for a
+  release nobody picked (CLAUDE.md: the `### For operators` entry ships in the same PR as the
   step, and there is no step yet).
 
 ## 5. Check 330
@@ -575,7 +589,8 @@ Anthropic key; the job's own environment held no credential of the repository's;
 whose `agent.auth` is `api-key` **without** the pairing naming the key is still refused, with the
 sentence AK5 rewrote.
 
-**C. The OpenRouter path (AK6–AK7).** Only if the owner takes it: the same as B with a provider
+**C. The OpenRouter path (AK6–AK7).** Taken by **D1410** and sequenced after the Anthropic-key half
+by **D1416**: the same as B with a provider
 route claiming the Claude ID as one explicit `anthropic/<id>` (**F22**), reading off that the key
 reached the provider's own host and Anthropic saw no call.
 
@@ -585,15 +600,23 @@ any installation whose budget mode is `off` — the review class refuses a run w
 
 ## 6. The gates a task may not start without
 
-1. **D1410 answered** — which slice the plan is about (reconciliation §9.1). **Blocking, and first.**
-2. **D1421 answered** — the release, before AK8 and before any release note.
-3. **The task's own go from the owner.** An answer is not an approval, and this plan's tasks are no
-   more started than the ones in `docs/cloud-senior-review` are.
-4. **AK4 and AK5 gated on D1416, D1417 and D1422; AK6 and AK7 on D1418, D1419 and a reconciliation
-   with §6.7's CSR17–CSR18**, which own the sketch this plan reads.
-5. **AK3 gated on D1415** — whether the record names the credential at all, and if it does, that it
-   is a **new field** and not a new value on `credential` (**F18**): the record is a wire shape
-   another reader consumes, and CLAUDE.md allows an additive field there but not a changed meaning.
+**Items 1–5 below are satisfied as of 2026-11-07**, each recording what the owner's answer settled or
+the approval of that day gave. **Items 6 and 7 are not the owner's answers to give and are not
+satisfied**: the security review is owed before AK4–AK7 land, and E7 is not met, so those four tasks
+may not start and the cloud path is not launchable. A reader must take those two as standing.
+
+1. **D1410 answered: both slices** — the plan is about all three (reconciliation §9.1).
+2. **D1421 answered: after 0.20.0** — the release for AK8 and for any release note.
+3. **The owner's own go: given.** He approved every task on 2026-11-07 (owner: "All tasks approved.
+   Jobmax"), so no task here waits on a further approval — unlike the ones in
+   `docs/cloud-senior-review`.
+4. **AK4 and AK5 were gated on D1416, D1417 and D1422; AK6 and AK7 on D1418, D1419 and a
+   reconciliation with §6.7's CSR17–CSR18**, which own the sketch this plan reads. D1416, D1417,
+   D1419 and D1422 are answered as recommended; D1418 defers the bundle-and-policy contract
+   question to that reconciliation, which still stands.
+5. **AK3 gated on D1415 — answered: the record names the credential, in a new field** and not a
+   new value on `credential` (**F18**): the record is a wire shape another reader consumes, and
+   CLAUDE.md allows an additive field there but not a changed meaning.
 6. **The security review owed before AK4–AK7 land**, not after: each is SEC, and the review is
    mandatory rather than advisory.
 7. **AK4–AK7 are gated on E7, and it is not this plan's to meet** (**F10**, **U6**;
@@ -616,3 +639,10 @@ any installation whose budget mode is `off` — the review class refuses a run w
    `internal/infra/projectjobs.go` that names the move that works (take the key off the profile),
    which AK5 replaces with the route's own answer — so the state is safe and honest, but it is not a
    state to ship a release on.
+
+**One answer leaves work that no gate and no task carries yet, and it is named here so it is not
+lost:** **D1413** settles *that* the key wins when the owner asks for it explicitly, and **the
+spelling of that request is this plan's to design** (reconciliation §7, §9.3), but **no task in
+AK1–AK8 names it** (§4). It is not an owner decision waiting to be taken and it blocks no task: it is
+design work this plan still owes, and the task that writes the explicit-request path is the one that
+will have to spell it.

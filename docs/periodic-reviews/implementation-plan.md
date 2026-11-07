@@ -1,7 +1,8 @@
 # Periodic run reviews: implementation plan
 
-**Status: design answered by the owner 2026-11-04 and ruled on again 2026-11-05; plan only; nothing
-implemented; no task approved.**
+**Status: design answered by the owner 2026-11-04, ruled on again 2026-11-05, and its decisions
+D1430–D1449 answered 2026-11-07 with all tasks approved 2026-11-07 (owner: "All tasks approved.
+Jobmax"); plan only; nothing implemented.**
 
 Every task is written to the owner's answers of 2026-11-04 (D960–D971,
 [reconciliation.md](reconciliation.md) §3) **and to the owner's rulings of 2026-11-05**
@@ -811,13 +812,14 @@ task here that is not gated by a release. R5 is the owner's whenever they run it
 
 ## Part II — the 0.22.0 slice: the reports job and the failures report (2026-11-07)
 
-**Status: plan only; nothing implemented; no task approved.** **Part I is everything above this
-heading**, the cut written to the owner's rulings E1–E8. This part is written to the owner's decision
+**Status: plan only; nothing implemented; every task in both parts is approved 2026-11-07 (owner:
+"All tasks approved. Jobmax").** **Part I is everything above this heading**, the cut written to the
+owner's rulings E1–E8. This part is written to the owner's decision
 of **2026-11-07** that the periodic reviews/reports ride **0.22.0 "Sloth"**
 (`docs/release-streams.yaml`: the CLI stream's `current` is `0.20.3` and its `next` is `Rhino`, so
 0.21.0 is Rhino's and 0.22.0 is Sloth's). It is a **release plan over two works that are already
 cut**, not a second cut of either. Its decisions are **D1430–D1449** ([reconciliation.md](reconciliation.md)
-§6), each with an empty owner's-answer cell; its checks are **Check 340–349** (§P8). Every path and
+§6), each answered as recommended on 2026-11-07; its checks are **Check 340–349** (§P8). Every path and
 symbol it names was read against `main` at `56c91f66` on 2026-11-07.
 
 ### P1. What this part is, and what it does not re-cut
@@ -1215,8 +1217,11 @@ from being a formality:
   repository reports and stops. **Reviewer:** opus + mandatory independent review. **Commit:**
   `feat(cli): the project aggregate, beside the repository reports`.
 
-**R9 — the opt-in commit (slice P). BLOCKED.** Part I, `## R9`. It waits for the designated-repo
-design item (E6), so it has **no commit message and no file list of record yet** — Part I writes
+**R9 — the opt-in commit (slice P). BLOCKED.** Part I, `## R9`. **Its task is approved — every task in
+both parts is, as of 2026-11-07 — and the block is not an approval question:** it waits for the
+designated-repo design item (**E6**), which is an **Open item** of this design and not one of the
+decisions answered on 2026-11-07, so no approved task can lift it. It therefore has **no commit
+message and no file list of record yet** — Part I writes
 `Files (to be completed by that design item)`. **What it commits is already decided, and neither
 decision is a task's:** the stored reports go in **as they are, table and all** (**D1441**), and a
 stored report **may name run ids** — the id is what makes a flagged row actionable with `fugaro

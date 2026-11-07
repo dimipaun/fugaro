@@ -10,14 +10,14 @@ flag for everything, list the open billing accounts the logged-in user can use,
 and rename the retired word everywhere a user or an agent reads it today.
 Where the reconciliation and the brief disagree, **the reconciliation wins**.
 
-**Status: approved to build; implementation in progress.** **D1–D12 in
+**Status: approved to build; implementation in progress** — [status-2026-11-07.md](status-2026-11-07.md) is the census of what is built and what remains. **D1–D12 in
 [reconciliation.md](reconciliation.md) §5 were answered by the owner on
 2026-10-20** — eleven as recommended and **D12 the other way**
 (`` `update --yes` `` covers everything `update` owns). The gate at the end of
 this file is **passed**: the plan may be built, in the slice order below. Being
 approved to build is not a go for every task at once — Global Constraint 2
-still asks the owner to name a task or a group before it starts, and no task
-below has been written or run yet. Where a task's text and an answer disagree,
+still asks the owner to name a task or a group before it starts. **Twenty-three of
+the twenty-seven tasks below are built**, W3.2 is partial, W2.7 is not started, and W6.1 and W6.2 are the owner's and unrun — [status-2026-11-07.md](status-2026-11-07.md) names each and cites the commit. Where a task's text and an answer disagree,
 **the answer wins** and the task is corrected before it is built.
 
 **Checked against.** `main` at `82d366af`, the same commit as
