@@ -196,10 +196,10 @@ func TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService(t *testing.T) {
 // saying on hands the address, because either is written by an apply that
 // dropped the job's mounts and granted its account roles/run.invoker. A machine
 // that holds neither never applied the root, and that is every console launch:
-// console/src/main/launch.ts spawns `fugaro run --repo` from a private empty
-// directory, so the document is never readable there and the record is the only
-// answer — withholding the address on such a machine starts a `cascade` run
-// whose job mounts no model credential and halts at the service's door (D143).
+// the desktop console spawns `fugaro run --repo` from a private empty directory,
+// so the document is never readable there and the record is the only answer —
+// withholding the address on such a machine starts a `cascade` run whose job
+// mounts no model credential and halts at the service's door (D143).
 func TestCredentialsServiceLaunchEnv(t *testing.T) {
 	optedIn := &localcfg.Config{
 		CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL},
@@ -326,8 +326,8 @@ func seedRepoRootVars(t *testing.T, slug, doc string) {
 // from (deployedRepoCredentialsService, over the file
 // seedRepoRootCredentialsService above writes and update_switch_test.go's rig
 // produces for real). Reading only the tfvars is what the console's launches
-// cannot survive: console/src/main/launch.ts spawns `fugaro run --repo` from a
-// private empty directory on every machine, so the record is the only answer a
+// cannot survive: the desktop console spawns `fugaro run --repo` from a private
+// empty directory on every machine, so the record is the only answer a
 // teammate's machine has — and a switched-on cascade repository it withholds
 // the address from fails at bootstrap with no PR.
 //

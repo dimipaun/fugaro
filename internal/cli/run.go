@@ -3768,9 +3768,9 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// start a `cascade` run whose job mounts no model credential and halt at
 	// the service's door (D143) — the state every launch from outside a
 	// checkout was in before the switch was written down, and the one the
-	// console's own launches would be in on every machine that did not apply
-	// the root itself (console/src/main/launch.ts spawns from a private
-	// directory, so launchFileConfig never answers there).
+	// desktop console's own launches would be in on every machine that did not
+	// apply the root itself: it spawns from a private empty directory, so
+	// launchFileConfig never answers there.
 	svcAuth, deployed := "", false
 	if env.lc != nil && env.lc.CredentialsService != nil {
 		svcAuth = checkoutAgentAuth(launchFileConfig(ctx, env, spec))
@@ -3899,8 +3899,9 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // apply dropped the job's mounts and made its grant
 // (deployedRepoCredentialsService). An empty auth is judged on the deployed
 // root OR the repository's own record, never on this machine's tfvars alone:
-// a machine that never applied the root holds no tfvars of it — the console
-// spawns from a private directory, so this is every console launch — while the
+// a machine that never applied the root holds no tfvars of it — the desktop
+// console spawns from a private directory, so this is every console launch —
+// while the
 // record is written only alongside the apply it describes, by that apply's
 // machine or by an installation-wide backfill that read the installation's own
 // state, so it agrees with the root wherever it was applied. A record that
