@@ -162,9 +162,6 @@ func workspaceHandoff(cmd *cobra.Command, old, next []byte) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// workspace add / rm: the member's half, in the selected project's config.
-
 type workspaceAddOptions struct {
 	firebaseProject string
 	issuer          string
@@ -399,9 +396,6 @@ func runWorkspaceRm(cmd *cobra.Command, name string, o *workspaceRmOptions) erro
 	workspaceHandoff(cmd, old, next)
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// workspace member add / rm: the owner's half, in the workspace's own config.
 
 func newWorkspaceMemberCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -641,9 +635,6 @@ func runWorkspaceMemberRm(cmd *cobra.Command, workspace, project string, o *work
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// workspace cap set: the workspace's own ceiling, in the workspace's config.
-
 func newWorkspaceCapCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cap",
@@ -739,9 +730,6 @@ func runWorkspaceCapSet(cmd *cobra.Command, o *workspaceCapOptions) error {
 	workspaceHandoff(cmd, old, next)
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// workspace ls / show: the reads.
 
 type workspaceLsOptions struct {
 	json bool
@@ -934,9 +922,6 @@ func listOrNone(values []string) string {
 	}
 	return strings.Join(values, ", ")
 }
-
-// ---------------------------------------------------------------------------
-// The machine read.
 
 // workspaceMachine is what this machine's own files say about workspaces: one
 // row per workspace, built from the configs that name one and from the config
