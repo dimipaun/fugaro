@@ -1,7 +1,7 @@
 # W3.2 — the region question, and the Firestore location kept apart — was already on `main`
 
 **Nothing was implemented for this task: its deliverable was already on `main` when this run
-started.** This note is the evidence, and — with the one-line amendment it points at in
+started.** This note is the evidence, and — with the amendment it points at in
 `docs/setup-wizard/status-2026-11-07.md` — the pull request's whole change. No Go file, no
 test and no golden was touched.
 
@@ -21,9 +21,9 @@ written. `d56ba73f` landed after that snapshot was taken and supplied both halve
 
 | W3.2's clause | state on `main` |
 |---|---|
-| The region question keeps `const defaultRegion = "us-east5"` as its default | `internal/cli/init_inputs.go:46`, unchanged since W1.3; the commit added only the comment above it (lines 41–45) saying it is **not** the Firestore location (C1) |
+| The region question keeps `const defaultRegion = "us-east5"` as its default | `internal/cli/init_inputs.go:46` — the constant M11 introduced and neither W1.3 nor W3.5 changed; the commit added only the comment above it (lines 41–45) saying it is **not** the Firestore location (C1) |
 | it is asked once | `internal/cli/wizard_stage.go:248–261` is the only question site: `questionFor("--region")`, then `r.prompt(q.label, defaultRegion, …)`. `TestRegionDefaultIsUsEast5` counts the label in the transcript and requires exactly one |
-| and its label says what it is the region **of** (the installation's jobs and the scheduler) | `internal/cli/setup.go:375` — `label: "Region (the installation's jobs and the scheduler)"`. This is the file the commit changed beyond the task's own list, and it is where the label lives: W1.3/W3.5 moved the wizard's question table here, so the row the prompt prints is this one. The row's `what` and `missing` are untouched, so `--non-interactive`'s refusal and the flag's usage text are the strings they already were |
+| and its label says what it is the region **of** (the installation's jobs and the scheduler) | `internal/cli/setup.go:375` — `label: "Region (the installation's jobs and the scheduler)"`. This is the file the commit changed beyond the task's own list, and it is where the label lives: W1.3 put the wizard's question table (`setupQuestions`) in `setup.go`, and W3.5's stage prints its rows, so the row the prompt prints is this one. The row's `what` and `missing` are untouched, so `--non-interactive`'s refusal — which is built from `missing` — and the flag's own usage text (registered in `init.go`, not in this table) are the strings they already were |
 | the Firestore location question (`init_firebase.go`, typed) is untouched | the commit does not touch `internal/cli/init_firebase.go` at all. `confirmLocation` (`init_firebase.go:624`) still prints `⚠ CONFIRM (project %s): the Firestore database is created in us-east5` from `infra.FirestoreLocation` (`internal/infra/firestore.go:21`) and still demands the location be typed |
 | the two are never derived from one another — a test fails if a single expression serves both | see the two assertions under **Evidence** below |
 | `TestRegionDefaultIsUsEast5` | `internal/cli/init_inputs_test.go:687` — the constant is `us-east5` (D4) and has a region's shape, the wizard asks the region once, Enter takes the suggestion, and an answer that is not a region is asked again rather than taken |
@@ -67,19 +67,21 @@ The plan's **Verification** line is `GOFLAGS=-p=2 go test ./internal/cli -run
 
 ## Which statements this makes stale
 
-The landed commit is later than the census, and three documents still count W3.2 as
-remaining. They are listed here rather than rewritten: each is a dated snapshot of its own
-day, and correcting all of them is the owner's call. The census's own row and its result
+The landed commit is later than the census, and the folder's own documents still count W3.2
+as remaining. They are listed here rather than all rewritten: each is a dated snapshot of its
+own day, and correcting the rest is the owner's call. The census's own row and its result
 sentence carry the amendment this pull request adds.
 
 - `docs/setup-wizard/status-2026-11-07.md`: the **Result** sentence ("23 done, 1 partial
-  (W3.2)…", line 10) and the **W3.2** row (line 43), whose "Missing" clause this commit
-  answers. *Amended in this pull request.* Still reading it as remaining: **Can launch now**
-  item 1 (line 63) and **Finding 3** (lines 97–100).
-- `docs/setup-wizard/README.md:3`: "the work is built and merged except for **four** tasks".
-- `docs/setup-wizard/reconciliation.md:3`: the same sentence.
-- `docs/setup-wizard/implementation-plan.md:19–20`: "Twenty-three of the twenty-seven tasks
-  below are built, **W3.2 is partial**, W2.7 is not started…".
+  (W3.2)…") and the **W3.2** row, whose "Missing" clause this commit answers. *Amended in
+  this pull request*, so the row reads DONE and the result sentence 24 done, 0 partial, 1 not
+  started, 2 owner-run and unrun. Still reading it as remaining: **Can launch now** item 1
+  and **Finding 3**.
+- `docs/setup-wizard/README.md` (line 3): "the work is built and merged except for **four**
+  tasks".
+- `docs/setup-wizard/reconciliation.md` (line 3): the same sentence.
+- `docs/setup-wizard/implementation-plan.md` (lines 19–20): "Twenty-three of the
+  twenty-seven tasks below are built, **W3.2 is partial**, W2.7 is not started…".
 
 ## What this run did not do
 
@@ -87,7 +89,7 @@ sentence carry the amendment this pull request adds.
   is unrun, because there was nothing to make red: the work is merged and green.
 - **No mutation check.** The task is a **standard** one; the plan marks exactly two tasks
   SECURITY-SENSITIVE (W4.1 and W4.3), and W3.2 is not among them.
-- **No live cloud action, no network, no credentials.** The two constants are read, and the
-  three tests are the package's own hermetic ones.
+- **No live cloud action, no network, no credentials.** Every test this note cites is the
+  package's own hermetic one: no cloud call, no `gcloud` on `PATH`, no account.
 - **No website or console test was run**: neither tree is touched by this change or by the
   commit it records.
