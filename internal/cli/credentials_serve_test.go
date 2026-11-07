@@ -19,6 +19,7 @@ import (
 	"golang.org/x/oauth2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
 )
@@ -141,6 +142,13 @@ var credentialsServeEnv = map[string]string{
 	envCredentialsServiceURL: "https://fugaro-credentials-abcde-uc.a.run.app",
 	envJobAccounts:           `[{"provider":"github","repo":"acme/webapp","workflow":"api"}]`,
 	envVerifierAccounts:      `["person-1@example.com"]`,
+	// Two review-only rows over the profile a real installation publishes, one
+	// per spelling of the account axis: the empty string is the default account
+	// (config.ProjectJobAccounts) and "team-a" is a named one, so a document
+	// the two readings disagree about fails here rather than at a caller. They
+	// are the triples CSR7 deploys the variant's jobs over, which is why they
+	// carry no repository: a review job's account names none (C3.9a).
+	envReviewJobAccounts: `[{"profile":"standard","provider":"github","account":""},{"profile":"standard","provider":"github","account":"team-a"}]`,
 }
 
 // TestCredentialsServeStartsWithoutTheVerifierList is what the eighth name's
@@ -271,6 +279,79 @@ func TestCredentialsServiceCoordinatorAccountReachesTheAuthenticator(t *testing.
 	}
 }
 
+// TestCredentialsServiceReviewJobAccountsReachTheAuthenticator is the same
+// wiring test for the review-only class (C3.9a), and it takes the overlap rule
+// to make it, because the class's own entries cannot be the ones the tests
+// above use: a review job's service account is DERIVED from its row
+// (credsvc.ReviewJobAccountFor over the triple), so every row this command can
+// build is a foldable address, and an unfoldable one -- the trick the verifier
+// and the coordinator entries are read with -- is not reachable through the
+// environment at all.
+//
+// What is reachable is the rule credsvc.NewAuthenticator holds the class to: a
+// person account may not also be a review job service account, because one
+// caller would then be two classes. The address below is the SECOND row of
+// `credentialsServeEnv`'s review document, derived, and the refusal it draws
+// exists ONLY if the rows arrived at the authenticator -- a service built with
+// ReviewJobAccounts dropped admits the person and starts, and one built with
+// the rows refuses. The refusal names no account, which is the process's own
+// no-echo rule.
+//
+// The second half is the optional and the empty half of the same wiring: with
+// the document absent -- the state of an installation whose module does not
+// render the entry yet -- and with an empty array, the configuration builds and
+// the service starts with no review job at all. That is what makes the absent
+// value a service that refuses the class rather than a process that will not
+// bind a port.
+//
+// Mutation (verified, run and restored): dropping ReviewJobAccounts from the
+// AuthConfig literal in credentialsServiceConfig -- this test fails on the
+// first half, the configuration building with the person admitted and no
+// review class configured. Mutation (verified, run and restored): dropping
+// ReviewAccounts from that function's returned credsvc.Config -- the headline
+// test above fails, which is that direction's own test, since a server with an
+// empty review table refuses every caller of the class with no way to say so
+// from the outside.
+func TestCredentialsServiceReviewJobAccountsReachTheAuthenticator(t *testing.T) {
+	// The address credsvc.ReviewJobAccountFor derives for
+	// {"profile":"standard","provider":"github","account":"team-a"} -- the row
+	// the headline test pins by value, so this is the deployment's own account
+	// and not a second spelling of it.
+	const reviewAccount = "fugaro-p-standard-git-b5f51775@proj-1234.iam.gserviceaccount.com"
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	t.Setenv(envReviewJobAccounts, credentialsServeEnv[envReviewJobAccounts])
+	t.Setenv(envPersonAccounts, `["`+reviewAccount+`"]`)
+	fakeCredentialsService(t)
+
+	_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: one address that is both a person and a review job's service account must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") || !strings.Contains(err.Error(), "review job service account") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers because the address is also a review job service account, which is reachable only if %s reached the authenticator", err, envReviewJobAccounts)
+	}
+	if strings.Contains(err.Error(), reviewAccount) {
+		t.Errorf("err = %v, which carries the derived review account itself: the refusal names the variable and never an account", err)
+	}
+
+	t.Setenv(envPersonAccounts, "")
+	for _, raw := range []string{"", "[]"} {
+		t.Setenv(envReviewJobAccounts, raw)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with %s = %q: %v (the entry arrives with the deployment of the variant's jobs, so an installation that has none must start the same service it always did)", envReviewJobAccounts, raw, err)
+		}
+		if len(cfg.ReviewAccounts) != 0 {
+			t.Errorf("review accounts with %s = %q: %+v, want none", envReviewJobAccounts, raw, cfg.ReviewAccounts)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer with %s = %q: %v", envReviewJobAccounts, raw, err)
+		}
+	}
+}
+
 // TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
 // whole of this task is that the service can be configured at all, so a
 // complete environment must build a credsvc.Config that NewServer accepts --
@@ -291,6 +372,15 @@ func TestCredentialsServiceCoordinatorAccountReachesTheAuthenticator(t *testing.
 // fails here rather than in a run that cannot authenticate.
 func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	// The optional entries this installation's module would render beside them:
+	// the verify route's list and the review class's document. They are set
+	// here rather than in the loop above because the command reads them outside
+	// credentialsServiceEnvNames (an installation that has neither must start
+	// the same service it always did), and this is the test that pins what a
+	// complete environment builds.
+	for _, n := range []string{envVerifierAccounts, envReviewJobAccounts} {
 		t.Setenv(n, credentialsServeEnv[n])
 	}
 	fakeCredentialsService(t)
@@ -321,11 +411,9 @@ func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 			t.Errorf("repository table[%q] = %q, want %q", slug, got, repo)
 		}
 	}
-	// Every piece NewServer requires is built here, and the two sets that are
-	// deliberately left empty are the shared project jobs' accounts (Global
-	// Constraint 6: per-repository jobs only until C3.9) and the review jobs'
-	// (this command reads no policy, so the accounts a review job runs as are
-	// not in its configuration to name; CSR7 is the task that fills them).
+	// Every piece NewServer requires is built here, and the one set that is
+	// deliberately left empty is the shared project jobs' accounts (Global
+	// Constraint 6: per-repository jobs only until C3.9).
 	for _, missing := range []struct {
 		name string
 		set  bool
@@ -345,8 +433,31 @@ func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 			t.Errorf("the configuration has no %s: the service cannot serve without it", missing.name)
 		}
 	}
-	if len(cfg.ReviewAccounts) != 0 {
-		t.Errorf("review accounts = %+v, want none: this command reads no policy, so it names no review job", cfg.ReviewAccounts)
+	// The review class's table (C3.9a), pinned by value for the reason the job
+	// accounts above are: these are the accounts internal/infra deploys the
+	// review-only variant as (credsvc.ReviewServiceAccountID over
+	// config.ReviewVariantAccount's spelling of the axis), and the account each
+	// call is served by is the one the published admissions speak. So a change
+	// in either derivation fails here rather than in a review run that cannot
+	// authenticate. The order is the table's own (by email), which is what puts
+	// the default account's row first.
+	wantReview := []credsvc.ReviewJobAccount{
+		{
+			Email:   "fugaro-p-standard-git-04644ca9@proj-1234.iam.gserviceaccount.com",
+			Account: config.DefaultClaudeAccount,
+		},
+		{
+			Email:   "fugaro-p-standard-git-b5f51775@proj-1234.iam.gserviceaccount.com",
+			Account: "team-a",
+		},
+	}
+	if len(cfg.ReviewAccounts) != len(wantReview) {
+		t.Fatalf("review accounts = %+v, want %+v", cfg.ReviewAccounts, wantReview)
+	}
+	for i, ra := range wantReview {
+		if cfg.ReviewAccounts[i] != ra {
+			t.Errorf("review accounts[%d] = %+v, want %+v", i, cfg.ReviewAccounts[i], ra)
+		}
 	}
 	if _, err := credsvc.NewServer(cfg); err != nil {
 		t.Fatalf("NewServer refused the configuration a complete environment builds: %v", err)
@@ -466,6 +577,39 @@ func TestCredentialsServiceConfigRefusesAMalformedVariable(t *testing.T) {
 			set:   map[string]string{envCoordinatorAccount: "coordinator-1@example.com coordinator-2@example.com"},
 			names: []string{envCoordinatorAccount},
 		},
+		{
+			name:  "the review job accounts are not JSON",
+			set:   map[string]string{envReviewJobAccounts: "standard github team-a"},
+			names: []string{envReviewJobAccounts},
+		},
+		{
+			name:  "the review job accounts are an object",
+			set:   map[string]string{envReviewJobAccounts: `{"profile":"standard","provider":"github","account":"team-a"}`},
+			names: []string{envReviewJobAccounts},
+		},
+		{
+			// The variant's axis has no repository, so a row that carries one is
+			// an owner expecting a binding the review class does not make: it is
+			// refused rather than ignored (the job table's own rule).
+			name:  "a review row carries a field nothing reads",
+			set:   map[string]string{envReviewJobAccounts: `[{"profile":"standard","provider":"github","account":"team-a","repo":"acme/webapp"}]`},
+			names: []string{envReviewJobAccounts},
+		},
+		{
+			name:  "a review row has no profile",
+			set:   map[string]string{envReviewJobAccounts: `[{"provider":"github","account":"team-a"}]`},
+			names: []string{envReviewJobAccounts},
+		},
+		{
+			name:  "a review row has no provider",
+			set:   map[string]string{envReviewJobAccounts: `[{"profile":"standard","account":"team-a"}]`},
+			names: []string{envReviewJobAccounts},
+		},
+		{
+			name:  "a review row's provider is not a provider kind",
+			set:   map[string]string{envReviewJobAccounts: `[{"profile":"standard","provider":"GitHub","account":"team-a"}]`},
+			names: []string{envReviewJobAccounts},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range credentialsServiceEnvNames {
@@ -509,6 +653,7 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 		envJobAccounts:           `[{"provider":"github","repo":"` + secret("repo") + `","workflow":"api"}]`,
 		envVerifierAccounts:      `["` + secret("verifier") + `@example.com"]`,
 		envCoordinatorAccount:    secret("coordinator") + "@example.com",
+		envReviewJobAccounts:     `[{"profile":"standard","provider":"github","account":"` + secret("account") + `"}]`,
 	}
 	for _, tc := range []struct {
 		name string
@@ -525,6 +670,9 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 		{"a job cannot be derived", map[string]string{envJobAccounts: `[{"provider":"github","repo":"s3cr3t-nope","workflow":"api"}]`}},
 		{"the verifier list is malformed", map[string]string{envVerifierAccounts: "s3cr3t-verifiers"}},
 		{"the coordinator account carries a space", map[string]string{envCoordinatorAccount: "s3cr3t-coordinator s3cr3t"}},
+		{"the review job accounts are malformed", map[string]string{envReviewJobAccounts: "s3cr3t-reviews"}},
+		{"a review row's provider cannot be derived", map[string]string{envReviewJobAccounts: `[{"profile":"standard","provider":"s3cr3t-nope","account":"team-a"}]`}},
+		{"a review row has no profile", map[string]string{envReviewJobAccounts: `[{"profile":"","provider":"github","account":"s3cr3t-account"}]`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for n, v := range values {

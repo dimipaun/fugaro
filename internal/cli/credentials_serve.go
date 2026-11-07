@@ -66,8 +66,9 @@ import (
 // because the module renders it only where it applies: FUGARO_VERIFIER_ACCOUNTS
 // (C3.9g2), FUGARO_PERSON_ACCOUNTS and FUGARO_COORDINATOR_ACCOUNT (the read
 // mint's two classes, BB4 and BB5) and FUGARO_REVIEW_JOB_ACCOUNTS (the
-// review-only project jobs, C3.9a's class, in FUGARO_JOB_ACCOUNTS' own shape
-// over the variant's axis). The names are held by a second thing:
+// review-only project jobs, C3.9a's class: {"profile","provider","account"}
+// triples the service derives each review job's account from, the same document
+// kind FUGARO_JOB_ACCOUNTS is). The names are held by a second thing:
 // internal/infra/tf's credentialsServiceEnv is the allow-list init's cover
 // applies to the service's container, so a name outside it is refused at plan
 // time, and the two lists move together -- an environment variable is not a
@@ -211,13 +212,11 @@ const (
 	// envVerifierAccounts is the identities that may ask the verify route
 	// whether a verdict's signature is this service's: a JSON array of bare
 	// addresses (the coordinator's account, and the owner's for a manual
-	// check). It is the ONE name this process reads as optional, and the only
-	// one outside credentialsServiceEnvNames: that list is what the service
-	// REQUIRES, and the module renders this entry only on an installation
-	// that named a verifier, so a name inside it would turn "an installation
-	// that never opted in" into "a service that refuses to start". Absent or
-	// empty is the empty list the verify route already refuses every caller
-	// with (C3.9g2, D1068).
+	// check). It is read as an OPTIONAL value, outside credentialsServiceEnvNames
+	// -- whose names are the seven this process REFUSES to start without --
+	// because credentials.tf renders the entry only on an installation that
+	// named a verifier (C3.9g2, D1068). Absent or empty is the empty list the
+	// verify route already refuses every caller with.
 	envVerifierAccounts = "FUGARO_VERIFIER_ACCOUNTS"
 	// envPersonAccounts is the identities that may ask the read mint for a
 	// read-scoped Bitbucket token: a JSON array of bare addresses, which is
@@ -242,16 +241,22 @@ const (
 	envCoordinatorAccount = "FUGARO_COORDINATOR_ACCOUNT"
 )
 
-// credentialsServiceEnvNames is the whole of this command's environment: the
-// seven names credentials.tf sets on the service's container, and the same set
-// as internal/infra/tf's credentialsServiceEnv allow-list, which is the
-// module's side of the same rule (init's cover refuses a container that sets a
-// name outside it). The two are held together by a test rather than by a
-// comment: TestCredentialsServiceEnvIsTheDeploymentsOwn reads credentials.tf's
-// own env blocks and requires this list to be exactly what the module sets, so
-// a name added on one side and not the other fails rather than drifts -- the
-// direction that matters is the one where the module sets a name this command
-// does not read, which is a fact an operator would believe was in effect.
+// credentialsServiceEnvNames is the whole of this command's REQUIRED
+// environment: the seven names credentials.tf sets on the service's container,
+// the ones whose absence is a service that cannot say which installation it is
+// serving. The class-specific entries it reads beside them are OPTIONAL and
+// live outside this list, because the module renders each of those only where
+// it applies (envReviewJobAccounts, envVerifierAccounts, envPersonAccounts and
+// envCoordinatorAccount). internal/infra/tf's credentialsServiceEnv is init's
+// cover's allow-list, which is these seven plus those four: a name outside it is
+// a container the cover refuses, which is what makes the module's list a
+// boundary rather than a convention. The lists are held together by tests
+// rather than by this comment: TestCredentialsServiceEnvIsTheDeploymentsOwn
+// reads credentials.tf's own env blocks and requires every name this command
+// reads to be one the module sets, so a name added on one side and not the
+// other fails rather than drifts -- the direction that matters is the one where
+// the module sets a name this command does not read, which is a fact an
+// operator would believe was in effect.
 var credentialsServiceEnvNames = []string{
 	envProject, envGCPProject, envRegion,
 	envRTDBURL, envFirebaseFP,
