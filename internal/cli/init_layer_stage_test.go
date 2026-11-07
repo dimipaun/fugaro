@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -303,7 +302,7 @@ func TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes(t *testing.T)
 	if got, ok := layerObject(t, r); !ok || got != testProjectLayer {
 		t.Errorf("the object was written in an agent's session: %q", got)
 	}
-	if all := out + errOut; !strings.Contains(all, "layer") || !strings.Contains(all, "needs you") {
+	if all := out + errOut; !strings.Contains(all, markLeft+" layer") || !strings.Contains(all, "left for you (layer") {
 		t.Errorf("the run does not say the layer stage is left for a person:\n%s", all)
 	}
 }
@@ -548,7 +547,10 @@ func newLayerStageRig(t *testing.T, published, local, generation string) *layerS
 	cmd.SetOut(out)
 	cmd.SetErr(&syncBuf{})
 	cmd.SetIn(strings.NewReader(""))
-	run := &initRun{o: &initOptions{door: updateDoor.name}, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
+	// The run's own streams are the door's (newInitRun): the stage writes
+	// through initRun.w, which is the run's writer and not the buffer itself,
+	// so a test that gives this run a reporter sees what a person would.
+	run := newInitRun(cmd, &initOptions{door: updateDoor.name})
 	run.setProject(lc)
 	return &layerStageRig{initRig: r.initRig, runs: r.runs, s: newLayerStage(&initEngine{r: run, lc: lc, path: r.cfg}), out: out}
 }

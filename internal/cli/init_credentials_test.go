@@ -164,10 +164,10 @@ func TestInitCredentialsStageRefusedInAgent(t *testing.T) {
 	// it done, so the run is not stopping at an earlier one whose refusal would
 	// read the same. An agent plans a self-confirming engine read-only, and the
 	// installation root's plan is empty here, which is what makes it Done.
-	if !strings.Contains(s, "[done]") || !strings.Contains(s, "installation") {
+	if !strings.Contains(s, markDone+" installation") {
 		t.Errorf("the installation stage was not done before the credentials stage:\n%s", s)
 	}
-	if !strings.Contains(s, "[needs you]  credentials") {
+	if !strings.Contains(s, markLeft+" credentials") {
 		t.Errorf("the run did not reach the credentials stage, so this is another stage's refusal:\n%s", s)
 	}
 	if r.resolveCalls != 0 {

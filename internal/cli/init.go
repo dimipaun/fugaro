@@ -41,6 +41,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -490,6 +491,18 @@ type initRun struct {
 	o   *initOptions
 	w   io.Writer // the human-readable account: stdout, or stderr with --json
 	in  *bufio.Reader
+	// rep is the run's account when the converge is its shape (CL5b): one line
+	// per stage, the closing line, and the log a failure sends the user to. It
+	// is built for the converge and left nil for the runs that do not go
+	// through the loop (--forget, --config-only, --print-vars), which print as
+	// they always have. repLog is the log it keeps, closed when the run ends.
+	rep    *report.Reporter
+	repLog report.Sink
+	// questions counts the questions in flight (initRun.asking): while one is
+	// open the run's own writer does not put the step's line back between the
+	// lines of the block it prints, so a CONFIRM block and a prompt are shown
+	// as one block rather than one line at a time.
+	questions int
 	// gcpProject is the GCP project ID every Google call uses;
 	// projectName is the project's name, shown and typed to confirm.
 	gcpProject, projectName string
@@ -651,11 +664,87 @@ type initResult struct {
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
-	r := &initRun{cmd: cmd, o: o, w: cmd.OutOrStdout(), in: bufio.NewReader(cmd.InOrStdin())}
+	r := &initRun{cmd: cmd, o: o}
+	r.w = runWriter{r: r, out: cmd.OutOrStdout()}
 	if o.asJSON {
-		r.w = cmd.ErrOrStderr()
+		r.w = runWriter{r: r, out: cmd.ErrOrStderr()}
 	}
+	r.in = bufio.NewReader(answerReader{r: r, in: cmd.InOrStdin()})
 	return r
+}
+
+// runWriter is the run's own writer (initRun.w): every line a person has
+// to read goes through it. The reporter's line in flight is taken down before
+// its first byte, because a frame drawn on the line a prompt is written on
+// swallows the prompt and the answer typed under it (G1) — and the rule is
+// the same one for every other line the run prints: nothing is drawn over
+// something the person is meant to read.
+type runWriter struct {
+	r   *initRun
+	out io.Writer
+}
+
+func (w runWriter) Write(p []byte) (int, error) {
+	if w.r.rep != nil {
+		w.r.rep.Pause()
+	}
+	n, err := w.out.Write(p)
+	if w.r.rep != nil && w.r.questions == 0 && endsLine(p) {
+		// A complete line leaves the cursor at the start of the next one, so
+		// the step in flight is put back as soon as the line is out: a stage
+		// that prints its own result lines mid-apply is still one somebody
+		// watches. A write that leaves the cursor mid-line is a prompt, and
+		// the line stays down until the answer is in.
+		w.r.rep.Resume()
+	}
+	return n, err
+}
+
+// endsLine reports whether a write left the cursor at the start of a line.
+func endsLine(p []byte) bool { return len(p) > 0 && p[len(p)-1] == '\n' }
+
+// asking runs a question the run puts through the command rather than through
+// its own writer: a stage's own confirmation, and the hidden prompt a secret's
+// value is typed at. The helpers that ask those hold the command and not the
+// run — they are the same ones the budget and project doors ask with — so the
+// line in flight is taken down around the whole question and drawn again once
+// the answer is in: neither the CONFIRM block, nor the prompt under it, nor
+// the answer typed under that is drawn over (G1), where a stage opened its own
+// step and asks in the middle of its minutes.
+func (r *initRun) asking(f func() error) error {
+	if r.rep == nil {
+		return f()
+	}
+	r.rep.Pause()
+	r.questions++
+	defer func() {
+		r.questions--
+		// Only the last question puts the line back: a question asked inside
+		// another one (a stage that confirms by name and then asks something
+		// else) keeps the screen down to the end of the outer one.
+		if r.questions == 0 {
+			r.rep.Resume()
+		}
+	}()
+	return f()
+}
+
+// answerReader is stdin behind the same rule: the answer to a prompt was
+// typed on a line of its own, and the line in flight comes back the moment it
+// arrives, so a stage that prompts in the middle of its work is still one a
+// person watches to the end. A run with no reporter, and a read that is not a
+// prompt, put back nothing.
+type answerReader struct {
+	r  *initRun
+	in io.Reader
+}
+
+func (a answerReader) Read(p []byte) (int, error) {
+	n, err := a.in.Read(p)
+	if n > 0 && a.r.rep != nil {
+		a.r.rep.Resume()
+	}
+	return n, err
 }
 
 func runInit(r *initRun) error {
@@ -782,6 +871,16 @@ func runInit(r *initRun) error {
 		// fact before it prints the result (markCreated, called from
 		// outcome), whatever the loop's outcome — which the run still
 		// returns.
+		//
+		// This run's account and log are the converge's (CL5b): the reporter
+		// prints the steps the loop hands it, and every stage's Terraform
+		// progress goes to its Stream — the log always, the terminal under
+		// --verbose. The log is closed here, on the run's way out, so its last
+		// partial line is written.
+		r.rep, r.repLog = reporterFor(cmd, o.doorName(), e.redaction())
+		if r.repLog != nil {
+			defer func() { _ = r.repLog.Close() }()
+		}
 		return e.converge(cmd.Context())
 	}
 
@@ -1162,8 +1261,36 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 		}
 		return nil, nil, userErr("%v", err)
 	}
-	t.Out = r.cmd.ErrOrStderr()
+	t.Out = r.progress()
 	return wd, t, nil
+}
+
+// progress is where a stage's own output goes: Terraform's progress, and the
+// children that print like it. Under the converge it is the reporter's stream —
+// the log always, the terminal under --verbose — so the default view stays one
+// line per stage and the full output is kept (D1352). A run with no reporter
+// (--forget, --config-only, --print-vars) writes to stderr, which is what every
+// run did before CL5b — and so does a converge whose log could not be opened at
+// all (a state directory that is a link, foreign-owned or read-only, G5): the
+// stream goes nowhere else, and the output that explains a failure is the last
+// thing a run may swallow (G8).
+//
+// --plan-only keeps stderr besides the log, which is the path it took before the
+// converge had a reporter: the plan the run prints IS what the command is for,
+// and a plan-only run that succeeds names no log path the way a failure does, so
+// the stream alone would put the one thing somebody asked for out of reach
+// (CL5b: --plan-only takes the path it takes today). The log is written all the
+// same, so a plan-only run that fails still points at a log that holds what it
+// printed.
+func (r *initRun) progress() io.Writer {
+	verbose := boolFlag(r.cmd, verboseFlag)
+	if r.rep != nil && (r.repLog != nil || verbose) {
+		if r.o.planOnly && !verbose {
+			return io.MultiWriter(r.cmd.ErrOrStderr(), r.rep.Stream())
+		}
+		return r.rep.Stream()
+	}
+	return r.cmd.ErrOrStderr()
 }
 
 // gcpOptions are the Google API options of lc's project and endpoints.
@@ -1726,6 +1853,20 @@ func (r *initRun) yesRoute() string {
 // that did not answer and a session with no terminal or with --yes reach the
 // lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
+	// The banner and the name typed under it are one question: the line in
+	// flight is down across both (initRun.asking), or the frame drawn when the
+	// banner's own line ends lands between the banner and the prompt (G1).
+	var ok bool
+	err := r.asking(func() error {
+		var err error
+		ok, err = r.askBanner(what)
+		return err
+	})
+	return ok, err
+}
+
+// askBanner is ask's question, asked between the pause and the resume.
+func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
