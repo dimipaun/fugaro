@@ -4453,7 +4453,7 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		Workflows:               slices.Sorted(maps.Keys(cfg.Workflows)),
 		GitHubAppID:             spec.GitHubAppID,
 		Vertex:                  spec.UsesVertex(),
-		CredentialsServiceReady: r.credentialsBundleReady(ctx, lc) || lc.Repos[key].CredentialsServiceReady,
+		CredentialsServiceReady: r.credentialsBundleReady(ctx, lc),
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {
 		// The installation enables the API from the recorded repositories,
