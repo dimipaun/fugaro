@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -561,6 +562,146 @@ func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
 		t.Errorf("the answer did not put the line in flight back: %q", got)
 	}
 	step.Done("")
+}
+
+// TestTheLineStaysDownThroughAWholeQuestion: what a question prints through the
+// run's own writer while it is open — the policy stage's diff and the sentences
+// above its prompt — is part of the question, so the step's line may not come
+// back between its lines: the block and the prompt under it are read as one
+// (initRun.asking, G1). The step's line is drawn again once the answer is in.
+func TestTheLineStaysDownThroughAWholeQuestion(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	fakeTerminal(t)
+	var out bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetIn(strings.NewReader(initProjectName + "\n"))
+	run := newInitRun(cmd, &initOptions{})
+	run.rep = report.New(report.Options{Out: &out, Getenv: os.Getenv,
+		IsTerminal: func(io.Writer) bool { return true }})
+	step := run.rep.Step("policy")
+
+	lc := &localcfg.Config{Name: initProjectName}
+	if err := run.asking(func() error {
+		fmt.Fprint(run.w, "the policy node this run writes:\n  allow_repos: [aurora]\n")
+		return confirmRemoval(cmd, lc, false, policyReseedWhat)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := out.String()
+	at := strings.Index(got, "\r\x1b[Kthe policy node this run writes:")
+	if at < 0 {
+		t.Fatalf("the question's block was not written on a line of its own:\n%q", got)
+	}
+	want := "\r\x1b[Kthe policy node this run writes:\n  allow_repos: [aurora]\n" +
+		"⚠ CONFIRM (project " + initProjectName + "): " + policyReseedWhat + "\n" +
+		"Type " + initProjectName + " to confirm: "
+	if !strings.HasPrefix(got[at:], want) {
+		t.Errorf("the question is not one block with its prompt under it:\n got %q\nwant %q", got[at:], want)
+	}
+	if !strings.HasSuffix(got, "policy") {
+		t.Errorf("the answer did not put the step's line back: %q", got)
+	}
+	step.Done("")
+}
+
+// TestAMidStageConfirmationIsNeverDrawnOver is the round-3 finding. The
+// confirmations a converge asks are the shared ones — the layer stage's
+// confirmRemoval, the policy stage's confirmTypedStrict, confirmRemoval and
+// confirmEmptyAllowList — and each holds the command rather than the run, so
+// each writes and reads through cmd. Asked with a step of the run's own open (a
+// step is open across every stage), every one of them landed on the line the
+// spinner had drawn — the frame and then the banner, with no clear between them
+// — and the redraw every 100ms kept painting the frame over the prompt and over
+// the name typed under it (G1). The question now goes to the person with the
+// line down, and no redraw reaches the screen while it is open.
+func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	clearAgentMarkers(t)
+	fakeTerminal(t)
+	writerAsTerminal(t)
+	r := newLayerStageRig(t, testProjectLayer, localEdit, "3")
+	run := r.s.e.r
+	// The answer arrives while the question is open: stdin is a pipe, so this
+	// test decides when the person has read the block and typed their name.
+	answer, typed := io.Pipe()
+	defer typed.Close()
+	run.cmd.SetIn(answer)
+	run.rep = report.New(report.Options{Out: r.out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
+	// The loop opens the stage's step as it enters it (initflow's converge),
+	// which is what makes this a prompt asked mid-stage and not one before the
+	// first step — the shape TestConfirmPromptsAreNeverSuppressed covers.
+	step := run.rep.Step(initflow.Layer)
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.s.Apply(context.Background(), initflow.Env{Interactive: true})
+		done <- err
+	}()
+
+	head := "⚠ CONFIRM (project " + initProjectName + "): "
+	prompt := "Type " + initProjectName + " to confirm: "
+	waitForOutput(t, r.out, prompt)
+	out := r.out.String()
+	at := strings.Index(out, head)
+	if at < 0 {
+		t.Fatalf("the stage asked no confirmation, so this test proves nothing:\n%q", out)
+	}
+	if before := out[:at]; !strings.HasSuffix(before, "\r\x1b[K") {
+		t.Errorf("the spinner drew the confirmation over its own line: %q", before)
+	}
+	rest := out[at:]
+	nl := strings.Index(rest, "\n")
+	if nl < 0 {
+		t.Fatalf("the confirmation's banner never ended, so the prompt under it cannot be read as its own line:\n%q", rest)
+	}
+	if !strings.HasPrefix(rest, rest[:nl+1]+prompt) {
+		t.Errorf("the confirmation is not the prompt's own line, with nothing drawn between them:\n%q", rest)
+	}
+
+	// A redraw every 100ms is what the finding measured, and three intervals of
+	// quiet are what says the spinner is down. The prompt is on the screen
+	// already, so anything written here is a frame over the answer being typed.
+	quiet := len(out)
+	time.Sleep(spinWatch)
+	if after := r.out.String(); len(after) != quiet {
+		t.Errorf("the spinner redrew over the prompt being answered: %q", after[quiet:])
+	}
+
+	if _, err := fmt.Fprintln(typed, initProjectName); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out.String())
+	}
+	// The answer puts the stage's line back: the first thing written after the
+	// prompt is the frame again and not a line's own clear, which is what a run
+	// that stopped drawing for the rest of the stage's minutes would show.
+	got := r.out.String()
+	after := got[strings.Index(got, prompt)+len(prompt):]
+	if !strings.HasPrefix(after, "\r") || strings.HasPrefix(after, "\r\x1b[K") {
+		t.Errorf("the answer did not put the stage's line back: %q", after)
+	}
+	step.Done("")
+}
+
+// spinWatch is three of the reporter's redraw intervals (spinInterval is
+// 100ms): the length of quiet that says its spinner is down, because a spinner
+// that is up cannot stay silent for it.
+const spinWatch = 300 * time.Millisecond
+
+// waitForOutput blocks until a run driven from another goroutine has written
+// at, or fails the test: the screen this test has to be looking at.
+func waitForOutput(t *testing.T, out *syncBuf, at string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(out.String(), at) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%q was never written:\n%q", at, out.String())
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // stepNames is the stages a run's steps name, in the order the account gives

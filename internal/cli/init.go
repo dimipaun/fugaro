@@ -498,6 +498,11 @@ type initRun struct {
 	// they always have. repLog is the log it keeps, closed when the run ends.
 	rep    *report.Reporter
 	repLog report.Sink
+	// questions counts the questions in flight (initRun.asking): while one is
+	// open the run's own writer does not put the step's line back between the
+	// lines of the block it prints, so a CONFIRM block and a prompt are shown
+	// as one block rather than one line at a time.
+	questions int
 	// gcpProject is the GCP project ID every Google call uses;
 	// projectName is the project's name, shown and typed to confirm.
 	gcpProject, projectName string
@@ -681,7 +686,45 @@ func (w runWriter) Write(p []byte) (int, error) {
 	if w.r.rep != nil {
 		w.r.rep.Pause()
 	}
-	return w.out.Write(p)
+	n, err := w.out.Write(p)
+	if w.r.rep != nil && w.r.questions == 0 && endsLine(p) {
+		// A complete line leaves the cursor at the start of the next one, so
+		// the step in flight is put back as soon as the line is out: a stage
+		// that prints its own result lines mid-apply is still one somebody
+		// watches. A write that leaves the cursor mid-line is a prompt, and
+		// the line stays down until the answer is in.
+		w.r.rep.Resume()
+	}
+	return n, err
+}
+
+// endsLine reports whether a write left the cursor at the start of a line.
+func endsLine(p []byte) bool { return len(p) > 0 && p[len(p)-1] == '\n' }
+
+// asking runs a question the run puts through the command rather than through
+// its own writer: a stage's own confirmation, and the hidden prompt a secret's
+// value is typed at. The helpers that ask those hold the command and not the
+// run — they are the same ones the budget and project doors ask with — so the
+// line in flight is taken down around the whole question and drawn again once
+// the answer is in: neither the CONFIRM block, nor the prompt under it, nor
+// the answer typed under that is drawn over (G1), where a stage opened its own
+// step and asks in the middle of its minutes.
+func (r *initRun) asking(f func() error) error {
+	if r.rep == nil {
+		return f()
+	}
+	r.rep.Pause()
+	r.questions++
+	defer func() {
+		r.questions--
+		// Only the last question puts the line back: a question asked inside
+		// another one (a stage that confirms by name and then asks something
+		// else) keeps the screen down to the end of the outer one.
+		if r.questions == 0 {
+			r.rep.Resume()
+		}
+	}()
+	return f()
 }
 
 // answerReader is stdin behind the same rule: the answer to a prompt was
@@ -1796,6 +1839,20 @@ func (r *initRun) yesRoute() string {
 // that did not answer and a session with no terminal or with --yes reach the
 // lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
+	// The banner and the name typed under it are one question: the line in
+	// flight is down across both (initRun.asking), or the frame drawn when the
+	// banner's own line ends lands between the banner and the prompt (G1).
+	var ok bool
+	err := r.asking(func() error {
+		var err error
+		ok, err = r.askBanner(what)
+		return err
+	})
+	return ok, err
+}
+
+// askBanner is ask's question, asked between the pause and the resume.
+func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
