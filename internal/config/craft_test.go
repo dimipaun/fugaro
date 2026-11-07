@@ -141,3 +141,33 @@ func TestNotYetTypesRefuse(t *testing.T) {
 		t.Errorf("an unknown type is not refused as unknown: %v", ps)
 	}
 }
+
+// TestReservedCredentialNamesRefuse: a name the platform already holds a
+// credential under is refused as a DEFINITION and admitted as a reference,
+// which is the rule claude_accounts states for `default` and the shape this
+// block's two ends have to mirror — a credential that defines `vertex` would be
+// a second credential no run could tell from the built-in one, and one that
+// defines `default` would be an entry nothing can reach, since a craft that sets
+// no access already resolves to the default.
+func TestReservedCredentialNamesRefuse(t *testing.T) {
+	for _, name := range []string{DefaultClaudeAccount, CredentialVertex, AnthropicKeyAccount, "acme-review", "Not A Name", strings.Repeat("x", MaxClaudeAccountNameLen+1), ""} {
+		if ps := ValidateCredentials([]Credential{{Name: name, Type: CredentialTypeAnthropic}}); len(ps) == 0 {
+			t.Errorf("%q is defined as a credential and nothing refuses it", name)
+		}
+		if ps := ValidatePools([]Pool{{Name: name, Members: []string{CredentialVertex}}}, nil); len(ps) == 0 {
+			t.Errorf("%q is named as a pool and nothing refuses it", name)
+		}
+	}
+	if ps := ValidateCredentials([]Credential{{Name: "acme-main", Type: CredentialTypeAnthropic}}); len(ps) > 0 {
+		t.Errorf("an ordinary name is refused: %v", ps)
+	}
+	// The other end: a reference to the built-in credential is valid, and the
+	// default is not — a craft whose access is `default` names nothing a run
+	// could resolve, because that is what an unset access already resolves to.
+	if msg := ValidCredentialRef(CredentialVertex); msg != "" {
+		t.Errorf("a reference to the built-in %s is refused: %s", CredentialVertex, msg)
+	}
+	if msg := ValidCredentialRef(DefaultClaudeAccount); msg == "" {
+		t.Errorf("%q is accepted as a craft's access", DefaultClaudeAccount)
+	}
+}

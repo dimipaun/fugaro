@@ -243,13 +243,19 @@ func ValidCredentialRef(name string) string {
 // The reserved names are refused here and admitted by ValidCredentialRef where
 // that is the right answer for a reference: `vertex` is the built-in
 // credential, so an entry of that name would be a second credential no run
-// could tell it apart from, and a name ending in -review would derive the
-// review-only job variant's own job name and service account for a credential
-// that mounts the coding job's key (reviewAccountNameMessage).
+// could tell it apart from; `default` is what a craft that sets no access
+// resolves to, so a definition of that name is an entry nothing can reach (it is
+// refused as a definition for the reason claude_accounts refuses it: the
+// reference and the definition cannot mean two things); and a name ending in
+// -review would derive the review-only job variant's own job name and service
+// account for a credential that mounts the coding job's key
+// (reviewAccountNameMessage).
 func credentialNameProblem(name string) string {
 	switch {
 	case name == "":
 		return "name is required: this is the name a craft's access and a pool's members speak, and an entry without one names nothing"
+	case name == DefaultClaudeAccount:
+		return `"` + DefaultClaudeAccount + `" is the default credential rather than a name for one: a craft that sets no access resolves to it already, so an entry under this name could never be reached — name the credential, or drop the entry`
 	case name == CredentialVertex:
 		return `"` + CredentialVertex + `" is the built-in credential: it needs no secret and exists in every installation, so an entry under this name would name a second credential no run could tell apart — pick a different name`
 	case name == AnthropicKeyAccount:

@@ -1815,6 +1815,14 @@ func (c *Config) validate() error {
 	for _, p := range config.ValidateCrafts(c.Crafts) {
 		bad("%s: %s", p.Path, p.Message)
 	}
+	// And a craft's model is a model ID here exactly as it is in fugaro.yaml:
+	// the same key may not mean two things in two files, and the gateway prices
+	// and pins the value wherever the layer it came from was written.
+	for _, name := range config.CraftNames {
+		if msg := config.ModelIDProblem(c.Crafts.Of(name).Model); msg != "" {
+			bad("crafts.%s.model: %s", name, msg)
+		}
+	}
 	// The account-choice keys are checked against the REFERENCE rule and not
 	// the definition's: each one names an account a run may use, and "default"
 	// is a legal name for the unsuffixed secret and only here — the

@@ -264,7 +264,15 @@ type Policy struct {
 	// among and narrows but never adds to (F25, D1628). A craft's access here
 	// names a member of CraftCredentials or CraftPools, or the built-in vertex;
 	// what the name resolves to is the run's answer (MC2).
-	Crafts config.Crafts `json:"crafts,omitempty"`
+	//
+	// It is a pointer for Orchestrator's reason: omitempty is a no-op on a
+	// struct, so a value field would write "crafts":{"coder":{},...} into every
+	// project's node, and this member is not known to a CLI that predates it —
+	// a project that uses no craft would force every teammate to update before
+	// it could launch. A project that sets none writes no member, and an absent
+	// member and a written empty one are the same block: no craft is set, so
+	// every craft resolves to the project's default credential (D1624).
+	Crafts *config.Crafts `json:"crafts,omitempty"`
 
 	// CloneURLs are the project's clone URLs, keyed by canonical repository
 	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
@@ -1206,11 +1214,19 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 	if fraw, ok := doc["crafts"]; ok && !IsNull(fraw) {
 		dec := json.NewDecoder(bytes.NewReader(fraw))
 		dec.DisallowUnknownFields()
-		if err := dec.Decode(&p.Crafts); err != nil {
+		var cs config.Crafts
+		if err := dec.Decode(&cs); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: crafts: %w", err)
 		}
-		for _, prob := range config.ValidateCrafts(p.Crafts) {
+		for _, prob := range config.ValidateCrafts(cs) {
 			return nil, true, fmt.Errorf("projectpolicy: %s: %s", prob.Path, prob.Message)
+		}
+		// A block that sets no craft is no block, exactly as an empty
+		// orchestrator is none: nil is what the decoder answers for an absent
+		// member, so the two spellings of "this project sets no craft" are one
+		// answer and a writer that round trips this policy writes no member.
+		if cs != (config.Crafts{}) {
+			p.Crafts = &cs
 		}
 	}
 	// The Bitbucket block is judged *before* the profiles block, and the
