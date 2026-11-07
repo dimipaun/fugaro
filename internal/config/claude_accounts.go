@@ -71,19 +71,23 @@ const MaxClaudeAccountNameLen = 31
 //
 // A profile that names it is publishable today and DEPLOYABLE by no
 // installation yet: every reader of the account axis on the way to a job —
-// internal/infra's ProjectJobAccounts and projectAccountMount, this file's
+// internal/infra's ProjectJobs (ProjectJobAccounts and projectAccountMount),
+// this file's
 // ProjectJobTokenAccount, modules/project's job.account validation — reads a
 // profile's claude_accounts as the Claude OAuth tokens its jobs mount, and the
 // project's own key is no token of any job's. The two of those that are claims
 // about a credential answer for it here and in the deployer (ProjectJobTokenAccount
-// returns no token, and projectAccountMount refuses a profile that names it in
-// words the operator can act on); the two that ARE the route — the module's
-// job.account validation and the task spec's oauth_token — belong to the task
-// that builds it. An installation that publishes a profile naming the sentinel
-// is therefore refused by fugaro update before terraform is planned, which is
-// fail-closed and deliberate: the route that deploys its review variant is the
-// api-key review plan's next task (AK5), and no message here may send an
-// operator at a route that does not exist.
+// returns no token, and ProjectJobs refuses a profile that names it in words the
+// operator can act on — for EVERY profile, ahead of the skip that leaves a
+// Bitbucket profile undeployed, because a refusal reached only by the jobs a
+// profile deploys would let a Bitbucket profile pass an installation
+// unrefused); the two that ARE the route — the module's job.account validation
+// and the task spec's oauth_token — belong to the task that builds it. An
+// installation that publishes a profile naming the sentinel is therefore
+// refused by fugaro update before terraform is planned, whichever provider its
+// profiles run on, which is fail-closed and deliberate: the route that deploys
+// its review variant is the api-key review plan's next task (AK5), and no
+// message here may send an operator at a route that does not exist.
 //
 // The account-CHOICE keys stand beside those readers and are the same claim
 // from the other side — a profile entry says which account a repository's runs

@@ -286,11 +286,15 @@ about a credential, and AK5 owns the two that are the route itself.
   container the installation does not create — for the sentinel with a sentence prescribing
   `claude_accounts.anthropic-api-key--project.allow_data_to`, the one key `ValidateClaudeAccounts`
   refuses. That is the refusal an installation publishing the sentinel lands in, and it is fail-closed,
-  but its remedy is not reachable, so **AK4 fixes this one too** (§2's declared exception): a sentinel
-  arm ahead of the container lookup refuses the value in words the operator can act on — no job can
-  serve the project's own key in this release, take it off the profile — because the true remedy is
-  that move, not a `claude_accounts` key. **AK5** replaces that arm with the route's own answer (no
-  mount — the review-only variant mounts nothing at all, **O1**).
+  but its remedy is not reachable, so **AK4 fixes this one too** (§2's declared exception): `ProjectJobs`
+  refuses the value in words the operator can act on — no job can serve the project's own key in this
+  release, take it off the profile — because the true remedy is that move, not a `claude_accounts` key.
+  The refusal stands in `ProjectJobs` itself, **ahead of the skip that leaves a Bitbucket profile
+  undeployed** (an arm inside the job loop would be reached by shared-job profiles only, so a Bitbucket
+  profile would carry the sentinel past `fugaro update` unrefused — with `DeriveAccounts` publishing its
+  accounts entry — while the state this section describes is claimed for every profile). **AK5**
+  replaces that refusal with the route's own answer (no mount — the review-only variant mounts nothing
+  at all, **O1**).
 - `config.ProjectJobTokenAccount` answered `(sentinel, true)`: a job holding a token no secret exists
   for, where the true answer is `("", false)`. **AK4 fixes this one**, because it is a claim about a
   credential and the launcher's gate and `doctor` both read it.
@@ -385,9 +389,10 @@ new credential — the pairing's sentinel — beside `"oauth"` and `config.AuthC
 `mixedRunAccount` resolve the sentinel to the review variant that is deployed for it; and
 `internal/infra/projectjobs.go` deploys that variant, so an installation that publishes the sentinel
 and no Claude account has a review job at all (**F17**) — where today the same profile is refused by
-`projectAccountMount` (AK4's sentinel arm, whose sentence now names the move that works — take the key
-off the profile — rather than a `claude_accounts` key `ValidateClaudeAccounts` refuses; AK5 replaces
-the arm with the route's own answer) and, past it, by `modules/project`'s `job.account` validation
+`ProjectJobs` (AK4's sentinel refusal, for every profile and ahead of the Bitbucket skip, whose
+sentence names the move that works — take the key off the profile — rather than a `claude_accounts`
+key `ValidateClaudeAccounts` refuses; AK5 replaces the refusal with the route's own answer) and, past
+it, by `modules/project`'s `job.account` validation
 (`ClaudeAccountNameRE`, which the sentinel does not match). **This task takes the decision AK4
 booked in §6 and did not take**: whether a profile naming the sentinel gets a coding job at all, what
 that job's account segment is (the module admits an empty account — a job that runs as no Claude
@@ -635,7 +640,8 @@ may not start and the cloud path is not launchable. A reader must take those two
    (`modules/project`'s `job.account` validation admits an empty account or a Claude account name,
    and the sentinel is neither), and what `credsvc.ReviewJobAccountsFor` and the deployer then agree
    the review variant's account segment is. An installation that publishes a profile naming the
-   sentinel is refused by `fugaro update` — fail-closed, and with AK4's own sentence in
+   sentinel is refused by `fugaro update` — fail-closed, for **every** profile and not only the
+   shared-job ones a Bitbucket profile is skipped from deploying, and with AK4's own sentence in
    `internal/infra/projectjobs.go` that names the move that works (take the key off the profile),
    which AK5 replaces with the route's own answer — so the state is safe and honest, but it is not a
    state to ship a release on.
