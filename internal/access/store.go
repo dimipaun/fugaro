@@ -65,12 +65,14 @@ type nodeGrant struct {
 
 // Decode reads the node's document. It is strict in every direction the node
 // can be wrong: an unknown field is refused (DisallowUnknownFields, so an older
-// CLI refuses a node carrying a member it does not know — F27), a second JSON
-// value after the first is refused, a missing grants list is refused, a
-// document past MaxNodeBytes or a list past MaxGrants is refused, and every
-// entry's member, role and scope is validated — the member is the canonical
-// "user:<address>" form, the role is one of the closed set and the scope is one
-// ParseScope accepts.
+// CLI refuses a node carrying a member it does not know — F27) and a field it
+// does know is read only in the one spelling this file writes
+// (refuseOtherSpellings, because encoding/json is lax about a name in two ways
+// no stored document may rely on), a second JSON value after the first is
+// refused, a missing grants list is refused, a document past MaxNodeBytes or a
+// list past MaxGrants is refused, and every entry's member, role and scope is
+// validated — the member is the canonical "user:<address>" form, the role is one
+// of the closed set and the scope is one ParseScope accepts.
 //
 // It refuses rather than dropping the entry it cannot read. A grant that does
 // not parse grants nothing (Effective skips it), so dropping would be safe for
@@ -81,6 +83,9 @@ type nodeGrant struct {
 func Decode(raw []byte) ([]Grant, error) {
 	if len(raw) > MaxNodeBytes {
 		return nil, fmt.Errorf("the grants node is %d bytes; at most %d are allowed", len(raw), MaxNodeBytes)
+	}
+	if err := refuseOtherSpellings(raw); err != nil {
+		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -106,6 +111,113 @@ func Decode(raw []byte) ([]Grant, error) {
 		grants = append(grants, g)
 	}
 	return grants, nil
+}
+
+// member is one field of a JSON object as it is written: its name, and its value
+// as the bytes it occupied. The names are what the walk below is about; a value
+// comes back whole only so the walk can step over it, because what a value means
+// is the typed decode's question.
+type member struct {
+	name  string
+	value json.RawMessage
+}
+
+// refuseOtherSpellings walks the document's objects and refuses a field that is
+// not one of the ones this file reads, spelled exactly, written once. It is the
+// half of strictness the typed decode cannot have.
+//
+// encoding/json matches an object key to a struct field case-insensitively and
+// lets the later of two spellings of a key win, and a Realtime Database node
+// holds two spellings as two children of the grant:
+// {"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"project",
+// "Role":"admin"}]} is a document Decode would read as an admin grant nobody
+// wrote, while DisallowUnknownFields stays quiet — "Role" is a field of
+// nodeGrant as far as it is concerned. The node's documents are the ones Encode
+// writes, in the one spelling each field has there, so a document spelling a
+// field any other way is one this reader cannot vouch for, and it is refused
+// here as the closed, case-sensitive schema refuses it (the review finding on
+// this change). Every other way the document can be wrong — an unknown field, a
+// value of the wrong type, a missing list — is still the typed decode's, which
+// keeps its own answers for those.
+func refuseOtherSpellings(raw []byte) error {
+	fields, err := objectFields(json.NewDecoder(bytes.NewReader(raw)))
+	if err != nil {
+		return fmt.Errorf("the grants node: %w", err)
+	}
+	for i, f := range fields {
+		if f.name != "grants" {
+			return fmt.Errorf("the grants node carries the field %q: the node has one field, %q, spelled exactly", f.name, "grants")
+		}
+		if i > 0 {
+			return fmt.Errorf("the grants node carries the field %q twice: a field is written once", f.name)
+		}
+		if err := refuseGrantSpellings(f.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refuseGrantSpellings walks the grants list and refuses a field in an entry
+// that is not user, role or scope, spelled exactly, written once.
+func refuseGrantSpellings(list json.RawMessage) error {
+	var entries []json.RawMessage
+	if err := json.NewDecoder(bytes.NewReader(list)).Decode(&entries); err != nil {
+		return fmt.Errorf("the grants node: %q is not a list of grants: %w", "grants", err)
+	}
+	for _, entry := range entries {
+		fields, err := objectFields(json.NewDecoder(bytes.NewReader(entry)))
+		if err != nil {
+			return fmt.Errorf("the grants node: a grant is not one object: %w", err)
+		}
+		seen := map[string]bool{}
+		for _, f := range fields {
+			switch f.name {
+			case "user", "role", "scope":
+			default:
+				return fmt.Errorf("the grants node: a grant carries the field %q: a grant has the fields user, role and scope, spelled exactly", f.name)
+			}
+			if seen[f.name] {
+				return fmt.Errorf("the grants node: a grant carries the field %q twice: a grant writes each of its fields once", f.name)
+			}
+			seen[f.name] = true
+		}
+	}
+	return nil
+}
+
+// objectFields reads one JSON object and returns its fields in the order they
+// are written. A name written twice is *not* collapsed here — the callers are
+// asking precisely because encoding/json would collapse it — so every field
+// comes back, and it is the caller that refuses the repetition.
+func objectFields(dec *json.Decoder) ([]member, error) {
+	t, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := t.(json.Delim); !ok || d != '{' {
+		return nil, fmt.Errorf("it is not one JSON object")
+	}
+	var fields []member
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := t.(string)
+		if !ok {
+			return nil, fmt.Errorf("a field name is not a string")
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+		fields = append(fields, member{name: name, value: value})
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	return fields, nil
 }
 
 // grant validates one stored entry and returns the Grant it names.

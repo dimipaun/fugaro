@@ -53,9 +53,13 @@ func encoded(t *testing.T, grants ...Grant) []byte {
 // TestAccessNodeDecodesStrictly: the node's document is read whole or not at
 // all. Every case here is a document a reader could be handed and must not act
 // on: an unknown field (the older CLI that does not know a member must refuse
-// the node, F27), a missing or null grants list, a second JSON value, a
-// top-level array, a member that is not a `user:`, a member that is not the
-// canonical spelling, and a scope ParseScope refuses.
+// the node, F27), a field name that is a case variant of a known one or that is
+// written twice — a Realtime Database node holds those as children of their own,
+// and encoding/json matches a name case-insensitively and lets the later of two
+// spellings win, so without the spelling walk `{"role":"viewer",…,"Role":
+// "admin"}` is read as an admin grant nobody wrote — a missing or null grants
+// list, a second JSON value, a top-level array, a member that is not a `user:`,
+// a member that is not the canonical spelling, and a scope ParseScope refuses.
 func TestAccessNodeDecodesStrictly(t *testing.T) {
 	grants, err := Decode(encoded(t,
 		grant(alice, RoleOperator, scope(t, "github/acme/api-*")),
@@ -82,6 +86,17 @@ func TestAccessNodeDecodesStrictly(t *testing.T) {
 		"a member that is not canonical": `{"grants":[{"user":"user:alice@EXAMPLE.com","role":"viewer","scope":"project"}]}`,
 		"a scope that does not parse":    `{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"*"}]}`,
 		"an empty scope":                 `{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":""}]}`,
+
+		// The spelling of a name, which encoding/json is lax about in both
+		// directions: it matches a field case-insensitively and takes the later
+		// of two spellings. Every document here is one the database can hold —
+		// `role` and `Role` are two children of the grant — and one this reader
+		// must refuse rather than read as the grant the decode would make of it.
+		"a case variant of a field name": `{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"project","Role":"admin"}]}`,
+		"a case variant of the list":     `{"Grants":[{"user":"user:alice@example.com","role":"admin","scope":"project"}]}`,
+		"a field name twice":             `{"grants":[{"user":"user:alice@example.com","role":"viewer","role":"admin","scope":"project"}]}`,
+		"an upper-case of a name twice":  `{"grants":[{"user":"user:alice@example.com","role":"viewer","Role":"viewer","scope":"project"}]}`,
+		"the list twice":                 `{"grants":[{"user":"user:alice@example.com","role":"admin","scope":"project"}],"grants":[]}`,
 	} {
 		if got, err := Decode([]byte(raw)); err == nil {
 			t.Errorf("%s: Decode accepted %s (got %+v)", name, raw, got)
