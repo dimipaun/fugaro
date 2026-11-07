@@ -10,7 +10,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/report"
 )
@@ -373,6 +376,71 @@ func TestUpdateLogRedactsHeldSecretsInTheTerraformStream(t *testing.T) {
 	}
 	if strings.Contains(out+errOut, held) {
 		t.Errorf("a held value reached the screen: %s%s", out, errOut)
+	}
+}
+
+// TestUpdateLogRedactsAValueAStageHoldsMidRun: the sink is redacted with the
+// converge's own slots, read at each line, and not with a copy of them taken
+// when the log opened. The one case where the two differ is a value a stage
+// takes mid-run — initEngine.hold, which the secrets stage calls while it
+// stores one (initsecrets.go) — so it goes in the log as the marker and never
+// as itself, and a value the stage takes after an earlier one was released is
+// covered just the same, since the slots are read as they are at that line.
+//
+// The value is printed through the stage's own stream, which is what TF.Out is
+// (initRun.progress): a Terraform that echoes a value it was handed writes
+// exactly there.
+func TestUpdateLogRedactsAValueAStageHoldsMidRun(t *testing.T) {
+	const (
+		first  = "held-through-the-apply"
+		second = "held-through-the-next-apply"
+	)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	cmd := NewRootCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	run := newInitRun(cmd, &initOptions{})
+	e := &initEngine{r: run}
+	run.rep, run.repLog = reporterFor(cmd, "update", e.redaction())
+	if run.repLog == nil {
+		t.Fatalf("the run opened no log, so this test has none to read")
+	}
+	t.Cleanup(func() { _ = run.repLog.Close() })
+	// hold is the stage: it takes one value, prints it while holding it, and
+	// gives the slot back on its way out, exactly as the secrets stage does
+	// around its store.
+	hold := func(v string) error {
+		release, err := e.hold([]byte(v))
+		if err != nil {
+			return err
+		}
+		defer release()
+		_, err = fmt.Fprintln(run.progress(), "terraform prints "+v+" in its line")
+		return err
+	}
+	st := &engineStage{e: e, name: initflow.Installation, skip: func() string { return "" },
+		run: func(context.Context) error {
+			if err := hold(first); err != nil {
+				return err
+			}
+			return hold(second)
+		}}
+	if _, err := initflow.Run(context.Background(), []initflow.Stage{st}, initflow.Options{
+		Yes: true, Out: io.Discard, Report: run.rep,
+	}); err != nil {
+		t.Fatalf("the converge: %v\n%s", err, out.String())
+	}
+	_, log := onlyLog(t, "update")
+	for _, v := range []string{first, second} {
+		if strings.Contains(log, v) {
+			t.Errorf("a value the stage held reached the log: %q\n%s", v, log)
+		}
+	}
+	if n := strings.Count(log, report.Redacted); n != 2 {
+		t.Errorf("the log holds %d redaction markers, want one per held value:\n%s", n, log)
 	}
 }
 
