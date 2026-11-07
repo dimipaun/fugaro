@@ -53,8 +53,8 @@ func TestBacklogIndexWritesTheIndexFromTheItems(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, backlog.IndexName)
-	if want := "wrote " + path + "\n"; out != want {
-		t.Errorf("fugaro backlog index printed %q, want %q", out, want)
+	if lines := reportLines(out); lines[0] != markDone+" wrote "+path {
+		t.Errorf("fugaro backlog index printed %q, want %q and the closing line", out, markDone+" wrote "+path)
 	}
 	items, err := backlog.Load(dir)
 	if err != nil {

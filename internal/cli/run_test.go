@@ -69,7 +69,7 @@ func TestRunHumanOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "launched " + appSlug + "/20260927-100000-abcd\n  branch fugaro/20260927-100000-abcd cut from main\n  logs https://"
+	want := markDone + " launch " + appSlug + "/20260927-100000-abcd\n  branch fugaro/20260927-100000-abcd cut from main\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}
@@ -691,7 +691,7 @@ func TestRunRetryOfALaunchedRunHints(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, err := execute(t, "run", "--retry", "20260927-100000-abcd")
-	if err != nil || !strings.HasPrefix(out, "already launched") || !strings.Contains(errOut, "fugaro diagnose "+appSlug+"/20260927-100000-abcd") {
+	if err != nil || !strings.Contains(out, markSkipped+" launch "+appSlug+"/20260927-100000-abcd already launched") || !strings.Contains(errOut, "fugaro diagnose "+appSlug+"/20260927-100000-abcd") {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
 	}
 }

@@ -56,7 +56,7 @@ image_catalog:
 func catalogCheckJob(t *testing.T, yaml string, imageBuilds int64) (*CatalogCheckSpec, CatalogCheckJobSpec) {
 	t.Helper()
 	lc := parseLC(t, yaml)
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", imageBuilds)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", imageBuilds, true)
 	if err != nil {
 		t.Fatalf("CatalogCheck: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestCatalogCheckUsesTheProjectCopyOfAProjectScopedCredential(t *testing.T) 
 	lc := parseLC(t, catalogCheckLocal+`project_secrets:
   bitbucket-token: { allow_data_to: [acme/app] }
 `)
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
 	if err != nil {
 		t.Fatalf("CatalogCheck: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestCatalogCheckIsNilWhenThereIsNothingToCheck(t *testing.T) {
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			lc := parseLC(t, m4LocalConfig+m5Additions+tc.yaml)
-			cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0)
+			cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
 			if err != nil {
 				t.Fatalf("CatalogCheck: %v", err)
 			}
@@ -308,14 +308,14 @@ func TestCatalogCheckIsNilWhenThereIsNothingToCheck(t *testing.T) {
 func TestCatalogCheckRefusesAMissingBaseImage(t *testing.T) {
 	lc := parseLC(t, strings.Replace(catalogCheckLocal,
 		"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n", "", 1))
-	_, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0)
+	_, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
 	if err == nil || !strings.Contains(err.Error(), "base_images."+config.BaseKind) {
 		t.Fatalf("err = %v, want the missing base image named with the key that fixes it", err)
 	}
 	// ... and with no catalog to build, no job and no refusal: the image is the
 	// job's own need.
 	lc = parseLC(t, m4LocalConfig)
-	if cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0); err != nil || cc != nil {
+	if cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true); err != nil || cc != nil {
 		t.Fatalf("CatalogCheck with no catalog = %+v, %v, want no job and no error", cc, err)
 	}
 }
@@ -334,10 +334,65 @@ func TestCatalogCheckCarriesTheManagedBound(t *testing.T) {
 		}
 	}
 	lc := parseLC(t, catalogCheckLocal)
-	if _, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 1001); err == nil || !strings.Contains(err.Error(), "1001") {
+	if _, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 1001, true); err == nil || !strings.Contains(err.Error(), "1001") {
 		t.Fatalf("err = %v, want an out-of-range build bound refused", err)
 	}
-	if _, err := CatalogCheck(lc, "Fugaro Runs", 0); err == nil {
+	if _, err := CatalogCheck(lc, "Fugaro Runs", 0, true); err == nil {
 		t.Fatal("a runs bucket outside [a-z0-9._-] was accepted: the condition built from it would be one no comparison expects")
+	}
+}
+
+// catalogCheckPaused is the paused key of the catalog check variable in the
+// installation tfvars the options render for the producer's local config.
+func catalogCheckPaused(t *testing.T, o InstallOptions) bool {
+	t.Helper()
+	spec, err := Installation(parseLC(t, catalogCheckLocal), o)
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	vars, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatalf("InstallationVars: %v", err)
+	}
+	var doc struct {
+		CatalogCheck map[string]json.RawMessage `json:"catalog_check"`
+	}
+	if err := json.Unmarshal(vars, &doc); err != nil {
+		t.Fatalf("the installation tfvars: %v", err)
+	}
+	raw, ok := doc.CatalogCheck["paused"]
+	if !ok {
+		t.Fatal("the catalog check variable carries no paused key: the module applies its own default, and no setting of the layer's reaches the schedule")
+	}
+	var paused bool
+	if err := json.Unmarshal(raw, &paused); err != nil {
+		t.Fatalf("paused: %v", err)
+	}
+	return paused
+}
+
+// TestCatalogCheckSpecCarriesThePausedSetting: the schedule's own state is a
+// field of the spec, so the project layer's jobs.catalog_check.paused (R13)
+// reaches the variable the module applies to the Scheduler job's paused. The
+// gap it closes is not theoretical: paused was a Terraform variable with no
+// field here for a run to set it from, so the 0.18.0 job's own operator note
+// offered a `gcloud scheduler jobs resume` that the next fugaro update reverted
+// — the module always applies paused, and the tfvars carried none.
+func TestCatalogCheckSpecCarriesThePausedSetting(t *testing.T) {
+	if paused := catalogCheckPaused(t, InstallOptions{}); !paused {
+		t.Error("an option set that names no layer turned the catalog check's schedule on: the loosening direction is the operator's alone, and a caller that read no layer must leave the schedule stopped")
+	}
+	yes := true
+	if paused := catalogCheckPaused(t, InstallOptions{CatalogCheckPaused: &yes}); !paused {
+		t.Error("the layer's paused: true is not what the module applies")
+	}
+}
+
+// TestCatalogCheckSpecCarriesPausedFalse: the one direction that starts the
+// schedule, and the only caller that writes it is the layer read.
+func TestCatalogCheckSpecCarriesPausedFalse(t *testing.T) {
+	no := false
+	if paused := catalogCheckPaused(t, InstallOptions{CatalogCheckPaused: &no}); paused {
+		t.Error("the layer's paused: false did not reach the variable: enabling a job would need the gcloud command the layer replaced")
 	}
 }

@@ -156,7 +156,7 @@ const SUFFIX = /^-[a-z0-9-]+(?:\/-[a-z0-9-]+)*$/
  * §2 whole must not quietly license either set, so they are subtracted here by
  * name -- which is what keeps both sentences true of the scan.
  *
- * **Six of §2.11's eight, and not the other two.** `data-key` and `data-view`
+ * **Seven of §2.11's nine, and not the other two.** `data-key` and `data-view`
  * are listed in §2.11 because *the graph* emits them and no graph rule selects
  * them, but the same two names are §2's hooks elsewhere: §2.3's table and §2.4's
  * prose license `data-key` on a spend chart's points and rows and on the caps
@@ -174,6 +174,7 @@ const NOT_A_LICENCE: readonly string[] = Object.freeze([
   'data-stream',
   'data-release',
   'data-word',
+  'data-source',
 ])
 
 /** readDesign reads the design document, failing by name rather than with an
@@ -790,14 +791,22 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     // first (design §2's licence paragraph, and §2.11's for the graph's).
     expect(hooks, 'the scan licensed the two hooks §2 refuses by name').not.toContain('data-hidden')
     expect(hooks).not.toContain('data-skew')
-    // §2.11 names eight attributes the graph emits and no rule needs, and the
-    // six that are not §2 hooks elsewhere are refused here too: §2.11 says "no
+    // §2.11 names nine attributes the graph emits and no rule needs, and the
+    // seven that are not §2 hooks elsewhere are refused here too: §2.11 says "no
     // stylesheet rule may select one without adding it above first", and a
-    // reading of §2 whole would otherwise license all eight.
-    for (const attribute of ['data-run-id', 'data-tab', 'data-chip', 'data-stream', 'data-release', 'data-word']) {
+    // reading of §2 whole would otherwise license all nine.
+    for (const attribute of [
+      'data-run-id',
+      'data-tab',
+      'data-chip',
+      'data-stream',
+      'data-release',
+      'data-word',
+      'data-source',
+    ]) {
       expect(hooks, `the scan licensed ${attribute}, which §2.11 says no rule may select`).not.toContain(attribute)
     }
-    // The other two of §2.11's eight **stay** licensed, and that is not an
+    // The other two of §2.11's nine **stay** licensed, and that is not an
     // oversight: the scan licenses by name, and both names are §2's hooks on
     // other screens -- a spend chart's and a caps row's `data-key` (§2.3, §2.4,
     // which `screens.css` selects) and the navigation's and the people panel's

@@ -164,6 +164,13 @@ var doctorSecurityPrefixes = []string{
 // must not pick one, and the default view names the command for each choice
 // rather than a single fix.
 var doctorDecisionIDs = map[string]bool{
+	// reviews-due-old is the cadence the user keeps (D965): the newest report
+	// is more than one period old, which is a state that is valid and is the
+	// reader's to choose between writing the period that closed and keeping
+	// the cadence they have. Its sibling, reviews-due, is the state that is
+	// not: a closed period with no report at all is work, and the class is
+	// decided by the ID, which is why the two states carry two IDs.
+	"reviews-due-old":                   true,
 	"secret-scope-shadowed":             true,
 	"project-secret-scope-stale":        true,
 	"project-secret-optional":           true,

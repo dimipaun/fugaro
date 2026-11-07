@@ -81,7 +81,12 @@ ends at the gates below.
   file, the design takes no check number (README, "Numbers this work holds"), and the two live
   checks (R12's listing check and R7's own) are **named**, not numbered — the task that writes each
   takes the number free at its merge
-  ([reconciliation.md](reconciliation.md) §5, "What the rulings take").
+  ([reconciliation.md](reconciliation.md) §5, "What the rulings take"). **Amended 2026-11-07:** the
+  file is **touched**, by Check 340 alone — the task that implemented it (§P8) wrote the register's
+  row and its `## Check 340` section, so R12's listing check has a number and a section now and R7's
+  own stays **named** until its task takes the number free at its merge
+  ([reconciliation.md](reconciliation.md) §5's amendment; the `Checks 340–349` row of
+  [README.md](README.md)).
 
 | Level | Tasks | Needs |
 | --- | --- | --- |
@@ -1369,7 +1374,12 @@ for a work that reserved none (`docs/gcp-live-checklist.md:586` — "which is th
 work that reserved none" — and `docs/run-limit-carry-over/README.md:55` is the same rule read from a
 work that took none). Two of the three replace
 the two live checks Part I "names and does not number" (R12's listing check and R7's own firing) —
-the numbering is this part's, the checks are Part I's.
+the numbering is this part's, the checks are Part I's. **Amended 2026-11-07:** the census above is
+the reading the numbers were taken at, and Check 340 is written since: its task (§P8) wrote the
+register's row and its `## Check 340` section, so the highest **written** `## Check` section is
+**340**, 341 and 342 stay claims until their own tasks write them, and this part's first check is
+one that names a section rather than only a number (the `Checks 340–349` row of
+[README.md](README.md); [reconciliation.md](reconciliation.md) §5's amendment).
 
 **Check 340 — the prefix-limited listing grant (R12's, and it gates R12).** The owner proves that the
 job's read grant lists `runs/<slug>/` and `reports/`, reads one `runs/` object, and is refused the

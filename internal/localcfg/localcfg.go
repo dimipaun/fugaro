@@ -566,10 +566,11 @@ type StageChoice struct {
 }
 
 // choiceRefProblem is why name may not stand as the value of an account-choice
-// key here, or "" when it may: the name's own rule first, then whether this
-// file actually defines the account. An undefined name is refused in the
-// sentence config.ValidateProfileClaudeAccounts already gives the same name in
-// a profile, because the two are the same reference and a second wording for
+// key here, or "" when it may: the name's own rule first, then the two values
+// that rule admits but this key cannot take, then whether this file actually
+// defines the account. An undefined name is refused in the sentence
+// config.ValidateProfileClaudeAccounts already gives the same name in a
+// profile, because the two are the same reference and a second wording for
 // one rule is a second rule; a name no run can use would leave the key silently
 // never applying, which is what the keys are specified to refuse.
 func (c *Config) choiceRefProblem(name string) string {
@@ -578,6 +579,15 @@ func (c *Config) choiceRefProblem(name string) string {
 	}
 	if name == config.DefaultClaudeAccount {
 		return ""
+	}
+	// The project's own Anthropic API key is the other value
+	// config.ValidClaudeAccountRef admits and this key cannot take: it names no
+	// account of any run's, so a key choosing a run's account cannot name it.
+	// The refusal has to stand ahead of the lookup below, whose sentence would
+	// send the operator to a claude_accounts entry that this file's own
+	// ValidateClaudeAccounts refuses — a remedy nobody can carry out.
+	if name == config.AnthropicKeyAccount {
+		return config.AnthropicKeyAccountChoiceMessage
 	}
 	if _, ok := c.ClaudeAccounts[name]; ok {
 		return ""

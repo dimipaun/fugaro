@@ -256,13 +256,13 @@ func newSyncRig(t *testing.T, names ...string) *syncRig {
 		}
 	}))
 	t.Cleanup(g.srv.Close)
-	oldURL, oldClient, oldRead := githubAPIURL, githubAPIClient, readAppKey
+	oldURL, oldClient, oldRead := githubAPIURL, githubAPIClient, readSecretValue
 	githubAPIURL, githubAPIClient = g.srv.URL, g.srv.Client()
-	readAppKey = func(_ context.Context, _ *localcfg.Config, secretID string) ([]byte, error) {
+	readSecretValue = func(_ context.Context, _ *localcfg.Config, secretID string) ([]byte, error) {
 		g.reads = append(g.reads, secretID)
 		return append([]byte(nil), appKey(t)...), nil
 	}
-	t.Cleanup(func() { githubAPIURL, githubAPIClient, readAppKey = oldURL, oldClient, oldRead })
+	t.Cleanup(func() { githubAPIURL, githubAPIClient, readSecretValue = oldURL, oldClient, oldRead })
 	return g
 }
 
