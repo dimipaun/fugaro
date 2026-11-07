@@ -576,6 +576,10 @@ func catalogEntrySlugs(ctx context.Context, env *cloudEnv, slug string, e config
 // build of an entry that has one.
 // (A 403 is ErrNotExist before it arrives here: the non-strict read folds it,
 // which is what the job and build accounts' conditional grant needs.)
+// `fugaro image ls` reads the same records with the other policy
+// (catalogEntryDigest reads one that does not parse as no record): a listing
+// answers which digest is known, where the caller here makes a claim about
+// what a build did, and that claim may not rest on a record nobody read.
 func catalogEntryRecord(ctx context.Context, rb *blobx.Bucket, slugs []string, entry string) (*imagecheck.CatalogRecordState, error) {
 	for _, s := range slugs {
 		key, err := gcp.CatalogRecordKey(s, entry)

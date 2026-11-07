@@ -601,6 +601,10 @@ func TestDoctorSweepWarningsAreOneLine(t *testing.T) {
 // names the entry and both definitions' sha256s, which is longer than a screen
 // line, so the default view prints the short form of its per-instance prefix —
 // the pair to image-config-'s — and the whole text stays in --all and --json.
+//
+// Mutation (run, restore): drop the image-catalog- entry from
+// doctorShortsByPrefix, and this test fails: the line is the check's own
+// sentence, clipped where the sha256s are.
 func TestDoctorCatalogImageLineIsItsShortForm(t *testing.T) {
 	c := doctorCheck{ID: "image-catalog-app", Severity: "warning",
 		Problem: "workflow app runs the project image catalog's entry go, whose image was built from another definition than the runs bucket holds now (sha256 " +
