@@ -517,6 +517,26 @@ func TestBitbucketRouteStreamsLargePack(t *testing.T) {
 	}
 }
 
+// TestBitbucketRouteFlushOnlyProbeIsForwarded: git's probe before a large
+// chunked push (an update request of only a flush packet) moves no ref and is
+// forwarded as the no-op it is (G13, B1.3). It is the one push that is allowed
+// with an empty ref list, and the distinction that makes it safe is
+// UpdatesRead: a push whose section nobody read has the same empty list and is
+// refused.
+func TestBitbucketRouteFlushOnlyProbeIsForwarded(t *testing.T) {
+	s, up, _ := proxySvc(t)
+	up.answerWith(http.StatusOK, "0000")
+
+	resp, ans := s.proxyCall(t, http.MethodPost, proxyPath(proxyGitPath("git-receive-pack")), []byte("0000"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the probe answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	got := up.only(t)
+	if string(got.body) != "0000" {
+		t.Errorf("the upstream received %q, want the flush packet the run sent", got.body)
+	}
+}
+
 // TestBitbucketRouteGzipPushRefused: a push whose body is not identity-encoded
 // is refused before it is parsed. Nothing in this service decompresses (B1.3's
 // contract says the caller decides this), so a gzip body is not a pkt-line
@@ -578,6 +598,16 @@ func TestBitbucketRouteUpstreamURLRebuilt(t *testing.T) {
 	proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonPathMalformed)
 	if n := up.count(); n != 2 {
 		t.Fatalf("the upstream saw %d calls, and a malformed path must reach it as none: %+v", n, up.calls())
+	}
+	// The refusal of a path that never classified names neither a purpose nor
+	// a credential (routeAct's rule for this route): the two facts are the
+	// classification's answer, and the service did not have one.
+	lines := s.auditLines(t)
+	if len(lines) != 3 {
+		t.Fatalf("the three calls wrote %d audit lines, want one each: %v", len(lines), lines)
+	}
+	if auditField(lines[2], "purpose") != "" || auditField(lines[2], "credential") != "" {
+		t.Errorf("the line = %v, and a call that never classified names neither purpose nor credential", lines[2])
 	}
 }
 

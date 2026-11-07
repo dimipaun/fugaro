@@ -178,13 +178,19 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		if errors.As(err, &refusal) {
 			reason = refusal.Reason
 		}
-		// The purpose and the credential are this route's own and are known
-		// even when the path is not: the route is the Bitbucket proxy and the
-		// credential it uses is the bundle's token. What is NOT known is which
-		// of the two purposes a call that never classified asked for, so the
-		// line names PurposeGit, the route's first purpose — and a class that
-		// named neither would be a line an operator cannot place at all.
-		s.refuseProxy(ctx, w, id, PurposeGit, reason)
+		// The line names neither a purpose nor a credential, and that is
+		// routeAct's own rule for this route written out: which of the two
+		// purposes the call asked for — git or the Bitbucket API — is the
+		// classification's answer, and a call that never classified is one the
+		// service cannot say the kind of. Naming one of the two would record a
+		// fact this service does not have (an unclassifiable REST path logged
+		// as a git call is exactly that), and the credential's name cannot
+		// travel without it: the audit's own rule holds the two together, and
+		// the credential of this route is the bundle's token — which is the
+		// same token whichever way the call would have gone, so nothing an
+		// operator needs is lost. What the line does carry is the CLASS, which
+		// is the one thing known about a path that could not be named.
+		s.refuseCall(ctx, w, id, "", "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+reason)
 		return
 	}
 	purpose, credential := gitproxyAct(req.Kind)
