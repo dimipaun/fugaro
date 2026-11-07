@@ -21,14 +21,18 @@ const convergeLegacyYAML = "version: 1\nproject: aurora\ngit: { provider: github
 
 // TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML (#1836): a checkout whose
 // default-branch fugaro.yaml still carries a key 0.7.0 removed stops the
-// repository stage — the user's to fix, `fugaro validate` — and that stop is
-// the user's alone. The installation-level stages (rules, policy, layer) and
-// the checkout's own local steps (the pin and the plugin in Claude Code) read
-// no repository fugaro.yaml, so the run must still reach them: the plugin
-// install is the one the HARD RULE is about here, because it is the step that
-// clears the "the installed Fugaro plugin is X but .claude/settings.json pins
-// Y: run fugaro update" line every command prints, and a run that never
-// reaches it leaves the user in a loop with no way out.
+// repository stage — the user's to fix, `fugaro validate` — and the checkout's
+// own local steps (the pin in .claude/settings.json and the plugin in Claude
+// Code) read that file nowhere, so the run must still reach them. The plugin
+// install is the one the HARD RULE is about here: it is the step that clears
+// the line every command prints ("the installed Fugaro plugin is X but
+// .claude/settings.json pins Y: run fugaro update"), so a run that never
+// reaches it leaves the reader of that line in a loop with no way out.
+//
+// The stages that publish the installation (rules, policy, layer) stay behind
+// the repository stage, and this test pins that too: what they publish is what
+// admits every cloud run of the project, and a run with a stage left for the
+// user does not write it (accounts_add_converge_test.go's F1).
 //
 // Mutation (run, restore): drop Checkout's pastStops row (initflow/stage.go)
 // and this test fails at the first assertion on the checkout stage — it is
@@ -73,10 +77,17 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 		t.Errorf("the run does not leave the invalid fugaro.yaml for the user:\n%s", out)
 	}
 
-	// The stages that read no repository fugaro.yaml ran.
-	for _, name := range []string{initflow.Rules, initflow.Policy, initflow.Layer, initflow.Checkout} {
-		if got := res.state(name); got == "blocked" {
-			t.Errorf("the %s stage is blocked by the repository stage, which it does not read:\n%s", name, out)
+	// The checkout's own steps ran: they read no repository fugaro.yaml, and
+	// they are the ones the user's stuck line is about.
+	if got := res.state(initflow.Checkout); got == "blocked" {
+		t.Errorf("the checkout stage is blocked by the repository stage, whose file its pin and plugin steps never read:\n%s", out)
+	}
+	// The stages that publish the installation are not reached, and that is
+	// the deliberate other half: a run with a stage left for the user does not
+	// write what admits its runs.
+	for _, name := range []string{initflow.Rules, initflow.Policy, initflow.Layer} {
+		if got := res.state(name); got != "blocked" {
+			t.Errorf("the %s stage is %q, want blocked behind the repository stage: it publishes installation state, and a run that is not converged does not publish what admits its runs\n%s", name, got, out)
 		}
 	}
 

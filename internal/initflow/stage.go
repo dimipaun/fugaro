@@ -131,20 +131,23 @@ type slot struct {
 	noYes bool
 	// pastStops names the stages whose needs-you stop this stage still runs
 	// past (RunsPastStop): the stages that stopped with something only the
-	// user can give, and only over a subject this stage does not read at
-	// all. Nothing else is one of them — a failure left a state nothing is
-	// known about, and a block a stage's own Check reported is not the
-	// user's to clear.
+	// user can give, and only over a subject this stage does not read at all.
+	// Nothing else is one of them — a failure left a state nothing is known
+	// about, a block a stage's own Check reported is not the user's to clear,
+	// and a stage that writes installation state is not one of them whatever
+	// the stop is about.
 	pastStops []string
 }
 
 // RunsPastStop reports whether the stage name still runs when the stage
 // stopped stopped with a step only the user can give (NeedsYou) and the loop
-// has nothing else to go on. It is the one place that answers it: a stage
-// with work to do on files or installations the stopped one never read may
-// not be taken with it, because the user's own fix can be weeks away and the
-// door the run's lines name is `fugaro update` (the owner's rule of
-// 2026-10-30: one fugaro update is the whole upgrade).
+// has nothing else to go on. It is the one place that answers it, and the
+// answer is a property of the stage: every row of order is empty but the
+// checkout's, whose own steps read no repository file, because the user's fix
+// for a stopped stage can be weeks away and the door the run's lines name is
+// `fugaro update` (the owner's rule of 2026-10-30: one fugaro update is the
+// whole upgrade) — a door that must not be left unable to clear the one line
+// it is the remedy for (#1836).
 func RunsPastStop(name, stopped string) bool {
 	for _, s := range order {
 		if s.name == name {
@@ -182,43 +185,46 @@ var order = []slot{
 	// predate the policy model, and a run whose rules are stale would refuse
 	// its own migration and leave the upgrade unfinished.
 	//
-	// pastStops: the generation is the installation's, deployed into its own
-	// Firebase database from the local config. The checkout's fugaro.yaml is
-	// not read for it, so a repository stage that stopped over that file —
-	// the user's to fix, with `fugaro validate` — may not take the deploy
-	// with it.
-	{name: Rules, needs: []string{Repository}, pastStops: []string{Repository}},
+	// A needs-you repository stage takes this stage with it, and that is not
+	// an accident of the file it stopped over: what the stages from here to
+	// the layer publish is the installation every run of the project is
+	// admitted by, and a run that is not converged does not write it — the
+	// fact `fugaro accounts add` fails on (accounts_add_converge_test.go).
+	{name: Rules, needs: []string{Repository}},
 	// The policy node is what every run of the project is admitted by, and
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
 	//
-	// pastStops, as Rules': the node is the installation's, read from the
-	// local config and the published object. The rules stage in front of it
-	// is one it does wait for — that stage deploys the marker this write is
-	// gated on, and it is not a needs-you stop.
-	{name: Policy, needs: []string{Repository, Rules}, pastStops: []string{Repository}},
+	// The rules stage in front of it is one it does wait for, and a needs-you
+	// repository stage stops it for Rules' reason: the node is what admits
+	// runs, and a run with a stage left for the user is not one to publish it
+	// from.
+	{name: Policy, needs: []string{Repository, Rules}},
 	// The layer is what the checkout's images are built from, so it is
 	// published before the refresh that reads it: the checkout stage's cloud
 	// step builds this checkout's images off the layer that applies, and a
 	// layer published after it would leave the run building from the one the
 	// owner just replaced.
 	//
-	// pastStops, as Rules': the published project layer is the
-	// installation's, seeded from and published to its own bucket, and the
-	// checkout's file is not read to publish it.
-	{name: Layer, needs: []string{Repository}, pastStops: []string{Repository}},
+	// It publishes installation state like Rules and Policy, so a needs-you
+	// repository stage stops it with them.
+	{name: Layer, needs: []string{Repository}},
 	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
 	// run after the repository stage: the images the cloud step refreshes are
 	// that repository's, and the onboarding the repository stage does is what
 	// the refresh builds for.
 	//
-	// pastStops: the two local steps — the pin in the checkout's settings and
-	// the plugin in the user's own Claude Code — read no repository
-	// fugaro.yaml, and the plugin is what clears the staleness line every
-	// command prints ("run fugaro update"). A repository stage that stopped
-	// needs-you over the checkout's own file may not take them with it, or
-	// the door that line names is the one door that cannot clear it (#1836).
-	// The cloud step does need the repository, and keeps every refusal of its
+	// pastStops: the one row that has it, and the reason it does is that its
+	// two local steps — the pin in the checkout's settings and the plugin in
+	// the user's own Claude Code — read no repository fugaro.yaml. The plugin
+	// is what clears the staleness line every command prints ("run fugaro
+	// update"), and a repository stage that stopped needs-you over a file
+	// these steps never read may not take them with it: the door that line
+	// names would be the one door that cannot clear it, and the user is left
+	// in a loop with no way out (#1836). The stages that publish the
+	// installation (rules, policy, layer) are deliberately not here: a run
+	// with a stage left for the user does not write what admits its runs. The
+	// cloud step does need the repository, and keeps every refusal of its
 	// own: it is the step that skips itself where the checkout's file is not
 	// this run's to build for.
 	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
