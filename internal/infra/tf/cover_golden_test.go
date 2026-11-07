@@ -112,7 +112,7 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 // What a covered plan is checked against must be in it: the checks would
 // otherwise pass on plans that merely lack the shape.
 func TestGoldenPlansHaveTheShapesTheChecksRead(t *testing.T) {
-	var jobs, scheds, roles, members, buckets, keys, sinks, checkSpecs int
+	var jobs, scheds, roles, members, buckets, keys, sinks, checkSpecs, bucketEnvs int
 	for _, name := range []string{"installation", "installation-accounts", "repo", "firebase"} {
 		for _, rc := range goldenPlan(t, name).ResourceChanges {
 			a := rc.Change.After
@@ -126,6 +126,12 @@ func TestGoldenPlansHaveTheShapesTheChecksRead(t *testing.T) {
 				for _, e := range objects(cs[0]["env"]) {
 					if e["name"] == "FUGARO_CHECK_SPEC" {
 						checkSpecs++
+					}
+					// The bucket a covered job's records go to, which checkSpecs
+					// holds to this run's: a golden whose env lost the entry
+					// would leave the check reading nothing, so it is counted.
+					if e["name"] == "FUGARO_BUCKET" {
+						bucketEnvs++
 					}
 				}
 				if _, ok := cs[0]["command"]; !ok {
@@ -165,7 +171,7 @@ func TestGoldenPlansHaveTheShapesTheChecksRead(t *testing.T) {
 			}
 		}
 	}
-	for what, n := range map[string]int{"jobs": jobs, "schedulers": scheds, "custom roles": roles, "iam members": members, "buckets": buckets, "api keys": keys, "sinks": sinks, "check specs": checkSpecs} {
+	for what, n := range map[string]int{"jobs": jobs, "schedulers": scheds, "custom roles": roles, "iam members": members, "buckets": buckets, "api keys": keys, "sinks": sinks, "check specs": checkSpecs, "runs buckets": bucketEnvs} {
 		if n == 0 {
 			t.Errorf("the golden plans hold no %s", what)
 		}

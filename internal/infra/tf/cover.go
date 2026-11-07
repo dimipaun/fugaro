@@ -2281,6 +2281,36 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 	return ""
 }
 
+// bucketEnv is the environment variable a run's buckets reach a job as: the
+// check job's (repo and catalog) and a workflow job's alike, because infra's
+// platformEnvFor writes the one runs bucket for all of them. This package
+// cannot import internal/infra (infra imports it), so the name is a literal
+// here as FUGARO_CHECK_SPEC's is, and infra's BucketEnv must keep the value.
+const bucketEnv = "FUGARO_BUCKET"
+
+// bucketEnvOK reports whether v is one of this run's buckets in the form the
+// modules write it: the literal "gs://<one of Cover.Buckets>". A value that is
+// not known is refused by the caller, as checkSpecs refuses the check specs'
+// unknown values.
+func (c Cover) bucketEnvOK(v string) bool {
+	for _, b := range c.Buckets {
+		if v == "gs://"+b {
+			return true
+		}
+	}
+	return false
+}
+
+// bucketURLs is this run's buckets in that same form, joined, for a refusal
+// that says what it wanted.
+func (c Cover) bucketURLs() string {
+	out := make([]string, 0, len(c.Buckets))
+	for _, b := range c.Buckets {
+		out = append(out, "gs://"+b)
+	}
+	return strings.Join(out, ", ")
+}
+
 // checkSpec is the part of the check job's FUGARO_CHECK_SPEC that points at
 // registries; it decodes as fugaro image check --job does (infra.CheckJobSpec
 // with the same tags: encoding/json's case-insensitive keys and last
@@ -2489,6 +2519,16 @@ func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creds crede
 // registry and each base image it builds FROM must be in this run's registry,
 // so a job that the covered plan creates can never build from or push to
 // anything else. An environment that is not fully known is not covered.
+//
+// It holds the job's FUGARO_BUCKET there too, and on EVERY job rather than on
+// the check jobs alone: infra's platformEnvFor writes the one runs bucket for
+// the check jobs and the workflow jobs alike, so a rule that fired on the
+// check job's copy would leave the same variable unchecked on the workflow
+// job's, which a hand-edited plan turns into a run whose records land in
+// another bucket — the same hole one job over, and under init's one
+// confirmation. The value must be the module's own literal, gs://<one of this
+// run's buckets>, and a computed one is refused as the specs' unknown values
+// are.
 func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string) string {
 	if unknownAt(unk, envPath...) {
 		return "an environment that is not known"
@@ -2501,6 +2541,15 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 			return "an environment variable whose name is not known"
 		}
 		name := str(e["name"])
+		if name == bucketEnv {
+			if unknownAt(unk, append(slices.Clone(ep), "value")...) {
+				return "a " + bucketEnv + " that is not known"
+			}
+			if v := str(e["value"]); !c.bucketEnvOK(v) {
+				return fmt.Sprintf("a %s of %q, which is not this run's runs bucket (%s)", name, v, c.bucketURLs())
+			}
+			continue
+		}
 		if name != "FUGARO_CHECK_SPEC" && name != "FUGARO_CATALOG_CHECK_SPEC" {
 			continue
 		}
