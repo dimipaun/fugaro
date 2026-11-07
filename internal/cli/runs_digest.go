@@ -76,7 +76,8 @@ const digestDueDocVersion = 1
 // digestDueDoc is runs digest --due --json's document: the periods that have
 // closed with no report under Dir, newest first, and the newest report the
 // folder holds. Due is always an array and Newest is null rather than absent,
-// so a consumer reads either without a nil check per member.
+// so every member is there on every document and a consumer branches on a
+// value rather than on whether a member it needs was written.
 type digestDueDoc struct {
 	Version int              `json:"version"`
 	Dir     string           `json:"dir"`
