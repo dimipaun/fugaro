@@ -807,6 +807,98 @@ func TestAccountsRmWarnsAboutACheckoutThatIsGone(t *testing.T) {
 	}
 }
 
+// TestAccountsRmManagedRefusesAnUncommittedBaseBranchSwitch is the hole the
+// working-tree fallback left open, pinned: an uncommitted edit can point
+// git.base_branch at a ref this checkout does not hold, and while the ref came
+// out of the working tree the committed read failed there, the edited file was
+// scored clean, the gate admitted the removal and the one-way delete ran while
+// the branch the runs use still named the account.
+//
+// The ref is the local config's now, so the commit is read whatever the
+// checkout's file says, and the removal is refused with the referrer named.
+func TestAccountsRmManagedRefusesAnUncommittedBaseBranchSwitch(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckoutDirty(t, "owner/repo-a", accountsRmRepoYAML, accountsRmRepoYAMLBogusBranch)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the one-way delete ran while the commit still names the account (%v):\n%s", got, out)
+	}
+	if err == nil {
+		t.Fatalf("a session pointed the read at a ref this checkout does not hold and the removal went through:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the removal was not refused by the gate, so nothing says which control refused it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "owner/repo-a") || !strings.Contains(err.Error(), "agent.oauth_token") {
+		t.Errorf("the refusal does not name the repository and the key that still reference the account: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a removal the gate refused:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 {
+		t.Fatalf("%d gate records, want the one refusal: %+v", len(recs), recs)
+	}
+	if recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the record's verdict is %q, want %q: the step was refused", recs[0].Verdict, managedmode.AuditRefused)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "owner/repo-a") }) {
+		t.Errorf("the record's rules (%v) do not name the repository that refused the removal", recs[0].Rules)
+	}
+}
+
+// TestAccountsRmWarnsOnlyWhenTheCommitItselfIsUnread is the other half of that
+// rule, and the decision this round took on it: with no committed fugaro.yaml to
+// read at all, a working tree that names the account is NOT a referrer this
+// command reports — the document that would have answered could not be read
+// either way, so the answer is unknown, which refuses a session and warns the
+// owner. The working tree is a source of the answer in neither direction, and
+// reporting it as a referrer would say "the next run of it stops at launch"
+// about a commit that may say nothing of the sort.
+func TestAccountsRmWarnsOnlyWhenTheCommitItselfIsUnread(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckoutNoFugaroYAML(t, "owner/repo-a", accountsRmRepoYAML)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: this machine could not read the committed fugaro.yaml of owner/repo-a") {
+		t.Errorf("a checkout whose commit holds no fugaro.yaml is not reported as a document that could not be read:\n%s", out)
+	}
+	if strings.Contains(out, "is named by owner/repo-a") {
+		t.Errorf("a name only the working tree carries was reported as a referrer the commit does not show:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v: on the owner's own path an unreadable checkout is a warning and not a block", got, id)
+	}
+}
+
+// TestAccountsRmReadsTheBranchTheCommittedFileNames: the ref is resolved out of
+// the committed bytes and then followed, so the file judged is the one at the
+// branch the repository's runs use. A read that stopped at the local config's
+// default would judge the file at main while every run of that repository reads
+// the file at release — the document that names the account here.
+func TestAccountsRmReadsTheBranchTheCommittedFileNames(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	accountsRmCheckoutBranched(t, "owner/repo-a", accountsRmRepoYAMLRelease, accountsRmRepoYAML)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if !strings.Contains(out, "warning: team-a is named by owner/repo-a's committed fugaro.yaml in agent.oauth_token") {
+		t.Errorf("the file at the branch the repository's own key names was not the one read:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v", got, id)
+	}
+}
+
 // TestAccountsRmWarnsAboutACheckoutItCannotRead is the other half: a checkout
 // this machine HAS, whose own committed fugaro.yaml it could not read, is unknown
 // in a different way — the question was asked and the answer could not be read —
@@ -884,7 +976,7 @@ const accountsRmRepoYAML = `version: 1
 project: aurora
 git: { provider: github }
 agent:
-  auth: oauth-token
+  auth: oauth
   oauth_token: team-a
 workflows:
   web:
@@ -899,7 +991,7 @@ const accountsRmRepoYAMLWithoutToken = `version: 1
 project: aurora
 git: { provider: github }
 agent:
-  auth: oauth-token
+  auth: oauth
 workflows:
   web:
     commands: { build: go build ./..., test: go test ./... }
@@ -912,6 +1004,35 @@ const accountsRmRepoYAMLUnreadable = `version: 1
 project: aurora
 git: { provider: github }
 a_key_this_fugaro_does_not_know: 1
+`
+
+// accountsRmRepoYAMLBogusBranch is the working tree of a session that tried to
+// put the commit out of the read's reach: the oauth_token line is gone AND the
+// ref the read resolves is pointed at a branch this checkout does not hold. It
+// is the state in which the working tree, while it decided the ref, both hid the
+// account and made the committed read fail.
+const accountsRmRepoYAMLBogusBranch = `version: 1
+project: aurora
+git: { provider: github, base_branch: a-ref-this-checkout-does-not-hold }
+agent:
+  auth: oauth
+workflows:
+  web:
+    commands: { build: go build ./..., test: go test ./... }
+`
+
+// accountsRmRepoYAMLRelease is the committed file at the default branch of a
+// repository whose runs use another one: the key that says so is in the file
+// itself, so it is the committed bytes — not the local config and not the
+// working tree — that resolve the branch the repository's file is judged at.
+const accountsRmRepoYAMLRelease = `version: 1
+project: aurora
+git: { provider: github, base_branch: release }
+agent:
+  auth: oauth
+workflows:
+  web:
+    commands: { build: go build ./..., test: go test ./... }
 `
 
 // accountsRmCheckout makes a real checkout of repo and remembers it for the
@@ -941,6 +1062,45 @@ func accountsRmCheckoutDirty(t *testing.T, repo, committed, working string) stri
 			t.Fatal(err)
 		}
 	}
+	return accountsRmRemember(t, repo, dir)
+}
+
+// accountsRmCheckoutNoFugaroYAML is the checkout whose COMMITTED tree holds no
+// fugaro.yaml at all, while the working tree does: the state in which the
+// document that would answer is not in the commit, so the read of the commit
+// fails however clean the tree beside it looks.
+func accountsRmCheckoutNoFugaroYAML(t *testing.T, repo, working string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": working, "README.md": "the repository's own readme\n"})
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	testutil.Git(t, dir, "add", "README.md")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's own files")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	return accountsRmRemember(t, repo, dir)
+}
+
+// accountsRmCheckoutBranched is a checkout whose committed file at the default
+// branch names the branch its runs use, and whose file at that branch is the one
+// that holds the token line: the two reads the reference check makes, in the
+// order it makes them.
+func accountsRmCheckoutBranched(t *testing.T, repo, atMain, atRelease string) string {
+	t.Helper()
+	dir := accountsRmCheckoutDirty(t, repo, atMain, "")
+	testutil.Git(t, dir, "checkout", "-q", "-b", "release")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": atRelease})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the file at the branch the runs use")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/release", "HEAD")
+	testutil.Git(t, dir, "checkout", "-q", "main")
+	return dir
+}
+
+// accountsRmRemember records dir as the project's checkout of repo, which is
+// what the reference check looks the checkout up through.
+func accountsRmRemember(t *testing.T, repo, dir string) string {
+	t.Helper()
 	if err := localcfg.RecordCheckout(os.Getenv, "aurora",
 		localcfg.CheckoutIdentity{Provider: "github", Repo: repo}, dir, time.Now(), checkoutTempRoots()); err != nil {
 		t.Fatal(err)

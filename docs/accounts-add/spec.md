@@ -378,10 +378,19 @@ Removes an account. The inverse of `add`, in the order that cannot strand a runn
    **committed** one, read at the ref a run of that repository checks out (`git cat-file`, the reader
    the launch itself uses) and **never the working tree**: the commit is what the next run resolves its
    account from, and a session's uncommitted edit — the state a coding agent leaves a checkout in —
-   would otherwise hide a reference the run still stops on. Of the two ways the read can come up short,
-   a repository this machine has **no checkout of** is a warning as well, while a checkout whose own
-   committed file **did not resolve** (a document the strict reader refuses) is a warning for the owner
-   and a **refusal** for a session, because there the answer was asked for and could not be read.
+   would otherwise hide a reference the run still stops on. **The ref is never the checkout's file's
+   either.** That file is layer 1 of a launch's resolution, but it belongs to the session that owns
+   the tree, which can write a `git.base_branch` into it, uncommitted, naming a ref this checkout does
+   not hold; the ref comes from the installation config instead (`repos.<r>.base_branch`, else the
+   project's own default), and
+   **the branch the committed file then names is followed**, because a repository whose file writes
+   `git.base_branch` has its runs read the file at that branch: the value is resolved out of the
+   committed bytes and the file there is read in its place. Of the two ways the read can come up short,
+   a repository this machine has **no checkout of** is a warning, while a checkout whose committed file
+   **did not resolve** (a document the strict reader refuses, or a ref this checkout does not hold) is
+   a warning for the owner and a **refusal** for a session, because there the answer was asked for and
+   could not be read — and a document that was not read is never scored clean, whichever file sits in
+   the working tree beside it.
 3. **Converge.** The same publish and deploy as `add` (§2.5), so the job the account owned is gone from
    the installation.
 

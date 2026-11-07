@@ -8,7 +8,6 @@ import (
 	"maps"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -318,18 +317,19 @@ func accountsRmServing(lc *localcfg.Config, name string) []string {
 // the same walk `fugaro models rm` makes over the same set (modelsModelPinned),
 // with no network and no cloud in it.
 //
-// The bytes judged are the COMMITTED ones and never the working tree, because
+// The document judged is the COMMITTED one and never the working tree, because
 // the committed file is what the next run of the repository resolves its account
 // from (project_job.go's agentAtRef: "never the network and never the working
 // tree"). A checkout whose working tree has the line removed while the branch it
 // was made from still names the account is exactly the state this check has to
-// see: a coding agent's session owns that working tree and its edits are
-// uncommitted until someone pushes them, so judging the working tree would admit
-// a removal that the repository's very next run still stops on. The file is read
-// through readFugaroYAMLAtRef at the ref a run of the repository checks out, and
-// the working tree is read only when the checkout holds no committed document
-// there at all: with nothing committed at the ref there is no answer for the
-// working tree to contradict, so that read can add a referrer and never hide one.
+// see: a coding agent's session owns that working tree, and its edits are
+// uncommitted until someone pushes them. Neither the document nor the ref it is
+// read at may come from that tree — accountsRmCommittedYAML says why the ref is
+// the config's — and a name only the working tree carries is therefore not a
+// referrer this command reports: the committed read is what fails, and its
+// failure is the unknown this check refuses a session on and warns the owner
+// about. The conservative direction is the only one available here: a document
+// this machine could not read is never scored clean.
 //
 // unseen and unread are the two ways this machine can come up short, and they
 // are not the same: no checkout here — no row at all, or a row whose directory
@@ -367,8 +367,8 @@ func accountsRmRepos(ctx context.Context, lc *localcfg.Config, name string) (ref
 			unseen = append(unseen, repo)
 			continue
 		}
-		data, ok := accountsRmCommittedYAML(ctx, lc, repo, dir)
-		if !ok {
+		data, err := accountsRmCommittedYAML(ctx, lc, repo, dir)
+		if err != nil {
 			unread = append(unread, repo)
 			continue
 		}
@@ -384,25 +384,42 @@ func accountsRmRepos(ctx context.Context, lc *localcfg.Config, name string) (ref
 	return referrers, unseen, unread
 }
 
-// accountsRmCommittedYAML is a repository's own fugaro.yaml as its next run will
-// read it: the blob at the ref that run checks out, out of the checkout's object
-// database, through the same reader the launch uses (readFugaroYAMLAtRef, which
-// is git cat-file). ok is false when the checkout is there and no document
-// resolved out of it, which is what a gate may not treat as a clean referrer.
-func accountsRmCommittedYAML(ctx context.Context, lc *localcfg.Config, repo, dir string) ([]byte, bool) {
-	if data, err := readFugaroYAMLAtRef(ctx, dir, modelsBaseBranch(lc, repo, dir)); err == nil {
-		return data, true
+// accountsRmCommittedYAML reads a repository's committed fugaro.yaml the way a
+// run of it reads that file: the blob at the ref the run resolves, out of the
+// checkout's object database, through the reader the launch uses
+// (readFugaroYAMLAtRef, which is git cat-file). An error is "this machine could
+// not read the document that answers", which is unknown and not clean.
+//
+// The ref is resolved from the local config's own layers and NEVER from the
+// checkout's file. A launch consults that file first (basebranch.go's layer 1),
+// but it belongs to the checkout a session owns: a ref it names — one this
+// checkout may not hold at all — fails the read, so a ref the file picks is a
+// ref the same uncommitted edit that hides the account can pick, and the read
+// that then falls back to a working tree without the name scores a referrer as
+// clean. The layers here are repos.<r>.base_branch, else the project's
+// base_branch, else main (config.EffectiveBaseBranch); a project whose base
+// branch lives only in the published policy node reads as main, because that is
+// a cloud read and this command reaches nothing.
+//
+// The file read at that ref may itself write git.base_branch, which is the
+// branch a launch out of this checkout then resolves (basebranch.go's layer 1)
+// and the run checks out: resolving that name out of the committed bytes and
+// reading the file there keeps this read on the document the runs use, and a ref
+// this checkout does not hold is an error rather than an older copy of the file.
+func accountsRmCommittedYAML(ctx context.Context, lc *localcfg.Config, repo, dir string) ([]byte, error) {
+	repoBranch := ""
+	if r, ok := lc.Repos[repo]; ok {
+		repoBranch = r.BaseBranch
 	}
-	// The checkout holds no committed fugaro.yaml at that ref — a branch never
-	// fetched, a repository whose file is not in the tree it was made from — so
-	// the working tree is the only document there is. It is read here and not
-	// preferred: this path is reached only when there is no committed file whose
-	// content the working tree could differ from.
-	data, err := readFugaroYAML(filepath.Join(dir, "fugaro.yaml"))
+	branch, _ := config.EffectiveBaseBranch("", false, repoBranch, lc.BaseBranch)
+	data, err := readFugaroYAMLAtRef(ctx, dir, branch)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
-	return data, true
+	if named, ok := config.GitBaseBranchOf(data); ok && named != branch {
+		return readFugaroYAMLAtRef(ctx, dir, named)
+	}
+	return data, nil
 }
 
 // accountsRmWarn is the whole of the protection spec §4 step 2 leaves for a
