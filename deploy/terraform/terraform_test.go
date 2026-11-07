@@ -188,6 +188,15 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/compute/outputs.tf",
 		"gcp/roots/compute/.terraform.lock.hcl",
 		"gcp/roots/compute/tests/compute.tftest.hcl",
+		// The workspace root (workspaces plan W3): the workspace's own service
+		// and the one grant that reaches the workspace's own database, and
+		// nothing else — a job, a bucket or a repository here would be a
+		// workspace holding a member's work (spec §9).
+		"gcp/roots/workspace/main.tf",
+		"gcp/roots/workspace/variables.tf",
+		"gcp/roots/workspace/outputs.tf",
+		"gcp/roots/workspace/.terraform.lock.hcl",
+		"gcp/roots/workspace/tests/workspace.tftest.hcl",
 	} {
 		if _, err := fs.Stat(FS, p); err != nil {
 			t.Errorf("embedded tree lacks %s: %v", p, err)

@@ -1,0 +1,66 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "workspaces": {
+      ".read": false,
+      ".write": false,
+      "$name": {
+        ".read": false,
+        ".write": false,
+        "version": {
+          ".read": false,
+          ".write": false
+        },
+        "name": {
+          ".read": false,
+          ".write": false
+        },
+        "members": {
+          ".read": false,
+          ".write": false
+        },
+        "cap": {
+          ".read": false,
+          ".write": false
+        }
+      }
+    },
+    "tokens": {
+      ".read": false,
+      ".write": false,
+      "$hash": {
+        ".read": false,
+        ".write": false
+      }
+    },
+    "meter": {
+      ".read": false,
+      ".write": false,
+      "$month": {
+        ".read": false,
+        ".write": false
+      }
+    },
+    "rollup": {
+      ".read": false,
+      ".write": false,
+      "$month": {
+        ".read": false,
+        ".write": false
+      }
+    },
+    "config": {
+      ".read": false,
+      ".write": false,
+      "limits": {
+        ".read": false,
+        ".write": false,
+        "$key": {
+          ".read": false,
+          ".write": false
+        }
+      }
+    }
+  }
+}
