@@ -148,6 +148,45 @@ func TestRegistrationRefusesANonLoopbackURI(t *testing.T) {
 	}
 }
 
+// TestRegistrationRefusesAURIWithUserinfo: a redirect URI that carries
+// credentials in its authority is refused, and it is refused for that reason
+// rather than for one of its neighbours.
+//
+// Each URI below is a loopback address written with a userinfo part in front of
+// it, which is the one shape where the other rules would admit it: the host is
+// 127.0.0.1, localhost or ::1, so isLoopbackRedirect would take it, and the
+// userinfo is the only thing wrong with it. That matters because the userinfo is
+// what a reader of a URI does not see: `http://127.0.0.1@evil.example.org/` is
+// somebody else's host, and `http://person-1@127.0.0.1/` is this one written to
+// look like it carries a credential. The control at the end is the same three
+// addresses without it, which do register.
+func TestRegistrationRefusesAURIWithUserinfo(t *testing.T) {
+	ts := newTestServer(t)
+
+	for _, uri := range []string{
+		"http://person-1@127.0.0.1:8976/callback",
+		"http://person-1@localhost:8976/callback",
+		"http://person-1@[::1]:8976/callback",
+	} {
+		rec := ts.postJSON(t, RegisterPath, registrationRequest{RedirectURIs: []string{uri}})
+		if rec.Code == http.StatusCreated {
+			t.Errorf("POST %s registered %q: a URI carrying credentials in its authority is refused, and this one is loopback otherwise, so the authority is the only thing this refusal can be about", RegisterPath, uri)
+		}
+	}
+	for _, uri := range []string{
+		"http://127.0.0.1:8976/callback",
+		"http://localhost:8976/callback",
+		"http://[::1]:8976/callback",
+	} {
+		if rec := ts.postJSON(t, RegisterPath, registrationRequest{RedirectURIs: []string{uri}}); rec.Code != http.StatusCreated {
+			t.Errorf("POST %s refused %q (%d): the same address without the userinfo is a loopback URI D928 always allows, so the three refusals above are about the authority and not about the address", RegisterPath, uri, rec.Code)
+		}
+	}
+	if got := ts.store.objects(t); len(got) != 3 {
+		t.Errorf("the store holds %d objects; want the three control registrations and nothing from the refused three", len(got))
+	}
+}
+
 // TestRedirectURIMustBeLoopbackOrAllowlisted is the rule the two doors share,
 // stated as the list of what it admits: the loopback forms a native client
 // receives a code at, and the one hosted callback the project's own

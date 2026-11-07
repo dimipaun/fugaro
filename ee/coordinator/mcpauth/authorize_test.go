@@ -433,6 +433,62 @@ func TestConsentIsCSRFBound(t *testing.T) {
 	}
 }
 
+// TestAuthorizeRefusesAnUnverifiedSignIn: the authorize endpoint's sign-in step
+// is what the whole consent page rests on, and neither of the two ways it can
+// fail renders one.
+//
+// The two ways are the two branches of verifySignIn: a request that carries no
+// Bearer credential at all, and one that carries a credential this installation
+// will not verify — here, a token another project's Firebase signed, which is
+// the refusal M6's own tests hold one layer down. What this test adds is that
+// the endpoint does not go on regardless: an unverified sign-in is a 401 page,
+// never a consent page and never a redirect to the client, because there is no
+// person yet whose consent the page could be about.
+func TestAuthorizeRefusesAnUnverifiedSignIn(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	otherProjectToken := signJWT(t, testKey(), testKid, "RS256", idTokenClaims(testOtherProject))
+
+	for _, tc := range []struct{ what, header string }{
+		{"no Authorization header at all", ""},
+		{"a scheme that is not Bearer", "Basic cGVyc29uLTE6bWFya2Vy"},
+		{"Bearer with no token after it", "Bearer"},
+		{"Bearer with an empty token", "Bearer "},
+		{"a token another installation's Firebase signed", "Bearer " + otherProjectToken},
+	} {
+		req := httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+authorizeQuery(clientID, testClientRedirect).Encode(), nil)
+		if tc.header != "" {
+			req.Header.Set("Authorization", tc.header)
+		}
+		rec := ts.do(t, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("an authorization request with %s answered %d (%s); want 401: an unverified sign-in is refused rather than rendered as a consent page", tc.what, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+		if loc := rec.Header().Get("Location"); loc != "" {
+			t.Errorf("an authorization request with %s answered with a redirect to %q: nothing is known about the person yet, so there is no flow to send an answer to", tc.what, loc)
+		}
+		if strings.Contains(rec.Body.String(), otherProjectToken) {
+			t.Errorf("the refusal for %s repeats the token: a token rendered into a page is a token in a browser's history", tc.what)
+		}
+	}
+	// Nothing was recorded for any of them: the pending request is what the
+	// consent page binds to, and a refused sign-in writes none.
+	if got := ts.store.objects(t); len(got) != 1 {
+		t.Errorf("the store holds %d objects after five refused sign-ins; want the one client record and no pending request", len(got))
+	}
+
+	// The same request with a token this installation signed is answered — under
+	// either spelling of the scheme, which RFC 7235 §2.1 makes case-insensitive —
+	// so the refusals above are about the token and not about the request.
+	for _, scheme := range []string{"Bearer ", "bearer "} {
+		req := httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+authorizeQuery(clientID, testClientRedirect).Encode(), nil)
+		req.Header.Set("Authorization", scheme+acceptedToken(t))
+		if rec := ts.do(t, req); rec.Code != http.StatusOK {
+			t.Errorf("the same request with %q answered %d (%s); want the consent page", scheme, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+}
+
 // refusalOf reads the OAuth error a token or revocation endpoint answered with.
 // It is not the redirect reader above: these two endpoints answer a refusal in
 // the body, because there is no redirect URI to send it to and no page to render.
