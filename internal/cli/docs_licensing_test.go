@@ -395,11 +395,26 @@ func TestDocsLicensingOneWording(t *testing.T) {
 // rather than with the spelling, because the reader who loses it is a verifier
 // author in another language, not a reader of the note.
 //
+// Each phrase is the fact and not the word for it: "refused", "production" and
+// "grace" are words a rewritten sentence keeps while it drops the rule they
+// were standing for, so the pins are the store's state table, the conditions in
+// it, and the sentences that carry the rules ("a staging key is refused", "a
+// test key can never license a customer", "the latest valid one"). A phrase is
+// also never split by the note's own emphasis: where a rule is bolded, the pin
+// is the span inside the markers, because flattenDoc folds whitespace and not
+// markup.
+//
 // Mutations (verified, run and restored): cut "raw bytes before any JSON is
 // parsed" out of the note -- TestDocsLicenceKeyDesign fails, naming that
-// claim; and delete the note's row from the licensing README --
-// TestDocsLicenceKeyNoteIsInTheLicensingReadme fails, naming the table, which
-// is the half no S2.1 test but these reaches.
+// claim; rewrite the test-mode sentence so it keeps "staging key id",
+// "refused" and "production" while flipping the rule (a staging key is
+// accepted, a test key can license a customer) -- TestDocsLicenceKeyDesign
+// fails on the two sentences that carry the rule; change the state table's
+// `expired` condition to "after it" -- it fails on that row; and delete the
+// note's row from the licensing README's file table, leaving the note named in
+// the amendment paragraph above it -- TestDocsLicenceKeyNoteIsInTheLicensing-
+// Readme fails, naming the table, which is the half no S2.1 test but these
+// reaches.
 
 const licenceKeyNotePath = "docs/licensing/licence-key.md"
 
@@ -417,15 +432,17 @@ var licenceKeyDesignGroups = []struct {
 		phrases: []string{
 			"ed25519",
 			"base64url",
+			"<key id>.<payload>.<signature>",
 			"before any json is parsed",
 			"key id",
 			"rotate",
-			"tier",
-			"features",
-			"seats",
-			"organisation",
-			"issued",
-			"expires",
+			"| `tier` | `community`, `team` or `enterprise` |",
+			"| `features` |",
+			"| `seats` |",
+			"| `organisation` |",
+			"| `issued` |",
+			"| `expires` |",
+			"not to a person or a machine",
 		},
 	},
 	{
@@ -445,9 +462,10 @@ var licenceKeyDesignGroups = []struct {
 			"nothing in the core",
 			"offline",
 			"no phone-home",
-			"valid",
-			"grace",
-			"expired",
+			"| `valid` | `now <= expires` |",
+			"| `grace` | `expires < now <= expires + 30 days` |",
+			"| `expired` | past the grace |",
+			"refused rather than given a state",
 		},
 	},
 	{
@@ -456,8 +474,9 @@ var licenceKeyDesignGroups = []struct {
 		phrases: []string{
 			"30-day grace",
 			"read-only",
-			"cancel",
-			"kill switch",
+			"keeps reading, cancel and the kill switch",
+			"loses launching and configuration changes",
+			"never stopped by licence state",
 		},
 	},
 	{
@@ -465,8 +484,9 @@ var licenceKeyDesignGroups = []struct {
 		why:     "the overlap is why an issuing outage of up to 60 days is survivable, and the latest valid key is the one a verifier acts on (T26)",
 		phrases: []string{
 			"30 days before expiry",
-			"two keys",
+			"two keys are simply two keys the store holds",
 			"the latest valid one",
+			"past 60 days",
 		},
 	},
 	{
@@ -474,9 +494,13 @@ var licenceKeyDesignGroups = []struct {
 		why:     "these are the accepted limits, and the tier maximum is the one that bounds a leaked signing key rather than merely warning about it",
 		phrases: []string{
 			"maximum lifetime",
+			"leaked signing key cannot mint keys",
+			"one year for every tier today",
+			"without a change to the key format",
+			"never in the verifier alone",
 			"no revocation",
-			"refund",
-			"clock",
+			"a refunded buyer keeps a working key until it expires",
+			"a clock set back extends `expires`",
 		},
 	},
 	{
@@ -484,8 +508,9 @@ var licenceKeyDesignGroups = []struct {
 		why:     "a staging key has to be unusable against a production installation, or the environment that exists to be broken is the environment that licenses customers",
 		phrases: []string{
 			"staging key id",
-			"refused",
-			"production",
+			"keyring holds production ids only",
+			"a staging key is refused",
+			"a test key can never license a customer",
 		},
 	},
 	{
@@ -494,20 +519,22 @@ var licenceKeyDesignGroups = []struct {
 		phrases: []string{
 			"licence.key",
 			"never in argv",
-			"environment",
-			"secure store",
+			"fugaro_licence_key",
+			"the one route to a spawned child is its **environment**",
+			"expo-secure-store.js",
 			"secret manager",
+			"mounted into the job and never typed by a person",
 		},
 	},
 	{
 		subject: "states and minting",
 		why:     "the no-key state is a real installation rather than an error (F43), minting is the owner's and off every machine an agent reaches (R8, T13), and the coordinator's job is handed its key rather than typing one",
 		phrases: []string{
-			"no key",
+			"the store being empty rather than a fourth state",
 			"minted by hand",
 			"owner-run",
 			"private signing key",
-			"coordinator",
+			"free keys expire too",
 		},
 	},
 }
@@ -554,17 +581,23 @@ func TestDocsLicenceKeyNoteSupersedesL31(t *testing.T) {
 }
 
 // TestDocsLicenceKeyNoteIsInTheLicensingReadme: the licensing README's table is
-// the folder's map of what each file is for, so the note takes a row in it.
-// The row is the only route to the note from the folder's front page, and a
-// design the front page does not name is a design the next reader of the
-// folder does not know exists (that table is where spec.md, reconciliation.md,
-// the implementation plan and the Terms are reached from).
+// the folder's map of what each file is for, so the note takes a row in it,
+// and the row says what the file is: a design that is not built. The row is the
+// only route to the note from the folder's front page, and a design the front
+// page does not name is a design the next reader of the folder does not know
+// exists (that table is where spec.md, reconciliation.md, the implementation
+// plan and the Terms are reached from).
+//
+// The row is read out of the table's own span rather than out of the whole
+// file: a mention of the note in the amendment paragraph above is not a row,
+// and the half this test exists for is a reader scanning the table.
 func TestDocsLicenceKeyNoteIsInTheLicensingReadme(t *testing.T) {
 	const readme = "docs/licensing/README.md"
 	doc := readDoc(t, readme)
-	for _, want := range []string{"](licence-key.md)", "licence key"} {
-		if !strings.Contains(strings.ToLower(doc), want) {
-			t.Errorf("%s carries no %q: the table is the folder's map, and the S2.1 note is a document a verifier author has to be able to find from the folder's front page", readme, want)
+	table := strings.ToLower(flattenDoc(docSection(t, readme, doc, "| File | Role |")))
+	for _, want := range []string{"](licence-key.md)", "the licence key's design", "not built"} {
+		if !strings.Contains(table, want) {
+			t.Errorf("%s's file table carries no %q: the table is the folder's map, and the S2.1 note is a document a verifier author has to be able to find -- and to see is a design rather than a built feature -- from the folder's front page", readme, want)
 		}
 	}
 }

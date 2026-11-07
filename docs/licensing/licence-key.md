@@ -3,13 +3,14 @@
 **Status 2026-11-07: a design, not built.** `ee/licence/` does not exist, no build reads a key, no
 release mounts one, and nothing refuses without one. This note is the text the verifier tasks are
 written against — the Go one (`ee/licence/key.go` and `store.go`, subscriptions plan S2.3), the
-console's (S2.4), the app's (S2.5) — with the two entry paths (S2.7, S2.8) and the key the
-coordinator job is handed (S1.9, carried as E1.4 by the ee-reorg plan). It **supersedes licensing
-plan task L3.1** ([implementation-plan.md](implementation-plan.md), "L3.1 — The licence-key design
-note"): that is this note before the owner's rulings of 2026-10-27, and its three design rules (the
-raw bytes before the JSON, the key id, the clock set back) are carried here, while the
-covered-versions date and the release-date stamping it still lists, and O4 dropped, are named under
-"Expiry only" below.
+console's (S2.4), the app's (S2.5) — with the two entry paths (S2.7, S2.8) and the coordinator job's
+key (T10, S1.9's secret, deferred with enforcement: no image carries one — the ee-reorg plan's E1.4
+builds the tagged image, and `TestRunImagesCarryNoKey` holds it to carrying none). It **supersedes
+licensing plan task L3.1** ([implementation-plan.md](implementation-plan.md), "L3.1 — The
+licence-key design note"): that is this note before the owner's rulings of 2026-10-27, and its three
+design rules (the raw bytes before the JSON, the key id, the clock set back) are carried here, while
+the covered-versions date and the release-date stamping it still lists, and O4 dropped, are named
+under "Expiry only" below.
 
 ## The key
 
@@ -88,8 +89,8 @@ choice, below.
 ## The lapse (D436, T12)
 
 `expires` is not the end of work. A **30-day grace** follows it (B17), and only after the grace does
-the paid side lapse: the console and the app go **read-only**, which keeps reading, **cancel** and
-the **kill switch**, and loses launching and configuration changes. A running fleet, a queued job
+the paid side lapse: the console and the app go **read-only**, which keeps reading, cancel and the
+kill switch, and loses launching and configuration changes. A running fleet, a queued job
 and a hotfix are never stopped by licence state, and the MIT CLI keeps launching and cancelling
 throughout. The console's and the app's own shape of that state is the design task S6.1's, and what
 a lapse shows is not this note's to fix.
@@ -110,11 +111,13 @@ code.
 
 - **A maximum lifetime per tier.** The verifier refuses a key whose `expires - issued` is longer
   than its tier allows, so **a leaked signing key cannot mint keys old releases accept for ever**:
-  the most it can mint is a key that dies within the tier's maximum. The maxima are one year for
-  every tier today: that is the term the Terms already give a key (section 10.2(b)'s open-source key
-  is "valid for one year", and the annual Team and Enterprise subscriptions renew by the year), and
-  they are stated per tier so a tier can be granted a longer term without a change to the key
-  format. The three-month commercial evaluation key (section 10.3, D440) sits well under it.
+  the most it can mint is a key that dies within the tier's maximum. **The maxima are this note's
+  number and not the Terms'**: one year for every tier today, taken from the longest term the ruled
+  issuance already gives a key — section 10.2(b)'s open-source key is "valid for one year", and the
+  Team and Enterprise subscriptions renew by the year — with section 10.3's three-month commercial
+  evaluation key (D440) well under it. They are stated per tier so a tier can be granted a longer
+  term without a change to the key format, and S2.3's `TestKeyBeyondTheTierLifetimeIsRefused` is what
+  enforces the bound: a tier's maximum moves here, in a decision, and never in the verifier alone.
 - **No revocation.** Nothing asks a server whether a key is still good, so a key works until it
   expires; that is the price of a check that never phones home.
 - **Refund leakage, accepted (T25).** A refunded buyer keeps a working key until it expires.
@@ -146,7 +149,7 @@ it in a command line: **a key in argv is a key every local process reads.**
 | the CLI | one file in the CLI's own config directory (`licence.key`, the directory `internal/localcfg` already returns), one key per line, at most two, mode 0600 | the operator writing the file, or a console that hands the key to the child it spawns |
 | the console | the console's own store on the machine, one per installation (S2.7) | pasted into the console's key screen (S2.7) |
 | the mobile app | the platform **secure store**, through `mobile/src/accounts/expo-secure-store.js`, the module every credential the app keeps goes through (S2.8) | pasted into the app's settings screen (S2.8) |
-| the coordinator job | a **Secret Manager** secret of the installation, mounted into the job and never typed by a person (S1.9, E1.4) | `fugaro update`, which stores it per installation |
+| the coordinator job | a **Secret Manager** secret of the installation, mounted into the job and never typed by a person (S1.9, T10) | `fugaro update`, which stores it per installation |
 
 The console spawns the CLI, and the one route to a spawned child is its **environment**: the console
 hands the key to the CLI it spawns in a single environment variable (`FUGARO_LICENCE_KEY`), never in
@@ -180,8 +183,9 @@ carry, and the first implementing task runs the image secret scan over a public-
   to absorb.
 - **The coordinator job's key (T10).** The coordinator runs where no person types anything, so its
   copy of the organisation's key is the installation's Secret Manager secret, mounted into the job
-  (S1.9, E1.4). Nothing is mounted yet: enforcement is deferred, and D524 keeps the tagged build and
-  the key apart until it lands.
+  (S1.9; E1.4 of the ee-reorg plan is the image half, and no image carries a key). Nothing is
+  mounted yet: enforcement is deferred, and D524 keeps the tagged build and the key apart until it
+  lands.
 - **An expiring free key is not a special case.** Free keys expire too (F39): a Community key that
   is not renewed reaches the same grace and the same read-only state, and the MIT CLI is unaffected
   as it is for a paid key.
