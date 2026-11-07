@@ -54,12 +54,16 @@ import {
   NO_CHECKOUT_KIND,
   NO_CHECKOUT_LEAD_CLASS,
   NO_CHECKOUT_OPERATION,
+  NO_CHECKOUT_SCOPE_CLASS,
+  NO_CHECKOUT_SCOPE_LABEL,
   NO_CHECKOUT_SENTENCE,
   NO_CHECKOUT_SENTENCE_CLASS,
   NO_CHECKOUT_SUMMARY_CLASS,
   NO_CHECKOUT_USE_LABEL,
+  noCheckoutActionKind,
   renderNoCheckout,
 } from '../../src/renderer/screens/nocheckout'
+import { GRAPH_SCOPE_ALL_LABEL } from '../../src/renderer/screens/graph'
 import type { NoCheckoutAction, NoCheckoutOptions } from '../../src/renderer/screens/nocheckout'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { INVISIBLE_CLASS, MAX_TEXT_INPUT_LENGTH } from '../../src/shared/sanitize'
@@ -205,6 +209,7 @@ describe('the Graph’s no-checkout card', () => {
         `p.${NO_CHECKOUT_LEAD_CLASS}`,
         `select.${CHECKOUT_SELECT_CLASS}`,
         `button.${NO_CHECKOUT_CHOICE_CLASS}`,
+        `button.${NO_CHECKOUT_SCOPE_CLASS}`,
         `details.${NO_CHECKOUT_DETAILS_CLASS}`,
       ])
       expect(one(body, 'unavailable-headline').textContent).toBe(NO_CHECKOUT_HEADLINE)
@@ -297,6 +302,7 @@ describe('the Graph’s no-checkout card', () => {
     expect(cells(body)).toEqual([
       'h1.unavailable-headline',
       `button.${NO_CHECKOUT_CHOICE_CLASS}`,
+      `button.${NO_CHECKOUT_SCOPE_CLASS}`,
       `details.${NO_CHECKOUT_DETAILS_CLASS}`,
     ])
     expect(one(body, NO_CHECKOUT_CHOICE_CLASS).textContent).toBe(NO_CHECKOUT_CHOICE_LABEL)
@@ -314,6 +320,7 @@ describe('the Graph’s no-checkout card', () => {
     expect(cells(body)).toEqual([
       'h1.unavailable-headline',
       `p.${NO_CHECKOUT_SENTENCE_CLASS}`,
+      `button.${NO_CHECKOUT_SCOPE_CLASS}`,
       `details.${NO_CHECKOUT_DETAILS_CLASS}`,
     ])
     // The second cell and not a `one(body, …)`: the disclosure below it wears
@@ -339,6 +346,7 @@ describe('the Graph’s no-checkout card', () => {
     expect(cells(body)).toEqual([
       'h1.unavailable-headline',
       `p.${NO_CHECKOUT_SENTENCE_CLASS}`,
+      `button.${NO_CHECKOUT_SCOPE_CLASS}`,
       `details.${NO_CHECKOUT_DETAILS_CLASS}`,
     ])
     expect(body.childNodes()[1]?.textContent).toBe(`${NO_CHECKOUT_AUTO_SENTENCE} ${checkoutLabel(ORBIT)}`)
@@ -361,6 +369,7 @@ describe('the Graph’s no-checkout card', () => {
       `p.${NO_CHECKOUT_LEAD_CLASS}`,
       `select.${CHECKOUT_SELECT_CLASS}`,
       `button.${NO_CHECKOUT_CHOICE_CLASS}`,
+      `button.${NO_CHECKOUT_SCOPE_CLASS}`,
       `details.${NO_CHECKOUT_DETAILS_CLASS}`,
     ])
     expect(drawn(root)).not.toContain(NO_CHECKOUT_AUTO_SENTENCE)
@@ -368,6 +377,60 @@ describe('the Graph’s no-checkout card', () => {
       ORBIT.path,
     ])
     expect(action.kind).toBe('choose')
+  })
+
+  it('names the action it will draw before it draws it, which is the entry’s own question', () => {
+    // **The card's four states are a function of its options** (CG10, H9): the
+    // entry asks `noCheckoutActionKind` whether the card would record the
+    // installation's one checkout by itself before it decides to answer the plan
+    // scope's refusal with the coordinator scope instead. A second copy of that
+    // decision in the entry is how the fallback ends up skipping the very card
+    // that was about to choose a checkout, so the two are held to one answer
+    // here: four option sets, four kinds, and the drawing's own action is the
+    // one the function named.
+    const states: readonly NoCheckoutOptions[] = [
+      { choices: [], listed: false, auto: true },
+      { choices: [], listed: true, auto: true },
+      { choices: [ORBIT], listed: true, auto: true },
+      { choices: [ORBIT], listed: true, auto: false },
+    ]
+    expect(states.map(noCheckoutActionKind), 'two states of the card share one kind').toEqual([
+      'picker',
+      'empty',
+      'auto',
+      'choose',
+    ])
+    for (const options of states) {
+      expect(theCard(PLAIN_SENTENCE, 'dark', options).action.kind, JSON.stringify(options)).toBe(
+        noCheckoutActionKind(options),
+      )
+    }
+  })
+
+  it('keeps its door back to the coordinator scope in every state of the card', () => {
+    // **The card is drawn instead of the Graph**, so the Graph's scope control is
+    // gone with the drawing, and the plan scope is a choice somebody made: this
+    // door is the operator's only way back to the scope that needs no checkout
+    // (CG10, H9). It is drawn by every state -- the ones whose action is a
+    // sentence and a control alike -- because the state is a fact about the
+    // *checkout* and the door is about the scope.
+    const states: readonly Partial<NoCheckoutOptions>[] = [
+      {},
+      { choices: [] },
+      { choices: [ORBIT] },
+      { choices: [], listed: false },
+    ]
+    for (const state of states) {
+      const { root } = theCard(PLAIN_SENTENCE, 'dark', state)
+      const body = one(root, 'unavailable-body')
+      const door = one(body, NO_CHECKOUT_SCOPE_CLASS)
+      expect(door.tag).toBe('button')
+      expect(door.attributes.get('type'), 'a button with no type submits the form it is in').toBe('button')
+      expect(door.textContent).toBe(NO_CHECKOUT_SCOPE_LABEL)
+      // Under the card's own words and above the CLI's account of the state: the
+      // disclosure stays the last thing the card says.
+      expect(cells(body).indexOf(`details.${NO_CHECKOUT_DETAILS_CLASS}`)).toBe(cells(body).length - 1)
+    }
   })
 
   it('draws the console’s own sentence when the refusal cannot be read', () => {
@@ -390,5 +453,11 @@ describe('the Graph’s no-checkout card', () => {
     expect(NO_CHECKOUT_LEAD_CLASS).toBe(ISSUE_CHECKOUT_LEAD_CLASS)
     expect(NO_CHECKOUT_OPERATION).toBe('plan.status')
     expect(NO_CHECKOUT_HEADLINE).toContain('checkout')
+    // The card names the **plan** scope and its door names the coordinator's, in
+    // the scope control's own word for it (`GRAPH_SCOPE_ALL_LABEL`): two screens
+    // draw the two scopes, so the one sentence they share is stated in both and
+    // held equal here rather than imported across screens.
+    expect(NO_CHECKOUT_HEADLINE).toContain('plan scope')
+    expect(NO_CHECKOUT_SCOPE_LABEL).toContain(GRAPH_SCOPE_ALL_LABEL)
   })
 })

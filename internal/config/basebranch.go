@@ -47,15 +47,36 @@ func EffectiveBaseBranch(file string, fileSets bool, repo, project string) (bran
 // sets nothing, exactly as it does there. A document that does not decode
 // answers false, and the caller's own parse is what reports why.
 func SetsGitBaseBranch(data []byte) bool {
+	_, set := gitBaseBranch(data)
+	return set
+}
+
+// GitBaseBranchOf is the base branch a fugaro.yaml's own text writes, where
+// SetsGitBaseBranch answers only whether it writes one. A caller that holds a
+// repository's committed file without that repository's layers needs this:
+// Resolve merges layers, so a file read on its own comes back with problems and
+// no config, while this reads the same tree as its sibling above.
+func GitBaseBranchOf(data []byte) (string, bool) {
+	v, set := gitBaseBranch(data)
+	n, ok := v.(*yaml.Node)
+	if !set || !ok || n.ShortTag() != "!!str" || n.Value == "" {
+		return "", false
+	}
+	return n.Value, true
+}
+
+// gitBaseBranch is the value git.base_branch carries in a document's own tree,
+// and whether the key is set at all: the read the two readers above share.
+func gitBaseBranch(data []byte) (any, bool) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return false
+		return nil, false
 	}
 	tree, ps := docTree(&doc)
 	if len(ps) > 0 {
-		return false
+		return nil, false
 	}
 	git, _ := tree["git"].(map[string]any)
 	v, ok := git["base_branch"]
-	return ok && v != nil
+	return v, ok && v != nil
 }

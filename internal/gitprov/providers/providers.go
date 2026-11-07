@@ -5,6 +5,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -37,6 +38,27 @@ const (
 // minSecretLen matches the agent package's redaction floor: a shorter
 // value cannot be redacted without mangling ordinary text.
 const minSecretLen = 4
+
+// ErrNoCredential identifies the failure of an Opener whose environment holds
+// no credential for the provider it was asked for: `FUGARO_BITBUCKET_TOKEN is
+// not set` is the one such failure today. A caller that has another place to
+// look for the value -- the CLI's catalog build reads the project's
+// bitbucket-token secret -- recognises it with errors.Is rather than by
+// reading the message, which stays the sentence it has always been.
+var ErrNoCredential = errors.New("the provider's credential is not in the environment")
+
+// notSetError is that failure. Its message is what secret has always returned;
+// only the match is new, through ErrNoCredential, so a caller that says where
+// else the value lives appends to the text instead of rewriting it.
+type notSetError struct{ name, what string }
+
+func (e *notSetError) Error() string {
+	return fmt.Sprintf("%s is not set: the provider needs %s (see docs/git-providers.md)", e.name, e.what)
+}
+
+// Is matches ErrNoCredential, so errors.Is finds it through every %w the
+// opener's failure is wrapped in on its way to a caller.
+func (e *notSetError) Is(target error) bool { return target == ErrNoCredential }
 
 // FromEnv returns an Opener that opens providers with credentials from env
 // (KEY=VALUE pairs, usually os.Environ()). hc is the HTTP client adapters
@@ -140,7 +162,7 @@ func AppKey(env []string) (string, error) {
 func secret(vars map[string]string, name, what string) (string, error) {
 	v := vars[name]
 	if v == "" {
-		return "", fmt.Errorf("%s is not set: the provider needs %s (see docs/git-providers.md)", name, what)
+		return "", &notSetError{name: name, what: what}
 	}
 	if len(v) < minSecretLen {
 		return "", fmt.Errorf("%s is shorter than %d bytes, so it cannot be redacted safely", name, minSecretLen)

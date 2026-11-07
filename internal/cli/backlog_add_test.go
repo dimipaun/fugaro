@@ -134,7 +134,7 @@ func TestBacklogAddRecordsTheRunAndAreaItIsFiledAbout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := strings.TrimSpace(strings.TrimPrefix(strings.Split(out, "\n")[0], "filed "))
+	path := strings.TrimSpace(strings.TrimPrefix(strings.Split(out, "\n")[0], markDone+" filed "))
 	doc, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

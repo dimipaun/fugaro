@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 342 rows and the generic writer carries 164 of them.** 88 by name
+- **F1 — the registry is 344 rows and the generic writer carries 164 of them.** 88 by name
   (`internal/cli/settings_set.go:81`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`
   and D873's three account keys), the two budget keys D1179 hands this path, and the wildcard blocks
@@ -27,7 +27,7 @@ what the guard at the end of this section re-runs.
   the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
   does not carry them — and 76 through the nine prefixes
   (`internal/cli/settings_set.go:195`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
-  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`). **178 rows have no generic
+  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`). **180 rows have no generic
   writer**, and the audit's whole subject is which of them are a defect and which are the
   installation's own plumbing (F13, D1182).
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
@@ -340,15 +340,21 @@ rather than its conclusion.
 
 - **D1172 (`fugaro accounts rm`, and `allow_data_to` on `add`) — OPEN, recommended. SEC.**
   Recommendation: `fugaro accounts rm NAME` removes the account's definition and its
-  `claude_accounts.*.allow_data_to` entry (`internal/settings/registry.go:627`), and is admitted by the
-  managed gate only when no profile and no repository still names the account (D1180) — a removal whose
-  referrers are checked rather than assumed. `add` with a widening `allow_data_to` stays refused in a
-  coding agent's session.
+  `claude_accounts.*.allow_data_to` entry (`internal/settings/registry.go:627`) — a removal whose
+  referrers are checked rather than assumed — and that check reads differently on its two paths. In a
+  coding agent's session the removal is refused outright (D1180's row): the refs and records that check
+  reads are the session's own, so a clean read is its own word for what origin carries. On the owner's
+  own run the gate is not consulted at all, and what stops the removal is the command's own refusal
+  while a profile still lists the account, while a repository whose committed `fugaro.yaml` still names
+  it is warned about before the confirmation and the removal goes ahead — that file belongs to a
+  repository no command here can write (D783). `add` with a widening
+  `allow_data_to` stays refused in a coding agent's session.
   Cost of the alternative: an account nothing can remove is an allow-list entry that outlives the
   account it was written for, and the person's only repair is an edit of a `fugaro.yaml`-adjacent file —
-  the hand edit the ruling removes. Cost of the recommendation: the removal has to know every referrer
-  and refuse when it finds one, which is a check with a test of its own and a refusal whose wording has
-  to name the referrer rather than the key.
+  the hand edit the ruling removes. Cost of the recommendation: the removal has to know every referrer —
+  a profile that still lists the account refuses it, and a repository that still names it is the warning
+  the owner reads — which is a check with tests of its own and wording that has to name the referrer
+  rather than the key.
 
 - **D1173 (`fugaro project repos set` for a job profile and a repository's own blocks; the `repos.*`
   scalars go to the generic writer) — OPEN, recommended.**

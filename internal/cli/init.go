@@ -41,6 +41,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -490,6 +491,18 @@ type initRun struct {
 	o   *initOptions
 	w   io.Writer // the human-readable account: stdout, or stderr with --json
 	in  *bufio.Reader
+	// rep is the run's account when the converge is its shape (CL5b): one line
+	// per stage, the closing line, and the log a failure sends the user to. It
+	// is built for the converge and left nil for the runs that do not go
+	// through the loop (--forget, --config-only, --print-vars), which print as
+	// they always have. repLog is the log it keeps, closed when the run ends.
+	rep    *report.Reporter
+	repLog report.Sink
+	// questions counts the questions in flight (initRun.asking): while one is
+	// open the run's own writer does not put the step's line back between the
+	// lines of the block it prints, so a CONFIRM block and a prompt are shown
+	// as one block rather than one line at a time.
+	questions int
 	// gcpProject is the GCP project ID every Google call uses;
 	// projectName is the project's name, shown and typed to confirm.
 	gcpProject, projectName string
@@ -586,6 +599,11 @@ type initRun struct {
 	// config — is written by this struct (writeConfig), from stages that all run
 	// before the policy stage applies.
 	policyStage *policyMigrateStage
+	// workspaceStage is the converge's workspace stage, held for the same reason
+	// and by the same write: the record it publishes names the database this
+	// struct writes into the local config, so a run that first names a backend
+	// gives the stage its database after the stage's read-only pass is over.
+	workspaceStage *workspaceStage
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -594,6 +612,8 @@ type initRun struct {
 	retireSet     []infra.Retirement
 	retireNotes   []infra.Retirement
 	retired       bool     // the flow was entered (a later plan must not re-enter it)
+	retireLooked  bool     // the read saw the state and the labels: an empty set is "nothing to retire" (see readRetirements)
+	retireNone    bool     // the read found nothing to retire: recorded when this run's own plan is through (recordRetiredNothing)
 	retireApplied bool     // it applied: the jobs it removed from state still need deleting
 	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
 	retireClean   bool     // the resume's plan changed nothing: no apply is left, only the API delete
@@ -649,11 +669,87 @@ type initResult struct {
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
-	r := &initRun{cmd: cmd, o: o, w: cmd.OutOrStdout(), in: bufio.NewReader(cmd.InOrStdin())}
+	r := &initRun{cmd: cmd, o: o}
+	r.w = runWriter{r: r, out: cmd.OutOrStdout()}
 	if o.asJSON {
-		r.w = cmd.ErrOrStderr()
+		r.w = runWriter{r: r, out: cmd.ErrOrStderr()}
 	}
+	r.in = bufio.NewReader(answerReader{r: r, in: cmd.InOrStdin()})
 	return r
+}
+
+// runWriter is the run's own writer (initRun.w): every line a person has
+// to read goes through it. The reporter's line in flight is taken down before
+// its first byte, because a frame drawn on the line a prompt is written on
+// swallows the prompt and the answer typed under it (G1) — and the rule is
+// the same one for every other line the run prints: nothing is drawn over
+// something the person is meant to read.
+type runWriter struct {
+	r   *initRun
+	out io.Writer
+}
+
+func (w runWriter) Write(p []byte) (int, error) {
+	if w.r.rep != nil {
+		w.r.rep.Pause()
+	}
+	n, err := w.out.Write(p)
+	if w.r.rep != nil && w.r.questions == 0 && endsLine(p) {
+		// A complete line leaves the cursor at the start of the next one, so
+		// the step in flight is put back as soon as the line is out: a stage
+		// that prints its own result lines mid-apply is still one somebody
+		// watches. A write that leaves the cursor mid-line is a prompt, and
+		// the line stays down until the answer is in.
+		w.r.rep.Resume()
+	}
+	return n, err
+}
+
+// endsLine reports whether a write left the cursor at the start of a line.
+func endsLine(p []byte) bool { return len(p) > 0 && p[len(p)-1] == '\n' }
+
+// asking runs a question the run puts through the command rather than through
+// its own writer: a stage's own confirmation, and the hidden prompt a secret's
+// value is typed at. The helpers that ask those hold the command and not the
+// run — they are the same ones the budget and project doors ask with — so the
+// line in flight is taken down around the whole question and drawn again once
+// the answer is in: neither the CONFIRM block, nor the prompt under it, nor
+// the answer typed under that is drawn over (G1), where a stage opened its own
+// step and asks in the middle of its minutes.
+func (r *initRun) asking(f func() error) error {
+	if r.rep == nil {
+		return f()
+	}
+	r.rep.Pause()
+	r.questions++
+	defer func() {
+		r.questions--
+		// Only the last question puts the line back: a question asked inside
+		// another one (a stage that confirms by name and then asks something
+		// else) keeps the screen down to the end of the outer one.
+		if r.questions == 0 {
+			r.rep.Resume()
+		}
+	}()
+	return f()
+}
+
+// answerReader is stdin behind the same rule: the answer to a prompt was
+// typed on a line of its own, and the line in flight comes back the moment it
+// arrives, so a stage that prompts in the middle of its work is still one a
+// person watches to the end. A run with no reporter, and a read that is not a
+// prompt, put back nothing.
+type answerReader struct {
+	r  *initRun
+	in io.Reader
+}
+
+func (a answerReader) Read(p []byte) (int, error) {
+	n, err := a.in.Read(p)
+	if n > 0 && a.r.rep != nil {
+		a.r.rep.Resume()
+	}
+	return n, err
 }
 
 func runInit(r *initRun) error {
@@ -780,6 +876,16 @@ func runInit(r *initRun) error {
 		// fact before it prints the result (markCreated, called from
 		// outcome), whatever the loop's outcome — which the run still
 		// returns.
+		//
+		// This run's account and log are the converge's (CL5b): the reporter
+		// prints the steps the loop hands it, and every stage's Terraform
+		// progress goes to its Stream — the log always, the terminal under
+		// --verbose. The log is closed here, on the run's way out, so its last
+		// partial line is written.
+		r.rep, r.repLog = reporterFor(cmd, o.doorName(), e.redaction())
+		if r.repLog != nil {
+			defer func() { _ = r.repLog.Close() }()
+		}
 		return e.converge(cmd.Context())
 	}
 
@@ -1160,8 +1266,36 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 		}
 		return nil, nil, userErr("%v", err)
 	}
-	t.Out = r.cmd.ErrOrStderr()
+	t.Out = r.progress()
 	return wd, t, nil
+}
+
+// progress is where a stage's own output goes: Terraform's progress, and the
+// children that print like it. Under the converge it is the reporter's stream —
+// the log always, the terminal under --verbose — so the default view stays one
+// line per stage and the full output is kept (D1352). A run with no reporter
+// (--forget, --config-only, --print-vars) writes to stderr, which is what every
+// run did before CL5b — and so does a converge whose log could not be opened at
+// all (a state directory that is a link, foreign-owned or read-only, G5): the
+// stream goes nowhere else, and the output that explains a failure is the last
+// thing a run may swallow (G8).
+//
+// --plan-only keeps stderr besides the log, which is the path it took before the
+// converge had a reporter: the plan the run prints IS what the command is for,
+// and a plan-only run that succeeds names no log path the way a failure does, so
+// the stream alone would put the one thing somebody asked for out of reach
+// (CL5b: --plan-only takes the path it takes today). The log is written all the
+// same, so a plan-only run that fails still points at a log that holds what it
+// printed.
+func (r *initRun) progress() io.Writer {
+	verbose := boolFlag(r.cmd, verboseFlag)
+	if r.rep != nil && (r.repLog != nil || verbose) {
+		if r.o.planOnly && !verbose {
+			return io.MultiWriter(r.cmd.ErrOrStderr(), r.rep.Stream())
+		}
+		return r.rep.Stream()
+	}
+	return r.cmd.ErrOrStderr()
 }
 
 // gcpOptions are the Google API options of lc's project and endpoints.
@@ -1547,6 +1681,7 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	if o.budget > 0 {
 		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
 	}
+	opts.ReportsPaused, opts.CatalogCheckPaused = jobsPaused(lc)
 	spec, err := infra.Installation(lc, opts)
 	if err != nil {
 		return infra.InstallationSpec{}, initErr(err)
@@ -1561,6 +1696,79 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 		}
 	}
 	return spec, nil
+}
+
+// jobsPaused is the project layer's jobs: block (R13) as the installation's
+// options take it: whether each of the project's two scheduled jobs is stopped.
+// A file this run can read gives both values — the ones the layer states, and
+// paused where it states nothing (config.Jobs' own default) — and a file it
+// cannot read gives none at all, which infra.InstallOptions reads as paused.
+//
+// It reads the LOCAL layer file — the one the owner edits and the run's layer
+// stage publishes — because the installation stage runs before that stage and
+// this is the only copy readable without the runs bucket. Silence is paused
+// along every way of having no value: no file, a file this CLI does not read
+// (a symlink, an oversized one), a file that does not parse. An unreadable
+// file is not silently accepted as an answer — it is not an answer at all, and
+// the layer stage refuses it moments later with the message that names it —
+// while the one thing neither direction may do is start a schedule the owner
+// never asked for.
+//
+// The installation's own apply does not stop at that silence: where this run's
+// layer stage will not leave the local file's bytes in place — the file is not
+// there and is seeded from the published object, or it is stale and is
+// re-seeded from it (D854) — the published object is the project's answer, and
+// publishedJobsPaused takes it, because that stage runs after this one.
+func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
+	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
+	if err != nil {
+		return nil, nil
+	}
+	data, err := readLayerFile(path)
+	if err != nil {
+		return nil, nil
+	}
+	l, ps := projectLayerProblems(data, lc)
+	if len(ps) > 0 || l == nil {
+		return nil, nil
+	}
+	reports, catalog := l.ReportsPaused(), l.CatalogCheckPaused()
+	return &reports, &catalog
+}
+
+// publishedJobsPaused completes the installation's jobs: state from the
+// published project layer, for the runs whose layer stage does not leave the
+// local file's own bytes in place: the stage seeds a file that is not there
+// FROM that object, and re-seeds one the object has moved past (D854's stale
+// state), and it runs after the installation stage. Without this, a `fugaro
+// update` on either machine would apply the silence of a file that is not the
+// project's answer (paused) and stop a schedule the published layer has
+// started, until the next update.
+//
+// Which of the two files this run leaves in place is the layer stage's own
+// decision, so it is the stage's own reading that answers it here (layerPlanFor)
+// rather than a second rule that could drift from it. Every other state — the
+// file is published as it stands, or it already is the published layer —
+// settles the question by itself, whatever it says: silence in the file the
+// stage publishes is its answer, and nothing the published object says may
+// overrule it. A bucket that cannot be read, a layer this CLI does not read and
+// a spec that carries no catalog check all leave the spec exactly as
+// installOptions built it: paused, which is also what the module defaults the
+// value to, and the layer stage names the read that failed a moment later.
+func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec) infra.InstallationSpec {
+	if spec.CatalogCheck == nil {
+		return spec
+	}
+	p, err := layerPlanFor(ctx, lc)
+	if err != nil || p.skip != "" || (p.stale == nil && !p.seed) {
+		return spec
+	}
+	l, ps := projectLayerProblems(p.published, lc)
+	if len(ps) > 0 || l == nil {
+		return spec
+	}
+	spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	return spec
 }
 
 // checkManagedStateBucket refuses a managed creation whose installation state
@@ -1724,6 +1932,20 @@ func (r *initRun) yesRoute() string {
 // that did not answer and a session with no terminal or with --yes reach the
 // lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
+	// The banner and the name typed under it are one question: the line in
+	// flight is down across both (initRun.asking), or the frame drawn when the
+	// banner's own line ends lands between the banner and the prompt (G1).
+	var ok bool
+	err := r.asking(func() error {
+		var err error
+		ok, err = r.askBanner(what)
+		return err
+	})
+	return ok, err
+}
+
+// askBanner is ask's question, asked between the pause and the resume.
+func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
@@ -2181,6 +2403,12 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 // fugaro update --firebase-project runs it twice more, as the first and third of its
 // applies.
 func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (outs infra.InstallationOutputs, stop bool, err error) {
+	// The project's schedules, read before anything of this run is planned or
+	// applied: see publishedJobsPaused, which is the half of the setting the
+	// local layer file cannot answer where this run's layer stage will not keep
+	// its bytes — a file that is not there, or one the published object has
+	// moved past (D854).
+	spec = r.publishedJobsPaused(ctx, lc, spec)
 	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
 		return outs, false, err
 	}
@@ -2754,6 +2982,12 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// its own check, which the loop makes right before it applies.
 	if r.policyStage != nil {
 		r.policyStage.forget()
+	}
+	// The workspace stage's plan is made of the same file, and the same write
+	// gives it the database the config did not name a moment ago: its own
+	// comment says the rest (update_workspace.go).
+	if r.workspaceStage != nil {
+		r.workspaceStage.forget()
 	}
 	if !r.o.planOnly {
 		r.publishSharedConfig(ctx, &next)
@@ -3425,6 +3659,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The project layer's jobs: block is the same kind of break on jobsSince,
+	// in the layer alone: no repository's file can carry the key.
+	if err := r.gateJobs(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// git.author is the same kind of break on gitAuthorSince, in the
 	// repository's own file alone: the key is InRepo, so no layer can carry
 	// it.
@@ -3876,6 +4115,26 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
 }
 
+// gateJobs is fugaro update --repo's gate for jobsSince: refuseJobsSkew, with
+// gateRigor's escapes and for its reason. The key is the project layer's alone
+// — a repository's fugaro.yaml has no jobs: key and refuses an unknown one — so
+// the repository half the other gates carry is absent: what is judged is the
+// layer this repository's configuration resolves over, and the refusal names it.
+//
+// The layer is the one this repository's configuration resolves over — the copy
+// the run will read — and the refusal names it, so the operator is sent to the
+// file and not to their checkout.
+func (r *initRun) gateJobs(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseJobsSkew(repo, cfg.Layer.SetsJobs(), lc.BaseImage(config.BaseKind), w)
+}
+
 // gateGitAuthor is fugaro update --repo's gate for gitAuthorSince:
 // refuseGitAuthorSkew, with gateRigor's escapes and for its reason. The
 // repository's half is the key being written (RepoGitAuthorSet) rather than the
@@ -4120,12 +4379,25 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		if err != nil {
 			return infra.RepoSpec{}, nil, err
 		}
+		if len(rets) == 0 {
+			// Nothing to retire is the run's own settlement, and the record
+			// says so: an empty set replaces a previous update's, so the
+			// console's project screen never draws the older set as the last
+			// update's own. It is written when this run's plan is through and
+			// not here: a run that stops after this line -- a guard refusal, a
+			// confirmation that was not given, a plan that aborted on
+			// prevent_destroy, a failed apply -- has read the same empty set
+			// and settled nothing, and the previous update's rows, which are
+			// kept nowhere else, stand (recordRetiredNothing, recordUpdate).
+			r.retireNone = true
+		}
 		if len(rets) > 0 {
 			r.retired = true
 			if r.o.retire {
 				if err := r.retirePlan(ctx, c, t, wd, ready, rets, opts, im); err != nil {
 					return infra.RepoSpec{}, nil, err
 				}
+				r.recordUpdate(ctx, lc, rets)
 				return ready, missing, nil
 			}
 			// A managed project retires this set by itself (issue #1794): no
@@ -4140,6 +4412,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 				return infra.RepoSpec{}, nil, err
 			}
 			if auto {
+				r.recordUpdate(ctx, lc, rets)
 				return ready, missing, nil
 			}
 			// The gate, and it is the two cases the design names and no
@@ -4167,6 +4440,11 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if !changed {
 		r.res.Changes = &infra.PlanCounts{}
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+		// Nothing was applied, so nothing was retired: only a set the read
+		// proved empty is settled by a plan that changed nothing, because a
+		// non-empty one is settled by the apply below, which is what deletes
+		// it (recordUpdate).
+		r.recordRetiredNothing(ctx, lc)
 		return ready, missing, nil
 	}
 	plan, err := t.Show(ctx, infra.PlanFile)
@@ -4213,6 +4491,20 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		return infra.RepoSpec{}, nil, err
 	}
 	r.res.Applied = true
+	// The third way a retirement's address goes away, and the last moment its
+	// record can be written: a set the run left to the ordinary plan is
+	// settled by the apply above, which is what deletes it. rets is non-empty
+	// here exactly for that case -- the two flows that retire by themselves
+	// returned long before this line, and the later plan of a run that built
+	// images has no read of its own -- so the record is written from the same
+	// read (recordUpdate). A run that had nothing to retire is the other half
+	// of the same moment: its plan is through too, and that is what its empty
+	// set was waiting for (recordRetiredNothing).
+	if len(rets) > 0 {
+		r.recordUpdate(ctx, lc, rets)
+	} else {
+		r.recordRetiredNothing(ctx, lc)
+	}
 	return ready, missing, nil
 }
 

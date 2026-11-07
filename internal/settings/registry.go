@@ -367,6 +367,12 @@ const (
 	// §5 and §6). The folder's own README, reconciliation and plan are not the
 	// document a key's meaning is stated in, so the row points at the spec.
 	docWorkspace = "docs/workspaces/spec.md"
+	// docPeriodicReviews is the document that states the project's jobs:
+	// block (R13). It is the work's plan rather than a spec, for
+	// docOrchestrator's reason: the two keys and the default that turns a
+	// schedule on are stated there and nowhere else yet, and a spec of the
+	// installation's own would be the document that takes the rows over.
+	docPeriodicReviews = "docs/periodic-reviews/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -380,6 +386,17 @@ func layerRow(key, def, owner, doc string) Row {
 		Owner:   owner,
 		Doc:     doc,
 	}
+}
+
+// layerValueRow is layerRow for a layer key whose default is a value the layer
+// reader leaves in place rather than an "unset means" sentence: the two jobs:
+// keys default to paused, and true is what a layer that states nothing has to
+// be read as. TestRegistryDefaultsMatchApplyDefaults then pins the value
+// against the reader itself, which is the point of writing it as one.
+func layerValueRow(key, v, owner, doc string) Row {
+	r := layerRow(key, "", owner, doc)
+	r.Default = value(v, "")
+	return r
 }
 
 // loc is a row of the local config. The local file is its only store, and
@@ -535,6 +552,16 @@ var layerRows = []Row{
 	layerRow("ab.challengers", "none", "models", docModels),
 	layerRow("ab.judge_model", "the A/B design's own judge", "models", docModels),
 	layerRow("ab.exchange_rate", "the A/B design's own rate", "models", docModels),
+
+	// The two schedules (R13). They are the installation's only keys in this
+	// table whose loosening direction starts something: paused: false is what
+	// makes a job run, and it is the operator's alone — a repository writes no
+	// jobs: key at all, and the generic path writes its allowlist, which
+	// carries neither of these. Owner update is the command that reads the
+	// layer file and applies the value into the installation; `fugaro settings
+	// set` refuses both keys, which is the state R13 ships.
+	layerValueRow("jobs.reports.paused", "true", "update", docPeriodicReviews),
+	layerValueRow("jobs.catalog_check.paused", "true", "update", docPeriodicReviews),
 }
 
 // LocalPrefix marks a local row whose bare name a fugaro.yaml key already

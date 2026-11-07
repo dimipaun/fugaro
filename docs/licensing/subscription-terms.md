@@ -13,11 +13,10 @@ the text is in force only once the owner publishes it
 ([implementation plan, L4.3](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
 
 **How to read it.** Parts A to G are the agreement text, as counsel wrote it, with Markdown for
-counsel's formatting. Two figures in counsel's text are not published in this repository and stand
-as bracketed items instead: the late-payment interest rate (section 12.2) and the liability cap for
-the Community Plan, Free Plans and Beta Features (section 10.5); the owner decides whether they
-are published. Counsel's table in section 3.5 is reproduced as a Markdown table. The list after the
-agreement is outside it.
+counsel's formatting. The two figures first held back are in the text: the late-payment interest
+rate (section 12.2) and the liability cap for the Community Plan, Free Plans and Beta Features
+(section 10.5), which the owner ruled on 2026-10-29 go in as counsel wrote them. Counsel's table in
+section 3.5 is reproduced as a Markdown table. The list after the agreement is outside it.
 
 ---
 

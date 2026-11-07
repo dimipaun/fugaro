@@ -3,6 +3,7 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -1119,6 +1120,76 @@ profiles:
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("err = %v, want it to name %q", err, want)
 				}
+			}
+		})
+	}
+}
+
+// TestAnthropicKeySentinelRefusedWithAReachableRemedy: a local config may now
+// list the sentinel the account axis spells for the project's own Anthropic API
+// key (config.ValidClaudeAccountRef accepts it, config.ValidateProfileClaudeAccounts
+// skips it, and projectpolicy.DeriveAccounts publishes its accounts entry from
+// exactly this profile), and no job of this release serves it. This is the door
+// `fugaro update` closes on such an installation — fail-closed, because a
+// shared job mounts Claude OAuth tokens and the project's own key is no token
+// of any job's, and because the review-only variant that carries the key is not
+// deployed yet.
+//
+// Both providers are cases, and the Bitbucket one is why the refusal stands in
+// ProjectJobs ahead of the provider skip rather than inside the job loop
+// (projectAccountMount's old arm): a Bitbucket profile is skipped, not
+// deployed, so a check reached only by the jobs a profile deploys never sees
+// it — the sentinel passed an installation unrefused, with its policy entry
+// published for a job that does not exist, while the claim this PR makes in
+// three places is that an installation publishing a profile naming it is
+// refused. The fixtures are the ones that otherwise deploy or derive cleanly
+// (the sentinel's list comes from the profile's own allow_repos, which
+// projectpolicy.anthropicKeySlugs needs the project's key to reach), so nothing
+// else in this deployer refuses them and the assertion below cannot pass for
+// another reason.
+//
+// The remedy is the point of the test. Without the sentinel's own refusal, the
+// message comes from the container lookup and prescribes
+// claude_accounts.<sentinel>.allow_data_to — a key config.ValidateClaudeAccounts
+// refuses, so one refusal names what the other forbids and the operator has no
+// move at all. What this refusal names instead is the profile field to edit.
+//
+// Mutation (run, restore): move the refusal back inside the job loop, or drop
+// it — the Bitbucket case passes unrefused, and with it dropped the shared-job
+// case's message comes from the container lookup, so the assertions below go
+// red.
+func TestAnthropicKeySentinelRefusedWithAReachableRemedy(t *testing.T) {
+	for name, tc := range map[string]struct{ provider, allowRepos string }{
+		"a shared-job profile":                                 {"github", "github/acme/webapp"},
+		"a Bitbucket profile this deployer deploys no job for": {"bitbucket", "bitbucket/acme/sandbox"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+`project_secrets:
+  anthropic-api-key: { allow_data_to: [acme/sandbox, acme/webapp] }
+profiles:
+  standard: { provider: `+tc.provider+`, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [`+tc.allowRepos+`], claude_accounts: [`+config.AnthropicKeyAccount+`] }
+`)
+			_, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+			if err == nil {
+				t.Fatalf("a %s profile naming %s deployed or passed: no job serves the project's own key as a Claude token, and the review variant that carries it is not built yet", tc.provider, config.AnthropicKeyAccount)
+			}
+			var ue *UserError
+			if !errors.As(err, &ue) {
+				t.Fatalf("the refusal is not a UserError (%T): a config this deployer cannot serve must read as a sentence the operator can act on, not as an internal error: %v", err, err)
+			}
+			for _, banned := range []string{"claude_accounts." + config.AnthropicKeyAccount, ".allow_data_to"} {
+				if strings.Contains(err.Error(), banned) {
+					t.Errorf("the refusal names %q: %v — that is the key config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err)
+				}
+			}
+			if !strings.Contains(err.Error(), "profiles.standard.claude_accounts") {
+				t.Errorf("the refusal does not name the field the operator edits: %v", err)
+			}
+			// The sentinel's own sentence, and not another refusal of the same
+			// profile: the container lookup and DeriveAccounts both answer this
+			// profile too, with remedies of their own.
+			if !strings.Contains(err.Error(), "is the project's own Anthropic API key, not a Claude account") {
+				t.Errorf("the refusal is not the sentinel's: %v", err)
 			}
 		})
 	}
