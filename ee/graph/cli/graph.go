@@ -152,7 +152,7 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	// document has no stderr to look at), and without it they go to stderr
 	// below. Either way they are carried once.
 	var warned bytes.Buffer
-	project, err := coordcli.StoredProject(ctx, env, graphRepos(env), graphSince(window), &warned)
+	project, err := coordcli.StoredProject(ctx, env, graphRepos(env), fcli.LsSince(window), &warned)
 	now := time.Now()
 	var doc graph.Document
 	switch {
@@ -246,16 +246,6 @@ func graphUnreadable(now time.Time, reason error, warned *bytes.Buffer) graph.Do
 // a word for having nothing to draw.
 func graphRepos(env *fcli.Cloud) []string {
 	return slices.Sorted(maps.Keys(env.Config().Repos))
-}
-
-// graphSince is the window's start for the runs half of the read, computed as
-// the coordinator's own default --since is: the listing's window measured back
-// from the listing's clock, and the zero time for a window of none.
-func graphSince(window time.Duration) time.Time {
-	if window <= 0 {
-		return time.Time{}
-	}
-	return fcli.LsNow().Add(-window)
 }
 
 // writeGraphJSON prints the document indented, as this tree's other --json
