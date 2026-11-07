@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -61,62 +62,72 @@ func managedUpdateNoTerminal(t *testing.T) (*initRig, *initEngine, *syncBuf) {
 // other half of the owner's own sentence, and the half a reader of it gets
 // wrong: the ruling is about a PERSON at the terminal, so a managed run whose
 // stdin is a pipe is asked for the name exactly as before — the gate's read
-// says who may act, and this run has nobody there to act. It is asserted with
-// a step the review did not cover, because that is the one whose note the arm
-// prints beside the sentence, and the note has to come back with the prompt.
+// says who may act, and this run has nobody there to act. Both steps are
+// asserted, because the arm is drawn inside the covered branch and the two
+// arrive there differently: the covered one is the step the arm would otherwise
+// answer for with nothing typed, and the one outside the review keeps the note
+// the arm would have carried beside its sentence, with the prompt instead.
 func TestManagedOwnerTerminalOrdinaryStepRefusesWithNobodyAtTheTerminal(t *testing.T) {
-	_, e, out := managedUpdateNoTerminal(t)
-	const notCovered = "the plan is outside what the review announced (a destroy of one resource)"
-	e.r.review = &runReview{state: reviewTaken}
-
-	ok, err := e.r.askOrdinary("writes the Terraform state bucket (cents a month)", notCovered)
-	if err != nil {
-		t.Fatalf("a run nobody is at was refused with an error rather than asked: %v\n%s", err, out)
-	}
-	if ok {
-		t.Fatalf("a step of a managed run nobody is at proceeded with nothing typed:\n%s", out)
-	}
-	if !strings.Contains(out.String(), notCovered+"; it asks for its own") {
-		t.Errorf("the step's own confirmation was not the one asked:\n%s", out)
-	}
-	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
-		t.Errorf("a run nobody is at read the sentence written for the owner's own terminal:\n%s", out)
-	}
-	if strings.Contains(out.String(), "confirmed by --yes") {
-		t.Errorf("a run nobody is at was told a flag it did not pass confirmed the step:\n%s", out)
-	}
-}
-
-// TestManagedOwnerTerminalOrdinaryStepTypesNothing: the ordinary steps of the
-// converge — the state bucket, the Viewer-read removal, a step the review did
-// not cover — are the ones the run's one confirmation used to cover, and on a
-// managed project the owner types nothing for them either. What is printed is
-// the step's own banner and OwnerProceeded's sentence, which claims no verdict
-// because no rule judged these steps; the note of why a step was not covered
-// is still shown, because it is what the sentence would have carried.
-//
-// The assertion about the question is the empty stdin: the rig's terminal has
-// nothing to read, so a step that asked would read no answer and report false,
-// and `ok` being true is the step having proceeded with nothing typed.
-func TestManagedOwnerTerminalOrdinaryStepTypesNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		what       string
 		notCovered string
 	}{
 		{"covered", "writes the Terraform state bucket (cents a month)", ""},
-		{"its own", "removes project Viewers' read access to the runs bucket", ""},
 		{"outside the review", "applies the plan as shown", "the plan is outside what the review announced (a destroy of one resource)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, e, out := managedTerminalUpdate(t, true)
-			if tc.notCovered != "" {
-				// The note is printed only for a step the run's review had
-				// already been taken for (init_review.go's askOrdinary), which
-				// is the state this rig's run is in after its review.
-				e.r.review = &runReview{state: reviewTaken}
-			}
+			_, e, out := managedUpdateNoTerminal(t)
+			e.r.review = &runReview{state: reviewTaken}
+
 			ok, err := e.r.askOrdinary(tc.what, tc.notCovered)
+			if err != nil {
+				t.Fatalf("a run nobody is at was refused with an error rather than asked: %v\n%s", err, out)
+			}
+			if ok {
+				t.Fatalf("a step of a managed run nobody is at proceeded with nothing typed:\n%s", out)
+			}
+			// A pipe cannot type, so what the step's own confirmation is here
+			// is its banner: ask prints it and answers false for a run with
+			// nobody at the terminal (init.go's ask).
+			if !strings.Contains(out.String(), "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): "+tc.what) {
+				t.Errorf("a run nobody is at was not asked for the step:\n%s", out)
+			}
+			if tc.notCovered != "" && !strings.Contains(out.String(), tc.notCovered+"; it asks for its own") {
+				t.Errorf("the step's own confirmation was not the one asked:\n%s", out)
+			}
+			if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+				t.Errorf("a run nobody is at read the sentence written for the owner's own terminal:\n%s", out)
+			}
+			if strings.Contains(out.String(), "confirmed by --yes") {
+				t.Errorf("a run nobody is at was told a flag it did not pass confirmed the step:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestManagedOwnerTerminalOrdinaryStepTypesNothing: the ordinary steps of the
+// converge — the state bucket, the Viewer-read removal — are the ones the run's
+// one confirmation used to cover, and on a managed project the owner types
+// nothing for them either. What is printed is the step's own banner and
+// OwnerProceeded's sentence, which claims no verdict because no rule judged
+// these steps.
+//
+// The assertion about the question is the empty stdin: the rig's terminal has
+// nothing to read, so a step that asked would read no answer and report false,
+// and `ok` being true is the step having proceeded with nothing typed.
+func TestManagedOwnerTerminalOrdinaryStepTypesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		what string
+	}{
+		{"covered", "writes the Terraform state bucket (cents a month)"},
+		{"its own", "removes project Viewers' read access to the runs bucket"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, e, out := managedTerminalUpdate(t, true)
+
+			ok, err := e.r.askOrdinary(tc.what, "")
 			if err != nil {
 				t.Fatalf("a managed project's own terminal was refused: %v\n%s", err, out)
 			}
@@ -131,8 +142,51 @@ func TestManagedOwnerTerminalOrdinaryStepTypesNothing(t *testing.T) {
 					t.Errorf("a managed project's own terminal read %q:\n%s", no, out)
 				}
 			}
-			if tc.notCovered != "" && !strings.Contains(out.String(), tc.notCovered) {
+		})
+	}
+}
+
+// TestManagedOwnerTerminalPlanOutsideTheReviewStillAsks is the boundary of the
+// sentence above, and the one a reader of the ruling gets wrong: what is not
+// asked is a step the run's one confirmation would have covered. A plan the
+// review did not announce is the plan that may delete, replace or remove an IAM
+// grant — tf.Cover's own refusal, the same cover the managed gate judges the
+// step by — so the owner's terminal is asked for the project's name there
+// exactly as a project that is not managed is, note and all. The mutation it
+// catches is an owner arm that answers for any step at all, which is the one
+// direction this ruling must not move: a refused or unannounced plan applying
+// itself with nothing typed.
+func TestManagedOwnerTerminalPlanOutsideTheReviewStillAsks(t *testing.T) {
+	const notCovered = "the plan is outside what the review announced (a destroy of one resource)"
+	for _, tc := range []struct {
+		name    string
+		managed bool
+	}{
+		{"managed", true},
+		{"not managed", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, e, out := managedTerminalUpdate(t, tc.managed)
+			// The note is printed only for a step of a run whose review had
+			// already been taken (init_review.go's askOrdinary), which is the
+			// state this rig's run is in after its review.
+			e.r.review = &runReview{state: reviewTaken}
+
+			ok, err := e.r.askOrdinary("applies the plan as shown", notCovered)
+			if err != nil {
+				t.Fatalf("the step was refused rather than asked: %v\n%s", err, out)
+			}
+			if ok {
+				t.Fatalf("a plan the review did not cover proceeded with nothing typed:\n%s", out)
+			}
+			if !strings.Contains(out.String(), notCovered+"; it asks for its own") {
 				t.Errorf("the step does not say what the run's confirmation did not cover:\n%s", out)
+			}
+			if !strings.Contains(out.String(), "Type "+initProjectName) {
+				t.Errorf("the step was not asked for the project's name:\n%s", out)
+			}
+			if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+				t.Errorf("a plan the review did not cover read the sentence written for the steps it did:\n%s", out)
 			}
 		})
 	}
@@ -507,6 +561,84 @@ func TestManagedOwnerTerminalLayerRefusesWithNobodyAtTheTerminal(t *testing.T) {
 	}
 	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
 		t.Errorf("a run nobody is at read the sentence written for the owner's own terminal:\n%s", out)
+	}
+}
+
+// TestManagedOwnerTerminalUnverifiedFirebaseStillAsks is that boundary at the
+// one production call site that reaches it without a Terraform plan: the
+// database write carries no document for the gate to judge, and its own
+// notCovered is firebaseReason — a Firebase project this run cannot prove is
+// Fugaro's (init_firebase.go's deployDatabase). Nothing judged that write, so
+// the owner's own terminal types the project's name for it, exactly as it did
+// before the ruling, and the note says why.
+func TestManagedOwnerTerminalUnverifiedFirebaseStillAsks(t *testing.T) {
+	_, e, out := managedTerminalUpdate(t, true)
+	e.r.review = &runReview{state: reviewTaken, firebase: func(context.Context) (bool, string) {
+		return false, "another project than " + initProject + ", with no Fugaro mark"
+	}}
+	notCovered := e.r.firebaseReason()
+	if notCovered == "" {
+		t.Fatalf("the rig's Firebase project is covered, so it is not the case this test is about:\n%s", out)
+	}
+
+	ok, err := e.r.askOrdinary("writes the database as listed, and then the local config", notCovered)
+	if err != nil {
+		t.Fatalf("the database write was refused rather than asked: %v\n%s", err, out)
+	}
+	if ok {
+		t.Fatalf("a database write no rule judged proceeded with nothing typed:\n%s", out)
+	}
+	if !strings.Contains(out.String(), notCovered+"; it asks for its own") {
+		t.Errorf("the write does not say why it asks:\n%s", out)
+	}
+	if !strings.Contains(out.String(), "Type "+initProjectName) {
+		t.Errorf("the database write was not asked for the project's name:\n%s", out)
+	}
+	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a database write no rule judged read the sentence written for the steps the review covered:\n%s", out)
+	}
+}
+
+// TestManagedOwnerTerminalRefusedPlanIsNotApplied is the same boundary driven
+// through the whole command instead of one call: the owner's own terminal, a
+// managed project, and a plan the gate refuses — a grant to a member the review
+// screen does not list, and a delete of a grant that is not one of the
+// launcher's own replacements. Nothing is applied, no OwnerProceeded sentence
+// is printed, and the run stops on the gate's own refusal, which is what the
+// owner reads: the refusal is the gate's error (managed_gate.go's admit), so
+// the step never reaches a confirmation at all, and an arm that answered for
+// any plan at all would be applying one the gate refused.
+func TestManagedOwnerTerminalRefusedPlanIsNotApplied(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		plan planChange
+	}{
+		{"a grant to a member the review did not list", grantChange("state", "user:not-listed@example.com", "roles/storage.objectViewer", "create")},
+		{"a delete of a grant that is not the launcher's", grantChange("state", "user:a@example.com", "roles/storage.objectAdmin", "delete")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := updateRig(t)
+			r.managedRuns(t, initProjectName, initProject)
+			isolateGateCredentials(t)
+			noAgentSession(t)
+			fakeTerminal(t)
+			updating(t, r)
+			r.setPlan(t, tc.plan)
+
+			out, err := updateRun(t, r, "update")
+			if err == nil {
+				t.Fatalf("a plan the gate refused applied itself:\n%s", out)
+			}
+			if !strings.Contains(out, "the managed gate did not admit this step") {
+				t.Errorf("the run did not stop on the gate's own refusal:\n%s", out)
+			}
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("a plan the gate refused was applied %d time(s):\n%s", n, out)
+			}
+			if strings.Contains(out, initflow.OwnerProceeded()) {
+				t.Errorf("a plan the gate refused read the sentence written for the steps it admitted:\n%s", out)
+			}
+		})
 	}
 }
 
