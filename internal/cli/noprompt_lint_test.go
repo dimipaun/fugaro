@@ -22,12 +22,19 @@ import (
 // of that plumbing, so a read written inside one is the same read). A read of
 // stdin for a decision is one of
 //
-//   - bufio.NewReader / bufio.NewScanner — the line reader this package asks a
-//     person with. It is matched by the package the call comes from and not by
-//     its text, so `import b "bufio"` and `import . "bufio"` are the same read
-//     and a function of the same name in this package is not one.
-//   - .ReadString / .ReadBytes / .ReadLine on such a reader: the reading half
-//     of the same reader, and what no data read in the package uses.
+//   - bufio.NewReader / NewReaderSize / NewScanner / NewReadWriter — the line
+//     reader this package asks a person with, however it is built. It is
+//     matched by the package the call comes from and not by its text, so
+//     `import b "bufio"` and `import . "bufio"` are the same read and a
+//     function of the same name in this package is not one.
+//   - .ReadString / .ReadBytes / .ReadLine / .ReadRune / .ReadByte / .ReadSlice
+//     on such a reader: the reading half of the same reader, and what no data
+//     read in the package uses.
+//   - io.ReadFull / io.ReadAtLeast, which fill a buffer from the reader they
+//     are given, unless that reader belongs to a package (crypto/rand's
+//     rand.Reader — no person is behind it). io.ReadAll is deliberately not a
+//     shape: it is how every data read in this package is written, and the four
+//     of them are named in dataReadSites.
 //   - .Read(p) — a byte-level read of a reader, which is how readConfirmLine is
 //     written itself (`n, err := in.Read(b)`) and how the wizard's reader is:
 //     the package's store reads are Read(ctx, key) and a data path reads
@@ -234,44 +241,24 @@ func decisionReadForm(call *ast.CallExpr, imports map[string]string) string {
 		if fun.Name == "readConfirmLine" {
 			return "readConfirmLine"
 		}
-		// A dot-import (`import . "bufio"`) puts the constructors in this
-		// file's own namespace, where a bare NewReader is the same read; any
-		// other function of that name is not, which is why the package is
-		// matched through the import rather than by the name alone.
-		switch imports["."] {
-		case "bufio":
-			if fun.Name == "NewReader" || fun.Name == "NewScanner" {
-				return "bufio." + fun.Name
-			}
-		case "golang.org/x/term":
-			if fun.Name == "ReadPassword" {
-				return "term.ReadPassword"
-			}
-		}
+		// A dot-import puts a package's names in this file's own namespace,
+		// where a bare NewReader is the same read; any other function of that
+		// name is not, which is why the package is matched through the import
+		// rather than by the name alone.
+		return dotImportForm(fun.Name, call, imports)
 	case *ast.SelectorExpr:
-		if pkg, ok := fun.X.(*ast.Ident); ok {
-			switch imports[pkg.Name] {
-			case "bufio":
-				if fun.Sel.Name == "NewReader" || fun.Sel.Name == "NewScanner" {
-					return "bufio." + fun.Sel.Name
-				}
-			case "golang.org/x/term":
-				if fun.Sel.Name == "ReadPassword" {
-					return "term.ReadPassword"
-				}
-			case "fmt":
-				switch fun.Sel.Name {
-				case "Scan", "Scanf", "Scanln", "Fscan", "Fscanf", "Fscanln":
-					return "fmt." + fun.Sel.Name
-				}
-			}
+		if form := packageCallForm(fun, call, imports); form != "" {
+			return form
 		}
-		// A reader this package built is read a line at a time here or not at
-		// all: the three line reads are the reading half of the bufio reader
-		// above, and no data read in the package uses one.
+		// A reader this package built is read here or not at all — a line, a
+		// rune, a byte, a delimiter — and no data read in the package uses one.
+		// The receiver is checked not to be a package for the same reason as
+		// Read below: io.ReadSlice and a store's own read are not this shape.
 		switch fun.Sel.Name {
-		case "ReadString", "ReadBytes", "ReadLine":
-			return fun.Sel.Name
+		case "ReadString", "ReadBytes", "ReadLine", "ReadRune", "ReadByte", "ReadSlice":
+			if !importedPackage(fun.X, imports) {
+				return fun.Sel.Name
+			}
 		}
 		// The same reader read a byte at a time is the same read one level
 		// down: readConfirmLine is a loop over in.Read(b), and the wizard's
@@ -285,6 +272,95 @@ func decisionReadForm(call *ast.CallExpr, imports map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// packageCallForm is the rule for a call that names a package: the line
+// reader's own constructors and reads, the hidden read, the formatted reads,
+// and a read filled from a reader. Each is matched through the import map, so
+// an alias is the same call and a same-named function in this package is not.
+func packageCallForm(fun *ast.SelectorExpr, call *ast.CallExpr, imports map[string]string) string {
+	pkg, ok := fun.X.(*ast.Ident)
+	if !ok {
+		return ""
+	}
+	switch imports[pkg.Name] {
+	case "bufio":
+		if isReaderConstructor(fun.Sel.Name) {
+			return "bufio." + fun.Sel.Name
+		}
+	case "io":
+		if isFilledRead(fun.Sel.Name) && !fromPackageReader(call, imports) {
+			return "io." + fun.Sel.Name
+		}
+	case "golang.org/x/term":
+		if fun.Sel.Name == "ReadPassword" {
+			return "term.ReadPassword"
+		}
+	case "fmt":
+		switch fun.Sel.Name {
+		case "Scan", "Scanf", "Scanln", "Fscan", "Fscanf", "Fscanln":
+			return "fmt." + fun.Sel.Name
+		}
+	}
+	return ""
+}
+
+// dotImportForm is the same rule for a file that dot-imports one of these
+// packages, where the call arrives as a bare name.
+func dotImportForm(name string, call *ast.CallExpr, imports map[string]string) string {
+	switch imports["."] {
+	case "bufio":
+		if isReaderConstructor(name) {
+			return "bufio." + name
+		}
+	case "io":
+		if isFilledRead(name) && !fromPackageReader(call, imports) {
+			return "io." + name
+		}
+	case "golang.org/x/term":
+		if name == "ReadPassword" {
+			return "term.ReadPassword"
+		}
+	}
+	return ""
+}
+
+// isReaderConstructor is how the reader this package asks a person with is
+// built: over the terminal at a size of its own, or as the reader half of a
+// read-writer. All of them read stdin the same way NewReader does, so a prompt
+// written with one is the same prompt.
+func isReaderConstructor(name string) bool {
+	switch name {
+	case "NewReader", "NewReaderSize", "NewScanner", "NewReadWriter":
+		return true
+	}
+	return false
+}
+
+// isFilledRead is a read of a whole reader rather than of a line: io.ReadFull
+// and io.ReadAtLeast fill the buffer they are given from the reader they are
+// given, so the first argument is the stream and the shape is the same
+// decision when that stream is stdin. io.ReadAll is deliberately not here: it
+// is how every data read in this package is written (the four named in
+// dataReadSites), so it is the data reads' own shape rather than this rule's.
+func isFilledRead(name string) bool {
+	return name == "ReadFull" || name == "ReadAtLeast"
+}
+
+// fromPackageReader reports whether a filled read draws from a reader a
+// package owns rather than from a stream handed in: creds.go's key material
+// comes from crypto/rand's rand.Reader, which is not a person and not stdin.
+// A package's own *stream* — os.Stdin, or a reader this package built — is not
+// exempt, since only a package-level reader value is this shape.
+func fromPackageReader(call *ast.CallExpr, imports map[string]string) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+	sel, ok := call.Args[0].(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Reader" {
+		return false
+	}
+	return importedPackage(sel.X, imports)
 }
 
 // importedPackage reports whether a selector's left side is a package name —
