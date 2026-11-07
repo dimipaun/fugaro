@@ -9,9 +9,9 @@ package mcpauth
 // design's §8 lean on. First, the token checks themselves: the issuer is built
 // from the project id, the audience is the bare project id, the signature is
 // the published key's, and a refusal names the check that failed and never the
-// value that failed it. Second, the one consumer: the token is accepted at
-// GET /oauth/authorize and is never a grant at POST /oauth/token, and no code
-// path in this package mints one.
+// value that failed it. Second, the one consumer: the token is accepted at the
+// approve step's POST /oauth/authorize and is never a grant at POST
+// /oauth/token, and no code path in this package mints one.
 //
 // Every token here is signed by a key the test generates, and the key set the
 // verifier reads is served by the test's own server or handed to it as a fixed
@@ -360,7 +360,7 @@ func TestTheTokenEndpointRefusesAFirebaseIDToken(t *testing.T) {
 
 	for _, want := range []GrantType{GrantAuthorizationCode, GrantRefreshToken, GrantClientCredentials} {
 		if got, err := ParseGrantType(string(want)); err != nil || got != want {
-			t.Errorf("ParseGrantType(%q) = %q, %v; the token endpoint's own grants are the three D929 and D930 name", want, got, err)
+			t.Errorf("ParseGrantType(%q) = %q, %v; the parse names the three D923, D929 and D930 name, of which the token endpoint serves two and refuses client_credentials itself", want, got, err)
 		}
 	}
 	for _, grant := range []string{
@@ -373,7 +373,7 @@ func TestTheTokenEndpointRefusesAFirebaseIDToken(t *testing.T) {
 	} {
 		got, err := ParseGrantType(grant)
 		if err == nil {
-			t.Errorf("ParseGrantType(%s) admitted a grant type that is not one of the endpoint's three: a Firebase ID token presented as a grant is the one thing the endpoint must never read", testMarker)
+			t.Errorf("ParseGrantType(%s) admitted a grant type the parse does not name: a Firebase ID token presented as a grant is the one thing the endpoint must never read", testMarker)
 			continue
 		}
 		if !errors.Is(err, ErrUnsupportedGrant) {
@@ -384,6 +384,9 @@ func TestTheTokenEndpointRefusesAFirebaseIDToken(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), tok) || strings.Contains(err.Error(), grant) && grant != "" {
 			t.Errorf("the refusal repeats the grant that failed it: %q", err)
+		}
+		if strings.Contains(err.Error(), "credential") {
+			t.Errorf("the refusal for an unknown grant is %q, which advertises a credentials grant: the endpoint refuses client_credentials itself (token.go), so naming it here tells a caller a grant is supported that is not", err)
 		}
 	}
 }

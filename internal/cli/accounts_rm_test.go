@@ -645,15 +645,17 @@ func TestAccountsRmNamesItselfOnTheOwnersPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("accounts rm: %v\nstderr:\n%s", err, errOut)
 	}
-	// The header and the result banner are what the person reads, and a removal
-	// run labelled `fugaro accounts add` hands them the inverse of the command
-	// they ran. Both are this path's: a session's removal never converges (the
-	// gate refuses it), so this is where the door's own name is pinned.
-	for _, want := range []string{"fugaro accounts rm: project ", "fugaro accounts rm: result"} {
-		if !strings.Contains(errOut, want) {
-			t.Errorf("the run does not name itself where it prints %q:\nstderr:\n%s", want, errOut)
-		}
+	// The review screen's header and the run's own log are what name the door,
+	// and a removal run labelled `fugaro accounts add` hands the person the
+	// inverse of the command they ran. Both are this path's: a session's
+	// removal never converges (the gate refuses it), so this is where the
+	// door's own name is pinned. The log is the second surface because it is
+	// filed under the name the run opened it with (CL7a, D1352): a converge
+	// that borrowed add's name would file add's log and leave this one empty.
+	if !strings.Contains(errOut, "fugaro accounts rm: project ") {
+		t.Errorf("the run does not name itself where it prints its review screen:\nstderr:\n%s", errOut)
 	}
+	onlyLog(t, "accounts-rm")
 	if strings.Contains(errOut, "accounts add") || strings.Contains(out, "accounts add") {
 		t.Errorf("the removal run names the inverse command:\nstderr:\n%s\nstdout:\n%s", errOut, out)
 	}

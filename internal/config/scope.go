@@ -25,16 +25,17 @@ type ScopeRow struct {
 }
 
 const (
-	whyAnchor     = "it identifies the repository and anchors the project layer"
-	whyBranch     = "a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead"
-	whyPeople     = "reviewers are people of one repository"
-	whyFiles      = "it names a file in the repository"
-	whyPolicy     = "it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it"
-	whySecrets    = "secrets belong to one repository's Secret Manager entries"
-	whyFollowup   = "it decides whose comments steer a run with the repository's credentials"
-	whyRepoShape  = "it is the repository's own"
-	whyRemoved    = "it was removed in 0.7.0 (" + MigrationDoc + ")"
-	whyGovernance = "it is a guardrail Fugaro ships: the project layer sets it for every repository of the project" +
+	whyAnchor           = "it identifies the repository and anchors the project layer"
+	whyBranch           = "a project-wide base branch in the launcher-writable project layer would let a bucket writer point image builds at an unreviewed branch; the project's default base branch is the owner's, published to the policy node instead"
+	whyPeople           = "reviewers are people of one repository"
+	whyFiles            = "it names a file in the repository"
+	whyPolicy           = "it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it"
+	whySecrets          = "secrets belong to one repository's Secret Manager entries"
+	whyFollowup         = "it decides whose comments steer a run with the repository's credentials"
+	whyRepoShape        = "it is the repository's own"
+	whyCredentialAccess = "it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here"
+	whyRemoved          = "it was removed in 0.7.0 (" + MigrationDoc + ")"
+	whyGovernance       = "it is a guardrail Fugaro ships: the project layer sets it for every repository of the project" +
 		" (a top-level key of the layer file, like claude_models) and a repository can only tighten it," +
 		" because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6)"
 )
@@ -59,6 +60,20 @@ var Scopes = []ScopeRow{
 	{Key: "agent.models.coder", In: InProject | InRepo},
 	{Key: "agent.models.reviewer", In: InProject | InRepo},
 	{Key: "agent.models.background", In: InProject | InRepo},
+	// The four crafts (docs/model-crafts/spec.md §3): each craft's model and
+	// the credential or pool its calls go out on. A craft's model is a default
+	// the project sets for every repository of it, as agent.models.* is; its
+	// access is not, and carries agent.oauth_token's own why — one sentence
+	// for all four, because the reason is about the key and not about which
+	// craft writes it.
+	{Key: "agent.crafts.coder.model", In: InProject | InRepo},
+	{Key: "agent.crafts.coder.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.review.model", In: InProject | InRepo},
+	{Key: "agent.crafts.review.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.senior-review.model", In: InProject | InRepo},
+	{Key: "agent.crafts.senior-review.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.security-review.model", In: InProject | InRepo},
+	{Key: "agent.crafts.security-review.access", In: InRepo, Why: whyCredentialAccess},
 	{Key: "agent.review_rounds", In: InProject | InRepo | InOverride},
 	{Key: "agent.max_budget_usd", In: InProject | InRepo | InOverride},
 	{Key: "agent.instructions", In: InRepo, Why: whyFiles},

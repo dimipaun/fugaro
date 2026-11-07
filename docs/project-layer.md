@@ -160,6 +160,14 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `agent.models.coder` | project, repo |  |
 | `agent.models.reviewer` | project, repo |  |
 | `agent.models.background` | project, repo |  |
+| `agent.crafts.coder.model` | project, repo |  |
+| `agent.crafts.coder.access` | repo | it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here |
+| `agent.crafts.review.model` | project, repo |  |
+| `agent.crafts.review.access` | repo | it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here |
+| `agent.crafts.senior-review.model` | project, repo |  |
+| `agent.crafts.senior-review.access` | repo | it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here |
+| `agent.crafts.security-review.model` | project, repo |  |
+| `agent.crafts.security-review.access` | repo | it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here |
 | `agent.review_rounds` | project, repo, override |  |
 | `agent.max_budget_usd` | project, repo, override |  |
 | `agent.instructions` | repo | it names a file in the repository |

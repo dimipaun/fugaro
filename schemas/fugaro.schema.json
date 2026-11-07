@@ -68,6 +68,17 @@
             "background": { "$ref": "#/$defs/modelName", "description": "Claude Code's small background requests" }
           }
         },
+        "crafts": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Each craft's model and the credential or pool its calls go out on (docs/model-crafts/spec.md §3). A craft that sets nothing takes the model and the access of the craft it follows — review follows coder, security-review follows senior-review — and the two halves inherit separately. No key here turns a review level on: level 3 stays the review levels' and the recipe's switch, not the security-review craft's.",
+          "properties": {
+            "coder": { "$ref": "#/$defs/craft", "description": "implement and fix" },
+            "review": { "$ref": "#/$defs/craft", "description": "review, level 1" },
+            "senior-review": { "$ref": "#/$defs/craft", "description": "senior review, level 2" },
+            "security-review": { "$ref": "#/$defs/craft", "description": "security review, level 3; setting it does not turn the level on" }
+          }
+        },
         "max_output_tokens": {
           "type": "object",
           "additionalProperties": false,
@@ -533,6 +544,21 @@
           }
         }
       }
+    },
+    "craft": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One craft: the model its calls use and the credential or pool they go out on (docs/model-crafts/spec.md §3). The two halves are set independently, so a security review may change only its model and keep the senior review's access.",
+      "properties": {
+        "model": { "$ref": "#/$defs/modelName", "description": "the model this craft's calls use" },
+        "access": { "$ref": "#/$defs/credentialName", "description": "the credential or pool its calls go out on, by name; the secret is a Secret Manager entry under that name and never appears in a config" }
+      }
+    },
+    "credentialName": {
+      "type": "string",
+      "maxLength": 31,
+      "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
+      "description": "A credential or pool name, config.ClaudeAccountNameRE: a credential generalises a Claude account (D1621), so it is named the way one is. vertex matches it and is the built-in credential every installation has."
     }
   }
 }

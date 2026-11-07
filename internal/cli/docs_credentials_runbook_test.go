@@ -31,8 +31,10 @@ func TestDocsCredentialsRunbookNamesEveryOwnerStep(t *testing.T) {
 		"fugaro accounts ls",
 		// C1.21's clearing of a wrong mark.
 		"fugaro accounts clear",
-		// The opt-in, named so an operator can tell whether it is on at all.
-		"fugaro update --provision-credentials",
+		// The command that deploys it, named so an operator can tell what puts
+		// the service there at all -- it is an ordinary step of `fugaro update`
+		// now, and the retired `--provision-credentials` is refused by name.
+		"it deploys the service on every installation",
 		// The two halt reasons an operator sees from this service.
 		"no_credential",
 		"creds_rules_denied",
@@ -97,9 +99,10 @@ func TestDocsCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 
 // TestDocsCredentialsRunbookSaysWhatTheLaunchWires: the runbook's header has to
 // say, before any of its steps, which jobs carry the service's address — the
-// launch sets it on an opted-in installation's repository job and on no other,
-// so a `cascade` run there is served while one on a shared project job or on an
-// installation that has not opted in fails at bootstrap — and what the release
+// launch sets it on a switched-on repository's job and on no other, so a
+// `cascade` run there is served while one on a shared project job or on a
+// repository whose root has not been re-applied with the switch on fails at
+// bootstrap — and what the release
 // does not carry (the other `agent.auth` modes' half). Every step in the file
 // is advice an operator acts on, so a reader who takes the wiring the wrong way
 // acts on it wrongly.
@@ -122,7 +125,7 @@ func TestDocsCredentialsRunbookSaysWhatTheLaunchWires(t *testing.T) {
 	for _, want := range []string{
 		"the launch wires the service",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
-		"a per-repository job of an installation that has opted in carries its address",
+		"a per-repository job of a repository whose root has been re-applied with the switch on carries its address",
 		"shared project job",
 		"byte for byte what it was",
 		"serviceUpstream",

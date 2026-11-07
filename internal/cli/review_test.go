@@ -310,7 +310,7 @@ func TestReviewRefusesWhereTheCredentialsServiceIsOff(t *testing.T) {
 
 	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
 		"credentials_service is not published in this project's config",
-		"fugaro update --provision-credentials",
+		"fugaro update --firebase-project",
 		"fugaro creds set github-app-key")
 }
 

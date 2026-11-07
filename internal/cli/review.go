@@ -241,7 +241,7 @@ func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr
 // yet: the service is deployed to admit a repository's own job, and admitting
 // a review caller whose job is project-scoped is C3.9, which is not built
 // (Global Constraint 6). The refusal says so in as many words, because the
-// other half's remedy (fugaro update --provision-credentials) is a command and
+// other half's remedy (an ordinary `fugaro update`) is a command and
 // this half has none: no fugaro update reaches it, and the operator who reads
 // "not configured" would spend a while looking for one before concluding that
 // the release they are on cannot launch a review at all.
@@ -314,7 +314,7 @@ func checkReviewService(env *cloudEnv) error {
 	if env.lc != nil && env.lc.CredentialsService != nil && env.lc.CredentialsService.URL != "" {
 		return nil
 	}
-	return userErr("a review runs on the review-only job, which mounts no credential of its own: its read-only installation token and its account's model calls both come from the installation's credentials service, and this installation has none (credentials_service is not published in this project's config). Run fugaro update --provision-credentials to deploy the service, then fugaro creds set github-app-key, which is the App the review's read-only token is issued for")
+	return userErr("a review runs on the review-only job, which mounts no credential of its own: its read-only installation token and its account's model calls both come from the installation's credentials service, and this installation has none (credentials_service is not published in this project's config). An ordinary `fugaro update` deploys the service on every installation that can carry one, which needs the installation's Firebase backend (`fugaro update --firebase-project`) and at least one repository job; then `fugaro creds set github-app-key` writes the App the review's read-only token is issued for")
 }
 
 // checkReviewAccountState is D882's refusal: a review is never launched on an

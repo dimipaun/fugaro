@@ -300,20 +300,40 @@ func TestCatalogCheckIsNilWhenThereIsNothingToCheck(t *testing.T) {
 	}
 }
 
-// TestCatalogCheckRefusesAMissingBaseImage: the job runs the installation's own
-// fugaro image and every build it submits is FROM it, so an installation that
-// has a catalog to build and no such image cannot be given a job — the same
-// refusal the repository's own daily check makes for the kinds its workflows
-// build FROM.
-func TestCatalogCheckRefusesAMissingBaseImage(t *testing.T) {
+// TestCatalogCheckHasNoJobWithoutABaseImage: the job runs the installation's
+// own fugaro image and every build it submits is FROM it, so an installation
+// that has a catalog to build and no such image is given no job at all. Not a
+// job running from an image this run guessed, and — since #1843 — not a
+// refusal either: the pin is the images stage's, in the same run, and the
+// installation root is applied again behind it. An installation that stays
+// without a base image is the state it was in before the job existed, which
+// the module's own null plans exactly.
+func TestCatalogCheckHasNoJobWithoutABaseImage(t *testing.T) {
 	lc := parseLC(t, strings.Replace(catalogCheckLocal,
 		"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n", "", 1))
-	_, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
-	if err == nil || !strings.Contains(err.Error(), "base_images."+config.BaseKind) {
-		t.Fatalf("err = %v, want the missing base image named with the key that fixes it", err)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
+	if err != nil || cc != nil {
+		t.Fatalf("CatalogCheck with the project's catalog and no base image = %+v, %v, want no job and no error", cc, err)
 	}
-	// ... and with no catalog to build, no job and no refusal: the image is the
-	// job's own need.
+	spec, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	vars, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(vars), "catalog_check") {
+		t.Errorf("the installation tfvars name catalog_check, want the key left out:\n%s", vars)
+	}
+	// The base image is the job's own need: with one recorded, the same catalog
+	// gets the job, so the two readings above are not a job that nothing
+	// deploys at all.
+	cc, err = CatalogCheck(parseLC(t, catalogCheckLocal), "fugaro-runs-proj-1234", 0, true)
+	if err != nil || cc == nil {
+		t.Fatalf("CatalogCheck with a base image = %+v, %v, want the job", cc, err)
+	}
+	// ... and with no catalog to build, no job and no error: the same nil.
 	lc = parseLC(t, m4LocalConfig)
 	if cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true); err != nil || cc != nil {
 		t.Fatalf("CatalogCheck with no catalog = %+v, %v, want no job and no error", cc, err)
