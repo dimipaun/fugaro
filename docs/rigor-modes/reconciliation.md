@@ -745,7 +745,10 @@ pin over the three comment-only fragments under `docs/pending-workflows/`, moved
 the table's row from 103 to 104: it is a check's pin rather than a folder's, and
 the figure is the tree's either way. Amended 2026-11-07: `internal/cli/docs_roles_scopes_test.go`, the
 roles-and-scopes folder's pin (RS1: the decision block, the answered cells, the files
-and the tests the plan names), moved the table's row from 105 to 106.) They
+and the tests the plan names), moved the table's row from 105 to 106. Amended
+2026-11-07: `internal/cli/docs_subscriptions_test.go`, the subscriptions folder's
+pin over its plan's no-price-figure constraint (S0.1), moved the table's row from
+109 to 110.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -764,7 +767,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 28 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 109 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 110 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |

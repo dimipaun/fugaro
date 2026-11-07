@@ -17,7 +17,7 @@ We will acknowledge a report as soon as we can, work on a fix with you privately
 
 ## Supported versions
 
-Only the latest 0.x release is supported. Fugaro is pre-1.0; fixes land on `main` and ship in the next release.
+The current minor release and the one before it are supported. Fugaro is pre-1.0; fixes land on `main` and ship in the next release.
 
 ## Trust model and known limits
 
