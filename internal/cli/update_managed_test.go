@@ -299,29 +299,35 @@ func TestUpdateManagedRemovalNoFlagAdmitsLeavesNoCommand(t *testing.T) {
 // with no rule left to read it — an outsider's grant, a GPU the cost list
 // blocks — with the owner told the removal was theirs alone.
 //
-// The two plans are that one shape from two sides: a bucket this installation
-// removes (the guard's refusal, which --allow-delete does reach) beside a change
-// no list reaches at all. The left-for-you has to be the plan refusal's, with no
-// command, and nothing may be applied. The mutation this is for is a
-// gateDeleteLeft that asks what the plan's addresses are and never which rule
-// refused: both arms hand the owner a command that applies the other refusal.
+// The three plans are that one shape from three sides: a bucket this
+// installation removes (the guard's refusal, which --allow-delete does reach)
+// beside a change no list reaches at all, and one address that is both — the
+// job below replaced, where the guard refuses the removal and the cost list the
+// GPU its create half states, so the address is on the list the flag clears and
+// the flag would still apply what the cost list blocked. The left-for-you has
+// to be the plan refusal's, with no command, and nothing may be applied. The
+// mutation this is for is a gateDeleteLeft that asks what the plan's addresses
+// are and never which rule refused: every arm hands the owner a command that
+// applies the other refusal.
 func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		// other is the change no delete list reaches, and names is the fact the
+		// plan is the whole plan — the removal and the change no delete list
+		// reaches, or the one change that is both — and names is the fact the
 		// refusal has to be about: a mixed plan that was refused, or applied, for
 		// any other reason would leave these assertions green.
-		other planChange
+		plan  []planChange
 		names string
 	}{
 		{"a grant the cover refuses beside the removal",
-			grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create"), "user:a@example.com"},
-		{"a job the cost list blocks beside the removal", gpuJobPlan(), "nvidia-l4"},
+			[]planChange{uploadsBucketRemoval(), grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")}, "user:a@example.com"},
+		{"a job the cost list blocks beside the removal", []planChange{uploadsBucketRemoval(), gpuJobPlan()}, "nvidia-l4"},
+		{"a replace the cost list blocks at the removal's own address", []planChange{gpuJobReplace()}, "nvidia-l4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateManagedRig(t)
 			updating(t, r)
-			r.setPlan(t, uploadsBucketRemoval(), tc.other)
+			r.setPlan(t, tc.plan...)
 
 			got, err := updateRun(t, r, "update", "--yes")
 			if err == nil {
@@ -378,6 +384,11 @@ func TestGateRefusedAsksTheDeleteQuestionOnlyOfARefusal(t *testing.T) {
 			managedmode.Verdict{Refusals: []managedmode.Refusal{removal, {Gate: "cover", Address: "module.installation.google_storage_bucket_iam_member.runs_outsider[\"user:a@example.com\"]", Why: "a member the review did not list"}}}, initflow.GateRefusedPlan},
 		{"a plan the cost list refused beside the removal", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
 			managedmode.Verdict{Refusals: []managedmode.Refusal{removal, {Gate: "cost", Why: "nvidia-l4"}}}, initflow.GateRefusedPlan},
+		// The removal's own address, refused by the cost list as well: a replace
+		// is one change, and the flag would clear the address and apply the
+		// create half the cost list blocked.
+		{"a plan the cost list refused at the removal's own address", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal, {Gate: "cover", Address: removal.Address, Why: "actions delete, create"}, {Gate: "cost", Address: removal.Address, Why: "nvidia-l4"}}}, initflow.GateRefusedPlan},
 		{"a mark that could not be read again", errors.New("the creation fact of p could not be read a second time, immediately before the write"),
 			managedmode.Verdict{Refusals: []managedmode.Refusal{removal}}, initflow.GateRefusedUnread},
 	} {
@@ -753,6 +764,18 @@ func gpuJobPlan() planChange {
 			}}}},
 		}},
 	}
+}
+
+// gpuJobReplace is the same job as one change that is a removal and a creation
+// at once: the address the guard refuses for its delete half (--allow-delete
+// clears it, tf.Listable) and the cost list refuses for the GPU its create half
+// states. It is the one shape the addresses alone cannot tell apart from a
+// removal the flag admits, and the reason gateDeleteLeft asks the verdict which
+// rule wrote the line as well.
+func gpuJobReplace() planChange {
+	ch := gpuJobPlan()
+	ch["change"].(map[string]any)["actions"] = []string{"delete", "create"}
+	return ch
 }
 
 // The gate's refusals are refusals in the owner's own terminal too, and the two
@@ -1726,6 +1749,17 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	}
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
 		t.Errorf("the workspace step reads the session's own refusal rather than what about the node the gate would not admit: %s", line)
+	}
+	// What stands beside that sentence: a Typed step is the owner's own (D1026
+	// refuses the plan gate's answer for it, and the record's rule for a
+	// widening is the class), so the refusal keeps the stage's own command — the
+	// one thing an agent's report to its owner can act on. The Kind is the
+	// assertion, not the text: the plan refusal's text carries the gate's
+	// sentence too, so a stage that left this field unset would read as the
+	// right answer in the line above and hand the owner "a person files an
+	// issue" instead.
+	if left := leftFor(got, initflow.Workspace, initflow.LeftCommand); !strings.Contains(left, selfCommand()+" update") {
+		t.Errorf("the class refusal did not keep the workspace stage's own command (%q): the step is the owner's to run themselves, and a refusal that sends them to an issue about it leaves the loop it opened unclosed:\n%s", left, got)
 	}
 	if got := wsMembers(t, db, initProjectName); !slices.Equal(got, []string{"member-b"}) {
 		t.Errorf("the published members are %v, want [%s]: the refused step wrote the local table", got, "member-b")

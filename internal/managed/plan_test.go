@@ -1305,10 +1305,11 @@ func TestACoverWhyThatIsARemovalRuleKeepsItsIdentityWhole(t *testing.T) {
 // RefusedOnlyForRemovals is the question internal/cli's gateDeleteLeft asks
 // before it hands the owner their own --allow-delete (the flag stands the whole
 // gate down, so it may only be offered for a plan nothing else refused), and
-// this is the pin on its four answers: the addresses it is asked about are the
+// this is the pin on its answers: the addresses it is asked about are the
 // caller's own (tf.Listable), the two halves of the gate's refusal of one
-// removal both count as that removal's, and a refusal about anything else — or
-// one about the plan rather than a change of it — is not.
+// removal both count as that removal's, and a refusal about anything else — a
+// cost refusal at the removal's own address included, or one about the plan
+// rather than a change of it — is not.
 //
 // The end-to-end arms of the same decision are internal/cli's
 // (TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand and
@@ -1320,8 +1321,9 @@ func TestRefusedOnlyForRemovals(t *testing.T) {
 		grant   = `module.installation.google_storage_bucket_iam_member.runs_outsider["user:a@example.com"]`
 	)
 	// The cover refuses a removal too — "actions delete" is outside what a run
-	// announces — and that line is the same fact as the guard's, which is why
-	// the question is asked of the addresses.
+	// announces — and that line is the same fact as the guard's, so a refusal by
+	// either of those two gates is the removal's. The cost list's is not, at any
+	// address: it refuses a change that creates, which the flag does not admit.
 	guardLine := Refusal{Gate: guardGate, Address: removal, Why: "delete"}
 	coverLine := Refusal{Gate: coverGate, Address: removal, Why: "actions delete"}
 	admits := []string{removal}
@@ -1337,6 +1339,12 @@ func TestRefusedOnlyForRemovals(t *testing.T) {
 			{Gate: coverGate, Address: grant, Why: "a member the review did not list"}}}, admits, false},
 		{"a cost refusal beside the removal", Verdict{Refusals: []Refusal{guardLine, coverLine,
 			{Gate: costGate, Why: "nvidia-l4"}}}, admits, false},
+		// The one the addresses alone cannot tell: a replace is one address the
+		// delete rule refuses for its removal and the cost list refuses for what
+		// its create half states, so the address is on admits and the flag would
+		// apply the create the cost list blocked.
+		{"a cost refusal at the removal's own address", Verdict{Refusals: []Refusal{guardLine, coverLine,
+			{Gate: costGate, Address: removal, Why: "nvidia-l4: an attached GPU"}}}, admits, false},
 		{"a removal no list admits", Verdict{Refusals: []Refusal{guardLine, coverLine}}, nil, false},
 		{"a plan-level refusal", Verdict{Refusals: []Refusal{{Gate: coverGate, Why: "no plan"}}}, admits, false},
 		{"a verdict that refused nothing", Verdict{}, admits, false},

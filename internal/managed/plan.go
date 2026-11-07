@@ -138,8 +138,9 @@ type Verdict struct {
 
 // RefusedOnlyForRemovals is whether every refusal in this verdict is about one
 // of the addresses in admits — the removals a caller's own delete approval
-// would clear there (tf.Listable) — so the plan's refusals are the removals
-// themselves and nothing else.
+// would clear there (tf.Listable) — and was made by the rule that refuses
+// removals, so the plan's refusals are the removals themselves and nothing
+// else.
 //
 // It is what a caller asks before telling its reader that their own
 // --allow-delete admits what the gate refused (internal/cli's gateDeleteLeft):
@@ -150,16 +151,24 @@ type Verdict struct {
 // person runs is the delete rule's own way past the delete rule, and not a way
 // past any other.
 //
-// Asked of the addresses and not of which gate wrote the line, because BOTH
-// halves of the gate refuse a removal and they refuse it as one fact: the guard
-// because the owner's list does not hold it, the cover because "actions delete"
-// is outside what a run announces. A caller that asked for the guard's lines
-// alone would therefore never offer the command for a plan whose only refusal
-// is a removal — every one of them carries the cover's line beside it — and the
-// flag clears both, since the run that passes it asks neither.
+// The address alone is not the whole of the question, and the gates are asked
+// beside it. BOTH halves of the delete rule refuse a removal and they refuse it
+// as one fact — the guard because the owner's list does not hold it, the cover
+// because "actions delete" is outside what a run announces — so a caller that
+// asked for the guard's lines alone would never offer the command for a plan
+// whose only refusal is a removal: every one of them carries the cover's line
+// beside it, and the flag clears both, since the run that passes it asks
+// neither. What the flag does NOT clear is the cost list's line, and a replace
+// is where the two meet: one address carrying a delete and a create, refused by
+// the delete rule for the removal and by the cost list for what the create half
+// states (tf.ManagedCosts bills a change that creates). That address is on
+// admits, so an address-only test would offer the owner the command for a plan
+// whose create half the flag applies unjudged — the very failure this exists to
+// prevent. The cost list's line is therefore not one of these, however the
+// address matches.
 //
-// A refusal with no address is not one of them: a gate that refused the plan
-// rather than a change of it refused something no list entry is about.
+// A refusal with no address is not one of them either: a gate that refused the
+// plan rather than a change of it refused something no list entry is about.
 //
 // It says nothing about whether the flag clears the removals it did refuse: an
 // address is on admits when tf.Listable put it there, and a caller that fills
@@ -170,6 +179,9 @@ func (v Verdict) RefusedOnlyForRemovals(admits []string) bool {
 	}
 	for _, r := range v.Refusals {
 		if r.Address == "" || !slices.Contains(admits, r.Address) {
+			return false
+		}
+		if r.Gate != guardGate && r.Gate != coverGate {
 			return false
 		}
 	}

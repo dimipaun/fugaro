@@ -661,12 +661,12 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// A node write with no bytes to write is the stage's own contract
 		// broken, and it is refused rather than published: an empty document is
 		// the one thing this gate must never hand to a write.
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace node this step would publish is empty")}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
 	conv := managedmode.ConvergeAdmitted(doc, class, workspaceAdmittedRules)
 	mg, err := r.gate.g.admit(ctx, class, conv)
 	if err != nil {
-		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
 	if !initflow.GateConfirms(class, r.conditions(), mg) {
@@ -686,7 +686,7 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// confirmation the caller would have asked.
 		if class == initflow.Typed && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
 		}
 		return false, nil
 	}
