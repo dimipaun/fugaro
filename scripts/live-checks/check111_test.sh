@@ -259,6 +259,12 @@ if [ -n "${AI_AGENT:-}" ]; then
 fi
 
 if [ "$json" = yes ]; then
+  # FAKE111_ASK_JSON: the picker running in the --json session, which is one of
+  # the runs where nothing may be asked and the ONE run whose capture is two
+  # files. The prompt goes to stderr, where a prompt in a run with no terminal
+  # belongs and where the document is not — so a case can tell a read of both of
+  # mode 4's files from a read of one, or of none.
+  [ -z "${FAKE111_ASK_JSON:-}" ] || printf 'Billing account (a number, or none to link none now): ' >&2
   printf '{"ok": true, "project": "%s", "billing": {"linked": false}}\n' "$proj"
   echo "$link" >&2
   exit 0
@@ -682,12 +688,37 @@ test_a_picker_where_none_may_run_is_a_fail() {
   RUN111_ENV=(FAKE111_ASK=1)
   run111
   expect_status "$status" 1 "picker where none may run"
-  expect_contains "$out" "FACT picker-3: FAIL — the picker ran where it must not: Billing account (a number, or" "picker where none may run: mode 3's own row"
-  expect_contains "$out" "FACT picker-4: PASS — " "picker where none may run: --json's run asks nothing"
+  expect_contains "$out" "FACT picker-3: FAIL — the picker ran where it must not: " "picker where none may run: mode 3's own row"
+  expect_contains "$out" "mode-3.log: Billing account (a number, or" "picker where none may run: and the row names the capture it read the prompt in"
+  # The PASS rows have to be readings: mode 4's capture is two files, and a row
+  # that named neither would be a PASS about a file nothing opened.
+  expect_contains "$out" "FACT picker-4: PASS — the picker never ran: neither its prompt nor its list appeared in " "picker where none may run: --json's run asks nothing, read from its own two files"
+  expect_contains "$out" "mode-4.json " "picker where none may run: and the row names the document it read"
+  expect_contains "$out" "mode-4.err, so no run that cannot answer was asked to" "picker where none may run: and the second of mode 4's two files with it"
   expect_contains "$out" "FACT picker-5: PASS — " "picker where none may run: and neither does an agent's session"
   expect_contains "$out" "FACT leak-3: PASS — " "picker where none may run: a prompt is not a leak"
   expect_contains "$out" "CHECK 111 RESULT: FAIL" "picker where none may run: the verdict"
   expect_scratch_gone "$dir" "picker where none may run"
+}
+
+# The --json session is one of the runs where nothing may be asked, and the one
+# run whose capture is TWO files — the document on stdout and everything else on
+# stderr. A prompt in either is a prompt, so this case asks in the file the
+# document is not: a read of mode-4.json alone, or of the mode-4.log that does
+# not exist, records this criterion as verified without ever reading it.
+test_a_picker_under_json_is_a_fail() {
+  setup_case askjson
+  sandbox_args
+  RUN111_ENV=(FAKE111_ASK_JSON=1)
+  run111
+  expect_status "$status" 1 "picker under --json"
+  expect_contains "$out" "FACT picker-4: FAIL — the picker ran where it must not: " "picker under --json: mode 4's own row"
+  expect_contains "$out" "mode-4.err: Billing account (a number, or" "picker under --json: and the row names the capture the prompt was read in"
+  expect_contains "$out" "FACT document-4: PASS — " "picker under --json: the document itself carries no account"
+  expect_contains "$out" "FACT picker-3: PASS — " "picker under --json: and mode 3 is untouched by it"
+  expect_contains "$out" "FACT picker-5: PASS — " "picker under --json: and so is an agent's session"
+  expect_contains "$out" "CHECK 111 RESULT: FAIL" "picker under --json: the verdict"
+  expect_scratch_gone "$dir" "picker under --json"
 }
 
 # Criterion 3 reads four forms of a leak, and each of these four cases carries
@@ -914,6 +945,71 @@ test_xtrace_is_refused() {
   expect_scratch_gone "$dir" "xtrace"
 }
 
+# The config root is this check's own, and the machine's own installations are
+# never read or written. A shell that already points XDG_CONFIG_HOME somewhere
+# else is refused BEFORE the export — after it the same stop could never fire,
+# and a half-run would leave every mode below reading the machine's own config.
+test_a_foreign_config_root_is_refused() {
+  setup_case configroot
+  sandbox_args
+  mkdir -p "$work/not-this-checks-root"
+  RUN111_ENV=(XDG_CONFIG_HOME="$work/not-this-checks-root")
+  run111
+  expect_status "$status" 2 "foreign config root"
+  [ -s "$dir/calls" ] && fail "foreign config root: a tool was called: $(tr '\n' ';' <"$dir/calls")"
+  expect_contains "$(cat "$dir/err")" "XDG_CONFIG_HOME" "foreign config root: the stop names the variable"
+  expect_contains "$(cat "$dir/err")" "not-this-checks-root" "foreign config root: and where it pointed"
+  expect_contains "$out" "FACT aborted: FAIL — " "foreign config root: the block says the run was refused"
+  expect_absent "$out" "CHECK 111 RESULT: PASS" "foreign config root: and carries no verdict"
+  expect_scratch_gone "$dir" "foreign config root"
+}
+
+# What this check writes is a wizard's answers and three projects' transcripts,
+# so a scratch directory inside a git work tree is refused: a run that wrote
+# there could have its own output committed by accident.
+test_a_scratch_directory_inside_a_work_tree_is_refused() {
+  setup_case intree
+  sandbox_args
+  if ! command -v git >/dev/null 2>&1; then
+    echo "check111_test: git is not installed, so the work-tree refusal has no case — that one case was not run" >&2
+    return 0
+  fi
+  mkdir -p "$dir/repo"
+  (cd "$dir/repo" && git init -q .) || { fail "work tree: git init failed, so the case proves nothing"; return 0; }
+  RUN111_ENV=(TMPDIR="$dir/repo")
+  run111
+  expect_status "$status" 2 "work tree"
+  [ -s "$dir/calls" ] && fail "work tree: a tool was called: $(tr '\n' ';' <"$dir/calls")"
+  expect_contains "$(cat "$dir/err")" "git work tree" "work tree: the stop says why"
+  expect_contains "$out" "FACT aborted: FAIL — " "work tree: the block says the run was refused"
+  expect_absent "$out" "CHECK 111 RESULT: PASS" "work tree: and carries no verdict"
+  [ -z "$(find "$dir/repo" -mindepth 1 -maxdepth 1 -name 'chk111.*' 2>/dev/null)" ] \
+    || fail "work tree: the scratch directory survived the refusal"
+}
+
+# --modes names what this run selects, and a name that is not one of the seven,
+# or one named twice, is a mode the check would have to read as run or as not
+# run with nothing to say which — refused before a tool is called.
+test_modes_that_are_unknown_or_named_twice_are_refused() {
+  local what
+  for what in unknown doubled; do
+    setup_case "modes-$what"
+    sandbox_args
+    case "$what" in
+    unknown) RUN111_ARGS+=(--modes 1a,9z) ;;
+    doubled) RUN111_ARGS+=(--modes 1a,1a) ;;
+    esac
+    run111
+    expect_status "$status" 2 "modes $what"
+    [ -s "$dir/calls" ] && fail "modes $what: a tool was called before the list was read: $(tr '\n' ';' <"$dir/calls")"
+    expect_contains "$(cat "$dir/err")" "usage:" "modes $what: the stop prints the usage line"
+    expect_contains "$(cat "$dir/err")" "--modes" "modes $what: and names the flag"
+    expect_contains "$out" "FACT aborted: FAIL — " "modes $what: the block says the run was refused"
+    expect_absent "$out" "CHECK 111 RESULT: PASS" "modes $what: and carries no verdict"
+    expect_scratch_gone "$dir" "modes $what"
+  done
+}
+
 test_usage() {
   local what
   for what in "no project" "no names file" "unknown flag"; do
@@ -961,6 +1057,7 @@ t test_all_seven_runs_pass
 t test_a_failed_assertion_still_restores
 t test_a_leak_is_a_fail
 t test_a_picker_where_none_may_run_is_a_fail
+t test_a_picker_under_json_is_a_fail
 t test_criterion_3_detects_an_account_resource_id
 t test_criterion_3_detects_one_of_the_owners_ids
 t test_criterion_3_detects_a_display_name
@@ -981,6 +1078,9 @@ t test_belong_is_refused
 t test_the_agent_marker_is_refused
 t test_no_adc_quota_project_stops
 t test_xtrace_is_refused
+t test_a_foreign_config_root_is_refused
+t test_a_scratch_directory_inside_a_work_tree_is_refused
+t test_modes_that_are_unknown_or_named_twice_are_refused
 t test_usage
 
 if [ "$failures" -ne 0 ]; then

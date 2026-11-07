@@ -9031,7 +9031,7 @@ plain() {
     assert_mode 4
     ```
 
-   The picker never runs, and **no account list is in the document**: the `jq` line must print `true` (that is the API's resource form, `billingAccounts/<id>`), and `assert_mode 4` checks the display names and the numbered list against the document **and** against stderr — the two are kept apart because `--json`'s document is stdout. **FACT:** the exit code, the document's own account of the billing stage, the guided line on stderr, and the assertions.
+   The picker never runs, and **no account list is in the document**: the `jq` line must print `true` (that is the API's resource form, `billingAccounts/<id>`), and `assert_mode 4` checks the display names and the numbered list against the document **and** against stderr — the two are kept apart because `--json`'s document is stdout, and the check's own picker row reads both of them for the same reason: a prompt in either file is a prompt, and mode 4 is the **one** mode whose capture is two files. **FACT:** the exit code, the document's own account of the billing stage, the guided line on stderr, and the assertions.
 5. **An agent session.** The markers `Options.Agent` reads are `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT` and `AI_AGENT`, and — since 0.20.0 — `CLAUDE_CODE_SSE_PORT` wherever no terminal is on stdin or another of those markers is set beside it (the IDE extension sets that one in a person's own terminal too, so alone, at a real terminal, it is not an agent's session; `internal/cli/initsecrets.go`, `internal/agentenv/agentenv.go`): with one set, nothing is applied at all, `--yes` or not, and every applying stage is *needs-you* ("run this in your own terminal window").
 
     ```bash

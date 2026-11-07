@@ -1073,14 +1073,30 @@ assert_leak() {
 
 # assert_no_picker MODE: the picker's own prompt never appeared. canType() is the
 # four conditions of Global Constraint 8, and where it is false nothing may be
-# listed and nothing may be asked.
+# listed and nothing may be asked. Mode 4 is the one mode whose capture is TWO
+# files — its document on stdout and everything else on stderr — so this reads
+# the same per-mode list assert_leak does, which is the list the register's own
+# block reads: a prompt in either file is a prompt. A file that is not there is
+# not a reading: mode_exit has already refused such a mode, and this row says the
+# same thing rather than a PASS about a criterion nothing was read for.
 assert_no_picker() {
-  local m=$1 line
-  line=$(first_line "$SCRATCH/mode-$m.log" 'Billing account (a number, or')
-  if [ -z "$line" ]; then
-    fact "picker-$m" PASS "the picker never ran: neither its prompt nor its list appeared, so no run that cannot answer was asked to"
+  local m=$1 files=() f line found="" files_read=0
+  case "$m" in
+  4) files=("$SCRATCH/mode-4.json" "$SCRATCH/mode-4.err") ;;
+  *) files=("$SCRATCH/mode-$m.log") ;;
+  esac
+  for f in "${files[@]}"; do
+    [ -s "$f" ] || continue
+    files_read=$((files_read + 1))
+    line=$(first_line "$f" 'Billing account (a number, or')
+    [ -z "$line" ] || { found="$f: $line"; break; }
+  done
+  if [ -n "$found" ]; then
+    fact "picker-$m" FAIL "the picker ran where it must not: $found"
+  elif [ "$files_read" -eq 0 ]; then
+    fact "picker-$m" FAIL "nothing was read: ${files[*]} is missing or empty, and a criterion nothing was read for is not a pass"
   else
-    fact "picker-$m" FAIL "the picker ran where it must not: $line"
+    fact "picker-$m" PASS "the picker never ran: neither its prompt nor its list appeared in ${files[*]}, so no run that cannot answer was asked to"
   fi
 }
 

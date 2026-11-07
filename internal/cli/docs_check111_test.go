@@ -60,6 +60,10 @@ func TestDocsCheck111IsOneScriptTheOwnerRuns(t *testing.T) {
 		// share with the rest of the run.
 		"One step no script may run for you",
 		"`--second-adc`",
+		// Mode 4 is the one mode whose capture is two files, and both of them
+		// are read: the section has to say so, because a picker row read from
+		// the mode-4.log that does not exist is a PASS nothing was read for.
+		"the check's own picker row reads both of them for the same reason",
 		// --dry-run is the first thing the owner runs, because the real run
 		// disables an API in two throwaway projects and repoints their ADC.
 		"`--dry-run` prints every command",
