@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -80,6 +81,12 @@ func TestProviderStreamCutIsLoggedAndCounted(t *testing.T) {
 	if line["cut"] != cutUpstream {
 		t.Errorf("cut = %v, want %q: the upstream's body ended, not the agent's read", line["cut"], cutUpstream)
 	}
+	// The read that failed said why, in the transport's own words: without
+	// them the line names the side that ended the stream but not what the
+	// connection did, which is the half an operator is looking for.
+	if e, _ := line["error"].(string); !strings.Contains(e, "EOF") {
+		t.Errorf("error = %q, want the failed read's own text (the connection was dropped mid-body)", e)
+	}
 }
 
 // The same on a Claude call: the diagnostic is not the provider route's, it
@@ -100,6 +107,9 @@ func TestClaudeStreamCutIsLoggedAndCounted(t *testing.T) {
 	}
 	if line["terminal_event_seen"] != false {
 		t.Error("terminal_event_seen is true for a stream cut before message_stop")
+	}
+	if e, _ := line["error"].(string); e == "" {
+		t.Error("error is empty: the read that ended this stream failed, and it said why")
 	}
 }
 
@@ -147,6 +157,17 @@ func TestClientCutStreamIsNotCounted(t *testing.T) {
 	if line["cut"] != cutClient {
 		t.Errorf("cut = %v, want %q: the agent's end went away, and the line still says which end it was", line["cut"], cutClient)
 	}
+	// Which read or write failed here is the race this test starts on
+	// purpose -- the agent's cancel reaches the upstream read and this
+	// gateway's write at once -- so the words are not pinned, only that the
+	// line carries what failed and keeps it on one line.
+	e, ok := line["error"].(string)
+	if !ok {
+		t.Errorf("the line carries no error text: %v", line)
+	}
+	if strings.ContainsAny(e, "\n\r\t") {
+		t.Errorf("the error text leaves its one line: %q", e)
+	}
 }
 
 // A whole stream is not a cut one: the count stays 0 and no warning is
@@ -167,20 +188,70 @@ func TestWholeStreamIsNotACutOne(t *testing.T) {
 // The line names the call and carries no content, no header and no
 // credential: neither the run's own token (the caller's, scrubbed from every
 // forwarded call) nor the provider's key, and not one byte of the request or
-// of the response the upstream sent.
+// of the response the upstream sent. The error text is the one part of the
+// line this gateway did not write itself, so it is checked here on the same
+// terms as the rest.
 func TestStreamCutLineCarriesNoContent(t *testing.T) {
 	const nonce = "NONCE-PROMPT-f3a1c9"
 	reply := anthropicfake.Compat{OmitCacheFields: true}.StreamOK(dsModel, pricing.Usage{Input: 2000, Output: 5})
 	reply.CutAfter = 3
 	r := feeRouted(t, 0, nil, routedStage, dsRoute, reply)
 	body := `{"model":"` + dsModel + `","max_tokens":1000,"stream":true,"messages":[{"role":"user","content":"` + nonce + `"}]}`
-	if resp, b := r.post(body); resp.StatusCode != http.StatusOK {
+	if resp, b := r.post(body, "authorization", "Bearer "+agentSecret); resp.StatusCode != http.StatusOK {
 		t.Fatalf("%d %s", resp.StatusCode, b)
 	}
-	_, raw := streamCutLine(t, r.logs)
-	for _, bad := range []string{nonce, providerKey, r.gw.Token(), "x-api-key", "authorization", "anthropic-version"} {
-		if strings.Contains(raw, bad) {
-			t.Errorf("the stream-cut line carries %q: %s", bad, raw)
+	line, raw := streamCutLine(t, r.logs)
+	// This one is the provider route's, whose key the call carried: the
+	// line says the read failed and never says what the key was.
+	if e, _ := line["error"].(string); e == "" {
+		t.Errorf("the line's error text is missing: %s", raw)
+	}
+	secrets := map[string]string{
+		"the prompt":          nonce,
+		"the provider's key":  providerKey,
+		"the agent's own key": agentSecret,
+		"the run's token":     r.gw.Token(),
+		"the token's prefix":  r.gw.Token()[:16],
+	}
+	// The error text is the one part of this line this gateway did not
+	// write itself, so the secrets are checked against every line the stage
+	// logged, not only the warning's: a transport's words are exactly where
+	// a key quoted out of a URL or a header would arrive.
+	for _, bad := range []string{"x-api-key", "authorization", "anthropic-version"} {
+		secrets[bad] = bad
+	}
+	all := r.logs.String()
+	for name, s := range secrets {
+		if strings.Contains(all, s) {
+			t.Errorf("the log holds %s: %q", name, s)
 		}
+	}
+}
+
+// streamEndError is the whole guard between a transport's words and a log
+// line, so it is pinned on its own: no error is no text, a credential the
+// call carried never survives, an error message cannot fold the line, and
+// the length is bounded like every other logged value.
+func TestStreamEndErrorScrubsAndFolds(t *testing.T) {
+	if got := streamEndError(nil); got != "" {
+		t.Errorf("streamEndError(nil) = %q, want no text: a body that ended cleanly has nothing to report", got)
+	}
+	// The key travels in a URL and a header of the error message, which is
+	// how a transport quotes the request it failed on.
+	err := errors.New(`Get "https://openrouter.ai/api?key=` + providerKey + `": unexpected EOF (x-api-key: ` + testKey + `)`)
+	got := streamEndError(err, providerKey, testKey)
+	for _, bad := range []string{providerKey, testKey} {
+		if strings.Contains(got, bad) {
+			t.Errorf("streamEndError kept %q: %s", bad, got)
+		}
+	}
+	if !strings.Contains(got, "unexpected EOF") || !strings.Contains(got, redacted) {
+		t.Errorf("streamEndError = %q, want the message with the credentials replaced", got)
+	}
+	if got := streamEndError(errors.New("a\nb\tc")); strings.ContainsAny(got, "\n\t") {
+		t.Errorf("streamEndError kept a control character: %q", got)
+	}
+	if got := streamEndError(errors.New(strings.Repeat("x", 4*maxLogValue))); len(got) > maxLogValue {
+		t.Errorf("streamEndError kept %d bytes, want at most %d", len(got), maxLogValue)
 	}
 }
