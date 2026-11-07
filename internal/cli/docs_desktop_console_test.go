@@ -9789,6 +9789,22 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"`widening`",
 		"`changed`",
 		"`refusal`",
+		// The four optional members version 1 has since grown (D1164), off the
+		// four `omitempty` fields of `settingsWriteDoc` and the four rows
+		// `writeSettingsWriteTable` prints below `refusal`. The console's own
+		// row cannot build an entry write, so its reader ignores them — but the
+		// section is the document described member by member, and a reader who
+		// finds ten of the fourteen members is reading a shape the CLI no
+		// longer writes.
+		"`operation`",
+		"`entry_key`",
+		"`entry_value`",
+		"`entry_fields`",
+		// And the phase slot's third word. `settingsDryRunFlags` refuses
+		// `--ask` beside `--dry-run` exactly as it refuses `--yes`, so a
+		// section that counts the slot's words and stops at two is short by
+		// one, whatever the console's own argv passes.
+		"`--ask`",
 	} {
 		if !strings.Contains(write, want) {
 			t.Errorf("%s's §6.20 does not state %q: the write's dry run is the document the window and the write are built over, and it is the console's contract to describe", path, want)
