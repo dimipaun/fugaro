@@ -475,11 +475,19 @@ func (e *AgentError) Error() string { return AgentRefusal(e.Marker) }
 // refusal is built rather than read off Err here: only that caller knows
 // whether the gate judged a document at all. The zero value is the plan
 // refusal, which is the answer that must never hand the reader a confirmation
-// to type (CV1); Left turns the three into the left-for-you.
+// to type (CV1); Left turns the four into the left-for-you.
+//
+// Owner is the left-for-you of the one refusal whose remedy is a command the
+// reader already has (GateRefusedDelete): the flag that admits a refused
+// removal, the address the gate refused and the identity of the object it
+// takes away are the producer's to name — the door, the flag and the plan are
+// all its — so it is built whole there and carried here. Left hands it back
+// with the stage's name filled in.
 type GatedError struct {
 	Reason  string
 	Err     error
 	Refusal GateRefusal
+	Owner   Left
 }
 
 func (e *GatedError) Error() string { return e.Reason }
@@ -491,12 +499,13 @@ type GateRefusal uint8
 
 const (
 	// GateRefusedPlan is the gate reading the document and not admitting it:
-	// the cover, the cost list, the delete list. The step is nobody's from
-	// here — the plan is outside what Fugaro's own tables cover, so what fixes
-	// it is a release and not a confirmation — and the reader is told exactly
-	// that instead of being handed the stage's prompt to type the project's
-	// name, which is the deadlock CV1 is about (D1012: no typed confirmation
-	// reaches past a refusal).
+	// the cover or the cost list, with no command of the reader's own that
+	// admits what it refused. The step is nobody's from here — the plan is
+	// outside what Fugaro's own tables cover, so what fixes it is a release
+	// and not a confirmation — and the reader is told exactly that instead of
+	// being handed the stage's prompt to type the project's name, which is the
+	// deadlock CV1 is about (D1012: no typed confirmation reaches past a
+	// refusal).
 	GateRefusedPlan GateRefusal = iota
 	// GateRefusedClass is the document being admitted and the step's own
 	// confirmation class being one no plan gate covers (D1026: the policy
@@ -512,15 +521,37 @@ const (
 	// which is what the reader is told rather than that a cover refused a
 	// shape it never saw.
 	GateRefusedUnread
+	// GateRefusedDelete is the plan removing a resource the reader's own
+	// --allow-delete would admit (tf.Listable): a delete or a replace is their
+	// decision and not a session's, and the command that carries it already
+	// exists (spec §4.3's "For the owner" sentence, which promises that
+	// command and the identity the plan's before view carries). So this
+	// refusal is neither the plan's "file an issue" — nothing is missing from
+	// Fugaro's tables, the owner simply has not approved the removal — nor the
+	// stage's prompt, which asks for a typing the gate never reaches: what it
+	// leaves is Owner, the producer's own command line. The plan's own
+	// section for it is §4.1's delete rule 1.
+	GateRefusedDelete
 )
 
 // Left is the left-for-you of this refusal: the stage's own for the step that
-// is the owner's to run themselves, the refusal's own commandless text for
-// every other answer.
+// is the owner's to run themselves, the producer's command for the removal
+// their own flag admits, and the refusal's own commandless text for every
+// other answer.
 func (e *GatedError) Left(stage Left) Left {
 	switch e.Refusal {
 	case GateRefusedClass:
 		return stage
+	case GateRefusedDelete:
+		owner := e.Owner
+		if owner.Kind == "" {
+			// A producer that classified the refusal without building the
+			// command it promises: the plan's own text, never the empty line
+			// an empty Left would print.
+			return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason)}
+		}
+		owner.Stage = stage.Stage
+		return owner
 	case GateRefusedUnread:
 		return Left{Kind: LeftRefused, Text: gateUnjudged(e.Reason)}
 	default:

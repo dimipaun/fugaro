@@ -391,8 +391,11 @@ const VerifierAccountID = "fugaro-verifier"
 // it is given to this constant, so a plan cannot hand the account a name this
 // package reads differently. It is NOT among FugaroAccounts, for the
 // credentials and coordinator accounts' reason: its grants are a project-wide
-// reach that no `fugaro update` confirmation announced, so every one of them
-// is refused here and the step asks its owner (toCatalogCheck).
+// reach that no `fugaro update` confirmation announced, so it is read as a
+// kind of its own (toCatalogCheck) and every role it is given is refused
+// unless a row carries that bit — which is the bucket rows' objectUser one
+// alone, and only through bucketCondition's catalogRecordsGrant, the check
+// that pins the grant to one repository's records condition (D1148).
 const CatalogCheckAccountID = "fugaro-catalog-check"
 
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
@@ -1347,12 +1350,14 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			kind = toVerifier
 		case c.isCatalogCheckMember(m):
 			// ... and the project's catalog check job (D1148): its own kind,
-			// which no row accepts, so every one of its grants — and every
-			// other role a plan might reach for — is refused and the update
-			// that carries them asks its owner. Read here, before the review
-			// screen's list, for the deployer's reason: a plan that listed its
-			// address would otherwise be able to grant it a launcher's or an
-			// operator's role.
+			// which one row accepts — objectUser on a bucket, and only under
+			// the records condition of one repository (catalogRecordsGrant) —
+			// so every other grant it is given, and every other role a plan
+			// might reach for, is refused and the update that carries them
+			// asks its owner. Read here, before the review screen's list, for
+			// the deployer's reason: a plan that listed its address would
+			// otherwise be able to grant it a launcher's or an operator's
+			// role.
 			kind = toCatalogCheck
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {

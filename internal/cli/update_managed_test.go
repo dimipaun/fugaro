@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -97,6 +98,27 @@ func audits(t *testing.T, r *initRig) []managedmode.AuditRecord {
 	return got
 }
 
+// leftFor is one stage's left-for-you as it was printed, "" when it printed
+// none: the "left for you (<stage>, <kind>): <text>" line and the indented
+// command lines under it, joined by newlines. The shape is internal/initflow's
+// (loop.left and Loop.finish), so a test that reads it here is reading what
+// the person does.
+func leftFor(got, stage string, kind initflow.LeftKind) string {
+	lines := strings.Split(got, "\n")
+	head := "left for you (" + stage + ", " + string(kind) + "): "
+	for i, line := range lines {
+		if !strings.HasPrefix(line, head) {
+			continue
+		}
+		block := []string{line}
+		for j := i + 1; j < len(lines) && strings.HasPrefix(lines[j], "    "); j++ {
+			block = append(block, strings.TrimSpace(lines[j]))
+		}
+		return strings.Join(block, "\n")
+	}
+	return ""
+}
+
 // M1's red step. A managed project, a coding agent's session, and a plan that
 // removes an address the owner's list does not name: today the run is refused
 // before the stage is reached — the session reads the coding agent's own
@@ -107,6 +129,14 @@ func audits(t *testing.T, r *initRig) []managedmode.AuditRecord {
 // what the session reads, the guard's own managed advice is not (a session
 // that read that one would be told to hand the step over rather than what
 // about the plan was refused), and nothing was applied.
+//
+// And the left-for-you is the owner's own command rather than the plan
+// refusal's (gateDeleteLeft, spec §4.3's "For the owner"): this plan removes an
+// object --allow-delete admits, so the refusal leaves the command the owner has
+// always run, with the address the gate refused, and neither "a person files an
+// issue" nor a prompt — the first sends them to work that does not close the
+// loop the refusal opened, and the second asks for a typing no refusal reaches
+// past.
 func TestUpdateManagedStageRefusesARemoval(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
@@ -142,6 +172,98 @@ func TestUpdateManagedStageRefusesARemoval(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(recs[0].Rules, "\n"), address) {
 		t.Errorf("the record does not name the rule that refused, so an owner cannot audit it: %+v", recs[0])
+	}
+
+	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
+	if left == "" {
+		t.Fatalf("a removal the owner's own --allow-delete admits left them no command:\n%s", got)
+	}
+	want := "fugaro update --allow-delete '" + address + "'"
+	if !strings.Contains(left, want) {
+		t.Errorf("the left-for-you is not the owner's own command (%q):\n%s", want, left)
+	}
+	for _, never := range []string{"a person files an issue", "type the project's name"} {
+		if strings.Contains(left, never) {
+			t.Errorf("the removal's left-for-you says %q, which is not what a removal the owner can approve leaves them:\n%s", never, left)
+		}
+	}
+	// This fixture's before view names no object of its own (an IAM member's
+	// view is role, member and bucket), and the identity is printed with that
+	// said rather than with a cut or an invented one.
+	if !strings.Contains(left, "does not identify") {
+		t.Errorf("the left-for-you does not say what the plan's before view identifies:\n%s", left)
+	}
+}
+
+// The identity half of the same sentence: a removal whose before view DOES
+// identify the object prints that identity (spec §4.3: "where the refusal is a
+// delete the owner did not approve, it prints the identity the plan's before
+// view carries ... byte for byte"), which is what tells the owner which object
+// they are approving.
+func TestUpdateManagedRemovalLeavesTheIdentityThePlanCarries(t *testing.T) {
+	const bucket = "module.installation.google_storage_bucket.runs"
+	ch := planChange{"address": bucket, "type": "google_storage_bucket",
+		"change": map[string]any{"actions": []string{"delete"}, "after": nil,
+			"before": map[string]any{"id": "fugaro-runs-" + initProject, "name": "fugaro-runs-" + initProject,
+				"project": initProject, "time_created": "2026-01-02T03:04:05.678Z"}}}
+	if !identifies(t, ch) {
+		t.Fatalf("the fixture's before view identifies nothing (%q): this test would then be about a sentence that says so", identityOf(t, ch))
+	}
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, ch)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run applied a plan that removes a bucket:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran: the gate refused the plan", n)
+	}
+	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
+	if left == "" {
+		t.Fatalf("the refused removal left the owner no command:\n%s", got)
+	}
+	if want := "fugaro update --allow-delete " + bucket; !strings.Contains(left, want) {
+		t.Errorf("the left-for-you does not carry the owner's command (%q):\n%s", want, left)
+	}
+	if want := identityOf(t, ch); !strings.Contains(left, want) {
+		t.Errorf("the left-for-you does not print the identity the plan's before view carries (%q):\n%s", want, left)
+	}
+}
+
+// gateRefusalOf's two answers are two opposite sentences — the plan refusal
+// says the plan is outside Fugaro's own tables and a person files an issue, the
+// unjudged one says the run failed and nothing is missing from any table — and
+// the tests above read only what the two SHARE ("Nothing here is yours to type
+// or to run"). So a classifier that collapsed to either answer would leave the
+// whole update family green, and this is the pin on the decision itself: the
+// sentence a refusal prints is internal/initflow's (its own table test drives
+// both doors), and what each error value means is this command's.
+func TestGateRefusalOfTellsAPlanRefusalFromAnUnjudgedStep(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want initflow.GateRefusal
+	}{
+		{"the gate refused the document",
+			fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			initflow.GateRefusedPlan},
+		{"the refusal and the record's own failure beside it",
+			fmt.Errorf("%w: %w", fmt.Errorf("%w: x", managedmode.ErrNotConverged), errors.New("the record could not be written")),
+			initflow.GateRefusedPlan},
+		{"the creation fact could not be read a second time",
+			errors.New("the creation fact of p could not be read a second time, immediately before the write"),
+			initflow.GateRefusedUnread},
+		{"the document nobody could produce",
+			errors.New("reading the saved plan: exit status 1"),
+			initflow.GateRefusedUnread},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := gateRefusalOf(tc.err); got != tc.want {
+				t.Errorf("gateRefusalOf(%v) = %v, want %v: the two answers are opposite promises, so one of them is being made about the other's refusal", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -546,6 +668,18 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 			}
 			if !strings.Contains(refused, "Nothing here is yours to type") {
 				t.Errorf("the refusal does not say there is nothing to type:\n%s", refused)
+			}
+			// And it is the PLAN refusal and not the unjudged one: both texts
+			// share the sentence above, so a classifier that collapsed to the
+			// other answer would leave this test green while the owner was told
+			// the run had failed rather than that a shape is missing from
+			// Fugaro's own tables (and the other way round: the unjudged text
+			// says nothing about an issue, which is the promise this arm makes).
+			if !strings.Contains(refused, "a person files an issue with the sentence above") {
+				t.Errorf("the refusal is not the plan's own, which is what a cover or a cost refusal leaves:\n%s", refused)
+			}
+			if strings.Contains(refused, "did not judge this step") {
+				t.Errorf("a plan the cover judged is left as a step the gate reached no verdict on:\n%s", refused)
 			}
 			for _, bad := range []string{"type the project's name", "fugaro update"} {
 				if strings.Contains(refused, bad) {

@@ -1093,12 +1093,15 @@ func TestCatalogCheckAccountIsItsOwnPrincipalKind(t *testing.T) {
 // modules' own. The ID and the project name the account; the reach is the
 // condition, which the module builds from its own input, one entry per
 // repository (catalogcheck.tf's catalog_check_records:
-// gcp.CatalogRecordsConditionTitle over gcp.CatalogRecordsCondition). Without
-// that check the row would cover the whole of what this kind of principal
-// exists to refuse — the job's objectUser on every repository's build records
-// and check state, under any per-repository prefix condition a plan cared to
-// write, retitled for another repository, or on a bucket of another run — so
-// each of those shapes is a case below.
+// gcp.CatalogRecordsConditionTitle over gcp.CatalogRecordsCondition). That
+// check is what keeps the row to the module's own condition: without it the row
+// covers a records condition retitled for another repository, one naming
+// another run's bucket, and one widened past the catalog segment. The
+// per-repository job's prefix, the build account's read and the launchers'
+// condition are a different check's subject — the objectUser branch refuses
+// this account's name under any condition that is not the module's records
+// grant, before it reads a condition at all — and each of those shapes is a
+// case below too.
 //
 // Both spellings of the member are admitted, for their own reasons: the plan
 // that first deploys the job computes it from the account the same module
@@ -1118,16 +1121,24 @@ func TestCatalogCheckAccountIsItsOwnPrincipalKind(t *testing.T) {
 // the modules DO grant objectAdmin in, to people — and objectViewer under the
 // records condition).
 //
-// Mutation (run, restore): drop the condition comparison from
-// catalogRecordsGrant, so any condition under the title's slug passes, and the
-// job-prefix, catalog-read, launcher, other-slug, other-bucket and widened
-// cases pass. That is the check this row is narrowed to — the other refusals
-// here come from rules of their own (the description, the member's kind, the
-// role) and stay put. Give roles/storage.objectAdmin the toCatalogCheck bit and
-// the objectAdmin-without-a-condition case passes; give the objectUser row's
-// bit to roles/storage.objectViewer and the objectionViewer case still fails on
-// the condition, which is why the row-pin loop in
-// TestCatalogCheckAccountIsItsOwnPrincipalKind is what catches that widening.
+// Mutations (each run, then restored):
+//
+//   - Drop the expression comparison from catalogRecordsGrant, so any condition
+//     under the title's slug passes: the retitled, on-another-bucket and
+//     widened cases pass. The job-prefix, catalog-read and launcher cases stay
+//     refused, because their titles fail the prefix cut before the comparison
+//     is reached — what catches them is the objectUser branch's guard on this
+//     account's name. Dropping catalogRecordsGrant whole (the member alone)
+//     fails the same three cases and no others, and dropping that guard instead
+//     lets the job-prefix, catalog-read and launcher cases pass while every
+//     other case here still refuses.
+//   - Give roles/storage.objectAdmin the toCatalogCheck bit: both objectAdmin
+//     cases pass, on the role table's own check.
+//   - Give roles/storage.objectViewer the bit: the objectViewer case is refused
+//     anyway, under the tokens/ sentence rather than this one, so what catches
+//     that widening is the row-pin loop in
+//     TestCatalogCheckAccountIsItsOwnPrincipalKind — which fails under the two
+//     bit-granting mutations and not under the first.
 func TestCatalogCheckRecordsGrant(t *testing.T) {
 	const slug = "acme-web-0123456789abcdef"
 	records := gcp.CatalogRecordsCondition(cbBucket, slug)
