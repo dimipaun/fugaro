@@ -344,15 +344,6 @@ type Policy struct {
 	// member existed.
 	ImageCatalog *ImageCatalog `json:"image_catalog,omitempty"`
 
-	// UnknownKeys lists the top-level keys of the node this Fugaro does not
-	// know, sorted. Decode fills it in and never writes it back (json:"-"):
-	// the keys are tolerated so that a policy a newer Fugaro wrote does not
-	// brick an older reader (P8), but "tolerated" and "silently absent" look
-	// the same in a decoded policy — a misspelt per_run_usdc leaves the cap
-	// unset and the run then reports no ceiling where the owner set one. The
-	// runner logs them (it must keep going: they may be a newer Fugaro's, and
-	// it enforces every value it does understand); the CLI refuses them,
-	// because the operator is the one who can fix them.
 	// Orchestrator is the project's block of the orchestrator's guardrails
 	// (D1239): how many runs the daemon may have running, how many one cycle
 	// may launch and how fast, and the model each decision class runs on
