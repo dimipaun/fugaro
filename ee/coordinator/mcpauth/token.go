@@ -358,6 +358,18 @@ func (s *Server) exchangeRefresh(w http.ResponseWriter, r *http.Request, form ur
 // told a caller which tokens exist would be an oracle. A token that IS this
 // client's revokes its family; everything else does nothing.
 //
+// **A store that refused the write is the one answer that is not a 200.** The
+// client revoking a stolen token is the one party who cannot find out
+// afterwards — the next call with that token is the thief's — so a 200 over a
+// family still alive is a client told its leak is closed while it is open
+// (store.go's delete: a refused delete is not an absence, and it is raised for
+// exactly this reason). Reporting it is not the oracle the rule above refuses:
+// the refusal is reached only after the token was found and found to be this
+// client's own, and the store that refused it refuses every write of that
+// client's, so the answer says nothing about anybody else's token. A store that
+// failed the lookup is answered the same way, and the caller is left to try
+// again rather than told the family is gone.
+//
 // The client id is read from the request and not from the token, and the two
 // have to agree: a caller may revoke what it holds, and nothing else.
 func (s *Server) serveRevoke(w http.ResponseWriter, r *http.Request) {
@@ -382,12 +394,18 @@ func (s *Server) serveRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if value := form.Get("token"); value != "" {
-		if rec, err := s.store.LookupByHash(r.Context(), TokenHash(value)); err == nil && rec.Token.ClientID == client.ID {
-			// A failure to delete is not reported either: the endpoint's own
-			// contract is that a client cannot tell a revocation that happened
-			// from one that did not, and the next call with the token is what
-			// shows which it was.
-			_ = s.store.RevokeFamily(r.Context(), rec.FamilyID)
+		rec, err := s.store.LookupByHash(r.Context(), TokenHash(value))
+		if err != nil && !errors.Is(err, ErrTokenNotFound) {
+			writeOAuthError(w, http.StatusInternalServerError, oauthError(oidc.ErrServerError(),
+				"the token could not be read back, so nothing was revoked"))
+			return
+		}
+		if err == nil && rec.Token.ClientID == client.ID {
+			if err := s.store.RevokeFamily(r.Context(), rec.FamilyID); err != nil {
+				writeOAuthError(w, http.StatusInternalServerError, oauthError(oidc.ErrServerError(),
+					"the token's family could not be revoked, so it is still alive"))
+				return
+			}
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")

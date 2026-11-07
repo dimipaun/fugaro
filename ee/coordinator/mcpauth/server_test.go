@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
+	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
 
 // testIssuer is the coordinator's own URL: the authorization server's
@@ -370,6 +372,74 @@ func TestNoRecordIsWrittenOutsideTheStore(t *testing.T) {
 		if !found {
 			t.Errorf("the store holds no record under %q after a whole flow: the endpoint that writes one did not, so this test is not covering it", prefix)
 		}
+	}
+}
+
+// TestARevokeTheStoreRefusesIsNotAnswered200: revoking is where a client is told
+// its own leak is closed, and a store that refused the delete is not a
+// revocation — the answer a caller acts on has to be the failure.
+//
+// The client is the one party who cannot find out afterwards: the token it is
+// revoking is the one the thief holds, so the next call with it is the thief's,
+// and a 200 over a family still alive is the signal that never comes. The store
+// already reports the refusal (store.go's delete, and
+// TestARevokeTheStoreRefusesIsNotARevoke holds that half); this test is that report
+// reaching the caller as a 500 whose body says nothing was revoked, with the
+// token read afterwards to prove the answer was true.
+func TestARevokeTheStoreRefusesIsNotAnswered200(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+
+	held, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("LookupByHash: %v", err)
+	}
+	// Every write to this family is refused from here, which is what a retention
+	// policy, a hold, a VPC-SC perimeter or a mistyped IAM change answers.
+	ts.store.gcs.DenyWrites(testBucket(), familyPrefix+held.FamilyID)
+
+	answer := ts.postForm(t, RevokePath, url.Values{
+		"token":     {tokens.AccessToken},
+		"client_id": {clientID},
+	})
+	if answer.Code != http.StatusInternalServerError || refusalOf(t, answer).Error != string(oidc.ServerError) {
+		t.Errorf("a revocation the store refused answered %d (%s); want 500 %s: the client that asked cannot check afterwards, so an answer that reads as done over a family still alive is the leak it was revoking",
+			answer.Code, strings.TrimSpace(answer.Body.String()), oidc.ServerError)
+	}
+	if _, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken)); err != nil {
+		t.Errorf("the token of the family a refused revocation answered 500 for = %v; want it still resolving: the answer is a report of a refusal, not a refusal of something that happened anyway", err)
+	}
+}
+
+// unreadableStore is a store whose lookup fails, which is the other half of the
+// same rule: a token this installation never issued is RFC 7009's 200, and a
+// store that could not be read is not that — it is a request whose outcome is
+// unknown, and an answer that read as done would be a claim nobody made.
+type unreadableStore struct{ Store }
+
+func (unreadableStore) LookupByHash(context.Context, string) (TokenRecord, error) {
+	return TokenRecord{}, errors.New("the store could not be read")
+}
+
+// TestARevokeTheStoreCouldNotBeReadIsNotAnswered200 is the lookup's half of the
+// test above, and it is a separate test because the two failures are told apart
+// in the code: ErrTokenNotFound is the absence RFC 7009 answers 200 to, and any
+// other error is the store failing to answer at all.
+func TestARevokeTheStoreCouldNotBeReadIsNotAnswered200(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+
+	// The flow above ran against the real store, so what is replaced here is a
+	// working store and not a broken one that everything else also stands on.
+	ts.Server.store = unreadableStore{Store: ts.store}
+
+	answer := ts.postForm(t, RevokePath, url.Values{
+		"token":     {tokens.AccessToken},
+		"client_id": {clientID},
+	})
+	if answer.Code != http.StatusInternalServerError || refusalOf(t, answer).Error != string(oidc.ServerError) {
+		t.Errorf("a revocation whose lookup failed answered %d (%s); want 500 %s: the family is where it was, and a client told its leak was closed would not ask again",
+			answer.Code, strings.TrimSpace(answer.Body.String()), oidc.ServerError)
 	}
 }
 

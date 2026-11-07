@@ -1518,7 +1518,7 @@ func TestAClientAuthRefusalNamesTheScheme(t *testing.T) {
 // its caller, and a revocation that did not authenticate revokes nothing.
 //
 // The endpoint answers 200 to every token it is asked to revoke (RFC 7009), so
-// its secret check is the one place it refuses at all — and the second half
+// its secret check is the one refusal a caller can cause — and the second half
 // below is what makes the refusal mean something: the family is still there
 // afterwards, read by rotating the very token the refused call named.
 func TestRevokeRefusesTheWrongClientSecret(t *testing.T) {
