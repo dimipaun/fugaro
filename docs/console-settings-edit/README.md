@@ -38,14 +38,14 @@ with it, **reconciliation wins**.
 
 ## What it is
 
-The Project tab draws five panels today, from **five** commands: `budget show --json`,
-`accounts ls --json` and `secrets ls --json` — the three on the day this was written — and, since,
-`models ls --json` (console 0.119.0's models panel) and `settings --json` (this design's **C1**, the
-read the pencil rests on) (`PROJECTS_SOURCE_LINES`,
-`console/src/renderer/screens/projects.ts:108`). What it shows is caps, kill switches, repositories,
-accounts and a secrets inventory — and two panels that say they have no command at all. The owner's
-ask is about **those values**: the settings of this one project, each of them editable from the
-console behind a little pencil.
+The Project tab draws **nine** panels today, seven of them from **five** commands: `budget show
+--json` — which draws caps, kill switches and repositories — plus `accounts ls --json` and `secrets
+ls --json`, the three that drove this screen on the day this was written, and, since, `models ls
+--json` (console 0.119.0's models panel) and `settings --json` (this design's **C1**, the read the
+pencil rests on) (`PROJECTS_SOURCE_LINES`, `console/src/renderer/screens/projects.ts:108`). The two
+that are left, policy and enrollment, say they have no command at all (`POLICY_SOURCE_LINE`, `:122`;
+`ENROLLMENT_SOURCE_LINE`, `:126`). The owner's ask is about **those values**: the settings of this
+one project, each of them editable from the console behind a little pencil.
 
 The console has **no editing code of its own**, and this design does not give it one. Every edit is
 `fugaro settings set` or `fugaro settings unset` — the generic write path the settings design's **S5**
