@@ -1504,10 +1504,10 @@ func TestBudgetPreviewPrintsTheComputeCeiling(t *testing.T) {
 		t.Fatal(err)
 	}
 	// web is the checkout's one workflow, at the defaults: 4 vCPU, 8Gi and
-	// timeouts.total 90m. The fixture's region is us-east5, Cloud Run's tier 1
+	// timeouts.total 120m. The fixture's region is us-east5, Cloud Run's tier 1
 	// ($0.000018 a vCPU-second, $0.000002 a GiB-second), so the ceiling is
-	// 5400 s × (4×0.000018 + 8×0.000002) = $0.4752.
-	const want = "compute ceiling (workflow web): 4 vCPU x 8 GiB x 1h30m0s = $0.48 at this installation's compute prices — NOT CAPPED"
+	// 7200 s × (4×0.000018 + 8×0.000002) = $0.6336.
+	const want = "compute ceiling (workflow web): 4 vCPU x 8 GiB x 2h0m0s = $0.63 at this installation's compute prices — NOT CAPPED"
 	if !strings.Contains(out, want) {
 		t.Errorf("preview never says %q:\n%s", want, out)
 	}
@@ -1567,10 +1567,10 @@ func TestBudgetPreviewComputeCeilingFollowsTheWorkflowsResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// web: 5400 s × (4×0.000018 + 8×0.000002) = $0.4752.
-	// render: 7200 s × (8×0.000018 + 32×0.000002) = $1.4976.
+	// web: 7200 s × (4×0.000018 + 8×0.000002) = $0.6336 (the default total).
+	// render: 7200 s × (8×0.000018 + 32×0.000002) = $1.4976 (its own 2h).
 	for _, want := range []string{
-		"compute ceiling (workflow web): 4 vCPU x 8 GiB x 1h30m0s = $0.48",
+		"compute ceiling (workflow web): 4 vCPU x 8 GiB x 2h0m0s = $0.63",
 		"compute ceiling (workflow render): 8 vCPU x 32 GiB x 2h0m0s = $1.50",
 	} {
 		if !strings.Contains(out, want) {
@@ -1636,7 +1636,7 @@ func TestBudgetPreviewArtifactRecipeDoesNotInflateTheModelCeiling(t *testing.T) 
 		t.Errorf("one stage × $0.50 is not the model ceiling:\n%s", out)
 	}
 	// The render is priced as compute, beside it, and not as a model stage.
-	if !strings.Contains(out, "compute ceiling (workflow web): 4 vCPU x 8 GiB x 1h30m0s = $0.48") {
+	if !strings.Contains(out, "compute ceiling (workflow web): 4 vCPU x 8 GiB x 2h0m0s = $0.63") {
 		t.Errorf("the artifact run's compute ceiling is missing:\n%s", out)
 	}
 }
@@ -1661,8 +1661,8 @@ func TestBudgetPreviewComputeCeilingJSON(t *testing.T) {
 		ComputeCeiling []ceiling `json:"compute_ceiling"`
 	}
 
-	// Priced: web at the checkout's defaults, 5400 s × (4×0.000018 +
-	// 8×0.000002) = $0.4752 at the fixture's region (us-east5, tier 1).
+	// Priced: web at the checkout's defaults, 7200 s × (4×0.000018 +
+	// 8×0.000002) = $0.6336 at the fixture's region (us-east5, tier 1).
 	f := newBudgetFixture(t, "")
 	f.Checkout(t, "  max_budget_usd: 0.5\n")
 	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6", "--json")
@@ -1676,11 +1676,11 @@ func TestBudgetPreviewComputeCeilingJSON(t *testing.T) {
 		t.Fatalf("compute_ceiling = %+v", doc.ComputeCeiling)
 	}
 	c := doc.ComputeCeiling[0]
-	if c.Workflow != "web" || c.VCPU != 4 || c.Memory != "8Gi" || c.GiB != 8 || c.TotalS != 5400 {
+	if c.Workflow != "web" || c.VCPU != 4 || c.Memory != "8Gi" || c.GiB != 8 || c.TotalS != 7200 {
 		t.Errorf("ceiling = %+v", c)
 	}
-	if c.USD == nil || *c.USD < 0.4752-1e-9 || *c.USD > 0.4752+1e-9 {
-		t.Errorf("usd = %v, want 0.4752", c.USD)
+	if c.USD == nil || *c.USD < 0.6336-1e-9 || *c.USD > 0.6336+1e-9 {
+		t.Errorf("usd = %v, want 0.6336", c.USD)
 	}
 	if c.Source != "Cloud Run jobs list price, tier 1 (2026-09)" || c.Unpriced != "" {
 		t.Errorf("source = %q, unpriced = %q", c.Source, c.Unpriced)

@@ -133,7 +133,7 @@ func TestResolveTable(t *testing.T) {
 			},
 			want: map[string]want{
 				"workflows.web.resources.memory": {"8Gi", SourceDefault},
-				"workflows.web.timeouts.total":   {"1h30m0s", SourceDefault},
+				"workflows.web.timeouts.total":   {"2h0m0s", SourceDefault},
 			},
 		},
 		{

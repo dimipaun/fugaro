@@ -1322,7 +1322,7 @@
           "default": "unset = 40m, or the total when it is shorter"
         },
         "workflows.*.timeouts.total": {
-          "default": "unset = 90m"
+          "default": "unset = 120m"
         },
         "workflows.*.timeouts.verify": {
           "default": "unset = 30m, or the total when it is shorter"

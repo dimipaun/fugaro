@@ -305,7 +305,7 @@ func applyDefaults(c *Config) {
 		w.Rebuild = w.Rebuild.Defaults()
 		t := &w.Timeouts
 		if t.Total.Duration == 0 {
-			t.Total.Duration = 90 * time.Minute
+			t.Total.Duration = 120 * time.Minute
 		}
 		// Unset timeouts scale down with a short total so a small total alone is valid.
 		if t.FinalizeReserve.Duration == 0 {

@@ -47,7 +47,7 @@ func TestParseAppliesDefaults(t *testing.T) {
 		t.Errorf("reports = %v", got)
 	}
 	to := w.Timeouts
-	if to.Total.Duration != 90*time.Minute || to.Stage.Duration != 40*time.Minute ||
+	if to.Total.Duration != 120*time.Minute || to.Stage.Duration != 40*time.Minute ||
 		to.Verify.Duration != 30*time.Minute || to.FinalizeReserve.Duration != 5*time.Minute {
 		t.Errorf("timeouts = %+v", to)
 	}
@@ -911,8 +911,8 @@ func TestRenderTimeoutDefaultsUnderTotal(t *testing.T) {
 	if w.Commands.Render != "sh render.sh" || w.Commands.Probe != "sh probe.sh" {
 		t.Fatalf("commands = %+v", w.Commands)
 	}
-	// 90m total: verify is min(30m, 90m) = 30m, the reserve is 5m, so render
-	// is min(30m, 85m) = 30m.
+	// 120m total: verify is min(30m, 120m) = 30m, the reserve is 5m, so render
+	// is min(30m, 115m) = 30m.
 	if got := w.Timeouts.Render.Duration; got != 30*time.Minute {
 		t.Fatalf("render = %s, want 30m", got)
 	}

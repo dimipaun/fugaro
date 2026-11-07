@@ -259,7 +259,7 @@ var yamlMeta = map[string]Row{
 	"workflows.*.secrets":                   {Default: unset("none")},
 	"workflows.*.resources.cpu":             {Default: value("4", "config.DefaultCPU")},
 	"workflows.*.resources.memory":          {Default: value("8Gi", "config.DefaultMemory")},
-	"workflows.*.timeouts.total":            {Default: unset("90m")},
+	"workflows.*.timeouts.total":            {Default: unset("120m")},
 	"workflows.*.timeouts.stage":            {Default: unset("40m, or the total when it is shorter")},
 	"workflows.*.timeouts.verify":           {Default: unset("30m, or the total when it is shorter")},
 	"workflows.*.timeouts.render":           {Default: unset("what verify gets")},
