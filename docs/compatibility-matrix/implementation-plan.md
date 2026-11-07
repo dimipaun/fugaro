@@ -2,7 +2,7 @@
 
 Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**. **Nothing is
 implemented and no task is approved**: each task needs the owner's explicit go (an answer to a
-decision is not that go). The owner's answers that shaped the plan (D1527's Vertex answer is amended after review and was confirmed by the owner on 2026-11-07; D1539's answer is amended after review and awaits the owner's confirmation): D1520 a "Built, not enabled"
+decision is not that go). The owner's answers that shaped the plan (D1527's Vertex answer is amended after review and was confirmed by the owner on 2026-11-07; D1539's answer is amended after review and was re-asked and answered the same day): D1520 a "Built, not enabled"
 status; D1522 the editions are "Core (MIT)" and "Subscription"; D1537 a data file, one page and an
 evidence test; D1538 an "as of" stamp refreshed by the release procedure; every row's wording is
 the reconciliation's findings F1–F31.
@@ -28,7 +28,7 @@ the reconciliation's findings F1–F31.
 | Every `supported` and `built-not-enabled` row names an evidence path that exists in the repository | CM1 |
 | The page never claims a feature the reconciliation marked Wrong: no mobile web, no gen 1, no Enterprise SSO, no tracker MCP inside a run, no "any model" | CM2's rendered-page test, which reads the forbidden phrases from the data file's own `never_say` list |
 | The "as of" stamp equals the latest `docs/releases/vX.Y.Z.md` | CM3 |
-| The Claude OAuth row carries no terms caveat and no new legal sentence (D1539 as amended, pending the owner's confirmation) | CM1 (a test that the row's note names neither "terms" nor "allowed") |
+| The Claude OAuth row carries exactly the owner's neutral line, "Use of a subscription is subject to the provider's own terms.", and no other legal wording (D1539 as amended) | CM1 (a test that the row's note ends with that exact sentence and no other row mentions terms) |
 
 ## Slice A: the data and the page (inert until the website promote)
 
@@ -41,9 +41,9 @@ the reconciliation's findings F1–F31.
   Every row of the reconciliation (F1–F31) maps to one row or one removal.
 - **Schema/rules/config change:** none beyond the new file.
 - **Tests:** `website/test/compatibility.mjs`: closed statuses and editions; every evidence path
-  exists; the Claude OAuth row's note contains no terms or permission wording; no row text contains a `never_say` phrase.
+  exists; the Claude OAuth row's note ends with the exact D1539 sentence and no other row names terms or permission; no row text contains a `never_say` phrase.
 - **Command:** `cd website && node --test test/compatibility.mjs` then `npm run check`; `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` if `website/README.md` is pinned from Go.
-- **Depends on:** nothing (the Vertex row is written from the owner-confirmed amended D1527; the Claude OAuth row waits on the owner's confirmation of D1539 as amended: until then it carries no caveat, which is also what the amended answer says).
+- **Depends on:** nothing (the Vertex row is written from the owner-confirmed amended D1527; the Claude OAuth row carries the D1539 sentence).
 - **Red step:** the test fails because the file does not exist, then fails once with a row that
   carries an unknown status.
 - **Reviewer tier:** standard.
