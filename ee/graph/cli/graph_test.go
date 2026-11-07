@@ -22,7 +22,13 @@ package cli
 //   - TestGraphJSONIsOneVersionedDocument: the shape a reader outside this
 //     binary consumes, read back strictly.
 //   - TestGraphNeedsNoCheckout: the read paints from a directory that is not a
-//     checkout, which is where the console's child runs.
+//     checkout, which is where the console's child runs — and its subtest is the
+//     one fact it does need from the project config, the provider each
+//     repository's slug is keyed by, which a config that leaves it out is
+//     refused for by name rather than guessed at.
+//   - TestGraphUnreadableStoredViewIsAStateNotARefusal: a stored node this build
+//     cannot read is the scope's `unreadable` state with a document printed, not
+//     a terminal refusal the console would read as "this CLI has no graph".
 //   - TestGraphEmptyProjectIsAnEmptyDocument: a project that lists no repository
 //     is an empty document and not a refusal, because the refusal would be read
 //     as "this CLI has no graph".
@@ -512,6 +518,12 @@ func TestGraphJSONIsOneVersionedDocument(t *testing.T) {
 // nothing else. An implementation that took the repository from the working
 // directory — plan status's rule, and the one this command exists to not have —
 // has no origin remote here to take it from, and fails.
+//
+// Its subtest is the one fact the read does take from the project config: the
+// provider each repository's slug is keyed by. A config that leaves it out has
+// no provider to find here, so the read refuses it by name rather than guessing
+// one, and "needs no checkout" is a promise about the config `fugaro init`
+// writes (every repository's provider in it) and not about this one.
 func TestGraphNeedsNoCheckout(t *testing.T) {
 	f := newGraphFixture(t)
 	f.writeStoredView(t, storedView())
@@ -529,6 +541,73 @@ func TestGraphNeedsNoCheckout(t *testing.T) {
 	}
 	if got := doc.Nodes[0].Repo; got != "acme/app" {
 		t.Errorf("the node's repository is %q, want the one the project config names", got)
+	}
+
+	t.Run("a repository whose repos entry leaves the provider out", func(t *testing.T) {
+		f := newGraphFixture(t)
+		path := f.writeConfig(t, "  acme/app: { base_branch: main, workflows: [web] }\n")
+		out, _, err := execute(t, "graph", "--config", path, "--json")
+		if err == nil {
+			t.Fatalf("a repository whose config names no provider was graphed: %s", out)
+		}
+		for _, want := range []string{"cannot tell the git provider of acme/app", "repos entry"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal is %q, want it to say %q: the provider is the one fact the read needs and cannot guess", err, want)
+			}
+		}
+		if out != "" {
+			t.Errorf("the refused read printed %q, want no document at all", out)
+		}
+	})
+}
+
+// TestGraphUnreadableStoredViewIsAStateNotARefusal: a node the database holds
+// and this build cannot read is the contract's `unreadable` — a state of the
+// scope, with the document printed and the process succeeding (§6.22, H3) — and
+// never a refusal of the whole read, which is what the console reads as "this
+// CLI has no graph" (T3). What it is told apart from is the other failure of
+// the same read: a database that could not be reached stays a terminal error
+// with no document, and a scope this build has no reader for stays the other.
+func TestGraphUnreadableStoredViewIsAStateNotARefusal(t *testing.T) {
+	f := newGraphFixture(t)
+	// What a sweep of a later build leaves behind: a view carrying a field this
+	// build does not know, which the read refuses rather than dropping, because
+	// a document read with a field missing is not the document that was written.
+	f.db.Set(coordinator.PathView(appSlug), map[string]any{
+		"repo": "acme/app", "records": []any{}, "collisions": []any{}, "a_field_from_a_later_sweep": true,
+	})
+	out, errOut, err := execute(t, "graph", "--json")
+	if err != nil {
+		t.Fatalf("a stored node this build cannot read refused the whole read: %v (stderr: %s)", err, errOut)
+	}
+	doc, err := graph.ParseDocument([]byte(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Sources) != 1 || doc.Sources[0].State != graph.SourceUnreadable {
+		t.Fatalf("the scope of a read that answered with something unreadable is %+v, want one source in the state %q", doc.Sources, graph.SourceUnreadable)
+	}
+	if got := doc.Sources[0].Source; got != "coordinator" {
+		t.Errorf("the unreadable scope names itself %q, want coordinator: the source half of every key it would have produced", got)
+	}
+	if doc.Sources[0].Reason == "" {
+		t.Error("the unreadable scope carries no reason: a screen has nothing to show beside the state")
+	}
+	if doc.Sources[0].AsOf != nil {
+		t.Errorf("as_of is %v, want null: nothing here says when the data was last good", doc.Sources[0].AsOf)
+	}
+	if len(doc.Nodes) != 0 {
+		t.Errorf("the unreadable scope drew %d nodes, want none: what it answered with is not something this build can read", len(doc.Nodes))
+	}
+
+	// The text output says the same thing to a person, who has no document to
+	// read the state out of.
+	text, errOut, err := execute(t, "graph")
+	if err != nil {
+		t.Fatalf("the table refused the read the document answered: %v (stderr: %s)", err, errOut)
+	}
+	if !strings.Contains(text, "coordinator: "+graph.SourceUnreadable) {
+		t.Errorf("the table does not say the scope is %s:\n%s", graph.SourceUnreadable, text)
 	}
 }
 

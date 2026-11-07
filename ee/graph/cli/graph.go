@@ -15,6 +15,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/ee/coordinator"
 	coordcli "github.com/dimipaun/fugaro/ee/coordinator/cli"
 	"github.com/dimipaun/fugaro/ee/graph"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
@@ -42,8 +44,14 @@ import (
 //   - It needs no checkout. The scope that exists today is the coordinator's
 //     stored view — the read `coordinator status --from-store` makes, through
 //     the caller's own credential and no key of the host's — so this command
-//     resolves no repository from a working directory and opens no host: it
-//     paints in a console child whose cwd is nothing in particular. The plan
+//     opens no host and paints in a console child whose cwd is nothing in
+//     particular. The one fact it can take from the working directory is a
+//     fallback, and it is not this command's: the provider a repository's slug
+//     is keyed by comes from the project's own config, and the checkout is
+//     consulted only when that entry leaves it out (repoSlug). So a project
+//     whose config names its providers — what `fugaro init` writes — is graphed
+//     with no checkout at all, and a repository the config leaves out is
+//     refused, naming that entry, rather than graphed from a guess. The plan
 //     scope keeps its checkout and its card; this command has neither (D1356).
 //   - It prints one document. A refused read is an error with no document at
 //     all, and a scope that is down is a state inside the document (H3), so a
@@ -65,8 +73,12 @@ func NewGraphCmd() *cobra.Command {
 		Long: "Print the project's dependency graph as one versioned document.\n" +
 			"Every scope is read from the project's database through the caller's own\n" +
 			"credential: the coordinator's stored view is what the coordinator's sweep\n" +
-			"already wrote, so this command needs no checkout and opens no host, and it\n" +
-			"works in a directory that is not a checkout at all.\n\n" +
+			"already wrote, so this command opens no host and works in a directory that\n" +
+			"is not a checkout. The one fact it needs is each repository's git\n" +
+			"provider, which the project config's repos entries carry and which the\n" +
+			"repository's slug is keyed by: a repository whose entry leaves provider\n" +
+			"out is refused with the sentence that says where to set it, rather than\n" +
+			"graphed from a guess.\n\n" +
 			"--source selects the scope, and the set is closed: all (the default) is\n" +
 			"every scope that exists, which today is the coordinator's stored view;\n" +
 			"coordinator is that view alone; orchestrator:<id> and local:<id> name scopes\n" +
@@ -137,29 +149,55 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	// below. Either way they are carried once.
 	var warned bytes.Buffer
 	project, err := coordcli.StoredProject(ctx, env, graphRepos(env), graphSince(window), &warned)
-	if err != nil {
-		return err
-	}
-	// The stored view carries no time of its own (the sweep's own design), so
-	// the caller has none to give: AsOf is the zero time, the document's
-	// `as_of` is null, and the scope claims no age. The one age fact the read
-	// does carry is the sweep's stale marker, and the source reads it itself.
 	now := time.Now()
-	src := graph.CoordinatorSource{View: project, Now: now}
-	nodes, state, err := src.Nodes()
-	if err != nil {
-		// An identity this build cannot key: the database's own data is what a
-		// reader here cannot read, which is how the read this command shares
-		// classifies the same case (a node that does not decode).
-		return fcli.RemoteErr(err)
-	}
-	doc := graph.Document{
-		Version:     graph.DocumentVersion,
-		GeneratedAt: now,
-		Sources:     []graph.SourceState{state},
-		Nodes:       nodes,
-		Edges:       []graph.Edge{},
-		Warnings:    graphWarningLines(&warned),
+	var doc graph.Document
+	switch {
+	case err == nil:
+		// The stored view carries no time of its own (the sweep's own design),
+		// so the caller has none to give: AsOf is the zero time, the document's
+		// `as_of` is null, and the scope claims no age. The one age fact the
+		// read does carry is the sweep's stale marker, and the source reads it
+		// itself.
+		src := graph.CoordinatorSource{View: project, Now: now}
+		nodes, state, err := src.Nodes()
+		if err != nil {
+			// An identity this build cannot key: the database's own data is what
+			// a reader here cannot read, which is how the read this command
+			// shares classifies the same case (a node that does not decode).
+			return fcli.RemoteErr(err)
+		}
+		doc = graph.Document{
+			Version:     graph.DocumentVersion,
+			GeneratedAt: now,
+			Sources:     []graph.SourceState{state},
+			Nodes:       nodes,
+			Edges:       []graph.Edge{},
+			Warnings:    graphWarningLines(&warned),
+		}
+	case errors.Is(err, coordinator.ErrUnreadable):
+		// The database answered, and what the coordinator's subtree holds is a
+		// document this build cannot read — a newer sweep's field, a value of
+		// another shape. That is the contract's `unreadable` (§6.22): a state of
+		// the scope and never a refusal of the whole read, because a refusal is
+		// exactly what the console reads as "this CLI has no graph" (T3), and it
+		// would say that about a project whose database it can read and whose
+		// coordinator has simply written something this build does not know. The
+		// nodes stay empty: a scope that answered with something unreadable has
+		// nothing this reader can draw, and the state beside them says so.
+		doc = graph.Document{
+			Version:     graph.DocumentVersion,
+			GeneratedAt: now,
+			Sources: []graph.SourceState{{
+				Source: graph.Scope{Kind: graph.ScopeCoordinator}.String(),
+				State:  graph.SourceUnreadable,
+				Reason: err.Error(),
+			}},
+			Nodes:    []graph.Node{},
+			Edges:    []graph.Edge{},
+			Warnings: graphWarningLines(&warned),
+		}
+	default:
+		return err
 	}
 	// The document is the boundary: every text field of it is made fit to print
 	// here, whichever source filled it (H2).
