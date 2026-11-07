@@ -11246,10 +11246,11 @@ a workspace access token reaches the whole workspace rather than one project (th
 credential with two reaches, and this check runs the project token because it is the narrower one);
 and no part of the path is kept out of the job — see D490 above.
 
-**Restore.** The script leaves the sandbox workspace as it found it: it removes the branch it pushes
-if the owner asks it to, it writes nothing to the allow-listed repository's base branch, and it names
-every object it created and what removing it takes. What a person has to undo by hand is what the
-check exists to make: the one extra sandbox repository created in step 7, the merged pull request of
+**Restore.** The script removes its own scratch directory and every file a credential was written
+into, and the block's `restore` row says whether they really went — a FAILed row there names what to
+remove by hand. It writes nothing to a base branch: the branches it pushes and the pull requests it
+opens are the runs' own, and they are left for a person to look at. What a person has to undo by hand
+is what the check exists to make: the one extra sandbox repository created in step 7, the merged pull request of
 step 6 (which cannot be unmerged), the rotated and revoked token pair of step 8 (the new version is
 the live one from then on), and the project-wide secret, which
 `fugaro secrets delete bitbucket-token --project-wide` removes once no repository needs it. **Never
