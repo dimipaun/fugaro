@@ -19,15 +19,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/report"
 )
 
-// familyLogs points this test's state directory at one of its own, so the log
-// a run keeps is the one this test reads and no other test's run is in the
-// same directory: the log is filed under the state directory (D1351), and
-// onlyLog insists on exactly one file per command name.
-func familyLogs(t *testing.T) {
-	t.Helper()
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-}
-
 // familyStep is a run's account: ONE step line, the closing line under it, and
 // whatever prose the run has to print anyway — a diff, a confirmation — kept
 // where it was (G1). It answers the step line, which is the thing this file is
@@ -93,7 +84,7 @@ func clearRig(t *testing.T) *budgetFixture {
 }
 
 func TestAccountsClearDefaultIsShort(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	clearRig(t)
 	out, errOut, err := execute(t, "accounts", "clear", "acme-personal", "--yes")
 	if err != nil {
@@ -111,7 +102,7 @@ func TestAccountsClearDefaultIsShort(t *testing.T) {
 }
 
 func TestAccountsClearWritesALog(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	clearRig(t)
 	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err != nil {
 		t.Fatal(err)
@@ -120,7 +111,7 @@ func TestAccountsClearWritesALog(t *testing.T) {
 }
 
 func TestSecretsSetDefaultIsShort(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	sm := secretsFixture(t)
 	out, errOut, err := executeStdin(t, tokenValue+"\n", "secrets", "set", "claude-oauth-token", "--repo", "acme/app")
 	if err != nil {
@@ -141,7 +132,7 @@ func TestSecretsSetDefaultIsShort(t *testing.T) {
 }
 
 func TestSecretsSetWritesALog(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	secretsFixture(t)
 	if _, _, err := executeStdin(t, tokenValue+"\n", "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
 		t.Fatal(err)
@@ -150,7 +141,7 @@ func TestSecretsSetWritesALog(t *testing.T) {
 }
 
 func TestSecretsRmDefaultIsShort(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	sm, id, _ := secretsRmFixture(t)
 	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
 	if err != nil {
@@ -177,7 +168,7 @@ func TestSecretsRmDefaultIsShort(t *testing.T) {
 }
 
 func TestSecretsRmWritesALog(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	secretsRmFixture(t)
 	if _, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes"); err != nil {
 		t.Fatal(err)
@@ -191,7 +182,7 @@ func TestSecretsRmWritesALog(t *testing.T) {
 // This is the one path of the command that ends a step itself, so it is the
 // one place the rules for a failure are this batch's to keep.
 func TestSecretsRmFailureIsACrossAndALog(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	sm, id, path := secretsRmFixture(t)
 	before := readFileString(t, path)
 	sm.FailDeleteWith = http.StatusForbidden
@@ -232,7 +223,7 @@ func lineAt(account []string, want string) int {
 }
 
 func TestCredsSetDefaultIsShort(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	f := credsFixtureFor(t)
 	f.seed(t, nil)
 	out, errOut, err := executeStdin(t, credsValue(t, "ours")+"\n", "creds", "set", config.ClaudeOAuthToken)
@@ -249,7 +240,7 @@ func TestCredsSetDefaultIsShort(t *testing.T) {
 }
 
 func TestCredsSetWritesALog(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	f := credsFixtureFor(t)
 	f.seed(t, nil)
 	if _, _, err := executeStdin(t, credsValue(t, "ours")+"\n", "creds", "set", config.ClaudeOAuthToken); err != nil {
@@ -266,7 +257,7 @@ func TestCredsSetWritesALog(t *testing.T) {
 // printed no closing line, so a person whose write lost the race was told
 // nothing until the error came back with no account of the run at all.
 func TestCredsSetFailureIsACrossAndALog(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	f := credsFixtureFor(t)
 	f.seed(t, nil)
 	restore := credsWriteBack
@@ -324,7 +315,7 @@ func familyStageLine(t *testing.T, account []string, stage string) string {
 // converge's own output already went. The stages used to be one block at the
 // end behind a result banner; they print as each stage ends now.
 func TestAccountsAddDefaultIsShort(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	r := newAddRig(t)
 	noisyTerraform(t, r.initRig)
 	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
@@ -377,7 +368,7 @@ func TestAccountsAddDefaultIsShort(t *testing.T) {
 }
 
 func TestAccountsAddWritesALog(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	r := newAddRig(t)
 	noisyTerraform(t, r.initRig)
 	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
@@ -398,7 +389,7 @@ func TestAccountsAddWritesALog(t *testing.T) {
 // which is the only place one of these runs can leak it: the default view
 // prints no value of its own, and the log is the run's other reader.
 func TestAccountsAddLogHoldsNoValueTheRunRead(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	r := newAddRig(t)
 	// The echo a stage may make of what it was given, in the shape a reader of
 	// the log would find it: on its own line, and inside one besides.
@@ -422,7 +413,7 @@ func TestAccountsAddLogHoldsNoValueTheRunRead(t *testing.T) {
 }
 
 func TestAccountsRmDefaultIsShort(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
@@ -445,7 +436,7 @@ func TestAccountsRmDefaultIsShort(t *testing.T) {
 }
 
 func TestAccountsRmWritesALog(t *testing.T) {
-	familyLogs(t)
+	isolateState(t)
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 	noisyTerraform(t, r.initRig)
@@ -457,19 +448,24 @@ func TestAccountsRmWritesALog(t *testing.T) {
 	}
 }
 
-// TestNoStepCommandPrintsAnsiOffATerminal is G4 for this family: a test's
+// TestTheFamilyPrintsNoAnsiOffATerminal is G4 for this family: a test's
 // writers are buffers, so every one of these runs is off a terminal, and not
 // one of them may print an escape sequence or a carriage return — neither the
 // commands that print steps now nor the readers of the same files, which have
 // no step to print and must not have gained a coloured one. A marker is a
 // marker off a terminal, never a coloured one, and a spinner is not drawn
 // where nobody is watching.
-func TestNoStepCommandPrintsAnsiOffATerminal(t *testing.T) {
+//
+// The name the plan gives a G4 test is the one CL7c's own — `run --json` and
+// `backlog list`, in report_run_test.go — already carries on main, so this
+// family's is the one that is renamed: two batches were written against the
+// same line of the plan, and a package cannot hold the name twice.
+func TestTheFamilyPrintsNoAnsiOffATerminal(t *testing.T) {
 	// A state home of this test's own, like every other test in this file: the
 	// runs below are mutating commands and three of them file a log
 	// (main_test.go's TestATestNeverWritesTheDeveloperStateHome is the backstop
 	// for the ones that do not, and it needs TestMain's own root to itself).
-	familyLogs(t)
+	isolateState(t)
 	// One rig per command: these fixtures select their local config through
 	// FUGARO_CONFIG, so two of them cannot be alive in one test at once.
 	runs := []struct {

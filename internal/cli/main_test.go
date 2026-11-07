@@ -33,10 +33,11 @@ var testCacheRoot string
 var testConfigRoot string
 
 // testStateRoot is TestMain's own state directory: the $XDG_STATE_HOME every
-// test that does not isolate one of its own gets, so a test can never file a
-// run's log in the developer's real ~/.local/state/fugaro/logs (see the
-// comment in TestMain). Also never removed. "" when TestMain could not
-// create it, which TestATestNeverWritesTheDeveloperStateHome fails on.
+// test that does not isolate one of its own gets, so the logs the step
+// reporter keeps (report.OpenLog) can never be filed in the developer's real
+// ~/.local/state/fugaro/logs — and pruned there, 50 files per command name.
+// Also never removed. "" when TestMain could not create it, which
+// TestATestNeverWritesTheDeveloperStateHome fails on.
 var testStateRoot string
 
 // TestMain closes the ways a test could reach real Google through a
@@ -83,17 +84,15 @@ func TestMain(m *testing.M) {
 		testConfigRoot = dir
 		os.Setenv("XDG_CONFIG_HOME", dir)
 	}
-	// The third of them, and the one that bites: $XDG_STATE_HOME/fugaro/logs
-	// is where a run files the log its account points a failure at (D1351),
-	// and every mutating command now opens one — so without this, every test
-	// that drives one of them without isolating a state home of its own files
-	// a log in the developer's real ~/.local/state/fugaro/logs. That is not
-	// noise either: OpenLog prunes the directory it writes into (D1352, 50
-	// files per command name), so a suite run evicts the logs of the
-	// developer's own runs. A test that reads the log back makes its own
-	// (newInitRig isolates one per test, familyLogs does it for the family);
-	// this is the backstop for every other test. Never removed, like the two
-	// above.
+	// And the third: the state directory, where every command that runs
+	// steps or writes files files its log (D1351, D1352). A log is opened
+	// and pruned by the command that writes it — 50 files per command name —
+	// so without this a suite run would read and delete the developer's own
+	// ~/.local/state/fugaro/logs, the logs an operator reads back after a
+	// failure. A test that reads its command's log back isolates a state
+	// home of its own (isolateState, or a rig that does it per test for a
+	// whole family — newInitRig); this is the backstop for every other test.
+	// Never removed, like the two above.
 	if dir, err := os.MkdirTemp("", "fugaro-test-state-"); err == nil {
 		testStateRoot = dir
 		os.Setenv("XDG_STATE_HOME", dir)
@@ -292,7 +291,7 @@ func TestATestNeverWritesTheDeveloperStateHome(t *testing.T) {
 	}
 	// And this run's log is the new one here. It cannot be when another test's
 	// run of this command in this same process and second already holds the
-	// name: that is a test to give a state home of its own (familyLogs,
+	// name: that is a test to give a state home of its own (isolateState,
 	// newInitRig), not a failure of this one.
 	fresh := newNames(readDirNames(t, logs), before)
 	switch {

@@ -145,13 +145,34 @@ const (
 	// is a person, who holds no run identity (callerWithoutJobPurpose,
 	// repositoryOnlyPurpose).
 	PurposeGitHubRead = "github_read"
+	// PurposeGit is one request of a run's own git traffic that this service
+	// forwarded to bitbucket.org (B1.5): a fetch, the receive-pack ref
+	// advertisement, or a push. The credential's name is the bundle's Bitbucket
+	// token (config.BitbucketSecret), which — like the App key and the read
+	// consumer — is not a model credential of the cascade and has no tier, so a
+	// line of this purpose names the token and no tier (see
+	// credentialWithoutTier).
+	//
+	// It is the purpose of the run's git calls and not of its Bitbucket REST
+	// ones (PurposeBitbucketAPI), so an operator reading the service's lines can
+	// tell a fetch from a pull-request read without a second field. A pushed
+	// ref never reaches such a line: the line names the run, the repository and
+	// the token, and the ref class of a refused push is the service's own log
+	// line's (G7, the no-echo rule).
+	PurposeGit = "git"
+	// PurposeBitbucketAPI is one Bitbucket REST call of a run that this service
+	// forwarded to api.bitbucket.org (B1.5): one of the calls
+	// bitbucket.Provider makes and no other. Its credential and its tier rule
+	// are PurposeGit's, from the same bundle entry.
+	PurposeBitbucketAPI = "bitbucket-api"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
 // for.
 func ValidPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead:
+	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
+		PurposeGit, PurposeBitbucketAPI:
 		return true
 	}
 	return false
@@ -159,10 +180,11 @@ func ValidPurpose(purpose string) bool {
 
 // credentialWithoutTier reports whether a purpose's credential is one the
 // cascade never had: the App key a mint signs a JWT with, the review-signing key
-// a sign line or a verify line names, and the read consumer a read mint exchanges
-// for a Bitbucket token. None is a model credential, none is spent on a call,
-// and none therefore has a tier — so a line of one of these purposes names a
-// credential and NO tier, and a tier on it is a tier this service never
+// a sign line or a verify line names, the read consumer a read mint exchanges
+// for a Bitbucket token, and the bundle's Bitbucket token a git or a
+// Bitbucket-API line names (B1.5). None is a model credential, none is spent on
+// a call, and none therefore has a tier — so a line of one of these purposes
+// names a credential and NO tier, and a tier on it is a tier this service never
 // assigned.
 //
 // It is one function because the two rules that read it (the tier refusal and
@@ -172,7 +194,8 @@ func ValidPurpose(purpose string) bool {
 func credentialWithoutTier(purpose string) bool {
 	return purpose == PurposeMint || purpose == PurposeReviewSign ||
 		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
-		purpose == PurposeGitHubRead
+		purpose == PurposeGitHubRead || purpose == PurposeGit ||
+		purpose == PurposeBitbucketAPI
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather

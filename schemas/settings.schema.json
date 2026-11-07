@@ -787,6 +787,12 @@
         "layer.governance.tiers.trivial.max_subagents": {
           "default": "unset = Fugaro's own tiers"
         },
+        "layer.jobs.catalog_check.paused": {
+          "default": "true"
+        },
+        "layer.jobs.reports.paused": {
+          "default": "true"
+        },
         "layer.profiles.*.base": {
           "default": "unset = none; the key was removed in 0.7.0"
         },

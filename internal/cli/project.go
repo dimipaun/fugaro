@@ -327,6 +327,18 @@ var consoleReadPaths = map[string]bool{
 	// own comment) -- and it is a read of the installation's records like the
 	// rest, aimed with `--project`/`--config`, so it belongs here with them.
 	"fugaro settings": true,
+	// The managed state and its audit trail (the managed screens' plan's CM3;
+	// D1472 to D1477): one closed document about one managed project, read
+	// from the two marks and the newest audit record. It writes nothing -- no
+	// cloud object, no cache -- and it is a read of the installation's records
+	// like the rest, aimed with `--project`/`--config`, so it belongs here
+	// with them: a console that asks it must remember no checkout.
+	"fugaro managed status": true,
+	// The published policy node (the same plan's CM3; D1480 and D1481):
+	// `project policy show --json` prints {project, policy} and nothing else,
+	// and it is the read the Project tab's policy panel was missing. It reads
+	// the project's database node and writes neither it nor the state file.
+	"fugaro project policy show": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,
