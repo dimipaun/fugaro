@@ -262,6 +262,8 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 	}
 	current := state.Entries
 	if len(approved) == 0 {
+		// The listing path is a pure reader and keeps no log (D1354): it is
+		// the same command with no argument, and nothing of it is a step.
 		if len(current) == 0 {
 			why := "there is no list"
 			if state.Unreadable {
@@ -275,6 +277,14 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 		printEntries(w, current)
 		return nil
 	}
+	// The write's own run, from here on: what is above is the read the print
+	// mode prints and the write is judged against, and the reporter's log is
+	// the run that changes something (D1352).
+	rep, sink := reporterFor(cmd, "allow-delete", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	// Sorted and deduplicated, so one approval has one encoding: two people
 	// adding the same two entries in either order write the same object. An
 	// entry sorts by its address and then by its identity, which is the order
@@ -315,10 +325,17 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 			return err
 		}
 	}
+	// The write is the run's one step, and it is opened before it: a write
+	// that fails is a failed step on the screen, not an error printed under a
+	// line that claims it wrote (G8).
+	step := rep.Step("delete-list")
 	if err := managed.WriteDeleteList(ctx, c.Storage, bucket, lc.GCPProject, number, approved, state.Generation); err != nil {
-		return allowDeleteWriteErr(lc, bucket, err)
+		werr := allowDeleteWriteErr(lc, bucket, err)
+		step.Failed(werr, nil)
+		return werr
 	}
-	fmt.Fprintf(w, "wrote gs://%s/%s: %s may now delete or replace %d object(s), at the addresses below and no others:\n", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), len(approved))
+	step.Done(fmt.Sprintf("wrote gs://%s/%s: %s may now delete or replace %d object(s), at the addresses below and no others:",
+		safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), len(approved)))
 	printEntries(w, approved)
 	return nil
 }
