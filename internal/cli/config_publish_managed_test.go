@@ -1384,12 +1384,18 @@ func TestConfigPublishManagedRefusesAnEmptyBlockAddedOrDropped(t *testing.T) {
 	}
 }
 
-// A value can be spelled so that it renders as another document's value: a
-// list of two scalars and a list of one scalar whose text carries the first
-// list's own punctuation are different documents, and `rebuild.paths:
-// [go.mod, go.sum]` against `rebuild.paths: ["go.mod, !!str go.sum"]` is a
-// change to a key outside the allowlist whichever way round it is written. The
-// comparison reads values as rendered text, so a rendering that is not
+// A value can be spelled so that it renders as another document's value. Two
+// shapes reach the command. A list of two scalars and a list of one scalar
+// whose text carries the first list's own punctuation are different documents,
+// and `rebuild.paths: [go.mod, go.sum]` against `rebuild.paths: ["go.mod, !!str
+// go.sum"]` is a change to a key outside the allowlist whichever way round it
+// is written. Two lists of the same length whose texts are cut differently are
+// another — `labels: [pval!!strq, Y]` and `labels: [p, qval!!strY]` are
+// different label sets — and they are the shape that shows what injectivity
+// needs here: every piece has to be readable to its own end, and the length
+// prefix is what gives it that.
+//
+// The comparison reads values as rendered text, so a rendering that is not
 // injective reports the two as the same value and admits the change — the hole
 // the first-line review of this change found. Both directions are asked,
 // because the collision is symmetric and a fix that caught only one of them
@@ -1398,13 +1404,19 @@ func TestConfigPublishManagedRefusesAValueSpelledAsAnotherValue(t *testing.T) {
 	head := minimalAnchored + "default_profile: web\nprofiles:\n  web:\n    rebuild:\n      paths: "
 	plain := head + "[go.mod, go.sum]\n"
 	spelled := head + "[\"go.mod, !!str go.sum\"]\n"
+	labelsHead := minimalAnchored + "defaults:\n  git:\n    pr:\n      labels: "
+	first := labelsHead + "[\"pval!!strq\", \"Y\"]\n"
+	second := labelsHead + "[\"p\", \"qval!!strY\"]\n"
 	cases := []struct {
 		name      string
 		published string
 		next      string
+		names     string
 	}{
-		{"two paths spelled as one", plain, spelled},
-		{"one path spelled as two", spelled, plain},
+		{"two paths spelled as one", plain, spelled, "layer.profiles.web.rebuild.paths"},
+		{"one path spelled as two", spelled, plain, "layer.profiles.web.rebuild.paths"},
+		{"two labels whose text carries the next", first, second, "layer.defaults.git.pr.labels"},
+		{"the same two labels the other way round", second, first, "layer.defaults.git.pr.labels"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1415,7 +1427,7 @@ func TestConfigPublishManagedRefusesAValueSpelledAsAnotherValue(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s was published in a coding agent's session", tc.name)
 			}
-			if !strings.Contains(err.Error(), "layer.profiles.web.rebuild.paths") {
+			if !strings.Contains(err.Error(), tc.names) {
 				t.Errorf("the refusal does not name the key that changed: %v", err)
 			}
 			if !strings.Contains(err.Error(), "allowlist") {
@@ -1440,6 +1452,15 @@ func TestConfigPublishManagedRefusesAValueSpelledAsAnotherValue(t *testing.T) {
 // version, say, is not a version once a comma is in it). A rendering that is
 // not injective reports a change as no change, which is what admitted the
 // change the first-line review of this change found.
+//
+// One pair of `differs` is there for the length prefix rather than for the hole
+// itself: `["pval!!strq", "Y"]` against `["p", "qval!!strY"]`, two lists of two
+// scalars whose texts are cut so that reading the pieces bare cannot say where
+// the first element ended. Every other pair here is told apart by the members
+// and the kind that stand beside the text, so the suite stays green when the
+// lengths go — that pair does not, which is the point of it. What layerNodeField
+// adds is not that the pair is refused but that the rendering can be read at
+// all.
 func TestLayerNodeValueTellsValuesApart(t *testing.T) {
 	value := func(t *testing.T, text string) *yaml.Node {
 		t.Helper()
@@ -1468,6 +1489,7 @@ func TestLayerNodeValueTellsValuesApart(t *testing.T) {
 		{"[a]", "[[a]]"},
 		{"{a: [b, c]}", "{a: \"[!!str b, !!str c]\"}"},
 		{"5", "\"5\""},
+		{"[\"pval!!strq\", \"Y\"]", "[\"p\", \"qval!!strY\"]"},
 	}
 	for _, tc := range differs {
 		got, want := layerNodeValue(value(t, tc[0])), layerNodeValue(value(t, tc[1]))
