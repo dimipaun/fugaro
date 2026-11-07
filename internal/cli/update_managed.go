@@ -645,11 +645,24 @@ const gateUnreadable = "the managed gate did not admit this step: the document i
 // removal here (gateDeleteLeft), and the error is what says whether the gate
 // judged anything at all (gateRefusalOf). The two stages whose document is not
 // a plan can only ever be the second, so they ask gateRefusalOf themselves.
+//
+// The plan's answer is asked only of a plan the gate REFUSED (gateRefusalOf's
+// plan answer, i.e. managed.ErrNotConverged): a step the gate reached no verdict
+// on — the plan could not be printed, the creation fact could not be read again
+// immediately before the write — is a failure of the run, and a run's failure
+// is not the owner's removal however many deletes the document it never judged
+// turns out to carry. A mark read that failed takes the same document down a
+// different road than a rule that refused it, and the two roads' answers must
+// not be handed one another's command.
 func (r *initRun) gateRefused(err error, doc []byte) *initflow.GatedError {
+	refusal := gateRefusalOf(err)
+	if refusal != initflow.GateRefusedPlan {
+		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
+	}
 	if owner, ok := r.gateDeleteLeft(err.Error(), doc); ok {
 		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: initflow.GateRefusedDelete, Owner: owner}
 	}
-	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
+	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
 }
 
 // gateRefusalOf is what a step's refusal leaves the person who reads it, read
@@ -704,6 +717,14 @@ func gateRefusalOf(err error) initflow.GateRefusal {
 // going onto a command line; --allow-delete takes the address alone (fugaro's
 // own roots are not the owner's delete list, D72/D74), so the identity is what
 // the owner reads to know which object they are approving.
+//
+// The address alone is also why a removal the plan identifies nothing for stays
+// in this shape rather than being filtered out of it: the guard the owner's own
+// flag reaches compares the address and nothing else, so it clears the removal
+// whether or not the before view names the object — and the reason
+// RemoveIdentityText gives is then the whole of what the owner has to go on,
+// which is why it is printed rather than dropped. What no flag reaches is what
+// tf.Listable already leaves out (the paragraph above), and nothing else.
 func (r *initRun) gateDeleteLeft(reason string, doc []byte) (initflow.Left, bool) {
 	var plan tf.Plan
 	if err := json.Unmarshal(doc, &plan); err != nil {
@@ -729,7 +750,7 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte) (initflow.Left, bool
 	return initflow.Left{
 		Kind: initflow.LeftCommand,
 		Text: "the managed gate refused this step and nothing was written: " + reason +
-			". The removal this plan carries is your own decision and not a session's, and no typed confirmation reaches past a refusal (D1012): the command below is the one you run yourself, at your own terminal, where the flag admits exactly the removals the gate refused. The plan removes " + strings.Join(words, ", "),
+			". The removal this plan carries is your own decision and not a session's, and no typed confirmation reaches past a refusal (D1012): the command below is the one you run yourself, at your own terminal, where the flag admits every removal named here and the step keeps its own confirmation. The plan removes " + strings.Join(words, ", "),
 		Commands: []string{selfCommand() + " " + r.o.doorName() + " " + strings.Join(args, " ")},
 	}, true
 }
