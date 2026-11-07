@@ -784,6 +784,8 @@ func TestUnpackRefusesAnEntryThroughALink(t *testing.T) {
 			{Name: top + "/a/link", Typeflag: tar.TypeSymlink, Linkname: "../outside"}}, "link"},
 		{"a file under a link", []*tar.Header{planted,
 			{Name: top + "/a/evil", Typeflag: tar.TypeReg}}, "evil"},
+		{"a directory under a link", []*tar.Header{planted,
+			{Name: top + "/a/dir", Typeflag: tar.TypeDir}}, "dir"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -798,6 +800,52 @@ func TestUnpackRefusesAnEntryThroughALink(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUnpackRefusesALinkThatResolvesOutOfTheTree: a link target is resolved by
+// the kernel, not by the comparison escapes makes, so "a/../outside" is not the
+// tree's "outside" when "a" is a link an earlier entry planted: it is the
+// parent of the tree, and a chain of such links climbs one level per link.
+// Every link is in the tree once the archive is unpacked, so they are resolved
+// then, the way internal/cache resolves the links in its own archives. The
+// third archive is the other half of the check: a target that goes through a
+// link and stays in the tree is kept, because links are legitimate entries the
+// repository itself ships.
+func TestUnpackRefusesALinkThatResolvesOutOfTheTree(t *testing.T) {
+	const top = "fugaro-abc"
+	link := func(name, target string) *tar.Header {
+		return &tar.Header{Name: top + "/" + name, Typeflag: tar.TypeSymlink, Linkname: target}
+	}
+	file := func(name string) *tar.Header {
+		return &tar.Header{Name: top + "/" + name, Typeflag: tar.TypeReg}
+	}
+	refused := []struct {
+		name string
+		hdrs []*tar.Header
+	}{
+		{"a target that climbs through a link", []*tar.Header{link("a", "."), link("y", "a/../outside")}},
+		{"a chain of links that climbs", []*tar.Header{link("a", "."), link("y", "a/.."), link("z", "y/..")}},
+		{"links that point at each other", []*tar.Header{link("a", "b"), link("b", "a")}},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			body := archiveOf(t, top, nil, tc.hdrs...)
+			if err := unpack(bytes.NewReader(body), dest, 1<<20); err == nil {
+				t.Fatalf("the archive was unpacked: %v holds a link that leaves the tree", treeNames(t, dest))
+			}
+		})
+	}
+	t.Run("a target that stays in the tree through a link", func(t *testing.T) {
+		dest := t.TempDir()
+		body := archiveOf(t, top, nil, link("a", "."), link("y", "a/VERSION"), file("VERSION"))
+		if err := unpack(bytes.NewReader(body), dest, 1<<20); err != nil {
+			t.Fatalf("a link that resolves inside the tree was refused: %v", err)
+		}
+		if target, err := os.Readlink(filepath.Join(dest, "y")); err != nil || target != "a/VERSION" {
+			t.Fatalf("the link is not in the tree: %q, %v", target, err)
+		}
+	})
 }
 
 func TestUnpackRefusesAnUnsafeArchive(t *testing.T) {

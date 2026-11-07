@@ -29,7 +29,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -65,6 +67,8 @@ const (
 	// maxEntries caps the entries of one archive, so an archive of millions
 	// of empty entries cannot cost more than its bytes suggest.
 	maxEntries = 1 << 20
+	// maxHops caps the links followed while resolving one link target.
+	maxHops = 40
 
 	// fetchTimeout bounds one download, gitWaitDelay how long a git command's
 	// Wait drains output after git itself exited. A leaked descendant that
@@ -385,7 +389,9 @@ func tarTree(ctx context.Context, o Options, root string, w want) (string, error
 // that escapes — an absolute name, a ".." component, a link whose target
 // leaves the tree — a second top-level directory, an entry that is not a
 // directory, a regular file or such a link, and an archive over max bytes
-// are all refused (F21).
+// are all refused (F21). So is an entry whose directory is a link an earlier
+// entry planted rather than a directory of the archive's own, and a link that
+// resolves out of the tree once every entry is in place.
 //
 // A link that stays inside the tree is created rather than refused: the
 // repository itself ships links under .claude/skills, and refusing every one
@@ -403,11 +409,12 @@ func unpack(body io.Reader, dest string, max int64) error {
 	defer rt.Close()
 	tr := tar.NewReader(gz)
 	real := map[string]bool{}
+	var links []string
 	top, total, entries := "", int64(0), 0
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			return checkLinks(rt, links)
 		}
 		if err != nil {
 			return fmt.Errorf("reading the archive: %w", err)
@@ -454,6 +461,7 @@ func unpack(body io.Reader, dest string, max int64) error {
 			if err := rt.Symlink(filepath.FromSlash(h.Linkname), rel); err != nil {
 				return fmt.Errorf("writing %q: %w", h.Name, err)
 			}
+			links = append(links, rel)
 		default:
 			return fmt.Errorf("refusing %q: a %s entry is not a directory, a file or a link", h.Name, entryType(h.Typeflag))
 		}
@@ -597,6 +605,78 @@ func entryType(t byte) string {
 func escapes(rel, target string) bool {
 	t := filepath.FromSlash(target)
 	return t == "" || filepath.IsAbs(t) || !filepath.IsLocal(filepath.Join(filepath.Dir(rel), t))
+}
+
+// checkLinks refuses an archive whose links resolve out of the tree, once the
+// whole archive is in place: escapes compares paths, and the kernel resolves
+// them, so "a/../outside" is the tree's "outside" until "a" is a link an
+// earlier entry planted -- and is the tree's parent afterwards, one level per
+// link in a chain. Every link is in the tree by the time this runs, so the
+// order the archive lists them in decides nothing (internal/cache resolves the
+// links in its own archives the same way, and it is not shared because that
+// package carries the cloud storage client into this one, which runs locally).
+func checkLinks(rt *os.Root, links []string) error {
+	for _, rel := range links {
+		out, err := resolvesOutside(rt, rel)
+		if err != nil {
+			return fmt.Errorf("resolving %q: %w", filepath.ToSlash(rel), err)
+		}
+		if out {
+			return fmt.Errorf("refusing the archive: %s resolves outside the source tree", filepath.ToSlash(rel))
+		}
+	}
+	return nil
+}
+
+// resolvesOutside reports whether name, resolved inside rt the way the kernel
+// would (following every link, the last one included), leaves rt. A component
+// that does not exist is taken lexically, so a dangling "missing/x/../.." is
+// judged as if missing and x were directories, and ".." above the root or an
+// absolute link target counts as outside. An error -- too many links, an
+// unreadable component -- is an error to fail closed on.
+func resolvesOutside(rt *os.Root, name string) (bool, error) {
+	todo := strings.Split(filepath.ToSlash(name), "/")
+	var cur []string // physical components below the root, none of them a link
+	hops := 0
+	for len(todo) > 0 {
+		c := todo[0]
+		todo = todo[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			if len(cur) == 0 {
+				return true, nil
+			}
+			cur = cur[:len(cur)-1]
+			continue
+		}
+		p := filepath.Join(append(slices.Clone(cur), c)...)
+		fi, err := rt.Lstat(p)
+		switch {
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			cur = append(cur, c)
+			continue
+		case err != nil:
+			return false, err
+		case fi.Mode()&fs.ModeSymlink == 0:
+			cur = append(cur, c)
+			continue
+		}
+		if hops++; hops > maxHops {
+			return false, fmt.Errorf("resolving %s: too many levels of symbolic links", name)
+		}
+		target, err := rt.Readlink(p)
+		if err != nil {
+			return false, err
+		}
+		target = filepath.ToSlash(target)
+		if target == "" || strings.HasPrefix(target, "/") {
+			return true, nil
+		}
+		todo = append(strings.Split(target, "/"), todo...)
+	}
+	return false, nil
 }
 
 // ChangesSince writes the "changes since your version" file that Fugaro —
