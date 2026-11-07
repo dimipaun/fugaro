@@ -3532,7 +3532,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * the plan scope's card is the drawing for the first (the installation has
      * one thing to do about it, and the read that was refused was the console's
      * own idea), and the sentence naming `graph.read` is the answer to the
-     * second, where the operator asked for that scope. */
+     * second, where the operator asked for that scope. A scope the operator
+     * chooses clears it (`chooseScope`), because from then on the read is
+     * theirs. */
     fellBack: boolean
   } = {
     screen: null,
