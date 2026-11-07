@@ -1010,6 +1010,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// publishedPolicyOf before a publish gets here, and what this assignment
 		// re-encodes is therefore the whole of the operator's block.
 		pol.Credentials = old.Credentials
+		// The crafts' credentials, their pools and the crafts that choose among
+		// them are kept for the same reason (docs/model-crafts, plan MC1): no
+		// command of this release writes them, so the node's are the only ones,
+		// and a publish that dropped them would take away definitions the owner
+		// put there — silently, since this release reads none of them yet. They
+		// are copied as the typed values, the credentials block's way: each of
+		// the three is strict inside, so a member this Fugaro does not model is
+		// refused by publishedPolicyOf before a publish gets here, and what the
+		// assignment re-encodes is the whole of what the node held. MC4 is where
+		// the operator's config becomes their writer, and where they gain the
+		// diff lines the other operator-written blocks have.
+		pol.CraftCredentials = old.CraftCredentials
+		pol.CraftPools = old.CraftPools
+		pol.Crafts = old.Crafts
 	}
 	return pol, keepRouting, nil
 }

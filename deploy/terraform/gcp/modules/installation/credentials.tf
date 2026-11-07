@@ -16,7 +16,7 @@
 # the service's own account — with the permissions spelled out at the role.
 
 locals {
-  # The whole file is gated on the one opt-in: null creates nothing, and a
+  # The whole file is gated on the one variable: null creates nothing, and a
   # single boolean keeps the six resources of this file in step (the account,
   # the bundle container, the accessor grant on it, the database role and its
   # binding, and the service — TestCredentialsServiceResourcesAreCounted is
@@ -26,8 +26,8 @@ locals {
 
   # The release the image pin names, or "" when the reference carries no
   # released version. The digest says nothing about which process is inside it,
-  # and the version beside it is the only thing that does: C1.20's stage
-  # resolves the release's own image and writes both (`mirror.RemoteRef`, so
+  # and the version beside it is the only thing that does: `fugaro update`'s
+  # deploy resolves the release's own image and writes both (`mirror.RemoteRef`, so
   # `…/fugaro-credentials:<version>@sha256:<digest>`), and a reference an
   # operator wrote by hand, a digest alone, or a version that is not
   # three numbers reads as "" — the direction that claims nothing.
@@ -36,11 +36,10 @@ locals {
   # Whether that process serves HTTP/2 cleartext, which is what the port's name
   # below is read as by Cloud Run's front end. The two MUST move together, and
   # what makes them is that the image is pinned by the run that plans this root:
-  # the owner-run credentials stage when the service is switched on, and — an
-  # installation that opted in under an earlier release — an ordinary
-  # `fugaro update`, which re-resolves this release's image and re-pins its
-  # digest before planning (internal/cli/init_stages.go's
-  # pinCredentialsImage). So the apply that moves the image onto this release
+  # every `fugaro update` resolves this release's image and re-pins its digest
+  # before planning the root (internal/cli/init_stages.go's pinCredentialsImage),
+  # whether the service is being deployed or an installation that already has it
+  # is being carried forward. So the apply that moves the image onto this release
   # is the one that renames the port. The direction of the name is the other
   # half: h2c in front of a process that answers HTTP/1.1 only serves nothing
   # at all — the front end reads the HTTP/2 preface as a malformed request line
@@ -321,7 +320,7 @@ resource "google_cloud_run_v2_service" "credentials" {
 
   # The service holds no data of its own: what is worth keeping is the bundle
   # container, and that one carries prevent_destroy above. So dropping the
-  # opt-in is NOT a removal a plan may make: with the container in state the
+  # block from the tfvars is NOT a removal a plan may make: with the container in state the
   # plan fails ("Instance cannot be destroyed") and applies nothing — the
   # service, this account and the grant above cannot be removed in that plan
   # either (independent security review of this file, M2, whose first version

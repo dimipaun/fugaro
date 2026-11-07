@@ -212,11 +212,12 @@ type InstallationSpec struct {
 	// (InstallOptions.ManagedDeployerScoped).
 	ManagedDeployerScoped bool `json:"managed_deployer_scoped,omitempty"`
 	// CredentialsService is the installation's credentials service (D146,
-	// D147), left out until an owner runs init's credentials stage (C1.20) —
-	// which is the only writer, and the only thing that can set it. Left out
-	// rather than written as null, so an installation that has not opted in
-	// writes exactly the tfvars it wrote before the variable existed, and the
-	// module creates nothing for an absent one.
+	// D147), left out until `fugaro update` deploys it (DON1, the owner's
+	// ruling of 2026-11-05) — which every run does for every installation that
+	// can carry the service at all. Left out rather than written as null, so an
+	// installation that cannot carry one (no Firebase backend to read, no
+	// repository job to admit) writes exactly the tfvars it wrote before the
+	// variable existed, and the module creates nothing for an absent one.
 	CredentialsService *CredentialsServiceSpec `json:"credentials_service,omitempty"`
 	// CatalogCheck is the project's catalog check job (D1148), left out on an
 	// installation whose project publishes no catalog and on one whose catalog
@@ -295,9 +296,9 @@ type CredentialsServiceSpec struct {
 	// verifier account when nobody names one, and the owner's list when they
 	// do. The value is the published policy node's list, not this machine's
 	// opinion of it: the owner writes it in the local config, `fugaro update`'s
-	// policy stage publishes it, and the same run's credentials stage reads it
-	// back and hands it here (localcfg's keep rule is what makes a config that
-	// states none keep the node's).
+	// policy stage publishes it, and the same run's prepare reads it back and
+	// hands it here (localcfg's keep rule is what makes a config that states
+	// none keep the node's).
 	//
 	// It is THREE-STATE, and a pointer is the only spelling of it, because
 	// `omitempty` on a slice cannot tell two of the three apart:
@@ -428,10 +429,11 @@ var credsImageReleaseRE = regexp.MustCompile(`:([0-9]+\.[0-9]+\.[0-9]+)@sha256:`
 // The Firebase facts come from the local config's budget block, which `fugaro
 // update --firebase-project` wrote from the Firebase root's outputs: the service reads
 // the installation's own database, so an installation whose config names none
-// cannot be configured at all — the stage's marker gate (requireCredsRules)
-// reads that same database, and a service with no database in its environment
-// refuses to bind a port. Both halves are refused here by name rather than
-// written empty, which is what the revision would refuse by.
+// cannot be configured at all — the service's own startup refuses a database
+// URL that is missing or is not this installation's, and it builds that client
+// before it serves anything, so the block would be a revision that never comes
+// up. Both halves are refused here by name rather than written empty, which is
+// what the revision would refuse by.
 //
 // publishedVerifiers is the verifier list the published policy node carries,
 // which the caller reads and this writer cannot: the list reaches the service
@@ -444,14 +446,7 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 	if !credsImageRE.MatchString(image) {
 		return CredentialsServiceSpec{}, userErr("the credentials service's image %q must be pinned by digest (ending in @sha256: and 64 lower-case hex digits): a tag is mutable, and this service reads every model credential the installation holds", image)
 	}
-	b := lc.Budget
-	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
-		return CredentialsServiceSpec{}, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <gcp-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
-	}
-	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
-		return CredentialsServiceSpec{}, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <gcp-project-id>' to write it from the Firebase root's outputs")
-	}
-	jobs, err := CredentialsJobAccounts(lc)
+	b, jobs, err := credentialsInstallation(lc)
 	if err != nil {
 		return CredentialsServiceSpec{}, err
 	}
@@ -476,6 +471,40 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 		// for, and the account it creates is admitted.
 		VerifierAccounts: verifierAccountsField(lc.VerifierAccountsEffective(publishedVerifiers)),
 	}, nil
+}
+
+// CredentialsInstallationFacts is Credentials' own question about the
+// installation, asked on its own: does this project's config name everything
+// the service needs to exist in it at all — the Firebase database it reads,
+// and at least one repository job it may admit? It is what a caller asks
+// BEFORE it resolves the service's image, so a run whose installation cannot
+// carry the service spends no registry read, no signature check and no pull
+// on one; Credentials asks it too (credentialsInstallation, below), so the
+// two can never disagree about an installation.
+func CredentialsInstallationFacts(lc *localcfg.Config) error {
+	_, _, err := credentialsInstallation(lc)
+	return err
+}
+
+// credentialsInstallation is the budget block and the job table Credentials
+// builds the service from, and the refusals an installation that names
+// neither gets: the service reads the installation's own database and admits
+// its repository jobs, so a project with no database named and a project
+// whose table binds no run to a repository are installations the service
+// cannot be deployed into (its own Authenticator refuses a table of none).
+func credentialsInstallation(lc *localcfg.Config) (*localcfg.Budget, []CredentialsJob, error) {
+	b := lc.Budget
+	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
+		return nil, nil, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <gcp-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
+	}
+	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
+		return nil, nil, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <gcp-project-id>' to write it from the Firebase root's outputs")
+	}
+	jobs, err := CredentialsJobAccounts(lc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return b, jobs, nil
 }
 
 // verifierAccountsField spells an effective verifier list as the three-state
@@ -543,16 +572,89 @@ func CredentialsJobAccounts(lc *localcfg.Config) ([]CredentialsJob, error) {
 	if len(out) == 0 {
 		return nil, userErr("the installation has no repository job to bind the credentials service to (the local config names no repository with a workflow): the service refuses a table that binds no run to a repository, so an installation with no jobs cannot have it")
 	}
-	slices.SortFunc(out, func(a, b CredentialsJob) int {
-		if c := strings.Compare(a.Provider, b.Provider); c != 0 {
-			return c
-		}
-		if c := strings.Compare(a.Repo, b.Repo); c != 0 {
-			return c
-		}
-		return strings.Compare(a.Workflow, b.Workflow)
-	})
+	slices.SortFunc(out, func(a, b CredentialsJob) int { return strings.Compare(credentialsJobKey(a), credentialsJobKey(b)) })
 	return out, nil
+}
+
+// credentialsJobKey is one row's sort key and its identity: the three fields
+// the service derives a caller's job from, joined so that two rows are the same
+// row exactly when they name the same job. The separator is a NUL, which no
+// provider, repository or variant can hold.
+func credentialsJobKey(j CredentialsJob) string {
+	return j.Provider + "\x00" + j.Repo + "\x00" + j.Workflow
+}
+
+// RefreshCredentialsServiceJobAccounts returns vars with the credentials
+// service's job_accounts brought up to date with the installation the local
+// config names now, and every other member of the block — the image, the URL,
+// the bundle container, the database and the verifier list — exactly what it
+// was.
+//
+// The table is the one member of the block this side composes out of the local
+// config (CredentialsJobAccounts over lc.Repos), and the deploy is its only
+// other writer: Credentials fills it in on the run that CREATES the block, and
+// every later run carries the block as it is found (CarriedCredentialsService).
+// A repository onboarded after that deploy is therefore in the table of
+// nobody — its root still grants its job roles/run.invoker on the service
+// (modules/workflow/sa.tf), and the running service then refuses every call
+// from an account whose row it does not hold, which is the failure
+// CredentialsJobAccounts' own comment calls the one that must not happen. No
+// other command could put the row there: `fugaro update` is the whole upgrade
+// (CLAUDE.md's HARD RULE), so the refresh is part of it or it is nowhere.
+//
+// The rows found in the document are UNIONED with the derived ones rather than
+// replaced by them, which is the fail-closed direction CredentialsJobAccounts
+// already states: a row for a job the config no longer names binds an account
+// no token is ever minted for, while a row a refresh DROPPED is a job that
+// holds an invoker grant and is refused. It is also what keeps an installation
+// whose config has not changed byte for byte what it was, which is what a
+// carried block owes its readers.
+//
+// A config that cannot describe the table at all — a named repository whose
+// provider it does not state, or no repository with a workflow — is refused
+// rather than written around, and so is a document whose rows this program
+// cannot read: the caller then keeps the block it found. Refreshing from a
+// config that is missing a repository is the removal the union is there to
+// prevent, and dropping the member is worse still.
+func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no credentials_service to refresh the job table of")
+	}
+	var found []CredentialsJob
+	if raw, ok := svc["job_accounts"]; ok && raw != nil {
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &found); err != nil {
+			return nil, fmt.Errorf("the installation's credentials_service.job_accounts is not a list of provider, repo and workflow rows: %w", err)
+		}
+	}
+	jobs, err := CredentialsJobAccounts(lc)
+	if err != nil {
+		return nil, err
+	}
+	merged := found
+	seen := make(map[string]bool, len(found)+len(jobs))
+	for _, j := range found {
+		seen[credentialsJobKey(j)] = true
+	}
+	for _, j := range jobs {
+		if seen[credentialsJobKey(j)] {
+			continue
+		}
+		seen[credentialsJobKey(j)] = true
+		merged = append(merged, j)
+	}
+	slices.SortFunc(merged, func(a, b CredentialsJob) int { return strings.Compare(credentialsJobKey(a), credentialsJobKey(b)) })
+	svc["job_accounts"] = merged
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
 }
 
 // CredentialsReviewJobAccounts is the installation's review-only job variants
@@ -620,6 +722,41 @@ func CredentialsServiceURLOf(vars []byte) (string, error) {
 	return url, nil
 }
 
+// RepoCredentialsServiceDeployed returns whether a REPOSITORY root's tfvars
+// carry the installation's credentials service: the key
+// installation.credentials_service, present and not null. Unlike the
+// installation root's own credentials_service, which sits at the top level of
+// its document, a repository root carries its copy under installation, the
+// object the workflow module reads (RepoVars, spec.go's RepoInstallation).
+//
+// The key is the whole of the switch's first flip for that root:
+// repoCredentialsService makes it nil for every other answer, and the module
+// reads null as "the service is off for this repository" — with it null the
+// job keeps its model mounts and its App key mount and no account of it is
+// granted roles/run.invoker, and with it set all three are the other way
+// (modules/workflow/sa.tf). So a document that carries it is the record of a
+// root that was applied with the service on, and one that does not is the
+// record of a root that was applied with it off — including the root of an
+// installation that has no service at all.
+//
+// It is the document the last run that applied this root handed Terraform, and
+// it is read where the run's own fugaro.yaml cannot be: a launch from a
+// directory that holds no checkout of the repository has no agent.auth to
+// judge the switch on (internal/cli's credentialsServiceLaunchEnv), and the
+// deployed root is then the fact the job's own containers carry.
+func RepoCredentialsServiceDeployed(vars []byte) (bool, error) {
+	if vars == nil {
+		return false, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return false, fmt.Errorf("the repository's terraform.tfvars.json is not readable: %w", err)
+	}
+	inst, _ := doc["installation"].(map[string]any)
+	svc, ok := inst["credentials_service"]
+	return ok && svc != nil, nil
+}
+
 // SetCredentialsServiceURL returns the installation root's tfvars with
 // credentials_service.url set to url and every other entry — the service's own
 // facts included — unchanged. It is the same read-modify-write of one entry
@@ -647,13 +784,12 @@ func SetCredentialsServiceURL(vars []byte, url string) ([]byte, error) {
 
 // CredentialsServiceImageOf returns the image the installation root's tfvars
 // carry for the credentials service, and false when they carry no service at
-// all (the installation has not opted in, D147) or one with no image.
+// all (D147) or one with no image.
 //
-// It is the read an ordinary `fugaro update` makes to learn that this
-// installation runs the service: the credentials stage is registered only
-// under --provision-credentials and every other run rewrites these tfvars from
-// a spec that never carries the key (init.go's prepare), so the document is
-// the only thing in the run that knows. An entry with no image answers false
+// It is the read an ordinary `fugaro update` makes to learn what this
+// installation's service is: every run rewrites these tfvars from a spec that
+// never carries the key (init.go's prepare) and carries the entry forward from
+// this document, so the document is the only thing in the run that knows. An entry with no image answers false
 // rather than pinning onto it: the module refuses a reference that is not
 // digest-pinned, so the plan is already the refusal, and writing an image into
 // an entry whose other facts are missing would describe half a service.
@@ -729,8 +865,8 @@ func CredentialsServiceImageRelease(image string) string {
 // every other entry byte-for-byte what it was.
 //
 // It is a read-modify-write of the ONE key and never a rebuild of the
-// document, because the tfvars that are on disk when the credentials stage
-// runs are not what InstallationVars(spec) would produce: the run that wrote
+// document, because the tfvars that are on disk when the deploy runs are not
+// what InstallationVars(spec) would produce: the run that wrote
 // them had run discovery, so they carry the module's project_secrets (the
 // live project-wide containers), adopt_legacy_registry and the run's imports
 // — values only that run's discovery knew. Rewriting the document from the
@@ -753,10 +889,11 @@ func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, err
 // workdir held none. It is handed over as bytes rather than read from a path
 // here on purpose: the caller's workdir has already been prepared, so the file
 // is gone, and a read at this point would answer "nothing to carry" for an
-// installation that has opted in (the bug C1.20's review found).
+// installation that has the service (the bug C1.20's review found).
 //
-// The variable is the credentials stage's alone (C1.20), and every ordinary
-// run of init rewrites the tfvars from its spec — which never sets the key.
+// The variable is the deploy's own (init_stages.go's pinCredentialsImage), and
+// every run of init rewrites the tfvars from its spec — which never sets the
+// key.
 // Carried forward exactly as it was, present or absent, an installation that
 // has opted in keeps the service across an ordinary run's rewrite; without
 // that, the next plain `fugaro update` would plan the service, its account and
@@ -1058,9 +1195,9 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, err
 	}
 	s.CatalogCheck = cc
-	// CredentialsService is deliberately NOT set from the options: the opt-in
-	// is the credentials stage's alone (C1.20), and that stage never comes
-	// through here — it read-modify-writes the one key of the document the
+	// CredentialsService is deliberately NOT set from the options: the block
+	// is the deploy's own (init_stages.go's pinCredentialsImage), and the
+	// deploy never comes through here — it read-modify-writes the one key of the document the
 	// installation stage wrote (infra.SetCredentialsService), because a
 	// document rebuilt from a spec would drop the discovery's project_secrets
 	// and plan their destruction.
