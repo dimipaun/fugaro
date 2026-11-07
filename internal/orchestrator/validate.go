@@ -136,6 +136,9 @@ func ValidateState(s State) error {
 		if !idRE.MatchString(k) {
 			return fmt.Errorf("%w: the fact key %q is not a name", ErrInvalid, safetext.OneLine(k))
 		}
+		if f.Value == "" {
+			return fmt.Errorf("%w: the fact %q carries no value, and setting one is how a fact is written", ErrInvalid, safetext.OneLine(k))
+		}
 		if over(f.Value, MaxFactValueRunes) {
 			return fmt.Errorf("%w: the fact %q is over %d runes", ErrTooLarge, safetext.OneLine(k), MaxFactValueRunes)
 		}
@@ -149,6 +152,9 @@ func ValidateState(s State) error {
 	for _, a := range s.Archived {
 		if !idRE.MatchString(a.ID) {
 			return fmt.Errorf("%w: the archived id %q is not a name", ErrInvalid, safetext.OneLine(a.ID))
+		}
+		if a.Outcome == "" {
+			return fmt.Errorf("%w: the archived item %q carries no outcome", ErrInvalid, safetext.OneLine(a.ID))
 		}
 		if over(a.Outcome, MaxOutcomeRunes) {
 			return fmt.Errorf("%w: an archived outcome is over %d runes", ErrTooLarge, MaxOutcomeRunes)

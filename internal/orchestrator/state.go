@@ -737,31 +737,30 @@ func protectedIntent(s State, it Intent, now time.Time) bool {
 }
 
 // shrink drops one more piece of history from a node that is still over the
-// target after the passes above, cheapest loss first, and reports whether it
-// dropped anything. It stops at the parts that are work rather than history:
-// an open decision, a live item, a protected intent and the goal are what the
-// node is for.
+// target after the passes above, and reports whether it dropped anything. The
+// order is what each loss costs: entries that only record something already
+// finished first, and the facts last, because a fact is the only thing here
+// the loop still works from — a fact it needs again it can write again, but
+// nothing will write it back on its own.
+//
+// It stops at what the node is for: an open decision, a live item, a protected
+// intent and the goal are never dropped, so a node over the target with
+// nothing but those left stays over it and OverCap says so. That is the fail
+// closed direction: the daemon stops spawning rather than a count moving.
+//
+// A finished item goes whole rather than losing its brief: an item with an
+// empty brief is not a document this release reads back, and the entry it
+// would leave in the archived list is room the node is short of.
 func shrink(s *State, now time.Time) bool {
 	if len(s.Archived) > 0 {
 		s.Archived = s.Archived[1:]
 		return true
-	}
-	for i := range s.WorkItems {
-		if s.WorkItems[i].Phase.Done() && s.WorkItems[i].Brief != "" {
-			s.WorkItems[i].Brief = ""
-			return true
-		}
 	}
 	for i, d := range s.Decisions {
 		if d.Resolved() {
 			s.Decisions = append(s.Decisions[:i], s.Decisions[i+1:]...)
 			return true
 		}
-	}
-	if len(s.Facts) > 0 {
-		keys := sortedKeys(s.Facts)
-		delete(s.Facts, keys[len(keys)-1])
-		return true
 	}
 	for i, w := range s.WorkItems {
 		if archivable(*s, w) {
@@ -774,6 +773,11 @@ func shrink(s *State, now time.Time) bool {
 			s.Intents = append(s.Intents[:i], s.Intents[i+1:]...)
 			return true
 		}
+	}
+	if len(s.Facts) > 0 {
+		keys := sortedKeys(s.Facts)
+		delete(s.Facts, keys[len(keys)-1])
+		return true
 	}
 	return false
 }
