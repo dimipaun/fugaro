@@ -265,6 +265,9 @@ and T8 waits on the spike only.
 - **Tests:** `TestUpdateRaisesASeededObserveToEnforce`, `TestAnOwnerChosenObserveIsNeverRaised`,
   `TestPreviousModeConvergesOnUpdate` (HARD RULE: an installation carrying the seeded `observe` with no
   `modeSet` converges), `TestUpdateIsANoOpAfterTheRaise`, `TestDoctorNamesTheMode`.
+- **Release:** `### For operators`: "run `fugaro update`" — it now raises the budget mode to `enforce` on a
+  managed project unless the installation's owner chose a mode, so a pre-change installation's seeded `observe`
+  becomes `enforce` (HARD RULE: update absorbs the change; no second command).
 - **Depends on:** T3, T8 (the shared files above). **Reviewer:** opus + mandatory independent review (money, the
   HARD RULE).
 - **Commit:** `managed: update sets enforce on a managed project unless its owner chose otherwise (T16)`.
@@ -327,7 +330,7 @@ ruled); T16, the T6(b) step, is off the critical path.
 
 | File | Writers (level) |
 | --- | --- |
-| `budget.go`, `update_managed.go` | T3 (1), T16 (2: the mode's choice record), T9 (3: the gate call), T11 (5: flags) |
+| `budget.go` | T3 (1), T16 (2: the mode's choice record), T9 (3: the gate call), T11 (5: flags) |
 | `settings_write.go` | T3 (1), T5 (2) |
 | `accounts_rm.go`, `accounts_managed.go`, `config_publish.go` | T5 (2), T9 (3), T11 (5) |
 | `image*.go`, `image_refresh_managed.go`, `image_build_managed.go` | T4 (2), T9 (3: the gate call in `image_refresh_managed.go`), T11 (5) |
@@ -340,7 +343,7 @@ ruled); T16, the T6(b) step, is off the critical path.
 | `managed_gate.go`, `managed_apply.go`, `doctor_managed_audit.go`, `internal/managed/{converge,plan,apply,audit}.go`, `cover.go`, `guard.go` | T9 (3) |
 | `internal/managed/builds.go`, `internal/infra/managed/*`, `internal/infra/catalogcheck.go` | T10 (3) |
 | `internal/budget/*`, Firebase rules, `iam.tf` (billing grant) | T8 (1) |
-| `update.go`, `update_budget_mode.go` (new), `doctor_build_budget.go`, `internal/infra/firebasedb.go` | T8 (1: `doctor_build_budget.go`, new), T16 (2: the mode step, one doctor line, the mode write's choice record) |
+| `update.go`, `update_budget_mode.go` (new), `doctor_build_budget.go`, `internal/infra/firebasedb.go` | T8 (1: `doctor_build_budget.go`, new), T16 (2: the mode step and one doctor line) |
 | `internal/initflow/stage.go` | T9 (3: `Removes` only), T12 (6) |
 | `docs/gcp-live-checklist.md`, `SECURITY.md` flag text, plugin skills, console `spawn.ts`/`confirm.ts` | T11 (5); T14 rows and T13 gate text land at level 5 |
 | `CLAUDE.md`, `.claude/rules/*` | T13 (6) |
