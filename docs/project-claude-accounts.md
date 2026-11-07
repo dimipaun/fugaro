@@ -83,9 +83,11 @@ checkout's origin), and `--profile NAME` names the profile whose jobs serve the 
 is the only profile, when the config holds exactly one). The rules §4 states are applied to the
 config this would write, before anything is written.
 
-**The token is read at one hidden prompt, and that prompt is the only path to the value:** the same
-echo-free terminal read `fugaro secrets set` performs, held in memory, cleared after the store, and
-never written to a file, a log, a message, an argument or an environment variable.
+**The token is read from stdin or at one hidden prompt, and neither is an argument, a flag or an
+environment variable:** the same read `fugaro secrets set` performs — the echo-free prompt on a
+terminal, and stdin when there is none, so a script pipes the value rather than passing it — held in
+memory, cleared after the store, and never written to a file, a log, a message, an argument or an
+environment variable.
 
 `--claude` (`fugaro accounts add acme-team --claude`) runs Anthropic's own login first, on that same
 terminal — two acts: the login, resolved on your `PATH` and run directly with your own stdin, stdout

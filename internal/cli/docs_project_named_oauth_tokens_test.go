@@ -461,6 +461,19 @@ func TestDocsProjectClaudeAccountsOneCommand(t *testing.T) {
 	if !projectWideAccepted(lc, config.ClaudeOAuthTokenPrefix+"acme-team") {
 		t.Error("projectWideAccepted refused a named account that names a repository: §2's bullet about a hand-stored named token is stale, and §3's cross-reference with it")
 	}
+	// The value's input is a read, and there are two of them: the hidden prompt
+	// on a terminal and stdin when there is none (spec §2.2 step 3), which is
+	// the way out --claude's own refusal names for a script. The page must not
+	// narrow that to the prompt alone, and readSecret is what decides it.
+	if !strings.Contains(doc, "read from stdin or at one hidden prompt") {
+		t.Errorf("%s no longer says the token is read from stdin or at one hidden prompt: the command's own --claude refusal sends a script to stdin", projectClaudeAccountsDoc)
+	}
+	if strings.Contains(doc, "that prompt is the only path to the value") {
+		t.Errorf("%s still says the hidden prompt is the only path to the value, and the command reads stdin when there is no terminal", projectClaudeAccountsDoc)
+	}
+	if src := sourceOfFunc(t, "secrets.go", "readSecret"); !strings.Contains(src, "io.ReadAll") {
+		t.Error("readSecret no longer reads stdin when there is no terminal: the page's sentence about the token's two input paths is now wrong")
+	}
 }
 
 // TestDocsProjectClaudeAccountsCommandsExist keeps every command line and flag
