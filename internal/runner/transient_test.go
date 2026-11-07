@@ -1,0 +1,241 @@
+package runner_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
+)
+
+// Issue #1827: a model stream closed before its response finished ends a
+// stage whose work was fine, and the run loses everything the stage had
+// committed. These tests pin the runner's answer: one retry of that stage,
+// in the session it already had, bounded on both sides, for that failure and
+// for nothing else.
+
+// streamClosedText is what Claude Code prints when the stream it was reading
+// ended before the response finished: an error result whose subtype is
+// still "success".
+const streamClosedText = "API Error: stream closed before completion"
+
+// cutStream is a streaming reply whose connection is dropped after n events:
+// the model's answer never reaches its terminal event, and the agent reading
+// it sees a stream that closed early.
+func cutStream(n int) anthropicfake.Reply {
+	rep := anthropicfake.StreamOK(sonnet, pricing.Usage{Input: 100, Output: 4000})
+	rep.CutAfter = n
+	return rep
+}
+
+// postStream sends one streaming Messages request as Claude Code would and
+// returns its status. The body is a stream, and a cut one ends mid-read --
+// which is the point.
+func postStream(t *testing.T, req agent.Request, model string, maxTokens int64) int {
+	t.Helper()
+	base, key := gwEnv(req)
+	body := fmt.Sprintf(`{"model":%q,"max_tokens":%d,"stream":true,"messages":[{"role":"user","content":"hello"}]}`, model, maxTokens)
+	status, _ := postBody(t, base+"/v1/messages", key, body)
+	return status
+}
+
+// closedStream is a stage attempt that loses its stream, then reports the
+// error Claude Code prints for it. tail is appended to the text, so a test
+// can watch for a run's own words reaching a line or a record.
+func closedStream(tail string) step { return closedStreamStatus(nil, tail) }
+
+// closedStreamStatus is closedStream, recording the call's status when
+// statuses is not nil (the same way calling does).
+func closedStreamStatus(statuses *[]int, tail string) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		got := postStream(t, req, sonnet, 4000)
+		if statuses != nil {
+			*statuses = append(*statuses, got)
+		}
+		if got != http.StatusOK {
+			t.Errorf("the cut call answered %d, want 200: the status arrived before the stream was cut", got)
+		}
+		return agent.Result{Text: streamClosedText + tail, IsError: true, Subtype: "success"}, nil
+	}
+}
+
+// retryLine is the last line the runner logged about retrying a stage, and
+// the raw line itself (for the no-content checks).
+func retryLine(t *testing.T, logs *lockedBuf) string {
+	t.Helper()
+	var raw string
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if strings.Contains(line, "running the stage once more") {
+			raw = line
+		}
+	}
+	if raw == "" {
+		t.Fatalf("no retry line logged; log:\n%s", logs.String())
+	}
+	return raw
+}
+
+// A closed stream is retried once, in the session the ended attempt had, and
+// the second attempt's result is the one the run goes on with: the stage's
+// own work — the commit it made before its stream was cut — is kept.
+func TestClosedStreamRetriesTheStageOnce(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "observe", "", cutStream(3), out4k())
+	var st []int
+	rec, err := g.run(t,
+		closedStream(""),
+		calling(&st, implement("feature"), call{sonnet, 4000}),
+		review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Retries != 1 {
+		t.Errorf("retries = %d, want 1: the stage was run a second time", rec.Retries)
+	}
+	if len(g.agent.calls) != 3 {
+		t.Fatalf("the agent was called %d times, want implement twice and review once", len(g.agent.calls))
+	}
+	first, retry := g.agent.calls[0], g.agent.calls[1]
+	if !retry.Resume || retry.SessionID == "" || retry.SessionID != first.SessionID {
+		t.Errorf("the retry ran in session %q (resume %v), want the ended attempt's %q resumed",
+			retry.SessionID, retry.Resume, first.SessionID)
+	}
+	if line := retryLine(t, g.logs); !strings.Contains(line, "stage=implement") || !strings.Contains(line, "retries=1") {
+		t.Errorf("the retry line names neither the stage nor the count: %s", line)
+	}
+	// The record with its new count is one the published schema accepts.
+	assertStoredRecordValidates(t, g.store)
+	// The stage's own work is on the branch the run pushed: the retry is the
+	// same stage in the same checkout, and implement committed feature.txt.
+	if got := testutil.Git(t, g.remote, "log", "-1", "--format=%s", "refs/heads/fugaro/"+runID); got != "Add feature" {
+		t.Errorf("the branch's last commit is %q, want the retried stage's own", got)
+	}
+}
+
+// Two closed streams in a row are the failure the stage always had: the
+// second attempt records it, with the agent's own words, and no third
+// attempt is made.
+func TestTwoClosedStreamsFailTheStage(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "observe", "", cutStream(3), cutStream(3))
+	rec, _ := g.run(t, closedStream(""), closedStream(""))
+	if rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v, want the stage failed after its one retry", rec)
+	}
+	if len(g.agent.calls) != 2 {
+		t.Fatalf("the stage ran %d times, want twice and no more", len(g.agent.calls))
+	}
+	if rec.Retries != 1 {
+		t.Errorf("retries = %d, want the one retry the stage spent", rec.Retries)
+	}
+	if !strings.Contains(rec.Reason, streamClosedText) {
+		t.Errorf("reason = %q, want the agent's own words for the failure", rec.Reason)
+	}
+}
+
+// A stage error that is not a closed stream is not retried, however
+// transient it looks: the list is closed, and a run's money, its credential
+// and its clock are never spent on a second attempt.
+func TestOtherStageErrorsAreNotRetried(t *testing.T) {
+	for _, text := range []string{
+		"API Error: 400 invalid_request_error: max_tokens: field required",
+		"API Error: 401 authentication_error: invalid x-api-key",
+		"fugaro: budget halted: run cap $5.00 reached ($5.00 spent)",
+		"Claude AI usage limit reached",
+		"the stage ran out of time",
+	} {
+		g := newGW(t, gwConfig(t, ""), "observe", "", out4k())
+		step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			return agent.Result{Text: text, IsError: true, Subtype: "success"}, nil
+		}
+		rec, _ := g.run(t, step)
+		if rec.Status != runstore.StatusFailed {
+			t.Fatalf("%q: rec = %+v", text, rec)
+		}
+		if rec.Retries != 0 || len(g.agent.calls) != 1 {
+			t.Fatalf("%q: retried %d times over %d calls, want none", text, rec.Retries, len(g.agent.calls))
+		}
+	}
+}
+
+// The gateway's own count is the other half of the trigger: an attempt that
+// lost a streamed call and then failed without any words for it -- a killed
+// process, an error exit -- is the same failure, and gets the same retry.
+func TestLostStreamWithoutWordsIsRetried(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "observe", "", cutStream(3), out4k())
+	lost := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if got := postStream(t, req, sonnet, 4000); got != http.StatusOK {
+			t.Errorf("the cut call answered %d, want 200", got)
+		}
+		return agent.Result{}, errors.New("claude exited with code 1 without a result event")
+	}
+	var st []int
+	rec, err := g.run(t,
+		lost,
+		calling(&st, implement("feature"), call{sonnet, 4000}),
+		review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Retries != 1 || len(g.agent.calls) != 3 {
+		t.Fatalf("retries = %d over %d calls, want one retry", rec.Retries, len(g.agent.calls))
+	}
+}
+
+// The retry is a stage like any other: its calls are reserved and charged by
+// the gateway, so a run whose retry would take it past its cap is refused
+// and halted exactly as any other call past the cap is. The retry is not a
+// way around the budget.
+func TestRetryRespectsTheRunCap(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "enforce", "0.05", cutStream(3), out4k())
+	var st []int
+	// The first attempt's call settles at its reservation's worth (~$0.04),
+	// so the retry's own call cannot fit under the $0.05 cap: the gateway
+	// refuses it with a 403 and halts the run.
+	retry := calling(&st, func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		return agent.Result{Text: streamClosedText, IsError: true, Subtype: "success"}, nil
+	}, call{sonnet, 4000})
+	rec, err := g.run(t, closedStreamStatus(&st, ""), retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st) != 2 || st[0] != http.StatusOK || st[1] != http.StatusForbidden {
+		t.Fatalf("statuses = %v, want the first call served and the retry's refused", st)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap {
+		t.Fatalf("rec = %+v, want the run halted on its cap", rec)
+	}
+	if rec.Retries != 1 {
+		t.Errorf("retries = %d, want the one the run spent before the cap refused it", rec.Retries)
+	}
+	// The refusal is the cap's: the retry never reached the upstream.
+	if g.fake.Count() != 1 {
+		t.Errorf("the upstream saw %d calls, want only the first attempt's", g.fake.Count())
+	}
+}
+
+// The retry line names the stage and the run's count and carries nothing
+// else: no text the agent wrote, no prompt, no credential.
+func TestRetryLineCarriesNoContent(t *testing.T) {
+	const nonce = "NONCE-STAGETEXT-f3a1c9"
+	g := newGW(t, gwConfig(t, ""), "observe", "", cutStream(3), out4k())
+	var st []int
+	rec, err := g.run(t,
+		closedStream(" "+nonce),
+		calling(&st, implement("feature"), call{sonnet, 4000}),
+		review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	line := retryLine(t, g.logs)
+	for _, bad := range []string{nonce, streamClosedText, plantedKey, "hello", "x-api-key"} {
+		if strings.Contains(line, bad) {
+			t.Errorf("the retry line carries %q: %s", bad, line)
+		}
+	}
+}

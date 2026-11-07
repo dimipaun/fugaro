@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -709,6 +710,7 @@ func zeroOutcome(model string, sent bool) outcome {
 // forward sends the call upstream and copies the response back without
 // buffering, teeing it to the usage parser, and says how it settles.
 func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int, tier *string, probed *[]string) outcome {
+	start := time.Now()
 	reserved := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: pricedTable}
 	if !known {
 		reserved.pricedAs = pricedMax
@@ -849,7 +851,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	tee := newUsageTee(isSSE(resp.Header, p.stream))
 	tee.provider = rt.provider != nil
-	eof := pump(out, rc, src, func(b []byte) {
+	end := pump(out, rc, src, func(b []byte) {
 		if readable {
 			tee.feed(b)
 		}
@@ -861,26 +863,59 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	tee.finish()
 
 	ok2xx := resp.StatusCode >= 200 && resp.StatusCode <= 299
+	// A streamed 2xx that never reached its terminal event is a response the
+	// model did not finish: the agent reads it as a stream that closed before
+	// completion, and the call settles from whatever the stream managed to
+	// say (usage, partial usage, or its reservation). It is one fact, and it
+	// is recorded and logged below whatever the call settles as.
+	cut := ok2xx && tee.sse && readable && !tee.stopped
+	var o outcome
 	switch {
 	case !ok2xx:
-		o := zeroOutcome(p.model, true)
+		o = zeroOutcome(p.model, true)
 		o.errorType = tee.errorType
-		return o
 	case !readable:
 		reserved.unparsed = true
 		s.logUsageUnparsed(p.model, rt.provider, "not_readable", nil)
-		return reserved
+		o = reserved
 	case tee.sse && tee.complete && !tee.broken && !tee.acc.negative():
-		return s.fromUsage(tee, p, rt.provider, w0, false)
+		o = s.fromUsage(tee, p, rt.provider, w0, false)
 	case tee.sse && tee.started && !tee.broken && !tee.acc.negative():
-		return s.fromUsage(tee, p, rt.provider, w0, true)
-	case !tee.sse && eof && tee.complete:
-		return s.fromUsage(tee, p, rt.provider, w0, false)
+		o = s.fromUsage(tee, p, rt.provider, w0, true)
+	case !tee.sse && end.eof && tee.complete:
+		o = s.fromUsage(tee, p, rt.provider, w0, false)
+	default:
+		reserved.unparsed = true
+		reserved.errorType = tee.errorType
+		s.logUsageUnparsed(p.model, rt.provider, tee.unparsedReason(), tee.events)
+		o = reserved
 	}
-	reserved.unparsed = true
-	reserved.errorType = tee.errorType
-	s.logUsageUnparsed(p.model, rt.provider, tee.unparsedReason(), tee.events)
-	return reserved
+	if cut {
+		o.charge.streamCut = true
+		s.logStreamCut(p.model, resp.StatusCode, tee, s.streamCutSide(r, end), time.Since(start))
+	}
+	return o
+}
+
+// logStreamCut warns that a streamed response ended before its terminal
+// event, with the facts that say which side ended it and how far it got:
+// the status the upstream answered with, whether a terminal event arrived,
+// the bytes and events the agent was sent, the last event's own type name
+// (through the closed list: a provider cannot name an event in this line),
+// how long the call took, and which end stopped the stream (streamCutSide).
+//
+// It names the stage and the model, as every call's line does, and nothing
+// else about the call: no header, no credential, no request and no byte of
+// the response. The line is separate from `budget: usage unparsed` because
+// the two facts differ: a cut stream may settle from its usage, partially
+// or fully, and a call that settled unparsed may have had a whole stream
+// whose usage the gateway could not read. Both can name the same call when
+// a cut stream leaves nothing to settle on.
+func (s *Server) logStreamCut(model string, status int, t *usageTee, cut string, took time.Duration) {
+	s.log.Warn("budget: stream ended before its terminal event",
+		"stage", s.stageName(), "model", logValue(model), "status", status,
+		"terminal_event_seen", t.stopped, "events", t.eventCount, "last_event", t.lastEvent,
+		"bytes", t.bytes, "ms", took.Milliseconds(), "cut", cut)
 }
 
 // logUsageUnparsed warns once a 2xx call settles at its reservation
@@ -1308,10 +1343,19 @@ func isSSE(h http.Header, requested bool) bool {
 	return requested
 }
 
+// pumpEnd is how a response copy ended: which of the two ends of it stopped
+// the copy, and which way. It is three facts and no text, so nothing an
+// upstream wrote can travel in it.
+type pumpEnd struct {
+	eof      bool // the upstream's body ended (io.EOF)
+	readErr  bool // reading the upstream's body failed
+	writeErr bool // writing to the agent failed: it went away, or the flush did
+}
+
 // pump copies src to the client, flushing after every write, and hands
 // each chunk to tee after it was written. It stops when src ends (eof)
 // or fails, or the client goes away.
-func pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]byte)) (eof bool) {
+func pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]byte)) pumpEnd {
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := src.Read(buf)
@@ -1322,16 +1366,43 @@ func pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]by
 			}
 			tee(buf[:n])
 			if werr != nil {
-				return false
+				return pumpEnd{writeErr: true}
 			}
 		}
 		if errors.Is(err, io.EOF) {
-			return true
+			return pumpEnd{eof: true}
 		}
 		if err != nil {
-			return false
+			return pumpEnd{readErr: true}
 		}
 	}
+}
+
+// streamCut names which end of the call ended a streamed response before its
+// terminal event, from a closed set: what a `budget: stream ended before its
+// terminal event` line reports, so the next occurrence says whether the
+// upstream, the agent or this gateway stopped the stream.
+const (
+	cutUpstream = "upstream" // the provider's end, or the network's, ended the body
+	cutClient   = "client"   // the agent's end went away: it stopped reading
+	cutGateway  = "gateway"  // this gateway cancelled the call (a halt, or Close)
+)
+
+// streamCutSide is which end ended a streamed response, from the closed set
+// above. The gateway's own cancellation is asked first: a halt or a close
+// cancels the call, which then surfaces as both a failed read and a failed
+// write, and a reader has to know that it was neither end's fault. The
+// request's own context is live while the handler runs, so it is the client
+// going away that sets it, not this gateway's cancel (the child context
+// forward builds is the one the upstream call carries).
+func (s *Server) streamCutSide(r *http.Request, e pumpEnd) string {
+	switch {
+	case s.hctx.Err() != nil || s.base.Err() != nil:
+		return cutGateway
+	case r.Context().Err() != nil || e.writeErr:
+		return cutClient
+	}
+	return cutUpstream
 }
 
 func isRedirect(status int) bool { return status >= 300 && status <= 399 }

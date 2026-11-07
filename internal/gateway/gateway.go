@@ -174,8 +174,18 @@ type StageReport struct {
 	Overrun       pricing.Micros            // charged above the calls' reservations
 	WouldHalt     int                       // observe: calls enforce would have refused
 	UsageUnparsed int                       // 2xx calls settled at their reservation
-	Tokens        int64                     // reported tokens: input, cache writes, cache reads and output
-	Violations    []string                  // what the stage asked for that isn't allowed, first first
+	// StreamsCut is how many of this stage's streamed calls ended before
+	// their terminal event: the model's answer was cut off, and the agent
+	// read a stream that closed before completion (a `budget: stream ended
+	// before its terminal event` WARN names each, with the end that cut it).
+	// It is disjoint from UsageUnparsed: a cut stream may still have said
+	// enough usage to settle the call, and a call that settled unparsed may
+	// have had a whole stream. A runner reads it to tell a stage whose
+	// stream the route dropped from one that failed for a reason about the
+	// work (internal/runner's one transient retry).
+	StreamsCut int
+	Tokens     int64    // reported tokens: input, cache writes, cache reads and output
+	Violations []string // what the stage asked for that isn't allowed, first first
 	// ServiceTiers are the usage.service_tier values this stage's responses
 	// reported that the table has no multiplier for ("priority" among them),
 	// each recorded once, first first. Such a call is charged the

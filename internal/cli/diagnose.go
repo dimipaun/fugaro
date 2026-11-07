@@ -102,6 +102,13 @@ type Diagnosis struct {
 	// sum(stages[].model_usd) + model_by["unattributed"] ==
 	// row.cost.model_usd.
 	Stages []runstore.StageTiming `json:"stages,omitempty"`
+	// Retries is the record's own count of attempts the run threw away and
+	// ran again because the model's stream was closed before its response
+	// finished (runstore.Record.Retries, issue #1827): why a stage's share of
+	// the run's duration and cost is larger than one pass over it. Zero for a
+	// run that retried nothing, which is every run whose record predates the
+	// field, so the key is absent rather than a zero.
+	Retries int `json:"retries,omitempty"`
 	// Reviews is the record's review rounds (runstore.ReviewSummary): the
 	// round, the tier, the verdict and the findings count, and what reviewed
 	// the round -- the model, the reasoning effort and the commit it read
@@ -252,6 +259,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Retries = rec.Retries
 		d.Reviews = reviewsOf(rec.Reviews, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
@@ -808,6 +816,15 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	if len(d.Route) > 0 {
 		fmt.Fprintf(&b, "Route:    %s\n", oneLine(spendList(d.Route)))
+	}
+	// The stage the run ran a second time, when there was one (issue #1827):
+	// the record's own count, because a stage that was run twice explains a
+	// duration and a cost that a reader looking at the stage list would
+	// otherwise have to guess at. Nothing else about it is here -- which
+	// stage, and what the agent said, are in the log tail above and in the
+	// run's stages.
+	if d.Retries > 0 {
+		fmt.Fprintf(&b, "Retries:  %d (the model's stream was closed before a stage finished, so that stage was run once more)\n", d.Retries)
 	}
 	if d.Reported > 0 {
 		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)\n", d.Reported, d.Charge)

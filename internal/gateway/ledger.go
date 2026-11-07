@@ -90,7 +90,14 @@ type charge struct {
 	unparsed     bool   // a 2xx settled at its reservation
 	tokens       int64  // reported tokens
 	sent         bool   // the call reached the upstream (it counts as a call)
-	violation    string // a surprise pricing dimension
+	// streamCut is a streamed 2xx whose response ended before its terminal
+	// event: the model never finished its answer, whatever the call settled
+	// as. It is not unparsed (a cut stream can settle from the usage it did
+	// report) and it is not a violation: it is the fact the stage report
+	// counts (StageReport.StreamsCut) so a runner can tell a stage that lost
+	// its stream from one that failed for a reason about the work.
+	streamCut bool
+	violation string // a surprise pricing dimension
 	// serviceTier is the usage.service_tier value the response reported and
 	// the call was charged conservatively for, as a message shows it
 	// (`"priority"`, `12` for a value that isn't a string). It is recorded
@@ -210,6 +217,9 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	r.Overrun = satAdd(r.Overrun, over)
 	if c.unparsed {
 		r.UsageUnparsed++
+	}
+	if c.streamCut {
+		r.StreamsCut++
 	}
 	r.Tokens = int64(satAdd(pricing.Micros(r.Tokens), pricing.Micros(c.tokens)))
 	if c.violation != "" && !contains(r.Violations, c.violation) {
