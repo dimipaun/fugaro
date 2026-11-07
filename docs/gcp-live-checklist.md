@@ -10321,7 +10321,9 @@ last line is `CHECK 130 RESULT: PASS|FAIL`. The block's keys are the script's ow
 the order it prints them — `setup`, `repository`, `belong`, `licensing-md`, `links`, `licence-api`
 and `restore`, with any further recorded key (`aborted`, `dry-run`, `xtrace`) after them in the order
 the run recorded it, and a key the run stopped before reads `FAIL — not reached`. `--dry-run` runs
-the guards and the link list, prints the commands a real run would run and fetches **nothing**. The
+the guards and the link list, prints the commands a real run would run and fetches **nothing** — the
+two rows a real run fills from the API (`setup`, `licence-api`) then read `INFO — not taken` rather
+than a FAIL, because a dry run stopped nowhere and measured nothing. The
 two readings no script can take — step 1's page and step 3's rendered page — are printed as **ONE**
 `MANUAL:` line carrying the exact text to paste back; the steps below are those two readings' own
 text and the criteria every assertion in the script is written against. Exit is `0` when every row

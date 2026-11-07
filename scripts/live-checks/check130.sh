@@ -224,7 +224,7 @@ finish() {
     facts="${facts}"$'\n'"restore|PASS|nothing was created: the run stopped before it made a scratch directory, so there is nothing to remove and nothing anywhere was enabled, disabled, granted or revoked"
   else
     [ "$SCRATCH_REMOVED" = yes ] || restore=FAIL
-    local note="this check created nothing and changed nothing anywhere — no project, no installation, no credential and no file of yours — and the scratch directory that held the API's answers $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
+    local note="this check created nothing and changed nothing anywhere — no project, no installation, no credential and no file of yours — and its scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself")"
     facts="${facts}"$'\n'"restore|$restore|${note}"
   fi
   if [ -z "$PRINTED" ]; then
@@ -547,6 +547,11 @@ main() {
     print_plan
     fact dry-run PASS "guards and the link list only; the commands a real run would run — the three anonymous GETs and the two browser readings — were printed, not run, and no request left this machine"
     fact setup INFO "not taken: this is a dry run, so nothing was fetched and the default branch and the licence endpoint's HTTP code are what a real run would read"
+    # Both rows a real run fills from the API say they were not taken rather
+    # than reading `FAIL — not reached`: a dry run did not stop, it was asked
+    # for nothing, and a block of FAILs would read as a finding about the
+    # detectors.
+    fact licence-api INFO "not taken: this is a dry run, so the licence object was not fetched — a real run asserts HTTP 200 with spdx_id MIT, key mit and path LICENSE on it"
     # The manual line is a string, not a step: printing it in a dry run shows
     # exactly what a real run asks you to paste back — with the branch the API
     # would report left as the placeholder a dry run cannot fill in.

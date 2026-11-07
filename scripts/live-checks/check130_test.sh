@@ -340,6 +340,8 @@ test_dry_run_runs_nothing() {
   expect_fetched_nothing "dry run"
   expect_contains "$out" "FACT dry-run: PASS — guards and the link list only" "dry run: the row"
   expect_contains "$out" "FACT setup: INFO — not taken: this is a dry run" "dry run: nothing was fetched, and the row says so rather than reading as a pass"
+  expect_contains "$out" "FACT licence-api: INFO — not taken: this is a dry run" "dry run: and the API reading it did not take is not a FAIL"
+  expect_absent "$out" "FACT licence-api: FAIL" "dry run"
   expect_contains "$out" "CHECK 130 RESULT: PASS" "dry run: the verdict"
   # The plan is on stderr: what a real run would run, in order, and the two
   # browser readings as the one MANUAL line.
@@ -470,7 +472,7 @@ test_teardown_runs_on_a_failed_assertion() {
   expect_contains "$out" 'FACT restore: PASS — this check created nothing and changed nothing anywhere' "failed assertion: the restore row is printed and it passed"
   # The teardown is the exit trap, not a step: it runs after the failure, which
   # is the whole point of asserting it here.
-  expect_contains "$out" "the scratch directory that held the API's answers is gone" "failed assertion: the scratch directory is named as removed"
+  expect_contains "$out" "its scratch directory is gone" "failed assertion: the scratch directory is named as removed"
   expect_scratch_gone "failed assertion"
 }
 
