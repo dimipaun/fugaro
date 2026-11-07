@@ -96,6 +96,21 @@ unknown() {
   printf 'fake gcloud: unexpected call: %s\n' "$*" >&2
   exit 64
 }
+# criteria_refusal PERMISSION: one of the four refusals the criteria read, and
+# the one place FAKE340_REFUSE_ERROR applies. A refusal that did not ANSWER — a
+# 5xx gcloud did not retry, an expired session, a killed request — is what that
+# knob models: the command fails without refusing anything, which says nothing
+# about the clause and must not be read as the criterion holding. The knob is
+# deliberately not inside `deny`: the propagation and read-back refusals are
+# other cases' subjects, and this one is about the criteria alone.
+criteria_refusal() { # permission
+  if [ -n "${FAKE340_REFUSE_ERROR:-}" ]; then
+    printf 'ERROR: (gcloud.storage) HTTPError 500: Backend Error\n' >&2
+    exit 1
+  fi
+  deny "$1"
+}
+
 deny() { # permission
   # FAKE340_DENY_PERM makes the refusal name a permission of another kind, which
   # is what a refusal for a reason other than the clause reads like. It applies
@@ -257,7 +272,7 @@ storage)
         full) attr="projects/_/buckets/$bucket/objects/$prefix" ;;
         *) attr='__no-form-carries-this__' ;;
         esac
-        allowed_list "$attr" || deny storage.objects.list
+        allowed_list "$attr" || criteria_refusal storage.objects.list
       fi
     elif [ -n "${FAKE340_UNREACHABLE:-}" ] || readback_denied; then
       deny storage.objects.list
@@ -295,7 +310,7 @@ storage)
       fi
     fi
     if [ -n "$impersonate" ]; then
-      allowed_read "projects/_/buckets/$bucket/objects/$path" || deny storage.objects.get
+      allowed_read "projects/_/buckets/$bucket/objects/$path" || criteria_refusal storage.objects.get
     fi
     if [ ! -f "$dir/objects/$path" ]; then
       printf 'ERROR: (gcloud.storage.cat) HTTPError 404: No such object: %s\n' "$url" >&2
@@ -914,9 +929,35 @@ test_a_refusal_of_another_kind_is_flagged() {
   setup_case other-permission none
   RUN340_ENV=(FAKE340_DENY_PERM=storage.buckets.get)
   run340_default
-  expect_status "$status" 1 "another permission"
+  # The listings and the read say what the refusal was of another kind, and the
+  # four refusals are not read as held: a denial naming storage.buckets.get is
+  # not a denial of the clause, so the run stops (2) rather than answering a form
+  # on a criterion it never observed.
+  expect_status "$status" 2 "another permission"
   expect_contains "$out" "NOTE: the refusal names storage.buckets.get" "another permission: the row says the refusal is of another kind"
+  expect_contains "$out" "could not be read as a refusal" "another permission: the refusals are not taken as readings"
+  expect_absent "$out" "FACT relative-root-refused: PASS" "another permission: and no refusal row is a pass"
   expect_bucket_clean "another permission"
+}
+
+# A refusal that did not ANSWER is not a criterion that held. A 5xx gcloud did
+# not retry, an expired session or a killed request all make the command fail
+# without refusing anything — and reading that as "the listing is refused" is how
+# a criterion nobody observed becomes a PASS, which names a form R12 must not
+# write. The run stops instead: exit 2, no form printed as the answer, and the
+# criterion's row not reached.
+test_a_refusal_that_did_not_answer_is_not_a_pass() {
+  setup_case refusal-error relative
+  RUN340_ENV=(FAKE340_REFUSE_ERROR=yes)
+  run340_default
+  expect_status "$status" 2 "refusal error"
+  expect_contains "$out" "FACT aborted: FAIL — the root listing of gs://$BUCKET/ could not be read as a refusal" "refusal error: the run says what it could not read"
+  expect_contains "$out" "the call failed without naming storage.objects.list" "refusal error: the row names the permission the criterion needed"
+  expect_contains "$out" "FACT relative-root-refused: FAIL — not reached" "refusal error: the criterion is not recorded at all"
+  expect_absent "$out" "FACT relative-root-refused: PASS" "refusal error: and not as a criterion that held"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "refusal error: no form is printed as the answer"
+  expect_bucket_clean "refusal error"
+  expect_scratch_gone "refusal error"
 }
 
 # A removal that takes effect LATE, between the two forms. A grant propagates
@@ -1131,6 +1172,7 @@ t test_refusals_are_not_read_when_nothing_held
 t test_a_refused_grant_is_could_not_tell
 t test_a_half_granted_pair_is_still_torn_down
 t test_a_refusal_of_another_kind_is_flagged
+t test_a_refusal_that_did_not_answer_is_not_a_pass
 t test_a_refused_removal_stops_instead_of_answering_the_wrong_form
 t test_a_refused_removal_the_restore_can_still_do
 t test_belong_is_refused_in_both_places

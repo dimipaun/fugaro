@@ -11377,7 +11377,11 @@ read only once one of those three has held under that form — if none did, they
 a refusal then could be the fresh grant simply not being in effect yet. IAM propagates a fresh grant and its
 condition asynchronously (V7's neighbour, §11 item **V5**), and reading one as a refusal would pick the wrong form —
 the one thing this check must not do. A refusal that is **allowed** instead is a grant wider than R12's two prefixes,
-and it fails that form. A **grant the bucket refuses**, and a **removal it refuses** between the two forms, are a
+and it fails that form. And a refusal has to **be** a refusal: the four calls are criteria only when the failure is
+the refusal itself, a denial naming the permission the clause would have carried (`storage.objects.list` for the
+root and the two listings, `storage.objects.get` for the read) — a call that did not answer (a 5xx gcloud did not
+retry, an expired session, a killed request, a denial of another kind) stops the run instead, because recorded as a
+refusal it would be a criterion nobody observed passing, and the form it names is one R12 must not write. A **grant the bucket refuses**, and a **removal it refuses** between the two forms, are a
 third thing again: the run stops there, with exit `2` and an `aborted` row naming the binding, rather than reading a
 permission error as "this form does not list". A refused removal has to stop the run all the same — the previous
 form's conditioned binding is still on the bucket, so the next form would list through the **earlier** clause and the
@@ -11408,8 +11412,9 @@ need is deliberately **not** a fallback here, because it reads `tokens/` and `ca
 passed every criterion **and** the Restore confirmed it deleted everything this run made; `1` means none did — or a
 form passed and the Restore could not confirm what it deleted, in which case the block's `restore` row names the
 account and the prefixes to remove by hand — so exit `1` reads as **E4** only when that row passed; and `2` means the
-run could not tell (a guard stopped it, a tool is missing, a grant or a removal the bucket refused, a removal that
-had not taken effect in time, a listing that never answered, an internal error ended it) — `2` is not an answer about
+run could not tell (a guard stopped it, a tool is missing, a grant or a removal the bucket refused, a refusal that
+came back as a call that did not answer, a removal that had not taken effect in time, a listing that never answered,
+an internal error ended it) — `2` is not an answer about
 the attribute, and the block's `aborted` row says so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
 
 **Cost.** Nothing billable and no model call: one throwaway service account, two bucket bindings, one impersonation

@@ -27,7 +27,13 @@
 # A grant the bucket refuses is NOT a form that does not list: the run stops with
 # exit 2 and an `aborted` row rather than reading a permission error as the
 # attribute's own answer, because every reading under a grant that never landed
-# would be a refusal for a reason that has nothing to do with the clause. A
+# would be a refusal for a reason that has nothing to do with the clause. The
+# four refusals are read the same way round: a command that fails is a criterion
+# only when the failure IS the refusal — a denial naming the permission the
+# clause would have carried — so a call that did not answer (a 5xx gcloud did
+# not retry, an expired session, a killed request, a denial of another kind)
+# stops the run rather than being recorded as a criterion that held, which would
+# name a form R12 must not write on a reading nobody took. A
 # removal the bucket refuses, and a removal that has not TAKEN EFFECT yet between
 # the two forms, stop it the same way: both forms speak for the same throwaway
 # account, so the full-path form granted while the relative binding is still in
@@ -86,8 +92,9 @@
 #             not confirm what it deleted, which the block's `restore` row names
 #             and which you then have to finish by hand — and 2 when the run
 #             could not tell (a guard stopped it, a grant or a removal the bucket
-#             refused, a removal that had not taken effect in time, a tool is
-#             missing, an internal error ended it).
+#             refused, a refusal that came back as a call that did not answer, a
+#             removal that had not taken effect in time, a tool is missing, an
+#             internal error ended it).
 #
 # No credential is handled anywhere in it: the account this check creates holds
 # no key and is granted nothing outside the bucket's two prefixes, every read is
@@ -631,21 +638,35 @@ must_read() {
   return 1
 }
 
-# must_refuse KEY WHAT CMD...: the four refusals. A refusal is the criterion, so
-# a command that SUCCEEDS here is the failure — and its own words are what the
-# detail carries, because a grant that is too wide has to say what it opened.
+# must_refuse KEY WHAT PERMISSION CMD...: the four refusals. A refusal is the
+# criterion, so a command that SUCCEEDS here is the failure — and its own words
+# are what the detail carries, because a grant that is too wide has to say what
+# it opened.
+#
+# A command that FAILS is not the reading yet: the failure has to BE the refusal,
+# a denial naming the permission the missing clause would have carried. A call
+# that did not answer — a 5xx gcloud did not retry, an expired session, a killed
+# request, a denial naming another permission — says nothing about the clause, and
+# recording it as "refused" would report a criterion that held when it was never
+# observed. Those stop the run instead, which is the same reading the wait between
+# the two forms gives a listing that did not answer.
 #
 # These are read after a listing that must succeed already did, so "refused" can
 # never be the grant simply not being in effect yet: by this point the account has
 # listed, under this form, with the same two bindings.
 must_refuse() {
-  local key=$1 what=$2 out
-  shift 2
+  local key=$1 what=$2 perm=$3 out named
+  shift 3
   if out=$("$@" 2>&1); then
     fact "$key" FAIL "$what was ALLOWED to the account under this form, which is wider than R12's two prefixes: a grant that opens it is not the grant the reports job is written against (what came back: $(first_line "$out"))"
     return 1
   fi
-  fact "$key" PASS "$what is refused to the account under this form (gcloud: $(first_line "$out"))"
+  named=$(missing_permission "$out")
+  case "$named" in
+  *"$perm"*) ;;
+  *) stop "$what could not be read as a refusal: the call failed without naming $perm, the permission the clause this criterion is about would have carried, so it is a call that did not answer — an expired session, a 5xx gcloud did not retry, a killed request or a denial naming another permission all read like this, and none of them is a reading about this form's clause (gcloud said: $(first_line "$out")). The form is neither PASSing nor failing here: nothing was measured under it, so run the check again" ;;
+  esac
+  fact "$key" PASS "$what is refused to the account under this form, and refused for the reason the criterion is about — the denial names $perm (gcloud: $(first_line "$out"))"
   return 0
 }
 
@@ -718,13 +739,13 @@ try_form() {
     # The root listing is the one the two prefixes must NOT reach: a listing of
     # `gs://$B/` carries an empty prefix (or the bucket's own path), and neither
     # candidate form may match it.
-    if ! must_refuse "$how-root-refused" "the root listing of gs://$B/" \
+    if ! must_refuse "$how-root-refused" "the root listing of gs://$B/" storage.objects.list \
       list_as_sa "gs://$B/"; then ok=no; fi
-    if ! must_refuse "$how-tokens-read-refused" "the read of the seeded tokens/ object gs://$B/$TOKEN_OBJ" \
+    if ! must_refuse "$how-tokens-read-refused" "the read of the seeded tokens/ object gs://$B/$TOKEN_OBJ" storage.objects.get \
       cat_as_sa "gs://$B/$TOKEN_OBJ"; then ok=no; fi
-    if ! must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/" \
+    if ! must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/" storage.objects.list \
       list_as_sa "gs://$B/tokens/"; then ok=no; fi
-    if ! must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/" \
+    if ! must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/" storage.objects.list \
       list_as_sa "gs://$B/cache/"; then ok=no; fi
   else
     # Nothing under this form held, so the grant is either not in effect or not
@@ -817,7 +838,7 @@ print_plan() {
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectViewer --condition-from-file=<the runs/ condition>"
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectUser --condition-from-file=<the reports/ condition>"
   say "    the first carrying $(clause_read runs) || $(clause_list "runs/") and the second $(clause_read reports) || $(clause_list "reports/") under the relative form, and the same two with projects/_/buckets/$B/objects/runs/ and .../objects/reports/ under the full one"
-  say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/ (must list, and the listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those three held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/"
+  say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/ (must list, and the listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those three held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/ (each has to be REFUSED, and refused by a denial naming storage.objects.list or storage.objects.get as the clause it is about would carry; a call that did not answer stops the run instead of counting as one of them)"
   say "  [network, writes] gcloud storage buckets remove-iam-policy-binding ... --all for both roles, between the two forms and again in the Restore"
   say "  [network, reads, as the account] between the two forms only: ls --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/, retried until the account is REFUSED it by a denial naming storage.objects.list, the permission the removed clause carried (the removal has taken effect, so the next form cannot read through the earlier clause), or for up to ${PROPAGATION_SECONDS}s — a failure that names no permission, or another one, is a call that did not answer and is retried like a listing that still succeeds, and a wait that never sees the denial is a stop rather than a verdict"
   say "and its Restore (also from the exit trap) would run:"
