@@ -5,7 +5,10 @@ installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
 `## console-windows.yml` below) **and `images.yml`** (the images workflow with
 the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
 see `## images.yml` — staged again below).
+**Three further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md` and `console-release-comments.md`** — comment-only corrections, staged on **2026-11-07** for three workflow files whose comments still say a reviewer approves a release. They are `.md` on purpose: they are not pending workflows, they are not enumerated as such by the docs tests or by `website/test/readme.mjs`, and neither count above moves. See `## The three comment-only fragments (2026-11-07)` below.
 **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+
+**2026-11-07: the three release environments no longer require a reviewer.** The owner removed the approval click from `website-live`, `console-release` and `mobile-release` — the three GitHub environments the website's promote, the console's signing and the mobile app's build-and-submit read their material through. The environments themselves stay: they are what carries each deployment branch policy, each environment secret and each set of repository variables. What holds a job to a reviewed commit is now stated in one place — `docs/release.md`, "What fences a release now": the deployment branch policy (`main` only for `website-live` and `mobile-release`, `console-v*` tags for `console-release`, plus `mobile-v*` for the app's own tags), the Workload Identity Federation provider's `refs/heads/main` and `workflow_dispatch` condition for the website's two workflows, the **"protect release tags"** ruleset over `v*`, `console-v*` and `mobile-v*`, and `scripts/release-gate.sh`, which each publishing workflow runs first. That page also gives the one `gh api` call that puts a click back, with no id written down. **Every sentence below that says a person approves a deployment, or that the owner is an environment's only required reviewer, is the record of what was true before that date** — including the ones about `console-release` and `website-live`, which are applied files whose comments still carry the old text; `## The three comment-only fragments (2026-11-07)` below holds the corrections for those comments.
 
 - **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. **Applied, not pending:** it was staged by a Fugaro run that cannot push a `.github/workflows/**` change, copied into `.github/workflows/shared-tests.yml` on 2026-10-22 and its staged copy removed; see `## shared-tests.yml` below, which also records what the job will report on `main`.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
@@ -14,7 +17,7 @@ see `## images.yml` — staged again below).
 - **`console-release-feed.yml`** — the console's signing, notarisation and publishing pipeline **with the console's update feed added**: the macOS `release` job writes electron-updater's `latest-mac.yml` beside the `.zip` it has just verified, sums it into the job's `console-sha256sums.txt` and uploads it with the other assets, and `publish` requires it, checks it against the sums and attaches it — so the release carries the feed under the one keyless cosign signature over the merged sums file. It runs on the release tag and **never on a pull request**. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-feed.yml` below.
 - **`console-release-symbols.yml`** — the console's signing, notarisation and publishing pipeline **with the crash reporter's symbols stamped into the build and then uploaded**: two steps — a build with no secret in its environment, then the stamp that writes `dist/main`'s debug id **before** the signing step packs it — which is why the signing step's first pack changes from `npm run package` to the same packer without its build, `npm run package:targets -- --dir` — and, after the artifacts have been verified and before they are uploaded, a step that pushes the packaged app's native debug files and the main process's JavaScript and source maps to Sentry (org `fugaro`, project `fugaro-console`, the EU region) — the maps under the console's own version, which every event now names as its release, and the native debug files keyed by the debug id inside each one, so `debug-files upload` takes no release at all. **One piece is still missing**: the pinned SDK fills an event's debug images from `globalThis._sentryDebugIds`, which the bundler shims write into a *bundle*, and the console's main process is unbundled `tsc` output — so an event carries the release and no image yet, and the four things now true (and the one that is not) are in `## console-release-symbols.yml` below. It carries the running file's text plus those three steps and the one changed pack line, and **it is the file that adds `SENTRY_AUTH_TOKEN` to the `console-release` environment**; each step prints one line and exits 0 while that secret does not exist, so the copy-in is inert until the owner adds it. It runs on the release tag and **never on a pull request**. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-symbols.yml` below.
 - **`console-windows.yml`** — the console's **Windows pack**, and the second of the three files here that are **not** a pull-request check (`console-release-linux.yml` above is the first and `mobile-release.yml` below is the third): one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
-- **`mobile-release.yml`** — **applied on 2026-10-23, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 and reworked on 2026-10-21 after the security review of #777 (the build runs from GitHub Actions on each release tag, and by hand). On every `mobile-v[0-9]+.[0-9]+.[0-9]+` tag (the app's own stream since the owner's ruling of 2026-10-22) and on a manual dispatch, **one job per platform** builds on EAS and submits the finished build to TestFlight's internal testers and to Play's internal-testing track, behind the `mobile-release` GitHub environment and its only required reviewer (the owner) — the same click that gates `console-release` and `website-live`. The two jobs are independent, **both are enabled**, and one repository variable (`MOBILE_RELEASE_DISABLED_PLATFORMS`) can turn either off; see `## mobile-release.yml` below, which carries the Android first-release checklist.
+- **`mobile-release.yml`** — **applied on 2026-10-23, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 and reworked on 2026-10-21 after the security review of #777 (the build runs from GitHub Actions on each release tag, and by hand). On every `mobile-v[0-9]+.[0-9]+.[0-9]+` tag (the app's own stream since the owner's ruling of 2026-10-22) and on a manual dispatch, **one job per platform** builds on EAS and submits the finished build to TestFlight's internal testers and to Play's internal-testing track, behind the `mobile-release` GitHub environment — whose required reviewer, the owner, was removed on 2026-11-07, as `console-release`'s and `website-live`'s were, so what fences the jobs now is that environment's deployment branch policy, the release gate each job runs and the tag ruleset. The two jobs are independent, **both are enabled**, and one repository variable (`MOBILE_RELEASE_DISABLED_PLATFORMS`) can turn either off; see `## mobile-release.yml` below, which carries the Android first-release checklist.
 - **`console-release-tag.yml`** — the console's **own release stream**: the staged `console-release.yml` with its trigger moved from the CLI's `vX.Y.Z` tag to the console's own `console-vX.Y.Z` tag, a step that refuses a tag whose X.Y.Z is not `console/package.json`'s own `version`, a step that refuses a version whose notes file `docs/releases/console/vX.Y.Z.md` is missing, and a `publish` whose release body is that notes file rather than the string it used to inline. The three release streams are independent (owner addendum 2026-10-22: CLI = animals, Console = fruits, Mobile = birds); nothing else in the file moved, and `scripts/release.sh` and `scripts/release-gate.sh` stay CLI-only. **Applied on 2026-10-23**: it was copied over the staged `console-release.yml` and into `.github/workflows/console-release.yml`, and its own staged copy is gone, so the byte-identity clause in `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` holds on the new text; see `## console-release-tag.yml` below, which is now the record.
 - **`dependabot-console.yml`** — **applied on 2026-10-23, not pending** (copied over `.github/dependabot.yml` and its staged copy removed; what follows is the record). **Dependabot's watch over the console's npm dependencies**, staged on 2026-10-23 on the owner's ruling of 2026-10-22. It is **not a workflow and not a file of its own**: it is the whole of `.github/dependabot.yml` as it should read once the console is watched -- the `github-actions` entry that runs today, unchanged, plus one `npm` entry for `/console`, weekly and **grouped** so that minor and patch bumps arrive as one pull request a week (a major, Electron's included, stays outside the group and arrives on its own for a deliberate look). **A staging file is not strictly forced here** -- `.github/dependabot.yml` is not under `.github/workflows/`, so an agent run may write it -- which is exactly why this plan stages it: `docs/plans/2026-10-15-desktop-console.md`'s open item 5 reserved the decision for the owner, and the ruling of 2026-10-22 is "stage it, with the copy-in step, and let them apply it". See `## dependabot-console.yml` below for the copy-in commands and for the two sentences that copy-in has to update.
 - **`images.yml` — applied on 2026-10-30, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The staged copy was the running `.github/workflows/images.yml` plus the credentials service's image leg (credentials-service plan, task **C1.14**): the `credentials` job that builds `images/credentials/Dockerfile`, smoke-tests it, holds it to a size budget and secret-scans it on every run, the `credentials` kind in the `version` job's list, the `publish-credentials` job that publishes it and gives it the same signed `<version>-pinned` tag the base has (which `fugaro update`'s credentials stage resolves and verifies), and the `credentials` image in `verify-public`'s pull-back loop. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## images.yml` below for the diff, the one command that applies it and the steps that have to go with it. **The two earlier `images.yml` changes are records, not requests:** the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag (plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`) was copied in and `git rm`'d from here in `6b57ba9`, and the 0.7.0 hard cut (`838e0b0`) before it.
@@ -98,7 +101,7 @@ authority for that.
 **The website pair's own copy-in steps, in order.** (1) Do the one-time setup
 in `docs/website/preview-promote.md` first — the workflows refuse to run
 without the three repository variables, and the promote job needs the
-`website-live` environment to exist before GitHub can hold it for approval.
+`website-live` environment to exist before it can deploy at all — since 2026-11-07 that environment requires no reviewer, so what it holds the job to is its `main`-only deployment branch policy.
 (2) Copy both files in with the two commands above, in **one** commit: they
 are a pair (a preview that cannot be promoted is not the feature), and the
 `git rm` is load-bearing for the same reason it was for `images.yml` — while a
@@ -434,17 +437,21 @@ stops the job with a message. The tag ruleset must let the workflow create
 `console-v*` tags. The console's Homebrew cask, when it exists, points at this
 release (a later task).
 
-**The real control is the environment's reviewer and a tag ruleset, not the
+**The real control is a tag ruleset and the environment's branch policy, not the
 file's own gate.** A tag push runs this file as the tagged commit holds it, so a
 tag on a branch whose copy of the workflow or of `scripts/release-gate.sh` was
-edited runs the edited copy. The `console-release` environment's required
-reviewer and a ruleset restricting who may create `v*` tags are what stop that;
-**the approver confirms the tag's commit is on `main` before approving the
-deployment**. The in-job ancestry check catches a mistake, not an attacker.
+edited runs the edited copy. A ruleset restricting who may create `v*` tags and
+the `console-release` environment's deployment branch policy, which admits
+`console-v*` tags and nothing else, are what stop that. **The environment's
+required reviewer, which until 2026-11-07 held the deployment until a person
+confirmed the tag's commit was on `main`, was removed by the owner on that date**
+(the dated note above, and `docs/release.md`, "What fences a release now"). The
+in-job ancestry check catches a mistake, not an attacker.
 
 **It reads its secrets through a job-level `environment: console-release`** —
-the protected GitHub environment the owner creates in the same step: required
-reviewers = the owner, deployment branches restricted to tags. A staging file
+the protected GitHub environment the owner creates in the same step: deployment
+branches restricted to tags, and, until the reviewer was removed on 2026-11-07,
+the owner as its required reviewer. A staging file
 cannot create an environment, so the copy-in and the environment have to be done
 together. The environment holds exactly these six, and the workflow names them
 and nothing else:
@@ -492,8 +499,9 @@ git add .github/workflows/console-release.yml
 git commit -m "console: sign and notarise the console on a version tag (plan Task 4.5)"
 ```
 
-and, in Settings, Environments, creates `console-release` with the owner as a
-required reviewer and its deployment branches restricted to tags. **Both are
+and, in Settings, Environments, creates `console-release` with its deployment
+branches restricted to tags (it was created with the owner as a required
+reviewer; the owner removed that reviewer on 2026-11-07). **Both are
 required before the first tag that ships the console**: a tag push runs the
 workflow exactly as the tagged commit holds it, and the workflow is only as safe
 as the environment its secrets live in.
@@ -1767,8 +1775,8 @@ is not green here.
 **While the Play side is not ready, set this before the copy-in and not after
 it.** The Android job is enabled by default — an unset variable names neither
 platform — so a copy-in that lands first is a workflow that can build and submit
-to Play on its very first run, and the environment's approval click says a person
-ran the workflow, not that the Play side is ready. `MOBILE_RELEASE_DISABLED_PLATFORMS=android`
+to Play on its very first run, and the environment is a fence around where a run
+may start rather than a statement that the Play side is ready. `MOBILE_RELEASE_DISABLED_PLATFORMS=android`
 is the state `### Android first release` below describes, and it is step **3** of
 the owner's list under `### Before it can run` for that reason.
 
@@ -1784,20 +1792,24 @@ account — the closing paragraph of this section says so.)
 **The environment, the secret and — while the Play side is not ready — the
 Android switch have to be done *before* the file is copied in, not after it.**
 GitHub creates a missing environment the first time a job names it, and the
-environment it creates that way has **no required reviewer at all** — so the
-first run of a copied-in workflow against a missing `mobile-release` would go
-straight through, holding the Expo token, with nobody's click in between. The
+environment it creates that way has **no required reviewer at all** and **no
+deployment branch policy either** — so the first run of a copied-in workflow
+against a missing `mobile-release` would go straight through from whatever ref
+started it, holding the Expo token, with nothing in between. (Since 2026-11-07
+the environments that do exist have no reviewer either; the branch policy is
+then the whole of what they hold a job to, which is why it has to be right.) The
 Android switch is the same rule from the other side: the Android job is enabled
 by default, so a copy-in made before `MOBILE_RELEASE_DISABLED_PLATFORMS=android`
 is set is a file whose first run can submit to Play. The copy-in is deliberately
 the last thing in this section: an environment that already exists is not
-re-created, and the secret on it is unreadable until the reviewer approves.
+re-created, and only a job that names it can read the secret on it.
 
-**1. [per repo] The `mobile-release` environment, with the owner as its only
-required reviewer.** This is the gate: GitHub holds the job until that reviewer
-approves it, however the run was started — the same click `console-release` and
-`website-live` wait for. Either in the repository's **Settings → Environments**
-(create `mobile-release`, add yourself under **Required reviewers**, and under
+**1. [per repo] The `mobile-release` environment, and its deployment branch
+policy.** This is the fence: **the environment has had no required reviewer since
+2026-11-07** — the owner removed the click from it, as from
+`console-release` and `website-live` — so what holds a run to a reviewed commit
+is this policy, the release gate each job runs and the tag ruleset. Either in
+the repository's **Settings → Environments** (create `mobile-release`, and under
 **Deployment branches and tags** choose **Selected branches** with `main` and the
 tag pattern `mobile-v*`), or with the API:
 
@@ -1806,7 +1818,6 @@ REPO=dimipaun/fugaro   # the repository the workflow runs in
 
 gh api --method PUT "repos/$REPO/environments/mobile-release" --input - <<JSON
 {
-  "reviewers": [{"type": "User", "id": $(gh api users/dimipaun --jq .id)}],
   "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}
 }
 JSON
@@ -1833,19 +1844,21 @@ through, so `mobile-v*` covers `mobile-vtest` too and that is the point.
 Tightening this line is the one edit here that can block every release rather
 than admit a wrong one, so leave it as it is.
 
-**Leave "Prevent self-review" off.** The owner is both the actor and the only
-reviewer, and GitHub would otherwise refuse the owner's own approval of the
-owner's own run — the environment would hold every release forever. (The same
-note is in `docs/website/preview-promote.md`, step 6, for the same reason.)
+**Leave "Prevent self-review" off if you put a reviewer back.** Nothing needs it
+while the environment has none, but a click restored with that setting on would
+be a click the owner can never make: they are both the actor and the only
+reviewer, and GitHub would refuse their own approval of their own run, so the
+environment would hold every release forever. (The same note is in
+`docs/website/preview-promote.md`, step 6, for the same reason.)
 
 **2. [per Expo account] An Expo access token, and [per repo] the secret
 `EXPO_TOKEN` holding it.** The token is created in the owner's own Expo account
 (expo.dev → **Access tokens** → *Create token*), and the workflow reads it as
 `secrets.EXPO_TOKEN`. **Create it as a secret on the `mobile-release`
 environment**, not as a repository secret: the environment is what withholds it
-until the approval above, and a repository secret of the same name would be
-readable by every workflow in the repository, pull-request-triggered ones
-included. Either in **Settings → Environments → mobile-release → Environment
+from every job that does not name it, and a repository secret of the same name
+would be readable by every workflow in the repository, pull-request-triggered
+ones included. Either in **Settings → Environments → mobile-release → Environment
 secrets → Add secret**, or:
 
 ```sh
@@ -2322,12 +2335,14 @@ replace nothing: `.github/workflows/` holds `ci.yml`, `images.yml` and
   read it.
 - **`website-promote.yml`** copies an existing preview channel's current
   version onto the live channel with `firebase hosting:clone` — the bytes the
-  owner already looked at, rebuilt nowhere — and it is the owner's alone, twice
-  over: the job carries `environment: website-live` (whose only required
-  reviewer is the owner, so GitHub holds the job for approval) and its `if:`
-  refuses any actor but the owner, so a dispatch by anyone else never even
-  queues an approval request. A second step checks the actor again, so a later
-  edit that lost the `if:` still stops rather than asking for approval.
+  owner already looked at, rebuilt nowhere — and it is the owner's alone to
+  dispatch, twice over: the job carries `environment: website-live` (whose
+  `main`-only deployment branch policy and repository variables live on it, and
+  which — **since 2026-11-07 — requires no reviewer**: the owner removed that
+  click, so it is no longer one of the locks) and its `if:` refuses any actor
+  but the owner, so a dispatch by anyone else runs nothing at all. A second step
+  checks the actor again, so a later edit that lost the `if:` still stops rather
+  than promoting.
 
 **Neither file holds a credential, and neither reads a secret.** Authentication
 to Google is Workload Identity Federation (`google-github-actions/auth`, pinned
@@ -2367,7 +2382,9 @@ reported, so no check can rot unnoticed. A second test holds
 
 **The owner's one-time setup is `docs/website/preview-promote.md`**, and it is
 the owner's alone: the WIF pool and provider, the deployer service account and
-its roles, the `website-live` environment and the three repository variables.
+its roles, the `website-live` environment (with its `main`-only deployment
+branch policy, and with no reviewer since 2026-11-07) and the three repository
+variables.
 No agent creates any of it and no agent runs any of its commands. Until it is
 done, both workflows stop at their first validation step with a message naming
 the missing variable.
@@ -2992,6 +3009,59 @@ gh workflow run core-without-ee --ref main
 **Two follow-up edits belong in that commit**, the same two sentences `## core-without-ee.yml` names: this document's opening line (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`) and the last section of `website/README.md` (`website/test/readme.mjs`, which reads the whole flattened page). Both go from **four** to **two** and drop both this file's name and `core-without-ee.yml`'s, leaving `images.yml` and `console-windows.yml`; `## core-without-ee.yml` above carries the resulting opening line. Read the count and the names off `docs/pending-workflows/` before you write them: another staging may have landed beside these two, and the directory is what both checks read.
 
 **Not verified.** The file has never run. What is verified offline is its text — the trigger surface, the permissions, the pins, the timeout, the two tagged steps, the untagged test step and its guard — by `TestStagedCIBuildsBothEditions`. That the tagged tree vets and builds, and that `go test ./ee/...` is green once a package is there, is what the first real run shows, and that run is yours to start after the move.
+
+## The three comment-only fragments (2026-11-07)
+
+Three files here are **fragments, not workflows**:
+`website-promote-comments.md`, `mobile-release-comments.md` and
+`console-release-comments.md`. Each one holds the comment text that
+`.github/workflows/website-promote.yml`, `.github/workflows/mobile-release.yml`
+and `.github/workflows/console-release.yml` need after the owner removed the
+required reviewer from `website-live`, `console-release` and `mobile-release` on
+**2026-11-07** (the dated note at the top of this page), and nothing else: **no
+executable line changes in any of them.**
+
+They are `.md` and not `.yml` on purpose. A `.yml` file here is enumerated as a
+pending workflow by `internal/cli`'s docs tests and by `website/test/readme.mjs`
+— both read every `.ya?ml` in this directory — and it would have to be named in
+this document's opening line, in `website/README.md`, and, for `console-release`,
+would break the byte-identity clause between the two copies of that file; none of
+which is a true statement about a comment correction. Because they are `.md`,
+both counts on this page and the site's README stay as they are, and none of the
+three is a workflow anyone owes a copy-in.
+
+**Applying one is an edit, not a copy.** Each file quotes the block to find and
+the block to put in its place. After the edit, prove that no executable line
+moved — the command is in each file, and it must print nothing:
+
+```sh
+git diff -U0 -- .github/workflows/<the file> \
+  | grep -E '^[+-]' | grep -v -E '^(\+\+\+|---)' | grep -v -E '^[+-][[:space:]]*(#|$)'
+```
+
+Every changed line is then a comment or a blank one. Delete the fragment
+(`git rm docs/pending-workflows/<the fragment>.md`) in the same commit: there is
+no byte-identity clause that needs it kept, and a fragment whose change has been
+applied is a stale instruction.
+
+The console's fragment is applied to **both** copies of that file. The staged
+`docs/pending-workflows/console-release.yml` and the applied
+`.github/workflows/console-release.yml` must stay byte-identical
+(`TestDocsConsoleReleaseWorkflowIsStagedAndPinned`), and a change to one of them
+alone reddens that test and, through it, every release tag — so after editing the
+applied file, make the staged twin the same text:
+
+```sh
+cp .github/workflows/console-release.yml docs/pending-workflows/console-release.yml
+git add docs/pending-workflows/console-release.yml
+git rm docs/pending-workflows/console-release-comments.md
+```
+
+The same correction is written in prose in `docs/release.md` ("What fences a
+release now"), `docs/website/preview-promote.md`,
+`docs/mobile/eas-signing-runbook.md` §9 and §10, and
+`docs/design/desktop-console.md` §9.4, which is where a reader who is not
+editing a workflow will meet it.
 
 ## Before you copy: check the action pins
 
