@@ -24,15 +24,16 @@ change and mark pending on a failed step.
 | NP-confirm: confirmations removed everywhere | AP3-AP6 | A chain never asks (spec rule 5) |
 | NP-lease: image builds lease from the job budget (D1543) | AP2, AP4 | The image-build step costs money |
 | NP-cap: cap raising is owner-only (D1542) | AP3 | The over-cap error names that command |
-| NP-gate: managed gate is audit-only (D1545) | AP2 | `publish-policy` and `deploy` must not refuse an admitted plan with a typed prompt |
+| NP-caps: every cap the chain publishes is owner-only (D1552, D1576) | AP5, AP6 | `budget.*`, `workspace cap set --monthly`, `governance.*`, `agent.max_*` refuse in an agent session, also with `--no-apply` |
+| NP-gate: managed gate is audit-only (D1545) | AP2 | the `policy` and `repository` stages must not refuse an admitted plan with a typed prompt; their refusal becomes an audit record plus the agent refusal |
 
-Until NP slices land the tasks may be built, but their end-to-end check (390-392) cannot pass. **The no-prompt plan's audit-only gate (D1545) removes a refusal this plan's D1573 and D1576 lean on; those two rules are stated here and tested here, not inherited.**
+Until NP slices land the tasks may be built, but their end-to-end check (390-392) cannot pass. **The no-prompt plan's audit-only gate (D1545) removes a refusal this plan's D1573 and D1576 lean on; those two rules are stated here and tested here, not inherited.** Every pending step, catalog-build included, runs its read-only check first and does nothing when the state owes nothing; the pending file is a hint, never authority (D1575), and console `apply` (D1572) follows the same rule. `update` clears only the entries for stages it ran successfully; catalog-build entries stay pending (D1567).
 
 ## Global constraints and review focus
 
 | Constraint | Pinned by |
 | --- | --- |
-| Stages dedupe and keep their order; publish and deploy run once for N changes | AP2 subset test, AP3 test; check 391 |
+| Stages dedupe and keep their order; the `policy` and `repository` stages run once for N changes | AP2 subset test, AP3 test; check 391 |
 | A step that fails leaves the change saved and the step pending, exit non-zero (D1563) | AP3 test; check 392 |
 | Pending file holds step names, never a value, and is versioned (D1570) | AP1 test and schema |
 | Repo-layer writes never publish, commit or open a PR (D1564) | AP5 test |
@@ -40,11 +41,11 @@ Until NP slices land the tasks may be built, but their end-to-end check (390-392
 | Agents/unmanaged projects follow the no-prompt rules (D1571) | AP3 test with the agent marker |
 | Console reads only the one new status verb through the fence (D1569); the `settings.edit` row passes `--no-apply` and its `--yes` covers only the local write (D1572) | AP8 equality test and spawn test |
 | Each extracted stage keeps its door's agent refusal, managed gate and loosening judgement (F5) | AP2 test per stage under the agent marker, plus a mutation check (drop the refusal, the test must fail) |
-| `image add` in an agent session refuses executable content (`--inline`, `--dockerfile`, `--default`) unless managed and judged (D1573) | AP4 test and mutation check |
-| `settings set budget.*` + publish never raises a cap in an agent session (D1576) | AP5 test |
+| `image add` in an agent session refuses `--inline`, `--default` and `--image <ref>` by its own check, not the managed gate (D1573) | AP4 test and mutation check |
+| No cap raise the chain publishes (`budget.*`, `workspace cap set --monthly`, `governance.*`, `agent.max_*`) is queued or published from an agent session, also with `--no-apply` (D1576, F13, D1552) | AP5 and AP6 tests |
 | An entry is bound to project name and GCP project ID; `apply` prints diffs, re-judges loosening, escapes the change text; a deleted file is detected (D1575) | AP3 tests |
 | `--no-apply` then `apply` reaches no billable build unasked on an unmanaged project before the no-prompt slices land (F6) | AP3 test (the build step refuses without a lease) |
-| `deploy` is per repository; unreachable repositories stay pending (D1574) | AP3 test |
+| The redeploy (`repository` stage) is per repository; unreachable repositories stay pending (D1574) | AP3 test |
 
 ## Slices and tasks
 
@@ -61,50 +62,50 @@ enforcement, notes): AP7-AP10.
 ### AP2: run a named subset of the stages (generalise `accountsAddStages`)
 - **Files:** `internal/cli/init_stages.go`, `internal/cli/accounts_add_converge.go`, `internal/cli/init_policy_migrate.go`, `internal/cli/init_policy_publish.go`, `internal/cli/update.go`, `internal/cli/stages_subset_test.go` (new).
 - **Interfaces:** consumes AP1's table; produces `stagesNamed(e, names...)` (what `accountsAddStages` does by hand), used by `accounts add` and by `apply`. `update` keeps running the whole list; no behaviour change.
-- **Tests:** `TestStagesSubsetKeepsOrderAndNeeds`, `TestEachStageKeepsItsAgentRefusalGateAndLooseningJudgement` (per stage, under the agent marker), `TestAccountsAddStillRunsItsThree`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'TestStagesSubset|TestEachStage|TestAccountsAdd|TestUpdate' -count=1`.
+- **Tests:** `TestStagesSubsetKeepsOrderAndNeeds`, `TestEachStageKeepsItsAgentRefusalAndAuditRecord` (per stage, under the agent marker: asserts the audit record plus the agent refusal, not a gate refusal; depends on the NP-gate edge), `TestAccountsAddStillRunsItsThree`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'TestStagesSubset|TestEachStage|TestAccountsAdd|TestUpdate' -count=1`.
 - **Depends on:** AP1; external NP-gate. **Commit:** `cli: run a named subset of the update stages (AP2)`. **Red step:** a subset test missing a `needs` edge fails. **Mutation check:** remove the policy stage's agent refusal in the subset path; the per-stage test must fail.
 - **Reviewer:** opus + mandatory independent review (in-run level 3: policy publish, managed gate).
 
 ### AP3: `fugaro apply`, the `--no-apply` helper, `apply --status`
 - **Files:** `internal/cli/apply.go`, `internal/cli/apply_test.go` (new), `internal/cli/root.go`, `schemas/apply-status.schema.json` (new).
 - **Interfaces:** consumes AP1/AP2; produces `fugaro apply [--json]`, `fugaro apply --status [--json]`, and `addNoApplyFlag(cmd)` used by every management command (D1565).
-- **Tests:** `TestApplyRunsEachPendingStepOnce`, `TestApplyNothingPending`, `TestApplyFailureKeepsPending`, `TestApplyUnderAgentMarker`, `TestApplyPrintsEachStepsDiffAndRejudgesLoosening`, `TestApplyDetectsADeletedPendingFile`, `TestApplyDeploysOnlyTheCheckoutsRepository`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'TestApply' -count=1`.
+- **Tests:** `TestApplyRunsEachPendingStepOnce`, `TestApplyNothingPending`, `TestApplyFailureKeepsPending`, `TestApplyUnderAgentMarker`, `TestApplyPrintsEachStepsDiffAndRejudgesLoosening`, `TestApplyDetectsADeletedPendingFile`, `TestApplyRedeploysOnlyTheCheckoutsRepository`, `TestApplyEachStepChecksFirstAndDoesNothingWhenNothingIsOwed`, `TestUpdateClearsOnlyTheStagesItRan`, `TestEachCloudWritingStepWritesItsAuditRecordEvenIfALaterStepFails`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'TestApply' -count=1`.
 - **Depends on:** AP1, AP2; external NP-confirm, NP-cap, NP-lease. **Commit:** `apply: the one command that runs what is pending (AP3)`. **Red step:** `TestApplyRunsEachPendingStepOnce` fails with two queued changes naming the same step.
-- **Reviewer:** opus + mandatory independent review (it runs the policy publish and the deploy).
+- **Reviewer:** opus + mandatory independent review (it runs the policy publish and the redeploy). Follow-up: pin the agent-refusal wording for catalog builds.
 
 ### AP4: `image add` / `image rm` run their chain
 - **Files:** `internal/cli/image_catalog.go`, `internal/cli/image_build_catalog.go`, `internal/cli/image_catalog_apply_test.go` (new).
-- **Interfaces:** declares the policy stage, `catalog-build` (leased, D1543) and the redeploy for an entry; `--no-apply` leaves them pending. **New agent rule (D1573): in a coding agent's session `--inline`, `--dockerfile` and `--default` refuse unless the project is managed and judged.**
-- **Tests:** `TestImageAddAloneMakesTheImageUsable` (asserts the deployed job's image equals the built entry's digest, through `catalogDockerAsk`'s inputs and the fake backend), `TestImageAddNoApplyLeavesPending`, `TestImageAddRefusesExecutableContentForAnAgent`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'TestImageAdd|TestImageCatalog' -count=1`.
+- **Interfaces:** declares the policy stage, `catalog-build` (leased, D1543) and the redeploy for an entry; `--no-apply` leaves them pending. **New agent rule (D1573): `image add` carries its own refusing check; in a coding agent's session `--inline`, `--default` and `--image <ref>` refuse (all are executable content), independent of the managed gate. AP4 builds and tests it.** Follow-up: pin the agent-refusal wording for catalog builds.
+- **Tests:** `TestImageAddAloneMakesTheImageUsable` (asserts the deployed job's image equals the built entry's digest, `catalogDockerAsk` returns a bool, not a digest, so the digest comes from the fake backend's built image and the deployed job), `TestImageAddNoApplyLeavesPending`, `TestImageAddRefusesExecutableContentForAnAgent` (the red step: under the agent marker `--inline`, `--default` and `--image <ref>` each refuse, with no managed gate in the fake). **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'TestImageAdd|TestImageCatalog' -count=1`.
 - **Depends on:** AP3; external NP-lease. **Commit:** `image: add and rm apply their own follow-up (AP4)`. **Red step:** add with fakes ends with a pending step before the change. **Mutation check:** delete the agent refusal; the executable-content test must fail.
 - **Reviewer:** opus + mandatory independent review (in-run level 3): an agent-reachable publish, Cloud Build of agent-written content and redeploy.
 
 ### AP5: `settings set` / `unset` run their chain
 - **Files:** `internal/cli/settings_set.go`, `internal/cli/settings_apply_test.go` (new), `internal/settings/steps.go` (new: key to steps table).
 - **Interfaces:** each key in the settings registry declares its steps (or none); a repo-layer write declares none and prints that it is live once merged (D1564).
-- **Tests:** `TestSettingsSetPublishesOnlyWhatTheKeyNeeds`, `TestRepoLayerWriteNeverPublishes`, `TestEverySettingKeyDeclaresItsSteps`, `TestBudgetKeyPublishRefusedInAnAgentSession` (D1576). **Command:** `GOFLAGS=-p=1 go test ./internal/cli ./internal/settings -run 'TestSettings' -count=1`.
+- **Tests:** `TestSettingsSetPublishesOnlyWhatTheKeyNeeds`, `TestRepoLayerWriteNeverPublishes`, `TestEverySettingKeyDeclaresItsSteps`, `TestCapKeysRefusedInAnAgentSessionEvenWithNoApply` (D1576: `budget.*`, `governance.*`, `agent.max_*`, with and without `--no-apply`, so a later owner `apply` never publishes an agent-queued raise). **Command:** `GOFLAGS=-p=1 go test ./internal/cli ./internal/settings -run 'TestSettings' -count=1`.
 - **Depends on:** AP3. **Commit:** `settings: set and unset apply their own follow-up (AP5)`. **Red step:** the every-key test fails on a key with no declaration. **Reviewer:** standard.
 
 ### AP6: `accounts rm`, `project repos`, `models`, `workspace`, `project policy publish`
 - **Files:** `internal/cli/accounts_rm.go`, `internal/cli/project_enroll.go`, `internal/cli/project_cmd.go`, `internal/cli/models_add.go`, `internal/cli/models_rm.go`, `internal/cli/workspace.go`, `internal/cli/chain_apply_test.go` (new).
 - **Interfaces:** declares steps per command. **`accounts add` is already composite (`accountsAddStages`) and is not rewired: its failure rule stays "error, re-run repairs" (F10); only its text is audited in AP7.** `project policy publish` stays the policy stage's own door.
-- **Tests:** `TestAccountsRmChain`, `TestReposAddChain`, `TestModelsAddChain`, `TestWorkspaceWritesChain`, `TestPolicyPublishStillTheStagesDoor`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'TestAccountsRm|TestProjectRepos|TestModels|TestWorkspace|TestPolicyPublish' -count=1`.
+- **Tests:** `TestAccountsRmChain`, `TestReposAddChain`, `TestModelsAddChain`, `TestWorkspaceWritesChain`, `TestWorkspaceCapSetMonthlyRefusedInAnAgentSession` (D1576, also with `--no-apply`), `TestPolicyPublishStillTheStagesDoor`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli -run 'TestAccountsRm|TestProjectRepos|TestModels|TestWorkspace|TestPolicyPublish' -count=1`.
 - **Depends on:** AP3. **Commit:** `cli: accounts rm, repos, models, workspace apply their own follow-up (AP6)`. **Red step:** a chain test that ends with a pending step. **Reviewer:** opus + mandatory independent review (policy publish, accounts grants).
 
 ### AP7: the audit of "now run X" texts, doctor and the plugin skills
-- **Files:** the F11 audit set not owned by AP4-AP6 (the output of the F11 grep minus the files AP2-AP6 own: `doctor*.go`, `config_show.go`, `exec.go`, `history_rollover.go`, `image_check_catalog.go`, `image_layer.go`, `image_promote.go`, `image_refresh*.go`, `imagecheck.go`, `init_credentials.go`, `init_fugaroyaml.go`, `init_images.go`, `init_new_machine.go`, `init_project.go`, `init_retire.go`, `launch_budget.go`, `operator_write.go`, `pair.go`, `project_job.go`, `recipes_skew.go`, `restore.go`, `review.go`, `reviewverify.go`, `run.go`, `sharedcfg.go`, `skillwarn.go`, `upgrade_cloud.go`, `user.go`, `validate.go`, and the `accounts_add_converge.go` text), `plugin/skills/*/SKILL.md`, `CLAUDE.md`, `docs/` pages that tell the user to publish/update.
+- **Files:** the whole F11 audit set not owned by AP2-AP6 (levels are sequential, so AP7 takes every F11 file the earlier tasks do not write: `config_publish.go`, `init.go`, `init_anchor.go`, `init_firebase.go`, `init_layer_stage.go`, `init_plugin_stage.go`, `doctor*.go`, `config_show.go`, `exec.go`, `history_rollover.go`, `image_check_catalog.go`, `image_layer.go`, `image_promote.go`, `image_refresh*.go`, `imagecheck.go`, `init_credentials.go`, `init_fugaroyaml.go`, `init_images.go`, `init_new_machine.go`, `init_project.go`, `init_retire.go`, `launch_budget.go`, `operator_write.go`, `pair.go`, `project_job.go`, `recipes_skew.go`, `restore.go`, `review.go`, `reviewverify.go`, `run.go`, `sharedcfg.go`, `skillwarn.go`, `upgrade_cloud.go`, `user.go`, `validate.go`, and the `accounts_add_converge.go` text), `plugin/skills/*/SKILL.md`, `CLAUDE.md`, `docs/` pages that tell the user to publish/update.
 - **Interfaces:** classifies each text (a)/(b)/(c) (F11); (a) moves into its command; (b) names `fugaro update` or `fugaro apply`.
 - **Tests:** `go test ./plugin -run 'TestPlugin|Skill' -count=1`; `go test ./internal/cli -run Docs -count=1`; the touched files' targeted tests.
 - **Depends on:** AP4, AP5, AP6. **Commit:** `cli: no message sends the user to publish or update by hand (AP7)`. **Red step:** AP9's lint run first (expected red). **Reviewer:** standard (the skills edit makes the path-routing rule send it to level 3 in-run: CLAUDE.md/plugin skills are in the security routing list).
 
 ### AP8: console read of the pending steps
-- **Files:** `internal/cli/project.go` (`consoleReadPaths` row), `internal/cli/docs_desktop_console_test.go` (`consoleLaunchPaths`), `console/src/main/spawn.ts` and its test (the new read row, **and the `settings.edit` row gains `--no-apply`; one new exact-argv row for `fugaro apply` (a write verb, D1572)**), `console/docs/json-contract.md`, `docs/design/desktop-console.md` (row).
+- **Files:** `internal/cli/project.go` (`consoleReadPaths` row), `internal/cli/docs_desktop_console_test.go` (`consoleLaunchPaths`), `console/src/main/spawn.ts` and its test, `console/src/main/ipc.ts` (the new `fugaro apply` row needs an operation or `assertSpawnSurface` fails), `console/src/main/settingsedit.ts` and `confirm.ts` if the `--no-apply` word reaches them (the new read row, **and the `settings.edit` row gains `--no-apply`; one new exact-argv row for `fugaro apply` (a write verb, D1572)**), `console/docs/json-contract.md`, `docs/design/desktop-console.md` (row).
 - **Tests:** the Go equality test between the two lists; a spawn test that `settings.edit` carries `--no-apply` in both phases; `console` typecheck and the spawn unit test.
 - **Depends on:** AP3. **Commit:** `console: the pending-steps read joins the fence (AP8)`. **Red step:** the equality test fails with only one side updated. **Reviewer:** opus + mandatory independent review (the console spawn allow-list is security-sensitive).
 
 ### AP9: enforcement
-- **Files:** `internal/cli/apply_enforce_test.go` (new), `internal/cli/testdata/management_commands.golden` (new).
-- **Tests:** every command in the golden list declares its steps and, run without `--no-apply` against fakes, ends with no pending step (spec's test); a text lint over user-facing strings fails on "run fugaro (config publish|project policy publish|update|image build|image refresh)" outside the (b) allow-list.
+- **Files:** `internal/cli/apply_enforce_test.go` (new), `internal/cli/testdata/management_commands.golden`, `internal/cli/testdata/next_step_allow.golden` (new).
+- **Tests:** every command in the golden list declares its steps and, run without `--no-apply` against fakes, ends with no pending step (spec's test); a text lint over user-facing strings runs F11's grep plus a golden allow-list (`internal/cli/testdata/next_step_allow.golden`, new), not only `run fugaro (...)`: it also fails on "next: fugaro update" and "fugaro update publishes it" outside the (b) allow-list.
 - **Depends on:** AP4-AP7. **Commit:** `cli: enforce composite commands (AP9)`. **Red step:** the lint is red until AP7 lands. **Reviewer:** standard.
 
 ### AP10: release notes and live checks
@@ -116,8 +117,8 @@ enforcement, notes): AP7-AP10.
 | Check | Measures | Runner |
 | --- | --- | --- |
 | 390 | `fugaro image add` alone: the deployed job's image digest equals the built entry's digest, and `apply --status --json` lists nothing | owner, after AP4 |
-| 391 | Three `--no-apply` changes then one `apply`: publish and deploy run once each | owner |
-| 392 | A forced publish failure leaves the change saved, the step pending, exit non-zero; `fugaro apply` finishes it | owner |
+| 391 | Three `--no-apply` changes then one `apply`: the `policy` and `repository` stages run once each | owner |
+| 392 | A forced `policy` stage failure leaves the change saved, the step pending, exit non-zero; `fugaro apply` finishes it | owner |
 | 393-399 | Reserved | |
 
 ## Parallel execution
@@ -148,8 +149,8 @@ they write (`image_catalog.go` and the other families) and the lint it satisfies
 | `internal/cli/image_catalog.go`, `image_build_catalog.go` | AP4 (3) only |
 | `internal/cli/settings_set.go`, `internal/settings/steps.go` | AP5 (3) only |
 | `internal/cli/accounts_rm.go`, `project_enroll.go`, `project_cmd.go`, `models_add.go`, `models_rm.go`, `workspace.go` | AP6 (3) only |
-| `internal/cli/project.go`, `docs_desktop_console_test.go`, `console/src/main/spawn.ts` | AP8 (3) only |
-| the rest of the F11 set (`doctor*.go`, `run.go`, ...), `plugin/skills/*`, `CLAUDE.md` | AP7 (4) only |
+| `internal/cli/project.go`, `docs_desktop_console_test.go`, `console/src/main/spawn.ts`, `ipc.ts`, `settingsedit.ts`, `confirm.ts` | AP8 (3) only |
+| the whole rest of the F11 set (`config_publish.go`, `init*.go`, `doctor*.go`, `run.go`, ...), `plugin/skills/*`, `CLAUDE.md` | AP7 (4) only; none of these is written by AP2-AP6 |
 | `docs/releases/*`, `docs/gcp-live-checklist.md`, `scripts/live-checks/*` | AP10 (6) only |
 
 ## Post-deploy actions
