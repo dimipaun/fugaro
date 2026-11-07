@@ -535,17 +535,21 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 // consoleMovedSections are the document's headings whose command and shapes
 // live under ee/: the coordinator's moved there with E2.1b, the report's with
 // E2.2b, and the graph's never lived in the core at all — D1362 puts `fugaro
-// graph` in ee/ from its first line, so its section was written (CG8) with its
-// code under ee/ from the start. This build can name no field or flag of any of
-// them — an untagged build compiles neither the command nor the shapes — so the
-// checks below would be reading a package they cannot import. For the two moved
-// ones the same checks run against the tagged tree, where the code is in the
-// build (ee/coordinator/cli/console_contract_test.go,
-// ee/report/cli/console_contract_test.go); §6.21 has no such counterpart yet,
-// and that is a fact of its age rather than a decision: the graph command (CG3)
-// and the console read of its document (CG9a) are the tasks that will carry one,
-// and until then the section stands on the plan's H1 to H5 and on the review
-// that read it against `ee/graph/document.go`. §6.15 is the coordinator's too —
+// graph` in ee/ from its first line. Nothing outside ee/ imports anything under
+// it (the rule internal/eeboundary's TestCoreNeverImportsEE guards: the core
+// builds and tests with the directory deleted), so this build cannot name a
+// field or a flag of any of them and the checks below would be reading the
+// shapes of a package they cannot import. For the two sections that moved, the
+// same checks run against the tagged tree, where the code is in the build
+// (ee/coordinator/cli/console_contract_test.go,
+// ee/report/cli/console_contract_test.go). §6.21 has no such counterpart, and
+// none is scheduled: the task that lands the command (CG3) lists no ee-side
+// contract test, and the one that lands the console's read of its document
+// (CG9a) names this file as "not edited here". So the graph's section is held
+// here by nothing but the heading and spelling rules every section gets, and
+// stands on the plan's H1 to H5 and on the review that read it against
+// `ee/graph/document.go` until a later task writes the counterpart. That is a
+// gap recorded rather than a licence. §6.15 is the coordinator's too —
 // coordinator v2 C3's `coordinator show`, whose document and command are both
 // under ee/ — and it is a heading of its own rather than a part of §6.13 because
 // the two document different reads of different shapes. §6.16 is coordinator v2
@@ -5766,6 +5770,30 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 	}
 }
 
+// mdHeadingRE finds the next markdown heading, `##` or deeper. It is anchored at
+// a line start, so the `#` of a code span or a fenced line is not one.
+var mdHeadingRE = regexp.MustCompile(`(?m)^#{2,} `)
+
+// mdSection returns the contract's text for one section, from its heading to the
+// next heading of any level. A section read that stops at a fixed later marker
+// swallows every section inserted between the two, and a pin over it then
+// asserts over a neighbour's text: CG8's §6.21 landed between §6.20 and
+// `## 7. The CLI gaps`, and the three reads that ended at that marker had been
+// reading past their own section ever since the first insertion above them.
+func mdSection(t *testing.T, path, doc, heading string) string {
+	t.Helper()
+	i := strings.Index(doc, heading)
+	if i < 0 {
+		t.Fatalf("%s: %q is not in the document; this test reads that section", path, heading)
+	}
+	rest := doc[i+len(heading):]
+	end := mdHeadingRE.FindStringIndex(rest)
+	if end == nil {
+		t.Fatalf("%s: %q is the document's last section, so this test cannot tell where it stops", path, heading)
+	}
+	return rest[:end[0]]
+}
+
 // TestDocsDesktopConsoleContractCitesRunsStatsBySymbol: the contract's
 // `runs stats --json` section (6.10) cites the code it describes by SYMBOL, not
 // by line. The line numbers it used to carry (`runs_stats.go:69`, `:467`,
@@ -5782,12 +5810,7 @@ func TestPlanRule9ListsEveryFlaggedHeading(t *testing.T) {
 func TestDocsDesktopConsoleContractCitesRunsStatsBySymbol(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
-	start := strings.Index(doc, "### 6.10 `fugaro runs stats --json`")
-	end := strings.Index(doc, "## 7. The CLI gaps")
-	if start < 0 || end <= start {
-		t.Fatalf("%s's runs stats section was renamed or reordered; update this test's markers", path)
-	}
-	section := doc[start:end]
+	section := mdSection(t, path, doc, "### 6.10 `fugaro runs stats --json`")
 	// The three symbols the section describes, each of which exists in the file
 	// it names (read from the source, so a rename cannot leave the contract
 	// pointing at a function that is gone).
@@ -9697,9 +9720,15 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
 
-	read := mdBetween(t, path, doc, "### 6.19 ", "\n## 7. The CLI gaps")
+	read := mdSection(t, path, doc, "### 6.19 ")
 	for _, want := range []string{
-		"operation `settings.edit`",
+		// §6.19's own words. The phrase "operation `settings.edit`" that stood
+		// here was never §6.19's: only §6.20 and §9 write it, and this read ran
+		// past §6.19's end into them until mdSection bounded it. The section does
+		// make the claim — it is where a reader learns the console writes this
+		// group — so it is pinned as the section states it.
+		"The write is an operation of the console",
+		"`settings.edit`",
 		"it is the console's second",
 		"`settings set|unset KEY --layer <L> --dry-run --json",
 		"retried silently",
@@ -9714,7 +9743,7 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 
 	// The dry run's document: the shape the confirmation window is drawn from,
 	// member by member, off `settingsWriteDoc`.
-	write := mdBetween(t, path, doc, "### 6.20 ", "\n## 7. The CLI gaps")
+	write := mdSection(t, path, doc, "### 6.20 ")
 	for _, want := range []string{
 		"settingsWriteDoc",
 		"schemas/settings-write.schema.json",
