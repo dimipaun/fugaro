@@ -46,12 +46,16 @@ const (
 // confirmRemoval asks (the project's name typed at a terminal, or --yes), or
 // nothing at all for the owner's own terminal on a managed project — the
 // owner's ruling of 2026-11-06, and the same shape the policy stage's writes
-// take. What the owner reads instead is the plan this stage printed above (the
-// layer file and object, the generation, the backup a re-seed leaves) and
-// OwnerProceeded's sentence: a layer publish rewrites a document every
-// repository resolves against, but it loses no data — a re-seed keeps the file
-// it replaces beside it — and takes no secret value, which is the whole of
-// what the ruling leaves asked.
+// take. What the owner reads instead is what stands above the sentence: the
+// plan this stage printed (the layer file, the generation), a re-seed's
+// three-way state, and — for the publish, the one of the three that replaces
+// the document every repository resolves against — the diff publishLayer prints
+// before it asks (the object it replaces, the lines that differ, and any
+// executable change), so the replacement is read before the write rather than
+// reported after it. A layer publish loses no data — the write is conditional
+// on the generation the run read, and a re-seed keeps the file it replaces
+// beside it — and takes no secret value, which is the whole of what the ruling
+// leaves asked.
 //
 // It is not a verdict about any plan: this stage's document is judged nowhere
 // (the layer stage is not one of the gate's stages), so the sentence claims

@@ -510,6 +510,51 @@ func TestManagedOwnerTerminalLayerWritesWithoutAsking(t *testing.T) {
 	})
 }
 
+// TestManagedOwnerTerminalLayerPublishReadsTheDiffBeforeTheNote: the publish is
+// the one of the stage's three writes that replaces the document every
+// repository of the project resolves against, and at a managed owner's terminal
+// it is the one the owner is asked nothing for — so the diff above the sentence
+// is the whole of what they read in place of the typed name, and it has to be
+// above it. publishLayer prints what it replaces and asks the caller's
+// confirmation after it, which is the policy stage's own order (m.print before
+// policyMigrationConfirm); a note that arrives first is an agreement to a
+// publish the owner never read.
+//
+// Mutation (run, restore): move publishLayer's confirm call above the block
+// that prints the replacement, or drop the call — the note then stands before
+// the diff, or nothing asks at all, and this test fails.
+func TestManagedOwnerTerminalLayerPublishReadsTheDiffBeforeTheNote(t *testing.T) {
+	r := newLayerRig(t, testProjectLayer)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	noAgentSession(t)
+	fakeTerminal(t)
+	recordLayer(t, localEdit, "0")
+
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("a managed project's own terminal did not publish the layer: %v\n%s%s", err, out, errOut)
+	}
+	if got, ok := layerObject(t, r); !ok || got != localEdit {
+		t.Fatalf("the local layer file was not published: %q %v\n%s%s", got, ok, out, errOut)
+	}
+	all := out + errOut
+	diff := strings.Index(all, "replacing the project layer")
+	note := strings.Index(all, initflow.OwnerProceeded())
+	if diff < 0 {
+		t.Fatalf("the publish does not show what it replaces:\n%s", all)
+	}
+	if note < 0 {
+		t.Fatalf("the publish does not say why nothing is typed:\n%s", all)
+	}
+	if diff > note {
+		t.Errorf("the note stands above the diff it is about, so the owner agrees to a publish they have not read:\n%s", all)
+	}
+	if strings.Contains(all, "Type "+initProjectName) {
+		t.Errorf("a managed project's own terminal was asked for the project's name:\n%s", all)
+	}
+}
+
 // TestManagedOwnerTerminalLayerRefusesAnAgentSession is the layer stage's own
 // half of the same case, driven at its own call: a coding agent's session
 // writes nothing there and reads no sentence of the owner's, and the
