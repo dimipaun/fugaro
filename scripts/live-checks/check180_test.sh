@@ -204,26 +204,79 @@ FUGARO_EOF
   cat >"$dir/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
 # A fake `gcloud`, for check180.sh's test only: the two Secret Manager reads the
-# rotation makes. The container list answers with the hash-suffixed name the real
-# ProjectSecretID builds, and the version list answers one version the first time
-# and two after the new value was stored.
+# rotation makes. It answers the way gcloud does, which is the point of it: a
+# secret's `name` is the FULL resource path projects/<project>/secrets/<id>,
+# --filter is applied client-side to the resource as a whole (so a
+# `labels.X=Y` term matches the labels and a `name~` term is a regex against the
+# path, not against the id), and --format decides what is printed. A fake that
+# answered a bare id to `value(name)` would hide a check whose filter can never
+# match a name — which is exactly the bug this fake was made faithful for.
 set -u
 state=${FAKE180_STATE:-/tmp}
 mode=${FAKE180_MODE:-ok}
+id=fugaro-project-sandbox-bitbucket-token-9f3c1a
+full=projects/sandbox-p/secrets/$id
+labels="fugaro=managed fugaro_project=sandbox fugaro_secret=bitbucket-token"
+
+filter=""
+format=""
+read_args() { # read_args [args...] — the two options the check passes
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --filter=*) filter=${1#--filter=} ;;
+    --format=*) format=${1#--format=} ;;
+    --filter | --format) shift ;;
+    esac
+    shift
+  done
+}
+
 if [ "${1:-}" = "secrets" ] && [ "${2:-}" = "list" ]; then
+  shift 2
+  read_args "$@"
   [ "$mode" = no-container ] && exit 0
-  echo "fugaro-project-sandbox-bitbucket-token-9f3c1a"
+  # Every whitespace-separated term of a gcloud filter has to hold (that is
+  # AND), against the resource as a whole. A term this fake does not know
+  # matches nothing, so a filter the real gcloud would not match either.
+  match=yes
+  for term in $filter; do
+    case "$term" in
+    labels.*=*)
+      key=${term%%=*}
+      value=${term#*=}
+      key=${key#labels.}
+      case " $labels " in *" $key=$value "*) ;; *) match=no ;; esac
+      ;;
+    "name~"*)
+      printf '%s\n' "$full" | grep -E -- "${term#name~}" >/dev/null || match=no
+      ;;
+    "name="*)
+      [ "$full" = "${term#name=}" ] || match=no
+      ;;
+    *) match=no ;;
+    esac
+  done
+  [ "$match" = yes ] || exit 0
+  case "$format" in
+  *name.basename*) printf '%s\n' "$id" ;;
+  *) printf '%s\n' "$full" ;;
+  esac
   exit 0
 fi
 if [ "${1:-}" = "secrets" ] && [ "${2:-}" = "versions" ]; then
+  shift 2
+  read_args "$@"
   n=$(cat "$state/version-calls" 2>/dev/null || echo 0)
   n=$((n + 1))
   printf '%s' "$n" >"$state/version-calls"
-  if [ "$n" -eq 1 ]; then
-    printf '1 ENABLED\n'
-  else
-    printf '1 ENABLED\n2 ENABLED\n'
-  fi
+  one_version() { # one_version NUMBER STATE
+    case "$format" in
+    *name.basename*) printf '%s %s\n' "$1" "$2" ;;
+    *) printf '%s/versions/%s %s\n' "$full" "$1" "$2" ;;
+    esac
+  }
+  one_version 1 ENABLED
+  if [ "$n" -gt 1 ]; then one_version 2 ENABLED; fi
   exit 0
 fi
 echo "fake gcloud: unknown call $*" >&2
@@ -319,6 +372,7 @@ import json, os, sys, http.server
 TOKEN = os.environ.get("FAKE180_TOKEN", "")
 MODE = os.environ.get("FAKE180_API_MODE", "ok")
 UUID = "{9f1d0c2a-0000-0000-0000-000000000001}"
+USERS = {}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -364,6 +418,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/2.0/user":
+            # The rotation's probe of the OLD value. The register's step 8 has
+            # the owner revoke the old token before the run after the rotation,
+            # and this fake stands in for that state — it cannot tell the two
+            # /user calls apart by what they carry (both send the same token),
+            # so it counts: the first is step_identity's, with a live token, and
+            # a later one is the rotation's, which is REFUSED as a revoked
+            # value would be. In mode `old-token-live` every call is accepted,
+            # which is the owner who has not revoked: the check then waits out
+            # its cap and the row reads UNVERIFIED.
+            if MODE != "old-token-live":
+                USERS["n"] = USERS.get("n", 0) + 1
+                if USERS["n"] > 1:
+                    self.refuse(401, "invalid_token")
+                    return
             if MODE == "no-identity":
                 self.reply(200, {"uuid": UUID, "display_name": "", "nickname": ""})
             else:
@@ -463,6 +531,7 @@ run180() {
   env PATH="$dir/bin:$PATH" TMPDIR="$dir/tmp" \
     CHECK180_API_URL="http://127.0.0.1:$FAKE_PORT/2.0" \
     CHECK180_CURL_SECONDS=20 CHECK180_RUN_SECONDS=30 CHECK180_RUN_POLL_SECONDS=1 \
+    CHECK180_ROTATION_SECONDS=2 CHECK180_ROTATION_POLL_SECONDS=1 \
     FAKE180_MODE="${RUN180_MODE:-ok}" FAKE180_TOKEN="$TOKEN_SENTINEL" \
     FAKE180_STATE="$dir/state" FAKE180_LOG="$dir/fugaro.log" \
     ${RUN180_ENV[@]+"${RUN180_ENV[@]}"} \
@@ -818,6 +887,15 @@ test_rotation() {
   expect_status "$status" 0 "the rotation"
   expect_contains "$out" "FACT rotation: PASS" "the rotation: the fact"
   expect_contains "$out" "the next run uses the new version" "the rotation: the reading it makes"
+  # What makes that reading a reading: the check asked GET /2.0/user with the
+  # OLD value before it launched anything, and the row says Bitbucket refused it.
+  # A run launched while the old value still worked would prove nothing.
+  expect_contains "$out" "Bitbucket REFUSES the old value" "the rotation: the refusal the row turns on"
+  # The version counts come from what gcloud really prints: the full resource
+  # name for a version, turned into a count by the basename the check asks for
+  # and the last path segment the reader accepts. A listing read as the full path
+  # would count 0 and the row would read '? version(s)'.
+  expect_contains "$out" "1 version(s) before, 2 after" "the rotation: the version list it read"
   # Two stores, the original and the rotated value, and both are the same value
   # write: the rotation's first half is a new version of the same secret.
   expect_store_argv "$work/rotation" "the rotation: the stores" 2
@@ -831,6 +909,28 @@ test_rotation() {
   run180 rotation-no-push
   expect_status "$status" 1 "a rotation the next run does not use"
   expect_contains "$out" "FACT rotation: FAIL" "a rotation the next run does not use: the fact"
+
+  # The old value still accepted by Bitbucket: the criterion is NOT measured, and
+  # the row has to say so rather than claim the new version is in use. With the
+  # old token live, a run launched after the store pushes exactly the same way —
+  # a job still mounting the old value, or a pinned version — so the check may
+  # not launch one and call the result a rotation. The fake's `old-token-live`
+  # mode is the owner who has not revoked yet, and the run is INCOMPLETE: the
+  # rotation's row is the one thing this run measured wrongly before.
+  RUN180_API_MODE=old-token-live
+  RUN180_ARGS=(--new-token-file "$work/rotation-live/token2")
+  run180 rotation-live
+  expect_status "$status" 3 "a rotation whose old value is still accepted"
+  expect_contains "$out" "FACT rotation: UNVERIFIED" "a rotation whose old value is still accepted: the fact"
+  expect_contains "$out" "still ACCEPTED by Bitbucket" "a rotation whose old value is still accepted: the reading"
+  expect_contains "$out" "Revoke it in the sandbox workspace's settings" "a rotation whose old value is still accepted: what to do about it"
+  expect_last_line "$out" "CHECK 180 RESULT: INCOMPLETE (exit 3)" "a rotation whose old value is still accepted: the block's last line"
+  # Nothing was launched for the post-rotation run: the two runs of the two
+  # repositories and no third.
+  local launched
+  launched=$(grep -c '^run --repo' "$work/rotation-live/fugaro.log" 2>/dev/null || true)
+  [ "${launched:-0}" -eq 2 ] \
+    || fail "a rotation whose old value is still accepted: the check launched ${launched:-0} run(s), want the two of the two repositories and none after the rotation — a run whose push could not settle the criterion must not be billed"
 
   # The container is found by filter, never composed: a listing that names
   # several (or none) stops rather than picking one.

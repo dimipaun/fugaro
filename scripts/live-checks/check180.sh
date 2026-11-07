@@ -35,11 +35,18 @@
 #             Bitbucket PROJECT afterwards, which is what makes U3 a reading of
 #             the token rather than of a list of names: create it before the
 #             run, and do NOT add it to `project_secrets`.
-#             --new-token-file is the token created in step 5's rotation (F3).
+#             --new-token-file is the token created in step 8's rotation (F3).
 #             Without it the rotation's own row reads UNVERIFIED and names what
-#             to pass, and the block's last line says INCOMPLETE; `--merge` is
-#             what lets the check measure U4's merge, and without it the approve
-#             is measured and the merge reads UNVERIFIED.
+#             to pass, and the block's last line says INCOMPLETE. With it, the
+#             new value is stored as a new version of the same secret and the
+#             check then WAITS for the OLD value to be refused by Bitbucket —
+#             revoke it in the workspace's settings when the run asks you to,
+#             and it goes on by itself (up to 600s; CHECK180_ROTATION_SECONDS).
+#             Nothing is launched until that refusal is read: with the old value
+#             still accepted, a run that pushed would prove nothing about the
+#             new one, so the row reads UNVERIFIED rather than PASS. `--merge`
+#             is what lets the check measure U4's merge, and without it the
+#             approve is measured and the merge reads UNVERIFIED.
 #             --gcloud-config names the directory the SECOND MACHINE reads its
 #             Application Default Credentials from (U5). That step runs the CLI
 #             in a scratch home, so without credentials named for it the seeded
@@ -93,7 +100,10 @@
 #                                                      could not verify its
 #                                                      criterion (the rotation or
 #                                                      the merge without the flag
-#                                                      that measures it, the second
+#                                                      that measures it, the
+#                                                      rotation whose old token is
+#                                                      still accepted by
+#                                                      Bitbucket, the second
 #                                                      machine without credentials
 #                                                      it can read the installation
 #                                                      with).
@@ -119,12 +129,13 @@
 # guard_xtrace REFUSES a run whose shell arrived with tracing on.
 #
 # CHECK180_API_URL, CHECK180_CURL_SECONDS, CHECK180_RUN_SECONDS,
-# CHECK180_RUN_POLL_SECONDS and CHECK180_DRY_RUN exist for this script's own
+# CHECK180_RUN_POLL_SECONDS, CHECK180_ROTATION_SECONDS,
+# CHECK180_ROTATION_POLL_SECONDS and CHECK180_DRY_RUN exist for this script's own
 # test: the first may only name a loopback address of exactly the form
 # http://127.0.0.1:<port> (the test's fake Bitbucket), so no environment can send
-# the token anywhere but Bitbucket Cloud's own API; the others shorten the two
-# caps, the interval the runs are polled at, and plan a run without touching
-# anything.
+# the token anywhere but Bitbucket Cloud's own API; the others shorten the caps,
+# the intervals the runs and the rotation's revocation are polled at, and plan a
+# run without touching anything.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: the commands below pass
@@ -664,9 +675,13 @@ def cmd_error(path):
 
 
 def cmd_versions(path):
-    """gcloud's `--format=value(name,state)` output: one `<number> <STATE>` line
-    per version. Counts only -- a version's own name is not a secret, but a
-    count is what the rotation's reading is."""
+    """gcloud's `--format=value(name.basename(),state)` output: one
+    `<number> <STATE>` line per version. Counts only -- a version's own name is
+    not a secret, but a count is what the rotation's reading is. A version's
+    `name` is the full resource path
+    (projects/<project>/secrets/<id>/versions/<number>), so the last path
+    segment is taken as well: gcloud has printed the bare number for this
+    format, and a listing that came back the other way still counts."""
     total = enabled = latest = 0
     try:
         with open(path, "r", encoding="utf-8") as fh:
@@ -675,10 +690,11 @@ def cmd_versions(path):
         die("the version listing could not be read")
     for line in lines:
         parts = line.split()
-        if not parts or not parts[0].isdigit():
+        number = parts[0].rsplit("/", 1)[-1] if parts else ""
+        if not number.isdigit():
             continue
         total += 1
-        number = int(parts[0])
+        number = int(number)
         if number > latest:
             latest = number
         if len(parts) > 1 and parts[1] == "ENABLED":
@@ -1105,18 +1121,28 @@ step_rotation() {
     fact rotation UNVERIFIED "the rotation was NOT measured: pass --new-token-file <path> with the token created in step 8 of the register's section (stored as a new version of the same secret). Without it, what a rotation does to the next run is an assumption this check does not make"
     return 0
   fi
+  # The container, found the way the CLI itself finds it: by the labels
+  # `fugaro secrets set --project-wide` writes on it — `fugaro_secret` (the
+  # logical name, internal/cli/secrets.go) and `fugaro_project` (the
+  # installation) — and NOT by a filter on `name`. A secret's `name` is the full
+  # resource path, projects/<project>/secrets/<id>, and gcloud applies --filter
+  # client-side to that path, so an anchored `^fugaro-project-…` matches nothing
+  # at all: the count would always be 0 and every run with --new-token-file
+  # would stop here. `name.basename()` is what turns the match into the id the
+  # versions are then listed from — the name carries a hash suffix, so this
+  # check finds it rather than composing it.
   local container count
   count=$(gcloud secrets list --project "$GCP_PROJECT" \
-    --filter="name~^fugaro-project-$(lower "$INSTALLATION")-bitbucket-token-" --format='value(name)' 2>"$SCRATCH/gcloud.err" \
+    --filter="labels.fugaro_secret=bitbucket-token labels.fugaro_project=$(lower "$INSTALLATION")" --format='value(name.basename())' 2>"$SCRATCH/gcloud.err" \
     | grep -c . || true)
   if [ "${count:-0}" != 1 ]; then
-    stop "the project-wide container for bitbucket-token was not found once (the listing named ${count:-0}): $(last_line "$SCRATCH/gcloud.err"). The container's name carries a hash suffix, so this check finds it by filter rather than composing it, and it will not pick one of several. Read 'gcloud secrets list --project ${GCP_PROJECT} --filter=name~bitbucket-token' yourself and store the new version with the fugaro secrets set command below"
+    stop "the project-wide container for bitbucket-token was not found once (the listing named ${count:-0}): $(last_line "$SCRATCH/gcloud.err"). The check finds it by its labels, the way the CLI does — fugaro_secret=bitbucket-token, fugaro_project=$(lower "$INSTALLATION") — because its name carries a hash suffix, and it will not pick one of several. Read 'gcloud secrets list --project ${GCP_PROJECT} --filter=labels.fugaro_secret=bitbucket-token' yourself: one container, written by the store above, is what the rotation's version list needs"
   fi
   container=$(gcloud secrets list --project "$GCP_PROJECT" \
-    --filter="name~^fugaro-project-$(lower "$INSTALLATION")-bitbucket-token-" --format='value(name)' 2>>"$SCRATCH/gcloud.err" | head -n 1)
+    --filter="labels.fugaro_secret=bitbucket-token labels.fugaro_project=$(lower "$INSTALLATION")" --format='value(name.basename())' 2>>"$SCRATCH/gcloud.err" | head -n 1)
 
   local before rc=0
-  before=$(gcloud secrets versions list "$container" --project "$GCP_PROJECT" --format='value(name,state)' 2>>"$SCRATCH/gcloud.err" >"$SCRATCH/versions-before.txt" && reader versions "$SCRATCH/versions-before.txt")
+  before=$(gcloud secrets versions list "$container" --project "$GCP_PROJECT" --format='value(name.basename(),state)' 2>>"$SCRATCH/gcloud.err" >"$SCRATCH/versions-before.txt" && reader versions "$SCRATCH/versions-before.txt")
   local before_n
   before_n=$(field_of versions "$before")
   local rc2=0
@@ -1129,12 +1155,37 @@ step_rotation() {
     return 0
   fi
   local after after_n enabled latest
-  after=$(gcloud secrets versions list "$container" --project "$GCP_PROJECT" --format='value(name,state)' 2>>"$SCRATCH/gcloud.err" >"$SCRATCH/versions-after.txt" && reader versions "$SCRATCH/versions-after.txt")
+  after=$(gcloud secrets versions list "$container" --project "$GCP_PROJECT" --format='value(name.basename(),state)' 2>>"$SCRATCH/gcloud.err" >"$SCRATCH/versions-after.txt" && reader versions "$SCRATCH/versions-after.txt")
   after_n=$(field_of versions "$after")
   enabled=$(field_of enabled "$after")
   latest=$(field_of latest "$after")
 
-  say "the rotation's new version is stored; launching one more run in ${REPO_A} so the next run's own reading is the last word"
+  # F3's second half, and the reason the run launched below is a reading at all:
+  # while the OLD value is still accepted by Bitbucket, a run that
+  # pushed proves NOTHING about the new version — a job still mounting the old
+  # value, or a pinned version, pushes exactly the same way. The register's step
+  # 8 has the owner revoke the old token before the run after the rotation, and
+  # this is where the check waits for it: GET /2.0/user with the OLD value — the
+  # config step_inputs wrote from ${TOKEN_FILE} — until Bitbucket refuses it, up
+  # to a cap. Nothing is launched until it is refused, and a value that never is
+  # leaves the row UNVERIFIED rather than claiming a reading it does not have.
+  local old_status=000 code="" waited=0
+  say "the new version is stored. Revoke the OLD token in the sandbox workspace's settings now (the register's step 8): this check goes on as soon as Bitbucket refuses the old value, and waits up to ${ROTATION_WAIT_SECONDS}s for it"
+  while :; do
+    old_status=$(request "$SCRATCH/old-token.json" GET "/user" --config "$CURL_CONF")
+    case "$old_status" in
+    401 | 403) break ;;
+    esac
+    if [ "$waited" -ge "$ROTATION_WAIT_SECONDS" ]; then
+      code=$(field_of error "$(reader error "$SCRATCH/old-token.json" 2>/dev/null || true)")
+      fact rotation UNVERIFIED "the new version IS stored (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), but the OLD value is still ACCEPTED by Bitbucket after ${waited}s (GET /2.0/user with it answered ${old_status}${code:+, ${code#error=}}), so the run after the rotation was NOT launched and F3 is NOT measured by this run. With the old value live, a run that pushed would prove nothing about the new version: a job still mounting the old value, or a pinned version, pushes exactly the same way — which is why the register's step 8 revokes the old token BEFORE that run. Revoke it in the sandbox workspace's settings (the project access token you replaced) and run this check again with the same arguments: storing the same new value again only adds a version, and one more run is all this criterion needs. Nothing was changed by this step beyond that version, and no run was billed to it"
+      return 0
+    fi
+    sleep "$ROTATION_POLL_SECONDS"
+    waited=$((waited + ROTATION_POLL_SECONDS))
+  done
+
+  say "the rotation's new version is stored and Bitbucket REFUSES the old value (GET /2.0/user: ${old_status}); launching one more run in ${REPO_A} so the next run's own reading is the last word"
   local task="$SCRATCH/task-rotation.md"
   cat >"$task" <<TASK_EOF
 Add a second line to the repository's README.md, saying that Fugaro's Check 180 ran once more after the
@@ -1159,11 +1210,11 @@ TASK_EOF
   status=$(field_of status "$row")
   poll=$(field_of poll "$row")
   if [ "$pushed" = yes ] && [ -n "$pr" ] && [ "$pr" != 0 ]; then
-    fact rotation PASS "the new token is a new ENABLED version of the project-wide container (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), and a run launched AFTER the store pushed its branch and opened pull request #${pr} (status=${status:-unread}, terminal=$(field_of terminal "$row"), run ${run_id}): the next run uses the new version, which is what F3's order is written for — the old token is revoked only after that"
+    fact rotation PASS "the new token is a new ENABLED version of the project-wide container (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), Bitbucket REFUSES the old value (GET /2.0/user with it answered ${old_status} BEFORE the launch, so the run below cannot have used it), and a run launched AFTER the store pushed its branch and opened pull request #${pr} (status=${status:-unread}, terminal=$(field_of terminal "$row"), run ${run_id}): the next run uses the new version, which is what F3's order is written for — the old value is revoked before that run, which is what makes its push a reading of the new version rather than of a live credential of either kind"
   elif [ "$poll" != terminal ]; then
-    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) but the run launched after it never reached a final status within ${RUN_SECONDS}s (poll=${poll:-nolisting}, run_id=${run_id:-none}, the last row read: status=${status:-unread}, pushed=${pushed:-unread}, pr=${pr:-unread}; fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value, and a run still going at the cap has not been read"
+    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) and Bitbucket refuses the old value (GET /2.0/user: ${old_status}), but the run launched after it never reached a final status within ${RUN_SECONDS}s (poll=${poll:-nolisting}, run_id=${run_id:-none}, the last row read: status=${status:-unread}, pushed=${pushed:-unread}, pr=${pr:-unread}; fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value, and a run still going at the cap has not been read"
   else
-    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) but the run after it did not push and open a pull request (pushed=${pushed:-unread}, pr=${pr:-unread}, status=${status:-unread}, fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value"
+    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) and Bitbucket refuses the old value (GET /2.0/user: ${old_status}), but the run after it did not push and open a pull request (pushed=${pushed:-unread}, pr=${pr:-unread}, status=${status:-unread}, fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value"
   fi
 }
 
@@ -1334,6 +1385,7 @@ stored, no run is launched, no request is made and no credential is written.
   source tree    ${SOURCE}
   API root       ${API_ROOT}
   run cap        ${RUN_SECONDS}s per run
+  rotation wait  ${ROTATION_WAIT_SECONDS}s for the revoked old token (polled every ${ROTATION_POLL_SECONDS}s)
 
 What the run will do, in this order:
   1. read the installation with 'fugaro doctor --project ${INSTALLATION} --json', and refuse 'belong';
@@ -1350,7 +1402,10 @@ What the run will do, in this order:
      (and, with --merge, a merge) on the sandbox repositories;
   8. the probe repository, for U3;
   9. TestLiveBitbucket in ${SOURCE} with the token in that one command's environment;
- 10. with --new-token-file: the new version of the same secret, its version list, and one more run;
+ 10. with --new-token-file: the new version of the same secret, its version list, then a WAIT for you
+     to revoke the OLD token in the workspace's settings — the check asks GET /2.0/user with the old
+     value every ${ROTATION_POLL_SECONDS}s until Bitbucket refuses it (up to ${ROTATION_WAIT_SECONDS}s,
+     then the rotation's row reads UNVERIFIED and no run is launched) — and one more run;
  11. a scratch home seeded with 'fugaro update --gcp-project ... --config-only --yes', then
      'fugaro update --repo --plan-only' there, expecting a per-repository token (U5, D467).
      Both commands are given the owner's own Application Default Credentials by path
@@ -1488,6 +1543,8 @@ main() {
   CURL_SECONDS=${CHECK180_CURL_SECONDS:-60}
   RUN_SECONDS=${CHECK180_RUN_SECONDS:-5400}
   RUN_POLL_SECONDS=${CHECK180_RUN_POLL_SECONDS:-20}
+  ROTATION_WAIT_SECONDS=${CHECK180_ROTATION_SECONDS:-600}
+  ROTATION_POLL_SECONDS=${CHECK180_ROTATION_POLL_SECONDS:-15}
   REPO_A_URL="https://bitbucket.org/${REPO_A}.git"
   if [ "${CHECK180_DRY_RUN:-}" = yes ]; then DRY_RUN=yes; fi
   guard_belong

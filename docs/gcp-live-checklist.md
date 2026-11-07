@@ -11285,9 +11285,18 @@ launcher of an allow-listed repository hold the token's value (F7), which is why
    (`fugaro secrets set bitbucket-token --project-wide < <new-token-file>`), wait for the running
    executions to end, then revoke the old token in the Bitbucket UI, and record that **the next run
    uses the new version**: a run launched after the rotation clones, pushes and opens its pull request
-   as before, while the revoked value is refused. The secret's version list is what the script reads
-   back here, with `gcloud secrets list --filter` to find the container (the name carries a hash
-   suffix) and `gcloud secrets versions list` for the versions.
+   as before, **while the revoked value is refused**. That second half is what makes the first one a
+   reading — with the old value still accepted, a job still mounting it (or a pinned version) pushes
+   exactly the same way — so the script does not launch that run until it has seen the refusal: after
+   storing the new version it asks `GET /2.0/user` with the old value every 15 seconds, tells you to
+   revoke it, and goes on the moment Bitbucket answers 401 or 403 (up to 600 seconds,
+   `CHECK180_ROTATION_SECONDS`). If the old value is still accepted when the wait runs out, the run
+   is **not** launched and the rotation's row reads **UNVERIFIED** with the store's own result
+   (`x` versions before, `y` after) — revoke the old token and run the check again with the same
+   arguments. The secret's version list is what the script reads back here: it finds the container by
+   the labels the store writes on it (`fugaro_secret=bitbucket-token`, `fugaro_project=<name>`, the
+   same way the CLI finds it) rather than by its name, which carries a hash suffix, and reads the
+   versions with `gcloud secrets versions list`.
 9. **A second operator's machine** (U5, D467). On a machine seeded from the shared config with
    `fugaro update --gcp-project <id> --region <region> --name <name> --config-only`, run
    `fugaro update --repo <path> --plan-only` **without** copying the `project_secrets` entry, and
@@ -11312,8 +11321,9 @@ before it could measure everything — a guard stopped it, a tool is missing, a 
 an error ended it — and the keys it never reached read `FAIL — not reached`, with `aborted` naming
 what stopped it; `INCOMPLETE (exit 3)` it ran to the end and at least one criterion was **not
 settled**: a row reading `UNVERIFIED`, a step that could not verify its criterion (the rotation
-without `--new-token-file`, the merge without `--merge`, the second machine without credentials it
-can read the installation with). A criterion that was not measured is not a pass: **only an all-PASS
+without `--new-token-file` or with the old token still accepted when the wait for its revocation ran
+out, the merge without `--merge`, the second machine without credentials it can read the installation
+with). A criterion that was not measured is not a pass: **only an all-PASS
 block is a PASS**, and a step that could not verify its criterion says so in its own row instead of
 leaving the reader to take the block for an answer it never got.
 

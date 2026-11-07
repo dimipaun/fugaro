@@ -187,8 +187,15 @@ func TestDocsCheck180StatesWhatOnlyATokenSettles(t *testing.T) {
 		// U3: a repository created in the Bitbucket project after the
 		// allow-list was written.
 		"added to the Bitbucket project afterwards",
-		// The rotation (F3), and the reading it turns on.
+		// The rotation (F3), and the reading it turns on. The revocation is the
+		// half that makes the run after it a reading: with the old value still
+		// accepted, a run that pushes proves nothing about the new version, so
+		// the section has to say that the script waits for the refusal and that
+		// the row is UNVERIFIED without it.
 		"the next run uses the new version",
+		"the script does not launch that run until it has seen the refusal",
+		"`CHECK180_ROTATION_SECONDS`",
+		"the rotation's row reads **UNVERIFIED**",
 		// U5 and D467: the second machine, and the command that shows what it
 		// would do without the entry.
 		"`fugaro update --repo <path> --plan-only`",
