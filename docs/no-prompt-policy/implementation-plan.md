@@ -11,6 +11,21 @@ prerequisite; D1547 harness plus lint; D1548 observe: builds proceed and record;
 stay; **D1550 the rate is queried from Cloud Billing at run time** (not the recommendation); D1551 delete/replace
 of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are reserved here.
 
+Tension rulings (2026-11-07), each carried from [reconciliation.md](reconciliation.md) §5: **T1** yes as
+proposed — `--ask` is the single sanctioned exemption (opt-in per invocation, owner terminal only, never an
+agent session, never `--json`), the lint allows stdin reads only in that helper and the value-entry helper plus
+the explicit data-read exemption, and `budget set` gains `--ask` in T3; **T2** (a) — audit-only accepted, the
+record hardened (versioned bucket, `doctor` reads it), the rules rewritten to call the cover table a tripwire,
+and the level-3 review of the IAM and cover code the pre-apply control, so **T9 is unblocked**; **T3** and
+**T4** confirmed — the integrity class as listed (the `internal/managed/budget.go` marker checks and the D1551
+classification included), and the owner-session fence a courtesy against the accidental loop, not a barrier
+against a hostile agent; **T6** (b) — `fugaro update` raises the budget mode to enforce on a managed project
+wherever the owner has not chosen one (the mode is *seeded* observe, so the trigger is a recorded choice, not an
+absent node), one `doctor` line says so, and the step is its own task (T16) with a converge test, T10 following
+it — where the global caps are missing the raise cannot land at all (D6), so that installation stays observe and
+T10 names it, with the capless case open in the reconciliation; **T5** stays open — the D1550 answer is held until the T8 spike (task **T8S**) reports,
+and T8 waits on the spike only.
+
 ## Order against open pull requests
 
 #1870 (NP3: image build asks nothing) **merged 2026-11-07**. #1804 (a person at a real terminal on a managed project) and #1891 (CV1: the cover-table row for `catalog_check_records`) are **open**; on `main` `cover.go` lacks the row, so T9 starts after both merge. Merging them first costs nothing: they remove prompts and add one cover row.
@@ -43,6 +58,7 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
 | Over-cap error: estimated cost, cap, spent, the one command, non-zero exit | T8 |
 | A missing or unknown Cloud Billing price **refuses**; a missing machine type refuses; local config cannot supply a rate | T8 |
 | Observe mode: the build proceeds and records; an absent mode is observe; only maxReserve and kill switches bite; `doctor` says so | T8, T9 |
+| `fugaro update` raises the mode to enforce on a managed project wherever the owner has not chosen one (an additive `config/modeSet` says which); one `doctor` line says so, and where the global caps are missing the raise cannot land (D6): the mode stays observe, `doctor` names the caps, and the installation is unbounded | T16 |
 | The integrity refusals stay (listed in T9) and are in `TestIntegrityRefusalsStillRefuse` | T9 |
 | Out-of-table grants apply, are recorded and warned (session and `doctor`); the record is harder to erase | T9 |
 | The marker and catalog-check spec format changes converge an installation at the previous version | T10 |
@@ -148,12 +164,26 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
 - **Depends on:** T1. **Reviewer:** standard; `secrets.go` and `creds.go`: opus + review (keep the hidden
   entry, change only its door). **Commit:** `init: no confirmations; values fail fast (T7)`.
 
+### T8S — the Cloud Billing read: the spike, before any grant (D1550, T5)
+- **Files:** none in the tree — the finding is written back into this folder (the T5 paragraph of
+  [reconciliation.md](reconciliation.md) §5 and its §6 UNVERIFIED item), and it is what T8's mechanism is read
+  from — unless a live probe is needed, which is one owner-run script under `scripts/live-checks/` (below).
+- Answers, before any grant is written: whether a Cloud Billing price read needs an IAM grant in
+  `deploy/terraform/gcp/modules/installation/iam.tf` at all (list prices need the Cloud Billing API enabled, not
+  a project role; contract prices need a billing-account role a project module cannot grant; the CLI runs on the
+  person's own credentials), and, if a grant is needed, its shape.
+- **Tests:** none (a spike). **Depends on:** none. **Reviewer:** opus + mandatory independent review at level 3
+  if the spike proposes a grant in `iam.tf`; that review is the pre-apply control T5 waits on. If the decision
+  needs a live probe, that probe is one owner-run script under `scripts/live-checks/` with its fake-gcloud test
+  (the conventions above); the finding still lands in this folder.
+- **Commit:** `docs: the Billing read's mechanism, decided before any grant (T8S)`.
+
 ### T8 — the estimator, the Billing read, and the lease (D1543, D1548, D1550, F19)
 - **Files:** `internal/budget/buildcost.go` (new), `internal/budget/buildcost_test.go` (new),
   `internal/budget/lease_build.go` (new), `internal/cli/image_cost.go` (new), `internal/cli/doctor_build_budget.go` (new; the observe-mode warning, D1548), the Firebase rules under
   `deploy/terraform/gcp/modules/firebase` and `internal/budget/rules` (the build lease path) with their emulator
   tests, `deploy/terraform/gcp/modules/installation/iam.tf` (only if the spike finds a grant is needed), golden plans, **and the rules path the catalog check job's lease uses (T10 consumes it, so it is written here)**.
-- **First a spike** decides the Billing mechanism (list prices need the API enabled, not a project role; contract prices need a billing-account role a project module cannot grant; the CLI runs on the person's credentials): the grant in `iam.tf` is **UNVERIFIED** until then. **The price is queried from Cloud Billing at run time** (D1550); **a missing or unknown price refuses**,
+- **T8S first** decides the Billing mechanism (list prices need the API enabled, not a project role; contract prices need a billing-account role a project module cannot grant; the CLI runs on the person's credentials): the grant in `iam.tf` is **UNVERIFIED** until then. **The price is queried from Cloud Billing at run time** (D1550); **a missing or unknown price refuses**,
   and so does a machine type absent from the build config; local config can supply neither. The lease: a node under its **own key** (`buildleases/<slug>/<id>`, never `runs/`, so no record reader mistakes it for a run), with **its own writer scoping** for the CLI and the catalog check service account (the rules today admit only a run token with `fs`/`fr` claims matching `$slug/$run`), counted against the per-run cap, settled
   on completion, **reclaimed if the CLI dies mid-build**; the rules change carries a **generation bump** and an
   `update` migration (HARD RULE) with a test that an installation at the previous generation converges. The
@@ -162,7 +192,8 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
 - **Tests:** `TestBuildCostIsAnUpperBound`, `TestUnknownBillingPriceRefuses`, `TestOverCapErrorNamesEstimateCapSpentAndTheCommand`,
   `TestObserveModeRecordsAndProceeds`, the rules' emulator test `TestBuildLeasePath`,
   `TestPreviousRulesGenerationConvergesOnUpdate`, `TestAnAbandonedBuildLeaseIsReclaimed`, `TestBuildLeaseWriterCannotTouchAnotherRunsReservedOrCaps` (emulator), `TestDoctorWarnsObserveWithUnattendedBuilds`.
-- **Depends on:** T1; the owner's review of the grant's shape (T5 of the reconciliation). **Reviewer:** opus +
+- **Depends on:** T1; **T8S** (the Billing spike). The grant's shape, if the spike finds one is needed, still
+  takes the level-3 security review before `iam.tf` is written (T5 of the reconciliation). **Reviewer:** opus +
   mandatory independent review (IAM, rules, money). **Commit:** `budget: an image build leases its estimated cost (T8)`.
 
 ### T9 — the gate becomes audit-only (D1545, D1549, D1551)
@@ -182,8 +213,9 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
   symlink and nesting bounds; the deployer impersonation checks; **the marker checks of `internal/managed/budget.go`** (unreadable marker, unknown version, another project's marker: fail closed). **D1551:** every entry of `allowedTypes` is classified data-bearing or not (the table in the reconciliation); data-bearing and **unclassified** types refuse delete/replace, including a type added later. `managedAsk` is deleted.
 - **Tests:** `TestOutOfTableGrantAppliesAndIsRecorded`, `TestIntegrityRefusalsStillRefuse`,
   `TestEveryAllowedTypeIsClassifiedDataBearingOrNot`, `TestAnUnclassifiedTypeRefusesDelete`, `TestMarkerChecksFailClosed`, `TestDoctorFlagsAnOutOfTableGrant`, `TestAuditRecordBucketIsVersioned`.
-- **Depends on:** T2, T4, T5, T7 (the shared files above), #1891 and #1804 merged; the owner's word on T2 of the
-  tensions. **Reviewer:** opus + mandatory independent review at level 3; its PR body carries the tension.
+- **Depends on:** T2, T4, T5, T7 (the shared files above), #1891 and #1804 merged. T2 of the tensions is
+  **ruled** (audit-only, choice (a), 2026-11-07), so T9 is unblocked on it; the rules rewrite is T13.
+  **Reviewer:** opus + mandatory independent review at level 3; its PR body carries the ruling.
 - **Commit:** `managed: the gate records and warns on content; the integrity refusals stay (T9)`.
 
 ### T10 — remove the build-count bound (D1543, D1554)
@@ -192,11 +224,19 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
   `deploy/terraform/gcp/modules/installation/catalogcheck.tf` (if the job's account needs the lease path T8 wrote), the
   schemas the marker/spec shape appears in, tests. **Not** `image_refresh_managed.go` (T4 removed that call).
 - Marker version bump; `fugaro update` converges an installation at the previous version; the catalog check job
-  takes a lease through T8's estimator with its own per-run cap (D1554). **Stated plainly: on a default installation the mode is
-  observe, a lease does not bite in observe, so the nightly job and every build are unbounded there; this is the owner's
-  tension T6, not fixed here.** **Tests:** `TestPreviousMarkerVersionConvergesOnUpdate`, `TestCatalogCheckJobLeasesEachBuild`.
-- **Depends on:** T4, T8, **T9** (golden plans and installation-module files are shared). **Release:** `### For operators`:
-  "run `fugaro update`". **Reviewer:** opus + review. **Commit:** `managed: the image build count is gone; update migrates the marker (T10)`.
+  takes a lease through T8's estimator with its own per-run cap (D1554). **T6 is ruled (b): `fugaro update`
+  raises the mode to enforce on a managed project (T16), so a lease bites there.** Two installations stay in
+  observe and take this removal as unbounded builds: one whose owner chose `observe` (D1548), and one with no
+  `config/caps/global` — T16's step sets no mode there, because `enforce` is refused without the global caps
+  (D6) and neither `setup` nor `update` seeds that node (`fugaro budget set --global` is its only writer). In
+  observe only `maxReserveMicros` (seeded at $5, so one build is bounded per lease) and the kill switches bite,
+  and nothing bounds how many builds run. `doctor` names the mode in both cases: T8's observe warning, and
+  T16's line, which names the missing caps. The caps are the operator's to set — no task here writes them — and
+  the capless case is one of the reconciliation's open items. **Tests:** `TestPreviousMarkerVersionConvergesOnUpdate`, `TestCatalogCheckJobLeasesEachBuild`.
+- **Depends on:** T4, T8, **T9** (golden plans and installation-module files are shared), **T16** (T6(b): the
+  mode is enforce — where the caps are set — before the count goes; the capless installation above is the
+  owner's call, held open in the reconciliation). **Release:** `### For operators`: "run `fugaro update`".
+  **Reviewer:** opus + review. **Commit:** `managed: the image build count is gone; update migrates the marker (T10)`.
 
 ### T15 — the non-money `Typed` steps get the owner-session-only fence (D1555)
 - **Files:** `internal/cli/update_managed.go` (`workspaceStage.gateStep`, the `p.widens` step), `update_workspace.go`
@@ -207,6 +247,40 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
 - **Depends on:** T1, T3 (`update_managed.go` is T3's at level 1, T9's at level 3). **Reviewer:** opus + mandatory
   independent review (it is the fence that replaces `Typed` for membership and credential minting).
 - **Commit:** `cli: membership, credential minting and compute are owner-session-only (T15)`.
+
+### T16 — `fugaro update` sets the budget mode to enforce on a managed project (D1548, D1554, T6(b))
+- **Files:** `internal/cli/update.go` (the hook), `internal/cli/update_budget_mode.go` (new),
+  `internal/infra/firebasedb.go` (the mode write records whether the mode was **asked for** or seeded),
+  `internal/cli/budget.go` (`budget set --global --mode …` records the owner's choice; T3 lands first),
+  `internal/cli/doctor_build_budget.go` (one line; T8 lands first), their tests.
+- **The trigger is the record of an owner's choice, not the mode's absence.**
+  `internal/infra/firebasedb.go` **seeds** `config/mode` = `observe` at install and keeps it ("changed only on
+  request"), so on every installation that could take a build lease the node is **present**: a step that fired on
+  an absent mode would never fire, and T10 would be removing the build count on the strength of a no-op. So the
+  writers record the choice — an additive `config/modeSet` — and the seed records nothing: the
+  `--budget-mode` flag of `setup`/`update` (the operator asked) and `fugaro budget set --global --mode …` write
+  `config/modeSet`; the seeding of `observe` on a fresh installation does not.
+- **The step:** on a managed project `fugaro update` raises `config/mode` to `enforce` where `config/modeSet` is
+  **absent** (a seeded mode, including an installation from before this change) or says `update`, and leaves
+  `config/modeSet = owner` alone, ever after. It stamps `config/modeSet = update` when it raises, so an `observe`
+  the owner sets afterwards carries `modeSet = owner` and the next update is a no-op. `enforce` still needs the
+  project-wide caps (D6, the refusal `budget set` already carries): where they are missing the step sets no mode,
+  and `doctor` names the missing caps **and says the installation is unbounded** — the capless case T10 names and
+  the reconciliation holds open for the owner. No location under `config` is writable by a run token
+  (`internal/budget/rules`), and
+  `modeSet` is written with operator credentials beside `config/mode`, so the rules carry no path for it.
+- **Why:** D1548 makes an absent mode observe, and in observe a lease does not bite, so without this step a
+  default installation's nightly catalog-check lease (D1554) and every build are unbounded; this is T6(b), and
+  T10 follows it.
+- **Tests:** `TestUpdateRaisesASeededObserveToEnforce`, `TestAnOwnerChosenObserveIsNeverRaised`,
+  `TestPreviousModeConvergesOnUpdate` (HARD RULE: an installation carrying the seeded `observe` with no
+  `modeSet` converges), `TestUpdateIsANoOpAfterTheRaise`, `TestDoctorNamesTheMode`.
+- **Release:** `### For operators`: "run `fugaro update`" — it now raises the budget mode to `enforce` on a
+  managed project unless the installation's owner chose a mode, so a pre-change installation's seeded `observe`
+  becomes `enforce` (HARD RULE: update absorbs the change; no second command).
+- **Depends on:** T3, T8 (the shared files above). **Reviewer:** opus + mandatory independent review (money, the
+  HARD RULE).
+- **Commit:** `managed: update sets enforce on a managed project unless its owner chose otherwise (T16)`.
 
 ## Slice 2 — the flags, the class system, the words
 
@@ -234,9 +308,9 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
 - **Files:** `internal/cli/docs_no_prompt_policy_test.go` (added with this PR: every D answered, in range D1540–D1559, unique), `CLAUDE.md`, `.claude/rules/terraform.md`, `.claude/rules/credentials-service.md`, `SECURITY.md`
   (the gate text; T11 owns its flag text and lands first), `website/content/security.md` (`npm run check`), the
   status line of this folder.
-- States the policy and points here as the authority; rewrites the cover-table rule as a tripwire **only after the
-  owner confirms T2 of the tensions**. Agents must not add confirmation steps.
-- **Depends on:** T9, T11, the owner's ruling. **Reviewer:** opus + mandatory independent review.
+- States the policy and points here as the authority; rewrites the cover-table rule as a tripwire, which T2 of
+  the tensions is **ruled** to be (audit-only, choice (a), 2026-11-07). Agents must not add confirmation steps.
+- **Depends on:** T9, T11. **Reviewer:** opus + mandatory independent review.
   **Commit:** `docs: no prompts, and what the cover tables now are (T13)`.
 
 ### T14 — owner-run checks
@@ -251,21 +325,22 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
 
 | Level | Tasks (concurrent) |
 | --- | --- |
-| 0 | T1, T2 |
-| 1 | T3, T6, T7, T8 (needs the Billing spike) |
-| 2 | T4 (after T8), T5 (after T3), T15 (after T3) |
+| 0 | T1, T2, T8S |
+| 1 | T3, T6, T7, T8 (after T8S) |
+| 2 | T4 (after T8), T5 (after T3), T15 (after T3), T16 (after T3, T8) |
 | 3 | T9 (after T2, T4, T5, T7, #1891, #1804) |
-| 4 | T10 (after T4, T8, T9) |
+| 4 | T10 (after T4, T8, T9, T16) |
 | 5 | T11 |
 | 6 | T12 (after T11, T15), T13, T14 |
 
-**Critical path:** T8 → T4 → T9 → T10 → T11 → T12. T9 is also gated by the owner's word on T2 of the tensions.
+**Critical path:** T8S → T8 → T4 → T9 → T10 → T11 → T12. T9 is no longer gated by an owner's word (T2 is
+ruled); T16, the T6(b) step, is off the critical path.
 
 ### Shared-files table (no level holds two writers of one file)
 
 | File | Writers (level) |
 | --- | --- |
-| `budget.go`, `update_managed.go` | T3 (1), T9 (3: the gate call), T11 (5: flags) |
+| `budget.go` | T3 (1), T16 (2: the mode's choice record), T9 (3: the gate call), T11 (5: flags) |
 | `settings_write.go` | T3 (1), T5 (2) |
 | `accounts_rm.go`, `accounts_managed.go`, `config_publish.go` | T5 (2), T9 (3), T11 (5) |
 | `image*.go`, `image_refresh_managed.go`, `image_build_managed.go` | T4 (2), T9 (3: the gate call in `image_refresh_managed.go`), T11 (5) |
@@ -278,6 +353,7 @@ of data-bearing types stays refused. Checks 380–389 and D1540–D1559 are rese
 | `managed_gate.go`, `managed_apply.go`, `doctor_managed_audit.go`, `internal/managed/{converge,plan,apply,audit}.go`, `cover.go`, `guard.go` | T9 (3) |
 | `internal/managed/builds.go`, `internal/infra/managed/*`, `internal/infra/catalogcheck.go` | T10 (3) |
 | `internal/budget/*`, Firebase rules, `iam.tf` (billing grant) | T8 (1) |
+| `update.go`, `update_budget_mode.go` (new), `doctor_build_budget.go`, `internal/infra/firebasedb.go` | T8 (1: `doctor_build_budget.go`, new), T16 (2: the mode step and one doctor line) |
 | `internal/initflow/stage.go` | T9 (3: `Removes` only), T12 (6) |
 | `docs/gcp-live-checklist.md`, `SECURITY.md` flag text, plugin skills, console `spawn.ts`/`confirm.ts` | T11 (5); T14 rows and T13 gate text land at level 5 |
 | `CLAUDE.md`, `.claude/rules/*` | T13 (6) |
@@ -301,3 +377,7 @@ build command before the marker change, every caller before the flags, every fla
 - Keeping the typed GCP-ID prompt for flagging a project managed: replaced by consent by argument (D1541).
 - Waiting for the meta repo (D1546).
 - A repo-held rate table (D1550's recommendation): the owner chose a Billing query.
+- Accepting the unbounded default (T6(a)) or making builds enforce whatever the mode (T6(c)): the owner took
+  T6(b), `fugaro update` sets enforce on a managed project (T16).
+- Keeping a refusal for IAM grants only (T2(b)): the owner took T2(a), audit-only with the rule rewritten as a
+  tripwire.

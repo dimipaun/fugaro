@@ -185,7 +185,7 @@ func newRunsStatsCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.by, "by", userStatsByUser, "what to break the figures down by (user)")
-	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
 	f.StringVar(&o.since, "since", userStatsDefaultSince, "only runs started within this long (7d, 36h, 90m; 0 for all)")
 	f.IntVar(&o.maxRuns, "max-runs", userStatsMaxRuns, "read at most this many runs, newest first (a bigger window is truncated and says so)")
@@ -204,6 +204,10 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	}
 	if o.maxRuns < 1 {
 		return userErr("--max-runs %d: use at least 1", o.maxRuns)
+	}
+	var err error
+	if o.repo, err = repoArg(cmd.Context(), o.cloud, o.repo); err != nil {
+		return err
 	}
 	since, err := parseSince(o.since)
 	if err != nil {

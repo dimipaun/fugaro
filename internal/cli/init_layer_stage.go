@@ -42,6 +42,34 @@ const (
 	layerReseedWhat  = "this re-seeds your local layer file from the published project layer: the file you have now is kept beside it"
 )
 
+// confirmWrite is the confirmation of this stage's three writes: the one
+// confirmRemoval asks (the project's name typed at a terminal, or --yes), or
+// nothing at all for the owner's own terminal on a managed project — the
+// owner's ruling of 2026-11-06, and the same shape the policy stage's writes
+// take. What the owner reads instead is what stands above the sentence: the
+// plan this stage printed (the layer file, the generation), a re-seed's
+// three-way state, and — for the publish, the one of the three that replaces
+// the document every repository resolves against — the diff publishLayer prints
+// before it asks (the object it replaces, the lines that differ, and any
+// executable change), so the replacement is read before the write rather than
+// reported after it. A layer publish loses no data — the write is conditional
+// on the generation the run read, and a re-seed keeps the file it replaces
+// beside it — and takes no secret value, which is the whole of what the ruling
+// leaves asked.
+//
+// It is not a verdict about any plan: this stage's document is judged nowhere
+// (the layer stage is not one of the gate's stages), so the sentence claims
+// none, and a coding agent's session never reaches Apply at all.
+func (s *layerStage) confirmWrite(lc *localcfg.Config, env initflow.Env, what string) error {
+	r := s.e.r
+	if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
+		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
+		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+		return nil
+	}
+	return confirmRemoval(r.cmd, lc, env.Yes, what)
+}
+
 // layerStage is the stage itself.
 type layerStage struct {
 	e       *initEngine
@@ -321,8 +349,8 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 // what makes the file usable on an installation that has never had one. It
 // writes only this machine's file: the object is left exactly as it is.
 func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
-	cmd, w := s.e.r.cmd, s.e.r.w
-	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, layerSeedWhat) }); err != nil {
+	w := s.e.r.w
+	if err := s.e.r.asking(func() error { return s.confirmWrite(p.lc, env, layerSeedWhat) }); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
@@ -344,15 +372,15 @@ func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, err
 // overwritten), and fans the object out to every repository of the installation
 // the way the explicit door does.
 //
-// The confirmation comes before publishLayer prints its diff: the diff is what
-// the run REPORTS it replaced, and the one thing a confirmation withholds is a
-// write the operator did not agree to — which publishLayer's own executable-key
-// gate still withholds afterwards, with the banner that names the keys.
+// The confirmation is asked inside publishLayer, between the diff it prints and
+// the write it makes: the owner reads what the publish replaces before agreeing
+// to it, which is the whole of what stands in for the typed name where the
+// ruling of 2026-11-06 takes it away (the policy stage's own shape, m.print
+// before policyMigrationConfirm), and a publish agreed to blind is one the owner
+// never read. publishLayer's own executable-key gate still withholds the write
+// afterwards, with the banner that names the keys.
 func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
-	cmd, w := s.e.r.cmd, s.e.r.w
-	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, layerPublishWhat) }); err != nil {
-		return initflow.Outcome{}, err
-	}
+	w := s.e.r.w
 	b, err := openRecordBucket(ctx, p.url)
 	if err != nil {
 		return initflow.Outcome{}, remote(fmt.Errorf("opening %s to publish the project layer: %w", p.url, err))
@@ -360,7 +388,8 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 	defer b.Close()
 	at := &layerAt{old: p.published, gen: p.gen, exists: p.pubExists}
 	rec := layerRecord{path: p.configPath, lc: p.lc}
-	gen, err := publishLayer(ctx, w, b, p.l, false, at, rec)
+	confirm := func() error { return s.e.r.asking(func() error { return s.confirmWrite(p.lc, env, layerPublishWhat) }) }
+	gen, err := publishLayer(ctx, w, b, p.l, false, at, rec, confirm)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -400,9 +429,9 @@ func (p *layerPlan) printReseedState(w interface{ Write([]byte) (int, error) }) 
 // object — backed up first — instead of the object being overwritten with what
 // the older file says.
 func (s *layerStage) reseed(env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
-	cmd, out := s.e.r.cmd, s.e.r.w
+	out := s.e.r.w
 	p.printReseedState(out)
-	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, layerReseedWhat) }); err != nil {
+	if err := s.e.r.asking(func() error { return s.confirmWrite(p.lc, env, layerReseedWhat) }); err != nil {
 		return initflow.Outcome{}, err
 	}
 	backup, err := backupFile(p.path, p.local, time.Now())

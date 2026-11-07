@@ -45,6 +45,17 @@
                 "background": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" }
               }
             },
+            "crafts": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Each craft's model for every repository of the project (docs/model-crafts/spec.md §3). A craft that sets no model takes the model of the craft it follows — review follows coder, security-review follows senior-review. A craft's ACCESS — the credential or pool its calls go out on — is not here and never the project layer's to name (config.Scopes): only the local config and the published policy node hold one, and a layer that writes one is refused. No key in this block turns a review level on: level 3 stays the review levels' and the recipe's switch, not the security-review craft's.",
+              "properties": {
+                "coder": { "$ref": "#/$defs/craft", "description": "implement and fix" },
+                "review": { "$ref": "#/$defs/craft", "description": "review, level 1" },
+                "senior-review": { "$ref": "#/$defs/craft", "description": "senior review, level 2" },
+                "security-review": { "$ref": "#/$defs/craft", "description": "security review, level 3; setting it does not turn the level on" }
+              }
+            },
             "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
             "max_budget_usd": { "type": "number", "minimum": 0 },
             "first_line_review": { "enum": ["auto", "on", "off"] },
@@ -363,6 +374,14 @@
             "paths": { "type": "array", "items": { "type": "string", "minLength": 1 } }
           }
         }
+      }
+    },
+    "craft": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One craft's model. The access is deliberately absent: it names a credential or pool the local config allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them (config.Scopes, the same rule agent.oauth_token is held to), and a layer that writes one is refused.",
+      "properties": {
+        "model": { "type": "string", "maxLength": 100, "pattern": "^\\S*$", "description": "the model this craft's calls use" }
       }
     }
   }

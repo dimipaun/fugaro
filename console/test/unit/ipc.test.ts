@@ -1868,9 +1868,14 @@ describe('the argument schemas', () => {
     //     (`src/main/spawn.ts`), decided by the main process from the dry run's
     //     own classification, and the row declares no flag at all -- which is
     //     the one place it differs from every read beside it;
-    //   - **no `--repo`, no `--add`/`--remove`**: the edit lands in the selected
-    //     installation's layers, and a list edit is a form no control on this
-    //     surface can choose.
+    //   - **no `--repo`, no `--add`/`--remove`**: a row whose `target_layer` is
+    //     `repo` is edited where the **child's own working directory** says,
+    //     because that is what the CLI resolves `--layer repo` from with no
+    //     `--repo` (`internal/cli/settings_set.go`) -- the child's directory is
+    //     the installation's recorded checkout when it has one and
+    //     `privateWorkingDirectory` otherwise -- so this surface names no
+    //     repository and never checks that the directory is one; and a list edit
+    //     is a form no control on this surface can choose.
     expect(operationFor('settings.edit').command).toBe('settings')
     expect(operationFor('settings.edit').flags).toEqual([])
     expect(operationFor('settings.edit').args.map((spec) => [spec.key, spec.kind, spec.required])).toEqual([

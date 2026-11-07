@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	storage "google.golang.org/api/storage/v1"
 
@@ -301,7 +302,18 @@ func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) st
 //
 // Each step's command names the scope that name is stored at by default
 // (D2): the project's for a name spec's own eligibility accepts
-// project-wide, the repository's for the rest.
+// project-wide, the repository's for the rest. A named Claude account's
+// step is neither of those commands: `fugaro accounts add <name>` declares
+// the account, stores its token where the shared job mounts it and
+// converges the installation, so the scope is the command's own. It carries
+// --repos with this repository (spec.Name), because the command would
+// otherwise take the origin of whatever checkout it is pasted into, and
+// --profile when the project has a profile that already serves the account
+// (spec.AccountProfiles), since the command must name the profile whose
+// claude_accounts gains the name, or refuse. When no profile serves the
+// account the pair that mints the token and stores it stands instead: the
+// account is one the config already declares, so `accounts add` would have
+// nothing to declare and only a profile to choose for itself.
 func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote func(string) string) []SecretStep {
 	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
@@ -314,9 +326,44 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote f
 		// the repository-copy command otherwise.
 		set := SecretFix(spec, logical, bin, quote)
 		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
-		if logical == "claude-oauth-token" {
+		switch {
+		case logical == config.ClaudeOAuthToken:
 			st.Commands = []string{"claude setup-token", set}
-		} else {
+		case strings.HasPrefix(logical, config.ClaudeOAuthTokenPrefix):
+			// A named account's token is the one command that declares the
+			// account, stores the token project-wide -- where the shared job
+			// mounts it -- and converges the installation (spec accounts-add
+			// §8). "default" is reserved (config.ValidateClaudeAccounts), so
+			// `accounts add` has no form for the default account above, and
+			// every other name in this namespace is one it owns end to end.
+			account := strings.TrimPrefix(logical, config.ClaudeOAuthTokenPrefix)
+			// The profile whose claude_accounts already lists the account
+			// (spec.AccountProfiles): it leaves that half of the command a
+			// no-op. The command refuses to pick one in a project with several
+			// (accountsAddProfile), and with exactly one it would add the
+			// account to that profile and deploy a job, where storing the token
+			// was the whole step.
+			if profile := spec.AccountProfiles[account]; profile != "" {
+				// --repos is the repository this root is for (spec.Name), and
+				// not the origin of whatever checkout the line is pasted into:
+				// accountsAddRepos defaults it to that origin, so the same line
+				// run elsewhere would bind the account to the wrong repository —
+				// and accountsAddBeyond measures the widening against that
+				// checkout as well, so the confirmation would say nothing about
+				// it. Naming this repository is a union with the list the
+				// account already has, so it cannot narrow it.
+				st.Commands = []string{bin + " accounts add " + quote(account) + " --repos " + quote(spec.Name) + " --profile " + quote(profile)}
+				break
+			}
+			// No profile serves the account, and it is one this config already
+			// declares (config.AllowedClaudeAccounts is where the name in
+			// spec.Secrets came from), so `accounts add` would have nothing to
+			// declare and only a profile to choose for itself. The pair that
+			// mints the token and stores it in the container such a job would
+			// mount is the whole step, as it was before `accounts add` took it
+			// over.
+			st.Commands = []string{"claude setup-token", set}
+		default:
 			st.Commands = []string{set + " < PATH-TO-THE-VALUE-FILE"}
 		}
 		out = append(out, st)

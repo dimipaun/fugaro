@@ -845,7 +845,7 @@ func doctorSecrets(cmd *cobra.Command, lc *localcfg.Config) []secretEntry {
 	ctx := cmd.Context()
 	env := &cloudEnv{lc: lc, gcp: gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
 		Endpoints: gcp.Endpoints{SecretManager: lc.Endpoints.SecretManager, NoAuth: lc.Endpoints.NoAuth}}}
-	r, err := resolveSecretRepo(cmd, env, "")
+	r, err := resolveSecretRepo(cmd, env, cloudOptions{}, "")
 	if err != nil {
 		return nil
 	}
@@ -1412,6 +1412,63 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 	return out
 }
 
+// doctorAccountStore are the commands both account checks hand an owner whose
+// named account has no stored token.
+//
+// A profile whose claude_accounts already lists the account leaves the profile
+// half of `fugaro accounts add` a no-op, and that command is then the whole fix:
+// it declares the account, stores the token project-wide — where a job mounts
+// it — and converges the installation. profile is the caller's own when it knows
+// which profile's job the check is about (project-account-stored names one), and
+// config.ClaudeAccountProfile's answer otherwise.
+//
+// No profile serving the account is the one state where that command is not the
+// fix, and both checks reach it: they fire for an account the config already
+// declares (config.AllowedClaudeAccounts, config.ProjectJobAccounts), and which
+// profile serves it is a separate fact. With several profiles accountsAddProfile
+// refuses outright, and with exactly one it serves the account from a profile
+// that did not, deploying a job for it — neither of which the store-the-token
+// step this replaced ever did. The pair that mints the token and stores it in
+// the container such a job would mount stands there instead.
+func doctorAccountStore(lc *localcfg.Config, account, profile string) []string {
+	if profile == "" {
+		profile = config.ClaudeAccountProfile(lc.Profiles, account)
+	}
+	if profile == "" {
+		return []string{"claude setup-token", selfCommand() + " secrets set " + quoteWord(config.ClaudeAccountSecret(account))}
+	}
+	return []string{doctorAccountsAdd(lc, account, profile)}
+}
+
+// doctorAccountsAdd is the `fugaro accounts add` line doctorAccountStore hands
+// an owner whose named account has no stored token, for an account a profile
+// serves: the one command that declares the account, stores the token
+// project-wide — where a job mounts it — and converges the installation,
+// spelled with the two flags that keep it from doing anything else.
+//
+// --repos is the account's own allow_data_to. Without it the command takes the
+// checkout it happens to run in (accountsAddRepos' default), appends that
+// repository to the list, and accountsAddBeyond measures the widening against
+// the same checkout — so the confirmation's sentence about who may then reach
+// the token would not fire, and the fix would have widened the account by
+// nothing more than the directory doctor was run from.
+//
+// --profile is a profile whose claude_accounts already lists the account, which
+// leaves that half of the command a no-op. Without it accountsAddProfile refuses
+// outright in a project with several profiles, and with exactly one profile that
+// does not serve the account the command adds the account to it and deploys a
+// job — which is why doctorAccountStore does not reach this line in that state.
+func doctorAccountsAdd(lc *localcfg.Config, account, profile string) string {
+	parts := []string{selfCommand(), "accounts", "add", quoteWord(account)}
+	if repos := lc.ClaudeAccounts[account].AllowDataTo; len(repos) > 0 {
+		parts = append(parts, "--repos", quoteWord(strings.Join(repos, ",")))
+	}
+	if profile != "" {
+		parts = append(parts, "--profile", quoteWord(profile))
+	}
+	return strings.Join(parts, " ")
+}
+
 // claudeAccountsStoredCheck is doctor's "claude-accounts-stored" check
 // (design docs/design/named-oauth-tokens.md §6f, plan Task 8): every named
 // Claude account repo may choose (config.AllowedClaudeAccounts, "default"
@@ -1431,8 +1488,12 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 // and its Fix -- `secrets set <secret> --repo <repo>` -- then stored a
 // repository copy that wins over the project copy forever (§5, the footgun
 // the project-secret checks already name). A missing token's Fix is
-// therefore the bare command, which stores it where D2's default puts it,
-// reaching exactly the repositories the account's allow_data_to lists.
+// therefore `fugaro accounts add <name>` (spec accounts-add §8), the one
+// command that declares the account, stores its token where D2's default
+// puts it -- the project copy, reaching exactly the repositories the
+// account's allow_data_to lists -- and converges the installation. It is
+// spelled by doctorAccountsAdd, which is where the two flags that keep the
+// command to exactly that are argued.
 //
 // listed == nil or !projectOK means one of those listings could not be
 // attempted or failed (no origin, no credentials, Secret Manager
@@ -1481,7 +1542,7 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		secret := config.ClaudeAccountSecret(n)
 		if !have[secret] {
 			missing = append(missing, pluginwire.Printable(n))
-			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(secret))
+			cmds = append(cmds, doctorAccountStore(lc, n, "")...)
 		}
 	}
 	if len(missing) == 0 {
@@ -1699,7 +1760,15 @@ func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, pr
 		}
 		missing = append(missing, fmt.Sprintf("%s (profile %s, account %s, token %s)", j.Job,
 			pluginwire.Printable(j.Profile), pluginwire.Printable(j.Account), j.Token))
-		cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(j.Token)+" --project-wide")
+		if j.Account == config.DefaultClaudeAccount {
+			// The default account has no `accounts add` form: "default" is
+			// reserved (config.ValidateClaudeAccounts), and its token's
+			// container is the one the project_secrets entry admits
+			// project-wide, so the pair that mints and stores it stands.
+			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(j.Token)+" --project-wide")
+			continue
+		}
+		cmds = append(cmds, doctorAccountStore(lc, j.Account, j.Profile)...)
 	}
 	if len(missing) == 0 {
 		return &doctorCheck{ID: "project-account-stored", OK: true, Severity: "info",

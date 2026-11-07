@@ -209,6 +209,13 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		// existing, generic enforcement covers once the row exists; no code
 		// change backs it.
 		{"named Claude accounts are repo-only", head + "defaults:\n  agent:\n    oauth_token: acme-personal\n", "agent.oauth_token may only be set in: repo, override"},
+		// A craft's access names a credential or pool the local config
+		// allow-lists (docs/model-crafts/spec.md §3, reconciliation F12): the
+		// layer may set a craft's model and never its access, so a launcher who
+		// could write the layer could not aim a run's spending and egress at a
+		// credential the owner never admitted. A craft's model, beside it, is
+		// the layer's own default and is admitted.
+		{"a craft's access is repo-only", head + "defaults:\n  agent:\n    crafts:\n      coder: { access: openrouter-main }\n", "agent.crafts.coder.access may only be set in: repo"},
 		{"base branch is repo-only", head + "defaults:\n  git:\n    base_branch: evil\n", "git.base_branch may only be set in: repo"},
 		{"dockerfile is repo-only", head + "profiles:\n  p:\n    dockerfile: x.Dockerfile\n", "workflows.*.dockerfile may only be set in: repo"},
 		{"key files are repo-only", head + "profiles:\n  p:\n    image:\n      key_files: [patches]\n", "workflows.*.image.key_files may only be set in: repo"},

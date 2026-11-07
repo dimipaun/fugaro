@@ -58,6 +58,13 @@ func TestParseRejects(t *testing.T) {
 		"bad parallel":  {sample + "max_parallel: -1\n", "max_parallel"},
 		"bad provider":  {sample + "  acme/api: { provider: githbu, workflows: [web] }\n", "must be one of github, bitbucket"},
 		"fake provider": {sample + "  acme/api: { provider: fake, workflows: [web] }\n", "must be one of github, bitbucket"},
+		// A craft's model is a model ID in this file as it is in fugaro.yaml,
+		// and this is the file the installation's crafts are written in.
+		"bad craft model":     {sample + "crafts:\n  coder: {model: \"claude opus\"}\n", "crafts.coder.model"},
+		"long craft model":    {sample + "crafts:\n  coder: {model: \"" + strings.Repeat("m", 101) + "\"}\n", "crafts.coder.model"},
+		"bad craft access":    {sample + "crafts:\n  coder: {access: \"Not A Name\"}\n", "crafts.coder.access"},
+		"bad credential type": {sample + "credentials:\n  - {name: acme-main, type: openai}\n", "not yet"},
+		"pool of nobody":      {sample + "pools:\n  - {name: acme-pool, members: [acme-nowhere]}\n", "no credential of this name"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.msg) {

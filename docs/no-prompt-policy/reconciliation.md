@@ -10,7 +10,8 @@ same budget as jobs" (jobs lease model spend; an image build is bounded by a **c
 says "managed resources never need confirmation" (the managed gate has refusals that are not
 confirmations), and it says agents may run every command (raising a cap is the one command where that
 defeats the cap). The owner has answered every question below that needed an answer; two answers are
-**not the recommendation** and open tensions (§5); D1550 is a third (tension T5).
+**not the recommendation** and opened tensions (§5); D1550 is a third (tension T5). The owner ruled the
+tensions on 2026-11-07 — T1, T2, T3, T4 and T6 — and held T5 until the T8 spike (task T8S) reports.
 
 ## 1. Headline: spec concept → what the repo has
 
@@ -264,11 +265,16 @@ D1540–D1559 are reserved for this work (highest in use on `main` and in open p
 - The spec's "agents may run all commands" is amended in four places, all one fence: raising a cap (D1542), loosening a policy ceiling (D1552), flagging a project managed (D1553) and the non-money `Typed` steps (D1555) — each refuses in an agent session and prints the owner's command.
 - Release notes carry `### For operators`: "run `fugaro update`" plus what it will now do without asking (the HARD RULE in CLAUDE.md).
 
-## 5. Open tensions and open items for the owner
+## 5. Tensions: the owner's rulings (2026-11-07)
+
+The owner ruled T1–T4 and T6 on 2026-11-07, and held T5 open until the T8 spike (task T8S) reports. Each
+ruling is written here and carried into [implementation-plan.md](implementation-plan.md); one case inside T6 —
+an installation with no global caps — is named in its ruling and left open with the owner (the open items at the
+end of this section).
 
 **T1 (D1544 against the spec and D1547).** The spec says any prompt is a bug; the owner wants `--ask` honoured.
-Proposed (needs the owner's word): `--ask` is the single sanctioned exemption — opt-in per invocation, owner
-terminal only (never an agent session, never `--json`); the lint allows reads only in that helper and the
+**RULED 2026-11-07: yes, as proposed.** `--ask` is the single sanctioned exemption — opt-in per invocation,
+owner terminal only (never an agent session, never `--json`); the lint allows reads only in that helper and the
 value-entry helper, and data reads (`--task-file -`) by an explicit exemption. `budget set` registers no `--ask`
 today; a task adds it (T3).
 
@@ -279,30 +285,48 @@ it on purpose"; "Never widen those tables to make a plan pass"), and that the cr
 applies. **The audit record is not tamper-proof** (written with operator credentials to an unversioned bucket,
 F15) and the warning is printed only to the acting session, so a hostile agent can apply, then erase the record
 (F20). The independent review of IAM, cover and credentials grants (in-run level 3) is the only pre-apply
-control, and it reviews code, not each plan. Choices: (a) accept, harden the record (versioning, `doctor`
-reads) and rewrite the rules to say the table is a tripwire (T9, T13); (b) keep the refusal for IAM grants only.
-*Held back:* T9 states the owner's answer (audit-only) and writes (a); it needs the owner's word that (a) stands.
+control, and it reviews code, not each plan. **RULED 2026-11-07: choice (a)** — accept, harden the record
+(versioning, `doctor` reads) and rewrite the rules to say the table is a tripwire (T9, T13); that level-3 review
+of the IAM and cover code is the pre-apply control. T9 is therefore unblocked.
 
-**T3 (D1549 and D1551, confirmation).** The owner named the first six integrity refusals; the plan keeps the whole class listed in D1549, the marker checks of `internal/managed/budget.go`, and the D1551 type classification. The owner delegated reading the rest to the PR (recommended).
+**T3 (D1549 and D1551, confirmation).** The owner named the first six integrity refusals; the plan keeps the
+whole class listed in D1549, the marker checks of `internal/managed/budget.go`, and the D1551 type
+classification. **RULED 2026-11-07: confirmed as listed** — the class stands whole, the owner having delegated
+reading the rest to the PR.
 
 **T4 (D1542, D1552 and F20).** The cap fence is as strong as `agentenv`'s markers: a courtesy against the
-accidental loop, not against a hostile one.
+accidental loop, not against a hostile one. **RULED 2026-11-07: confirmed** — the limit is accepted and written
+into the plan's review focus.
 
 **T5 (D1550 against the "no billing read" assumption and the lease design).** The reconciliation, the plan and
 the budget design assumed no billing read exists on the launch path. A Cloud Billing price lookup adds a network
 call, an IAM grant to whichever identity launches a build (a new grant in a security-sensitive module), and a
 failure mode on every build; **a missing or unknown price refuses** (never defaults). The lease estimate is still
-client-side only (F19). *Held back:* T8 cannot start until the grant's shape is reviewed (security-reviewer, in-run
-level 3).
+client-side only (F19). **OPEN, held 2026-11-07:** the D1550 answer (the rate is queried from Cloud Billing at
+run time) is held until the T8 spike (task T8S) reports, and T8 waits on the spike only. The spike decides the
+mechanism before any grant is written; the grant's shape, if there is one, still takes the level-3 security
+review (T2's pre-apply control).
 
-**T6 (D1554 against D1548).** An absent mode is observe, and in observe a lease does not bite: on a default installation
-the nightly catalog check job (D1554's lease) and every other build is **unbounded**; only `maxReserve` and the kill
-switches bite. D1554 gives the job a lease, not a limit. *Choices (the owner's, not made here):* (a) accept; (b) `fugaro
-update` sets the mode to enforce on a managed project; (c) builds enforce regardless of mode (a second meaning of
-"mode"). T10's text no longer says the job is not left unbounded.
+**T6 (D1554 against D1548).** An absent mode is observe, and in observe a lease does not bite: on a default
+installation the nightly catalog check job (D1554's lease) and every other build is **unbounded**; only
+`maxReserve` and the kill switches bite. D1554 gives the job a lease, not a limit. **RULED 2026-11-07: choice
+(b)** — `fugaro update` sets the mode to enforce on a managed project (observe stays an explicit choice), with
+one `doctor` line saying so. T10 and the lease design follow it: the enforce-on-update step is its own task
+(T16, one file group), with a converge test (HARD RULE: `fugaro update` is the whole upgrade; an installation at
+the previous mode converges). The trigger cannot be an absent mode node: `internal/infra/firebasedb.go` **seeds**
+`config/mode` = `observe` at install, so T16 records the owner's choice instead, and raises where there is none.
+**Where the caps are missing the raise cannot land:** `enforce` is refused without
+`config/caps/global` (D6, `RequireCapsForEnforce`), and neither `setup` nor `update` seeds that node — its only
+writer is `fugaro budget set --global` — so a managed installation whose caps were never set stays in observe
+even after T16, and once T10 removes the build count nothing bounds how many builds run (only
+`maxReserveMicros`, seeded at $5, bounds one build's lease, and the kill switches). The owner has not ruled on
+that case; it is named in T10 and in the open items below, and `doctor` reports it.
 
-**Open items:** none among D1540–D1554 (all answered 2026-11-07); whether `doctor`'s observe warning (D1548) is a warning or an error;
-the meta repo's own design (out of this plan).
+**Open items:** T5 above, until the T8S spike reports; the capless case of T6 — after T10, a managed
+installation with no `config/caps/global` stays in observe, where the lease does not bite, so an aggregate bound
+for it (or caps seeded from its policy) is the owner's call, and T16's `doctor` line names the missing caps;
+whether `doctor`'s observe warning (D1548) is a warning or an error; the meta repo's own design (out of this
+plan). Every decision D1540–D1555 is answered (2026-11-07).
 
 ## 6. UNVERIFIED
 
@@ -318,7 +342,8 @@ the meta repo's own design (out of this plan).
 - **D1550's Billing grant.** That a Cloud Billing price read needs an IAM grant in `installation/iam.tf` is not
   verified: list prices need the Cloud Billing API enabled, not a project role; contract prices need a role on the
   billing account that a project module cannot grant; and the CLI runs on the person's own credentials, so the
-  grant may not be needed at all. T8's first step is a spike that decides the mechanism before any grant is written.
+  grant may not be needed at all. T8's first step is the spike T8S, which decides the mechanism before any
+  grant is written; T5 stays open until it reports.
   **Resolved 2026-11-07, [`billing-price-spike.md`](billing-price-spike.md):** all three guesses hold. Public list
   prices need no IAM grant — Google documents "You don't need any specific IAM permissions" — so no `iam.tf` edit
   and **no new `grantRules` row**; the only installation change is enabling `cloudbilling.googleapis.com` in

@@ -995,7 +995,7 @@ func newImageStatusCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runImageStatus(cmd, o, repo, asJSON) },
 	}
-	cmd.Flags().StringVar(&repo, "repo", "", "only this repository (owner/name, as the local config's repos has it)")
+	cmd.Flags().StringVar(&repo, "repo", "", "only this repository (owner/name, or a path inside its checkout, as the local config's repos has it)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o)
 	return cmd
@@ -1008,6 +1008,9 @@ func runImageStatus(cmd *cobra.Command, o cloudOptions, only string, asJSON bool
 		return err
 	}
 	defer env.Close()
+	if only, err = repoArg(ctx, o, only); err != nil {
+		return err
+	}
 	repos := slices.Sorted(maps.Keys(env.lc.Repos))
 	if only != "" {
 		if _, ok := env.localRepo(only); !ok {
