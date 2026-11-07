@@ -2600,8 +2600,8 @@ instead. **The layer is never guessed by the console** either: the CLI itself fa
 omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
 one `settingsWriteLayers` names, and a layer outside them is a refusal rather
 than a document. The command is the same pair §6.19's paragraph describes, so the
-`--`-terminated value, the two phase words and the layer's provenance are
-written down there and not twice here.
+`--`-terminated value, the two spellings the console passes and the layer's
+provenance are written down there and not twice here.
 
 ### 6.22 `fugaro graph --json` — the dependency graph, and its stream
 
