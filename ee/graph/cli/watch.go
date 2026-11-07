@@ -10,6 +10,7 @@ import (
 	"io"
 	"time"
 
+	coordcli "github.com/dimipaun/fugaro/ee/coordinator/cli"
 	"github.com/dimipaun/fugaro/ee/graph"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/coordpath"
@@ -76,8 +77,11 @@ var (
 // database, subscribes to the one subtree the scope reads, and prints until the
 // context ends or its reader goes away.
 func runGraphWatch(ctx context.Context, out io.Writer, env *fcli.Cloud) error {
-	lc := env.Config()
-	db, err := fcli.NewBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	// The connection is the coordinator read's own (CoordinatorDB), so a project
+	// with no database is refused here with the sentence `graph --json` refuses
+	// it with — the same call and not a second check worded alike — rather than
+	// dereferenced.
+	db, err := coordcli.CoordinatorDB(ctx, env.Config())
 	if err != nil {
 		return err
 	}

@@ -44,6 +44,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -609,6 +611,62 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("the listen is refused when the stream opens", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, storedView())
+		fast(t, testFloor, testKeep)
+
+		// The grant the subscription needs is gone before the child starts: a
+		// 403 on the listen itself, which is this CLI being refused the graph
+		// rather than a scope whose transport fell over.
+		f.db.Refuse(http.StatusForbidden, "403", "Forbidden", "Permission denied")
+
+		sink := newWatchSink()
+		child := startWatch(t, sink, "graph", "--watch", "--json")
+		err := child.wait(t, testPatience)
+		if err == nil {
+			t.Fatalf("the child streamed a project it may not read")
+		}
+		if !strings.Contains(err.Error(), "fugaro graph") {
+			t.Errorf("the refusal is %q, want it to name the command to run instead", err)
+		}
+		if got := sink.text(); got != "" {
+			t.Errorf("the refused stream wrote %q, want no document at all: a refusal is not a graph with nothing in it", got)
+		}
+	})
+
+	t.Run("the listen is refused on a reconnect", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.writeStoredView(t, storedView())
+		fast(t, testFloor, testKeep)
+
+		sink := newWatchSink()
+		child := startWatch(t, sink, "graph", "--watch", "--json")
+		if first := sink.next(t, testPatience); first.Seq != 1 {
+			t.Fatalf("the first document is seq %d, want 1", first.Seq)
+		}
+
+		// The grant is withdrawn while the console is watching: the connection
+		// dies without a word — a scope that is down, a document and not an
+		// exit — and the reconnect that follows is refused with 403, which is
+		// the other thing entirely.
+		f.db.Refuse(http.StatusForbidden, "403", "Forbidden", "Permission denied")
+		f.db.DropStreams()
+
+		err := child.wait(t, testPatience)
+		if err == nil {
+			t.Fatalf("the child kept streaming after the listen was refused")
+		}
+		if !strings.Contains(err.Error(), "fugaro graph") {
+			t.Errorf("the refusal is %q, want it to name the command to run instead", err)
+		}
+		// The down document came first, and it is what tells a reader the two
+		// apart: the transport fell over, and then this CLI was refused.
+		if written := sink.text(); !strings.Contains(written, `"state":"down"`) {
+			t.Errorf("the child never said the scope was down before it was refused; it wrote:\n%s", written)
+		}
+	})
+
 	t.Run("--watch without --json", func(t *testing.T) {
 		f := newGraphFixture(t)
 		f.writeStoredView(t, storedView())
@@ -636,4 +694,62 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 			t.Errorf("the refused stream made %d database calls, want none", got-before)
 		}
 	})
+}
+
+// TestWatchRefusesAProjectWithNoDatabase: the project's config names no
+// Firebase database at all — an installation that never ran `fugaro update
+// --firebase-project` — and there is no connection to subscribe to, so the
+// child must be refused, exit 1 with the sentence the one-shot read refuses it
+// with (the command's own exit codes, §6.22), and never dereferenced: a console
+// that spawns this child reads a refusal it can show, where a panic is a
+// goroutine dump on its stderr and a stream that never prints a document.
+func TestWatchRefusesAProjectWithNoDatabase(t *testing.T) {
+	f := newGraphFixture(t)
+	nodb := noDatabase(t, f)
+
+	_, _, err := execute(t, "graph", "--config", nodb, "--json")
+	if err == nil {
+		t.Fatalf("graph --json answered a project with no database")
+	}
+	if !strings.Contains(err.Error(), "has no Firebase database") {
+		t.Fatalf("the one-shot read refuses a project with no database with %q, want the documented sentence", err)
+	}
+
+	sink := newWatchSink()
+	child := startWatch(t, sink, "graph", "--config", nodb, "--watch", "--json")
+	serr := child.wait(t, testPatience)
+	if serr == nil {
+		t.Fatalf("the stream kept running on a project with no database")
+	}
+	// The stream's refusal is the read's own, character for character: it is
+	// the same call and not a second check worded alike, so a console that
+	// reads both never has to know which one it is looking at.
+	if serr.Error() != err.Error() {
+		t.Errorf("the stream refuses a project with no database with\n  %q\nwant the one-shot read's own\n  %q", serr, err)
+	}
+	if got := fcli.ExitCode(serr); got != fcli.ExitUserError {
+		t.Errorf("the refusal exits %d, want %d: a project with no database is the user's to fix", got, fcli.ExitUserError)
+	}
+	if got := sink.text(); got != "" {
+		t.Errorf("the refused stream wrote %q, want no document at all", got)
+	}
+}
+
+// noDatabase removes the budget block from a fixture's config, leaving the
+// project of an installation that has no database, and answers the same path.
+func noDatabase(t *testing.T, f *graphFixture) string {
+	t.Helper()
+	path := f.writeConfig(t, "  acme/app: { provider: github, base_branch: main, workflows: [web] }\n")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := "budget: { mode: observe, per_run_usd: 5, rtdb_url: " + f.db.URL + " }\n"
+	if !strings.Contains(string(body), block) {
+		t.Fatalf("the fixture's config does not carry %q:\n%s", block, body)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(body), block, "", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

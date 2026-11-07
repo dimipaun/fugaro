@@ -246,19 +246,34 @@ func ownCoordinatorDB(ctx context.Context, lc *localcfg.Config, declined string)
 	return fcli.RequireOwnBudgetDB(ctx, lc, db, declined)
 }
 
-// openCoordinatorStore opens the coordinator's store over the project's own
-// database: the same client, the same address and the same credential the
-// budget commands open (newBudgetClient, the caller's ADC with the database
-// scopes). The store's own check, and not the rules and not IAM, is what keeps
-// the writer to the coordinator's subtree (D194), and it mints nothing.
+// CoordinatorDB is the connection to the project's own database that the
+// coordinator's subtree lives in: the same address and the same credential the
+// budget commands open (fcli.NewBudgetClient, the caller's ADC with the
+// database scopes), and the same refusal — one sentence, in one place — for a
+// project whose config names no database at all, which is an installation that
+// never ran `fugaro update --firebase-project`. It mints nothing.
+//
+// It is exported for the one caller that needs the connection itself rather
+// than a store over it: `graph --watch --json` holds a subscription to the
+// subtree for as long as the console is looking at the graph (CG7 of
+// docs/cli-output-console-graph/implementation-plan-graph.md), and a project
+// with no database has to be refused there with the words the one-shot read
+// refuses it with — never opened a second way, and never dereferenced.
+func CoordinatorDB(ctx context.Context, lc *localcfg.Config) (*rtdb.Client, error) {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return nil, fcli.UserErr("project %s has no Firebase database to report to (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
+	}
+	return fcli.NewBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+}
+
+// openCoordinatorStore opens the coordinator's store over that same connection.
+// The store's own check, and not the rules and not IAM, is what keeps the
+// writer to the coordinator's subtree (D194).
 //
 // A package variable, so a test replaces exactly the one thing that would
 // reach a database.
 var openCoordinatorStore = func(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
-	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return nil, fcli.UserErr("project %s has no Firebase database to report to (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
-	}
-	db, err := fcli.NewBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	db, err := CoordinatorDB(ctx, lc)
 	if err != nil {
 		return nil, err
 	}
