@@ -694,12 +694,6 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'compatibility.mode': { within: 'renderVersionSkew', reason: '`CliCompatibilityMode`, the closed union of the three things the console can do about a skew' },
     'compatibility.skew': { within: 'renderVersionSkew', reason: '`CliSkewName`, the closed list of the six ways a version line can be placed' },
   },
-  // The policy notes (CM7), whose attribute writes are the same `make` class
-  // list as every other screen plus four `data-*` hooks, each written as a
-  // string literal in the branch that picks it.
-  'policynotes.ts': {
-    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
-  },
   'spend.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     'entry.dimension': '`SPEND_DIMENSIONS`, the console\'s table',
