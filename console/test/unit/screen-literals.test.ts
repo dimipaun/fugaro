@@ -88,8 +88,11 @@ const RENDERER = join(__dirname, '..', '..', 'src', 'renderer')
 
 /** SINKS are the functions whose argument is written to the screen unsanitized,
  * with the index of that argument. `note` is `projects.ts`'s wrapper around
- * `literal`, so its call sites are sinks of their own. */
-const SINKS: Readonly<Record<string, number>> = Object.freeze({ literal: 1, note: 2 })
+ * `literal` and `term` is `managed.ts`'s, so their call sites are sinks of their
+ * own: a wrapper around `literal` is a second door into the same slot, and a
+ * vocabulary entry that says "every call site passes a constant" is worth
+ * nothing unless the scan reads those call sites. */
+const SINKS: Readonly<Record<string, number>> = Object.freeze({ literal: 1, note: 2, term: 2 })
 
 /** Entry is why an argument is the console's own word: a reason, or a reason
  * that holds only inside one function's body (`within`). */

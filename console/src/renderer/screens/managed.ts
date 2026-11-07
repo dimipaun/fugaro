@@ -473,7 +473,7 @@ function trailBlock(factory: ScreenFactory, trail: ManagedTrail): ScreenElement 
     // one, so the field contract section 6.21 carries for comparing a record
     // against a plan is drawn by `fugaro managed status` itself and not here.
     // Adding that class is a decision about the sanitizer rather than about this
-    // drawing -- the same call `docs/design/console-styling.md` section 2.5
+    // drawing -- the same call `docs/design/console-styling.md` section 2.11
     // makes for a coordinator id -- and it is reported rather than made in this
     // section.
     term(list, factory, MANAGED_DIGEST_TERM)
