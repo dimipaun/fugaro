@@ -573,14 +573,26 @@ func userInvite(w io.Writer, who string, lc *localcfg.Config) {
 	fmt.Fprintf(w, "  the repository's fugaro.yaml names the project; no setup is needed\n")
 }
 
-// userListDoc is `fugaro user ls --json`: the two lists of one installation.
-// Both arrays are seeded empty and never null: "there are none" is a fact and
-// a null is not (the console's own availability rule for a JSON document).
+// userListDocVersion is `fugaro user ls --json`'s document version. The
+// document carried the two lists under the keys the roles were spelled with
+// before this release — `launchers` for the operators and `operators` for the
+// admins — and both keys are gone: the roles' own words are the only spelling
+// this document publishes, and a consumer that reads `operators` as the list it
+// named in version 1 would draw the admins. Version 1 is the shape that
+// document had; this one is a new version rather than a reused member name
+// (CLAUDE.md, "a field never changes meaning").
+const userListDocVersion = 2
+
+// userListDoc is `fugaro user ls --json`: the two lists of one installation,
+// under the roles' own names, as the human listing prints them. Both arrays are
+// seeded empty and never null: "there are none" is a fact and a null is not
+// (the console's own availability rule for a JSON document).
 type userListDoc struct {
+	Version    int      `json:"version"`
 	Project    string   `json:"project"`
 	GCPProject string   `json:"gcp_project"`
-	Launchers  []string `json:"launchers"`
 	Operators  []string `json:"operators"`
+	Admins     []string `json:"admins"`
 }
 
 // printUserLists prints the two lists: the human listing, or the document.
@@ -589,8 +601,9 @@ func printUserLists(w io.Writer, lc *localcfg.Config, asJSON bool) error {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(userListDoc{
+			Version: userListDocVersion,
 			Project: lc.Name, GCPProject: lc.GCPProject,
-			Launchers: userMembers(lc.Terraform.Operators), Operators: userMembers(lc.Terraform.Admins),
+			Operators: userMembers(lc.Terraform.Operators), Admins: userMembers(lc.Terraform.Admins),
 		})
 	}
 	for _, l := range []struct {

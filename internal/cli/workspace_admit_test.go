@@ -125,7 +125,7 @@ func TestTheListsFugaroUserWritesAreTheOnesTheAdmissionReads(t *testing.T) {
 	if err := json.Unmarshal([]byte(js), &doc); err != nil {
 		t.Fatalf("the --json document: %v\n%s", err, js)
 	}
-	if got := projectpolicy.MemberListsOf(doc.Launchers, doc.Operators).Addresses(); !slices.Equal(got, want) {
-		t.Errorf("the document names %v / %v and the member's admission reads them as %v, want %v", doc.Launchers, doc.Operators, got, want)
+	if got := projectpolicy.MemberListsOf(doc.Operators, doc.Admins).Addresses(); !slices.Equal(got, want) {
+		t.Errorf("the document names %v / %v and the member's admission reads them as %v, want %v", doc.Operators, doc.Admins, got, want)
 	}
 }

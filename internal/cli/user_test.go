@@ -704,8 +704,17 @@ func TestUserLsListsBoth(t *testing.T) {
 	if doc.Project != initProjectName || doc.GCPProject != initProject {
 		t.Errorf("the document names %q/%q, want %q/%q", doc.Project, doc.GCPProject, initProjectName, initProject)
 	}
-	if strings.Join(doc.Launchers, ",") != "user:person-1@example.com" || strings.Join(doc.Operators, ",") != "user:person-2@example.com" {
-		t.Errorf("the document lists %v / %v", doc.Launchers, doc.Operators)
+	if doc.Version != userListDocVersion {
+		t.Errorf("the document is version %d, and the shape it publishes is %d", doc.Version, userListDocVersion)
+	}
+	if strings.Join(doc.Operators, ",") != "user:person-1@example.com" || strings.Join(doc.Admins, ",") != "user:person-2@example.com" {
+		t.Errorf("the document lists %v / %v", doc.Operators, doc.Admins)
+	}
+	// The two keys the roles were spelled with before this release are gone:
+	// `launchers` names nothing any more, and `operators` is the run-starters'
+	// list here rather than the admins' list it named in version 1.
+	if strings.Contains(js, `"launchers"`) || !strings.Contains(js, `"admins"`) {
+		t.Errorf("the document still spells the roles the old way:\n%s", js)
 	}
 	// Neither form reads the cloud or runs Terraform: ls is the two lists the
 	// config holds, and nothing else.
