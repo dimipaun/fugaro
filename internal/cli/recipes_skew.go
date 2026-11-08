@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -90,6 +92,42 @@ const cloneShipped = true
 // yet: the release that tags it holds this number to the tag it cuts, as it
 // does for planTaskSince's 0.11.2 and digestSince's 0.13.0.
 const sharedSince = "0.14.0"
+
+// proxySince is the first fugaro release whose runner serves a repository's
+// Bitbucket access through the run's own loopback forwarder and the
+// installation's credentials service (B1.7, the plan's S1; D495): such a run's
+// job holds no Bitbucket token at all (G1 — the flip takes the mount off it),
+// so its git environment is rewritten to the forwarder and the credential it
+// pushes with is the service's. A runner older than this release knows none of
+// that, so it would start on a job that has no token and no forwarder and die
+// at bootstrap over a repository it cannot even clone.
+//
+// The launch gate (proxyGate, launch_budget.go) refuses such a launch, judged
+// the way every other *Since gate is (checkImageSince, or
+// checkCloneImageSince for a checkout: clone workflow): a release older than
+// this one refuses, a base with no release tag (a dev or hand-pushed image) is
+// only warned about. It carries no shipped flag: refusing every image that
+// predates it is exactly the direction the gate wants, since a proxied run on
+// an older runner cannot work at all.
+//
+// It names 0.22.0, the CLI minor after the 0.21.0 tag, and NOT the plan's own
+// S1 number 0.15.0: that slot was spent on other work and 0.15.0 is tagged, so
+// a gate naming it would refuse nothing — every image in the field is at or
+// past it. It named 0.21.0 until 2026-11-08, while that release was not yet
+// tagged, and the tag was then cut without the runner half: its tree has no
+// proxySince, nothing of the proxy in internal/runner, and no proxied path in
+// internal/gitprov's providers, while internal/infra's resolveBitbucketProxied
+// — the flip that takes the mount off the job — is already in it and carries no
+// image-version condition of its own. 0.21.0 is therefore the one release this
+// gate must refuse, and the base image `fugaro update` installs today: a value
+// naming it admits exactly the launch the gate exists to refuse, which is the
+// "refuses too late" failure the number exists to avoid. The number is the
+// release that carries the runner half, not the one the work was first slotted
+// for. docs/release.md's Before-you-tag list verifies it against the release
+// actually cut, as it does for the other *Since constants. A wrong value
+// refuses too late (a proxied run reaches a runner that cannot do it) or too
+// early (an image that would have worked stays blocked).
+const proxySince = "0.22.0"
 
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
@@ -390,21 +428,61 @@ const noneModelSince = "0.21.0"
 // "needs a job image whose runner knows <this>".
 const noneModelKnows = "a level's model named none as the level's own switch"
 
-// reviewJobSince is the first fugaro release that deploys and launches the
-// review-only job variant (design docs/cloud-senior-review, CSR7): the second
-// job per (profile, provider, account), with its own service account and no
-// secret at all, which is what a senior review runs on. An image older than it
-// has no variant beside its coding job, so a launch naming one resolves a job
-// the installation does not hold.
+// reviewJobSince is the first fugaro release whose runner can serve a review
+// launch, which is two things and not one: it deploys the review-only job
+// variant (design docs/cloud-senior-review, CSR7 — the second job per
+// (profile, provider, account), with its own service account and no secret at
+// all, which is what a senior review runs on) and it carries the review run's
+// own model path (CSR13, PR #1777, first tagged in 0.20.0), which is how a
+// container holding no token reaches a model at all. The variant shipped in
+// 0.19.0 and the model path in 0.20.0, so an image older than this one fails
+// in one of two ways: with no variant beside its coding job, a launch naming
+// one resolves a job the installation does not hold; on a 0.19.0 image the
+// variant is there and the launch starts, pays for the container and dies on
+// the runner's own missing-token refusal.
+//
+// It named 0.19.0 until CSR11's flip of 2026-11-08, because reviewJobAdmitted
+// was false and refused every launch before this gate was ever reached: the
+// value only decides anything once a launch is admitted, and the commit that
+// admits it is the one that moves the value.
 //
 // It is declared here, by the task that ships the variant, and read by the
 // tasks that gate on it — the launch refusal (CSR2: an image older than this
 // one would otherwise be accepted in silence) and the release's own checklist
 // entry (CSR6) — which is what the plan means by declaring the constant to
-// that task. It names the release this work is slotted for; docs/release.md's
-// ("Before you tag") list verifies the number against the tag actually cut,
-// the way digestSince's and reviewLevelsSince's bullets record.
-const reviewJobSince = "0.19.0"
+// that task. docs/release.md's ("Before you tag") list verifies the number
+// against the release whose runner can serve the launch, the way
+// digestSince's and reviewLevelsSince's bullets record.
+const reviewJobSince = "0.20.0"
+
+// reviewAdmissionSince is the first fugaro release whose credentials service
+// admits the review job's own caller, which is E7's second half and the half
+// an INSTALLATION carries rather than a binary: reviewJobAdmitted says this
+// launcher has the class compiled in, and this says which release's service
+// answers it. The service reads its review class out of
+// FUGARO_REVIEW_JOB_ACCOUNTS (CSRW1, PR #1932) and the installation module
+// renders that variable (CSRW2, PR #1934), so an installation whose service
+// predates this release refuses the review job's account — the launch starts,
+// pays for the container and dies on the service's answer, which is the one
+// failure a launch refusal exists to keep in front of the spend.
+//
+// The judge is the installation's own record of that service: the installation
+// root's terraform.tfvars.json, whose credentials_service.image is the image
+// `fugaro update` pinned (installationServiceRelease). It is the one record of
+// it there is — the launcher can ask the service nothing (no admin route to its
+// configuration, D143, and its admission decision is invisible without a call
+// that mints a credential, reviewJobAdmitted's comment), and localcfg's
+// CredentialsService holds the service's URL and no version. It is also a
+// record every update writes: the pin is resolved and applied on every
+// installation, whether the service is being deployed or one already deployed
+// is moved onto this release's image (init_stages.go's pinCredentialsImage),
+// where `base_images.base` moves only in an update that handles that base kind
+// at all — outside a checkout with no --base and no catalog build,
+// imagesStage.kinds names none, and a gate on the base image would then refuse
+// an installation an update has already converged. docs/release.md's ("Before
+// you tag") list verifies the number against the release whose service admits
+// the class.
+const reviewAdmissionSince = "0.21.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
@@ -1507,11 +1585,13 @@ func checkCloneNoneModelImage(lc *localcfg.Config, spec *task.Spec, cfg *config.
 	return checkCloneImageSince(lc, spec, noneModelSince, subject, noneModelKnows, "; or "+alt, warn)
 }
 
-// reviewJobKnows names, for the gate's messages, what the job image's runner
-// has to know: the review-only variant of the job it is in, and the marker a
+// reviewJobKnows names, for this gate's messages, what the job image's runner
+// has to know: the review-only variant of the job it is in, the marker a
 // launch on it sets, which is the whole of what a review run branches on
-// (internal/runner's reviewJob).
-const reviewJobKnows = "the review-only job variant and the review job's own marker (FUGARO_REVIEW_JOB, mode: review)"
+// (internal/runner's reviewJob), and the model path the review class serves —
+// the last of the three is why an image that has the other two can still be
+// refused, since a container holding no token reaches a model only through it.
+const reviewJobKnows = "the review-only job variant, the review job's own marker (FUGARO_REVIEW_JOB, mode: review) and the review run's own model path"
 
 // reviewJobAlt is the refusal's other way out, as reviewLevelsAlt's is: the
 // update deploys the variants beside the coding jobs and rebuilds this
@@ -1520,11 +1600,16 @@ const reviewJobAlt = "; or run fugaro update, which is the whole upgrade: it bri
 
 // checkReviewJobImage refuses a launch that carries mode: review (fugaro
 // review): the launch starts CSR7's review-only variant and marks the
-// execution, and an installation older than reviewJobSince has neither the
-// variant deployed beside its coding job nor a runner that reads the marker —
-// so a review it accepted would run the coder's own job, with the App key the
-// review container exists to be without. Judged from the deployed job's build
-// record, as every checkImageSince gate's is.
+// execution, and the two releases that satisfy it are not one. An image older
+// than the variant's has no such job beside its coding job, so a launch naming
+// one resolves a job the installation does not hold, and the review would run
+// on the coder's own container with the App key the review container exists to
+// be without; a 0.19.0 image holds the variant and no model path for a
+// container that carries no token, so the launch starts, bills and dies inside
+// the job. reviewJobSince's value is what has to keep this gate ahead of both,
+// which is why it names the release whose runner can serve the launch rather
+// than the release that first deployed the variant. Judged from the deployed
+// job's build record, as every checkImageSince gate's is.
 func checkReviewJobImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
 	return checkImageSince(ctx, env, slug, spec, kind, reviewJobSince, "a review launch", reviewJobKnows, reviewJobAlt, warn)
 }
@@ -1533,6 +1618,91 @@ func checkReviewJobImage(ctx context.Context, env *cloudEnv, slug string, spec *
 // workflow: see checkCloneImageSince.
 func checkCloneReviewJobImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
 	return checkCloneImageSince(lc, spec, reviewJobSince, "a review launch", reviewJobKnows, reviewJobAlt, warn)
+}
+
+// checkReviewAdmission is the review launch's other half, and the half no job
+// image can show: a review container mounts no credential of its own, so its
+// account comes from the installation's credentials service, and the service
+// admits the review job's own caller only where its own release carries the
+// class (reviewAdmissionSince). The two halves of a review launch are then
+// judged from two different places — the job's build record for the variant,
+// the installation for the service — and this is the one the flip of
+// reviewJobAdmitted made load-bearing: while the constant was false no launch
+// reached the service, and a launch that reaches one too old for the class
+// starts, bills and dies on its 401.
+//
+// The judge is the installation's own record of its service rather than any
+// image of the job's: installationServiceRelease, whose comment says why that
+// record and no other one — the launcher cannot ask the service anything (D143,
+// reviewJobAdmitted's comment), the local config carries the service's URL and
+// no release, and the installation's tfvars are what `fugaro update` writes on
+// every installation, whatever kind of images that run happened to handle. An
+// installation that states no release for its service — no workdir for this
+// project, no tfvars, no credentials_service block, or a reference an operator
+// wrote by hand — is warned about and admitted: what cannot be read is not a
+// refusal, the rule every gate here takes for an image it cannot judge.
+//
+// This gate is reached by `fugaro review` and not by every spelling of a
+// review: `fugaro run --pr N --recipe review-only` builds the same task with no
+// mode on it (reviewSpec writes none, and only runReviewLaunch sets one), so it
+// enters no `mode: review` block and launches the repository's ordinary coding
+// job, whose container carries an account of its own and asks the service for
+// no review class. That spelling is the refusal's way out, and it needs no gate
+// of this one's.
+func checkReviewAdmission(lc *localcfg.Config, warn io.Writer) error {
+	if lc == nil {
+		return nil
+	}
+	rel, image, ok := installationServiceRelease(lc)
+	if !ok {
+		fmt.Fprintf(warn, "warning: %s, so the release the installation's credentials service was deployed from is not known; whether that service admits the review job's own caller is not checked\n", installationServiceUnknown)
+		return nil
+	}
+	if !imagePredates(rel, reviewAdmissionSince) {
+		return nil
+	}
+	return userErr("a review runs on the review-only job, which mounts no credential of its own: its account comes from the installation's credentials service, and a service admits the review job's own caller only from fugaro %s on, the release whose service reads the review class out of FUGARO_REVIEW_JOB_ACCOUNTS. This installation's service is %s — image %s, the pin this installation's own fugaro update wrote — so the run would fetch its account from a service that refuses it and die inside the job it had already paid for. Run fugaro update: that is the whole upgrade, and the command that resolves this release's service image and applies it, beside the review-only job variant. This launch is refused rather than started until that update has run; until then, review the pull request in the run's own job with fugaro run --pr N --recipe %s, which starts the repository's ordinary coding job — that container carries its own account, so its review asks the service for no class at all",
+		reviewAdmissionSince, rel, pluginwire.Printable(image), reviewOnlyRecipe)
+}
+
+// installationServiceUnknown is what the warning above names when the
+// installation states nothing this gate can read as a release: it is one
+// sentence per outcome, and this one is shared by every reason, because the
+// reason is a fact about a file on this machine rather than something the
+// reader can act on differently.
+const installationServiceUnknown = "this installation's terraform.tfvars.json names no credentials service image, or names one whose reference carries no release version"
+
+// installationServiceRelease is the release the installation's credentials
+// service image names, read from the installation root's terraform.tfvars.json,
+// with the image itself for the refusal to print. ok is false when the
+// installation states no release there, which is "not known" rather than "old":
+// no workdir for this project on this machine, no tfvars in it, no
+// credentials_service block, no image, or a reference an operator wrote by hand
+// (a digest with no release in it, or one resolved from another registry).
+//
+// It is the update's DESIRED state and not the applied one: the document is
+// written as the stage plans, and the apply that carries it out comes after, so
+// a run whose apply the owner declined or which failed at the apply leaves the
+// pin ahead of the deployed service and this gate admits a launch the service
+// still refuses. That is the direction it can be wrong in, and the other one is
+// worse: refusing an installation whose record this machine does not hold — a
+// second machine, a config copied to someone else's — is a refusal on a launch
+// that works, with a remedy the reader cannot carry out.
+func installationServiceRelease(lc *localcfg.Config) (rel, image string, ok bool) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return "", "", false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return "", "", false
+	}
+	image, ok, err = infra.CredentialsServiceImageOf(vars)
+	if err != nil || !ok {
+		return "", "", false
+	}
+	rel = infra.CredentialsServiceImageRelease(image)
+	return rel, image, rel != ""
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or
@@ -1921,7 +2091,7 @@ func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Sp
 // It names 0.22.0, the release the key ships in ("Sloth",
 // docs/periodic-reviews/implementation-plan.md §P7), which is not tagged yet:
 // the release that tags it holds this number to the tag it cuts, as it does for
-// sharedSince's 0.14.0 and reviewJobSince's 0.19.0. docs/release.md ("Before
+// sharedSince's 0.14.0 and reviewJobSince's 0.20.0. docs/release.md ("Before
 // you tag") has the checklist verify it.
 const jobsSince = "0.22.0"
 

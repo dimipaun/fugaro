@@ -167,6 +167,78 @@ func TestRunDigestNoRecordYet(t *testing.T) {
 	})
 }
 
+// TestRunDigestReadFailureIsAWarningOnly: each of the two reads behind the
+// digest comparison fails, and the launch says so and starts anyway. Nothing
+// pins the digest a build record names (D619: Cloud Run cannot vary the image
+// per execution), so a read the launcher cannot complete is never a reason to
+// refuse the launch — C4's "a read failure is a warning only". Neither failure
+// is a drift either: the launcher makes no claim about the image when it could
+// not compare, so the mismatch wording must not appear.
+//
+// The build record is the read that is a refusal in most launches: the recipe,
+// title, rigor and governance gates judge that same record and refuse one they
+// cannot read (checkImageSince). A launch that trips none of them — this
+// fixture's, which carries no such field and resolves no repository recipe —
+// reaches the warning with the failure instead, which is what makes the record
+// half of the rule reachable here at all. TestWarnImageDigestDriftSkips pins
+// that same branch at the warning's own level; what this case adds is the end
+// of the launch, which the direct call cannot show.
+func TestRunDigestReadFailureIsAWarningOnly(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, f *cloudFixture, reg *gcpfake.Registry)
+		want  string
+		// reads is how many calls the registry fake must have received: a
+		// refused one is still a call, so this says the launcher asked and
+		// how often.
+		reads int
+	}{{
+		name: "the build record cannot be read",
+		setup: func(t *testing.T, f *cloudFixture, _ *gcpfake.Registry) {
+			// Over MaxReadBytes: a read failure that is not ErrNotExist, so
+			// what is tested is the failure rather than the record's absence.
+			writeBucketFile(t, f, imagecheck.RecordKey(appSlug, "web"), strings.Repeat("x", blobx.MaxReadBytes+1))
+		},
+		want:  "warning: the image digest of acme/app workflow web is not compared with its build record: " + imagecheck.RecordKey(appSlug, "web") + ": object is too large",
+		reads: 0,
+	}, {
+		name: "the registry cannot be read",
+		setup: func(t *testing.T, f *cloudFixture, reg *gcpfake.Registry) {
+			// Every call answered 500: a read failure that is neither the tag
+			// being gone (a 404, named for the operator to fix) nor the
+			// launcher's identity being refused (a 401/403, which stays
+			// silent).
+			reg.Refuse(http.StatusInternalServerError, "INTERNAL", "", "the registry is down")
+			writeDigestBuildRecord(t, f, appSlug, "web", digestImage, recordDigest)
+		},
+		want:  "warning: the image digest of acme/app workflow web is not compared with its build record: reading " + digestImage + ":latest's manifest: HTTP 500",
+		reads: 1,
+	}}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			reg := hookDigestRegistry(t)
+			c.setup(t, f, reg)
+			_, warn, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "d5a1"), "A task")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(warn, c.want) {
+				t.Fatalf("warn = %q, want it to carry %q", warn, c.want)
+			}
+			if strings.Contains(warn, "is at digest ") {
+				t.Fatalf("warn = %q, want no drift claim from a read that failed", warn)
+			}
+			if n := len(f.run.Executions()); n != 1 {
+				t.Fatalf("%d executions, want 1: a read failure must never refuse the launch", n)
+			}
+			if n := len(reg.Requests()); n != c.reads {
+				t.Fatalf("%d registry calls, want %d", n, c.reads)
+			}
+		})
+	}
+}
+
 // TestWarnImageDigestDriftSkips pins the branches a launch-level test cannot
 // reach: each is a case where the two digests cannot be compared at all, and
 // each must stay a warning or a silence — never a refusal — and none may

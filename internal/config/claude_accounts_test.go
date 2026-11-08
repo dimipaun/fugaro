@@ -526,15 +526,17 @@ func TestAnthropicKeyAccountIsAReferenceAndNotADefinition(t *testing.T) {
 		t.Errorf("the refusal echoes the name: %q", def[0].Message)
 	}
 	// The fix it names is a different name and not a profile entry: a profile
-	// that lists the sentinel is published today and refused by fugaro update
-	// (the route that deploys a job for it is not built yet), so a sentence
-	// sending the operator there would hand them a route that ends in another
-	// refusal, and the two would read as each other's remedy.
+	// entry under the sentinel is a reference the installation deploys (the job
+	// whose account segment is the sentinel, and its review variant), but an
+	// entry of this block would be an account whose token no bundle can hold —
+	// the credential under the name is the platform's own — so a sentence
+	// sending the operator there would describe a second way to ask for what
+	// this rule refuses.
 	//
 	// Mutation (run, restore): restore the "write it as a profile's
 	// claude_accounts entry" clause — red here.
 	if !strings.Contains(def[0].Message, "pick a different account name") || strings.Contains(def[0].Message, "claude_accounts") {
-		t.Errorf("the definition half answers the sentinel with %q: it must name the fix an installation can carry out today (a different account name), not a profile entry that fugaro update refuses", def[0].Message)
+		t.Errorf("the definition half answers the sentinel with %q: it must name the fix an installation can carry out (a different account name), not a profile entry, which is a reference this block may not define", def[0].Message)
 	}
 	// And the entry is refused whatever else it says: the config it is written
 	// in would otherwise be one whose accounts block holds a credential no
@@ -579,11 +581,12 @@ func TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt(t *testing.T) {
 }
 
 // TestAnthropicKeyAccountIsNoJobsToken: the sentinel is a job name and no
-// mount. A profile that lists it is publishable (above) and deployable by no
-// installation yet — every reader on the way to a job reads a profile's
-// claude_accounts as the tokens its jobs mount (AnthropicKeyAccount's comment)
-// — and ProjectJobTokenAccount is the one they all ask, so its answer is what
-// keeps the halves of that axis from disagreeing: the sentinel resolves to no
+// mount. A profile that lists it is deployable — internal/infra's ProjectJobs
+// deploys the job whose account segment is the sentinel, with its review
+// variant beside it (AnthropicKeyAccount's comment) — and every one of those
+// jobs is mounted with nothing at all, which is the answer
+// ProjectJobTokenAccount has to give: it is the one function both the
+// launcher's gate and the runner's re-check ask, so the sentinel resolves to no
 // token account, whatever the profile lists.
 //
 // The mutation is dropping the sentinel's arm: the join answers with the axis

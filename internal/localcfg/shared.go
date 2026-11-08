@@ -106,6 +106,13 @@ func (c *Config) Shared() *Config {
 	// phase 3 added profiles.
 	s.Profiles = nil
 	s.UpdateCheck = nil
+	// Issues is local-only for update_check's reason: the nudge is a line the
+	// section prints on the machine reading it, and no other machine acts on
+	// this one's thresholds — the committed report carries no part of them
+	// (T-IS15, F14). Dropping the block here also keeps an older CLI's strict
+	// ParseShared from refusing a shared file whole over keys it does not
+	// know.
+	s.Issues = nil
 	// The operator's rotation record is local-only for update_check's reason,
 	// one credential at a time: secret_rotation_days is how often the person
 	// who holds the provider accounts means to rotate them, and secret_expires

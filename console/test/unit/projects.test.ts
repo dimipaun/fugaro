@@ -10,13 +10,16 @@
 // tests the plan names are here:
 //
 //   - **an unbuilt section renders as not-built and never as a zero.** The
-//     policy object (`fugaro project show --json`, project-centric phase 1) and
-//     the enrollment allow-list (phase 1 and 4) have no command behind them on
-//     this tree, so their panels carry no count at all: a screen that drew `0`
-//     for either would be reporting a measurement nobody made, and a screen that
-//     drew an empty list would be reporting "there are none". The test asserts
-//     the state, the reason, and that the drawn tree holds **no count cell** for
-//     those two panels.
+//     enrollment allow-list (project-centric phase 1 and 4) has no command
+//     behind it on this tree, so its panel carries no count at all: a screen
+//     that drew `0` for it would be reporting a measurement nobody made, and a
+//     screen that drew an empty list would be reporting "there are none". The
+//     test asserts the state, the reason, and that the drawn tree holds **no
+//     count cell** for that panel. **The policy panel is no longer one of
+//     these** (the managed-project screens plan's CM10): it reads
+//     `project policy show --json` (`policy.show`), so its state is `read`
+//     where a policy document arrived and `unavailable` where the read was
+//     refused -- and its count is the node's own allow-list.
 //   - **the inventory contains no value-shaped string.** The secrets panel is
 //     `secrets ls --json`'s entries: name, scope, labels and version counts. The
 //     test feeds it an entry whose label value is a real-shaped token --
@@ -48,6 +51,7 @@ import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { putText } from '../../src/renderer/app'
 import {
   PROJECT_PANEL_KEYS,
+  PROJECTS_SOURCE_LINES,
   PROJECTS_THEMES,
   SETTINGS_PENCIL_KEY,
   buildProjectsModel,
@@ -273,9 +277,44 @@ const SECRETS = [
   },
 ]
 
+/** POLICY is `fugaro project policy show --json`: the `{project, policy}` object
+ * CM4's `policy.show` row answers with, and the document the tab's policy panel
+ * is drawn from now that CM10 flipped it (D1481). */
+const POLICY = {
+  project: 'example-project',
+  policy: {
+    version: 3,
+    base_branch: 'trunk',
+    allow_repos: ['github/example-owner/example-repo'],
+  },
+}
+
+/** DOCTOR is `fugaro doctor --json`, whose `checks` array carries the six
+ * `policy-*` checks the policy panel's checks block draws (D1482). Two of the
+ * six are here, one of them absent from the document on purpose -- the block
+ * draws a check its document does not carry as *not in this document* rather
+ * than dropping the row -- and `managed-audit` is here because it is a check of
+ * doctor's that is not the policy's and reaches no row. */
+const DOCTOR = {
+  ok: true,
+  checks: [
+    { id: 'policy-published', ok: false, severity: 'info', problem: 'a policy is published', fix: '' },
+    { id: 'policy-vs-jobs', ok: true, severity: 'info', problem: 'the jobs read it', fix: '' },
+    { id: 'managed-audit', ok: true, severity: 'info', problem: 'the audit trail is readable', fix: '' },
+  ],
+}
+
 /** inputs is a complete set of documents. */
 function inputs(overrides: Partial<ProjectsInputs> = {}): ProjectsInputs {
-  return { budget: BUDGET, accounts: ACCOUNTS, secrets: SECRETS, sentences: {}, ...overrides }
+  return {
+    budget: BUDGET,
+    accounts: ACCOUNTS,
+    secrets: SECRETS,
+    policy: POLICY,
+    doctor: DOCTOR,
+    sentences: {},
+    ...overrides,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -294,11 +333,11 @@ describe('buildProjectsModel', () => {
     ])
     expect(PROJECT_PANEL_KEYS).toEqual(model.panels.map((entry) => entry.key))
     for (const entry of model.panels) {
-      // Every panel names what it read, and the two that have no source name the
-      // command they would read instead -- the design's "every panel names its
+      // Every panel names what it read, and the one that has no source names the
+      // phase it ships with instead -- the design's "every panel names its
       // source" and the plan's "rather than drawing an empty box".
       expect(entry.source, `${entry.key} has no source line`).not.toBeNull()
-      const built = entry.key === 'policy' || entry.key === 'enrollment'
+      const built = entry.key === 'enrollment'
       expect(entry.state, `${entry.key}`).toBe(built ? 'not-built' : 'read')
       expect(entry.because === null).toBe(!built)
     }
@@ -324,18 +363,75 @@ describe('buildProjectsModel', () => {
     }
   })
 
-  it('draws the two panels the CLI has no command for as not-built, with no count at all', () => {
+  it('draws the panel the CLI has no command for as not-built, with no count at all', () => {
     const model = buildProjectsModel(inputs())
-    for (const key of ['policy', 'enrollment']) {
-      const entry = model.panels.find((candidate) => candidate.key === key)
-      expect(entry?.state).toBe('not-built')
-      // The plan's rule: not-built and **never a zero**. A count is the only
-      // thing a screen could draw a zero from, so a not-built panel has none.
-      expect(entry?.count, `${key} carries a count`).toBeNull()
-      expect(entry?.because ?? '').not.toBe('')
-      expect(entry?.operation).toBeNull()
-    }
-    expect(model.panels.find((entry) => entry.key === 'policy')?.source).toContain('project show')
+    const entry = model.panels.find((candidate) => candidate.key === 'enrollment')
+    expect(entry?.state).toBe('not-built')
+    // The plan's rule: not-built and **never a zero**. A count is the only
+    // thing a screen could draw a zero from, so a not-built panel has none.
+    expect(entry?.count, 'enrollment carries a count').toBeNull()
+    expect(entry?.because ?? '').not.toBe('')
+    expect(entry?.operation).toBeNull()
+  })
+
+  it('draws the policy panel from its own read, on the source line this file settles', () => {
+    // CM10: the policy panel stops being a not-built one. The row below is
+    // **this file's**, and it has to be: the panel constructors take
+    // `source ?? PROJECTS_SOURCE_LINES[operation] ?? \`fugaro ${operation}\``,
+    // so an operation named `policy.show` with no row would draw
+    // `fugaro policy.show` -- an argv no CLI answers. Dropping the row is the
+    // task's mutation, and it fails here.
+    expect(PROJECTS_SOURCE_LINES['policy.show']).toBe('fugaro project policy show --json')
+    const model = buildProjectsModel(inputs())
+    const entry = model.panels.find((candidate) => candidate.key === 'policy')
+    expect(entry?.state).toBe('read')
+    expect(entry?.operation).toBe('policy.show')
+    expect(entry?.source).toBe('fugaro project policy show --json')
+    expect(entry?.because).toBeNull()
+    // The count is the node's own allow-list: the one figure the panel
+    // measures, and never a zero out of a document nobody read.
+    expect(entry?.count).toEqual({ state: 'measured', value: 1, because: '', lowerBound: false })
+    // And what the panel draws under its frame is CM7's section, built from the
+    // same two documents (the policy panel's own read, and doctor's checks).
+    expect(model.policy.node.state).toBe('read')
+    expect(model.policy.node.allowRepos).toEqual(['github/example-owner/example-repo'])
+    expect(model.policy.checks.state).toBe('read')
+  })
+
+  it('says which read has not answered when the policy document did not arrive', () => {
+    const model = buildProjectsModel(inputs({ policy: null }))
+    const entry = model.panels.find((candidate) => candidate.key === 'policy')
+    expect(entry?.state).toBe('unavailable')
+    expect(entry?.operation).toBe('policy.show')
+    expect(entry?.count).toBeNull()
+    // The console's own sentence names the command the operator can run, which
+    // is the sentence the panel's own node block draws beside it.
+    expect(entry?.because).toBe('no document arrived for `fugaro project policy show --json`')
+    // A refused read draws the CLI's own sentence instead (design section 6.3).
+    const refused = buildProjectsModel(
+      inputs({ policy: null, sentences: { 'policy.show': 'permission denied' } }),
+    ).panels.find((candidate) => candidate.key === 'policy')
+    expect(refused?.because).toBe('permission denied')
+    // A document that arrived and is not the one this section reads is its own
+    // reason, and never a node drawn out of a document that does not mean it.
+    const shaped = buildProjectsModel(inputs({ policy: { policy: 'not an object' } })).panels.find(
+      (candidate) => candidate.key === 'policy',
+    )
+    expect(shaped?.state).toBe('unavailable')
+    expect(shaped?.because).toContain('is not the {project, policy} object this section reads')
+  })
+
+  it('draws a published-nothing node as a read, and says so in the panel\'s body', () => {
+    // `"policy": null` is the CLI's own answer that this project has published
+    // none: a different fact from a read that did not answer, and the node
+    // block's own sentence (`POLICY_NO_POLICY`). The panel read it, so its
+    // state is `read` -- and its count is the allow-list a null node admits,
+    // which is none.
+    const model = buildProjectsModel(inputs({ policy: { project: 'example-project', policy: null } }))
+    const entry = model.panels.find((candidate) => candidate.key === 'policy')
+    expect(entry?.state).toBe('read')
+    expect(entry?.count).toEqual({ state: 'measured', value: 0, because: '', lowerBound: false })
+    expect(model.policy.node.state).toBe('no-policy')
   })
 
   it('shows the repository set the cap document carries, and nothing the run list would add', () => {
@@ -370,6 +466,8 @@ describe('buildProjectsModel', () => {
       budget: null,
       accounts: null,
       secrets: null,
+      policy: null,
+      doctor: null,
       sentences: { 'budget.show': 'permission denied' },
     })
     const entry = refused.panels.find((candidate) => candidate.key === 'repositories')
@@ -448,10 +546,17 @@ describe('buildProjectsModel', () => {
   })
 
   it('reads nothing out of a document it was not given, and says so per panel', () => {
-    const model = buildProjectsModel({ budget: null, accounts: null, secrets: null, sentences: {} })
+    const model = buildProjectsModel({
+      budget: null,
+      accounts: null,
+      secrets: null,
+      policy: null,
+      doctor: null,
+      sentences: {},
+    })
     expect(model.project).toBeNull()
     for (const entry of model.panels) {
-      if (entry.key === 'policy' || entry.key === 'enrollment') {
+      if (entry.key === 'enrollment') {
         expect(entry.state).toBe('not-built')
         continue
       }
@@ -478,13 +583,28 @@ describe('renderProjects', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     for (const key of PROJECT_PANEL_KEYS) {
       const drawn = panel(tree, key)
-      expect(drawn.getAttribute('data-state')).toBe(key === 'policy' || key === 'enrollment' ? 'not-built' : 'read')
+      expect(drawn.getAttribute('data-state')).toBe(key === 'enrollment' ? 'not-built' : 'read')
     }
+  })
+
+  it('draws the policy panel\'s body from the two documents it reads', () => {
+    const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    const drawn = panel(tree, 'policy')
+    // The panel is a **read** one now, so it carries a body: CM7's section,
+    // inside the tab's own panel shell. The node's own string and a check of
+    // doctor's are what says the body is that section and not an empty box.
+    expect(all(drawn, 'policy-notes').length).toBe(1)
+    const text = drawnText(drawn)
+    expect(text).toContain('trunk')
+    expect(text).toContain('policy-vs-jobs')
+    // A check the document does not carry is drawn as *not in this document*
+    // rather than dropped, which is the block's own rule and not this file's.
+    expect(text).toContain('policy-newer-than-binary')
   })
 
   it('renders an unbuilt section as not-built, with no zero anywhere in it', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
-    for (const key of ['policy', 'enrollment']) {
+    for (const key of ['enrollment']) {
       const drawn = panel(tree, key)
       expect(drawn.getAttribute('data-state')).toBe('not-built')
       // No count cell and no reading: the only text is the console's own
@@ -500,7 +620,7 @@ describe('renderProjects', () => {
   it('shows the source of every panel on the panel itself', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     expect(one(panel(tree, 'caps'), 'projects-source').textContent).toContain('fugaro budget show --json')
-    expect(one(panel(tree, 'policy'), 'projects-source').textContent).toContain('fugaro project show --json')
+    expect(one(panel(tree, 'policy'), 'projects-source').textContent).toContain('fugaro project policy show --json')
   })
 
   it('contains no value-shaped string, and refuses one a document carries', () => {
@@ -1415,7 +1535,7 @@ describe('the settings section', () => {
   it('draws the settings section beside the budget panels, under one frame', () => {
     const tree = renderProjects(
       factory,
-      buildProjectsModel({ budget: BUDGET, accounts: null, secrets: null, sentences: {} }),
+      buildProjectsModel({ budget: BUDGET, accounts: null, secrets: null, policy: null, doctor: null, sentences: {} }),
       'light',
       undefined,
       buildProjectsSettings(settingsInputs()),
