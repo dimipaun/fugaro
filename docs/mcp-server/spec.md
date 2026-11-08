@@ -2,8 +2,9 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
-not started; this folder approves no task.** The owner's spec of
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
+except the reading of the installation's published state its lists come from, which no task of this
+plan carries; M8–M10 are not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -788,13 +789,16 @@ rather than silent.
 **What a stolen Firebase ID token reaches.** One thing: **the approve step's `POST /oauth/authorize`**
 — the single endpoint that consumes one (the owner's answer of 2026-11-04, amended the same day by
 M-a; an earlier draft had it at `POST /oauth/token`) — and only while it is unexpired and only if its
-issuer and audience match the project. **The last of the bounds this paragraph used to state is not
-built**: an identity has to be one the project's own lists admit, and **M5's approve step mints a
-code and a family for any verified Firebase address** — resolving an identity through the launcher
-and operator lists is **M7** (`ee/coordinator/mcpauth/identity.go`, `TestIdentityOffTheListsIsRefused`,
-`TestOnlyExactUserEntriesAreRead`), which is not started. So until M7 lands, what stands between a
-verified Firebase identity and a token family is that sign-in and nothing else, and the lists narrow
-it afterwards rather than M5 keeping the rule. It is
+issuer and audience match the project. **The last of the bounds this paragraph used to state is built
+at one door and not at the other**: an identity has to be one the project's own lists admit, and
+**M5's approve step still mints a code and a family for any verified Firebase address** — resolving
+an identity through the launcher and operator lists is **M7** (`ee/coordinator/mcpauth/identity.go`,
+`TestIdentityOffTheListsIsRefused`, `TestOnlyExactUserEntriesAreRead`), which reads them on every
+request to the MCP endpoint — **once something supplies them: the reading of the installation's
+published state they live in is not built, and §11 carries it as an open item** — so a verified
+Firebase address still gets a token family and **that
+token reaches no tool**: an identity on neither list is refused before the request body is read, and
+the lists bound what a token buys rather than who may obtain one. It is
 never a bearer for the MCP endpoint and it is never a grant at the token endpoint, which is the whole
 reason the coordinator mints its own tokens, and it is why the design will not accept a Firebase
 token as an access token
@@ -1084,6 +1088,18 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   growth §8 accepts is accepted only while nothing mounts the routes. **The wiring task owes M5b
   beside them** (the owner's ruling of 2026-11-07): the guard is relaxed by building the
   paired-device approval, not by deleting its message.
+- **Where the front door's own two lists are read from** (§4, D933, the amendment's finding M-f):
+  **the design says the installation's published state, and the tree reads nothing there.** §8's
+  claim that the lists bound what a token buys turns on it: `ee/coordinator/mcpauth/identity.go`
+  holds the `Roster` interface the door resolves an identity through and a server with none set
+  refuses every token (fail-closed, `WithRoster`), but **no implementation of that interface over the
+  published state is in the tree and no task of this plan carries one** — so what is built is the
+  rule the reading must keep (the lists as the source rather than a machine's config, and exact
+  `user:` entries only) rather than the reading. **The door is dormant with the rest of the front
+  door (D936)**, so no local file is read either, and **the wiring task that mounts this package on a
+  binary — the one M5b gates — owes this reading beside the two bounds above**; until it lands, a
+  front door wired up without one admits nobody rather than everybody, which is the direction the
+  gap fails in ([reconciliation.md](reconciliation.md) §4a, D933's amendment).
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.
