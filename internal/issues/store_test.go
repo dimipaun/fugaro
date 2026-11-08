@@ -88,6 +88,36 @@ func TestStoreWritesPrivateFiles(t *testing.T) {
 	}
 }
 
+func TestStoreTightensAFolderThatIsWider(t *testing.T) {
+	// The folder can already be there — made by an older build, by hand, or by
+	// a tool whose umask was loose — so a write tightens it rather than
+	// trusting the mode it was created with: what is in it can name a path or
+	// a project, and a group-readable issue hands both to every account on the
+	// machine.
+	if runtime.GOOS == "windows" {
+		t.Skip("windows has no file modes")
+	}
+	_, env := issueState(t)
+	s := issueStore(t, env)
+	if err := os.MkdirAll(s.Dir(), 0o755); err != nil {
+		t.Fatalf("making a wide folder: %v", err)
+	}
+	// Chmod explicitly: MkdirAll's mode is what the umask leaves of it.
+	if err := os.Chmod(s.Dir(), 0o755); err != nil {
+		t.Fatalf("widening the folder: %v", err)
+	}
+	if err := s.Save(issueSample()); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+	fi, err := os.Stat(s.Dir())
+	if err != nil {
+		t.Fatalf("stat %s: %v", s.Dir(), err)
+	}
+	if got := fi.Mode().Perm(); got != 0o700 {
+		t.Errorf("directory mode = %o, want 0700", got)
+	}
+}
+
 func TestStoreRenameOnUpload(t *testing.T) {
 	_, env := issueState(t)
 	s := issueStore(t, env)
@@ -157,6 +187,23 @@ func TestStoreListsSavedIssues(t *testing.T) {
 	if err := os.WriteFile(junk, []byte("---\nsurprise: 1\n---\n\n## Summary\n\nx\n"), 0o600); err != nil {
 		t.Fatalf("seeding an unreadable record: %v", err)
 	}
+	// A name this package does not write is not read even when it holds a whole
+	// record: a temporary file a crash left between the write and the rename,
+	// and an editor's backup of an issue file. Both would otherwise list the
+	// same issue twice, and — the copy sort.Slice happens to leave first — make
+	// Get return the stale one. Both names sort before the record they copy.
+	stale := issueSample()
+	stale.Status = StatusDismissed
+	stale.URL = "https://github.com/dimipaun/fugaro/issues/999"
+	staleRecord, err := Marshal(stale)
+	if err != nil {
+		t.Fatalf("marshalling the stale record: %v", err)
+	}
+	for _, name := range []string{".issue-1234567890.tmp", "0007-update-20261107183012-48213.md~"} {
+		if err := os.WriteFile(filepath.Join(s.Dir(), name), staleRecord, 0o600); err != nil {
+			t.Fatalf("seeding %s: %v", name, err)
+		}
+	}
 	got, err := s.List()
 	if err != nil {
 		t.Fatalf("listing: %v", err)
@@ -167,8 +214,14 @@ func TestStoreListsSavedIssues(t *testing.T) {
 	if got[0].Number != 0 || got[1].Number != 7 {
 		t.Errorf("List is not ordered by number: %d, %d", got[0].Number, got[1].Number)
 	}
-	if _, err := s.Get("7"); err != nil {
+	if got[1].Status != StatusPending {
+		t.Errorf("List read a copy under a name this package does not write: %v", got[1].Status)
+	}
+	seven, err := s.Get("7")
+	if err != nil {
 		t.Errorf("an unreadable record beside it broke Get: %v", err)
+	} else if seven.Status != StatusPending {
+		t.Errorf("Get(7) returned the stale copy: status %q, want %q", seven.Status, StatusPending)
 	}
 	if _, err := os.Stat(junk); err != nil {
 		t.Errorf("the unreadable record was removed rather than skipped: %v", err)
