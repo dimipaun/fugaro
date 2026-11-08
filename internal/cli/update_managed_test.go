@@ -1373,7 +1373,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // is refused it for the reason §3.2 gives those arguments: the cover's Listed
 // members are read from THIS run's options (accessLists reads spec.Launchers,
 // spec.Operators and the budget admins into tf.Cover.Listed), so a session that
-// passed --launcher, --operator or --budget-admin would have the gate judge a
+// passed --operator, --admin or --budget-admin would have the gate judge a
 // plan against the list it just wrote — §4.1's rules 4 and 5 refuse exactly the
 // grant such a plan makes, and the flag would walk around both by making it
 // covered. --budget with --billing-account sets the cover's Billing the same
@@ -1385,7 +1385,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // widening flag would have had admitted is refused in the session's own words,
 // nothing is applied, and — the property a flag asked beside the door has — the
 // gate read nothing and no record exists, because no verdict was ever made. The
-// plan grants a member the run's own --launcher would have listed, which is the
+// plan grants a member the run's own --operator would have listed, which is the
 // exact shape the hole was found with.
 func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 	const outsider = "user:not-listed@example.com"
@@ -1401,8 +1401,8 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 		// config names its shared budget backend.
 		rig func(t *testing.T) *initRig
 	}{
-		{"launcher", []string{"--launcher", outsider}, nil},
 		{"operator", []string{"--operator", outsider}, nil},
+		{"admin", []string{"--admin", outsider}, nil},
 		{"budget-admin", []string{"--firebase-project", fpID, "--budget-admin", outsider}, func(t *testing.T) *initRig {
 			r := newFBRig(t)
 			r.managedRuns(t, initProjectName, initProject)

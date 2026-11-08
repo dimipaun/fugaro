@@ -412,7 +412,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 func TestInitFirebaseOwnersToTfvars(t *testing.T) {
 	r := newFBRig(t)
 	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-admin", "user:boss@example.com",
-		"--launcher", "user:l@example.com", "--operator", "user:op@example.com")
+		"--operator", "user:l@example.com", "--admin", "user:op@example.com")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -448,15 +448,15 @@ func TestInitFirebaseOwnersToTfvars(t *testing.T) {
 
 func TestInitFirebaseRefusesBadMembers(t *testing.T) {
 	for name, args := range map[string][]string{
-		"job account":       {"--budget-admin", "serviceAccount:fugaro-aurora-web-1a2b3c@proj-1234.iam.gserviceaccount.com"},
-		"build account":     {"--budget-admin", "serviceAccount:fugaro-b-aurora-9f8e7d@proj-1234.iam.gserviceaccount.com"},
-		"scheduler":         {"--launcher", "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"},
-		"history":           {"--operator", "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"},
-		"signer":            {"--budget-admin", "serviceAccount:fugaro-token-signer@proj-1234.iam.gserviceaccount.com"},
-		"domain launcher":   {"--launcher", "domain:example.com"},
-		"wildcard operator": {"--operator", "user:*@example.com"},
-		"bare address":      {"--budget-admin", "boss@example.com"},
-		"all users":         {"--budget-admin", "allUsers"},
+		"job account":     {"--budget-admin", "serviceAccount:fugaro-aurora-web-1a2b3c@proj-1234.iam.gserviceaccount.com"},
+		"build account":   {"--budget-admin", "serviceAccount:fugaro-b-aurora-9f8e7d@proj-1234.iam.gserviceaccount.com"},
+		"scheduler":       {"--operator", "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"},
+		"history":         {"--admin", "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"},
+		"signer":          {"--budget-admin", "serviceAccount:fugaro-token-signer@proj-1234.iam.gserviceaccount.com"},
+		"domain operator": {"--operator", "domain:example.com"},
+		"wildcard admin":  {"--admin", "user:*@example.com"},
+		"bare address":    {"--budget-admin", "boss@example.com"},
+		"all users":       {"--budget-admin", "allUsers"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)

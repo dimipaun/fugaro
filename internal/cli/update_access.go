@@ -130,6 +130,23 @@ const accessNeedsAdmin = "this run could not write the grants node, which needs 
 // and a change that cannot be written may not look applied.
 const accessFlagsNeedAdmin = "the grants node cannot be written with your credentials: writing it needs roles/firebasedatabase.admin, which the project's owners, editors and budget admins hold. A project Owner runs fugaro update on this installation, or adds you to terraform.budget_admins (fugaro update --budget-admin)"
 
+// accessNoOutputs is the warning a migration gets when the installation's own
+// outputs cannot be read: the migration has no roster to write the node from,
+// and this run keeps the local config's lists. It never stops the run — `fugaro
+// update` is the whole upgrade, and a roles step that could not read a state
+// bucket may not be the thing that fails it — and the state is the one the
+// installation was in before this release, so nothing is lost by waiting for a
+// later update, which is what the sentence says.
+const accessNoOutputs = "the installation's own outputs could not be read, so its roles were not migrated into the grants node: the operators and admins stay the local config's lists, and the next fugaro update migrates them"
+
+// accessStale is what a migration says when this machine's copy of the two
+// lists is not what the installation holds. It is not fatal and it is not
+// silent: the node is written from the INSTALLATION's roster — the copy written
+// by hand or by a door this release does not move is the one that would revoke
+// a member — and the sentence names both lists, so an operator who edited the
+// file sees what happened rather than finding it gone.
+const accessStale = "this machine's %s is not what the installation's own outputs list, so this run migrates the installation's: the config lists %s, the installation lists %s"
+
 // migrateAccess writes the grants node for an installation that has none, from
 // the lists the INSTALLATION carries, and returns the node as it now is. A node
 // that is not Found and holds no grants means nothing was written: the lists
@@ -139,10 +156,10 @@ const accessFlagsNeedAdmin = "the grants node cannot be written with your creden
 // and not from the local config, and the difference is the whole point: the
 // config is one machine's copy, and a machine that has not converged since
 // another operator changed the installation would migrate a roster that is not
-// the installation's. The copy is still used, as the thing to DISAGREE with:
-// userFresh refuses when the two do not hold the same members, and the refusal
-// names the list and the command, so the fix is a `fugaro update` on the
-// machine that changed it and not a node written from the wrong list.
+// the installation's. The copy is still used, as the thing to disagree with
+// (accessStale), and never as the thing to write: the roster applied after this
+// run is the installation's either way, because the derive that follows reads
+// the node this wrote, and the file follows the derive.
 //
 // A first run has no outputs to read (nothing has been applied) and nothing to
 // migrate: the run's own lists are the flags the operator typed, which the
@@ -163,10 +180,20 @@ func (e *initEngine) migrateAccess(ctx context.Context, db *rtdb.Client, node ac
 	}
 	outs, err := e.r.installationOutputs(ctx, e.lc, e.bin, spec.StateBucket)
 	if err != nil {
-		return accesslib.Node{}, err
+		e.r.warn(accessNoOutputs)
+		return accesslib.Node{}, nil
 	}
-	if err := userFresh(e.lc, outs); err != nil {
-		return accesslib.Node{}, userErr("%v", err)
+	for _, l := range []struct {
+		what   string
+		local  []string
+		remote []string
+	}{
+		{"terraform.operators", e.lc.Terraform.Operators, outs.Launchers},
+		{"terraform.admins", e.lc.Terraform.Admins, outs.Operators},
+	} {
+		if !sameUserMembers(l.local, l.remote) {
+			e.r.warn(fmt.Sprintf(accessStale, l.what, safetext.FieldListLine(l.local), safetext.FieldListLine(l.remote)))
+		}
 	}
 	return e.seedAccess(ctx, db, node, outs.Launchers, outs.Operators)
 }

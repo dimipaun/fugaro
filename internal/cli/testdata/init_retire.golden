@@ -50,6 +50,8 @@ Still missing for acme/sandbox:
   Then rerun fugaro setup --repo when they are stored.
 deleted the orphaned Cloud Run job fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0])
 The local config <tmp> changes:
+  + version: 2
+  - version: 1
   + base_images:
   +     base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0
   + build:

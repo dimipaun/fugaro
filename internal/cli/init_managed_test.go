@@ -612,7 +612,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	}
 	want := "the plan would delete or replace 1 resource(s), or do something the guard doesn't know; nothing was applied. " +
 		tf.AllowDeleteAdvice + ":\n  " + address
-	if !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "--launcher and --operator") {
+	if !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), "--operator and --admin") {
 		t.Errorf("the unmanaged refusal is not today's (the flag and the hints):\n%s", err)
 	}
 	if len(r2.ran(t, "apply")) != 0 {
@@ -1447,7 +1447,7 @@ func (r *initRig) allowDeleteList(t *testing.T, gcp string, entries ...tf.Delete
 func noFlagName(t *testing.T, s string) {
 	t.Helper()
 	for _, flag := range []string{
-		"--allow-delete", "--allow-job-delete", "--launcher", "--operator", "--alert-email",
+		"--allow-delete", "--allow-job-delete", "--operator", "--admin", "--alert-email",
 		"--budget", "--billing-account", "--yes", "--non-interactive", "--managed",
 	} {
 		if strings.Contains(s, flag) {

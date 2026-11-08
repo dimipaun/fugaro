@@ -703,7 +703,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--base-image", base, "--launcher", "user:launcher@example.com", "--alert-email", "ops@example.com")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--base-image", base, "--operator", "user:launcher@example.com", "--alert-email", "ops@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -769,7 +769,7 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 	}
 	out := screen(t, &initOptions{operatorsChanged: true, adminsChanged: true, alertEmail: "ops@example.com"}, &localcfg.Config{},
 		infra.InstallationSpec{Launchers: []string{"user:a@example.com"}, Operators: []string{"user:b@example.com"}}, "")
-	for _, want := range []string{"launchers:      user:a@example.com (from a flag)", "operators:      user:b@example.com (from a flag)", "alert email:    ops@example.com (from a flag)"} {
+	for _, want := range []string{"operators:      user:a@example.com (from a flag)", "admins:         user:b@example.com (from a flag)", "alert email:    ops@example.com (from a flag)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("flags: lacks %q:\n%s", want, out)
 		}
@@ -777,17 +777,17 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 	cfg := &localcfg.Config{}
 	cfg.Terraform.AlertEmail = "cfg@example.com"
 	out = screen(t, &initOptions{}, cfg, infra.InstallationSpec{Launchers: []string{"group:eng@example.com"}}, "")
-	for _, want := range []string{"launchers:      group:eng@example.com (from the local config)", "operators:      nobody (from the local config)", "alert email:    cfg@example.com (from the local config)"} {
+	for _, want := range []string{"operators:      group:eng@example.com (from the local config)", "admins:         nobody (from the local config)", "alert email:    cfg@example.com (from the local config)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("config: lacks %q:\n%s", want, out)
 		}
 	}
 	out = screen(t, &initOptions{operatorsChanged: true, adminsChanged: true}, &localcfg.Config{},
 		infra.InstallationSpec{Launchers: []string{"user:me@example.com"}, Operators: []string{"user:me@example.com"}}, "user:me@example.com")
-	if !strings.Contains(out, "launchers:      user:me@example.com (default: you)") || !strings.Contains(out, "alert email:    none (not set)") {
+	if !strings.Contains(out, "operators:      user:me@example.com (default: you)") || !strings.Contains(out, "alert email:    none (not set)") {
 		t.Errorf("default:\n%s", out)
 	}
-	if strings.Index(out, "launchers:") > strings.Index(out, "Every Terraform plan is shown as it runs") || !strings.Contains(out, "Fixed, announced and free") {
+	if strings.Index(out, "operators:") > strings.Index(out, "Every Terraform plan is shown as it runs") || !strings.Contains(out, "Fixed, announced and free") {
 		t.Errorf("order or wording:\n%s", out)
 	}
 }

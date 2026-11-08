@@ -1340,7 +1340,7 @@ func TestUpdateRefusesInstallationFlags(t *testing.T) {
 	r := sandboxRig(t)
 	for _, args := range [][]string{
 		{"--repo", r.checkout, "--config-only"},
-		{"--repo", r.checkout, "--launcher", "user:a@example.com"},
+		{"--repo", r.checkout, "--operator", "user:a@example.com"},
 		{"--repo", r.checkout, "--registry-cleanup", "on"},
 		{"--repo", r.checkout, "--forget", "--allow-job-delete"},
 		{"--repo", r.checkout, "--plan-only", "--print-vars"},

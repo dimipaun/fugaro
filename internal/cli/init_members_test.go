@@ -162,7 +162,7 @@ func TestNoUserNeedsTheFlags(t *testing.T) {
 				t.Fatalf("%+v\n%s", res, out)
 			}
 			lf := res.Left[0]
-			if len(lf.Commands) != 1 || !strings.Contains(lf.Commands[0], "--launcher user:<your-email>") || !strings.Contains(lf.Commands[0], "--operator user:<your-email>") || strings.Contains(lf.Commands[0], "\n") {
+			if len(lf.Commands) != 1 || !strings.Contains(lf.Commands[0], "--operator user:<your-email>") || !strings.Contains(lf.Commands[0], "--admin user:<your-email>") || strings.Contains(lf.Commands[0], "\n") {
 				t.Errorf("left %+v", lf)
 			}
 			if !strings.Contains(lf.Text, "nobody can run anything") || n(r.ran(t, "apply")) != 0 {
@@ -188,7 +188,7 @@ func TestReviewScreenNamesDefaultedMembers(t *testing.T) {
 	}
 	out.Reset()
 	e.reviewScreen(t.Context(), "test")
-	if !strings.Contains(out.String(), "launchers:      user:me@example.com (default: you)") {
+	if !strings.Contains(out.String(), "operators:      user:me@example.com (default: you)") {
 		t.Errorf("\n%s", out.String())
 	}
 }
