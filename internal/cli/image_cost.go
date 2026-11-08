@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -38,10 +39,20 @@ import (
 // writer moved them first, which is this writer's version of the guard a run's
 // write gets from the rules: the CLI writes as a budget admin, so no rule
 // computes its delta for it, and without the etag two writers of one counter
-// could lose each other's move. The lease's own node is written first and the
-// counters after it, so a write that fails half way leaves the ledger saying
-// what happened and the day counting money as still held — the fail-closed
-// direction — and the refusal says which half was written.
+// could lose each other's move.
+//
+// Which half is written first depends on which way the half-written state
+// fails. Taking a lease counts the money first and writes the lease node after
+// it: the node is what a later reclaim reads to know what a dead CLI still
+// holds, so an open lease whose reservation the day never counted is one
+// reclaim would subtract from a counter that never held it — the day short by a
+// reservation and the caps no longer biting. With the counters first that state
+// cannot come about: the worst a failure leaves is a day counting a reservation
+// no lease holds, which the caps still see and which nothing pays out a second
+// time. Moving a lease this command already holds writes the node first and the
+// counters after it, the same reason read the other way round: the day then
+// holds at least what the lease still counts and never less, so a half-written
+// settle or release refuses a later build rather than letting one past a cap.
 
 // buildPricer is the price lookup a lease is sized from. internal/budget's
 // Pricer is the real one: it reads the catalog once per command, on the
@@ -155,10 +166,103 @@ func (c *imageCost) take(ctx context.Context, id string) (budget.BuildLease, *bu
 	if !d.Allow {
 		return budget.BuildLease{}, nil, c.refuse(d, read.Caps, want, read.State)
 	}
-	if err := c.writeWith(ctx, path, etag, budget.BuildLease{}, want); err != nil {
+	// The counters first and the lease node after them: see the file's comment.
+	moved, err := c.raiseCounters(ctx, want, now)
+	if err != nil {
 		return budget.BuildLease{}, nil, err
 	}
+	if err := c.putLease(ctx, path, etag, want); err != nil {
+		return budget.BuildLease{}, nil, c.giveBackCounters(ctx, moved, err)
+	}
 	return want, d.Advisory, nil
+}
+
+// counterGuard is one more judgement of the build before a day counter is
+// written: the caps a take judged it with are the caps of a read taken before
+// the write, and no rule re-checks them for a writer on IAM credentials.
+type counterGuard func(ctx context.Context) error
+
+// counterMove is one day-counter leaf a take raised, and by how much: what a
+// failure further along gives back.
+type counterMove struct {
+	Path  string
+	Delta budget.Micros
+}
+
+// raiseCounters raises the two day counters a build's reservation is counted in
+// — the repository's and the project's — and keeps the caps true while it does.
+//
+// The judgement take made ran against a read taken before the first write, and
+// this writer is IAM: no rule re-checks the cap for it, so two builds racing
+// for the last room under a cap, or a run's own lease landing in between, would
+// both go through on the strength of that one stale read. Every leaf is
+// therefore read, the build judged again against a fresh read, and only then
+// written — and a leaf a concurrent writer moved is read and judged again on
+// the retry (addLeaf). A build that no longer fits is refused with the refusal
+// the first judgement would have given, and nothing of it is counted.
+//
+// The judgement takes this take's own writes back out of what it reads: a fresh
+// read carries the reservations this take has already counted, and judging the
+// same money twice would refuse a build that fits.
+func (c *imageCost) raiseCounters(ctx context.Context, want budget.BuildLease, now time.Time) ([]counterMove, error) {
+	var moved []counterMove
+	day := want.Day()
+	guard := func(ctx context.Context) error {
+		again, err := c.read(ctx, day)
+		if err != nil {
+			return err
+		}
+		again.State.Repo = withoutThisTake(again.State.Repo, budget.PathSpendRepo(day, c.slug), moved)
+		again.State.Global = withoutThisTake(again.State.Global, budget.PathSpendGlobal(day), moved)
+		d := budget.EvaluateBuild(want, budget.Write{Op: budget.OpLease, Day: day, Amount: want.Reserved},
+			again.State, again.Caps, again.Kills, now)
+		if !d.Allow {
+			return c.refuse(d, again.Caps, want, again.State)
+		}
+		return nil
+	}
+	for _, counter := range []string{budget.PathSpendRepo(day, c.slug), budget.PathSpendGlobal(day)} {
+		if err := c.addLeaf(ctx, counter+"/counted", want.Reserved, guard); err != nil {
+			return nil, c.giveBackCounters(ctx, moved, err)
+		}
+		moved = append(moved, counterMove{Path: counter + "/counted", Delta: want.Reserved})
+	}
+	return moved, nil
+}
+
+// withoutThisTake is a fresh counter read with this take's own counted money
+// taken back out of it: what a judgement of the same build would have seen
+// before this take wrote. A subtraction that goes below zero is a concurrent
+// release of the reservation itself — "nothing counted" is the honest figure,
+// and not the negative node the predicate refuses as corrupt.
+func withoutThisTake(c budget.Counters, counter string, moved []counterMove) budget.Counters {
+	for _, m := range moved {
+		if m.Path == counter+"/counted" {
+			c.Counted -= m.Delta
+		}
+	}
+	if c.Counted < 0 {
+		c.Counted = 0
+	}
+	return c
+}
+
+// giveBackCounters takes back what a take raised when the take does not finish,
+// and says what it could not take back. A counter it could not is a day
+// counting money no lease holds: the caps still see it — the safe direction,
+// since nothing pays it out a second time — and the error names it, because
+// nothing else can.
+func (c *imageCost) giveBackCounters(ctx context.Context, moved []counterMove, cause error) error {
+	var stuck []string
+	for i := len(moved) - 1; i >= 0; i-- {
+		if err := c.addLeaf(ctx, moved[i].Path, -moved[i].Delta, nil); err != nil {
+			stuck = append(stuck, moved[i].Path)
+		}
+	}
+	if len(stuck) > 0 {
+		return remote(fmt.Errorf("%w\n/%s could not be given back: the day counts money no lease holds, which the caps still see and no release pays out a second time", cause, strings.Join(stuck, "/, /")))
+	}
+	return remote(fmt.Errorf("%w\nnothing of this build is counted and no lease holds it", cause))
 }
 
 // settle records what the build really spent and gives the rest back. actual is
@@ -259,15 +363,25 @@ func (c *imageCost) closeStale(ctx context.Context, before, after budget.BuildLe
 	return nil
 }
 
-// writeWith writes the lease node and then the day's counters. The lease first,
-// for the reason the file's comment gives: a failure after it leaves the ledger
-// right and the day counting money as still held.
-func (c *imageCost) writeWith(ctx context.Context, path, etag string, before, after budget.BuildLease) error {
+// putLease writes the lease's own node.
+func (c *imageCost) putLease(ctx context.Context, path, etag string, after budget.BuildLease) error {
 	if err := c.db.PutIfMatch(ctx, path, etag, after); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return remote(fmt.Errorf("the build lease at /%s changed while it was written: run the build again", path))
 		}
 		return remote(fmt.Errorf("writing the build lease at /%s: %w", path, err))
+	}
+	return nil
+}
+
+// writeWith moves a lease this command already holds: the node first and the
+// day's counters after it, the other way round from a take and for the reason
+// the file's comment gives — the day then holds at least what the lease still
+// counts, so a failure here refuses a later build rather than letting one past
+// a cap.
+func (c *imageCost) writeWith(ctx context.Context, path, etag string, before, after budget.BuildLease) error {
+	if err := c.putLease(ctx, path, etag, after); err != nil {
+		return err
 	}
 	day := after.Day()
 	for _, counter := range []string{budget.PathSpendRepo(day, c.slug), budget.PathSpendGlobal(day)} {
@@ -281,7 +395,7 @@ func (c *imageCost) writeWith(ctx context.Context, path, etag string, before, af
 			if m.delta == 0 {
 				continue
 			}
-			if err := c.addLeaf(ctx, counter+m.leaf, m.delta); err != nil {
+			if err := c.addLeaf(ctx, counter+m.leaf, m.delta, nil); err != nil {
 				return remote(fmt.Errorf("%w\nthe build lease at /%s is written as %s and the day's counters are not, so the day still counts what this build gave back: `fugaro budget show` says what it holds, and the counters of %s are /%s and /%s",
 					err, path, oneLine(after.State), budget.DayDate(day), budget.PathSpendRepo(day, c.slug), budget.PathSpendGlobal(day)))
 			}
@@ -291,11 +405,13 @@ func (c *imageCost) writeWith(ctx context.Context, path, etag string, before, af
 }
 
 // addLeaf moves one day-counter leaf by delta, conditionally: the leaf is read,
-// written with the etag that read carried, and read again when a concurrent
-// writer moved it first, so neither writer's move is lost. A counter is never
-// written as a negative, which is a state the predicate refuses and no release
-// can be right about.
-func (c *imageCost) addLeaf(ctx context.Context, path string, delta budget.Micros) error {
+// guard — when there is one — given its last look at the state, and the leaf
+// written with the etag that read carried; a leaf a concurrent writer moved is
+// read and judged again, so neither writer's move is lost and a cap judged
+// before the write is still true at it. A counter is never written as a
+// negative, which is a state the predicate refuses and no release can be right
+// about.
+func (c *imageCost) addLeaf(ctx context.Context, path string, delta budget.Micros, guard counterGuard) error {
 	for attempt := 1; attempt <= setAttempts; attempt++ {
 		var cur budget.Micros
 		etag, found, err := c.db.GetETag(ctx, path, &cur)
@@ -308,13 +424,18 @@ func (c *imageCost) addLeaf(ctx context.Context, path string, delta budget.Micro
 		if cur+delta < 0 {
 			return fmt.Errorf("/%s holds %s, and this build gives back more than that", path, usdFixed(cur.USD()))
 		}
+		if guard != nil {
+			if err := guard(ctx); err != nil {
+				return err
+			}
+		}
 		if err := c.db.PutIfMatch(ctx, path, etag, cur+delta); err == nil {
 			return nil
 		} else if !errors.Is(err, rtdb.ErrPrecondition) {
 			return fmt.Errorf("writing /%s: %w", path, err)
 		}
-		// Another process moved this counter: read it again and add to what is
-		// there now.
+		// Another process moved this counter: read it again, judge it again and
+		// add to what is there now.
 	}
 	return fmt.Errorf("/%s kept changing under the write (%d attempts)", path, setAttempts)
 }

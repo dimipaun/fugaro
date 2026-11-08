@@ -470,6 +470,106 @@ func TestALeaseFromAClosedDayIsClosedWithoutACounterWrite(t *testing.T) {
 	}
 }
 
+// TestACounterThatCouldNotBeWrittenLeavesNoLease: a take counts the money
+// before it writes the lease node, so a counter the database refuses leaves
+// nothing behind — no lease, and no counter left raised. It is the state the
+// other order fails open on: an open lease whose reservation the day never
+// counted is one a later reclaim gives back out of a counter that never held
+// it, and it is the counter of the day's jobs and its other builds that pays.
+func TestACounterThatCouldNotBeWrittenLeavesNoLease(t *testing.T) {
+	f, c := imageCostFixture(t, fakePricer{book: pricedBook()})
+	// The project's counter is the write that fails, and it fails after the
+	// repository's has already been raised: the half-written take.
+	f.db.Deny(budget.PathSpendGlobal(imageCostDayNo()) + "/counted")
+
+	_, _, err := c.take(context.Background(), "build-1")
+	if err == nil {
+		t.Fatal("a build was leased although its reservation could not be counted")
+	}
+	if got := ExitCode(err); got != ExitRemoteError {
+		t.Errorf("exit code %d, want %d: the database refused the write", got, ExitRemoteError)
+	}
+	if !strings.Contains(err.Error(), "nothing of this build is counted") {
+		t.Errorf("the failure is %q, want it to say that nothing of the build was counted", err)
+	}
+	if got := f.db.Value(budget.PathBuildLease(appSlug, "build-1")); got != nil {
+		t.Errorf("a lease was left behind for a build whose counters could not be written: %v", got)
+	}
+	if got := repoCounter(t, c, "counted"); got != 0 {
+		t.Errorf("the repository counts %d µ$, want the counter this take raised given back", got)
+	}
+	if got := globalCounter(t, c, "counted"); got != 0 {
+		t.Errorf("the project counts %d µ$, want nothing: that write was refused", got)
+	}
+	// And there is nothing for a later command to reclaim: a reclaim pays a
+	// lease's reservation back out of the day, and no lease holds this one.
+	if n, err := c.reclaim(context.Background()); err != nil || n != 0 {
+		t.Errorf("a reclaim closed %d leases (%v), want none", n, err)
+	}
+}
+
+// TestACounterMovedUnderATakeRefusesTheBuild: the cap is judged against a read
+// taken before the counter is written, and this writer's IAM credentials mean
+// no rule re-checks it. A counter another lease raised in between must refuse
+// this build rather than be added to, or two builds racing for the last room
+// under a cap both go through it.
+func TestACounterMovedUnderATakeRefusesTheBuild(t *testing.T) {
+	f, c := imageCostFixture(t, fakePricer{book: pricedBook()})
+	// $4.06 of the repository's $5.00 daily cap is counted, so exactly one
+	// $0.94 build fits and both leases judge themselves against that figure.
+	counted := budget.PathSpendRepo(imageCostDayNo(), appSlug) + "/counted"
+	f.db.Set(budget.PathSpendRepo(imageCostDayNo(), appSlug), map[string]any{"counted": 406 * usd1 / 100})
+
+	// The take is stopped on both of its requests to the counter: the read it
+	// carries into the judgement, and the write. The other lease takes the room
+	// while that write is in flight.
+	read, releaseRead := f.db.HoldNext(counted)
+	write, releaseWrite := f.db.HoldNext(counted)
+	var (
+		lease budget.BuildLease
+		err   error
+	)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		lease, _, err = c.take(context.Background(), "build-1")
+	}()
+	<-read
+	releaseRead()
+	<-write
+	f.db.Set(counted, int64(5*usd1))
+	releaseWrite()
+	<-done
+
+	if err == nil {
+		t.Fatalf("a build took the room another lease had taken: lease %+v", lease)
+	}
+	var over *BuildOverCapError
+	if !errors.As(err, &over) {
+		t.Fatalf("the refusal is %v, want a *BuildOverCapError", err)
+	}
+	if over.Cap != budget.Micros(5*usd1) || over.Scope != budget.ScopeRepo {
+		t.Errorf("the refusal names cap %d in scope %s, want the repository's $5.00", over.Cap, over.Scope)
+	}
+	for _, want := range []string{"$5.00", "$0.94"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+	// Nothing of the refused build is left: the counter is the other lease's
+	// $5.00 and no more, the project's counter was never reached, and no lease
+	// holds the room this build asked for.
+	if got := repoCounter(t, c, "counted"); got != budget.Micros(5*usd1) {
+		t.Errorf("the repository counts %d µ$, want the %d the other lease counted", got, 5*usd1)
+	}
+	if got := globalCounter(t, c, "counted"); got != 0 {
+		t.Errorf("the project counts %d µ$, want nothing: the build was refused at the repository's counter", got)
+	}
+	if got := f.db.Value(budget.PathBuildLease(appSlug, "build-1")); got != nil {
+		t.Errorf("a lease was written for a build that no longer fits: %v", got)
+	}
+}
+
 // repoCounter and globalCounter read the fixture day's counter leaves.
 func repoCounter(t *testing.T, c *imageCost, leaf string) budget.Micros {
 	t.Helper()
