@@ -137,8 +137,8 @@ func TestFollowupInstructionsNameTheContractFile(t *testing.T) {
 	text := decouplingText(t)
 	for _, want := range []string{
 		"fugaro run --pr",
-		"names the contract file",
-		"never pastes its text",
+		"name the contract file",
+		"never paste its text",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the decoupling text never says %q, so a launched dependent is never told its contract changed", want)

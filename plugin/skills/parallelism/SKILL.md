@@ -72,6 +72,12 @@ A plan you write as a file can carry its tasks as a graph the CLI reads. Write i
 
 `fugaro plan graph --json` prints the document back, validated; without `--json` it prints a table of ID, TITLE, VERSION, RUN, NEEDS and FOOTPRINT, every footprint labelled `predicted:`. Name the plan with `--plan` wherever `docs/plans/` holds more than one graph: with none the read takes the one artifact it finds there, and several are a refusal rather than a pick. A refused graph — another schema version, an unknown field, an unknown stream, a missing reason, a malformed glob, a cycle — exits non-zero and prints nothing.
 
+## Break dependencies with a contract first
+
+An edge that carries nothing but an order is one the plan did not have to accept. For each edge A to B, ask **does B need A's interface or A's behaviour?** Where it is the interface, write a small contract task that settles it and let both sides run at once; keep the edge where B needs A's real behaviour or data. The contract and the integration task that removes the stubs are ordinary nodes of the graph, named `C-...` and `I-...`, each edge carrying its reason — this is the "contracts first" and "stubs and fakes" pair of job max, taken edge by edge.
+
+Break an edge only when the weighted path shrinks, and say what the pass adds: one broken edge costs two more tasks, so the task count alone reads as a loss. `reference/decoupling.md` has the per-edge test, the contract task's contents, the integration task, what to do when a contract turns out wrong, the rigor table and what the plan says afterwards. Read the graph with `fugaro plan graph` — the CLI validates it, and never parse the graph yourself.
+
 ## A batch onto one long-lived branch
 
 When the pieces all land on one integration branch whose own `fugaro.yaml` still names main, every run's review pays for that branch's divergence from main, so a batch of fifteen onto a branch far ahead of main reads that distance fifteen times. Merge main into the branch before the batch so it starts from as little divergence as possible, and launch each run with `--ref BRANCH` (the `working` skill's long-lived-branch section; a branch whose file names itself gets its pull requests against the branch, and its reviews read only the change itself).
