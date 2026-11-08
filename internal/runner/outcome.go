@@ -420,28 +420,50 @@ func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
 // repository for it (finalize).
 //
 // atStop is the half of the stop rule that ended the run's rounds, "" for a run
-// that stopped for a reason of its own. It changes the rule the round is read
-// through and nothing else: at the stop the mode's own row answers what it
-// accepts when the rounds are gone (rigor.SplitAtStop, the owner's ruling of
-// 2026-11-08), which is wider than what its rounds tolerated and never
-// narrower. D9's bound is not asked here, and does not need to be: it is about
-// filing an item, and the stop accepts findings into the run record and the
-// pull request's body alone. A run whose repository never opted in resolves the
-// default mode (D19), whose row names no stop, so it is a draft at the stop
-// whatever this branch does; a task that named a mode is a run in that mode
-// (rigor.Request.Mode), and the ruling's answer is the mode's. Only a mode the
-// table does not hold — the zero Mode a hand-built run carries — accepts
-// nothing at all, which is the fail-closed zero value.
+// that stopped for a reason of its own. It is asked last, and only of a round
+// the mode's own rule blocks on: the stop changes what a run *accepts* — the
+// findings its rounds were gone before it could buy a fix for — and it renames
+// nothing the mode already let through. A round below Pro's floor is tolerated
+// at the stop exactly as it is tolerated in a round, and its reason says so.
+//
+// Where the round is one the mode's own rule blocks on, the mode's row answers
+// what it accepts at the stop (rigor.SplitAtStop, the owner's ruling of
+// 2026-11-08), and only for a mode whose row names a stop (rigor.AcceptsAtStop):
+// POC and Startup accept everything but a catastrophic finding, Hotfix keeps its
+// own row, and Pro, Critical and every name the table does not hold keep the
+// draft, which is the fail-closed zero value. D9's bound is not asked here and
+// does not need to be: it is about filing an item, and the stop accepts
+// findings into the run record and the pull request's body alone. A run whose
+// repository never opted in resolves the default mode (D19), whose row names no
+// stop, so it is a draft at the stop whatever this branch does; a task that
+// named a mode is a run in that mode (rigor.Request.Mode), and the ruling's
+// answer is the mode's.
 func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []rigor.Score, atStop string) FindingsPolicy {
-	if atStop != "" && rigor.Known(mode) {
+	// D9 first, and the mode's own round rule with it: a mode may not let a
+	// finding through where the repository has not asked for the mode, so the
+	// split is taken only where both hold — the repository opted in
+	// (rigor.Config.Configured — an opt-in read from the base branch, D25) and
+	// the mode's rigor.Files row tolerates. Every other run gets the zero
+	// policy and decides by the count on the record, exactly as it did before
+	// modes existed — the unconfigured repository, which D19 resolves Pro for
+	// its budget, and POC, whose account of what it left open is its pull
+	// request body's own line (D30). A tolerated finding is recorded in the
+	// run's record (Tolerated, T3.4) and named in the pull request's status
+	// section, which is all the run does with it: nothing is written into the
+	// repository for it (finalize).
+	ordinary := FindingsPolicy{}
+	if cfg.Configured() && rigor.Files(mode).Tolerated {
+		blocking, tolerated := rigor.Split(mode, findings)
+		ordinary = FindingsPolicy{Mode: mode, Round: round, Blocking: blocking, Tolerated: tolerated}
+		if len(blocking) == 0 {
+			return ordinary
+		}
+	}
+	if atStop != "" && rigor.AcceptsAtStop(mode) {
 		blocking, accepted := rigor.SplitAtStop(mode, findings)
 		return FindingsPolicy{Mode: mode, Round: round, Blocking: blocking, Tolerated: accepted, AtStop: atStop}
 	}
-	if !cfg.Configured() || !rigor.Files(mode).Tolerated {
-		return FindingsPolicy{}
-	}
-	blocking, tolerated := rigor.Split(mode, findings)
-	return FindingsPolicy{Mode: mode, Round: round, Blocking: blocking, Tolerated: tolerated}
+	return ordinary
 }
 
 // findingsPolicy is findingsPolicyOf for this run: the last review round the

@@ -345,6 +345,23 @@ func SplitAtStop(m Mode, findings []Score) (blocking, accepted []Score) {
 	return splitWith(m, findings, BlocksAtStop)
 }
 
+// AcceptsAtStop reports whether the mode's row names a stop that accepts
+// findings at all — stopCatastrophic or stopSecurity rather than the zero
+// stopDraft — and so whether the stop rule is a rule this mode wrote. It is the
+// row's own fact and the one thing a caller asks before reading a round through
+// the stop instead of through the mode's ordinary rule: a mode that says
+// nothing about the stop keeps the draft (stopDraft), and a name the table does
+// not hold is not a mode whose stop accepts anything.
+//
+// A mode whose row names a stop need not accept more than its rounds do:
+// Hotfix's stop row is the security gate its ordinary row already applies, so
+// its stop accepts exactly what its rounds do. What the row says is asked, not
+// whether it is wider.
+func AcceptsAtStop(m Mode) bool {
+	row, known := thresholds[m]
+	return known && row.Stop != stopDraft
+}
+
 // splitWith is Split and SplitAtStop's one loop: the group each finding falls in
 // is the predicate's answer, so neither reader can disagree with the rule it
 // names about which findings they are.

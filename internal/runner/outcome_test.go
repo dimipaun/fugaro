@@ -128,6 +128,85 @@ func TestDecideByMode(t *testing.T) {
 	}
 }
 
+// TestDecideAtTheStop is the owner's ruling of 2026-11-08 read through Decide
+// (item 3): a run whose review rounds are spent, or whose clock has reached the
+// configured share of its budget, does not stay a draft because a finding is
+// left — its mode accepts what the last round left, the run is ready and the
+// reason says which half of the stop rule ended the review. The stop widens the
+// mode's own row and nothing else: the gates above the verdict still hold, a
+// mode whose row names no stop keeps the draft it always had, and the findings
+// no mode accepts at its stop are the catastrophic ones.
+func TestDecideAtTheStop(t *testing.T) {
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	fail := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true}
+	dirty := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", Passed: true}
+	// A finding above every axis of Startup's ordinary row and below the
+	// override: risk 9 blocks a round, and at the stop it is exactly what
+	// "merge as-is, follow up the rest" accepts.
+	overStartupsFloor := rigor.Score{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}
+	// Impact 5 with an ordinary class: catastrophic reads the axis, so this
+	// blocks in a round and at the stop alike, and the stop accepts nothing the
+	// override covers.
+	impactFive := rigor.Score{Likelihood: 1, Impact: 5, FixCost: 1, Class: rigor.Correctness}
+	dataLoss := rigor.Score{Likelihood: 1, Impact: 2, FixCost: 1, Class: rigor.DataLoss}
+	cases := []struct {
+		name     string
+		records  []verify.Record
+		cfg      rigor.Config
+		mode     rigor.Mode
+		findings []rigor.Score
+		at       string
+		owner    *runstore.OwnerDecisions
+		ready    bool
+		reason   string
+	}{
+		// Startup's at-the-stop row is stopCatastrophic, so a round it would
+		// have bought another fix round for is accepted once the rounds are
+		// gone — the whole point of the ruling, and of the run merging as-is.
+		{"startup accepts a finding its rounds block on", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, true, "review round 2 left 1 finding, accepted at startup (rounds spent)"},
+		{"startup accepts a whole round at the time threshold", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor, small, tiny}, runstore.StopTimeThreshold, nil, true, "review round 2 left 3 findings, accepted at startup (time threshold)"},
+		{"startup blocks impact 5 at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{impactFive}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		// A round the mode's own rule lets through is the round's own answer and
+		// not the stop's, whatever the clock or the rounds did: the stop renames
+		// nothing the mode already decided, and its reason is the tolerance's.
+		{"a round startup tolerates reads as a tolerance at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{tiny}, runstore.StopRoundsSpent, nil, true, "review round 2 left 1 finding, tolerated at startup"},
+		{"a round pro tolerates below its floor reads as a tolerance at the stop", []verify.Record{pass}, optedIn, rigor.Pro, []rigor.Score{tiny}, runstore.StopTimeThreshold, nil, true, "review round 2 left 1 finding, tolerated at pro"},
+		// The stop is the mode's, and a task that named a mode is a run in that
+		// mode: D9's opt-in is about filing an item, and the stop files none.
+		{"a task-named startup accepts without the repository opting in", []verify.Record{pass}, rigor.Config{}, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, true, "review round 2 left 1 finding, accepted at startup (rounds spent)"},
+		{"poc accepts at its stop too", []verify.Record{pass}, optedIn, rigor.POC, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, true, "review round 2 left 1 finding, accepted at poc (rounds spent)"},
+
+		// The catastrophic finding is the one no stop row accepts, whichever
+		// half of the rule ended the run: the reason is the count's own, and
+		// the pull request stays a draft.
+		{"startup blocks the severity override at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{catastrophic}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		{"startup blocks a data loss class at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{dataLoss}, runstore.StopTimeThreshold, nil, false, "review round 2 still has 1 finding"},
+		{"startup blocks a finding it cannot read at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{unscored}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		{"a catastrophic finding blocks beside an accepted one", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor, catastrophic}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 2 findings"},
+		{"hotfix blocks a security class at the stop", []verify.Record{pass}, optedIn, rigor.Hotfix, []rigor.Score{catastrophic}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+
+		// Pro and Critical name no stop row, so the draft stopDraft is their
+		// answer: they stop and finalize, and the reason is the count's own.
+		{"pro keeps its draft at the stop", []verify.Record{pass}, optedIn, rigor.Pro, []rigor.Score{small}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		{"critical keeps its draft at the stop", []verify.Record{pass}, optedIn, rigor.Critical, []rigor.Score{small}, runstore.StopTimeThreshold, nil, false, "review round 2 still has 1 finding"},
+		{"a mode the table does not know keeps its draft", []verify.Record{pass}, optedIn, rigor.Mode("wild"), []rigor.Score{tiny}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+
+		// The gates above the verdict outrank the stop, exactly as they outrank
+		// the mode's ordinary tolerance: a run that stopped is not a run that
+		// verified, and a question only the owner can answer is not a finding.
+		{"a failing test outranks the stop", []verify.Record{fail}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, false, "tests failing on the final commit"},
+		{"no clean test outranks the stop", []verify.Record{dirty}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, false, ReasonNoVerifiedTest},
+		{"an owner decision outranks the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, runstore.NewOwnerDecisions([]runstore.OwnerDecision{{Summary: "clear the licence with legal"}}), false, ownerWaitingReason(1)},
+	}
+	for _, tc := range cases {
+		last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: len(tc.findings)}
+		ready, reason, _ := Decide(tc.records, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, tc.findings, tc.at), tc.owner)
+		if ready != tc.ready || reason != tc.reason {
+			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
+		}
+	}
+}
+
 // TestDecideUnscoredFindingBlocksEveryMode is D4: a reviewer that stops
 // emitting scores must not turn a strict mode into a lenient one, so a
 // finding the table cannot read blocks wherever it appears — including beside
