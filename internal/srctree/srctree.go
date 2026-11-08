@@ -1027,14 +1027,15 @@ func gitArgs(args ...string) []string {
 // It is the same rule as gitArgs, one step further out. gitArgs refuses the
 // commands a repository the call meets may name; the environment is where the
 // repository itself can be named. git reads GIT_DIR, GIT_WORK_TREE,
-// GIT_INDEX_FILE, GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY and GIT_NAMESPACE ahead
-// of the directory a call runs in, so one inherited from the shell — a git
-// hook or alias exports GIT_CONFIG_PARAMETERS to everything it starts, and a
-// tool can leave a GIT_DIR behind — sends the "git init" and the fetch after
-// it into a repository of the person's own, detaches its HEAD and overwrites
-// its index. The GIT_CONFIG_COUNT family and GIT_CONFIG_PARAMETERS inject
-// values the way "-c" does, so a wrapper's leftover url.*.insteadOf would have
-// the fetch read the source from somewhere the call never named.
+// GIT_INDEX_FILE and GIT_COMMON_DIR ahead of the directory a call runs in, and
+// GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES and GIT_NAMESPACE
+// change what it finds there, so one inherited from the shell — a git hook or
+// alias exports GIT_CONFIG_PARAMETERS to everything it starts, and a tool can
+// leave a GIT_DIR behind — sends the "git init" and the fetch after it into a
+// repository of the person's own, detaches its HEAD and overwrites its index.
+// The GIT_CONFIG_COUNT family and GIT_CONFIG_PARAMETERS inject values the way
+// "-c" does, so a wrapper's leftover url.*.insteadOf would have the fetch read
+// the source from somewhere the call never named.
 //
 // GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM and the deprecated
 // GIT_CONFIG stay: they name the configuration files the person chose for this
