@@ -18,28 +18,22 @@ import (
 // liveCheckScripts are the owner-run live checks' scripts and their tests.
 // Each test drives its script against fake tools on PATH -- a fake `claude`
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
-// Check 91, fake `gcloud`, `git`, `curl` and `fugaro` for Check 190, fake
-// `gcloud` and `fugaro` for Check 146, and a fake `gcloud` that evaluates the
-// conditions of Check 340's own IAM bindings for Check 340 -- or, for Check
-// 145, against a fake Bitbucket Cloud on a loopback port, so no network, no
-// cloud project and no credential is touched here, and no live step of any of
-// them is run by an agent. Check 130's fake is a fake `curl` alone, answering
-// the three anonymous GETs the check makes about a repository; its fake
-// `gcloud` and `fugaro` log any call and fail, so the test can say the check
-// never reaches a cloud tool. Check 361's fakes are a fake `gcloud` that mints a
-// token sentinel and a fake `curl` that answers the check's one read from files
-// the test writes and records the request -- the URL, the headers, and the
-// Authorization header of the `--config` file the check handed over -- so a case
-// can say the token travelled through a 0600 file and never onto a command line
-// or into the block.
-// `gcloud` and `fugaro` for Checks 111 and 146, and a fake `gcloud` that
-// evaluates the conditions of Check 340's own IAM bindings for Check 340 --
-// or, for Check 145, against a fake Bitbucket Cloud on a loopback port, so no
+// Check 91, fake `gcloud` and `fugaro` for Checks 111 and 146, fake `gcloud`,
+// `git`, `curl` and `fugaro` for Check 190, and a fake `gcloud` that evaluates
+// the conditions of Check 340's own IAM bindings for Check 340 -- or, for
+// Checks 145 and 180, against a fake Bitbucket Cloud on a loopback port, so no
 // network, no cloud project and no credential is touched here, and no live
 // step of any of them is run by an agent. Check 130's fake is a fake `curl`
 // alone, answering the three anonymous GETs the check makes about a
 // repository; its fake `gcloud` and `fugaro` log any call and fail, so the
-// test can say the check never reaches a cloud tool.
+// test can say the check never reaches a cloud tool. Check 300's fakes are a
+// fake `gcloud`, a fake `fugaro` and a fake RTDB behind a fake `curl`, and
+// Check 361's are a fake `gcloud` that mints a token sentinel and a fake
+// `curl` that answers the check's one read from files the test writes and
+// records the request -- the URL, the headers, and the Authorization header
+// of the `--config` file the check handed over -- so a case can say the token
+// travelled through a 0600 file and never onto a command line or into the
+// block.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -50,7 +44,9 @@ var liveCheckScripts = []struct {
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
+	{"check180.sh", "check180_test.sh"},
 	{"check190.sh", "check190_test.sh"},
+	{"check300.sh", "check300_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check361.sh", "check361_test.sh"},
 }

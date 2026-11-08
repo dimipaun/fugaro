@@ -1167,12 +1167,28 @@ func (s *Spec) Validate() error {
 	// account name the runner refuses writes a task the run then dies on
 	// after it was paid for, so the two refuse the same names in the same
 	// words (config.ReservedClaudeAccountName).
+	//
+	// The account axis's one value that is not an account at all
+	// (config.AnthropicKeyAccount, the project's own Anthropic API key) is
+	// admitted here as its own case rather than by loosening the shape rule,
+	// which is what the sentinel's spelling exists for: it is outside
+	// ClaudeAccountNameRE by construction. A review launch names it as the
+	// run's own credential (internal/cli's claudeAccountFor, D1417), so the
+	// spec a review is stored as carries it, and the runner resolves the
+	// class's model path from exactly that field (internal/runner's
+	// checkReviewClassModelPath). It is written where an account is
+	// REFERENCED and never defined (config.ValidClaudeAccountRef,
+	// config.ValidateClaudeAccounts), which is why this is the same
+	// reference the launcher already made.
 	switch {
 	case s.OAuthToken == "":
 	case s.OAuthToken == config.DefaultClaudeAccount:
 		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
 	case config.ReservedClaudeAccountName(s.OAuthToken):
 		bad("task spec: oauth_token: %s", config.ReservedClaudeAccountNameMessage)
+	case s.OAuthToken == config.AnthropicKeyAccount:
+		// Valid, and deliberately before the shape rule: the sentinel does not
+		// match it, and it is no account name to judge as one.
 	case len(s.OAuthToken) > config.MaxClaudeAccountNameLen:
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):

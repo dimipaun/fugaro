@@ -8,6 +8,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // The tests in this file are the fix round of 2026-10-19 on checks 81, 82 and
@@ -200,6 +203,71 @@ func TestDocsCheck82PlanCitesTheConstructsThatPlanTheActLines(t *testing.T) {
 	}
 	if m := regexp.MustCompile("`:[0-9]+`").FindString(section); m != "" {
 		t.Errorf("## Check 82: cites %s, a bare line number into a source file: the line a construct sits on moves with every edit above it, and the citation this replaces was wrong about the construct as well as fragile about the position -- cite the symbol or the construct, which this test holds to the file", m)
+	}
+}
+
+// TestDocsCheck82ActLinesAreEveryMarkerThePlanPlans holds check 82 step 3's
+// act-line block to the plan that prints it: the block lists the database
+// step's act lines in the order `DB.Plan` plans them, and names the last of
+// them as the step's last write. The review of PR #1945 found it still listing
+// two -- the rules deploy and the rules generation marker, that marker as the
+// last write -- after the plan had grown the credentials marker, and in this
+// release the orchestrator marker behind it, so the owner reading the plan was
+// told to expect a plan the binary does not print and to read as last a write
+// that is no longer last.
+//
+// The markers, their order and the last-write sentence are read out of
+// internal/infra/firebasedb.go and the node paths out of the packages that own
+// them, so a fourth marker, a reordering or a rename fails here until the check
+// is written with it.
+func TestDocsCheck82ActLinesAreEveryMarkerThePlanPlans(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	section := docSection(t, path, doc, "## Check 82:")
+	src := readSrc(t, "../infra/firebasedb.go")
+
+	markers := []struct{ construct, node string }{
+		{"d.put(projectpolicy.PathRulesMarker(),", projectpolicy.PathRulesMarker()},
+		{"d.put(rules.PathCredsRulesMarker(),", rules.PathCredsRulesMarker()},
+		{"d.put(rules.PathOrchestratorRulesMarker(),", rules.PathOrchestratorRulesMarker()},
+	}
+	// `deployDatabase` prints the plan's actions in slice order, so the offset
+	// of each `d.put` call in the file is the position of its act line.
+	srcAt, docAt := -1, -1
+	for _, m := range markers {
+		at := strings.Index(src, m.construct)
+		if at < 0 {
+			t.Errorf("internal/infra/firebasedb.go no longer plans %s (`%s`), which check 82 step 3 lists among the step's act lines", m.node, m.construct)
+		} else {
+			if at < srcAt {
+				t.Errorf("DB.Plan plans %s at offset %d, above the marker it plans before it: check 82 step 3 states the order the plan prints its lines in, so a reordering moves both", m.node, at)
+			}
+			srcAt = at
+		}
+		if !strings.Contains(section, m.node) {
+			t.Errorf("## Check 82: does not name %s, one of the nodes the database step's act lines are about", m.node)
+		}
+		at = strings.Index(section, m.construct)
+		if at < 0 {
+			t.Errorf("## Check 82: does not name the construct `%s`, which plans %s: the check tells the owner which lines the plan prints and in which order, and a marker it does not name is one the owner reads as a plan that is not this binary's", m.construct, m.node)
+			continue
+		}
+		if at < docAt {
+			t.Errorf("## Check 82: names `%s` above the marker the plan plans before it: the parenthesis lists them in the plan's own order", m.construct)
+		}
+		docAt = at
+	}
+
+	// The last write, read off the last marker's own node path: this release
+	// made the orchestrator's the last of the three, and the sentence the owner
+	// reads the plan against has to say so.
+	last := markers[len(markers)-1].node
+	family := strings.TrimSuffix(strings.TrimPrefix(last, "config/limits/"), "Rules")
+	if want := fmt.Sprintf("The %s marker is the step's last write", family); !strings.Contains(section, want) {
+		t.Errorf("## Check 82: does not say %q: %s is the last marker `DB.Plan` plans, and the check's whole point is that the owner reads the plan's last write as the statement about the document underneath it -- a check that names an earlier marker as the last write is the defect this test exists for", want, last)
+	}
+	if strings.Contains(section, "The marker is the step's last write") {
+		t.Errorf("## Check 82: still says \"The marker is the step's last write\" with a single marker: `DB.Plan` plans three, and the sentence would have the owner read a plan whose last line is not the one it names as a correct deploy")
 	}
 }
 
@@ -1815,15 +1883,21 @@ func TestDocsCheck81StatedCountsMatchTheirBlocks(t *testing.T) {
 }
 
 // TestDocsGeneratorSizeAndMailboxCountAreTheGoldens: check 81 step 8 and check
-// 82 step 5 both state the generated document's size and check 82 states the
-// mailbox subtree's count (1). The three `grep -o` counts of check 81 step 8
-// are held to the golden document; these two numbers, which the owner pastes
-// back as the deployment's fingerprint, were not. Both are read out of the
-// file the checks name -- `rules.Generate()`'s own document, which
+// 82 step 5 both state the generated document's size, and check 82 states three
+// of the counts its own step prints -- the mailbox subtree's, D166's device
+// conjunct's and D165's pairing subtree's. The three `grep -o` counts of check
+// 81 step 8 are held to the golden document; these numbers, which the owner
+// pastes back as the deployment's fingerprint, were not, and the orchestrator
+// release moved one of them: `/orchestrator` carries the `USER` predicate too,
+// so the device conjunct went from 13 to 14 while check 82's FACT went on
+// saying 13 -- the check printing `devices: 14` in the step above a FACT that
+// calls 13 the pass value, which is a correct deployment read as a fingerprint
+// mismatch. Every number here is read out of the file the checks name --
+// `rules.Generate()`'s own document, which
 // `internal/budget/rules/testdata/rules.golden.json` holds byte for byte -- so
-// a template change moves them together. Neither number is written down here:
-// the size was 42687 bytes under the generation-2 template, and what the test
-// uses now is `len(golden)`.
+// a template change moves them together. None of them is written down here: the
+// size was 42687 bytes under the generation-2 template, and what the test uses
+// now is `len(golden)`.
 func TestDocsGeneratorSizeAndMailboxCountAreTheGoldens(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -1841,6 +1915,8 @@ func TestDocsGeneratorSizeAndMailboxCountAreTheGoldens(t *testing.T) {
 		{"## Check 81:", `generator's own \*\*(\d+)\*\* bytes`, "the generated document's size", len(golden)},
 		{"## Check 82:", `\*\*(\d+) is the generator's own size\*\*`, "the generated document's size", len(golden)},
 		{"## Check 82:", "its `mailbox` count \\(\\*\\*(\\d+)\\*\\*", "the mailbox subtree's count", strings.Count(string(golden), "mailbox")},
+		{"## Check 82:", "its `config/admin/devices` count \\(\\*\\*(\\d+)\\*\\*", "D166's device conjunct, one per expansion of the `USER` predicate", strings.Count(string(golden), "config/admin/devices")},
+		{"## Check 82:", "its `pairing` count \\(\\*\\*(\\d+)\\*\\*", "D165's pairing subtree", strings.Count(string(golden), `"pairing"`)},
 	} {
 		section := docSection(t, path, doc, c.heading)
 		m := regexp.MustCompile(c.re).FindStringSubmatch(section)

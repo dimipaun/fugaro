@@ -268,13 +268,13 @@ func readAllowList(r *initRig) bool {
 	return false
 }
 
-// TestManagedApplyRunsPastAnOpenGate (M5): with a valid version-2 marker the
-// command goes on past the gate, over the fakes, to the steps the gate guards:
-// the owner's delete list is read, the deployer account is assumed through the
-// impersonation API, and terraform is launched (the fake's init). The run need
-// not finish — what is pinned is that an open gate is not a dead end, which the
-// refusal table above (none of these reached) cannot show on its own.
-func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
+// managedOpenGateRig is the rig a managed apply that gets PAST the gate runs
+// on: a valid version-2 marker (so every refusal above is behind it), a root
+// with one resource, the deployer account the creating path would have made
+// and the operator's token-creator grant on it, and the impersonation API
+// faked. It returns the rig, the root, and every path that API was asked for.
+func managedOpenGateRig(t *testing.T) (*initRig, string, func() []string) {
+	t.Helper()
 	noAgentSession(t)
 	r, root := managedBudgetRig(t)
 	r.gcs.Put(initRunsBucket, "fugaro/managed.json",
@@ -317,17 +317,30 @@ func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
 	oldEndpoint := impersonationEndpoint
 	impersonationEndpoint = srv.URL
 	t.Cleanup(func() { impersonationEndpoint = oldEndpoint })
+	return r, root, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(mints)
+	}
+}
+
+// TestManagedApplyRunsPastAnOpenGate (M5): with a valid version-2 marker the
+// command goes on past the gate, over the fakes, to the steps the gate guards:
+// the owner's delete list is read, the deployer account is assumed through the
+// impersonation API, and terraform is launched (the fake's init). The run need
+// not finish — what is pinned is that an open gate is not a dead end, which the
+// refusal table above (none of these reached) cannot show on its own.
+func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
+	r, root, mints := managedOpenGateRig(t)
 
 	_, _, _ = execute(t, "managed", "apply", root)
 
 	if !readAllowList(r) {
 		t.Error("an open gate did not go on to read the owner's delete list")
 	}
-	mu.Lock()
-	minted := slices.ContainsFunc(mints, func(p string) bool { return strings.HasSuffix(p, ":generateAccessToken") })
-	mu.Unlock()
-	if !minted {
-		t.Errorf("an open gate did not go on to assume the deployer (impersonation calls: %v)", mints)
+	calls := mints()
+	if !slices.ContainsFunc(calls, func(p string) bool { return strings.HasSuffix(p, ":generateAccessToken") }) {
+		t.Errorf("an open gate did not go on to assume the deployer (impersonation calls: %v)", calls)
 	}
 	var verbs []string
 	initWithCred := false
@@ -859,7 +872,9 @@ func TestManagedTerraformRunsWithTheDeployerCredentialAlone(t *testing.T) {
 	cmd := newManagedApplyCmd()
 	cmd.SetErr(&strings.Builder{})
 	bin := filepath.Join(r.dir, "bin", "terraform")
-	tfr, cleanup, err := managedTerraform(cmd, lc, wd, bin, cache, testCredential{account: account, url: u})
+	// No reporter: this is the build and its environment, and a run with none
+	// writes to the writer it was given and draws nothing (through).
+	tfr, cleanup, err := managedTerraform(cmd, lc, wd, bin, cache, testCredential{account: account, url: u}, nil)
 	if err != nil {
 		t.Fatalf("building terraform for the deployer: %v", err)
 	}
@@ -903,7 +918,7 @@ func TestManagedTerraformRunsWithTheDeployerCredentialAlone(t *testing.T) {
 		{"a terraform that does not start", filepath.Join(t.TempDir(), "absent"), testCredential{account: account, url: u}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, cleanup, err := managedTerraform(cmd, lc, wd, tc.bin, cache, tc.cred); err == nil {
+			if _, cleanup, err := managedTerraform(cmd, lc, wd, tc.bin, cache, tc.cred, nil); err == nil {
 				cleanup()
 				t.Fatal("accepted")
 			}

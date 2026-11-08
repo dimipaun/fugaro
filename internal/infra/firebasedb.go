@@ -216,6 +216,26 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	if err := rules.CheckWorkspaceRulesMarker(wsFound, wsGen); err != nil {
 		return nil, nil, userErr("%v; the door for this database is 'fugaro update --firebase-project %s', run with the newer binary", err, d.gcpProject)
 	}
+	// The orchestrator subtree's own generation is read and refused the same
+	// way (stateless orchestrator plan, task O2). It is a marker of its own for
+	// the credentials children's reason: the change that adds the subtree does
+	// not bump RulesVersion — a bump would drop every published policy on an
+	// installation whose owner has not redeployed the rules yet — so the
+	// document generation cannot answer "does this database carry the
+	// orchestrator subtree". A marker above this binary's needs a future
+	// release's write: it says this database runs under a document this binary
+	// does not generate, and deploying this binary's older one would take that
+	// release's rules — whatever it changed — out from under a daemon whose
+	// gate reads this same marker, with nothing naming the rewind.
+	var orchGen int
+	orchEtag, orchFound, err := d.c.GetETag(ctx, rules.PathOrchestratorRulesMarker(), &orchGen)
+	if err != nil {
+		return nil, nil, dbErr("reading "+rules.PathOrchestratorRulesMarker(), err)
+	}
+	if orchFound && orchGen > rules.OrchestratorRulesVersion {
+		return nil, nil, userErr("the deployed security rules carry orchestrator generation %d (%s = %d) and this Fugaro's are generation %d: the orchestrator subtree this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary",
+			orchGen, rules.PathOrchestratorRulesMarker(), orchGen, rules.OrchestratorRulesVersion, d.gcpProject, rules.OrchestratorRulesVersion, d.gcpProject)
+	}
 	d.acts = nil
 	var warnings []string
 	mark := dbMark{By: markBy, Project: d.project, GCPProject: d.gcpProject, Version: markVersion}
@@ -333,6 +353,18 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	if !wsFound || wsGen != rules.WorkspaceRulesVersion {
 		d.put(rules.PathWorkspaceRulesMarker(), wsEtag, rules.WorkspaceRulesVersion,
 			fmt.Sprintf("records the workspace rules generation (%s = %d)", rules.PathWorkspaceRulesMarker(), rules.WorkspaceRulesVersion))
+	}
+	// The orchestrator subtree's generation, written beside them and for the
+	// same reason, with the same two cases (stateless orchestrator plan, task
+	// O2): after the deploy above, and on the no-deploy path when it is absent —
+	// where the deployed rules are byte-for-byte the generated ones, so the
+	// subtree this marker names is the subtree the database runs under. The read
+	// at the top of this function is where a marker above this binary's
+	// OrchestratorRulesVersion refused the plan; here only the write is left, and
+	// the etag is that read, so a marker changed since is a 412 at Apply.
+	if !orchFound || orchGen != rules.OrchestratorRulesVersion {
+		d.put(rules.PathOrchestratorRulesMarker(), orchEtag, rules.OrchestratorRulesVersion,
+			fmt.Sprintf("records the orchestrator rules generation (%s = %d)", rules.PathOrchestratorRulesMarker(), rules.OrchestratorRulesVersion))
 	}
 	return d.acts, warnings, nil
 }

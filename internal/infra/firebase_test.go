@@ -490,12 +490,14 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 		paths = append(paths, a.Path)
 	}
 	// The rules are last of the database's own writes; the actions after them
-	// are the three generation markers — this binary's rules, the credentials
-	// children and the workspace family — none of which must be written unless
-	// the deploy succeeded (TestRulesMarkerOnlyAfterTheRulesDeploy in
-	// internal/cli drives the failing case through init).
+	// are the generation markers, one per family — this binary's rules, the
+	// credentials children, the workspace family and the orchestrator subtree —
+	// none of which may be written unless the deploy succeeded
+	// (TestRulesMarkerOnlyAfterTheRulesDeploy in internal/cli drives the failing
+	// case through init).
 	wantPaths := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules",
-		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker(), rules.PathWorkspaceRulesMarker()}
+		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker(), rules.PathWorkspaceRulesMarker(),
+		rules.PathOrchestratorRulesMarker()}
 	if !slices.Equal(paths, wantPaths) {
 		t.Fatalf("actions = %v, want %v (the rules last, their marker after them)", paths, wantPaths)
 	}
@@ -511,9 +513,12 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	if got := f.Value(rules.PathWorkspaceRulesMarker()); got != json.Number(strconv.Itoa(rules.WorkspaceRulesVersion)) {
 		t.Errorf("%s = %#v, want %d (WorkspaceRulesVersion): the workspace family's generation", rules.PathWorkspaceRulesMarker(), got, rules.WorkspaceRulesVersion)
 	}
+	if got := f.Value(rules.PathOrchestratorRulesMarker()); got != json.Number(strconv.Itoa(rules.OrchestratorRulesVersion)) {
+		t.Errorf("%s = %#v, want %d (OrchestratorRulesVersion): the orchestrator subtree's generation", rules.PathOrchestratorRulesMarker(), got, rules.OrchestratorRulesVersion)
+	}
 	lim, _ := f.Value(budget.PathLimits).(map[string]any)
-	if len(lim) != 4 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the three markers beside maxReserveMicros", lim)
+	if len(lim) != 5 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the four markers beside maxReserveMicros", lim)
 	}
 	want, _ := rules.Generate()
 	if !SameJSON(f.Rules(), want) {

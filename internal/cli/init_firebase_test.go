@@ -511,16 +511,18 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	}
 	// The rules go in last of the database's own writes, over a database that
 	// is already marked and configured: the mark is written before them. The
-	// three writes after them are the generation markers, which exist to say
+	// four writes after them are the generation markers, which exist to say
 	// the deploy above succeeded and must not be there otherwise
 	// (TestRulesMarkerOnlyAfterTheRulesDeploy): the document's generation and,
 	// beside it, the credentials children's own (credentials-service plan, task
-	// C1.3) and the workspace family's (workspaces plan, task W3), which the
-	// same deploy carries because they ride on the same document.
-	if len(puts) < 4 || puts[0] != "/fugaro/mark" || puts[len(puts)-4] != "/.settings/rules" ||
-		puts[len(puts)-3] != "/"+projectpolicy.PathRulesMarker() ||
-		puts[len(puts)-2] != "/"+rules.PathCredsRulesMarker() ||
-		puts[len(puts)-1] != "/"+rules.PathWorkspaceRulesMarker() {
+	// C1.3), the workspace family's (workspaces plan, task W3) and the
+	// orchestrator subtree's (stateless orchestrator plan, O2), which the same
+	// deploy carries because they ride on the same document.
+	if len(puts) < 5 || puts[0] != "/fugaro/mark" || puts[len(puts)-5] != "/.settings/rules" ||
+		puts[len(puts)-4] != "/"+projectpolicy.PathRulesMarker() ||
+		puts[len(puts)-3] != "/"+rules.PathCredsRulesMarker() ||
+		puts[len(puts)-2] != "/"+rules.PathWorkspaceRulesMarker() ||
+		puts[len(puts)-1] != "/"+rules.PathOrchestratorRulesMarker() {
 		t.Errorf("PUT order = %v", puts)
 	}
 }
@@ -534,16 +536,21 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 // marker at all.
 //
 // The credentials children's marker (`config/limits/credsRules`, plan task
-// C1.3) and the workspace family's (`config/limits/workspaceRules`, workspaces
-// plan task W3) are written by the same deploy and for the same reason, so they
-// are pinned here too: absent after a refused deploy, at this binary's
-// generation after one that succeeded, and beside — never on top of — the
-// largest lease. A Realtime Database carries ONE rules document, so the three
-// generations ride on it together and each counts its own changes.
+// C1.3), the workspace family's (`config/limits/workspaceRules`, workspaces
+// plan task W3) and the orchestrator subtree's (`config/limits/orchestratorRules`,
+// stateless orchestrator plan, O2) are written by the same deploy and for the
+// same reason, so they are pinned here too: absent after a refused deploy, at
+// this binary's generation after one that succeeded, and beside — never on top
+// of — the largest lease. A Realtime Database carries ONE rules document, so
+// the four generations ride on it together and each counts its own changes. The
+// daemon's gate reads the orchestrator one before it writes any state, so a
+// marker left behind by a deploy that did not happen is a daemon writing into a
+// subtree the deployed rules do not carry.
 func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	marker := func(r *fbRig) any { return r.db.Value(projectpolicy.PathRulesMarker()) }
 	credsMarker := func(r *fbRig) any { return r.db.Value(rules.PathCredsRulesMarker()) }
 	wsMarker := func(r *fbRig) any { return r.db.Value(rules.PathWorkspaceRulesMarker()) }
+	orchMarker := func(r *fbRig) any { return r.db.Value(rules.PathOrchestratorRulesMarker()) }
 
 	// A refused rules deploy: init fails and leaves no marker.
 	refused := newFBRig(t)
@@ -562,12 +569,19 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	if got := credsMarker(refused); got != nil {
 		t.Errorf("%s = %#v after a refused rules deploy, want it absent: a cascade launch would pass the marker gate on rules that do not carry the children", rules.PathCredsRulesMarker(), got)
 	}
-	// The workspace family's marker is the same claim about the family's third
+	// The workspace family's marker is the same claim about the family's own
 	// generation (workspaces plan, task W3): it says the database runs under the
 	// record, the token hashes, the meter and the rollup, so it must not survive
 	// a deploy that did not happen either.
 	if got := wsMarker(refused); got != nil {
 		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the database would be read as running under a workspace family these rules do not carry", rules.PathWorkspaceRulesMarker(), got)
+	}
+	// The orchestrator subtree's marker is the same claim about its generation
+	// (stateless orchestrator plan, O2): the daemon reads it before it writes any
+	// state, so a marker left behind by a deploy that did not happen is a daemon
+	// writing into a subtree the deployed rules do not carry.
+	if got := orchMarker(refused); got != nil {
+		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the daemon's gate would pass on rules that carry no orchestrator subtree", rules.PathOrchestratorRulesMarker(), got)
 	}
 	if n := refused.db.RulePuts(); n != 0 {
 		t.Errorf("rules deployed %d times, want 0", n)
@@ -594,10 +608,14 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	if !ok || wsNum.String() != strconv.Itoa(rules.WorkspaceRulesVersion) {
 		t.Errorf("%s = %#v, want %d (WorkspaceRulesVersion)", rules.PathWorkspaceRulesMarker(), wsMarker(r), rules.WorkspaceRulesVersion)
 	}
-	// All three sit beside the largest lease, not on top of it.
+	orchNum, ok := orchMarker(r).(json.Number)
+	if !ok || orchNum.String() != strconv.Itoa(rules.OrchestratorRulesVersion) {
+		t.Errorf("%s = %#v, want %d (OrchestratorRulesVersion)", rules.PathOrchestratorRulesMarker(), orchMarker(r), rules.OrchestratorRulesVersion)
+	}
+	// All four sit beside the largest lease, not on top of it.
 	lim, _ := r.db.Value("config/limits").(map[string]any)
-	if len(lim) != 4 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the three markers beside maxReserveMicros", lim)
+	if len(lim) != 5 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the four markers beside maxReserveMicros", lim)
 	}
 }
 
