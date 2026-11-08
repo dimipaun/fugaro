@@ -5,7 +5,8 @@ merged on `main`; M5 is built except the paired device M-a asks for, which is M5
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
 plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 and M9 are not started; this folder approves no task.** The design is
+half and not started; M8 is built except the wiring that would serve its four read tools, which is
+the task M5b gates; M9 is not started; this folder approves no task.** The design is
 [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
@@ -164,7 +165,9 @@ public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.t
 `:527`) — **M5 is built apart from the paired device M-a asks for, which is M5b below and is not
 built, M7 is built apart from the reading of the installation's published state its lists come from,
 which no task below carries, M10 is built apart from the store's own bucket and its one grant, which
-are M4's store half below and are not started, and M8 and M9 are not started**. **What each built task
+are M4's store half below and are not started, **M8 is built apart from the wiring that would serve
+its four read tools**, which is the wiring task M5b gates and no task below carries, **and M9 is not
+started**. **What each built task
 still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
@@ -928,6 +931,17 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   a log line, an echoed environment, a command it ran. The front door serves **the progress record
   redacted through `internal/safetext`** (`internal/safetext/safetext.go:17`) and **never the raw
   file**: `TestLogsAreRedactedAndTheRawTranscriptIsNeverServed`.
+- **What this task leaves unserved, and it is the wiring's, not M8's.** The four tools are registered
+  on M7's registry and **no binary registers them**: nothing outside this package's own tests calls
+  `RegisterReadTools` or constructs `NewProjectRuns`, so the read reach this task adds is reach no
+  process has while the door is dormant (D936), and `TestNoBinaryLinksTheFrontDoorYet` still holds. **The task
+  that mounts this package on a binary — the one M5b gates, which owes M7's reading of the published
+  state and the two bounds the open registration endpoint is accepted under — owes this wiring
+  beside them**: it is where the project's own repository slugs are read, from the
+  `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:491`, "the repositories the front door
+  may answer about"), and where a token's own repository filter is applied on top of that list
+  rather than instead of it. spec.md §11 carries it as an open item until the owner assigns it.
 
 ### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling — **DEFERRED (D936)**
 **Out of the first slice (D936).** The first slice is **the authorization server plus the read
