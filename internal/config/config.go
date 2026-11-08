@@ -16,6 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -67,6 +68,17 @@ type Config struct {
 	// pointer with no json name would write a null key into every file
 	// that writes none, moving the hash of a file that did not change.
 	Rigor *Rigor `yaml:"rigor,omitempty" json:"rigor,omitempty"`
+	// Security is what this repository itself calls security-sensitive
+	// (docs/security-classification, D1500, D1501): the rows a run matches the
+	// paths it changed against to decide whether the change reaches the
+	// adversarial review level. The block is optional and additive — a run's
+	// list is the engine's floor, then the project layer's rows, then these,
+	// and a repository can only ever say that more is sensitive, never less
+	// (D1506). Like Rigor the pointer is what keeps an absent block out of the
+	// resolved config's hash: SHA256 marshals this struct (resolve.go), and a
+	// pointer with no json name would write a null key into every file that
+	// writes none, moving the hash of a file that did not change.
+	Security *Security `yaml:"security,omitempty" json:"security,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -131,6 +143,23 @@ type Rigor struct {
 	// both in effect, never one replacing the other (the merge rule §4
 	// otherwise gives a list), which is RepoRigor's reason to exist.
 	Areas []rigor.Area `yaml:"areas,omitempty"`
+}
+
+// Security is fugaro.yaml's security: block (D1500): this repository's own
+// list of named patterns. It is one block whose list is security.patterns and
+// not the key being the list itself, because the same block carries one
+// non-pattern member in the project layer — always_level_3 (D1517) — and a
+// repository's block and a project's have to be the same shape for a reader to
+// move a row from one to the other.
+type Security struct {
+	// Patterns are this layer's rows: a name, a doublestar glob relative to
+	// the repository root, and the category the paths it matches are labelled
+	// with. Each row is validated by sensitivity.Pattern.Validate, in one
+	// place and at load (D1502, F21) — so a glob the matcher cannot read is a
+	// configuration error rather than a rule that silently never fires, and
+	// `*` or `**` is refused, because "everything is sensitive" is the
+	// project's always_level_3 setting and not a pattern (D1503).
+	Patterns []sensitivity.Pattern `yaml:"patterns,omitempty"`
 }
 
 // RigorConfig is the rigor configuration a resolved config stands for: the
