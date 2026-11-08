@@ -9,9 +9,16 @@ the API itself by the owner's probe and dated where it appears (§8), or marked 
 **The two facts this spike could not read for want of a credential were verified by the owner's own
 probe on 2026-11-08** (§1.4, §1.5, and the record in §8): their OAuth login, `X-Goog-User-Project` naming
 their own installation project, **no billing role and no API key**, read-only — the two `curl` calls the
-spike asked for, both answered. The conclusion those two facts decide — **a public list price needs no
-IAM grant in `deploy/terraform`** — is therefore verified too, and is what T8 is built on: no `iam.tf`
-edit, no `grantRules` row, the Cloud Billing API enabled on the installation project the lookup names.
+spike asked for, both answered. What that verifies is the **user path** — a person's own credentials,
+naming the installation project as their quota project, need no IAM grant in `deploy/terraform` and no
+`grantRules` row, the Cloud Billing API on that project being the only installation change.
+
+**It does not verify the job path**, and the header says so rather than rounding up: the probe sent a
+*user* token **with** the header, while §1.2's split rule has the catalog check job's client send **no**
+quota project at all on its service account (§9 item 1). Whether that request is billed to the account's
+own project, and whether a service account naming its own project needs `serviceusage.services.use`, is
+what keeps the job's reach unchanged — so the `installation/iam.tf` entry stays on T8's file list and the
+level-3 security review stays conditional on T8's live run of that path, not cancelled by this probe.
 
 Two kinds of evidence weaker than the probe are marked where they appear: a **spot observation** from an
 unauthenticated request to a public endpoint (§1.4), reproducible only in outline, which never carries a
@@ -22,7 +29,8 @@ of unauthenticated requests to a public endpoint — no token, no key, no projec
 
 **Decisions this answers:** D1550 (the rate is queried from Cloud Billing at run time), tension T5,
 F19 (the lease path), F5 (the estimator), and T8's file list (`iam.tf` *"only if the spike finds a
-grant is needed"* — **it finds none**, 2026-11-08).
+grant is needed"* — **it finds none on the user path**, 2026-11-08; the job path is §9 item 1, which
+T8's live run closes).
 
 ## 0. The answer, in one screen
 
@@ -30,10 +38,10 @@ grant is needed"* — **it finds none**, 2026-11-08).
 | --- | --- |
 | Which API | `cloudbilling.googleapis.com`, the **Cloud Billing Catalog API**: `services.list` then `services.skus.list` (GA, `v1`), whose `Sku.pricingInfo` carries the public list-price timeline. The newer **Google Cloud Pricing API** (`v2beta/services`, `v2beta/skus`, `v1beta/skus/<id>/price`) is **Preview** and does the same for public data. |
 | Which role | **None.** Google documents *"You don't need any specific IAM permissions to make this API call"* for the public services and SKUs. |
-| Which grant to write in `iam.tf` | **None** — concluded, and **verified 2026-11-08** with the credential (§1.4, §3, §8). Not a new `grantRules` row either. The only installation change is enabling the API (§3) — and that holds for **both** credential kinds, because the rule for the quota project depends on which one is calling, and because the lookup runs only where the budget backend is on, which is where the person's `serviceusage.services.use` already comes from (§1.2). |
+| Which grant to write in `iam.tf` | **None on the user path** — concluded, and **verified 2026-11-08** with the credential (§1.4, §3, §8). Not a new `grantRules` row either, and the only installation change is enabling the API (§3): the lookup runs only where the budget backend is on, which is where the person's `serviceusage.services.use` already comes from (§1.2). The **job** path is the split rule's other half and the probe did not read it (§9 item 1) — so T8 keeps `installation/iam.tf` on its file list, and the level-3 review, until its own live run of that path says no grant there either. |
 | Which credential | The launching identity's **own OAuth credentials**; no API key anywhere in the design. **Verified 2026-11-08** by the owner's probe (§1.4): `GET /v1/services` answered **200** to `Authorization: Bearer $(gcloud auth print-access-token)` with `X-Goog-User-Project` naming their installation project, **no billing role and no key**. |
 | Contract prices | **Not reachable from a project**, by design: they need `billing.billingAccountSkus.list` / `billing.billingAccountPrice.get` on the **Cloud Billing account** (`roles/billing.viewer`/`roles/billing.admin`, whose lowest grant level is the billing account). A project module cannot grant it. The cap needs an upper bound, and the **list price is one** — so this is a limit we do not need to cross. |
-| The recommendation | The lookup, as D1550 says, with three amendments and a per-process cache (§6). The one fact that gated it was verified 2026-11-08 (§1.4); had the token route failed, the fallback was the pinned dated table, which is the smallest design that still caps builds in dollars. |
+| The recommendation | The lookup, as D1550 says, with three amendments and a per-process cache (§6). The user path's fact gating it was verified 2026-11-08 (§1.4), and T8's live run closes the job path (§9 item 1); had the token route failed, the fallback was the pinned dated table, which is the smallest design that still caps builds in dollars. |
 
 ## 1. Which API gives a Cloud Build machine-minute price
 
@@ -334,7 +342,9 @@ Two notes a reader should not have to rediscover:
 
 ## 3. The smallest grant, if any, and where it would live
 
-**The recommendation needs no IAM grant, and no new `grantRule`.**
+**The recommendation needs no IAM grant on the user path, and no new `grantRule`.** The job path's
+half of the table is the `serviceUsageConsumer` row below, whose *No* rests on the split rule's
+unprobed half — T8's live run is what confirms it (§9 item 1).
 
 | Change | Where | Needed? |
 | --- | --- | --- |
@@ -343,7 +353,7 @@ Two notes a reader should not have to rediscover:
 | `roles/serviceusage.serviceUsageConsumer` for the catalog check account | `installation/catalogcheck.tf`, and a new `toCatalogCheck` row in `cover.go`'s `grantRules` | **No, and it would not be an ordinary row** (see below). The job's lookup client passes no quota project, so the job never needs the permission; only the **user** path does, and the person already holds it. |
 | `roles/serviceusage.serviceUsageConsumer` for the operators, so the user path also works **without** a budget backend | `deploy/terraform/gcp/modules/installation/iam.tf` (`var.operators`, as `operator_build_submitter` is granted at `:77-85`) | **No** — the lookup does not run without the backend (§1.2). This row is recorded because it is the one real alternative: it would be **covered by an existing `grantRules` row** (`toPeople`, `internal/infra/tf/cover.go:189`, so no new row and no secret), it grants a permission the same person already has on every installation whose backend is on, and it would let a backend-less installation read a price it has no ledger to spend against. If the owner wants that, it is one `google_project_iam_member` and T5's *"a new grant in a security-sensitive module"* becomes live. |
 | A new `grantRules` row | `internal/infra/tf/cover.go:143` | **No** for the token route. |
-| A new `grantRules` row for a **secret**, if an API key is chosen | `cover.go`'s `google_secret_manager_secret_iam_member` row | **No** — the token route is verified (§1.4, 2026-11-08), so no key exists and this row is never written. Had a key been needed it would have been a **widening**: that row accepts no `toCatalogCheck` member (`cover.go:233-250`), and the catalog check account is a principal kind of its own (`toCatalogCheck`, `cover.go:127`, matched by `isCatalogCheckMember` at `:753`) which exactly **one** row accepts — the bucket `roles/storage.objectUser` under one repository's records condition (`:223`, `catalogRecordsGrant` at `:1982`), and nothing else. So an API key handed to the job would have meant a new row admitting `toCatalogCheck`: the account's reach would have grown from one repository's records to a secret the lookup reads. |
+| A new `grantRules` row for a **secret**, if an API key is chosen | `cover.go`'s `google_secret_manager_secret_iam_member` row | **No** — the token route is verified on the **user** path (§1.4, 2026-11-08), and that is the path a key would have existed for; on the job path the same route is T8's live run (§9 item 1), so no key exists today and this row is written only if that run fails. Had a key been needed it would have been a **widening**: that row accepts no `toCatalogCheck` member (`cover.go:233-250`), and the catalog check account is a principal kind of its own (`toCatalogCheck`, `cover.go:127`, matched by `isCatalogCheckMember` at `:753`) which exactly **one** row accepts — the bucket `roles/storage.objectUser` under one repository's records condition (`:223`, `catalogRecordsGrant` at `:1982`), and nothing else. So an API key handed to the job would have meant a new row admitting `toCatalogCheck`: the account's reach would have grown from one repository's records to a secret the lookup reads. |
 
 **Why the `serviceUsageConsumer` row above is the wrong fix even if the job ever did need it.** A
 grant naming `toCatalogCheck` is not covered by init's one confirmation the way `toAccounts` rows are:
@@ -505,28 +515,36 @@ price refuses — with three amendments.**
    `option.WithQuotaProject(<installation project>)` for user ADC and **not** for service-account
    credentials; the env var changes neither answer; and the lookup is never constructed without a
    backend (the repo's own early return, `internal/cli/accounts.go:262-264`). No `iam.tf` edit, no
-   `grantRules` row, no secret, no API key — and the 2026-11-08 probe (§1.4) read the token route green,
-   so this is the design as built rather than the design if the route works.
+   `grantRules` row, no secret, no API key — on the **user** path, which the 2026-11-08 probe (§1.4) read
+   green, so there this is the design as built rather than the design if the route works. The job path's
+   half is T8's live run (§9 item 1), and it is what decides the `iam.tf` entry T8 keeps on its list.
 
-**The exact grant, stated once:** *none*. Federated out: nothing in `installation/iam.tf`, nothing in
-`cover.go`'s `grantRules`, one line in `apis.tf` — plus, on the user path, a quota project the
-installation already lets that person use (`§1.2`), which is why the lookup may not run where that
-grant is absent (a backend-less installation). That pair, and nothing else, is what keeps the
-enablement inside `fugaro update`.
+**The exact grant, stated once:** *none on the user path*. Federated out: nothing in
+`installation/iam.tf`, nothing in `cover.go`'s `grantRules`, one line in `apis.tf` — plus, on the user
+path, a quota project the installation already lets that person use (`§1.2`), which is why the lookup
+may not run where that grant is absent (a backend-less installation). That pair, and nothing else, is
+what keeps the enablement inside `fugaro update`. **The job path stays open**: the probes sent a *user*
+token (§9 item 1), so whether the catalog check job's service-account request — which sends no
+`X-Goog-User-Project` at all — needs `serviceusage.services.use` on its own project is T8's live run to
+settle, and until it does `installation/iam.tf` stays on T8's file list, with the level-3 review of any
+entry it needs.
 
 **The cache rule, stated once:** one lookup per command, held in memory, reused for every build that
 command submits; never persisted, so it never ages and needs no limit. If the owner later wants
 availability across commands, the persisted form — the second one in §4 — is the one to build, with a 7-day limit
 and a `doctor` line for its age.
 
-**The one gate before T8 starts — run and passed 2026-11-08.** The §1.4 probe and the §1.5 probe ran on
-the owner's own OAuth login, with no billing role and no API key, read-only, and both came back 200: the
-public service list, and Cloud Build's SKUs. So the design above stands as the smallest one that meets
-the requirement, and **T8 writes no `deploy/terraform/gcp/modules/installation/iam.tf` edit**: a public
-list price needs no IAM grant at all — the one requirement is the Cloud Billing API enabled on the
-installation project, which is the project the budget backend lives on and the quota project the user
-path names (§1.2) — and that one `apis.tf` line is
-the installation's whole change, with no `grantRules` row behind it. Nor is a billing-account role any
+**The one gate before T8 starts — run and passed 2026-11-08, on the user path.** The §1.4 probe and the
+§1.5 probe ran on the owner's own OAuth login, with no billing role and no API key, read-only, and both
+came back 200: the public service list, and Cloud Build's SKUs. So the design above stands as the
+smallest one that meets the requirement **on the path those probes read**, and the `apis.tf` line is
+that path's whole installation change, with no `grantRules` row behind it: a public list price needs no
+IAM grant, the one requirement being the Cloud Billing API enabled on the installation project, which is
+the project the budget backend lives on and the quota project the user path names (§1.2). **The job
+path is not closed by those probes** (§9 item 1): its client sends no quota project at all, so T8's live
+run of the catalog check job's own request is what decides whether `installation/iam.tf` needs an entry
+for it — **T8 keeps that file on its list, and any level-3 review of an entry, until that run says
+otherwise**. Nor is a billing-account role any
 help: contract prices are out of a project module's reach (§1.3), which is why the estimator reads the
 list price. **The other branch did not happen** — had the token route returned 403,
 the lookup would have needed an API key, and the smallest safe design would then be *no longer the
@@ -581,7 +599,7 @@ The repository, by path and symbol:
 | Path | Used for |
 | --- | --- |
 | `docs/no-prompt-policy/reconciliation.md` §3 D1543/D1548/D1550, §5 T5, F5, F18, F19, F20, §6 | The decisions and the UNVERIFIED this spike answers |
-| `docs/no-prompt-policy/implementation-plan.md` T8S, T8 | The task that commissioned this spike, the T8 file list, and the condition T8S answers: *"the grant in `iam.tf` is UNVERIFIED until then"* — answered **no grant** on 2026-11-08 (§8) |
+| `docs/no-prompt-policy/implementation-plan.md` T8S, T8 | The task that commissioned this spike, the T8 file list, and the condition T8S answers: *"the grant in `iam.tf` is UNVERIFIED until then"* — answered **no grant on the user path** on 2026-11-08 (§8), the job path being §9 item 1 and T8's live run |
 | `internal/backend/gcp/build.go:227,231,233,363,398-410,483,496` | The build request: service account, machine type, the fixed 3600 s timeout, the submit path |
 | `internal/backend/gcp/gcp.go:67-82` | ADC as the identity, and the quota-project pattern for the **user** path: `option.WithQuotaProject(o.GCPProject)` when a project is known — that backend's own builder, not a shared one, and the option it sets unconditionally (§1.2 splits it by credential) |
 | `google.golang.org/api@v0.299.0` `transport/http/dial.go:189,240-242`; `internal/creds.go:29,285-303` | The header rule the split rests on: `X-Goog-User-Project` is set whenever a quota project resolved non-empty, whatever the credential kind; with no client option the only fallbacks are `GOOGLE_CLOUD_QUOTA_PROJECT` and a `quota_project_id` in the credentials file |
@@ -603,7 +621,8 @@ The repository, by path and symbol:
 | `docs/gcp-live-checklist.md:1339,2668` | The operator's today's-by-hand `cloudbilling.googleapis.com` enablement on the ADC quota project |
 
 Not a source but the evidence the two verified sections rest on: **the owner's probe of 2026-11-08**
-(§8) — the API read directly, with the owner's own credential, and its answers recorded there.
+(§8) — the API read directly, with the owner's own credential, and its answers recorded there. It read
+the **user** path only; §9 item 1 is the job path, which T8's live run closes.
 
 ## 8. The owner's probe, 2026-11-08
 
@@ -618,7 +637,7 @@ document. What it read, and what each reading settles:
 | Does an OAuth caller with no billing role read the public catalog? (§1.4) | `GET /v1/services` | **200** with the public service list, at `pageSize=5`, `1000` and `5000` alike. **Verified.** |
 | Is Cloud Build in it, and are its SKUs readable? (§1.5) | `GET /v1/services`, then `GET /v1/services/8B5D-EF7D-EB12/skus?pageSize=5000` | **200**; `serviceId` **`8B5D-EF7D-EB12`**, found by `displayName` `"Cloud Build"`; **370 SKUs in one page and no `nextPageToken`**. **Verified.** |
 | What does a SKU carry, and in what unit? (§1.5) | the same 370 | `description`, `serviceRegions`, `pricingInfo[0].pricingExpression.usageUnit` — **`min`** for machine time, **`GiBy`** for network. **Verified**, and the shape T8's parser is written against. |
-| Beyond enabling the API, is anything needed in `deploy/terraform`? (§3, §6) | — | **No**: no `iam.tf` edit, no `grantRules` row, no secret, no key. The conclusion the three readings above carry. |
+| Beyond enabling the API, is anything needed in `deploy/terraform`? (§3, §6) | — | **No grant on the user path**: no `iam.tf` entry, no `grantRules` row, no secret, no key. Every reading above carried a *user* token; the job path's no-quota-project request is the first bullet below, and T8's live run settles it. |
 
 **What it does not settle, so that the table is not over-read:**
 
@@ -639,7 +658,9 @@ document. What it read, and what each reading settles:
    holds the permission — either that is fine or that path has always needed it, and the history
    account holding `serviceUsageConsumer` beside its Firestore client's header (`firebase/iam.tf:102-121`)
    points at the second. T8's live run should confirm both, since the split is what keeps the job's
-   reach unchanged.
+   reach unchanged — and it is the run that decides whether `installation/iam.tf` needs an entry for the
+   job at all: until it does, that file stays on T8's list and any entry still takes the level-3 review
+   before it is written.
 2. That Cloud Build rejects an unknown `machineType` at submit time rather than falling back to the
    default (§5). Assumed in the safe direction. **Not probed**: the probe read prices and launched
    nothing.

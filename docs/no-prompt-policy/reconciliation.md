@@ -12,7 +12,8 @@ confirmations), and it says agents may run every command (raising a cap is the o
 defeats the cap). The owner has answered every question below that needed an answer; two answers are
 **not the recommendation** and opened tensions (§5); D1550 is a third (tension T5). The owner ruled the
 tensions on 2026-11-07 — T1, T2, T3, T4 and T6 — and held T5 until the T8 spike (task T8S) reports — which
-it now has, with its two live facts verified by the owner's probe of 2026-11-08 (§6).
+it now has, with its two live facts verified by the owner's probe of 2026-11-08 (§6) on the **user** path,
+the job path being what T8's own live run closes.
 
 ## 1. Headline: spec concept → what the repo has
 
@@ -307,10 +308,13 @@ client-side only (F19). **OPEN, held 2026-11-07:** the D1550 answer (the rate is
 run time) is held until the T8 spike (task T8S) reports, and T8 waits on the spike only. The spike decides the
 mechanism before any grant is written; the grant's shape, if there is one, still takes the level-3 security
 review (T2's pre-apply control). **The spike has now reported, and its two live facts were verified by the
-owner's probe on 2026-11-08 (§6): there is no grant** — the one installation change is the
+owner's probe on 2026-11-08 (§6): the user path needs no grant** — the one installation change there is the
 `cloudbilling.googleapis.com` entry in `apis.tf`, and the lookup reads the public catalog on the caller's own
-OAuth credentials, no key — so the level-3 review a grant would have taken is not triggered, and T8 waits on
-nothing further.
+OAuth credentials, no key. **The job path is the one thing still open:** the probe sent a *user* token **with**
+the quota-project header, while the catalog check job's client sends none at all on its service account
+(billing-price-spike §9 item 1), so whether that request needs `serviceusage.services.use` on its own project —
+and therefore whether `installation/iam.tf` needs an entry — is T8's live run to settle. Until then the level-3
+review of any such entry stays live (T2's pre-apply control), and T8 waits on that run, not on the spike.
 
 **T6 (D1554 against D1548).** An absent mode is observe, and in observe a lease does not bite: on a default
 installation the nightly catalog check job (D1554's lease) and every other build is **unbounded**; only
@@ -327,8 +331,8 @@ even after T16, and once T10 removes the build count nothing bounds how many bui
 `maxReserveMicros`, seeded at $5, bounds one build's lease, and the kill switches). The owner has not ruled on
 that case; it is named in T10 and in the open items below, and `doctor` reports it.
 
-**Open items:** T5 above — the spike it waited on has reported in full (2026-11-08, §6 below), so what is left
-there is the owner's ruling and not a probe; the capless case of T6 — after T10, a managed
+**Open items:** T5 above — the spike it waited on has reported for the user path (2026-11-08, §6 below), so
+what is left there is the owner's ruling, the job path's live run T8 owes, and not a probe; the capless case of T6 — after T10, a managed
 installation with no `config/caps/global` stays in observe, where the lease does not bite, so an aggregate bound
 for it (or caps seeded from its policy) is the owner's call, and T16's `doctor` line names the missing caps;
 whether `doctor`'s observe warning (D1548) is a warning or an error; the meta repo's own design (out of this
@@ -367,7 +371,9 @@ plan). Every decision D1540–D1555 is answered (2026-11-07).
   ([billing-price-spike.md](billing-price-spike.md) §8): their OAuth login, no billing role and no API key, read
   the public service list (`GET /v1/services`, 200) and Cloud Build's 370 SKUs (`200`, one page, no
   `nextPageToken`), so the "no grant" conclusion above stands as measured rather than as read off the
-  documentation, and **T8 writes no `iam.tf` edit**. The SKU shape that probe recorded — `description` prose
+  documentation — **for the user path, which is the only path that probe read**: the job's service-account
+  request sends no quota project at all, and whether it needs a grant is T8's live run (billing-price-spike §9
+  item 1). The SKU shape that probe recorded — `description` prose
   naming the family, the resource, the unit and the region, `serviceRegions`, and
   `pricingInfo[0].pricingExpression.usageUnit` (`min` for machine time, `GiBy` for network) — is what T8's
   parser is written against, and an unknown or unmapped SKU still **refuses**.
