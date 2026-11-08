@@ -21,28 +21,25 @@ import (
 
 // listsFunc is the member's own admission lists as a source: the entries it
 // holds, or the failure of a host that cannot read them at all.
-type listsFunc func(ctx context.Context, address string) (bool, error)
+type listsFunc func(ctx context.Context) ([]string, error)
 
-func (f listsFunc) Admits(ctx context.Context, address string) (bool, error) {
-	return f(ctx, address)
-}
+func (f listsFunc) Addresses(ctx context.Context) ([]string, error) { return f(ctx) }
 
-// memberListsOf is a source holding the entries `fugaro user` writes, read
-// through the member's REAL reader — projectpolicy.MemberLists and its one rule
-// for addresses — rather than through a fake free to answer differently from
-// the list a member's own configuration holds. Every test below is then the
-// composed decision: the exchange's verification and the member's own lists
-// together, which is what W5 is.
-func memberListsOf(launchers, operators []string) Lists {
+// memberLists is a source holding the entries `fugaro user` writes, read
+// through the member's REAL reader — projectpolicy.MemberLists, its one rule
+// for which entries are addresses and mobileauth's one rule for addresses —
+// rather than through a fake free to answer differently from the list a
+// member's own configuration holds. Every test below is then the composed
+// decision: the exchange's verification and the member's own lists together,
+// which is what W5 is.
+func memberLists(launchers, operators []string) listsFunc {
 	m := projectpolicy.MemberListsOf(launchers, operators)
-	return listsFunc(func(ctx context.Context, address string) (bool, error) {
-		return m.Admits(ctx, address)
-	})
+	return func(context.Context) ([]string, error) { return m.Addresses(), nil }
 }
 
 // unreachableLists is the member's own lists when the host cannot read them.
-func unreachableLists(err error) Lists {
-	return listsFunc(func(context.Context, string) (bool, error) { return false, err })
+func unreachableLists(err error) listsFunc {
+	return func(context.Context) ([]string, error) { return nil, err }
 }
 
 // memberWithKey is one member of a workspace, with its own pin and the key its
@@ -77,7 +74,7 @@ func exchangeURL(host string) string { return "https://" + host + AuthorizePath 
 // own `fugaro user` wrote and nobody the workspace chose.
 func TestAdmitRefusesAnAddressTheMembersListsDoNotName(t *testing.T) {
 	member, key := memberWithKey(t)
-	admission := newTestAdmission(t, member, memberListsOf(
+	admission := newTestAdmission(t, member, memberLists(
 		[]string{"user:person-2@example.com"},
 		[]string{"user:person-3@example.com"},
 	))
@@ -100,7 +97,7 @@ func TestAdmitRefusesAnAddressTheMembersListsDoNotName(t *testing.T) {
 // the member's own configuration already names.
 func TestAdmitDoesNotWidenAMembersLists(t *testing.T) {
 	member, key := memberWithKey(t)
-	admission := newTestAdmission(t, member, memberListsOf([]string{"user:person-1@example.com"}, nil))
+	admission := newTestAdmission(t, member, memberLists([]string{"user:person-1@example.com"}, nil))
 	ctx := context.Background()
 
 	sess, err := admission.Admit(ctx, assertionFor(t, key, testProject, exchangeURL(member.name), nil))
@@ -134,8 +131,8 @@ func TestAdmitDoesNotWidenAMembersLists(t *testing.T) {
 func TestAdmitReadsTheListsOnEveryRequest(t *testing.T) {
 	member, key := memberWithKey(t)
 	held := []string(nil)
-	admission := newTestAdmission(t, member, listsFunc(func(ctx context.Context, address string) (bool, error) {
-		return memberListsOf(held, nil).Admits(ctx, address)
+	admission := newTestAdmission(t, member, listsFunc(func(context.Context) ([]string, error) {
+		return projectpolicy.MemberListsOf(held, nil).Addresses(), nil
 	}))
 	ctx := context.Background()
 
@@ -162,28 +159,25 @@ func TestAdmitReadsTheListsOnEveryRequest(t *testing.T) {
 func TestAdmitRefusesAnUnverifiedAddress(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		raw  func(t *testing.T, key *rsa.PrivateKey, member *testMember) string
+		edit func(claims map[string]any)
 	}{
-		{"absent", func(t *testing.T, key *rsa.PrivateKey, member *testMember) string {
-			a := testAssertion(testProject, exchangeURL(member.name))
-			claims := a.claims()
-			delete(claims, "email_verified")
-			return signClaims(t, key, claims)
-		}},
-		{"false", func(t *testing.T, key *rsa.PrivateKey, member *testMember) string {
-			return assertionFor(t, key, testProject, exchangeURL(member.name), func(a *assertion) { a.EmailVerified = false })
-		}},
-		{"not a bool", func(t *testing.T, key *rsa.PrivateKey, member *testMember) string {
-			return assertionWithClaim(t, key, testProject, exchangeURL(member.name), "email_verified", "true")
-		}},
+		{"absent", func(claims map[string]any) { delete(claims, "email_verified") }},
+		{"false", func(claims map[string]any) { claims["email_verified"] = false }},
+		{"not a bool", func(claims map[string]any) { claims["email_verified"] = "true" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			member, key := memberWithKey(t)
+			// The assertion is signed claim by claim rather than minted:
+			// mintAssertion refuses to write an unverified address at all
+			// (the signer's own check), and what this test is about is the
+			// member's, which must not depend on the workspace having one.
+			claims := testAssertion(testProject, exchangeURL(member.name)).claims()
+			tc.edit(claims)
 			// The person IS on this member's list, so nothing but the claim
 			// can be what refuses them here.
-			admission := newTestAdmission(t, member, memberListsOf([]string{"user:" + testEmail}, nil))
+			admission := newTestAdmission(t, member, memberLists([]string{"user:" + testEmail}, nil))
 
-			err := mustErr(admission.Admit(context.Background(), tc.raw(t, key, member)))
+			err := mustErr(admission.Admit(context.Background(), signClaims(t, key, claims)))
 			refuse(t, err, "an assertion whose emailed claim is "+tc.name)
 			// The plan's rule is that the refusal names the CLAIM. The
 			// sentence the exchange writes for this one is that the address
@@ -211,7 +205,7 @@ func TestAdmitIsCaseFoldedOnTheDomainOnly(t *testing.T) {
 	ctx := context.Background()
 
 	// The domain is folded on the list's side and on the assertion's.
-	admission := newTestAdmission(t, member, memberListsOf([]string{"user:" + testEmail}, nil))
+	admission := newTestAdmission(t, member, memberLists([]string{"user:" + testEmail}, nil))
 	folded := assertionFor(t, key, testProject, exchangeURL(member.name), func(a *assertion) {
 		a.Email = "person-1@EXAMPLE.com"
 	})
@@ -222,8 +216,13 @@ func TestAdmitIsCaseFoldedOnTheDomainOnly(t *testing.T) {
 	if sess.Identity.Email != testEmail {
 		t.Fatalf("the admitted identity carries %q, and the address of a session is the folded one", sess.Identity.Email)
 	}
-	caseFoldedEntry := newTestAdmission(t, member, memberListsOf([]string{"user:person-1@EXAMPLE.COM"}, nil))
-	if _, err := caseFoldedEntry.Admit(ctx, assertionFor(t, key, testProject, exchangeURL(member.name), nil)); err != nil {
+	// Every assertion here is a separate sign-in, so each one carries an id of
+	// its own: the member spends the id of every assertion it verifies, and a
+	// second presentation of one is refused for that reason instead of the one
+	// under test.
+	caseFoldedEntry := newTestAdmission(t, member, memberLists([]string{"user:person-1@EXAMPLE.COM"}, nil))
+	entry := assertionFor(t, key, testProject, exchangeURL(member.name), func(a *assertion) { a.JTI = "jti-2" })
+	if _, err := caseFoldedEntry.Admit(ctx, entry); err != nil {
 		t.Fatalf("the admission refused a listed address written with a folded-away domain case: %v", err)
 	}
 
@@ -231,6 +230,7 @@ func TestAdmitIsCaseFoldedOnTheDomainOnly(t *testing.T) {
 	// person, whatever the mail host does with it.
 	localPart := assertionFor(t, key, testProject, exchangeURL(member.name), func(a *assertion) {
 		a.Email = "Person-1@example.com"
+		a.JTI = "jti-3"
 	})
 	refuse(t, mustErr(admission.Admit(ctx, localPart)), "an address whose local part differs from the listed one only in case")
 }
@@ -246,14 +246,14 @@ func TestAdmitIsCaseFoldedOnTheDomainOnly(t *testing.T) {
 func TestAdmitRefusesADisplayNameForm(t *testing.T) {
 	member, key := memberWithKey(t)
 	ctx := context.Background()
-	admission := newTestAdmission(t, member, memberListsOf([]string{"user:" + testEmail}, nil))
+	admission := newTestAdmission(t, member, memberLists([]string{"user:" + testEmail}, nil))
 
 	displayName := assertionFor(t, key, testProject, exchangeURL(member.name), func(a *assertion) {
 		a.Email = "Person One <" + testEmail + ">"
 	})
 	refuse(t, mustErr(admission.Admit(ctx, displayName)), "an assertion whose address is a display name")
 
-	wrapping := newTestAdmission(t, member, memberListsOf([]string{"user:Person One <" + testEmail + ">"}, nil))
+	wrapping := newTestAdmission(t, member, memberLists([]string{"user:Person One <" + testEmail + ">"}, nil))
 	refuse(t, mustErr(wrapping.Admit(ctx, assertionFor(t, key, testProject, exchangeURL(member.name), nil))), "an assertion for a person whose only list entry is a display name wrapping their address")
 }
 
@@ -269,7 +269,7 @@ func TestAdmitRefusesACustomTokenProvider(t *testing.T) {
 	member, key := memberWithKey(t)
 	// The person IS on the member's list: whatever refuses them is the
 	// provider, and nothing else.
-	admission := newTestAdmission(t, member, memberListsOf([]string{"user:" + testEmail}, nil))
+	admission := newTestAdmission(t, member, memberLists([]string{"user:" + testEmail}, nil))
 
 	custom := assertionFor(t, key, testProject, exchangeURL(member.name), func(a *assertion) { a.Provider = "custom" })
 	refuse(t, mustErr(admission.Admit(context.Background(), custom)), "an assertion whose provider is a custom token")
@@ -279,7 +279,7 @@ func TestAdmitRefusesACustomTokenProvider(t *testing.T) {
 // at all, so there is nothing for the two lists to name.
 func TestAdmitRefusesAnAnonymousProvider(t *testing.T) {
 	member, key := memberWithKey(t)
-	admission := newTestAdmission(t, member, memberListsOf([]string{"user:" + testEmail}, nil))
+	admission := newTestAdmission(t, member, memberLists([]string{"user:" + testEmail}, nil))
 
 	anon := assertionFor(t, key, testProject, exchangeURL(member.name), func(a *assertion) { a.Provider = "anonymous" })
 	refuse(t, mustErr(admission.Admit(context.Background(), anon)), "an assertion whose provider is anonymous")
