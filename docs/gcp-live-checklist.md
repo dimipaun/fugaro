@@ -839,7 +839,7 @@ probe account carries predefined grants only).
 | 305 | The MCP state group and its scopes ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16** and its Check 305 — **the text is written when O16's files are named**, and this row and the section below reserve the number, which is never renumbered): `get_state`, `get_events` and `apply_patch` over the state store, behind `state:read` and `state:write`, with `apply_patch` also gated by **D1225**, and with no `spawn_task` anywhere in it (T2) | Not written yet: O16 writes "Check 305" when the MCP registry and its scope files exist (M7, T3, T4), and the register's number is held for it | Nothing to run and nothing to expect until the files are named: the number is reserved so that a later task writes the check into the register rather than renumbering it. **USER-RUN, NOT RUN.** |
 | 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, reads **both** candidate forms (fourteen rows, the `reports/` row covering the bare prefix and the slug level under it as two calls) and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Two attempts have been made, both on 2026-11-07 and both exit `2`, aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list`, which stopped the run before the full-path form was ever tried — so **nothing is settled about the attribute and no `PASS` for `list-prefix`** is recorded; the section below records what each run did and did not measure. |
 | 360 | The managed screens show what the CLI says, on a managed project ([`docs/console-managed-screens/`](console-managed-screens/implementation-plan.md), its Check 360 and task **CM12**; **F3** and **D1489**, the owner's ask of 2026-11-07): the Project tab's five later sections — the managed state, the retirements, the account keys, the credentials service and the policy panel — drawn on a real managed project, each within its own read and from the document that read answers with, agreeing with `fugaro managed status --json`, `fugaro settings --json`, `fugaro project policy show --json` and `fugaro doctor`'s policy lines; **no section offers a control that changes anything**, and no token appears anywhere (**D1471**). Its hermetic half is `console/test/e2e/managed.spec.ts`, which walks the same tab against the stub — and the live reading is the one a stub cannot take | See "Check 360" below; there is **no script** — the check is three steps you do by hand in the console and the reading you take from them — and **you** run it, on your own machine, with an installation and a managed project; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus two reads and one window: no model call, no run and nothing billable. Nothing is created or written by the check itself, so there is nothing to restore. **USER-RUN, NOT RUN.** |
-| 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` (a command the same work's task **SC3** lands, in slice 1: it is **not on this tree yet**, so those two parts are blocked) on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
+| 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` (the same work's task **SC3**, in slice 1: it landed as `cb69f1754`, #1979, and is an ancestor of this checkout) on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -12043,18 +12043,16 @@ step: the fixture's plan is a slice in memory, and only a run whose loop walks i
 stage shows the level is not merely recorded. That is the second part below, and it is the part that
 costs money.
 
-**Part 1 — the reader, on a project with no key. BLOCKED, and not runnable today.** `fugaro security
-paths` is **not on this tree**: it lands with the same work's task **SC3**, in slice 1, and a shell that
-runs it here answers `unknown command "security"`. Nothing in this part is a step you can take until SC3
-has merged; the "Run it" block below keeps its commands separate for that reason. What it will read when
-it lands: `fugaro security paths --json` prints the floor's 43 rows on a project that has published no
-`security` list, each with its source layer. `--check internal/creds/state.go` answers
-`sensitive: true` from the `credentials` floor row; `--check docs/recipes.md` answers
-`sensitive: false`; `--check docs/pending-workflows/console-tests.yml` answers `true` from
-`pending-workflows`. The pair is the point: `docs/` is a routine tree, and only the two `docs/` rows the
-routing text's own exceptions name are on the floor, so the list is a **positive list and not the
-classifier's complement** (F1, F22). The third path is the interesting case in between — a routine tree
-with a listed exception — which is the shape a project's own list will have.
+**Part 1 — the reader, on a project with no key.** `fugaro security paths` is on this tree: it is the
+same work's task **SC3**, in slice 1, landed as `cb69f1754` (#1979) and an ancestor of this checkout, so
+every reading below is a step you can take now. `fugaro security paths --json` prints the floor's 43
+rows on a project that has published no `security` list, each with its source layer.
+`--check internal/creds/state.go` answers `sensitive: true` from the `credentials` floor row;
+`--check docs/recipes.md` answers `sensitive: false`; `--check docs/pending-workflows/console-tests.yml`
+answers `true` from `pending-workflows`. The pair is the point: `docs/` is a routine tree, and only the
+two `docs/` rows the routing text's own exceptions name are on the floor, so the list is a **positive
+list and not the classifier's complement** (F1, F22). The third path is the interesting case in
+between — a routine tree with a listed exception — which is the shape a project's own list will have.
 
 **Part 2 — the escalation, on a real run.** Two runs on the sandbox repository, each launched with a
 task that says which paths to touch. The first touches a floor path: a task that creates
@@ -12066,29 +12064,26 @@ on the list, and must do neither: no adversarial round, and **no `security` memb
 the difference between "no escalation" and "an escalation with an empty row". The two runs are the whole
 of the claim — that the list in force decides what a run spends, and that the record says why.
 
-**Part 3 — the base-branch property. BLOCKED on the same command as part 1** (`fugaro security paths`,
-SC3's, slice 1), so it is not runnable today either. With a working tree whose `fugaro.yaml` carries a
-`security` row and a base branch that does not, `fugaro security paths --json` prints the **base's** list,
-and the working tree's row is nowhere in it. This is the property D1518 exists for — a change that carries its
+**Part 3 — the base-branch property.** With a working tree whose `fugaro.yaml` carries a `security` row
+and a base branch that does not, `fugaro security paths --json` prints the **base's** list, and the
+working tree's row is nowhere in it. This is the property D1518 exists for — a change that carries its
 own pattern list must not also carry its own exemption from it — and it is the one part a reviewer
 cannot check by reading either side.
 
-**Run it — part 2, the only part this tree can run:**
-
-```bash
-fugaro run --repo <sandbox repo> "create internal/creds/state.go with a package clause and one comment"
-fugaro run --repo <sandbox repo> "add a line to docs/recipes.md"
-gcloud storage cat gs://<runs bucket>/runs/<slug>/<run-id>/result.json   # each run's record
-```
-
-**Parts 1 and 3 wait on SC3**, the slice-1 task that lands `fugaro security paths`. Their commands are
-these, and they are not runnable on this tree — the shell answers `unknown command "security"`:
+**Run it:**
 
 ```bash
 fugaro security paths --json
 fugaro security paths --check internal/creds/state.go --check docs/recipes.md \
   --check docs/pending-workflows/console-tests.yml --json
+
+fugaro run --repo <sandbox repo> "create internal/creds/state.go with a package clause and one comment"
+fugaro run --repo <sandbox repo> "add a line to docs/recipes.md"
+gcloud storage cat gs://<runs bucket>/runs/<slug>/<run-id>/result.json   # each run's record
 ```
+
+Parts 1 and 3 are the three `fugaro security paths` commands at the top of that block — free, offline,
+and runnable here; part 2 is the two runs below them, and it is the part that spends money.
 
 **You** run it, on the sandbox installation and the sandbox repository only, and **no agent runs any
 step of it**. A project or a repository naming `belong` is out of bounds for every step. The record is

@@ -19,7 +19,10 @@ package cli
 // unchecked here is the folder: an ask reworded out of the owner's words, a
 // status line still reading as the brief asked for it while the tree has moved,
 // a decision cell that quietly acquired an answer, a number taken beside one
-// already claimed, or a task that lost the files an agent picks it up by.
+// already claimed, or a task that lost the files an agent picks it up by. SC6
+// adds one more: the live register's section for this folder's own check names
+// only commands the tree carries, because a section that writes its own steps
+// off as unrunnable sends a reader to the half of the check that spends money.
 
 import (
 	"os"
@@ -452,5 +455,92 @@ func TestDocsSecurityClassificationCensusRowMovedForItsPin(t *testing.T) {
 	// the paragraph it sits in.
 	if !strings.Contains(flattenDoc(doc), "the security-classification folder's pin, moved the table's row") {
 		t.Errorf("%s does not carry the amendment sentence naming this folder's pin: the row's own text says a folder that writes one moves the row in its own commit, and an amendment the row does not record is the merge that did not", path)
+	}
+}
+
+// secClassCheck370Section returns Check 370's section of the live register, cut
+// at the next `## ` heading so a check written after it cannot widen what is
+// read. The number is the plan's §6, which leaves the register's row and this
+// section to SC6, so the guard for what the section tells a reader to run lives
+// here with the rest of what the folder claims.
+func secClassCheck370Section(t *testing.T, register string) string {
+	t.Helper()
+	i := strings.Index(register, "\n## Check 370:")
+	if i < 0 {
+		t.Fatalf("%s has no `## Check 370:` section: the register's row points at steps that have to be there", liveChecksDoc)
+	}
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	return section
+}
+
+// secClassCheck370Commands are the `fugaro ...` invocations the section's fenced
+// blocks carry, each cut back to the command words a shell resolves -- those
+// before the first flag or `<placeholder>` -- and de-duplicated in the order
+// they appear. Reading the fences rather than the prose is the point: the prose
+// names commands in backticks, and only a fenced line is a step a reader runs.
+func secClassCheck370Commands(section string) [][]string {
+	var cmds [][]string
+	seen := map[string]bool{}
+	inFence := false
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			continue
+		}
+		if !inFence {
+			continue
+		}
+		line, _, _ = strings.Cut(line, "#")
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "fugaro" {
+			continue
+		}
+		var words []string
+		for _, f := range fields[1:] {
+			if strings.HasPrefix(f, "-") || strings.HasPrefix(f, "<") {
+				break
+			}
+			words = append(words, f)
+		}
+		if len(words) == 0 {
+			continue
+		}
+		if key := strings.Join(words, " "); !seen[key] {
+			seen[key] = true
+			cmds = append(cmds, words)
+		}
+	}
+	return cmds
+}
+
+// TestDocsSecurityClassificationCheck370NamesOnlyCommandsTheTreeCarries guards
+// the drift the merge that brought SC3 in produced. Check 370 was written while
+// `fugaro security paths` was a task on the plan and not yet a command; it said
+// so in three places, and it went on saying so after the command landed on the
+// tree -- which tells a reader that the free, offline half of the check cannot
+// be run at all and leaves only the half that spends money. So: every command
+// the section's blocks name has to resolve in this tree's own command tree, and
+// the reader command has to be one of them.
+func TestDocsSecurityClassificationCheck370NamesOnlyCommandsTheTreeCarries(t *testing.T) {
+	section := secClassCheck370Section(t, readDoc(t, liveChecksDoc))
+	cmds := secClassCheck370Commands(section)
+	if len(cmds) == 0 {
+		t.Fatalf("Check 370's blocks name no `fugaro` command, so this case proves nothing: the section is the steps a person runs")
+	}
+	root := NewRootCmd()
+	reader := false
+	for _, c := range cmds {
+		if sub, _, err := root.Find(c); err != nil || sub == root {
+			t.Errorf("Check 370 names `fugaro %s`, which this tree does not carry: a step a reader cannot run is a part of the check written off as unrunnable", strings.Join(c, " "))
+		}
+		if c[0] == "security" {
+			reader = true
+		}
+	}
+	if !reader {
+		t.Errorf("Check 370 does not name `fugaro security paths` among the steps it tells a reader to run: parts 1 and 3 of the check are that command, and a section that drops it leaves only the part that spends money")
 	}
 }
