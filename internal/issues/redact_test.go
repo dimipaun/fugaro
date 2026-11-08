@@ -133,10 +133,16 @@ func TestRedactKeepsShortExcerpts(t *testing.T) {
 // TestScrubNames: a post goes to a public repository, and the project, the
 // repository and the organisation are not its to name (D1722, F4), in text
 // the reporter wrote as well as in a URL they pasted.
+//
+// The caller lists one casing and the text holds the other, so the match's
+// case-insensitivity is exercised rather than spelled out by the list itself.
 func TestScrubNames(t *testing.T) {
 	t.Run("names go and the diagnosis stays", func(t *testing.T) {
 		got := Scrub("the Acme-Widgets launcher failed; see https://github.com/acme-widgets/acme-widgets",
-			[]string{"acme-widgets", "Acme-Widgets", " acme "})
+			[]string{"acme-widgets", " acme "})
+		if strings.Contains(got, "Acme-Widgets") {
+			t.Errorf("Scrub = %q: the capitalised name survived the lower-case one the caller listed", got)
+		}
 		for _, name := range []string{"acme-widgets", "acme"} {
 			if strings.Contains(strings.ToLower(got), name) {
 				t.Errorf("Scrub = %q: %q survived", got, name)
