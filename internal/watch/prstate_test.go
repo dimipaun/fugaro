@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -630,7 +631,7 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 	// The row is gone from the ready list only: its finished row is untouched,
 	// and that row's RUN cell is the same short form as every table row's
 	// (shortRun; owner request 2026-10-24).
-	if !strings.Contains(s, shortRun("r-merged")+" Already merged") {
+	if !strings.Contains(s, task.ShortRun("r-merged")+" Already merged") {
 		t.Fatalf("the finished row itself must stay:\n%s", s)
 	}
 }

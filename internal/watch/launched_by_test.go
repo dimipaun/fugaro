@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // launcherView is one repository with a live run and a finished run, both
@@ -97,10 +98,10 @@ func byCellOf(t *testing.T, frame, header, id string) (cell string, cells, hcell
 // dropping the column, or printing the full address in it.
 func TestPlainShowsTheLauncherShortForm(t *testing.T) {
 	got := plainFrame(t, launcherView("dana@example.com"))
-	if cell, _, _, _ := byCellOf(t, got, "RUN", "r-live"); cell != "dana" {
+	if cell, _, _, _ := byCellOf(t, got, "RUN", task.ShortRun("r-live")); cell != "dana" {
 		t.Errorf("the active table's BY cell = %q, want the short form %q:\n%s", cell, "dana", got)
 	}
-	if cell, _, _, _ := byCellOf(t, got, "FINISHED", "r-done"); cell != "dana" {
+	if cell, _, _, _ := byCellOf(t, got, "FINISHED", task.ShortRun("r-done")); cell != "dana" {
 		t.Errorf("the finished table's BY cell = %q, want the short form %q:\n%s", cell, "dana", got)
 	}
 	if strings.Contains(got, "dana@example.com") {
@@ -109,7 +110,7 @@ func TestPlainShowsTheLauncherShortForm(t *testing.T) {
 	// An automated launch shows its identity as it is: a service account name
 	// has no @ to cut at, so the whole value is the short form.
 	sa := plainFrame(t, launcherView("ci-runner"))
-	if cell, _, _, _ := byCellOf(t, sa, "RUN", "r-live"); cell != "ci-runner" {
+	if cell, _, _, _ := byCellOf(t, sa, "RUN", task.ShortRun("r-live")); cell != "ci-runner" {
 		t.Errorf("a service account's BY cell = %q, want the whole value:\n%s", cell, sa)
 	}
 }
@@ -121,7 +122,7 @@ func TestPlainShowsTheLauncherShortForm(t *testing.T) {
 // empty.
 func TestPlainLauncherIsADashWhenNotRecorded(t *testing.T) {
 	got := plainFrame(t, launcherView(""))
-	for _, c := range []struct{ header, id string }{{"RUN", "r-live"}, {"FINISHED", "r-done"}} {
+	for _, c := range []struct{ header, id string }{{"RUN", task.ShortRun("r-live")}, {"FINISHED", task.ShortRun("r-done")}} {
 		cell, _, _, _ := byCellOf(t, got, c.header, c.id)
 		if cell != "-" {
 			t.Errorf("%s row %s's BY cell = %q, want a dash:\n%s", c.header, c.id, cell, got)
@@ -164,7 +165,7 @@ func TestPlainLauncherIsSanitised(t *testing.T) {
 		}
 		// A tab in the value would open a cell of its own and shift every
 		// column after it; a value can never add cells, only widen them.
-		for _, c := range []struct{ header, id string }{{"RUN", "r-live"}, {"FINISHED", "r-done"}} {
+		for _, c := range []struct{ header, id string }{{"RUN", task.ShortRun("r-live")}, {"FINISHED", task.ShortRun("r-done")}} {
 			cell, cells, hcells, line := byCellOf(t, got, c.header, c.id)
 			if strings.ContainsRune(line, '\t') {
 				t.Fatalf("launcher %q: a tab survived into the %s row: %q", by, c.header, line)
@@ -316,7 +317,7 @@ func detailValue(frame, key string) string {
 // Mutation caught: printing the sanitised value unclipped.
 func TestPlainLauncherCellIsClippedToTheColumn(t *testing.T) {
 	got := plainFrame(t, launcherView(strings.Repeat("ö", 10_000)))
-	for _, c := range []struct{ header, id string }{{"RUN", "r-live"}, {"FINISHED", "r-done"}} {
+	for _, c := range []struct{ header, id string }{{"RUN", task.ShortRun("r-live")}, {"FINISHED", task.ShortRun("r-done")}} {
 		cell, _, _, _ := byCellOf(t, got, c.header, c.id)
 		if n := utf8.RuneCountInString(cell); n != launcherCellRunes+1 || !strings.HasSuffix(cell, "…") {
 			t.Errorf("%s BY cell is %d runes, want %d ending in an ellipsis: %q", c.header, n, launcherCellRunes+1, cell)
@@ -325,7 +326,7 @@ func TestPlainLauncherCellIsClippedToTheColumn(t *testing.T) {
 	// Exactly the cap is not cut.
 	exact := strings.Repeat("y", launcherCellRunes)
 	got = plainFrame(t, launcherView(exact))
-	if cell, _, _, _ := byCellOf(t, got, "RUN", "r-live"); cell != exact {
+	if cell, _, _, _ := byCellOf(t, got, "RUN", task.ShortRun("r-live")); cell != exact {
 		t.Errorf("a value of exactly %d runes was changed: %q", launcherCellRunes, cell)
 	}
 }
@@ -336,7 +337,7 @@ func TestPlainLauncherCellCutsAtTheBoundary(t *testing.T) {
 	over := strings.Repeat("z", launcherCellRunes+1)
 	got := plainFrame(t, launcherView(over))
 	want := strings.Repeat("z", launcherCellRunes) + "…"
-	if cell, _, _, _ := byCellOf(t, got, "RUN", "r-live"); cell != want {
+	if cell, _, _, _ := byCellOf(t, got, "RUN", task.ShortRun("r-live")); cell != want {
 		t.Errorf("a value one rune over the cap shows %q, want %q", cell, want)
 	}
 }

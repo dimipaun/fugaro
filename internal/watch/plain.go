@@ -30,6 +30,10 @@ type PlainOptions struct {
 // FAST, NOTIONAL), never in colour. Every string of v is already safe
 // (Build sanitised it); nothing here adds a control character but newlines.
 //
+// Every run it names is named by its short form (blockEndings), the same
+// ending the interactive table shows, so the text frame says a run the way
+// every other surface does and the commands take that ending (spec.md §1).
+//
 // ready is ReadyRowsOf the view before the finished-run filter hid anything
 // (design generic-tool §10.1): a ready PR stays listed past --keep and
 // --keep-count, which bound how much history the rest of the frame shows,
@@ -66,11 +70,16 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 		if r.Kill.On {
 			fmt.Fprintf(&b, "  %s\n", killText(r.Kill, warn, "KILLED"))
 		}
+		// The same endings the interactive table shows (blockEndings): a
+		// run's short form, extended where two of the block's printed rows
+		// collide. Both tables of the block read one set, since the frame
+		// prints them together.
+		endings := blockEndings(r)
 		if len(r.Runs) > 0 {
 			tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "  RUN\tTITLE\tSTAGE\tROUND\tAGE\tSPENT\tBY\tFLAGS")
 			for _, run := range r.Runs {
-				fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", run.Run, run.Title, run.Stage, run.Round, ageText(run), runSpend(run), launcherText(run), flags(run, warn))
+				fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", endings[run.Run], run.Title, run.Stage, run.Round, ageText(run), runSpend(run), launcherText(run), flags(run, warn))
 			}
 			tw.Flush()
 		}
@@ -78,7 +87,7 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 			ftw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(ftw, "  FINISHED\tOUTCOME\tAGE\tBY\tPR")
 			for _, f := range r.Finished {
-				fmt.Fprintf(ftw, "  %s\t%s\t%s\t%s\t%s\n", f.Run, finishedOutcomeText(f), ageText(f), launcherText(f), dashIfEmpty(f.PRURL))
+				fmt.Fprintf(ftw, "  %s\t%s\t%s\t%s\t%s\n", endings[f.Run], finishedOutcomeText(f), ageText(f), launcherText(f), dashIfEmpty(f.PRURL))
 			}
 			ftw.Flush()
 		}
