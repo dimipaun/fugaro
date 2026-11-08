@@ -65,7 +65,7 @@ func haltFamilies() map[runstore.HaltReason]failure.Class {
 
 // TestHaltReasonsMapToTheirFamily: the writer's halt table, reason by reason,
 // over the whole closed set — every value runstore declares, and not the
-// fifteen that happen to be there today.
+// sixteen that happen to be there today.
 //
 // The class is durable (the report counts runs by it and nothing rewrites it),
 // so a reason left on the wrong family is a figure a reader acts on with the

@@ -554,7 +554,7 @@ func TestHaltedRunCarriesItsHaltsClass(t *testing.T) {
 //
 // There is no slice to range over — GovernanceHaltReasons is the governance
 // arm alone — so the source is the only complete list, and reading it is what
-// makes the walk above cover a reason added later rather than the fifteen of
+// makes the walk above cover a reason added later rather than the sixteen of
 // today. A reason declared in a const block of its own, with no HaltReason
 // type anywhere in it, is the one shape this cannot see: nothing in the source
 // says the value is a halt reason at all.

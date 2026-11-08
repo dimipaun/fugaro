@@ -2181,12 +2181,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// (applyChallenger), so the policy refusing *that* pin is the arm's
 		// own refusal and is recorded as one (D556) rather than as
 		// infrastructure that failed. Only the coder pin is the arm's: the
-		// pins both arms share, and everything else these checks can fail
-		// over — a Vertex budget, a settings directory, a price table — fails
-		// a challenger exactly as it fails a run carrying no arm, and is left
-		// to end the run infra_error. A halt is not a refusal either: a cap
-		// the run has reached stops a shadow exactly as it stops any other
-		// run.
+		// pins both arms share fail a challenger exactly as they fail a run
+		// carrying no arm, and what refuses them is the run's configuration —
+		// the same cause, and so the same class, the arm's own refusal is
+		// recorded under (refuseArm, shadow.go). What these checks raise with
+		// no refusal in it — a Vertex budget, a settings directory — keeps the
+		// fallback's infra_error. A halt is not a refusal either: a cap the run
+		// has reached stops a shadow exactly as it stops any other run.
 		var refused *modelRefusal
 		if r.shadow && errors.As(err, &refused) && refused.coderPin {
 			return r.refuseArm(err.Error())

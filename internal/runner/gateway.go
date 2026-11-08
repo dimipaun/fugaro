@@ -48,8 +48,8 @@ const reviewerPinPath = "agent.models.reviewer"
 // infrastructure failing under it, and it carries whether the coder pin was
 // one of the models refused. The coder is the one pin an A/B arm moves
 // (D555): a challenger arm's own model refused is the arm's own refusal
-// (D556), while the pins both arms share, and every infrastructure failure
-// (a Vertex budget, a managed settings directory, a price table), are the
+// (D556), while the pins both arms share, and every failure that is no model
+// refusal at all (a Vertex budget, a managed settings directory), are the
 // champion's conditions too and are never recorded as the arm's decision.
 type modelRefusal struct {
 	msg      string
