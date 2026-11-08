@@ -158,6 +158,14 @@ var doctorSecurityPrefixes = []string{
 	// the budget is a legitimate choice, but a credential in the agent's own
 	// reach is a fact the reader acts on now rather than reviews later.
 	"model-key-in-agent",
+	// security-list is D1513's line: the security list in force for a
+	// checkout, which in slice 1 is the engine's floor alone and so is only
+	// measured — the default view does not print it and --security does. Its
+	// sibling ID, security-list-unused, is the finding the same check makes
+	// when a row a person wrote matches nothing in the base: that one is a
+	// warning, so the class is doctorClassActionable and the default view
+	// prints it whatever this list says.
+	"security-list",
 }
 
 // doctorDecisionIDs are the checks whose state is the owner's to choose: doctor

@@ -911,15 +911,16 @@ func hostCredentialsService(ctx context.Context, cfg credsvc.Config, getenv func
 //
 // h2c is what B1.0 exists for, and B1.0 is conditional on the owner's Check
 // 190 failing a large push (implementation-plan.md, whose entry depends on
-// B0.6 recording one). Nothing in this file rests on a measurement of that
-// check: docs/gcp-live-checklist.md still records it as not run on this tree,
-// and the reconciliation marks the reading it rests on (U2: that HTTP/2's
-// streaming keeps the pack off the HTTP/1 path's buffer) unverified. So what
-// is stated here is the belief the task was planned on and not a result — the
-// hop in front of this process buffers an HTTP/1 request body and refuses one
-// a large git pack exceeds, and an HTTP/2 body is streamed past that buffer,
-// which is the hop the port's name (credentials.tf) turns h2c on for. Check
-// 190's live re-run is the owner's, and it is what would prove it.
+// B0.6 recording one). That record is in, and it is the FAIL: a 33 MiB pack on
+// HTTP/1.1 was answered 413 by the front end, which the run read as the four
+// bytes its proxy received. So the first half of the belief below is measured
+// -- the hop in front of this process refuses an HTTP/1 request body a large
+// git pack exceeds. The second half is not: the reconciliation still marks it
+// (U2: that HTTP/2's streaming keeps the pack off that buffer) unverified, and
+// the run above never reached a listener that speaks h2c, so no live step has
+// read it. What is stated here is therefore what the port's name
+// (credentials.tf) turns on and not a result -- an HTTP/2 body is streamed
+// past that buffer.
 //
 // HTTP/1.1 stays on, and not as a courtesy: it is what every caller this
 // service has today speaks. The runner's gateway is a plain net/http client

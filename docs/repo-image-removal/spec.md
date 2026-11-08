@@ -92,7 +92,7 @@ removal and not a separate one.
 
 ### 1.4 Every path that writes the removed settings
 
-- **The setup skill** (`plugin/skills/setup/SKILL.md:84`–`:91`) teaches the agent to write `image:` and
+- **The setup skill** (`plugin/skills/setup/SKILL.md:82`–`:89`) teaches the agent to write `image:` and
   `dockerfile:` into `fugaro.yaml`; it is rewritten to write a **catalog entry** instead (§8, D1205).
 - **The plugin's reference documents** (`plugin/skills/setup/reference/services-and-images.md:110` and
   its neighbours) carry the same instructions and the same YAML examples, and
@@ -361,7 +361,7 @@ that the refusal and the retirement behave as this document says. The task that 
 
 ## 8. The skill, the plugin, the console and the website
 
-- **The setup skill** (`plugin/skills/setup/SKILL.md:84`) stops writing `image:`/`dockerfile:` and
+- **The setup skill** (`plugin/skills/setup/SKILL.md:82`) stops writing `image:`/`dockerfile:` and
   writes a catalog entry: it asks what toolchain the repository needs, adds the Dockerfile the entry
   points at, and sets `image_name` (or `needs`) on the workflow. The skill's own rule that it "writes
   the Dockerfile only when needed" survives in the catalog's vocabulary (D1205).
