@@ -563,7 +563,7 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 		"Discovery stays **optional and explicit**",
 		"| `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]` |",
 		"The **enrolled** against the **seen**",
-		"the ones the allow-list does not already admit, in **one batch, confirmed once**",
+		"the ones the allow-list does not already admit, in **one batch, with no confirmation**",
 		"the discovery answer has shipped too",
 		"never removes an entry",
 		// The review's doc findings (see above).

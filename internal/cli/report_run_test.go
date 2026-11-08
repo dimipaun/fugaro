@@ -331,6 +331,13 @@ func assertLogMode(t *testing.T, cmdName string) {
 // case is why it is not merely tidy: a refusal's file is one of the 50 the
 // command's own name keeps (CL3's pruneLogs), so enough refused cancels would
 // evict the newest real one an operator is pointed at.
+//
+// The project and config writers of CL7b (the cases from the budget's writers
+// down) are held to the same rule, each with a refusal its own command line,
+// environment or argument answers: a scope a budget command did not name, a
+// layer file that is not there, a GODEBUG that leaks the credential, an
+// argument that is not a project ID, a restore with no terminal to type at, and
+// a delete-list entry that is not one.
 func TestARefusedCommandKeepsNoLog(t *testing.T) {
 	cases := []struct {
 		name string
@@ -354,6 +361,86 @@ func TestARefusedCommandKeepsNoLog(t *testing.T) {
 		{"a pass the selected project refuses", func(t *testing.T) error {
 			newReaperRig(t, false)
 			_, _, err := execute(t, "reaper")
+			return err
+		}},
+		// The writers of CL7b, whose reporter is opened the same way: where
+		// their own work starts and not at the command's door. Each refusal
+		// below is one the command answers from its own command line, its own
+		// environment or a file it was pointed at, so nothing of it reached the
+		// cloud and there is no run for a log to hold.
+		{"a budget set with no scope", func(t *testing.T) error {
+			_, _, err := execute(t, "budget", "set")
+			return err
+		}},
+		{"a budget kill with no scope", func(t *testing.T) error {
+			_, _, err := execute(t, "budget", "kill")
+			return err
+		}},
+		{"a budget resume with no scope", func(t *testing.T) error {
+			_, _, err := execute(t, "budget", "resume")
+			return err
+		}},
+		{"a publish of a layer file that is not there", func(t *testing.T) error {
+			_, _, err := execute(t, "config", "publish", filepath.Join(t.TempDir(), "no-such-layer.yaml"))
+			return err
+		}},
+		// The same writers again, with a command line that gets all the way
+		// through: what refuses these is the credential leak and the project
+		// selection that openBudget and openCloud make — the environment and
+		// the installation's own config, answered before any call reaches the
+		// cloud — so those two sit above the opener as well, and a run they
+		// refuse files no log. These are the cases an opener at the door
+		// answers wrongly: a leak is refused after the command line has been
+		// read, so the run gets far enough in to file its empty file.
+		{"a budget set whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "set", "--global", "--daily", "60", "--yes")
+			return err
+		}},
+		{"a budget kill whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "kill", "--all", "--yes")
+			return err
+		}},
+		{"a budget resume whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "resume", "--all", "--yes")
+			return err
+		}},
+		{"a publish whose GODEBUG leaks credentials", func(t *testing.T) error {
+			f := newCloudFixture(t)
+			isolateCache(t)
+			publishedLayer(t, f, testProjectLayer)
+			noAgentSession(t)
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "config", "publish")
+			return err
+		}},
+		{"a managed apply whose GODEBUG leaks credentials", func(t *testing.T) error {
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "managed", "apply", "root")
+			return err
+		}},
+		{"a managed flag of something that is not a project ID", func(t *testing.T) error {
+			_, _, err := execute(t, "managed", "flag", "NOT-A-PROJECT")
+			return err
+		}},
+		{"a managed unflag of something that is not a project ID", func(t *testing.T) error {
+			_, _, err := execute(t, "managed", "unflag", "NOT-A-PROJECT")
+			return err
+		}},
+		{"a restore at no terminal", func(t *testing.T) error {
+			noAgentSession(t)
+			terminal(t, false)
+			_, _, err := execute(t, "restore", "proj-new-id", t.TempDir())
+			return err
+		}},
+		{"an allow-delete argument that is not an entry", func(t *testing.T) error {
+			allowDeleteRig(t)
+			_, _, err := execute(t, append(allowDeleteArgs(), "not-an-entry")...)
 			return err
 		}},
 	}

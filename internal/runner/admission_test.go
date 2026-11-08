@@ -13,13 +13,16 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // admissionRun is newBK re-homed on the run a launcher creates for slugRepo
@@ -321,6 +324,61 @@ func TestRunnerRefusesARemoteOffTheProvidersEndpoint(t *testing.T) {
 		})
 	}
 }
+
+// TestProxiedRunRefusesAStaleEndpointOrigin: a proxied run never fetches from
+// the forwarder of an execution that is over. The listener's port belongs to
+// the execution that drew it, so a checkout whose origin is one -- a work
+// directory an earlier execution of the same job left, which is the one way
+// such a remote can exist -- is refused by the admission, before any git
+// credential, rather than admitted and then fetched from, and pushed to, an
+// address nothing is listening on.
+//
+// Nothing this run does writes one: the endpoint is derived per execution
+// (forwarderRemote) and the remote stays the launcher's Bitbucket URL, which
+// the rewrite credentialVars installs routes to the listener of the execution
+// that is running. This is the other side of that: a checkout that already
+// carries one is not this run's to use.
+//
+// The rows are the two loopback spellings, because nothing listens on the port
+// they name: if this check regresses, the clone below fails at once instead of
+// reaching out. What the endpoint's address is -- one of the loopback
+// spellings, one that only looks like one (127.0.0.1.evil.example), or an
+// address that is not loopback at all -- is refused the same way and is the
+// seam table's question (TestForwarderEndpointIsNeverARemote, internal/runner's
+// own package), which needs no run and no listener to ask it.
+//
+// Mutation (run, restored): admit the endpoint for a proxied Bitbucket run --
+// the shape this code had, where the runner itself wrote it into the checkout
+// -- and these runs get past admission and then fetch from a dead port.
+func TestProxiedRunRefusesAStaleEndpointOrigin(t *testing.T) {
+	const policy = `{"version":4,"allow_repos":["bitbucket/acme/*"],"bitbucket_token":{"allow_repos":["bitbucket/acme/app"],"proxy":true}}`
+	for _, tc := range []struct{ name, origin string }{
+		{"a loopback endpoint", "http://127.0.0.1:31415" + gateway.GitProxyPrefix + "acme/app.git"},
+		{"the IPv6 loopback spelling of one", "http://[::1]:31415" + gateway.GitProxyPrefix + "acme/app.git"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := admissionRun(t, "bitbucket", "acme/app", "off", "", policy)
+			b.deps.Env = append(b.deps.Env, providers.EnvCredentialsServiceURL+"="+proxyServiceEnv)
+			// The launcher's own remote: what this run would fetch from if the
+			// checkout did not carry an endpoint. The checkout does.
+			b.deps.Remote = "https://bitbucket.org/acme/app.git"
+			if err := os.MkdirAll(b.deps.WorkDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			testutil.Git(t, b.deps.WorkDir, "init", "--quiet", "-b", "main", ".")
+			testutil.Git(t, b.deps.WorkDir, "remote", "add", "origin", tc.origin)
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, tc.origin, "before any git credential")
+		})
+	}
+}
+
+// proxyServiceEnv is the installation's credentials service as this file's
+// fixtures name it: the job carries its URL (providers.EnvCredentialsServiceURL,
+// what fugaro update writes wherever it deploys one), and it is the half of
+// the proxied decision the job's own environment answers. Nothing is called at
+// it.
+const proxyServiceEnv = "https://creds.example.invalid"
 
 // The scheme and the port are the credential's, and only where a credential is
 // scoped at all: internal/gitops' CredentialURL answers "" for every scheme

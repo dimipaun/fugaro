@@ -1169,7 +1169,8 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 // TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
 // adds, and nothing else. The user claim reads the eight expressions a run
 // token already carried (each now `… || USER`), the two nodes of its own
-// mailbox, and — since coordinator plan task P3 — the coordinator's subtree.
+// mailbox, — since coordinator plan task P3 — the coordinator's subtree, and —
+// since O2 of the stateless orchestrator plan — the orchestrator's.
 // A grant anywhere else, on a family tension (b1) struck or on a parent that
 // would cascade to one, fails here as well as in the golden.
 //
@@ -1179,13 +1180,16 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 // and outcomes above all — was widened by this change.
 func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 	paths := generatedPaths(t)
-	// The nine, and the two mailbox nodes, which are scoped to the mailbox
+	// The eleven, and the two mailbox nodes, which are scoped to the mailbox
 	// the claim owns.
 	// generatedPaths spells $slug as slugForPath (it is the one wildcard the
 	// tests substitute), so the keys below do too.
 	// The ninth is the coordinator's subtree (coordinator plan task P3): the
 	// one family here that is granted on the root, so that the whole prefix is
-	// one grant rather than a list (D195).
+	// one grant rather than a list (D195). The tenth is the stateless
+	// orchestrator's (O2, D1220), granted on the root for the same reason and
+	// with a `.write: false` beside it: the person reads the state over the
+	// claim, and writes it over IAM, which no rule here binds.
 	want := map[string]bool{
 		"config/caps/global":                       true,
 		"config/caps/defaults":                     true,
@@ -1198,6 +1202,7 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 		"mailbox/$mb/outbox":                       true,
 		"mailbox/$mb/heartbeat":                    true,
 		"coordinator":                              true,
+		PathOrchestrator:                           true,
 	}
 	got := map[string]string{}
 	for p, attrs := range paths {
@@ -1720,10 +1725,15 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 // had it) still carries byte-for-byte the same rule. The new document may only
 // add; a rule that moved under a path that already existed is a change to what
 // every installation's runs may do, and it must be seen and named rather than
-// arrive as part of "we added the credentials children".
+// arrive as part of "we added the credentials children" — or, for this branch's
+// O2, "we added the orchestrator subtree", whose addition is the top-level
+// /orchestrator node and nothing under it, or for its T8, "we added the build
+// lease family", whose addition is likewise its own node and nothing under it
+// (isNamedAddition).
 //
 // Hand mutation this fails on: editing any existing rule (a loosened bound, a
-// dropped conjunct) while adding the new nodes.
+// dropped conjunct) while adding the new nodes, or dropping the new node from
+// the template (the addition check below).
 func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 	raw, err := os.ReadFile("testdata/rules.generation3.json")
 	if err != nil {
@@ -1758,8 +1768,8 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 		}
 	}
 	// And the addition is the one this task makes: the new paths are exactly
-	// the credentials family. Anything else that appears here is a rules change
-	// nobody asked for.
+	// the ones isNamedAddition names. Anything else that appears here is a
+	// rules change nobody asked for.
 	for p := range after {
 		if _, ok := before[p]; ok {
 			continue
@@ -1768,23 +1778,35 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 			t.Errorf("/%s is new and is not one of this task's additions", p)
 		}
 	}
+	// And this task's own addition is really there. The loop above proves only
+	// that whatever appeared is allowed, and a document that never gained the
+	// subtree would pass it, while the whole point of this diff is that it did.
+	if _, ok := after[PathOrchestrator]; !ok {
+		t.Errorf("the generated rules carry no /%s node: O2's addition to this document is the whole of what this branch changes", PathOrchestrator)
+	}
 }
 
 // isNamedAddition reports whether p is one of the paths a rules change of this
 // branch is allowed to add: the credentials family (C1.3), the coordinator's
 // subtree (coordinator plan task P3, D195), the hosted MCP server's own
-// (docs/mcp-server/implementation-plan.md's M3, D922), or the build lease's
-// (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22). Anything
-// else that appears in the document is a rules change nobody asked for.
+// (docs/mcp-server/implementation-plan.md's M3, D922), the build lease's
+// (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), or the
+// stateless orchestrator's (docs/stateless-orchestrator/implementation-plan.md's
+// O2, D1220). Anything else that appears in the document is a rules change
+// nobody asked for.
 //
-// The last three are equalities and not prefixes, for the reason
-// isNewCredsPath gives below: P3 adds the family's own node and nothing under
-// it, so a path *under* /coordinator is a change to what the family contains —
-// the shape a grant hidden under it takes — and belongs here as a diff a
-// reviewer reads rather than as a match this test waves through. M3's and T8's
-// nodes are refused whole, so a path under either is the same shape.
+// They are equalities and not prefixes, for the reason isNewCredsPath gives
+// below: P3 adds the family's own node and nothing under it, so a path *under*
+// /coordinator is a change to what the family contains — the shape a grant
+// hidden under it takes — and belongs here as a diff a reviewer reads rather
+// than as a match this test waves through. M3's and T8's nodes are refused
+// whole, so a path under either is the same shape. O2's is the same again, and
+// it is the one that matters most: the subtree carries a single `.read` at the
+// top and no rule under it, so a `$child` with a grant of its own is a widening
+// hidden one level down — and one a `USER` read at the top would otherwise make
+// look legitimate.
 func isNamedAddition(p string) bool {
-	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth || p == PathBuildLeases
+	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth || p == PathBuildLeases || p == PathOrchestrator
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the
@@ -1829,9 +1851,15 @@ func isNewCredsPath(p string) bool {
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
 //     which a cascade launch, the init stage and doctor read (C1.19-C1.21).
+//   - rules.OrchestratorRulesVersion is the orchestrator family's own
+//     generation, at 1 (marker.go), which the daemon and the CLI read before
+//     they write the state node (O2, O3, O5). It is a marker of its own rather
+//     than a bump of the first number for C1.3's reason: a bump drops every
+//     published policy on an installation whose owner has not redeployed the
+//     rules yet, and nothing gates the subtree on the document generation.
 //
-// Hand mutation this fails on: bumping any of the three (or lowering
-// CredsRulesVersion), which is what a reviewer must see argued for.
+// Hand mutation this fails on: bumping any of the four (or lowering one of the
+// family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
 	if projectpolicy.RulesVersion != 4 {
 		t.Errorf("projectpolicy.RulesVersion = %d, want 4: the generation that carries the coordinator's read grant (coordinator plan task P3)", projectpolicy.RulesVersion)
@@ -1847,6 +1875,15 @@ func TestRulesVersionUnchanged(t *testing.T) {
 	}
 	if PathCredsRulesMarker() == projectpolicy.PathRulesMarker() {
 		t.Errorf("the credentials marker is the rules marker: %q", PathCredsRulesMarker())
+	}
+	if OrchestratorRulesVersion != 1 {
+		t.Errorf("OrchestratorRulesVersion = %d, want 1: the first generation that carries the /%s subtree", OrchestratorRulesVersion, PathOrchestrator)
+	}
+	if PathOrchestratorRulesMarker() != "config/limits/orchestratorRules" {
+		t.Errorf("PathOrchestratorRulesMarker() = %q, want config/limits/orchestratorRules", PathOrchestratorRulesMarker())
+	}
+	if PathOrchestratorRulesMarker() == projectpolicy.PathRulesMarker() || PathOrchestratorRulesMarker() == PathCredsRulesMarker() {
+		t.Errorf("the orchestrator marker is another family's: %q", PathOrchestratorRulesMarker())
 	}
 }
 

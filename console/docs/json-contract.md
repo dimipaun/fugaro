@@ -591,6 +591,7 @@ reads:
 | `recipe`, `config_sha256` | string | **yes** | |
 | `project_layer` | `*runstore.ProjectLayerRecord` | **yes** | absent before 0.6.0 |
 | `status`, `stage`, `reason` | string | `status` no, other two yes | |
+| `failure_class` | `failure.Class` | **yes** | why the run did not end `succeeded`, as one value of the closed vocabulary of `docs/design/failure-classes.md` §3: the class the runner wrote beside the terminal status, and — for a record written before the field shipped — the reader's reading of the record's own `reason` (`runview.ClassOf`). **A reading and never written back**: the bucket keeps the bytes it had, so the same record read twice reads the same. Absent for a run that did not fail — a `succeeded` run, a run still going and a run that never started name no cause — and for a row the read side ended itself: a preemption, a lost execution and a cancel before launch, none of which left a record that ever settled, so nothing named a cause and the row's own account of what happened to it is `derived`; and `error`, the row for a run whose execution could not be followed at all, whose record the row may not claim to have read. `reason` keeps its text and its meaning byte for byte, and a value a reader does not know reads as `unclassified`, so the vocabulary may grow inside the field |
 | `derived` | string | **yes** | **what the read side derived, and not a status of its own** — the CLI's 2026-10-21 ruling. Written only on a row whose record was never finalized and whose Cloud Batch job the platform preempted: `status` stays `failed` (the vocabulary every reader already switches on) and `derived` carries the fact (`preempted`, `runview.DerivedPreempted`), with `reason` saying so in a sentence. Absent for every other row, which is what keeps the shape additive. See **the derived status** below |
 | `halt` | `*runstore.Halt` | **yes** | why a run halted |
 | `batch`, `requested_by` | string | **yes** | `requested_by` is a person's address |
@@ -784,6 +785,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 |---|---|---|---|
 | `project` | string | no | the Fugaro project |
 | `row` | `runview.Row` | no | §5 — this is where a live run's PR number and `pr_url` come from (design gap 6). *Note 2026-10-27:* the live row of `watch --json` now carries `pr_number` too (GV2.5), a draft PR's number parsed from the run's PR URL with the GitHub URL pattern; `pr_url` is still only here |
+| `failure_class` | `failure.Class` | **yes** | why the run did not end `succeeded`, as one value of the closed vocabulary of `docs/design/failure-classes.md` §3 (D1460): the same value `row.failure_class` carries (§5), on this shape because diagnose is the command a person runs to be told why the run stopped, and a reader of this document is never sent into the row for it. Absent for a run that did not fail, and for a row the read side ended itself (§5) |
 | `halt` | `*runstore.Halt` | **yes** | why a halted run was halted |
 | `verify` | `[]verify.Record` | **yes** | `result.json`'s verify records |
 | `failed`, `flaky` | `[]string` | **yes** | the last test record's failed and flaky tests |
@@ -3023,6 +3025,145 @@ subtree per scope it covers, shared across that scope's nodes rather than opened
 once per node (H6, F12): an RTDB stream is a held connection, and the console
 runs this one only while the Graph tab is visible and counts it in
 `MAX_LIVE_FEEDS` (CG9b, CG11).
+
+### 6.23 `fugaro security paths --json` — the list in force, and the answer per path
+
+**Command:** `internal/cli/security.go` `newSecurityCmd` / `newSecurityPathsCmd`,
+with the document built as `securityPathsDoc`. Cited by symbol, not by line, for
+§6.11's reason. **It is the reader an agent calls instead of guessing** what a
+repository's runs treat as security-sensitive (the security-classification
+design's SC3, D1512). It is a command of its own rather than a verb under
+`config` for D1512's own reason: `config`'s subcommands read the repository's
+configuration, while this reads the resolution a run is governed by, whose
+base-branch half no `config` verb reaches at all.
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `project` | string | never | never | the project the repository's own `fugaro.yaml` names at `base`, and `""` when it names none — or when the file could not be read at all, which is `error`'s case |
+| `repo` | string | never | never | owner/name of the checkout this answered for. The command takes no `--repo`: the list is a file at a ref of the checkout it is standing in, and a name would be a repository whose refs this process cannot read |
+| `base` | string | never | never | the branch the list was read at: the ref the next run from this checkout is cut from, resolved through `config.EffectiveBaseBranch` |
+| `floor_source` | string | never | never | the layer the engine's own rows carry in `security.patterns`: `floor`. It is what lets a consumer take the floor's rows without scanning the list for a name, and it is `floor` in every answer this slice can give (D1504) |
+| `security` | object | never | never | the list in force, below |
+| `checked` | array | never | **yes** | one answer per `--check` path, in the order they were given, and **null** when the command was asked for the list alone: a caller that named no path gets no answers, rather than an empty array that reads like "nothing is sensitive" |
+| `error` | string | never | never | why the repository's own file could not be read at `base`: this checkout holds no such ref, holds no `fugaro.yaml` at it, or holds one with no place in it for a project name. Bounded text that **names a ref or a line and never a value read out of the file**, and `""` when the read answered |
+
+**`security` is the list in force:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `patterns` | array | never | never | the rows, floor first, in the order a run matches them |
+| `count` | int | never | never | how many rows `patterns` carries. It is a member rather than `len(patterns)` at each reader, because a consumer that draws a figure wants one number to draw |
+
+**One row of `patterns`:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the row's name: what the run record, the pull request body and `fugaro watch` print when they say which rule decided (D24) |
+| `match` | string | never | never | the row's glob, repository-relative, in the doublestar dialect the whole tree matches with (D1502) |
+| `category` | string | never | never | one of `credentials`, `guards`, `targets`, `infrastructure`, `prompts`, `CI`, `artifacts` (`sensitivity.Categories`; the seventh word is that design's own, D1500) |
+| `source` | string | never | never | the layer the row came from: `floor`, `project` or `repo` (D1512). A project's row and a repository's row are added to the list, never subtracted from it (D1506) |
+
+**One entry of `checked`:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `path` | string | never | never | the path **as it was asked for**, never a cleaned or rewritten spelling of it: the answer is keyed by what the caller typed |
+| `sensitive` | bool | never | never | whether the list in force treats the path as security-sensitive, and the fail-closed rule below is the whole of it |
+| `matched` | object | never | **yes** | the row that decided the answer — `{name, category, source}`, the same three words a `patterns` row carries — and **null** when no row of the list in force matched. Null is a real answer and not a missing one: the list says nothing about this path |
+
+**`sensitive` fails closed, and that is the field's whole rule** (F22, D1512). It
+is true when a row of the list in force matched the path — the list is a
+**positive** one, and this field answers what it says, not what it leaves out —
+and true when the reader cannot place the path at all: a spelling that is not a
+clean repository-relative path means more than one path, or names none inside
+the repository, and no list can speak about it. The spellings are the ones
+`TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath` holds, drawn from
+`sensitivity`'s own table (`pattern_test.go`'s
+`TestUnplaceablePathMatchesNoRuleAndClassifiesSensitive`): `/etc/passwd` is
+absolute, `docs/../website/src/x.md` escapes, the empty string is no path at
+all, and a bare `.` and a bare `..` are the repository root as a directory
+reference and the tree above it — the pair the matcher's own rule *accepts*,
+since `path.Clean` leaves both exactly as they are, and that this command
+refuses where it composes the answer. The two are told apart by `matched`:
+`sensitive: true` with `matched: null` is exactly that unplaceable case, and
+`docs/pending-workflows/console-tests.yml` is `true` **with** the floor's
+`pending-workflows` row.
+
+The classifier's class is deliberately **not** a third input, and this is the
+rule's one non-obvious half. `sensitivity.Classify` answers `Sensitive` for every
+path outside its routine trees as well, which on any real repository is most of
+the tree: `internal/cli/registry.go`, `internal/gitops/push.go` and
+`shared/lib.go` all sit in no routine tree and on no floor row. Asking it as well
+would make this field the classifier's complement rather than the list's answer,
+and would tell the agent reading it that a change forces level 3 when the run
+does not: **a run escalates on a row of the list in force that matches its diff
+and on nothing else** (SC6, F5, F7), which is the same ground Check 370's own
+pair stands on — `docs/recipes.md` matches no row and is `false`, while the
+`docs/pending-workflows/**` row makes the file staged there `true`. So a
+placeable path no row matches is `false` whatever tree it sits in, and
+`TestSecurityPathsCheckAnswersPerPath`'s fourth path is that case, asserted
+against the class as well as against the answer so the two rules cannot quietly
+agree.
+
+**The base branch, never the working copy** (F14, D1518). The list in force is
+read at the base branch, so a change can never carry the rule that governs its
+own review — the exploit the ask exists to close. The file is read out of the
+checkout's **own object database** (`readFugaroYAMLAtRef`: git `cat-file`, never
+the network and never the working tree), and the base branch's *name* is resolved
+the way every launcher resolves it — the working tree's own `git.base_branch`,
+else the local config's, else main — because the ref is what the read needs
+before it can happen at all. That first layer is read out of the file's own text
+(`config.GitBaseBranchOf`) rather than through the launcher's
+`checkoutBaseBranch`, whose value comes from the file resolved over the published
+project layer — a resolution that opens the layer's bucket (`checkoutParse` →
+`findLayer`) and writes the local layer cache. Nothing is lost by it: a project
+layer cannot set `git.base_branch` at all (`config.LayerGit` carries `provider`
+and `pr` and nothing else), so the file's own text and the resolution name the
+same branch, and `fugaro models ls`'s own base-branch read makes the same offline
+choice. The layer this does **not** read is the published policy's `base_branch`
+(the launcher's layer 3): that one is a database read, so a project whose default
+lives only there reads as `main` here — the one case in which a run could be cut
+from a branch this document does not name. **Nothing is fetched**: a ref this
+checkout does not hold is the `error` above rather than a guess at another
+document.
+
+**A read that did not answer is not an exit, and it is not a silent floor
+either.** The one thing this slice reads at the ref is the repository's own
+`fugaro.yaml`, for `project`; a repository that has none at its base — one being
+onboarded — still gets an answer, because the list in force is the floor alone
+here and the floor is compiled in. So the document is printed with `error` set
+and the command exits zero, §6.21's own rule for a state that is the answer, and
+the table a person reads says the same thing on stderr beside it: what it printed
+is the floor, and the repository's own rows are not in it.
+
+**What is not in it, and it is the whole of the bound: the session.** The
+document carries the caller's own `--check` paths and nothing else of the machine
+it ran on — no environment, no path outside the repository, no argv beyond the
+flags it was given. The two values it does read are the repository's own and both
+are named members above: `project`, out of the repository's `fugaro.yaml` at the
+base ref, and `base`, the branch that file's own resolution names. **Nothing in
+it is a credential**: a row is a name, a glob and a category, and a checked path
+is the path the caller typed.
+
+**Flags** (`newSecurityPathsCmd`): `--check PATH` (repeatable) and `--json`, and
+nothing else. It carries no cloud flags — no `--project`, no `--config` — because
+it reads one file at one ref of the checkout it runs in: it wants no project, no
+credentials and **no read of its own that leaves the machine**. That last one is
+a property of the code and not only of the flags, and it has a test of its own:
+`TestSecurityPathsOpensNoBucket` holds the project layer's opener
+(`layerBucketOpener`) and the runs bucket's (`sharedBucketOpener`) to a failure
+if either is reached, with an anchored checkout and a selected project config —
+the two things `findLayer` needs before it reads anything. It is **not** on the
+console's spawn list, and that is D1514's deferral rather than an oversight: the
+console draws no screen from this document yet, and this section exists because
+§6 is where a document a console could read is written down.
+
+**This slice is the floor alone** (D1504, D1519). No project key and no
+repository key exists yet, so every row's `source` is `floor` and there is one
+layer to merge; SC7 and SC8 add the two keys, SC9 re-points this read at the one
+resolution, and the shape above does not move for any of them.
 
 ## 7. The CLI gaps, settled against the code
 

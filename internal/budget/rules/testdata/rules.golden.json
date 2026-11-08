@@ -561,6 +561,10 @@
     "buildleases": {
       ".read": false,
       ".write": false
+    },
+    "orchestrator": {
+      ".read": "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())",
+      ".write": false
     }
   }
 }

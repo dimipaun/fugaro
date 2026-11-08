@@ -781,6 +781,65 @@ func TestReviewRunIsGatewayOnWhateverItsAuth(t *testing.T) {
 	}
 }
 
+// TestReviewRunIsServedByTheProjectsAnthropicKey (AK5, D1417): the class's
+// second credential. A review run the launcher admitted to the review variant
+// of the account the sentinel names (config.AnthropicKeyAccount) is served by
+// the project's own Anthropic API key: the class is the run's model path
+// whatever the repository's file says its own calls are — agent.auth: api-key
+// is what such a repository writes, because its calls are a key's and the key
+// is the project's own — the gateway's upstream is the credentials service's,
+// and the environment the agent is built with carries the gateway's per-run
+// token and no credential of the job's.
+//
+// The pairing is what admits it, never the auth: this run's repository writes
+// the same agent.auth as TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn's, and
+// only the job the run was admitted to tells the two apart.
+//
+// Mutation (run, restored): admit the repository's own agent.auth as the
+// class's credential — every api-key repository's review is admitted, and the
+// second direction of TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn goes red.
+func TestReviewRunIsServedByTheProjectsAnthropicKey(t *testing.T) {
+	for _, mode := range []string{policy.ModeEnforce, policy.ModeObserve} {
+		t.Run(mode, func(t *testing.T) {
+			r := reviewClassRun(t, "api-key", mode)
+			r.job.Account = reviewVariantAccount(config.AnthropicKeyAccount)
+			r.spec.OAuthToken = config.AnthropicKeyAccount
+			r.d.Execution = identityExecution(gcp.ProjectJobName(r.job.Profile, r.job.Provider, r.job.Account))
+			if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+				t.Fatalf("a review whose pairing names the project's own Anthropic API key was refused: %v", err)
+			}
+			r.sess = svcSession(t)
+			up, err := r.gatewayUpstream(context.Background())
+			if err != nil {
+				t.Fatalf("the upstream of a review the project's key serves: %v", err)
+			}
+			if up.Kind != gateway.KindService || up.BaseURL != reviewClassServiceURL {
+				t.Errorf("upstream = %+v, want the credentials service's kind and URL: the class's calls are the service's, and the key is the bundle's tier-B entry", up)
+			}
+			// No credential of the job's reaches the agent: the gateway holds
+			// the credential and presents its own per-run token.
+			env, _, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
+				Auth: r.modelAuth(), Gateway: &agent.Gateway{BaseURL: "http://127.0.0.1:1", Token: reviewClassToken},
+			})
+			if err != nil {
+				t.Fatalf("building the agent's environment for a review the project's key serves: %v", err)
+			}
+			got := map[string]string{}
+			for _, kv := range env {
+				if k, v, ok := strings.Cut(kv, "="); ok {
+					got[k] = v
+				}
+			}
+			if got["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:1" || got["ANTHROPIC_API_KEY"] != reviewClassToken {
+				t.Errorf("the agent's environment routes to %q with %q, want the gateway's URL and its per-run token", got["ANTHROPIC_BASE_URL"], got["ANTHROPIC_API_KEY"])
+			}
+			if v, ok := got["CLAUDE_CODE_OAUTH_TOKEN"]; ok {
+				t.Errorf("the agent carries CLAUDE_CODE_OAUTH_TOKEN (%q): the variant mounts no token of its own", v)
+			}
+		})
+	}
+}
+
 // TestReviewRunSkipsTheCodingCascadeSwitch (CSR13, O2): the class is the
 // consent the operator's switch stands for in a coding run, so a review needs
 // no routing.claude at all to be admitted — and nothing more than the switch is
@@ -1163,22 +1222,32 @@ func TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn(t *testing.T) 
 	}
 }
 
-// TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn (CSR13, O1 and the owner's cut
-// of 2026-11-06): a repository's own api-key configuration cannot produce an
-// api-key review. The class's one credential is the pairing account's tier-A
-// OAuth one (reviewCandidates), and the api-key review is a later release, so
-// the run is refused in bootstrap with a sentence that names the api-key review
-// and the release it is in — and nothing in 0.20.0 reads as though it works.
-// vertex is refused the same way: it is a credential of the repository's, and
-// the review variant mounts none of them (CSR7).
+// TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn (CSR13, O1, D1420): a
+// repository's own api-key configuration cannot produce a review served by a
+// key of its own. The class's one credential is the pairing's, and the pairing
+// is the job the platform admitted the run to (reviewCandidates, D1417), so a
+// repository whose file writes a credential of its own is refused in bootstrap
+// unless the job it was admitted to is the project's key's own variant — and
+// the sentence names what the class is served from (the credentials service's
+// review class, the pairing, and the sentinel that pairing is spelled with)
+// rather than the release the path was cut in. vertex is refused the same way:
+// it is a credential of the repository's, and the review variant mounts none of
+// them (CSR7).
+//
+// This is the fail-closed direction the class exists to hold, and its other
+// direction is TestReviewRunIsServedByTheProjectsAnthropicKey: that run's
+// repository writes the same agent.auth as this one's and is admitted, because
+// its pairing names the project's key. So what refuses these two is the pairing
+// and never the auth.
 //
 // The refusal is the auth's and not the budget's, so it is the same sentence
 // whatever the mode says: an api-key review is refused before a mode can be
 // asked about.
 //
 // Mutation (run, restored): let a repository's own agent.auth: api-key give the
-// review run a key — the run is admitted and its first call is served by a
-// credential the class never picked.
+// review run a key — every api-key repository's review is admitted whatever job
+// it was placed in, and the run's first call is served by a credential the
+// class never picked.
 func TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn(t *testing.T) {
 	for _, auth := range []string{"api-key", "vertex"} {
 		for _, mode := range []string{policy.ModeEnforce, policy.ModeOff} {
@@ -1188,9 +1257,18 @@ func TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn(t *testing.T) {
 				if err == nil {
 					t.Fatal("a review whose repository writes a credential of its own was admitted")
 				}
-				for _, want := range []string{auth, "api-key review", "later release", "0.20.0 ships the OAuth review alone", "oauth"} {
+				for _, want := range []string{auth, "credentials service", "review class", "pairing", config.AnthropicKeyAccount, "oauth"} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				// D1420's rewrite: the sentence names what the class is served
+				// from, and not the release the path is in — a repository's own
+				// file is refused for a reason of its own, and a reader of the
+				// refusal must be able to act on it in this release.
+				for _, gone := range []string{"later release", "0.20.0"} {
+					if strings.Contains(err.Error(), gone) {
+						t.Errorf("the refusal still names %q: %v", gone, err)
 					}
 				}
 				// The class is an accessor and not a rewrite: the repository's

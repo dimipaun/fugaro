@@ -267,8 +267,10 @@ func newSyncRig(t *testing.T, names ...string) *syncRig {
 }
 
 // `project sync` offers the App's installed repositories that the allow-list
-// does not admit, in one confirmed batch, and writes them through the same
-// ETag-guarded path `repos add` uses.
+// does not admit, in one batch, and writes them through the same ETag-guarded
+// path `repos add` uses. It asks nothing: the policy removed the typed
+// confirmation this batch used to take (docs/no-prompt-policy), so the offer
+// is what the owner reads and the write follows it.
 //
 // What it must never do is remove: an entry the App is not installed on at all
 // (bitbucket/acme/other) is still on the list after the sync, which is the
@@ -278,8 +280,7 @@ func newSyncRig(t *testing.T, names ...string) *syncRig {
 // Mutation (verified, run and restored): write the installed set as the new
 // allow-list instead of appending the missing ones — this test fails on the
 // bitbucket entry, which a sync would have un-enrolled.
-func TestProjectSyncAddsOnlyTheMissingOnesAndConfirmsOnce(t *testing.T) {
-	typed(t)
+func TestProjectSyncAddsOnlyTheMissingOnes(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version":     projectpolicy.Version,
@@ -287,27 +288,27 @@ func TestProjectSyncAddsOnlyTheMissingOnesAndConfirmsOnce(t *testing.T) {
 		"allow_repos": []string{"bitbucket/acme/other", "github/acme/app"},
 	})
 	g := newSyncRig(t, "acme/app", "Acme/New", "other/thing")
-	out, _, err := executeStdin(t, "aurora\n", "project", "sync", "--github-app-id", "12345", "--github-app-key")
+	out, _, err := execute(t, "project", "sync", "--github-app-id", "12345", "--github-app-key")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	// One batch, one confirmation, and it comes after the list it confirms.
-	if n := strings.Count(out, "Type aurora to confirm"); n != 1 {
-		t.Errorf("the batch is confirmed %d times, want once:\n%s", n, out)
-	}
-	offer, confirm, ok := strings.Cut(out, "Type aurora to confirm")
+	// The offer, and then the write: the repositories the App is installed on
+	// that the allow-list does not admit are named before what was written is.
+	offer, wrote, ok := strings.Cut(out, "allow_repos: ")
 	if !ok {
-		t.Fatalf("the sync wrote without confirming:\n%s", out)
+		t.Fatalf("the sync did not say what it wrote:\n%s", out)
 	}
 	for _, want := range []string{"github/acme/new", "github/other/thing"} {
 		if !strings.Contains(offer, want) {
 			t.Errorf("the offer does not name %q:\n%s", want, out)
 		}
+		if !strings.Contains(wrote, want) {
+			t.Errorf("the write does not name %q:\n%s", want, out)
+		}
 	}
 	if strings.Contains(offer, "github/acme/app") {
 		t.Errorf("the offer names a repository the allow-list already admits:\n%s", out)
 	}
-	_ = confirm
 	// Canonical and sorted, with the entries that were there left alone.
 	want := []string{"bitbucket/acme/other", "github/acme/app", "github/acme/new", "github/other/thing"}
 	if got := allowReposOf(t, f.db); !slices.Equal(got, want) {
@@ -319,7 +320,7 @@ func TestProjectSyncAddsOnlyTheMissingOnesAndConfirmsOnce(t *testing.T) {
 	}
 	// A second sync has nothing to add and writes nothing at all.
 	before := nodeOf(t, f.db)
-	out2, _, err := executeStdin(t, "aurora\n", "project", "sync", "--github-app-id", "12345", "--github-app-key")
+	out2, _, err := execute(t, "project", "sync", "--github-app-id", "12345", "--github-app-key")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out2)
 	}
@@ -363,14 +364,17 @@ func TestProjectSyncOffersNothingTheListAlreadyAdmits(t *testing.T) {
 	}
 }
 
-// The batch is a write to the project's policy node, and a confirmation that
-// was not given writes nothing: the operator types the project's name, and
-// anything else leaves the node byte-identical.
+// The batch is a write to the project's policy node, and the policy asks
+// nothing before it (docs/no-prompt-policy): with no terminal on its input and
+// nothing on stdin the sync writes the batch it offered, and there is no --yes
+// to give. This is the assertion a later change that put a confirmation back
+// would break.
 //
-// Mutation (verified, run and restored): ignore confirmTyped's error — this
-// test fails, the node holding the batch after a refused confirmation.
-func TestProjectSyncWritesNothingWhenTheConfirmationIsRefused(t *testing.T) {
-	typed(t)
+// Mutation (verified, run and restored): confirm the batch again
+// (confirmTyped with bufio.NewReader over cmd.InOrStdin()) — this test fails,
+// the command waiting on a stream nobody is there to write to.
+func TestProjectSyncWritesWithoutATerminalOrAConfirmation(t *testing.T) {
+	noTerminal(t)
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version":     projectpolicy.Version,
@@ -378,13 +382,12 @@ func TestProjectSyncWritesNothingWhenTheConfirmationIsRefused(t *testing.T) {
 		"allow_repos": []string{"github/acme/app"},
 	})
 	newSyncRig(t, "acme/new")
-	before := nodeOf(t, f.db)
-	_, _, err := executeStdin(t, "nope\n", "project", "sync", "--github-app-id", "12345", "--github-app-key")
-	if err == nil {
-		t.Fatal("sync wrote the batch without the confirmation")
+	out, _, err := execute(t, "project", "sync", "--github-app-id", "12345", "--github-app-key")
+	if err != nil {
+		t.Fatalf("the sync asked for something nobody was there to give: %v\n%s", err, out)
 	}
-	if nodeOf(t, f.db) != before {
-		t.Error("a refused confirmation still changed the policy node")
+	if got := allowReposOf(t, f.db); !slices.Contains(got, "github/acme/new") {
+		t.Errorf("allow_repos = %v, want the App's installed repository added", got)
 	}
 }
 
