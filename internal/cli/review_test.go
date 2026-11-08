@@ -340,7 +340,7 @@ func TestReviewRefusesAnInstallationWhoseServicePredatesTheClass(t *testing.T) {
 	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
 		"only from fugaro "+reviewAdmissionSince+" on",
 		"Run fugaro update",
-		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
+		"refused rather than started")
 }
 
 // TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped is the release's own

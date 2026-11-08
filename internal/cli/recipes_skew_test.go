@@ -478,8 +478,11 @@ func TestRecipesSkewRefusesAReviewServiceOlderThanTheClass(t *testing.T) {
 		if !strings.Contains(err.Error(), "at "+refused.rel) {
 			t.Errorf("%s: the refusal does not name the installation's own release: %v", refused.base, err)
 		}
-		if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), reviewOnlyRecipe) {
-			t.Errorf("%s: the refusal names neither the update that is the whole upgrade nor the review in the run's own job: %v", refused.base, err)
+		if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), "refused rather than started") {
+			t.Errorf("%s: the refusal names neither the update that is the whole upgrade nor the fact that it refuses: %v", refused.base, err)
+		}
+		if strings.Contains(err.Error(), "review a pull request in the run's own job") {
+			t.Errorf("%s: the refusal offers a way out the same gate closes: fugaro run --pr N --recipe %s carries mode: review too: %v", refused.base, reviewOnlyRecipe, err)
 		}
 		if warn != "" {
 			t.Errorf("%s: warning %q, want none", refused.base, warn)

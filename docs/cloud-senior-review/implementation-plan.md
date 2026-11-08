@@ -1216,10 +1216,10 @@ that is still the check's step 3.
   nothing (D143, `reviewJobAdmitted`'s comment), while `fugaro update` pins `base_images.base` at the
   release it runs and resolves and pins the service's image in the same run, so a base image below this
   value is an installation whose service is below it too; a base image that carries no release, or none
-  at all, only warns (`releaseOf`'s rule). The refusal names `fugaro update` as the whole upgrade and
-  `fugaro run --pr N --recipe review-only` as what works until it is run — **not**
-  `reviewJobSince`'s `fugaro image refresh`, which moves no credentials service, and that is why this is
-  a second constant rather than that value raised. Tests:
+  at all, only warns (`releaseOf`'s rule). The refusal names `fugaro update` as the whole upgrade, and it
+  names no other way out: `fugaro run --pr N --recipe review-only` carries the same `mode: review` and
+  meets the same gate. It is **not** `reviewJobSince`'s `fugaro image refresh`, which moves no credentials
+  service, and that is why this is a second constant rather than that value raised. Tests:
   `TestRecipesSkewRefusesAReviewServiceOlderThanTheClass` (0.20.x refused, 0.21.0 admitted, an unreadable
   or absent base image warned about),
   `TestReviewRefusesAnInstallationWhoseServicePredatesTheClass` (the command's own refusal, on the
