@@ -19,7 +19,8 @@ figure, the cell below records its structure and says "price: private" or "figur
 **Numbers this work holds:** decisions **D430–D459** and checks **170–179**, taken above the
 go-to-market work's D400–D429 and Checks 160–169 (`docs/go-to-market/README.md`) and the Bitbucket
 credentials work's D360–D389 and Checks 145–154, on `main` and in the docs of every open PR.
-**D430–D448** are written and answered; **D449–D459** are reserved and unused. **Checks 170–179**
+**D430–D448** are written and answered; **D449–D459** are written and unanswered, by the key
+service's design (S3.1, `docs/design/key-signing-service.md` §12). **Checks 170–179**
 are named by the plan, owner-run and not run. Findings are
 **F1–F47**, resolutions **R1–R6**, tensions **T1–T26** (T1–T9 from the first reading, T10–T26 from
 the answers; **all ruled 2026-10-27**, see "Rulings"; **T27**, a consequence of the rulings, **ruled

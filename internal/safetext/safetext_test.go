@@ -1,6 +1,7 @@
 package safetext
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -102,6 +103,54 @@ func TestTableCellEscapesTab(t *testing.T) {
 	hostile := "a\nb" + string(rune(0x1b)) + "[2Jc" + string(rune(0x202e)) + "d"
 	if TableCell(hostile) != OneLine(hostile) {
 		t.Errorf("TableCell and OneLine disagree on %q: %q vs %q", hostile, TableCell(hostile), OneLine(hostile))
+	}
+}
+
+// TestJSONTextKeepsTheDocumentWhole: the difference from MultiLine is what an
+// introducer takes with it. A run's own value can carry a C1 control, which a
+// JSON encoder writes as itself, so the bytes after it in the document are the
+// document's — the quote ending the string it sat in, the comma after it, the
+// brace after that. MultiLine reads them as the rest of a sequence and drops
+// them; JSONText leaves them and the document parseable.
+func TestJSONTextKeepsTheDocumentWhole(t *testing.T) {
+	const doc = `{"field":"a value a run wrote: %s","after":"another field"}`
+	// The case the function exists for, stated once: the terminal rule over the
+	// same document answers text no client can parse. If this ever stops being
+	// true, JSONText has no reason left to exist.
+	if csi := fmt.Sprintf(doc, string(rune(0x9b))); json.Valid([]byte(MultiLine(csi))) {
+		t.Errorf("MultiLine(%q) is JSON: the C1 introducer no longer costs the document its own bytes", csi)
+	}
+	for _, spoof := range []string{
+		string(rune(0x9b)), string(rune(0x9b)) + "31m", string(rune(0x9d)), string(rune(0x202e)), string(rune(0x1b)) + "[31m",
+	} {
+		in := fmt.Sprintf(doc, spoof)
+		got := JSONText(in)
+		if !json.Valid([]byte(got)) {
+			t.Fatalf("JSONText(%q) = %q, which is not JSON", in, got)
+		}
+		var parsed struct {
+			Field string `json:"field"`
+			After string `json:"after"`
+		}
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Fatalf("JSONText(%q) = %q, which does not decode: %v", in, got, err)
+		}
+		if parsed.After != "another field" || !strings.Contains(parsed.Field, "a value a run wrote") {
+			t.Errorf("JSONText(%q) = %q; want the document's own fields, with the character redacted and the text kept", in, got)
+		}
+		if strings.ContainsAny(got, string(rune(0x9b))+string(rune(0x9d))+string(rune(0x1b))+string(rune(0x202e))) {
+			t.Errorf("JSONText(%q) = %q; want the character a reader obeys redacted", in, got)
+		}
+	}
+	// A document with nothing to redact is returned as it was, and so is one
+	// whose only control is the escape a JSON encoder writes.
+	plain := fmt.Sprintf(doc, "an ordinary value")
+	if JSONText(plain) != plain {
+		t.Errorf("JSONText(%q) = %q, want it unchanged", plain, JSONText(plain))
+	}
+	escaped := fmt.Sprintf(doc, `\u009b is how an encoder would write it`)
+	if JSONText(escaped) != escaped {
+		t.Errorf("JSONText(%q) = %q, want the encoder's own escape left alone", escaped, JSONText(escaped))
 	}
 }
 

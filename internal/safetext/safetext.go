@@ -20,7 +20,7 @@ func OneLine(s string) string { return Text(s, false) }
 func MultiLine(s string) string { return Text(s, true) }
 
 // Text implements OneLine and MultiLine.
-func Text(s string, keepNewlines bool) string { return text(s, keepNewlines, true, true) }
+func Text(s string, keepNewlines bool) string { return text(s, keepNewlines, true, true, true) }
 
 // TableCell is OneLine for a value that will sit in one cell of a
 // tabwriter table, such as an account or recipe name read back from a
@@ -29,13 +29,13 @@ func Text(s string, keepNewlines bool) string { return text(s, keepNewlines, tru
 // too. Everything else OneLine already escapes (ESC/CSI/OSC sequences,
 // bidi and zero-width characters, the line/paragraph separators, newline)
 // is escaped here the same way.
-func TableCell(s string) string { return text(s, false, false, true) }
+func TableCell(s string) string { return text(s, false, false, true, true) }
 
 // Strip is s as typed or pasted input: what OneLine would replace is dropped
 // instead of marked, and so are tabs and the Unicode line separators, so the
 // result is one run of printable characters.
 func Strip(s string) string {
-	s = text(s, false, true, false)
+	s = text(s, false, true, false, true)
 	return strings.Map(func(r rune) rune {
 		if r == '\t' || r == 0x2028 || r == 0x2029 {
 			return -1
@@ -52,11 +52,31 @@ func Clip(s string, n int) string {
 	return string([]rune(s)[:max(n, 0)])
 }
 
-// text implements Text, TableCell and Strip; repl says whether a rejected
-// character leaves a "?" (Text, TableCell) or nothing (Strip); keepTab
-// exempts a literal tab from escaping (Text's behavior) or not (TableCell's,
-// where a tab must not open a new column of its own).
-func text(s string, keepNewlines, keepTab, repl bool) string {
+// JSONText is the text of a JSON document with the characters a JSON encoder
+// writes raw and a reader would obey replaced by "?" — and nothing else.
+//
+// It is Text's character rule without Text's sequence rule, and that is the
+// whole difference. A JSON encoder writes a control as an escape (\u001b), so
+// the bytes a terminal pass takes for an introducer are here the document's
+// own: a C1 control arrives as itself, because encoding/json escapes the C0
+// range and not the C1 one, and the bytes after it are the quote that ends the
+// string it sat in, the comma after it and the brace after that — which
+// skipCSI would consume as parameters and a final byte, answering text that is
+// not JSON at all. What this does replace is everything else Text marks: C1
+// controls, bidi controls, zero-width characters and the rest of spoofing's
+// set. None of them is structural in a JSON document — every structural byte is
+// ASCII — so replacing one leaves the document whole, which is the only promise
+// a pass over a document can make.
+func JSONText(s string) string { return text(s, true, true, true, false) }
+
+// text implements Text, TableCell, Strip and JSONText; repl says whether a
+// rejected character leaves a "?" (Text, TableCell) or nothing (Strip);
+// keepTab exempts a literal tab from escaping (Text's behavior) or not
+// (TableCell's, where a tab must not open a new column of its own); and
+// sequences says whether an introducer takes the bytes after it with it
+// (Text's rule, for a string a terminal is being fed) or is itself all that
+// goes (JSONText's, for text whose bytes are structure).
+func text(s string, keepNewlines, keepTab, repl, sequences bool) string {
 	mark := func(b *strings.Builder) {
 		if repl {
 			b.WriteByte('?')
@@ -80,11 +100,11 @@ func text(s string, keepNewlines, keepTab, repl bool) string {
 		case r == utf8.RuneError && size <= 1:
 			mark(&b)
 			i += max(size, 1)
-		case r == 0x1b: // ESC
+		case sequences && r == 0x1b: // ESC
 			i = skipEscape(s, i+1)
-		case r == 0x9b: // 8-bit CSI
+		case sequences && r == 0x9b: // 8-bit CSI
 			i = skipCSI(s, i+size)
-		case r == 0x9d || r == 0x90 || r == 0x98 || r == 0x9e || r == 0x9f: // 8-bit OSC, DCS, SOS, PM, APC
+		case sequences && (r == 0x9d || r == 0x90 || r == 0x98 || r == 0x9e || r == 0x9f): // 8-bit OSC, DCS, SOS, PM, APC
 			i = skipString(s, i+size)
 		case (r == '\t' && keepTab) || (r == '\n' && keepNewlines):
 			b.WriteRune(r)

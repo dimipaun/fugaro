@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 func TestMergeFinishedAddsRowsBelowRunning(t *testing.T) {
@@ -108,13 +110,15 @@ func TestCleanURLRefusesNonHTTPSAndOverlongURL(t *testing.T) {
 	}
 }
 
-// A finished run's whole id is not on the interactive screen (owner request
-// 2026-10-24: its row names the run in the short form every other row shows,
-// and a finished row is a one-liner that cannot be expanded), so `--plain` and
-// `--json` are that run's route to the id `fugaro logs RUN` and `fugaro
-// diagnose RUN` want (design generic-tool §10.3). A short fixture id would
-// pass either way, so this pins a real one, where shortRun drops the stamp.
-func TestFinishedWholeRunIDAwayFromTheScreenIsInPlainAndJSON(t *testing.T) {
+// A finished run's whole id is on neither human surface: its row names the
+// run in the short form every other row shows (owner request 2026-10-24), a
+// finished row is a one-liner that cannot be expanded, and the plain frame
+// prints the same form (spec.md §1). The commands that take a run argument
+// still take a whole id, so the whole id — which the branch, the PR and the run
+// record carry — stays reachable in `--json` and in `runs ls`'s
+// `<slug>/<full id>`, never on this screen (design generic-tool §10.3). A short fixture id would pass either way, so
+// this pins a real one, where task.ShortRun drops the stamp.
+func TestFinishedWholeRunIDIsOnlyInJSON(t *testing.T) {
 	const full = "20261023-021512-abcd"
 	v := fixture()
 	v = MergeFinished(v, Config{}, []FinishedRun{
@@ -128,7 +132,7 @@ func TestFinishedWholeRunIDAwayFromTheScreenIsInPlainAndJSON(t *testing.T) {
 	if strings.Contains(got, full) {
 		t.Fatalf("the screen shows the whole id for a finished run:\n%s", got)
 	}
-	if !strings.Contains(got, shortRun(full)) {
+	if !strings.Contains(got, task.ShortRun(full)) {
 		t.Fatalf("the screen lost the finished run's short id:\n%s", got)
 	}
 	if strings.Contains(got, "    run ") {
@@ -138,8 +142,11 @@ func TestFinishedWholeRunIDAwayFromTheScreenIsInPlainAndJSON(t *testing.T) {
 	if err := RenderPlain(&b, "aurora", v, nil, PlainOptions{ASCII: true}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(b.String(), full) {
-		t.Fatalf("--plain dropped the finished run's whole id:\n%s", b.String())
+	if strings.Contains(b.String(), full) {
+		t.Fatalf("--plain prints the finished run's whole id:\n%s", b.String())
+	}
+	if !strings.Contains(b.String(), task.ShortRun(full)) {
+		t.Fatalf("--plain lost the finished run's short id:\n%s", b.String())
 	}
 	fin := BuildJSON("aurora", v).Finished
 	if len(fin) != 1 || fin[0].Run != full {
