@@ -75,8 +75,19 @@ func TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand(t *testin
 		t.Error("the managed read does not believe the installation this run flagged")
 	}
 	// The run says what it did, and says that nothing follows it.
-	if said := out + errOut; !strings.Contains(said, "no second command") {
+	said := out + errOut
+	if !strings.Contains(said, "no second command") {
 		t.Errorf("the run does not say the flagging needs no second command:\n%s", said)
+	}
+	// And it said what it was about to write before it wrote it: the flag
+	// command's own statement (managedFlagStatement), which is the disclosure
+	// the flag carries on its own command line and which no help text of this
+	// door can carry — --managed, whose text used to be the only place any of
+	// this was said, is declared here, hidden and refused by name.
+	for _, want := range []string{"flagging GCP project", managed.MarkerObject, "it records: this project is managed", "it gives up: the typed confirmation"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the run does not state %q before it writes the flag:\n%s", want, said)
+		}
 	}
 	// The other direction of the same property: a second run of the same
 	// command finds it managed, flags nothing again, and still succeeds.
@@ -89,6 +100,184 @@ func TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand(t *testin
 	}
 	if !managedFlagIsManaged(t, r) {
 		t.Error("the installation is not managed after a second run")
+	}
+}
+
+// seedFlagFact leaves gs://<runs bucket>/fugaro/managed.json holding m and
+// nothing else, as an earlier run left it: the marker object without the label
+// on the project is exactly the half-written state this step can produce — its
+// object write succeeds and its label write then fails — and it is sealed here
+// rather than injected, because a GCS answer that fails once has no hook in
+// gcpfake. The marker is built by the package's own writer, so the seed is a
+// marker this build would have written and not a literal that could drift from
+// one.
+func seedFlagFact(t *testing.T, r *initRig, m managed.Marker) {
+	t.Helper()
+	data, err := m.Bytes()
+	if err != nil {
+		t.Fatalf("building the marker to seed: %v", err)
+	}
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, data)
+}
+
+// TestUpdateFinishesAFlagWhoseLabelWriteFailed: the state the self-flag itself
+// leaves when its label write fails — the object recording the amount, the
+// project without the label. The read the apply-time gate makes requires both
+// marks and answers not managed, so a second `fugaro update` with the same
+// budget reaches the flag writer and meets the object the first run wrote:
+// managed.WriteFlag refuses it (ErrAlreadyMarked) and `fugaro managed flag`
+// refuses it for the same reason, so a warning naming a hand-written label
+// would leave the owner a manual repair — the one thing the `fugaro update`
+// rule forbids. The run reads the object WITHOUT the label (managed.ReadFlagFact,
+// which the read that requires the label cannot do: it drops the object), tells
+// it is this project's fact recording the amount it was given, and writes the
+// half that is missing.
+func TestUpdateFinishesAFlagWhoseLabelWriteFailed(t *testing.T) {
+	r := unmanagedUpdateRig(t)
+	seedFlagFact(t, r, managed.Marker{
+		Version:    managed.MarkerVersionBuilds,
+		GCPProject: initProject,
+		Budget:     &managed.Budget{Amount: 50, Currency: "USD"},
+		// The object's own default bound: the seed is what a flag writes.
+		MaxImageBuilds: managed.DefaultImageBuilds,
+	})
+	// The premise, so the test cannot pass on a state that was already managed:
+	// the label is what is missing, and the read that requires both refuses.
+	if managedFlagIsManaged(t, r) {
+		t.Fatal("the seeded state already reads as managed, so this test proves nothing about finishing it")
+	}
+	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
+	if err != nil {
+		t.Fatalf("fugaro update with the budget over a half-written flag: %v\n%s\n%s", err, out, errOut)
+	}
+	// The label was written, the object was left alone, and the read believes
+	// the project: the flag is finished, and no second command was needed.
+	if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != managed.ProjectLabelValue {
+		t.Errorf("the project carries %s=%q, want %q: the run did not finish the flag", managed.ProjectLabelKey, l, managed.ProjectLabelValue)
+	}
+	if !managedFlagIsManaged(t, r) {
+		t.Error("the managed read does not believe the installation the run finished flagging")
+	}
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || !strings.Contains(got, `"amount":50`) {
+		t.Errorf("gs://%s/%s = %q, want the fact the earlier run wrote, recording the amount", initRunsBucket, managed.MarkerObject, got)
+	}
+	said := out + errOut
+	for _, want := range []string{"left the creation fact", "no second command"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the run does not say %q about the flag it finished:\n%s", want, said)
+		}
+	}
+}
+
+// TestUpdateDoesNotFinishAFactThatRecordsAnotherAmount: the completion above is
+// for ONE object — this project's fact recording the amount this run was given.
+// A fact recording another amount is close to it and is not it: a flag records
+// an amount, it does not edit one, so writing the label there would make the
+// project managed at a figure its owner never chose for this run, and no
+// command of ours would take it back to the amount the run meant. The run says
+// what it found, names both amounts, and names the one way to finish it.
+func TestUpdateDoesNotFinishAFactThatRecordsAnotherAmount(t *testing.T) {
+	r := unmanagedUpdateRig(t)
+	seedFlagFact(t, r, managed.Marker{
+		Version:        managed.MarkerVersionBuilds,
+		GCPProject:     initProject,
+		Budget:         &managed.Budget{Amount: 75, Currency: "EUR"},
+		MaxImageBuilds: managed.DefaultImageBuilds,
+	})
+	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
+	if err != nil {
+		t.Fatalf("fugaro update with the budget over a fact recording another amount: %v\n%s\n%s", err, out, errOut)
+	}
+	if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != "" {
+		t.Errorf("the run wrote %s=%q on a fact recording 75 EUR, and the amount this run was given is the one a flag records", managed.ProjectLabelKey, l)
+	}
+	if managedFlagIsManaged(t, r) {
+		t.Error("the managed read believes a project the run did not flag")
+	}
+	said := out + errOut
+	for _, want := range []string{"it was not flagged", "records the budget amount 75 EUR", "--budget 75 --budget-currency EUR", "if that is the amount meant"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the warning does not say %q:\n%s", want, said)
+		}
+	}
+	if strings.Contains(said, "left the creation fact") {
+		t.Errorf("the run claims to have finished a fact recording another amount:\n%s", said)
+	}
+	if strings.Contains(said, "no second command") {
+		t.Errorf("the run claimed to have flagged the installation:\n%s", said)
+	}
+}
+
+// TestUpdateDoesNotFinishAFactAboutAnotherProject: the other side of the same
+// check, and the one that decides whether the completion writes anything at
+// all. The object is in this project's runs bucket — proved by number and
+// label, as the writer proves it — and it says it is a fact about a different
+// project, so it is not this project's: the label goes on THIS project, and
+// writing it on the strength of an object about someone else would flag a
+// project whose own fact was never read. The run says what is there instead.
+func TestUpdateDoesNotFinishAFactAboutAnotherProject(t *testing.T) {
+	r := unmanagedUpdateRig(t)
+	seedFlagFact(t, r, managed.Marker{
+		Version:        managed.MarkerVersionBuilds,
+		GCPProject:     "someone-elses-project",
+		Budget:         &managed.Budget{Amount: 50, Currency: "USD"},
+		MaxImageBuilds: managed.DefaultImageBuilds,
+	})
+	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
+	if err != nil {
+		t.Fatalf("fugaro update with the budget over a fact about another project: %v\n%s\n%s", err, out, errOut)
+	}
+	if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != "" {
+		t.Errorf("the run wrote %s=%q on the strength of an object about another project", managed.ProjectLabelKey, l)
+	}
+	if managedFlagIsManaged(t, r) {
+		t.Error("the managed read believes a project the run did not flag")
+	}
+	// The read's own sentence about what is there, in this step's warning and
+	// not only in the writer's error: the branch that has nothing to write says
+	// what it found, and it is not the branch that records another amount — a
+	// fact that is not this project's is not a fact whose amount this run could
+	// adopt either.
+	said := out + errOut
+	for _, want := range []string{"it was not flagged", "there is nothing for this step to write", "names project someone-elses-project, not " + initProject} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the warning does not say %q:\n%s", want, said)
+		}
+	}
+	if strings.Contains(said, "if that is the amount meant") {
+		t.Errorf("the run read an object about another project as this project's fact recording an amount:\n%s", said)
+	}
+	if strings.Contains(said, "no second command") {
+		t.Errorf("the run claimed to have flagged the installation:\n%s", said)
+	}
+}
+
+// TestUpdateBudgetHelpNamesTheFlaggingItTriggers is the disclosure half of D1553
+// on the update door. What a run given the budget does besides recording it —
+// flag an installation that is not managed, which takes that installation's
+// typed confirmation away — used to be said only in --managed's help, and
+// --managed is declared on this door, hidden from its help and refused by name,
+// so a reader of `fugaro update --help` was told nothing about it. --budget is
+// the flag that triggers the write, so --budget is where it is said; setup's
+// own --budget is the budget alone, because setup flags nothing it did not
+// create.
+func TestUpdateBudgetHelpNamesTheFlaggingItTriggers(t *testing.T) {
+	out, _, err := execute(t, "update", "--help")
+	if err != nil {
+		t.Fatalf("fugaro update --help: %v", err)
+	}
+	said := strings.Join(strings.Fields(out), " ")
+	for _, want := range []string{"--budget", "flags that installation as managed", "fugaro_managed=true", "typed confirmation", "coding agent's session"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("fugaro update --help's --budget does not say %q:\n%s", want, out)
+		}
+	}
+	sout, _, err := execute(t, "setup", "--help")
+	if err != nil {
+		t.Fatalf("fugaro setup --help: %v", err)
+	}
+	if ssaid := strings.Join(strings.Fields(sout), " "); strings.Contains(ssaid, "flags that installation as managed") {
+		t.Errorf("fugaro setup --help claims setup flags an installation that already exists:\n%s", sout)
 	}
 }
 

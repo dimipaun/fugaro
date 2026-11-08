@@ -3497,6 +3497,69 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 	}
 }
 
+// TestReadFlagFactReadsTheObjectWithoutTheLabel is the read the self-flag
+// finishes a half-written flag with (internal/cli/update_selfflag.go, whose
+// object write can succeed and whose label write then fail): the object half of
+// the marks on its own, which the label-bearing read cannot answer, because
+// readFact drops the object when the label is missing. Ours is the one state
+// that completion acts on — this project's fact, of a version that records an
+// amount, with a figure this build accepts — and every other state is a reason
+// instead, so a caller prints what is there rather than writing the label on
+// the strength of an object it did not recognise.
+func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		seed   string
+		ours   bool
+		budget Budget
+		want   string
+	}{
+		{name: "nothing there", ours: false, want: "is not there"},
+		{name: "the creation fact that records no amount", seed: markerJSON, ours: false, want: "records no budget amount"},
+		{
+			name: "a fact about another project",
+			seed: `{"version":3,"gcp_project":"another-project","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`,
+			ours: false, want: "names project another-project",
+		},
+		{
+			name: "a figure this build refuses",
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":0,"currency":"USD"},"max_image_builds":1}`,
+			ours: false, want: "records a budget this build refuses",
+		},
+		{name: "this project's fact recording an amount", seed: markerBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			if tc.seed != "" {
+				f.Put(testBucket, MarkerObject, []byte(tc.seed))
+			}
+			fact, err := ReadFlagFact(ctx, s, testBucket, testProject, testProjectNumber)
+			if err != nil {
+				t.Fatalf("ReadFlagFact: %v", err)
+			}
+			if fact.Ours != tc.ours {
+				t.Errorf("Ours = %v, want %v (reason %q)", fact.Ours, tc.ours, fact.Reason)
+			}
+			if tc.ours && fact.Budget != tc.budget {
+				t.Errorf("Budget = %+v, want %+v", fact.Budget, tc.budget)
+			}
+			if !tc.ours && !strings.Contains(fact.Reason, tc.want) {
+				t.Errorf("the reason %q does not say %q", fact.Reason, tc.want)
+			}
+		})
+	}
+	// And the same proof the writers make: a bucket that is not this project's
+	// own is not believed, whatever it holds.
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	f.Put(testBucket, MarkerObject, []byte(markerBuildsJSON))
+	if _, err := ReadFlagFact(ctx, s, testBucket, testProject, testProjectNumber+1); err == nil {
+		t.Error("an object in a bucket belonging to another project number was read as this project's fact")
+	}
+}
+
 // The flag's other half, and the reason it is not "create only": a project
 // Fugaro created WITHOUT --managed records the version-1 creation fact and no
 // amount (init passes no budget to WriteMarker), and the apply-time budget

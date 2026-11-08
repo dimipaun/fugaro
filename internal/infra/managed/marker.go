@@ -704,6 +704,92 @@ func alreadyFlagged(bucket, project string, cur []byte) error {
 		ErrAlreadyMarked, bucket, MarkerObject, what, project, bucket, MarkerObject)
 }
 
+// FlagFact is the object half of a project's marks as it stands, read WITHOUT
+// the label: what gs://<bucket>/fugaro/managed.json holds for gcpProject, with
+// no Resource Manager call and no label requirement.
+//
+// It exists for the one reader the label-bearing read cannot serve. That read
+// requires both marks and drops the object when the label is missing
+// (readFact), which is right for every caller that asks "is this project
+// managed" — but it makes one state unreadable: this project's own fact,
+// recording an amount, with the label absent. `fugaro update`'s self-flag
+// (internal/cli/update_selfflag.go, D1553) can leave exactly that state — its
+// write of the object succeeds and its write of the label then fails — and it
+// is the state a second run meets: the label-bearing read answers not managed,
+// the flag writer is reached, and the very object the first run wrote refuses
+// it with ErrAlreadyMarked. The only way out of that state without this read
+// would be a label written by hand, which is the manual repair the `fugaro
+// update` rule forbids; with it, the second run can tell "this project's fact
+// recording the amount I was given, missing its label" from every other object
+// and finish its own write.
+//
+// Ours is that answer: the object is this project's marker, of a version that
+// records an amount, and the figure it records is one this build accepts.
+// Budget is that figure. When Ours is false, the object is either absent or one
+// this build does not believe, and Reason says which — in the words the writers
+// and the read already use, so a caller prints the answer rather than inventing
+// a second account of what is there. An error means the read could not be made
+// at all (the bucket could not be looked at, the object could not be read), and
+// never "nothing is there".
+type FlagFact struct {
+	Ours   bool
+	Budget Budget
+	Reason string
+}
+
+// ReadFlagFact reads the object half of gcpProject's marks in bucket, without
+// the label. The bucket is proved to be gcpProject's own before anything in it
+// is believed (proveRunsBucket, exactly as WriteFlag proves it): a bucket name
+// is global, so without that proof an object in a stranger's bucket would read
+// as a fact about this project.
+func ReadFlagFact(ctx context.Context, s *storage.Service, bucket, project string, number uint64) (FlagFact, error) {
+	fact, err := readFlagFact(ctx, s, bucket, project, number)
+	return fact, safetext.FieldErr(err)
+}
+
+func readFlagFact(ctx context.Context, s *storage.Service, bucket, project string, number uint64) (FlagFact, error) {
+	switch {
+	case bucket == "" || number == 0:
+		return FlagFact{}, refusedf("to read %s for %s: no runs bucket, or no project number to check it against", MarkerObject, project)
+	case s == nil:
+		return FlagFact{}, refusedf("to read %s for %s: no storage client", MarkerObject, project)
+	}
+	if err := proveRunsBucket(ctx, s, bucket, project, MarkerObject, number); err != nil {
+		return FlagFact{}, err
+	}
+	data, _, ok, err := markerAt(ctx, s, bucket, project)
+	if err != nil {
+		return FlagFact{}, err
+	}
+	if !ok {
+		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s is not there", bucket, MarkerObject)}, nil
+	}
+	m, perr := parseMarker(data, bucket, project)
+	if perr != nil {
+		return FlagFact{Reason: perr.Error()}, nil
+	}
+	// The project it names first, as readFactObject judges it: a fact about
+	// another project is that, whatever else is wrong with it, so its budget is
+	// never handed back as this project's.
+	if m.GCPProject != project {
+		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s names project %s, not %s", bucket, MarkerObject, safetext.Field(m.GCPProject), safetext.Field(project))}, nil
+	}
+	// And the versions that record no amount are not this answer either: the
+	// write that replaces a version-1 creation fact is WriteFlag's, and a
+	// caller here is asking whether this project's fact already records an
+	// amount, which is the whole difference between the two.
+	if m.Version != MarkerVersionBudget && m.Version != MarkerVersionBuilds {
+		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s is a version %d marker, which records no budget amount", bucket, MarkerObject, m.Version)}, nil
+	}
+	if m.Budget == nil {
+		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records no budget amount", bucket, MarkerObject)}, nil
+	}
+	if err := m.Budget.Check(); err != nil {
+		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records a budget this build refuses (%v)", bucket, MarkerObject, err)}, nil
+	}
+	return FlagFact{Ours: true, Budget: *m.Budget}, nil
+}
+
 // RemoveMarker removes the creation fact from a project's runs bucket: the
 // object half of the revocation `fugaro managed unflag` makes (D1020, spec
 // §10), and the write the two marker writers above are undone by.

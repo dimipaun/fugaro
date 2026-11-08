@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -175,6 +176,35 @@ is overwritten blind.`,
 	return cmd
 }
 
+// managedFlagStatement is what flagging a project writes, what it records and
+// what it gives up, printed BEFORE the write and never after it: the answer's
+// own framing (D58) is that flagging only adds guards AND that the marker is
+// what turns the typed confirmation off, so the second half is stated rather
+// than left to be inferred. It is a statement and not a confirmation — what
+// confirms the write is the argument the command was given (D1541) — so it is
+// printed as what the write does.
+//
+// It is one function because two commands make this same write, both of them
+// the owner's own and both through the same two writers: `fugaro managed flag`
+// and `fugaro update`'s self-flag (update_selfflag.go, D1553, which makes it
+// when the run is given the budget once). A statement of what a write costs,
+// kept true in two places, goes stale in one of them — and this one names the
+// amount, the bound and the guard that is given up.
+//
+// Its last line is each caller's own, because what happens when the project
+// already records whether it is managed is not the same for the two: this
+// command replaces one object and refuses every other state, while the
+// self-flag can also finish a fact that already records the amount it was
+// given.
+func managedFlagStatement(w io.Writer, gcpProject, bucket string, amount int64, currency string) {
+	fmt.Fprintf(w, "flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(gcpProject), safetext.Field(bucket), managed.MarkerObject)
+	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
+	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s and the bound on billable image builds (one build per invocation, D1013)\n", amount, safetext.Field(currency))
+	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
+	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
+	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
+}
+
 // managedFlag is newManagedFlagCmd's body. The order is the answer's: who is
 // running, what is being asked for, which project it is, that the bucket is
 // that project's own — and only then the statement of what the write does and
@@ -274,18 +304,10 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
 	}
 	w := cmd.OutOrStdout()
-	// What is about to be written, and what it costs, before it is written:
-	// the answer's own framing is that flagging only adds guards AND that the
-	// marker is what turns the confirmation off, so the second half is stated
-	// rather than left to be inferred. It is a statement and not a
-	// confirmation — what confirms this write is PROJECT_ID on the command
-	// line (D1541) — so it is printed as what the command does.
-	fmt.Fprintf(w, "flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject)
-	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
-	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s and the bound on billable image builds (one build per invocation, D1013)\n", amount, safetext.Field(currency))
-	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
-	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
-	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
+	managedFlagStatement(w, lc.GCPProject, bucket, amount, currency)
+	// The statement's last line is this command's own, and it is the one the
+	// self-flag answers differently: this command replaces one object and
+	// refuses every other state.
 	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro setup --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
 	replaced, err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
 	if err != nil {
