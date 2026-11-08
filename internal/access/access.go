@@ -30,11 +30,17 @@
 //     github/acme/a/b.
 //
 // What this package deliberately does not do, said here so a reader does not
-// look for it: it reads and writes no database (the node under config/admin/
-// is RS2's), it holds no licence code (a lapse is an input — Input.Lapse — and
+// look for it: it holds no licence code (a lapse is an input — Input.Lapse — and
 // ee/ owns that seam), it runs no command by itself (every command asks it),
 // and it cannot check that a member exists: Fugaro has no directory to ask
 // (F27).
+//
+// The one part of the package that touches a database is store.go (RS2): it is
+// where the grants node at config/admin/access is read and conditionally
+// written, through internal/rtdb — it is the only file here that imports it —
+// and a reader asking which code can reach that node is reading that file.
+// Everything else here is the decision over what was read: what a grant means,
+// and which role a caller holds.
 package access
 
 import (
@@ -117,11 +123,12 @@ func (r Role) AtLeast(min Role) bool {
 // Grant is one stored pair: the member it names, the role, and the scope the
 // role is held at (the spec's "role and scope pairs"). It is what a reader of
 // the grants node holds and what this package decides against; the node's own
-// shape, its reader and its writer are RS2's.
+// shape, its reader and its writer are store.go's.
 //
-// No field carries a wire tag: the format the node is written in is RS2's to
-// name, and a name invented here would be a second spelling of one field
-// (CLAUDE.md, "a field never changes meaning").
+// No field carries a wire tag: the names the node is read and written by are
+// nodeGrant's there — `user`, `role` and `scope` — and a name invented here
+// would be a second spelling of one field (CLAUDE.md, "a field never changes
+// meaning").
 type Grant struct {
 	// User is the member the grant names, in the "user:<address>" form Member
 	// builds (F25: a group, a domain and a service account cannot be matched

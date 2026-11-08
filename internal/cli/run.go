@@ -148,6 +148,15 @@ type runOptions struct {
 	// fact; the release that owns that file documents it (reconciliation
 	// F22/E4).
 	reviewRun string
+	// ownerRuled is --owner-ruled: the repository owner's answer to the
+	// findings a run on this PR left for them (OD1). A follow-up whose
+	// previous run stopped waiting on owner decisions is refused without it
+	// (resolvePR), so a person's answer is what unblocks the pull request
+	// rather than another blind run; the text is stored on the task
+	// (task.Spec.OwnerRuled) and appended to the brief verbatim by the
+	// runner. Empty is no ruling at all, which is every launch that is not
+	// answering one.
+	ownerRuled string
 	// attach is --attach, repeated: files this launch uploads into the
 	// run's own inputs/ for a mode: artifact run to download (design
 	// artifact-runs.md §4, plan Task 6). It is refused outright on a run id
@@ -319,6 +328,7 @@ func newRunCmd() *cobra.Command {
 	// Hidden: see the field's own note on the generated reference.
 	f.StringVar(&o.reviewRun, "review-run", "", "carry the findings of review RUN (<repo-slug>/<run-id> or a run ID) into this fix round's brief; needs --pr, and refused with a mode: review recipe")
 	_ = f.MarkHidden("review-run")
+	f.StringVar(&o.ownerRuled, "owner-ruled", "", "the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -409,6 +419,15 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		if err = reviewLevelsFlag(cmd, o); err != nil {
 			return err
 		}
+		// --owner-ruled, read here with the rest of the launch's text: the
+		// task may not read stdin twice, and the ruling is stored on the task
+		// (task.Spec.OwnerRuled) rather than kept beside it.
+		if o.ownerRuled == "-" && (o.tf == "-" || o.reviewLevelsPath == "-") {
+			return userErr("--owner-ruled - and another flag both read stdin; pass one of them as a file")
+		}
+		if o.ownerRuled, err = ownerRuledText(cmd, o.ownerRuled); err != nil {
+			return err
+		}
 		if o.totalTimeout != "" {
 			if total, err = parseTotalTimeout(o.totalTimeout); err != nil {
 				return err
@@ -424,6 +443,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// checked below, where the recipe is resolved.
 	if cmd.Flags().Changed("review-run") && !prSet {
 		return userErr("--review-run needs --pr: it carries a review run's findings into a fix round of a pull request")
+	}
+	// --owner-ruled answers findings a run on a pull request left (OD1), so
+	// it is a follow-up's flag and nothing else: refused here, before
+	// openCloud, the way --review-run is.
+	if cmd.Flags().Changed("owner-ruled") && !prSet {
+		return userErr("--owner-ruled needs --pr: it answers the findings the last run on that pull request left for you")
 	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
@@ -484,6 +509,18 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			case rerr == nil && rr.Recipe.Mode == recipe.ModeReview:
 				if cmd.Flags().Changed("review-run") {
 					return userErr("--review-run carries a review run's findings into a fix round, and --recipe %s reviews a pull request instead", rr.Name)
+				}
+				// --owner-ruled is refused here for the same reason
+				// --review-run is: the ruling answers findings a run on the
+				// pull request left, the runner appends it to that
+				// follow-up's brief, and task.Validate holds it to a spec
+				// with a branch, a pr and a previous_run — the reviewSpec
+				// below builds none of the three, because a review-mode
+				// launch reviews a pull request rather than continuing one.
+				// Accepted, the flag would write no field anywhere and the
+				// owner's answer would be dropped without a word.
+				if cmd.Flags().Changed("owner-ruled") {
+					return userErr("--owner-ruled answers the findings a run on a pull request left, and --recipe %s reviews a pull request instead of fixing one", rr.Name)
 				}
 				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
 					if n := len(o.pr); n < lo || n > hi {
@@ -1260,6 +1297,50 @@ func taskText(cmd *cobra.Command, file string, args []string, optional bool) (st
 	}
 	if text = strings.TrimSpace(text); text == "" && !optional {
 		return "", userErr("the task is empty")
+	}
+	return text, nil
+}
+
+// ownerRuledText is fugaro run --owner-ruled's value as the ruling to store
+// (task.Spec.OwnerRuled): "-" reads stdin, a value naming a regular file reads
+// that file, and every other value is the ruling as it was given. A value that
+// happens to name an existing file is read rather than taken literally, which
+// is what makes one flag carry "text or file" without a second flag saying
+// which — and why the help text says so.
+//
+// The text is trimmed and its CRLFs are made newlines, and nothing else about
+// it is touched: the ruling is a person's own words, appended to the brief
+// verbatim, and a launcher that rewrote them would be answering for them.
+// Blank and over-long rulings are refused here, in the launcher's words,
+// rather than by the run at bootstrap: the rules are task.Spec.Validate's, so
+// a ruling this accepts is never one the run refuses after it was paid for.
+func ownerRuledText(cmd *cobra.Command, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	text := value
+	switch {
+	case value == "-":
+		data, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return "", userErr("reading the owner's ruling from stdin: %v", err)
+		}
+		text = string(data)
+	default:
+		if fi, err := os.Stat(value); err == nil && fi.Mode().IsRegular() {
+			data, err := os.ReadFile(value)
+			if err != nil {
+				return "", userErr("reading the owner's ruling: %v", err)
+			}
+			text = string(data)
+		}
+	}
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	switch {
+	case text == "":
+		return "", userErr("--owner-ruled is empty: pass the owner's ruling, a file holding it, or - for stdin")
+	case len(text) > task.MaxOwnerRuledBytes:
+		return "", userErr("--owner-ruled is %d bytes; a ruling must be at most %d", len(text), task.MaxOwnerRuledBytes)
 	}
 	return text, nil
 }

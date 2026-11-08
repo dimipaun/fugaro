@@ -25,8 +25,13 @@ func keys(m map[string]any) []string {
 }
 
 func TestGatewayLogFields(t *testing.T) {
+	fastRetry(t)
 	u := pricing.Usage{Input: 10, CacheWrite5m: 2, CacheWrite1h: 3, CacheRead: 4, Output: 5}
-	h := newHarness(t, anthropicfake.StreamOK(sonnet, u), anthropicfake.Error(529, "overloaded_error", "busy"))
+	// The 529 is scripted twice: the gateway sends a failed call once more
+	// (issue #1827, SC2), so the second post's own retry gets the same answer
+	// and the second model call line is the 529 the first post never made.
+	busy := anthropicfake.Error(529, "overloaded_error", "busy")
+	h := newHarness(t, anthropicfake.StreamOK(sonnet, u), busy, busy)
 	secretPrompt := "the prompt text must not be logged"
 	body := msgBlocks(sonnet, 100, `{"type":"text","text":"`+secretPrompt+`"}`, `"stream":true`, `"cache_control":{"type":"ephemeral","ttl":"1h"}`)
 	h.post(body, "x-claude-code-session-id", "sess-42", "x-claude-code-agent-id", "agent-7", "anthropic-beta", "beta-header-value")
