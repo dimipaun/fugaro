@@ -3506,6 +3506,13 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 // amount, with a figure this build accepts — and every other state is a reason
 // instead, so a caller prints what is there rather than writing the label on
 // the strength of an object it did not recognise.
+//
+// Both of the figures a version-3 object carries are answered, and the bound is
+// not the amount: a caller that completes a half-written flag with the label
+// completes the object as it stands, so it has to be able to see a bound other
+// than the one the flag writes — and ReadImageBuilds' own rule is the one that
+// judges it, including the default a version-2 object is held to because it
+// records none (D1013).
 func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -3513,6 +3520,7 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 		seed   string
 		ours   bool
 		budget Budget
+		builds int64
 		want   string
 	}{
 		{name: "nothing there", ours: false, want: "is not there"},
@@ -3527,7 +3535,18 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":0,"currency":"USD"},"max_image_builds":1}`,
 			ours: false, want: "records a budget this build refuses",
 		},
-		{name: "this project's fact recording an amount", seed: markerBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}},
+		{
+			name: "a bound this build refuses",
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":0}`,
+			ours: false, want: "records an image build bound this build refuses",
+		},
+		{name: "this project's fact recording an amount", seed: markerBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: 1},
+		{
+			name: "this project's fact recording another bound",
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1000}`,
+			ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: 1000,
+		},
+		{name: "the version that records no bound", seed: markerBudgetJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: DefaultImageBuilds},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f := newStorage(t)
@@ -3545,8 +3564,14 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 			if tc.ours && fact.Budget != tc.budget {
 				t.Errorf("Budget = %+v, want %+v", fact.Budget, tc.budget)
 			}
+			if tc.ours && fact.Builds != tc.builds {
+				t.Errorf("Builds = %d, want %d", fact.Builds, tc.builds)
+			}
 			if !tc.ours && !strings.Contains(fact.Reason, tc.want) {
 				t.Errorf("the reason %q does not say %q", fact.Reason, tc.want)
+			}
+			if !tc.ours && fact.Builds != 0 {
+				t.Errorf("Builds = %d on an object this read does not believe: the figure is set only when Ours", fact.Builds)
 			}
 		})
 	}

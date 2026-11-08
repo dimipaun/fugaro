@@ -724,16 +724,26 @@ func alreadyFlagged(bucket, project string, cur []byte) error {
 // and finish its own write.
 //
 // Ours is that answer: the object is this project's marker, of a version that
-// records an amount, and the figure it records is one this build accepts.
-// Budget is that figure. When Ours is false, the object is either absent or one
-// this build does not believe, and Reason says which — in the words the writers
-// and the read already use, so a caller prints the answer rather than inventing
-// a second account of what is there. An error means the read could not be made
-// at all (the bucket could not be looked at, the object could not be read), and
-// never "nothing is there".
+// records an amount, and both figures it records are ones this build accepts.
+// Budget is the amount, and Builds the bound. When Ours is false, the object is
+// either absent or one this build does not believe, and Reason says which — in
+// the words the writers and the read already use, so a caller prints the answer
+// rather than inventing a second account of what is there. An error means the
+// read could not be made at all (the bucket could not be looked at, the object
+// could not be read), and never "nothing is there".
 type FlagFact struct {
 	Ours   bool
 	Budget Budget
+	// Builds is the bound the fact holds this project's applies to, and it is
+	// set only when Ours. It is answered exactly as ReadImageBuilds answers it
+	// for the same object: the figure a version-3 marker records, and Default-
+	// ImageBuilds for version 2, which records none — a project marked before
+	// that version existed is held to one build per invocation rather than to
+	// no bound (D1013). It is here because the figure and the amount are not
+	// the same question: a caller that finishes a half-written flag with the
+	// label completes the object as it stands, and an object recording a bound
+	// other than the one its own statement promised is not one to complete.
+	Builds int64
 	Reason string
 }
 
@@ -787,7 +797,20 @@ func readFlagFact(ctx context.Context, s *storage.Service, bucket, project strin
 	if err := m.Budget.Check(); err != nil {
 		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records a budget this build refuses (%v)", bucket, MarkerObject, err)}, nil
 	}
-	return FlagFact{Ours: true, Budget: *m.Budget}, nil
+	// And the other figure the version that carries a bound records, judged by
+	// the read's own rule (CheckImageBuilds, which readFactObject applies to the
+	// same key): a version-3 object whose figure this build refuses — including
+	// the zero that is also what an absent key decodes to — is not a fact it
+	// believes, and handing that figure back as the bound a caller may act on
+	// would be believing half of an object the read refuses whole.
+	builds := DefaultImageBuilds
+	if m.Version == MarkerVersionBuilds {
+		if err := CheckImageBuilds(m.MaxImageBuilds); err != nil {
+			return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records an image build bound this build refuses (%v)", bucket, MarkerObject, err)}, nil
+		}
+		builds = m.MaxImageBuilds
+	}
+	return FlagFact{Ours: true, Budget: *m.Budget, Builds: builds}, nil
 }
 
 // RemoveMarker removes the creation fact from a project's runs bucket: the

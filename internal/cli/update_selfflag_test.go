@@ -208,6 +208,66 @@ func TestUpdateDoesNotFinishAFactThatRecordsAnotherAmount(t *testing.T) {
 	}
 }
 
+// TestUpdateDoesNotFinishAFactThatRecordsAnotherBuildBound: the amount is the
+// one this run was given and the fact is not one the flag writes, for the other
+// figure it carries. The bound is what the statement printed above the write
+// promises — one billable build per invocation (D1013) — and a fact holding the
+// project's applies to a larger count is an object recorded by hand rather than
+// by any run of ours: completing it with the label would make the project
+// managed at a bound this run never stated, so the figure that took effect
+// would not be the one the owner read. The run writes neither mark and says
+// what is there.
+func TestUpdateDoesNotFinishAFactThatRecordsAnotherBuildBound(t *testing.T) {
+	r := unmanagedUpdateRig(t)
+	seedFlagFact(t, r, managed.Marker{
+		Version:    managed.MarkerVersionBuilds,
+		GCPProject: initProject,
+		Budget:     &managed.Budget{Amount: 50, Currency: "USD"},
+		// In the marker's own range, so the object is one the read believes:
+		// the bound is a figure this build accepts and not the default.
+		MaxImageBuilds: 1000,
+	})
+	before, ok := managedFlagAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatalf("the seed wrote no gs://%s/%s", initRunsBucket, managed.MarkerObject)
+	}
+	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
+	if err != nil {
+		t.Fatalf("fugaro update with the budget over a fact recording another bound: %v\n%s\n%s", err, out, errOut)
+	}
+	if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != "" {
+		t.Errorf("the run wrote %s=%q on a fact holding the project's applies to another bound", managed.ProjectLabelKey, l)
+	}
+	if managedFlagIsManaged(t, r) {
+		t.Error("the managed read believes a project the run did not flag")
+	}
+	// The object is untouched: neither half of this run's write happened.
+	if after, _ := managedFlagAt(t, r.gcs, initRunsBucket); after != before {
+		t.Errorf("gs://%s/%s = %q, want the fact the earlier run wrote (%q)", initRunsBucket, managed.MarkerObject, after, before)
+	}
+	said := out + errOut
+	// Both figures are named, and so is the one the statement above the write
+	// promised — the statement this run printed before it asked for either mark.
+	for _, want := range []string{
+		"it was not flagged",
+		"one build per invocation",
+		"records the budget amount 50 USD",
+		"holds this project's applies to 1000 billable builds per invocation",
+		"where the flag this step would finish records 1",
+		"neither mark was written",
+	} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the warning does not say %q:\n%s", want, said)
+		}
+	}
+	if strings.Contains(said, "left the creation fact") {
+		t.Errorf("the run claims to have finished a fact recording another bound:\n%s", said)
+	}
+	if strings.Contains(said, "no second command") {
+		t.Errorf("the run claimed to have flagged the installation:\n%s", said)
+	}
+}
+
 // TestUpdateDoesNotFinishAFactAboutAnotherProject: the other side of the same
 // check, and the one that decides whether the completion writes anything at
 // all. The object is in this project's runs bucket — proved by number and
