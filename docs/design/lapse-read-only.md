@@ -62,7 +62,7 @@ clock, never about the network: the check is offline, so no outage on Fugaro's s
 - **It never refuses a read** — the paid views included, on this document's call rather than a ruling
   (§3.2, §8 item 6). Every screen, view and read stays (§3.2, §4.2).
 - **It deletes nothing, signs nobody out, and locks no screen.** The key screen in particular is
-  never gated: a state a user cannot walk out of is a state that traps them (§5.5).
+  never gated: a state a user cannot walk out of is a state that traps them (§5.6).
 
 ## 3. The console
 
@@ -342,7 +342,41 @@ fix. **A key the verifier refuses at entry never becomes a state at all** — bo
 bad key as it is pasted (S2.7, S2.8) — so what the user sees then is the entry screen's refusal and
 not a product state.
 
-### 5.5 The key screen is never gated
+### 5.5 A free evaluator's expiry
+
+**A three-month evaluation key expires like any other key:** the same 30-day grace, the same lapsed
+state, the same refusals and the same banner. That is F39's answer — a free evaluator who does not
+renew is read-only, and the MIT CLI is unaffected, "stated, not a tension"
+([reconciliation.md](../subscriptions/reconciliation.md)) — and the licence-key note puts it the same
+way: "An expiring free key is not a special case"
+([licence-key.md](../licensing/licence-key.md)). Nothing in the state table reads the tier: the
+states are the key's own clock, `expires` and then `expires + 30 days`, and §10.3's evaluation key is
+a License Key of the free seat under §10.2(a), renewable by design
+([subscription-terms.md](../licensing/subscription-terms.md), D440).
+
+**So the two free paths end differently, and that is the design.** An evaluator whose key expires
+reaches the lapsed state and loses the launch and the settings write until a renewal key is pasted;
+an evaluator who never asked for a key is in §5.3's state and keeps launching. The difference is not
+the evaluator, it is what the store holds: an expired key is a licence the clock has run out on
+(D436, B17), while an empty store is an absence nothing in this tree refuses (§5.3, D523), and the
+two cannot be made to read alike without either refusing the keyless installation or inventing a
+refusal for a missing file.
+
+**What keeps the expiring path from being a lockout** is the way out, which the lapsed state already
+has: the renewal is renewable by design and self-serve once the key service is built (§10.3, D440;
+until then the licence-key note's T13 interim mints by hand), the banner names the day and the key
+screen (§5.7), and the key screen is never gated (§5.6). Everything the evaluator has read stays
+readable throughout — the records, the spend, the kill switch's state (§3.2, §4.2) — which is the
+difference between a lapse and a lockout.
+
+**The other reading, and why this document does not take it.** An expired *evaluation* key could be
+read as the no-key state — a trial that ended is an evaluation that ended, and §5.3 keeps launching —
+so that the two free paths end alike. It is rejected because it would make the state table read the
+key's `tier`, which no state does today, because it rewards letting a key expire over asking for one,
+and because F39 and the licence-key note both state the opposite. It is §8 item 1's alternative in
+another dress: the same refusal set, on the same decision.
+
+### 5.6 The key screen is never gated
 
 The key screen (S2.7 in the console, S2.8 in the app) is reachable and writable at every state,
 including the lapse. It is not a configuration change in §3.2's or §4.2's refused class, and it must
@@ -350,7 +384,7 @@ not become one: a lapse you cannot leave is a trap, and a refusal's copy always 
 out. This is the same rule as "cancel and the kill switch stay", one level up — a lapse takes paid
 capabilities away and never the customer's ability to fix their licence.
 
-### 5.6 The banner, and a refusal's copy
+### 5.7 The banner, and a refusal's copy
 
 - The **banner** is the console's. It is persistent, it never blocks a read, and it names three
   things: the state, the day it refers to (the key's own `expires`, from the key), and the key
@@ -384,10 +418,10 @@ the plan says. Nothing else gains a check:
 Checks **176** and **177** (owner-run, S6.4, not yet written into the register) are the plan's
 measure of this document, one product each: within grace everything works; after grace the reads and
 cancel remain while the launch and the configuration write are refused in the console's main process;
-with no key the console behaves as §5.3 says; the app still cancels through the mailbox and still
-shows the kill switch, and refuses launch and configuration; and the MIT CLI launches and cancels
-throughout. Both are OWNER-RUN: an agent builds, and a person with a packed console and an app build
-runs them.
+with no key the console behaves as §5.3 says and with an expired evaluation key as §5.5 says; the app
+still cancels through the mailbox and still shows the kill switch, and refuses launch and
+configuration; and the MIT CLI launches and cancels throughout. Both are OWNER-RUN: an agent builds,
+and a person with a packed console and an app build runs them.
 
 ## 8. Decisions for the owner
 
@@ -406,7 +440,9 @@ runs them.
 1. **No key keeps working, with a banner (§5.3).** The alternative is that an installation with no
    key is read-only once enforcement ships, which would take the launch and the settings write away
    from an upgraded 0.112.0 console and from every honour-based installation. Recommendation: §5.3,
-   with the hole stated.
+   with the hole stated. **Its cost, stated in §5.5:** an evaluator whose three-month key expires
+   goes read-only while one who never asked for a key keeps launching; the third reading, where an
+   expired evaluation key is read as no key so the two paths end alike, is rejected there.
 2. **A key this build cannot verify reads as no key (§5.4).** The alternative is to read it as
    lapsed, on the argument that the store only ever held a key that verified when it was pasted.
 3. **`merge` is refused after a lapse (§4.2).** The kept set is T12's closed one, and a merge is a
