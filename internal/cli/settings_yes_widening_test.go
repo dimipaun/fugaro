@@ -37,33 +37,20 @@ func TestSettingsSetWideningWithYesWritesAndShowsTheDiff(t *testing.T) {
 	}
 }
 
-// TestSettingsSetWideningWithoutYesAsksTheTypedName: --yes is one way to
-// confirm a widening, not the only one. Without it the typed project name is
-// still what confirms the edit, and a session with no terminal is refused
-// (D1107 keeps S5's behaviour for this path).
-func TestSettingsSetWideningWithoutYesAsksTheTypedName(t *testing.T) {
+// TestSettingsSetWideningWithoutYesWritesAndAsksNothing: --yes is not what
+// confirms a widening — nothing is asked for it in either session (D1540,
+// D1552) — so the same write lands with the flag, without it, and at a session
+// with no terminal at all.
+func TestSettingsSetWideningWithoutYesWritesAndAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
-	before := readFileString(t, path)
 
 	noTerminal(t)
-	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a widening with no terminal and no --yes was written")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
-	}
-	if readFileString(t, path) != before {
-		t.Error("the refused write changed fugaro.yaml")
-	}
-
-	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "budget.per_run_usd", "50", "--layer", "repo"); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo"); err != nil {
+		t.Fatalf("a widening with no terminal asked for an answer: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 50") {
-		t.Errorf("the typed project name did not confirm the widening:\n%s", got)
+		t.Errorf("fugaro.yaml does not carry the widened ceiling:\n%s", got)
 	}
 }
 
