@@ -1,17 +1,18 @@
 # The api-key review path — implementation plan
 
-**Status: AK4 is implemented on this branch, and no other task is started; D1410–D1429 are answered
+**Status: AK1–AK5 are implemented on `main`, and no task past AK5 is started; D1410–D1429 are answered
 2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** AK4 lets the
 review class's one credential be the project's own Anthropic API key: a policy naming the sentinel is
-publishable and the credentials service serves it, and **no installation can deploy it yet** (AK4's own
-section and **§6.8** — an installation that publishes a profile naming the sentinel is refused by
-`fugaro update`, fail-closed, until **AK5** deploys the route). Every gate this plan carried that a
-decision or an approval could settle is satisfied: the answers are in
-[reconciliation.md](reconciliation.md) §7 and §9, and §6 below records what each one settled. **Two
-gates in that list are not of that kind and still stand** — the mandatory security review owed before
-AK4–AK7 land (item 6, which AK4's own change is under rather than past) and **E7**, which item 7 states
-is not met — so **the cloud path is not launchable**, and the one task taken here was taken under the
-owner's go for it alone. Where this file and
+publishable and the credentials service serves it, and **AK5 deploys the route** (its own section and
+**§6.8** — a profile naming the sentinel gets the job whose account segment is the sentinel, mounting
+nothing, and its review-only variant beside it, so an installation that publishes the sentinel and no
+Claude account has a review job at all). Every gate this plan carried that a decision or an approval
+could settle is satisfied: the answers are in
+[reconciliation.md](reconciliation.md) §7 and §9, and §6 below records what each one settled. **One
+gate in that list is not of that kind and still stands** — the mandatory security review owed before
+AK4–AK7 land (item 6, which AK4's and AK5's changes are under rather than past) — and **E7's gate is
+lifted**, item 7's own accounting: its second half reached the tree on 2026-11-08, so `fugaro review`
+admits a launch, though **no live installation has been measured** against it. Where this file and
 [reconciliation.md](reconciliation.md) disagree about the code, the reconciliation wins.
 
 **Read with:** [spec.md](spec.md) (the owner's ask) and [reconciliation.md](reconciliation.md) (what
@@ -29,7 +30,7 @@ a slice the owner does not want is simply not started.
 | Level | Tasks | What it is | Why these can run together |
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
-| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This is code for a launch E7 still refuses** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
+| **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This was code for a launch E7 refused when it was written; the flip of 2026-11-08 admits it** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
 | **L3** | **AK6**, **AK7** | the OpenRouter half: the bundle holds a provider key (**F15**, **F16**, **F24**), and the review run's model path reaches a provider's endpoint | AK6 is `internal/credsvc` and `schemas/`; AK7 is `internal/runner` and `internal/gateway` |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
@@ -278,13 +279,13 @@ credential and no fallback** (**F13**). The sentinel is published like every oth
 the same function: `DeriveAccounts` derives its entry from the profiles that name it (their own
 `allow_repos`, kept to the reach the key itself has, `config.ProjectSecretReaches`), refuses the pair
 where that list is empty, and the child admissions are the same block inverted — so a policy naming
-the sentinel is **writable**, which is the whole of what this task makes it. **No installation can
-deploy it yet**: the sentinel is publishable and *not* deployable, an installation that publishes a
-profile naming it is refused by `fugaro update` rather than misconfigured, and **AK5**'s deployment
-claim (**F17**) is the task that closes that gap. Nothing in `internal/credsvc/forward.go` changes: the
-tier-B arm already builds `gateway.Upstream{Kind: upstreamKindAnthropic, APIKey: e.Value()}` and
-attaches it with `gateway.UpstreamHeaders` (**F12**), and that is the whole reason this task is
-small.
+the sentinel is **writable**, which is the whole of what this task makes it. **No installation could
+deploy it until AK5**: on AK4's own landing the sentinel was publishable and *not* deployable, an
+installation that published a profile naming it was refused by `fugaro update` rather than
+misconfigured, and **AK5**'s deployment claim (**F17**) is the task that closed that gap. Nothing in
+`internal/credsvc/forward.go` changes: the tier-B arm already builds
+`gateway.Upstream{Kind: upstreamKindAnthropic, APIKey: e.Value()}` and attaches it with
+`gateway.UpstreamHeaders` (**F12**), and that is the whole reason this task is small.
 
 **What AK4 does not make possible — the sentinel's deployment route.** Publishing is not deploying,
 and every reader of the account axis on the way to a job reads a profile's `claude_accounts` as *the
@@ -627,9 +628,11 @@ any installation whose budget mode is `off` — the review class refuses a run w
 ## 6. The gates a task may not start without
 
 **Items 1–5 below are satisfied as of 2026-11-07**, each recording what the owner's answer settled or
-the approval of that day gave. **Items 6 and 7 are not the owner's answers to give and are not
-satisfied**: the security review is owed before AK4–AK7 land, and E7 is not met, so those four tasks
-may not start and the cloud path is not launchable. A reader must take those two as standing.
+the approval of that day gave. **Item 6 is not the owner's answer to give and is not satisfied**: the
+security review is owed before AK4–AK7 land, so those four tasks landed under it rather than past it.
+**Item 7's gate is lifted** — E7's second half reached the tree on 2026-11-08 (**U6**) — so the launch
+is admitted where it was refused, though no live installation has been measured against it. A reader
+must take item 6 as standing.
 
 1. **D1410 answered: both slices** — the plan is about all three (reconciliation §9.1).
 2. **D1421 answered: after 0.20.0** — the release for AK8 and for any release note.

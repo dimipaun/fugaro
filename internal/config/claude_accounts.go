@@ -534,7 +534,9 @@ func MountsAnthropicKey(secret string) bool {
 // defines it — a file that demanded a claude_accounts entry for it would
 // refuse the one shape the sentinel exists for. Stating it is what this
 // function allows; whether an installation can then deploy the profile is not
-// this file's question and is not true yet (AnthropicKeyAccount's comment).
+// this file's question, and it can — the value rides the account axis to a job
+// like every other one (AnthropicKeyAccount's comment names the job and its
+// review variant).
 //
 // What it does NOT check is the key's reach, and that is deliberate: the key
 // is stored project-wide (D2's sweep) rather than for a list of repositories,
