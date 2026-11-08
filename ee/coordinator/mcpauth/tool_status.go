@@ -211,16 +211,24 @@ func (p *ProjectRuns) locate(ctx context.Context, ref string) (*runstore.Store, 
 // reads it.
 //
 // Every string a run wrote was put through safetext where it was read, and the
-// whole document is passed through it again here, because the one thing this
+// whole document is passed over again here, because the one thing this
 // function can promise regardless of which field a later writer adds is that
 // no answer leaves this package carrying a character that rewrites what its
 // reader sees (M-g).
+//
+// The pass over the marshalled document is safetext.JSONText rather than
+// safetext.MultiLine, and the difference is the document itself: a control a
+// run wrote reaches the document as an escape, but a C1 control reaches it as
+// itself, and MultiLine's terminal rule would take the bytes after such an
+// introducer — the quote ending the string it sat in, the comma after it, the
+// brace after that — for the rest of a sequence and answer text no client can
+// parse (TestAnswerJSONKeepsTheDocumentWhole).
 func answerJSON(v any) (any, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return nil, fmt.Errorf("encoding the answer: %w", err)
 	}
-	return safetext.MultiLine(string(data)), nil
+	return safetext.JSONText(string(data)), nil
 }
 
 // taskStatus is one run as the read tools answer it: the run's own record and

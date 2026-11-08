@@ -130,6 +130,22 @@ func TestLogsComeFromTheRunsOwnArtefacts(t *testing.T) {
 	}
 }
 
+// TestLogsOfARunThatRecordedNothingAreAnEmptyList: a run between its task and
+// its first stage has recorded no progress, and the answer says so as an empty
+// list rather than as a null — the rule runstore's own shapes are written by,
+// where an empty array is a fact ("this run recorded no stage") and a null is
+// not (runstore.ChangedFiles' own doc, and the same change's list_tasks, which
+// answers [] for the project with no run in its window).
+func TestLogsOfARunThatRecordedNothingAreAnEmptyList(t *testing.T) {
+	f := newRunsFixture(t)
+	f.seedRun(testSlug, testRunID, &runstore.Record{Status: runstore.StatusRunning}, nil)
+
+	text := f.answer("stream_logs", `{"run_id":"`+testRunID+`"}`, &runLogs{})
+	if !strings.Contains(text, `"stages":[]`) {
+		t.Errorf("stream_logs answered %s for a run that recorded no progress; want an empty list, which is the fact, rather than a null", text)
+	}
+}
+
 // TestLogsRecordTheLinesTheyDrop: the answer is a tail of the run's recorded
 // lines, and it says it is a tail whenever a line was dropped. The drop
 // happens as the lines arrive so that the answer's cost is not the run's

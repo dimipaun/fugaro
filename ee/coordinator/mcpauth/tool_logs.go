@@ -113,7 +113,12 @@ func (p *ProjectRuns) streamLogs(ctx context.Context, call Call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	logs := runLogs{RunID: st.RunID(), Repo: st.Slug()}
+	// Stages starts as an empty list rather than as nothing: a run that has
+	// recorded no progress has recorded no stage, which is a fact about it, and
+	// an answer that spelled it null would read as one with no answer at all
+	// (runstore's own shapes are written the same way — ChangedFiles.Paths is
+	// never null).
+	logs := runLogs{RunID: st.RunID(), Repo: st.Slug(), Stages: []logStage{}}
 	// The transcripts read are capped, oldest first: the answer is a tail, and
 	// how many objects one call reads is the cap's to say rather than the run's.
 	if len(names) > maxLogTranscripts {

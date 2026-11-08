@@ -563,6 +563,44 @@ func TestAnswerJSONRedactsTheWholeDocument(t *testing.T) {
 	}
 }
 
+// TestAnswerJSONKeepsTheDocumentWhole: the document pass is there for the
+// characters a JSON encoder writes raw and a reader obeys — the bidi overrides,
+// the zero-width characters, the C1 controls — and it has to redact them
+// without touching the document's own structure. The 8-bit CSI is what tells
+// the two apart: safetext's terminal passes drop a whole sequence from its
+// introducer to its final byte, and in a document the bytes after the
+// introducer are the document's own — the quote that ends the string it sat in,
+// the comma after it, the brace after that — so a pass that skipped them
+// answered text no client can parse.
+func TestAnswerJSONKeepsTheDocumentWhole(t *testing.T) {
+	for _, spoof := range []string{"\u009b", "\u009b31m", "\u009d", "\u009b\u009b", "‮"} {
+		got, err := answerJSON(struct {
+			Field string `json:"field"`
+			After string `json:"after"`
+		}{Field: "a value a run wrote: " + spoof, After: "another field of the answer"})
+		if err != nil {
+			t.Fatalf("answerJSON(%q): %v", spoof, err)
+		}
+		text, ok := got.(string)
+		if !ok {
+			t.Fatalf("answerJSON answered %T; want the document's own text", got)
+		}
+		var doc struct {
+			Field string `json:"field"`
+			After string `json:"after"`
+		}
+		if err := json.Unmarshal([]byte(text), &doc); err != nil {
+			t.Fatalf("answerJSON answered text that is not the JSON it was given (%v): %q", err, text)
+		}
+		if doc.After != "another field of the answer" || !strings.Contains(doc.Field, "a value a run wrote") {
+			t.Errorf("answerJSON answered %+v for %q; want the document's own fields, the value with the character redacted and the text kept", doc, spoof)
+		}
+		if strings.ContainsAny(text, "\u009b\u009d‮") {
+			t.Errorf("answerJSON answered %q for %q; want the character a reader obeys redacted", text, spoof)
+		}
+	}
+}
+
 // TestTheReadReachRefusesAProjectItCannotFence: NewProjectRuns' own guards,
 // which are the reach's and not a call's — a reach built over a project the
 // tools cannot answer for is a wiring mistake, and every tool over it would
