@@ -23,9 +23,9 @@ Issues are project-wide, not tied to one machine. Troubleshoot runs on every tea
 - **Sync:** local issues that haven't been uploaded yet are retried on the next Fugaro command or by `fugaro issue sync`. Once an upload succeeds, the issue is marked as uploaded locally.
 - **Numbering:** each issue gets a local ID right away. Once uploaded, it also gets a sequential project-wide number from shared storage (for example, #0007), and that is the number shown from then on.
 - **Naming:** each file is named with its number plus the task ID, for example `0007-<task-id>.md`.
-- **Metadata header:** number, task ID, reporter, created time, classification (`fugaro` or `unclear`), Fugaro version, OS, status (`pending`, `submitted` or `dismissed`), and the GitHub URL once submitted.
+- **Metadata header:** number, task ID, reporter, created time, the command that failed (redacted, used later by `fugaro update` to suggest retrying it), classification (`fugaro` or `unclear`), Fugaro version, OS, status (`pending`, `submitted` or `dismissed`), and the GitHub URL once submitted.
 - **Body:** a summary, the diagnosis, steps to reproduce if known, and log excerpts that have been redacted.
-- **Duplicates:** when uploading, check against existing project issues. If one matches, attach the new occurrence to it (reporter, time, logs) instead of creating another issue.
+- **Duplicates:** when uploading, check against existing project issues. If one matches, attach the new occurrence to it (reporter, time, logs) instead of creating another issue. If the match is a resolved issue and the reporter's version already includes the fix, flag it as a regression and link it to the original GitHub issue. Troubleshoot itself never checks for duplicates. It only writes the local issue, and all matching happens at upload.
 - Redaction always happens on the user's machine before anything is written or uploaded.
 
 ## 3. Redaction (required)

@@ -1,8 +1,8 @@
 # Troubleshoot findings to `fugaro issue`: reconciliation
 
-**Status: reconciliation of [spec.md](spec.md) against `origin/main` (commit `93ba9e997`, read 2026-11-08). Where the two disagree this file wins.** The spec is the owner's (Dimi Paun). Nothing here is implemented and no task is approved. Every cited path and symbol was grepped on `origin/main`; what was not checked is in section 4.
+**Status (2026-11-08, later): the owner sent an updated spec (the failed command in the header; the regression rule and "troubleshoot never checks for duplicates" in section 2). F25–F27 and D1731–D1733 cover them; `spec.md` is the updated text.** Reconciliation of [spec.md](spec.md) against `origin/main` (commit `93ba9e997`, read 2026-11-08). Where the two disagree this file wins.** The spec is the owner's (Dimi Paun). Nothing here is implemented and no task is approved. Every cited path and symbol was grepped on `origin/main`; what was not checked is in section 4.
 
-**Numbers.** This work reserves **D1720–D1749** (D1720–D1729 used) and **Checks 450–459** (verified above every `D` and `Check` number on `origin/main` and in the open pull requests' docs on 2026-11-08: the highest seen were D1710 and Check 441). The sibling this spec builds on is `docs/diagnose-agent/` (D1600–D1619, Checks 410–419).
+**Numbers.** This work reserves **D1720–D1749** (D1720–D1733 used) and **Checks 450–459** (verified above every `D` and `Check` number on `origin/main` and in the open pull requests' docs on 2026-11-08: the highest seen were D1710 and Check 441). The sibling this spec builds on is `docs/diagnose-agent/` (D1600–D1619, Checks 410–419).
 
 ## What the spec's concepts already have
 
@@ -67,6 +67,12 @@
 
 **F23. Gap (arguments, dismissal, schemas).** Before numbers exist, `show`, `submit` and `dismiss` accept the local ID or the number; the saved line prints `Saved issue local-<stem>. Run 'fugaro issue submit local-<stem>' to file it on GitHub.` until upload and `#0007` after. `dismiss` writes the shared status once uploaded and refuses in an agent session (T-IS5, T-IS11). Unknown class or outcome values are refused (T-IS3). `list --json`, `show --json` and the shared record have JSON Schemas in `schemas/` (T-IS3, T-IS5). Short run IDs of `docs/short-run-ids` are UNVERIFIED (U6).
 
+**F25. Gap ("resolved" and "the fix version" exist nowhere).** The regression rule needs an issue's resolved state and the release that fixed it. The shared record has neither, upload runs on any teammate's machine often without `gh`, and nothing records a GitHub close. *Consequence:* D1731: the record gains `resolved_in` (a release) and the original GitHub URL it already holds; a person with `gh` records it (T-IS18, `fugaro issue resolve N --in X.Y.Z`); upload compares the reporter's version with `resolved_in` offline. A reporter's version at or above `resolved_in` matching a resolved issue is a **regression**: the occurrence is flagged and linked to the original URL, and the issue's status is shown `regression` in `list` and counted by the terminal section. An unresolved or later-version match attaches as before (F21).
+
+**F26. Gap (the failed command is a secret and data carrier; "troubleshoot never checks for duplicates").** Arguments can hold paths, URLs, project names and secret-shaped values; `fugaro update` must not prompt (D1544). *Consequence:* D1732: the header stores the command name and flags with values redacted (`internal/redact`, then values that look like a path, URL or identifier replaced by a placeholder); it is never part of the public post (D1722) and `update` only prints it. Duplicate matching runs only inside upload (T-IS10); T-IS8's `Record` and the troubleshoot path call no matcher and read no shared store (T-IS8 test with a spy).
+
+**F27. Gap (what `fugaro update` suggests).** D1733: after a successful update, for this reporter's issues whose `resolved_in` is at or below the version just installed and not yet notified, `update` prints one line each, `You can retry: <redacted command>`, and marks them notified; it runs nothing, reads no stdin, and in an agent session prints without marking (T-IS19). It reads the shared record only through the issue store's sync seam and never fails the update on a read error (the hard rule: `update` stays the whole upgrade). The line is a hint, not a step an operator must take, so no `### For operators` entry.
+
 ## 2. Decisions
 
 All answered by the owner on 2026-11-08 through `AskUserQuestion`; every answer is the recommended option.
@@ -85,6 +91,9 @@ All answered by the owner on 2026-11-08 through `AskUserQuestion`; every answer 
 | **D1729** | The Issues section's home (F14) | Terminal-only after `runs digest` output; summaries allowed through `safetext` | Committed section by the CLI only: breaks parity and G2 | **Terminal-only, 2026-11-08 (recommended).** |
 
 | **D1730** | Local `dismiss` in an agent session (O3) | Refuse, same guard as upload | Allow and log: a hidden bug is easy to bury | **Refuse, 2026-11-08 (recommended).** |
+| **D1731** | Where the resolved state and fix version come from (F25) | The shared record gains `resolved_in`, set by `fugaro issue resolve N --in X.Y.Z` (a person with `gh`, no cloud write from an agent session); upload compares versions offline; a match at or above `resolved_in` is a regression linked to the original URL | Ask GitHub at upload: a network call and rate limits per upload, no regression detection offline | **Recorded at submit/close, 2026-11-08 (recommended).** |
+| **D1732** | The stored failed command and update's use of it (F26) | Redacted argv, values replaced by placeholders, printed by `update` and never run, never posted | Command name only: the hint is often incomplete | **Redacted argv, print only, 2026-11-08 (recommended).** |
+| **D1733** | Which issues `update` suggests retrying (F27) | This reporter's issues resolved at or below the installed version, once | Every pending issue: noisy | **Only this user's, resolved by the new version, 2026-11-08 (recommended).** |
 
 Spec owner recorded: Dimi Paun (asked, answered 2026-11-08).
 
