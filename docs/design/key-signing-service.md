@@ -65,7 +65,7 @@ What this design has to state is what the service puts in the two claims it alon
 | --- | --- |
 | `tier`, `features`, `seats`, `organisation` | The check that passed (§4) or the purchase that arrived (§5). The plan's paid path states the seats the customer bought; a Free Plan key's tier and features are D449's |
 | `issued` | **The service's own clock at the mint, never a caller's value** |
-| `expires` | **`issued` plus the tier's term and nothing more** |
+| `expires` | **The end of the term the key covers, never beyond `issued` + the tier's maximum (S2.1)** |
 
 The two bolded entries are the one rule this design adds to S2.1's, and they close, for
 service-minted keys, the hole that note lists under its tier maximum: "`issued` is the minter's to
@@ -74,6 +74,14 @@ choose, so a key minted with an `issued` far in the future passes the length che
 claims and the term; it cannot supply a date. The hole stays open for **hand minting**, which is the
 owner's own tool on the owner's own machine (S2.10), and closing it there would take a rule S2.1
 deliberately does not have — so it is stated as a limit rather than fixed (§9.2).
+
+**A renewal is the case the `expires` rule is written for.** It is minted 30 days before the key it
+succeeds expires (S2.1's overlap, §5.3) and covers the term that begins where that key ends, so its
+`expires` is the end of the covered term — `issued` plus a term plus those 30 days, for a term of the
+length its predecessor covered. A minter that dated `expires` as `issued` plus the bare term would
+hand every renewal 30 days short of the term the customer paid for, and would take those days from a
+customer who cancels at the end of it. That is why S2.1's tier maximum is the term **plus** the 30-day lead (its §"Limits, accepted"):
+the ceiling is the longest key the design mints, not licence to over-issue.
 
 Two more of S2.1's rules the minter obeys and nothing else in the slice states:
 
@@ -472,7 +480,7 @@ Stated rather than defended, the way S2.1's own are.
   expires. A cancellation, a refund (T25) and a leak all end at `expires`.
 - **The tier maximum bounds one key's length, not a signing key's horizon.** The service picks
   `issued` itself (§2), so a *service*-minted key cannot be future-dated; hand minting still can, and
-  either way a leaked signing key mints a year-long key per call.
+  either way a leaked signing key mints a year-and-30-day key per call.
 - **The record is not a control.** It makes abuse visible after the fact — the second domain, the
   buyer who asked for a free seat — and it cannot prevent it.
 - **The checks are visible and best-effort** (§4.6, §9.1 rows 2 and 11).
@@ -575,7 +583,7 @@ Restated with its source, so that nothing below is read as open that is not.
 | D452 | What counts as **proof of control** of a repository for the open-source check? | (a) a token the applicant commits to a repository the check can read; (b) an application installation that shows control of the organisation; (c) a commit signed by a key the applicant publishes | (a) | (a) one file in one of the repositories already named, readable through the same API, and it works for an individual with no organisation; (b) proves the organisation and asks an individual maintainer to install an app on their own account; (c) proves a key, not the project, and asks the applicant to hold one | open |
 | D453 | Where does the free-mail list come from and who keeps it? | (a) a pinned list of domains committed under `ee/keyservice/`, updated by a task of its own; (b) a public list fetched at build time; (c) a hand-kept list in the service's configuration | (a) | (a) the check is hermetic, testable and reviewable in the public repository, and it is stale until someone updates it — which is why the update is a task rather than a habit; (b) a network fetch at build and a licence question about the list's own terms; (c) a change to the running service that nothing in the tree records | open |
 | D454 | What are the per-tier mint limits, and what does a limit do? | (a) a cap per tier per window that **queues** the excess; (b) a hard refusal; (c) no cap until abuse is seen | (a) | (a) an honest burst (a batch of renewals) is seen and answered and a drain is stopped; (b) one mistyped renewal becomes a refusal for a paying customer; (c) the caps are what Check 173 measures, and "no cap" is not a limit to measure | open |
-| D455 | Who may reach the admin page, and what is the step-up? | (a) the owner's own account only, with a hardware key or TOTP **per minting action**; (b) a second owner account as well, with the same factor; (c) a password and a session cookie | (a) | (a) one account and one factor, and a stolen session alone mints nothing; (b) a second person who can mint every tier is a second licensor in fact, which the Terms' Licensor wording has not been written for; (c) a session that mints a year-long key per click | open |
+| D455 | Who may reach the admin page, and what is the step-up? | (a) the owner's own account only, with a hardware key or TOTP **per minting action**; (b) a second owner account as well, with the same factor; (c) a password and a session cookie | (a) | (a) one account and one factor, and a stolen session alone mints nothing; (b) a second person who can mint every tier is a second licensor in fact, which the Terms' Licensor wording has not been written for; (c) a session that mints a year-and-30-day key per click | open |
 | D456 | Where does the audit log go, and who reads it? | (a) the project's own log sink, read by the owner, with the mint line repeated in the issuance record (§7.3); (b) the record only; (c) the record and an off-project sink | (a) | (a) one place to look and no new dependency, and the log's retention is the project's; (b) a log that a redeploy or a store bug can take with it, in the surface Check 173's audit is about; (c) an off-project copy is D457's personal data in a second place before D457 is answered | open |
 | D457 | What does the issuance record hold, and for how long? | (a) the fields §7.3 lists, with the applicant's address and domain dropped once the key has expired, and the mints themselves kept; (b) everything kept indefinitely; (c) the minimum: the key id and the tier only | (a) | (a) the record answers §4.3's lookup and §4.2's question while it is needed and stops being a store of personal data after; (b) a perpetual store of scraped addresses, which no notice in this tree yet covers; (c) a paid-domain lookup that cannot answer, so §4.3 stops working | open |
 | D458 | What uptime target, and what does a form submission get while the intake is down? | (a) no external target for the Free Plans (the Terms carry none, §10.5), the 60-day absorption stated, and an honest failure page; (b) a stated target for paying customers only; (c) a target for everyone | (a), or (b) with (a) | (a) matches the Terms as counsel wrote them and promises nothing Check 175 does not already measure; (b) a commitment that the merchant's and the Terms' own documents then have to carry; (c) a promise about a service whose interruption is already absorbed for 60 days | open |
