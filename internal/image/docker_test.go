@@ -174,11 +174,13 @@ func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
 // intended coverage for "a project's pinned runtime version is honored on
 // the Fugaro base" (mise.toml, not image.node).
 
-// TestDerivedSkipBuildScripts: with image.skip_build_scripts, the warm-up
-// installs the dependencies but runs neither the repository's nor a
-// dependency's postinstall script. The same package.json run through a plain
-// npm install shows both scripts do run otherwise.
-func TestDerivedSkipBuildScripts(t *testing.T) {
+// TestDerivedWarmUpRunsNoBuildScripts: the warm-up installs the
+// dependencies but runs neither the repository's nor a dependency's
+// postinstall script — for a repository whose fugaro.yaml says nothing about
+// it at all, as image.skip_build_scripts, the setting that used to say it, is
+// refused by name. The same package.json run through a plain npm install
+// shows both scripts do run otherwise.
+func TestDerivedWarmUpRunsNoBuildScripts(t *testing.T) {
 	base := testutil.BaseImageOf(t, "base")
 	testutil.IsolateGit(t)
 	pkg := `{"name":"fugaro-fixture","version":"0.0.0","private":true,"dependencies":{"dep":"file:dep"},"scripts":{"postinstall":"touch \"$HOME/root-postinstall-ran\""}}` + "\n"
@@ -192,7 +194,6 @@ func TestDerivedSkipBuildScripts(t *testing.T) {
 	files := testutil.FixtureFiles(t)
 	files["mise.toml"] = "[tools]\nnode = \"24\"\n"
 	files["package.json"], files["dep/package.json"], files["package-lock.json"] = pkg, dep, lock
-	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  app:\n", "  app:\n    image: { skip_build_scripts: true }\n", 1)
 	dir := checkout(t, files)
 	render := exec.Command(testutil.BuildFugaro(t), "image", "render")
 	render.Dir = dir

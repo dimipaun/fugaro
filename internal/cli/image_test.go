@@ -46,7 +46,7 @@ func TestImageRenderGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"FROM ${FUGARO_BASE}", "# Dependency warm-up for package-lock.json.\nRUN npm ci\n", "finalize-checkout /work/repo"} {
+	for _, want := range []string{"FROM ${FUGARO_BASE}", "# Dependency warm-up for package-lock.json.", "RUN npm ci --ignore-scripts\n", "finalize-checkout /work/repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render output lacks %q:\n%s", want, out)
 		}

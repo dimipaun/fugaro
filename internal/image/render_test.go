@@ -92,7 +92,10 @@ RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,g
  && if [ -n "$missing" ]; then printf 'mise left these tools missing:\n%s\n' "$missing" >&2; exit 1; fi
 
 # Dependency warm-up for yarn.lock.
-RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; yarn install --immutable
+# Package build scripts do not run in this warm-up: a dependency's install
+# script is unreviewed code and this RUN mounts the workflow's secrets. The
+# workflow's build command builds what the repository needs.
+RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; yarn install --immutable --mode=skip-build
 
 # The source layer: the rest of the checkout, at the commit the key files
 # were taken from, on top of the dependency install (D620).
@@ -380,95 +383,93 @@ func TestRenderHasNoInstallNode(t *testing.T) {
 
 // warmUpBlock is the warm-up section of a derived Dockerfile rendered with
 // the NPM_TOKEN secret: the comment and the RUN line.
-func warmUpBlock(comment, lockfile, install string) string {
-	return "\n# Dependency warm-up for " + lockfile + "." + comment + "\n" +
+func warmUpBlock(lockfile, install string) string {
+	return "\n# Dependency warm-up for " + lockfile + ".\n" + noBuildScriptsComment + "\n" +
 		`RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; ` + install + "\n"
 }
 
-const skipComment = "\n# image.skip_build_scripts: package build scripts do not run here, so\n# the workflow's build command builds what the repository needs."
+const noBuildScriptsComment = `# Package build scripts do not run in this warm-up: a dependency's install
+# script is unreviewed code and this RUN mounts the workflow's secrets. The
+# workflow's build command builds what the repository needs.`
 
-// renderPMs are the package managers the warm-up renders for, with their
-// plain install and the one that skips build scripts.
-var renderPMs = []struct {
-	pm          config.NodePM
-	plain, skip string
+// warmUpInstalls are the package managers the warm-up renders for, with the
+// install that runs no package lifecycle or build scripts.
+var warmUpInstalls = []struct {
+	pm      config.NodePM
+	install string
 }{
 	{config.NodePM{Name: "yarn", Berry: true, Lockfile: "yarn.lock", Install: "yarn install --immutable"},
-		"yarn install --immutable", "yarn install --immutable --mode=skip-build"},
+		"yarn install --immutable --mode=skip-build"},
 	{config.NodePM{Name: "yarn", Lockfile: "yarn.lock", Install: "yarn install --frozen-lockfile"},
-		"yarn install --frozen-lockfile", "yarn install --frozen-lockfile --ignore-scripts"},
+		"yarn install --frozen-lockfile --ignore-scripts"},
 	{config.NodePM{Name: "npm", Lockfile: "package-lock.json", Install: "npm ci"},
-		"npm ci", "npm ci --ignore-scripts"},
+		"npm ci --ignore-scripts"},
 	{config.NodePM{Name: "pnpm", Lockfile: "pnpm-lock.yaml", Install: "pnpm fetch && pnpm install --offline --frozen-lockfile"},
-		"pnpm fetch && pnpm install --offline --frozen-lockfile", "pnpm fetch && pnpm install --offline --frozen-lockfile --ignore-scripts"},
+		"pnpm fetch && pnpm install --offline --frozen-lockfile --ignore-scripts"},
 }
 
-// fullInput is TestRenderFull's input with pm as the package manager.
-func fullInput(pm config.NodePM, skip bool) RenderInput {
+// fullInput is TestRenderFull's input with pm as the package manager and the
+// image: field a caller wants to see ignored.
+func fullInput(pm config.NodePM, skipBuildScripts bool) RenderInput {
 	return RenderInput{
 		Workflow: "web", Base: config.BaseKind, Version: "1.2.3", Mise: true,
 		Image: config.Image{
 			Apt:              []string{"libvips-dev", "fonts-liberation"},
 			Setup:            []string{"npx playwright install --with-deps chromium", "mkdir -p build"},
-			SkipBuildScripts: skip,
+			SkipBuildScripts: skipBuildScripts,
 		},
 		PM:      &pm,
 		Secrets: []string{"NPM_TOKEN"},
 	}
 }
 
-// With image.skip_build_scripts, each package manager's warm-up installs
-// without lifecycle or build scripts, and the rest of the Dockerfile is
-// TestRenderFull's, byte for byte.
-func TestRenderSkipBuildScripts(t *testing.T) {
-	yarnBlock := warmUpBlock("", "yarn.lock", "yarn install --immutable")
+// Every package manager's warm-up installs without lifecycle or build
+// scripts, and the rest of the Dockerfile is TestRenderFull's, byte for byte.
+//
+// The warm-up is the one RUN that mounts the workflow's secrets, so the
+// scripts a dependency's install would otherwise start are unreviewed code
+// running beside them — the setting that used to keep them out
+// (image.skip_build_scripts) is refused by name now, which leaves the safe
+// setting as the only one the renderer may write.
+func TestRenderWarmUpRunsNoBuildScripts(t *testing.T) {
+	yarnBlock := warmUpBlock("yarn.lock", "yarn install --immutable --mode=skip-build")
 	if !strings.Contains(wantFull, yarnBlock) {
 		t.Fatalf("wantFull lacks %q", yarnBlock)
 	}
-	for _, tc := range renderPMs {
-		t.Run(tc.pm.Lockfile+" "+tc.plain, func(t *testing.T) {
-			got, err := Render(fullInput(tc.pm, true))
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := strings.Replace(wantFull, yarnBlock, warmUpBlock(skipComment, tc.pm.Lockfile, tc.skip), 1)
-			if string(got) != want {
-				t.Errorf("Render =\n%s\nwant\n%s", got, want)
-			}
-			if msgs := config.LintDockerfile(got); len(msgs) > 0 {
-				t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
-			}
-		})
-	}
-}
-
-// Leaving image.skip_build_scripts off renders exactly what fugaro rendered
-// before the setting existed, for every package manager.
-func TestRenderDefaultWarmUpUnchanged(t *testing.T) {
-	for _, tc := range renderPMs {
-		t.Run(tc.pm.Lockfile+" "+tc.plain, func(t *testing.T) {
-			got, err := Render(fullInput(tc.pm, false))
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := strings.Replace(wantFull, warmUpBlock("", "yarn.lock", "yarn install --immutable"), warmUpBlock("", tc.pm.Lockfile, tc.plain), 1)
-			if string(got) != want {
-				t.Errorf("Render =\n%s\nwant\n%s", got, want)
+	for _, tc := range warmUpInstalls {
+		t.Run(tc.pm.Lockfile+" "+tc.install, func(t *testing.T) {
+			want := strings.Replace(wantFull, yarnBlock, warmUpBlock(tc.pm.Lockfile, tc.install), 1)
+			for _, skip := range []bool{false, true} {
+				got, err := Render(fullInput(tc.pm, skip))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != want {
+					t.Errorf("Render (image.SkipBuildScripts %v) =\n%s\nwant\n%s", skip, got, want)
+				}
+				if msgs := config.LintDockerfile(got); len(msgs) > 0 {
+					t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
+				}
 			}
 		})
 	}
 }
 
-func TestDockerfileSkipBuildScripts(t *testing.T) {
+// The Dockerfile a workflow's own image: block renders is the same one,
+// whatever the block says: image.skip_build_scripts no longer reaches the
+// render, so the setting cannot turn install scripts back on.
+func TestDockerfileWarmUpRunsNoBuildScripts(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFiles(t, root, map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": ""})
-	cfg := configWithImage(t, "web", config.Image{SkipBuildScripts: true})
-	data, _, err := Dockerfile(root, cfg, "web", "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := warmUpBlock(skipComment, "yarn.lock", "yarn install --immutable --mode=skip-build"); !strings.Contains(string(data), want) {
-		t.Fatalf("Dockerfile lacks %q:\n%s", want, data)
+	for _, skip := range []bool{false, true} {
+		cfg := configWithImage(t, "web", config.Image{SkipBuildScripts: skip})
+		data, _, err := Dockerfile(root, cfg, "web", "dev")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := warmUpBlock("yarn.lock", "yarn install --immutable --mode=skip-build"); !strings.Contains(string(data), want) {
+			t.Fatalf("Dockerfile (skip_build_scripts %v) lacks %q:\n%s", skip, want, data)
+		}
 	}
 }
 
@@ -549,7 +550,7 @@ func TestDockerfileDetectsPackageManager(t *testing.T) {
 	if err != nil || repoFile != "" {
 		t.Fatalf("repoFile %q, err %v", repoFile, err)
 	}
-	if want := "# Dependency warm-up for package-lock.json.\n" + `RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; npm ci` + "\n"; !strings.Contains(string(data), want) {
+	if want := warmUpBlock("package-lock.json", "npm ci --ignore-scripts"); !strings.Contains(string(data), want) {
 		t.Fatalf("Dockerfile lacks %q:\n%s", want, data)
 	}
 }

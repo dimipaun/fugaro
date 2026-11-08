@@ -98,7 +98,15 @@ func Render(in RenderInput) ([]byte, error) {
 	}{RenderInput: in}
 	data.ShellKeyFiles = shellWords(in.KeyFiles)
 	if in.PM != nil {
-		data.WarmUp, data.WarmUpFor = in.PM.WarmUp(in.Image.SkipBuildScripts), in.PM.Lockfile
+		// The warm-up never runs package lifecycle or build scripts, whatever
+		// a workflow's image: block holds: this is the one RUN that mounts the
+		// workflow's own secrets, and image.skip_build_scripts — the switch
+		// that kept a dependency's install scripts out of it — is a key the
+		// repository-image removal refuses by name, so no configuration can
+		// turn them back on. The safe setting is the only one left while this
+		// renderer still builds a repository's image; when it goes, the
+		// catalog entry's own Dockerfile says what its install runs.
+		data.WarmUp, data.WarmUpFor = in.PM.WarmUp(true), in.PM.Lockfile
 	}
 	for _, name := range slices.Sorted(maps.Keys(in.Image.Tools)) {
 		v := in.Image.Tools[name]
