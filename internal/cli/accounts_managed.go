@@ -98,8 +98,8 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// such place: the flag has to speak about the marks in every session that
 	// passes it (a refusal in a managed project's agent session, a sentence
 	// everywhere else), so it forces the read even where the declaration
-	// itself would have asked nothing (--yes, or no terminal at all).
-	if !settingsGateAsks(marker, settingsAsk(cmd, o.yes) || o.ask, settingsDocLocal, accountsAddTypedEdit) {
+	// itself would have asked nothing (a session with no terminal at all).
+	if !settingsGateAsks(marker, settingsWriteOwnTerminal(cmd) || o.ask, settingsDocLocal, accountsAddTypedEdit) {
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	clients, err := newInitClients(ctx, lc)

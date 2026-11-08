@@ -687,18 +687,21 @@ func TestSettingsSetYesReadsNoMark(t *testing.T) {
 	}
 }
 
-// The owner's own terminal in a managed project takes no confirmation either
-// (the ruling of 2026-11-01: the gate manages the project on the owner's
-// behalf, without the prompts). The marks are read because this is exactly the
-// run the y/N would have been asked at, the gate judges the document the edit
-// would write, and its verdict replaces the question — the diff above it is the
-// whole of what the owner reads, and the admission is in their own bucket.
+// The owner's own terminal in a managed project takes no confirmation (the
+// ruling of 2026-11-01: the gate manages the project on the owner's behalf,
+// without the prompts), and neither does the same edit anywhere else: no
+// settings write asks anything any more (D1540). What the two runs read apart
+// is where the write's answer came from. The managed one reads GateProceeded's
+// sentence: the marks ARE read because this is exactly the run the y/N would
+// have been asked at, the gate judges the document the edit would write, and
+// its verdict stands where the question stood — the diff above it is the whole
+// of what the owner reads, and the admission is in their own bucket. The
+// control reads the sentence naming the change and nothing about a verdict, and
+// files no record, because no rule read this edit's document.
 //
-// The control is the same edit, the same terminal and a project the marks do
-// not prove is managed: the question is asked, and a terminal with nothing
-// typed writes nothing. The mutation caught: Managed.Removes answering true for
-// every project, which leaves the control's question unasked and the edit
-// written.
+// The mutation caught: Managed.Removes answering true for every project, which
+// hands the control the managed run's sentence and files it a record of a
+// verdict that was never taken.
 func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 	for _, tc := range []struct {
 		what    string
@@ -712,7 +715,6 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			r := newSettingsManagedRig(t, tc.marks)
 			r.managedRunsBucket(t)
 			path := settingsManagedLayerFile(t, minimalAnchored)
-			before := readFileString(t, path)
 			noAgentSession(t)
 			fakeTerminal(t)
 
@@ -720,14 +722,17 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			after := readFileString(t, path)
 			recs := r.audits(t)
 			if !tc.managed {
-				if err == nil || !strings.Contains(err.Error(), "not confirmed; nothing was written") {
-					t.Fatalf("a project the marks do not prove is managed was not asked: %v\n%s", err, out)
+				if err != nil {
+					t.Fatalf("a project the marks do not prove is managed was refused: %v\n%s", err, out)
 				}
-				if !strings.Contains(out, "Write this to "+path+"? [y/N]") {
-					t.Errorf("the y/N this command has always asked was not printed:\n%s", out)
+				assertNoPrompt(t, out)
+				if !strings.Contains(after, "review_rounds: 6") {
+					t.Errorf("the write did not land:\n%s", after)
 				}
-				if after != before {
-					t.Error("a question nobody answered wrote the file anyway")
+				for _, gate := range []string{initflow.GateProceeded(), initflow.GateOrdinary()} {
+					if strings.Contains(out, gate) {
+						t.Errorf("a project the marks do not prove is managed reads a verdict that was never taken:\n%s", out)
+					}
 				}
 				if len(recs) != 0 {
 					t.Errorf("a project that is not managed filed %+v", recs)
@@ -740,9 +745,7 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			if !strings.Contains(after, "review_rounds: 6") {
 				t.Errorf("the write did not land:\n%s", after)
 			}
-			if strings.Contains(out, "? [y/N]") {
-				t.Errorf("a managed project's own terminal was asked anyway:\n%s", out)
-			}
+			assertNoPrompt(t, out)
 			// The owner's own terminal reads the sentence that says where the
 			// verdict was taken, not GateOrdinary's — this step's diff IS the
 			// document the gate judged and the record above names its digest,

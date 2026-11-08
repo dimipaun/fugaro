@@ -225,20 +225,20 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	}
 	// A file that was already what this command would write — a rotation
 	// re-run, the account declared and the profile serving it — returns from
-	// applySettingsEdit before its refusal and before its confirmation, and
+	// applySettingsEdit before its refusal and before its own sentence, and
 	// both are still owed here: the converge below reads the token from stdin,
 	// stores a new version of it project-wide and clears the account's mark,
-	// which is the write the refusal is about and the change the confirmation
-	// is about. A session writes nothing, --yes included (spec §2.4), and the
-	// marker fence comes first, as it does in applySettingsEdit — the same rule,
-	// lifted by the same answer and for the same class, so a session the gate
-	// admitted to the declaration is not refused the step it declared.
+	// which is the write the refusal is about and the change the sentence names.
+	// A session writes nothing, --yes included (spec §2.4), and the marker fence
+	// comes first, as it does in applySettingsEdit — the same rule, lifted by
+	// the same answer and for the same class, so a session the gate admitted to
+	// the declaration is not refused the step it declared.
 	if !changed {
 		if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
 			return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 				sel.Path, marker, what, command)
 		}
-		if err := confirmSettingsWrite(cmd, lc, sel.Path, o.yes, what); err != nil {
+		if err := announceSettingsWrite(cmd, what); err != nil {
 			return err
 		}
 	}

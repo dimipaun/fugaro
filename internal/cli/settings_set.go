@@ -1590,7 +1590,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// project's session with no terminal, a sentence anywhere else — so the
 	// read it needs is made even where the edit itself would have asked
 	// nothing (--yes, or no terminal at all).
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsAsk(cmd, o.yes) || o.ask)
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsWriteOwnTerminal(cmd))
 	if err != nil {
 		return err
 	}
@@ -1688,7 +1688,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	}
 	// The read and the flag's own sentence: the same pair, in the same order,
 	// as the set path above.
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsAsk(cmd, o.yes) || o.ask)
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsWriteOwnTerminal(cmd))
 	if err != nil {
 		return err
 	}

@@ -1,13 +1,9 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,7 +11,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
@@ -39,7 +34,10 @@ type settingsEdit struct {
 	// Old is the file as it is and New as it would be, both read and produced
 	// by the caller. The helper writes nothing when the two are equal.
 	Old, New []byte
-	// What is the sentence the confirmation shows, naming what changes.
+	// What is the sentence naming what changes. It is printed before the write —
+	// the whole of what the y/N confirmation showed, minus the prompt itself
+	// (D1540) — and it is the sentence the one question a write may still ask is
+	// built from (announceSettingsWrite, D1544).
 	What string
 	// Typed marks the widening directions: a loosened ceiling, a floor
 	// removed, a followup key turned on. They are the owner's own step, so
@@ -71,8 +69,10 @@ type settingsEdit struct {
 	// the person to run at their own terminal. It is the whole of what the
 	// refusal may produce beside the diff.
 	Command string
-	// Yes is --yes. It answers the y/N confirmation, and the typed one too
-	// wherever the caller says a flag may (D1107).
+	// Yes is --yes. The confirmations it used to answer are gone (D1540), so
+	// nothing in this path reads it as an answer any more: it stands in the
+	// conditions the fence and the gate are decided under, and the flag itself
+	// is T11's to remove.
 	Yes bool
 	// Managed is the managed gate's answer for the step this edit is (D1012): a
 	// caller that read the gate passes what it answered, and every caller that
@@ -145,16 +145,17 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 
 	fmt.Fprintf(out, "%s\n%s", e.Path, diff)
-	// The owner's own terminal in a managed project asks nothing (the ruling of
-	// 2026-11-01): the gate read this edit's document, admitted it, and its
-	// verdict IS the confirmation — the diff above is the whole of what the
-	// owner reads. A widening is the one edit that is asked nothing for
-	// whatever the verdict was (D1552, D1555): initflow.GateConfirms is false
-	// for one (D1026, and settingsEdit's own editClass), and what the person
-	// reads instead of a confirmation is the sentence saying what it widens. A
-	// project that is not managed, a mark that did not answer and an edit the
-	// gate refused all arrive here as the zero value every fence reads exactly
-	// as it did before the gate existed.
+	// No write asks anything (D1540), so what a person reads is one of three
+	// things. A managed project's own terminal reads the gate's sentence (the
+	// ruling of 2026-11-01): the gate read this edit's document, admitted it, and
+	// its verdict IS the confirmation — the diff above is the whole of what the
+	// owner reads. A widening reads what it widens (D1552, D1555):
+	// initflow.GateConfirms is false for one whatever the verdict was (D1026, and
+	// settingsEdit's own editClass). Every other edit reads the sentence naming
+	// it, and the one question a write may still ask is the one --ask puts back
+	// (D1544). A project that is not managed, a mark that did not answer and an
+	// edit the gate refused all arrive here as the zero value every fence reads
+	// exactly as it did before the gate existed.
 	//
 	// Which sentence that is read as is the session's own, and nothing else in
 	// this path is: a coding agent's session reads AgentProceeded, which names
@@ -175,7 +176,7 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 		// command waits on stdin, and a question a session can answer is not a
 		// fence.
 		fmt.Fprintf(out, "%s\n%s\n", e.TypedWhy, e.What)
-	} else if err := confirmSettingsWrite(cmd, lc, e.Path, e.Yes, e.What); err != nil {
+	} else if err := announceSettingsWrite(cmd, e.What); err != nil {
 		return err
 	}
 
@@ -247,28 +248,29 @@ func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditi
 	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())), Ask: e.Ask}
 }
 
-// confirmSettingsWrite is the ordinary y/N confirmation: --yes answers it, a
-// terminal asks, and anything else refuses rather than guessing. It is
-// confirmTyped's shape without the typed name, because most settings writes are
-// not the widening directions D846 reserves the typed form for.
-func confirmSettingsWrite(cmd *cobra.Command, lc *localcfg.Config, path string, yes bool, what string) error {
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)
-	if yes {
-		fmt.Fprintln(out, "  confirmed by --yes")
-		return nil
+// announceSettingsWrite says what one settings write does and asks whether to
+// make it — a question only --ask ever raises (D1540, D1544). Without the flag
+// it prints the sentence, writes nothing of its own and returns nil: the run
+// proceeds, which is the policy's answer to a step that used to ask, and the
+// fence, the compare-and-swap and the backup are what bound it. With the flag
+// the sentence is followed by the one question the flag is for, asked by the one
+// sanctioned reader (askConfirm), which refuses where nobody can answer it
+// instead of letting a silent proceed stand in.
+//
+// It is the one place a settings write says its sentence and asks, so the
+// callers that write outside applySettingsEdit — `accounts add` and `secrets rm`
+// on the paths where that helper returns before it announces anything — ask in
+// the same words as the helper does. A "no" is an answer and not an error: every
+// caller here answers it the same way, because every one of them leaves the same
+// thing behind, a document byte-identical to the one it read.
+func announceSettingsWrite(cmd *cobra.Command, what string) error {
+	fmt.Fprintln(cmd.OutOrStdout(), what)
+	ok, err := askConfirm(cmd, "make this change?")
+	if err != nil {
+		return err
 	}
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s, or pass --yes once you have read what it does", initflow.NeedsTerminal("the confirmation of this write"))
-	}
-	fmt.Fprintf(out, "Write this to %s? [y/N]: ", path)
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
-	}
-	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
+	if !ok {
 		return userErr("not confirmed; nothing was written")
 	}
-	noteIDETerminalCmd(cmd, out)
 	return nil
 }

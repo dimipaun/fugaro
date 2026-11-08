@@ -2014,8 +2014,8 @@ func TestSettingsSetTurningAFollowupKeyOnAsksNothing(t *testing.T) {
 // credentials, so `--add` on this key is the widening D846 types — the owner's
 // own step, which asks nothing at their terminal (D1552, D1555) — and not the
 // harmless direction `--add` is on a list that narrows something. `--remove`
-// takes someone off the list, which is the tightening half, and keeps the
-// ordinary y/N.
+// takes someone off the list, which is the tightening half and the ordinary
+// edit, and it asks nothing either (D1540).
 func TestSettingsSetTrustedAddIsAWideningThatAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("followup:\n  trusted:\n    - \"100000001\"\n"))
@@ -2039,11 +2039,13 @@ func TestSettingsSetTrustedAddIsAWideningThatAsksNothing(t *testing.T) {
 	}
 
 	// Taking a name off the list narrows who can steer the run, so it is the
-	// ordinary y/N write and a terminal answering y is enough.
+	// ordinary write — and the ordinary write asks nothing, terminal or not.
 	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "y\n", "settings", "set", "followup.trusted", "--remove", "100000001", "--layer", "repo"); err != nil {
+	out, _, err = executeStdin(t, "", "settings", "set", "followup.trusted", "--remove", "100000001", "--layer", "repo")
+	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	assertNoPrompt(t, out)
 	if got := readFileString(t, path); strings.Contains(got, "100000001") {
 		t.Errorf("fugaro.yaml still carries the removed account:\n%s", got)
 	}

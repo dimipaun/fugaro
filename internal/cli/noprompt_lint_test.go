@@ -701,7 +701,6 @@ var notADecisionSites = map[string]string{}
 // `confirmTypedStrict` and `askTyped`, so their entries are the helpers' own
 // sites in `budget.go` and `init.go` — the read is what the lint holds.
 var pendingSites = map[string]string{
-	"accounts.go:accountsClear":              "T5",
 	"billing_prompt.go:billingAPIOff":        "T7",
 	"budget.go:confirmTyped":                 "T3",
 	"budget.go:confirmTypedStrict":           "T3",
@@ -723,7 +722,6 @@ var pendingSites = map[string]string{
 	"project_enroll.go:runProjectSync":       "T6",
 	"restore.go:anchor":                      "T6",
 	"restore.go:confirm":                     "T6",
-	"settings_write.go:confirmSettingsWrite": "T5",
 }
 
 // forms is the shapes found at one site, in a stable order, for a failure's
