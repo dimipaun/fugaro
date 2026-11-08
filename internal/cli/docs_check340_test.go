@@ -176,6 +176,61 @@ func TestDocsCheck340RecordsTheFirstRun(t *testing.T) {
 	}
 }
 
+// TestDocsCheck340RecordsTheSecondRun: the check has now been run TWICE, both
+// times on 2026-11-07 and both times exit 2, and the second run has to be
+// recorded beside the first. It matters because it is the run that lost the
+// fallback: the relative form measured five of its rows (four PASSing, the
+// `reports/` listing FAILing with the binding read back as present), a `tokens/`
+// listing refused with a denial naming `storage.objects.get` was read as "a call
+// that did not answer" and stopped the run, and the full-path form — the only
+// one left that could answer the attribute — was never tried. A section that
+// recorded only the first attempt would leave the next reader with a fix that
+// has since been run once more and still answered nothing; and the row has to
+// carry both attempts, because the row is where a reader stops.
+func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	section := flattenDoc(check340Section(t, register))
+	for _, want := range []string{
+		// The second attempt, its exit, and the standing statement that the
+		// attribute is still unanswered.
+		"Second run: 2026-11-07, exit `2`",
+		"no `PASS` is recorded for `list-prefix` anywhere here",
+		// What the relative form measured, and the reading that separates a
+		// clause which does not match from a grant that never landed: the
+		// policy named the binding.
+		"found the binding present",
+		// The refusal that stopped it, and that it was left unclassified.
+		"unclassified",
+		"`storage.objects.get`",
+		"the **full-path form was never reached**",
+		// The three fixes this task made, so a reader of the second run's
+		// paste-back knows what the next run will do differently.
+		"either permission is a refusal",
+		"reads **both** candidate forms to the end of their criteria",
+		"`reports/<slug>/` **and** the bare `reports/` must list",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the check has been run twice and the second run is where the fallback was lost, so the register has to carry it", check340Number, want)
+		}
+	}
+	// A missing bucket is a stop of its own, and the row and the stop have to
+	// say how to make one: the script grants IAM on a bucket and writes into
+	// it, so the bucket is the owner's to create.
+	for _, want := range []string{
+		"gcloud storage buckets create",
+		"--location=us-central1 --uniform-bucket-level-access",
+		"never creates the bucket",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: a bucket that is not there stops the run, and a stop that does not name the create command leaves the owner with a check that will not start", check340Number, want)
+		}
+	}
+	// The row is where a reader stops, so it carries both attempts.
+	if row := check340Row(register); !strings.Contains(row, "Two attempts have been made") {
+		t.Errorf("Check %s's row does not record the second attempt: the row and the section are one registration, and a reader who stops at the table has to see that the check has been run twice and settled nothing either time", check340Number)
+	}
+}
+
 // TestDocsCheck340CensusReadsTheRegister: the design's own census of the
 // register is a reading of the register, and the two move together — the same
 // rule docs/coordinator/README.md's row is held to. This design's row said the
