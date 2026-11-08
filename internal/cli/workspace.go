@@ -251,7 +251,7 @@ func runWorkspaceAdd(cmd *cobra.Command, name string, o *workspaceAddOptions) er
 	// different values, which is the owner's own step — asked nothing at their
 	// terminal and refused in a coding agent's session (D1552). A first
 	// membership widens nothing and is the ordinary write.
-	if workspaceMember(lc) {
+	if lc.Workspace != "" || !lc.WorkspacePin.IsZero() {
 		edit.Typed = true
 		edit.TypedWhy = fmt.Sprintf("this replaces what project %s trusts: the membership moves from %s to %s, or %s is re-pinned with different values",
 			lc.Name, workspaceOrNone(lc.Workspace), name, name)

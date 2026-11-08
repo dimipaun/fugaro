@@ -40,8 +40,16 @@ type Options struct {
 	// fall back to a token that was also passed -- and when it is nil the
 	// static Token is wrapped into a source of its own.
 	TokenSource gitprov.TokenSource
-	BaseURL     string // API root; empty means DefaultBaseURL
-	HTTP        *http.Client
+	// Proxied opens a provider that holds no Bitbucket credential at all
+	// (B1.7, G1): its caller is a proxied repository's run, whose job mounts
+	// no token, and every request it makes is sent to the runner's loopback
+	// forwarder (Options.HTTP carries the transport that does it) where the
+	// credentials service puts one on the wire. Token and TokenSource are
+	// then not read, and neither is the Authorization header built: a run
+	// that held one would be the credential G1 says it has none of.
+	Proxied bool
+	BaseURL string // API root; empty means DefaultBaseURL
+	HTTP    *http.Client
 	// Warn, when set, receives adapter warnings meant for the run's log:
 	// once, the first time a PRSpec with non-empty Labels is seen
 	// (Bitbucket Cloud pull requests have no labels, so they are silently
@@ -78,7 +86,7 @@ func New(o Options) (*Provider, error) {
 		return nil, errors.New("bitbucket: workspace and repository slug are required")
 	}
 	tokens := o.TokenSource
-	if tokens == nil {
+	if tokens == nil && !o.Proxied {
 		if o.Token == "" {
 			return nil, errors.New("bitbucket: a Bitbucket access token or a token source is required")
 		}
@@ -94,13 +102,15 @@ func New(o Options) (*Provider, error) {
 	p.api = &httpjson.Client{
 		BaseURL: o.BaseURL, HTTP: o.HTTP,
 		Header: http.Header{"Accept": {"application/json"}},
-		Auth: func(ctx context.Context) (string, error) {
+	}
+	if !o.Proxied {
+		p.api.Auth = func(ctx context.Context) (string, error) {
 			tok, _, err := p.tokens.Token(ctx, apiMinValid)
 			if err != nil {
 				return "", err
 			}
 			return "Bearer " + tok, nil
-		},
+		}
 	}
 	return p, nil
 }
@@ -354,6 +364,15 @@ func (p *Provider) Comment(ctx context.Context, pr gitprov.PR, body string) erro
 // because it does not expire during a run, and a minted one comes back with
 // the life its mint gave it, so a caller knows when to ask again.
 func (p *Provider) GitAuth(ctx context.Context, minValid time.Duration) (gitprov.GitAuth, error) {
+	if p.o.Proxied {
+		// A proxied provider mints nothing and hands git nothing: the job
+		// holds no Bitbucket credential (G1), and the request git makes
+		// through the forwarder is authenticated by the credentials service
+		// on the wire, not by a credential in this environment. An empty
+		// Token is what "git needs no credentials" is spelled with
+		// (gitprov.GitAuth).
+		return gitprov.GitAuth{}, nil
+	}
 	tok, expires, err := p.tokens.Token(ctx, minValid)
 	if err != nil {
 		return gitprov.GitAuth{}, err

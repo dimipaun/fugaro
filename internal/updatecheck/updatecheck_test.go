@@ -770,3 +770,56 @@ func TestARelativeXDGCacheHomeIsIgnoredOnPOSIX(t *testing.T) {
 		t.Errorf("cachePath = %q, want %q: a relative XDG_CACHE_HOME must not decide where the cache goes", got, want)
 	}
 }
+
+// TestCanonicalRelease pins the exported strict parse: an optional "v" is
+// dropped, the canonical X.Y.Z comes back, and everything that is not
+// strictly X.Y.Z is refused. It is the one parse the issue reader, the
+// installation record and the resolver share, so a second copy of the
+// regexp cannot drift from this one.
+func TestCanonicalRelease(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want string
+	}{
+		{"0.22.0", "0.22.0"},
+		{"v0.22.0", "0.22.0"},
+		{"12.34.56", "12.34.56"},
+		{"0.0.0", "0.0.0"},
+	} {
+		got, ok := CanonicalRelease(c.in)
+		if !ok || got != c.want {
+			t.Errorf("CanonicalRelease(%q) = %q, %v, want %q, true", c.in, got, ok, c.want)
+		}
+	}
+	for _, in := range []string{"0.22", "0.22.0-rc1", "next", "", "v", "0.22.0.1", " 0.22.0"} {
+		if got, ok := CanonicalRelease(in); ok {
+			t.Errorf("CanonicalRelease(%q) = %q, true, want false", in, got)
+		}
+	}
+}
+
+// TestAtOrBelow pins the "never lowers" comparison: release is at or below
+// current, and a current that is not a strict X.Y.Z (a dev build, an empty
+// version) never matches, so an unknown installed version resolves
+// nothing.
+func TestAtOrBelow(t *testing.T) {
+	for _, c := range []struct {
+		release, current string
+		want             bool
+	}{
+		{"0.21.1", "0.22.0", true},
+		{"0.22.0", "0.22.0", true},
+		{"v0.22.0", "0.22.0", true},
+		{"0.22.1", "0.22.0", false},
+		{"0.9.0", "0.10.0", true},
+		{"0.10.0", "0.9.0", false},
+		{"0.22.0", "dev", false},
+		{"0.22.0", "", false},
+		{"next", "0.22.0", false},
+		{"", "0.22.0", false},
+	} {
+		if got := AtOrBelow(c.release, c.current); got != c.want {
+			t.Errorf("AtOrBelow(%q, %q) = %v, want %v", c.release, c.current, got, c.want)
+		}
+	}
+}

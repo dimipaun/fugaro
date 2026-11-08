@@ -367,7 +367,7 @@ func sequentialFactsLookBack(t *testing.T, b budget.BucketFacts, from, to int64,
 			switch {
 			case errors.Is(err, runstore.ErrNotFound):
 				continue
-			case errors.Is(err, runstore.ErrTooLarge) || (err != nil && strings.HasPrefix(err.Error(), "decoding result.json")):
+			case errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, runstore.ErrCorrupt):
 				if b.Warn != nil {
 					b.Warn(fmt.Sprintf("skipping %s/%s: its result.json cannot be used (%v)", slug, id, err))
 				}

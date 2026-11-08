@@ -762,12 +762,15 @@ register's Check 111 section (W0.3), moved the table's row from 111 to 112. Amen
 folder's pin, moved the table's row from 112 to 113: it holds the folder's own claims rather
 than a claim about code — the ask is the owner's words verbatim, the twenty decision rows
 carry an empty owner's-answer cell, the number block sits above every claim the folder read,
-and every task in the plan states its files, its red step and its reviewer tier. Amended
-2026-11-08: `internal/cli/docs_check361_test.go`, the workspaces work's pin over its Check
-361 section of the live checklist (W3, added with the check on 2026-11-07), is a pin the
-chain above never counted, and the row takes the merged tree's own count rather than the
-chain's next number: main's own row had fallen one behind the tree it counts (113 stated
-where 114 pins were held), and the merged tree holds 115.) They
+and every task in the plan states its files, its red step and its reviewer tier.
+Amended 2026-11-08: that move was resolved away by the batch merge that landed the
+same pin beside `de90e93c`'s recount of the doubled row, so the table's row moves from
+113 to 114 and carries the tree's figure again. Amended 2026-11-08:
+`internal/cli/docs_check361_test.go`, the workspaces work's pin over its Check 361
+section of the live checklist (W3, added with the check on 2026-11-07), is a pin no
+line above counted — it landed on the workspaces branch while this row was being
+recounted — so the row moves from 114 to 115, the merged tree's own figure rather than
+the chain's next number.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
