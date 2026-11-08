@@ -4,7 +4,8 @@
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M8–M10 are not started; this folder approves no task.**
+plan carries; M8 is built except the wiring that would serve its four read tools, which is the
+task M5b gates; M9–M10 are not started; this folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -206,9 +207,12 @@ owner; the rest is not started; this folder approves no task.** **That quotation
 stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and the line every
 file carries today reads "...which is M5b and is a hard prerequisite before any binary links the
 front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's
-published state its lists come from, which no task of this plan carries; M8–M10 are not started" —
-**the last two clauses moving when M7 landed** (§4a), the exception added with its landing because
-the task builds the seam that reading goes through and not the reading itself.
+published state its lists come from, which no task of this plan carries; M8 is built except the
+wiring that would serve its four read tools, which is the task M5b gates; M9–M10 are not started" —
+**each clause after "asks for" moving when its task landed** (§4a), every exception added with its
+landing and for the same shape of reason: M7 builds the seam its reading goes through and not the
+reading itself, and M8 builds the four read tools and registers them on no binary, which is the
+wiring task M5b gates.
 
 ### The answer of 2026-11-05
 
@@ -597,8 +601,10 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   registry, dormant with the rest of the door) **except the reading of the installation's published
   state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
   **nothing in the tree implements it over that state, because no task of the plan carries the
-  reading** — **and the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
-  and its one grant) and M8–M10; **M3's node is in with its parity test while the comment D935 asks
+  reading** — **M8 is built** (the four read tools, over the project's own runs and redacted through
+  `internal/safetext`) **except the wiring that would serve them**: no binary registers them, which
+  is the wiring M5b gates — **and the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
+  and its one grant) and M9–M10; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
   built after M6 rather than with it. **And one row of an already-merged task

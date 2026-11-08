@@ -4,7 +4,8 @@
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M8–M10 are not started; this folder approves no task.** The owner's spec of
+plan carries; M8 is built except the wiring that would serve its four read tools, which is the
+task M5b gates; M9–M10 are not started; this folder approves no task.** The owner's spec of
 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code here;
 [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the
@@ -55,7 +56,8 @@ found the same defect (`ee/coordinator/mcpauth/limits.go:298`). **The tree has g
 half being its account, the front door service and its public invoker binding
 (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **and what is left
 is M4's store half, the reading of the installation's published state M7's lists come from, M5b and
-M8–M10** ([reconciliation.md](reconciliation.md) §4a, "What has happened since", and spec.md §11).
+the wiring M8's four read tools wait for** — **M8 itself is built**, and **M9–M10 are not started**
+([reconciliation.md](reconciliation.md) §4a, "What has happened since", and spec.md §11).
 
 **Asked by.** The owner, on 2026-10-24: a hosted MCP server inside the coordinator, with OAuth 2.1
 and PKCE and the project's own Firebase as the identity provider, so that MCP clients can submit and
