@@ -237,3 +237,63 @@ func TestStopAcceptanceIsFiledOnThePullRequestAndTheReport(t *testing.T) {
 		t.Errorf("the run's report files the stop's findings under the tolerance heading, which says a review let them go:\n%s", got)
 	}
 }
+
+// TestStopReadsTheRoundTheRunStoppedAtAndNotTheLevelItNeverReached is item 6b
+// at the moment it bites. A run whose first line is on and whose clock crosses
+// the threshold inside the cheap loop stops with level 1's round recorded and
+// no level 2 round at all — the stop starts no round, so the level the plan
+// would have run next holds none by construction (decidingReview) — and the
+// round the stop has to read is the one that ran. The pair below is one run
+// with level 2 on and the same run with it off, and the ruling's own sentence
+// is that asking for a level must not change the mode's rigor (the owner's
+// ruling of 2026-11-08): read off the senior round alone, the level-2 run ends
+// a draft on findings no field had kept, while the level-2-off run — whose
+// round the cheap loop records because it decides there — is ready.
+func TestStopReadsTheRoundTheRunStoppedAtAndNotTheLevelItNeverReached(t *testing.T) {
+	cfg := func() string {
+		return modeCfg(t, "startup", 1, "  first_line_review: on\n  review_stop_fraction: 0.05\n")
+	}
+	// Above Startup's floor and below the override: a finding the mode buys a
+	// fix round for while it has one, and one its stop accepts. It is above the
+	// floor so the round is not one the ordinary rule tolerates either — what
+	// makes the run ready below is the stop and nothing else.
+	blocking := reviewScored("changes", map[string]any{
+		"summary": "unbounded retry loop in the fetch path", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	})
+	spec := func(l2Off bool) *task.Spec {
+		s := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+		if l2Off {
+			s.ReviewLevels = &config.ReviewLevels{L2: &config.LevelSetting{Off: true}}
+		}
+		return s
+	}
+	for _, off := range []bool{true, false} {
+		name := "level 1 is the only level, and the stop reads its round"
+		if !off {
+			name = "level 2 is enabled and never ran, and the stop reads the same round"
+		}
+		t.Run(name, func(t *testing.T) {
+			clk := newClock()
+			h := newHarness(t, cfg(), spec(off))
+			h.deps.Now = clk.Now
+			rec, err := h.run(t, afterStep(clk, implement("feature")), afterStep(clk, blocking))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The one round that ran is the cheap loop's, and the stop cut the
+			// loop before the level above it could start.
+			if got := stageNames(rec); !eq(got, "implement", "review_first") {
+				t.Fatalf("stages = %v, want the cheap round the stop ended the loop on", got)
+			}
+			if rec.Outcome != runstore.OutcomeReady {
+				t.Fatalf("outcome = %s (reason %q), want ready: the stop accepts this round's finding", rec.Outcome, rec.Reason)
+			}
+			if want := "review round 1 left 1 finding, accepted at startup (time threshold)"; rec.Reason != want {
+				t.Errorf("reason = %q, want %q", rec.Reason, want)
+			}
+			if ac := rec.Accepted; ac == nil || ac.Round != 1 || ac.At != runstore.StopTimeThreshold {
+				t.Fatalf("the record's accepted block = %+v, want the cheap loop's round and the half that ended the run", ac)
+			}
+		})
+	}
+}

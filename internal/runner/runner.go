@@ -467,6 +467,15 @@ type run struct {
 	// returns, which is the only one readiness reads: level 3's where it ran,
 	// level 2's otherwise, and level 1's where no outer level ran at all.
 	lastSenior seniorRound
+	// firstLineLast is level 1's own last round, kept for the same reason
+	// seniorLevelLast is: lastSenior holds it only where the cheap loop decides
+	// readiness itself, and a run the stop ended before an outer level could
+	// start has no outer round for readiness to read. Without this the
+	// findings the stop has to accept at that moment are the empty round the
+	// policy would otherwise be built from, and asking for the outer level
+	// would make the run a draft where the same run without it is ready (the
+	// owner's ruling of 2026-11-08, item 6b).
+	firstLineLast seniorRound
 	// seniorLevelLast is the senior level's own last round, kept beside
 	// lastSenior because level 3 overwrites that one. Readiness is decided on
 	// the highest enabled level, but the decisions the run owes the owner are
@@ -3313,8 +3322,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// is asked of the outer ones: level 1 is a review level, and a run
 			// whose clock ran out starts no round of it either (item 6b — the
 			// stop is the run's, not one level's).
-			r.stopAt = runstore.StopTimeThreshold
-			return sessionID, false
+			return r.firstLineStop(sessionID)
 		}
 		// Counted as seniorLoop counts its rounds: the stop's guard and its
 		// time half read the run's review rounds, never one level's.
@@ -3343,6 +3351,11 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		if decides {
 			r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		}
+		// Kept whether or not this loop decides: a run the stop ends before
+		// level 2 starts has only this round for finalize to read, and the
+		// findings the mode accepts at the stop are the ones it left
+		// (decidingRound).
+		r.firstLineLast = seniorRound{Round: round, Findings: v.Findings}
 		r.rec.Reviews = append(r.rec.Reviews, sum)
 		r.save(ctx)
 		if r.capReached() {
@@ -3372,8 +3385,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// The time half again, before the fix this round would be followed
 			// by: a fix bought here is one the next round would review, and the
 			// stop says the loop starts neither.
-			r.stopAt = runstore.StopTimeThreshold
-			return sessionID, false
+			return r.firstLineStop(sessionID)
 		}
 		var more bool
 		if sessionID, more = r.fix(ctx, v, sys, sessionID); !more {
@@ -3388,6 +3400,38 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		r.stopAt = runstore.StopRoundsSpent
 	}
 	return sessionID, true
+}
+
+// firstLineStop ends the cheap loop at the stop rule's time half (item 2) and
+// leaves the round readiness reads where readiness reads it.
+//
+// The stop ends the whole loop, not only this level's, so where no outer level
+// has reviewed yet the round finalize decides on is this loop's — level 1's.
+// lastSenior is the field every reader of that round goes through (findingsPolicy
+// and the two record blocks), and where the cheap loop decides readiness itself
+// it writes lastSenior already; this is the other case, the level the stop cut
+// before it could start. Without it the policy is built from the empty round
+// lastSenior still holds and the run ends a draft on findings no level recorded,
+// which is the strictness the ruling of 2026-11-08 forbids: the same run with
+// the outer level configured off would be ready.
+func (r *run) firstLineStop(sessionID string) (string, bool) {
+	if !r.outerLevelReviewed() {
+		r.lastSenior = r.firstLineLast
+	}
+	r.stopAt = runstore.StopTimeThreshold
+	return sessionID, false
+}
+
+// outerLevelReviewed reports whether an enabled level above the cheap one has
+// left a round in the record: where none has, level 1's round is the one
+// readiness reads (decidingReview), and the stop hands it to lastSenior.
+func (r *run) outerLevelReviewed() bool {
+	for _, l := range []policy.Level{policy.LevelL2, policy.LevelL3} {
+		if levelOn(r.levels, l) && lastRoundOf(r.rec.Reviews, l) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // seniorReview is the last review the readiness rule reads: the latest

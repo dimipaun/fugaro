@@ -359,6 +359,12 @@ func (r *run) stopBlockingLevels() []runstore.ReviewSummary {
 // level 3 would otherwise overwrite. The round numbers of the two levels are
 // not comparable (each loop counts from 1), which is why the level decides
 // which of the two is read and the number only has to agree with the record's.
+//
+// Level 1 is not one of them: where the cheap loop decides readiness it writes
+// lastSenior itself (firstLine), so the round is already there, and where a
+// stop ended the run before level 2 started, the copy it left is what the stop
+// puts in lastSenior (firstLine's stop paths) — one field either way, which is
+// what the policy and the record are read off.
 func (r *run) levelRound(l policy.Level, round int) ([]Finding, bool) {
 	switch l {
 	case policy.LevelL2:
@@ -602,12 +608,16 @@ func (r *run) toleratedRecord(pol FindingsPolicy) *runstore.ToleratedFindings {
 // and what that left open — a reader that only saw the first would read a run
 // merged at its time threshold as a run whose review let the finding go.
 //
-// nil for every run that did not accept anything at the stop: one that stopped
-// for a reason of its own, and one whose stop found a finding the mode blocks on
-// (which is a draft, and a draft accepted nothing). It is written beside
-// Tolerated and never instead of it, so the pull request's body, the report and
-// the filing path read the accepted findings exactly as they read a tolerated
-// one.
+// nil for every run whose stop did not accept the round it ended on: one that
+// stopped for a reason of its own, and one whose stop found a finding the mode
+// blocks on (which is a draft). It is written beside Tolerated and never
+// instead of it, so the pull request's body, the report and the filing path
+// read the accepted findings exactly as they read a tolerated one — and on the
+// same terms: like Tolerated, the block is the mode's own reading of the round
+// the run ended on, and the reasons a pull request is still a draft — no
+// verified test on the final commit, tests failing on it, a decision the run is
+// waiting on the owner for — are Decide's, checked above the verdict and stated
+// in the run's own reason rather than here.
 func (r *run) acceptedRecord(pol FindingsPolicy, last *runstore.ReviewSummary) *runstore.AcceptedFindings {
 	if !pol.acceptsAtStop(last) {
 		return nil
