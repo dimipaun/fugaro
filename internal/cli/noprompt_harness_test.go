@@ -293,7 +293,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro project policy show":    "prints that this installation has published no policy",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
 	"fugaro project show":           "prints the no-project-config refusal",
-	"fugaro project sync":           "refuses before its ask: the deployed rules here carry no policy marker",
+	"fugaro project sync":           "refuses before its write: the deployed rules this world serves carry no policy marker",
 	"fugaro reaper":                 "prints the no-project-config refusal",
 	"fugaro recipes ls":             "prints the no-project-config refusal",
 	"fugaro report":                 "refuses: the edition is not in this build",
@@ -361,24 +361,6 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 		file: "allow_delete.go", marker: "confirmTypedStrict(cmd, lc,",
 		task: "T5", why: "asks only where the write drops a read approval, which needs a managed installation this world is not",
 	},
-	// The restore refuses a session with no terminal before its banner, in a
-	// sentence of its own, so the banner is never printed here.
-	"fugaro restore": {
-		file: "restore.go", marker: "func (rr *restoreRun) confirm(cmd *cobra.Command) error {",
-		task: "T6", why: "refuses a session with no terminal before the banner it would print",
-	},
-	// Both banners stand behind the managed installation: the flag's behind the
-	// project-number read its banner carries, the unflag's behind the marker
-	// read, and both behind a runs bucket with the name a managed project's
-	// marker lives in. This world's is the project config's own.
-	"fugaro managed flag": {
-		file: "managed_flag.go", marker: "confirmTypedGCPProject(cmd, lc.GCPProject)",
-		task: "T6", why: "prints its banner after a project-number read, which needs the managed installation this world is not",
-	},
-	"fugaro managed unflag": {
-		file: "managed_unflag.go", marker: "confirmTypedGCPProject(cmd, lc.GCPProject)",
-		task: "T6", why: "prints its banner after a marker read, which needs the managed installation this world is not",
-	},
 	// managed apply asks from inside an apply: the question carries a saved
 	// plan's hash and counts, so it takes a planned root this world has none of.
 	"fugaro managed apply": {
@@ -400,12 +382,6 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 	"fugaro project policy publish": {
 		file: "project_cmd.go", marker: "confirmRemoval(cmd, lc, o.yes,",
 		task: "T7", why: "asks after a deployed-rules read, which this world refuses",
-	},
-	// An un-enrollment asks once runs are in flight, or where it drops an
-	// approval the rules already carry.
-	"fugaro project sync": {
-		file: "project_enroll.go", marker: "confirmRemovalStrict(cmd, lc,",
-		task: "T6", why: "asks where the sync drops an approval the deployed rules hold",
 	},
 	// The rules deployment asks as the owner, through the database client this
 	// world keeps out of the dev-build path.

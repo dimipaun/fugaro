@@ -2613,10 +2613,12 @@ confirmation, and it is normally written by the run that created the project
 (fugaro setup --create-project --managed). Flagging is the after-the-fact way,
 answered by the owner on 2026-10-16 (design D58).
 
-Run it in your own terminal, as an operator, with your own credentials, and
-type the GCP project ID it asks for. A coding agent's session is refused, and
-nothing stands in for the typed ID — not --yes, not --non-interactive, not a
-pipe.
+Run it as an operator, with your own credentials. A coding agent's session is
+refused, and so is a Fugaro run's process. The permission you give is the
+PROJECT_ID argument itself: naming the exact GCP project ID on the command line
+is the declaration that this project is managed (design D1541), and nothing is
+typed at a prompt — this command registers no --yes and no --non-interactive,
+so no flag stands in for naming the project either.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -2773,10 +2775,11 @@ update --forget stays refused for a fenced installation. This command makes no
 IAM call at all; undoing the fence is not revocation and is not offered here
 (docs/design/managed-projects.md §10.2).
 
-Run it in your own terminal, as an operator, with your own credentials, and
-type the GCP project ID it asks for. A coding agent's session is refused, a
-Fugaro run's own process is refused, and nothing stands in for the typed ID —
-not --yes, not --non-interactive, not a pipe.
+Run it in your own terminal, as an operator, with your own credentials. The
+permission you give is the PROJECT_ID argument itself: it names the one project
+whose marks come off, and nothing stands in for naming it — not --yes, not
+--non-interactive, not a pipe. A coding agent's session is refused, and a
+Fugaro run's own process is refused.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -3512,7 +3515,8 @@ Offer the GitHub App's installed repositories that the allow-list does not admit
 
 Ask GitHub which repositories the project's GitHub App is installed on (the
 App API, with the App's own credentials) and offer the ones the published
-allow_repos does not admit, as one list confirmed once. The accepted list is
+allow_repos does not admit, as one list written in one batch: nothing is
+asked, and what was written is printed after the write. The accepted list is
 written through the same ETag-guarded write `project repos add` uses; entries
 are only ever added, so a sync never un-enrolls a repository — including one
 the App is not installed on at all (another provider's, or one whose
@@ -3539,7 +3543,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for sync |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--yes` | bool | `false` | no | confirm the batch without typing the project's name |
+| `--yes` | bool | `false` | no | accepted and does nothing: the batch is written with no confirmation |
 
 Subcommands:
 
@@ -3790,9 +3794,12 @@ can be run again; what the creation did in the cloud (the project, its
 billing link, its state bucket, the installation's resources, any secrets)
 is not undone, and the message says so.
 
-Every step is money or permanent, so the project's name is typed at a real
-terminal, and there is no --yes, no --non-interactive and no address argument.
-The command is refused in a coding agent's session.
+Every step is money or permanent, so this command prints what it is about to
+make permanent — the new project, the budget amount, the root and the two files
+— before its first write, and the creating path it delegates to keeps its own
+typed questions (the new project's ID and the billing account) at a real
+terminal. There is no --yes, no --non-interactive and no address argument. The
+command is refused in a coding agent's session.
 
 It ends by printing what was NOT restored, as a list: the runs that were in
 flight and their counters, the spend history and the kill-switch state, the
@@ -5223,7 +5230,7 @@ Flags:
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
 | `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--link-billing` | string | "" | no | on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link |
-| `--managed` | bool | `false` | no | on a first run, which creates the project: record its monthly budget in the creation fact. Every project setup creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and never setup's |
+| `--managed` | bool | `false` | no | on a first run, which creates the project: record its monthly budget in the creation fact. Every project setup creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and --managed never flags one: it records the budget of a project the run creates |
 | `--name` | string | "" | no | the project's name: for a project config setup creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's) |
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
@@ -5394,7 +5401,7 @@ Flags:
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
 | `--billing-account` | string | "" | no | the billing account the budget is on |
-| `--budget` | int64 | `0` | no | a monthly budget on the project, in whole units of --budget-currency |
+| `--budget` | int64 | `0` | no | a monthly budget on the project, in whole units of --budget-currency. On an installation that is not managed, giving update the budget once — --budget, --budget-currency and --billing-account together — flags that installation as managed in the same run: it writes gs://fugaro-runs-<gcp-project>/fugaro/managed.json and the fugaro_managed=true label on the project itself, and from the next run on that project's applies no longer stop for the typed confirmation. The run prints what it writes before it writes it, and the write is refused inside a coding agent's session and inside a Fugaro run's process |
 | `--budget-admin` | stringArray | `[]` | no | with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
 | `--budget-currency` | string | "" | no | the budget's currency, such as USD |
 | `--budget-mode` | string | "" | no | with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
