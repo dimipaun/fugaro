@@ -2,8 +2,9 @@
 
 **Status: design answered by the owner 2026-11-04, ruled on again 2026-11-05, and put in 0.22.0 on
 2026-11-07; its decisions D1430–D1449 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); plan only; nothing implemented.** D960–D971 are written,
-**D972–D979** are reserved and unused, and the plan is written to the owner's answers
+(owner: "All tasks approved. Jobmax").** **Part of Part I has landed — R0–R4, R6 and R13 — and the
+reports job has not.** D960–D971 are written, **D972–D979** are reserved and unused, and the plan is
+written to the owner's answers
 ([reconciliation.md](reconciliation.md) §3) **and to the rulings of 2026-11-05 (§5, E1–E8)**, which
 take no decision number and move the reports out of the repositories and into the project's runs
 bucket. **On 2026-11-07 the owner put this work in 0.22.0 "Sloth"**, and the release plan for that
@@ -12,6 +13,28 @@ slot — this folder's work together with the failures report's own design
 [implementation-plan.md](implementation-plan.md)**, reconciled in
 [reconciliation.md](reconciliation.md) **§6** (findings F25–F34 and the decisions **D1430–D1449**,
 each answered as recommended on 2026-11-07).
+
+**Which tasks are in the tree, and which are not.** **R0** — the due computation moved into
+`internal/digest`, where a report run and a CLI read cannot disagree — is `e0c44bbc` (#1856);
+**R1** — `fugaro runs digest --due [--json]`, the offline reading of a checkout's report folder — is
+`991d58e4` (#1868); **R2** — `doctor`'s `reviews-due` line, in the classes `doctor` prints — is
+`5ae50f4a` (#1903); **R3** — the setup skill's cadence step, the due signal and the fifth rule's
+name in the working skill — is `c852912c` (#1939); **R4** — `cost_per_run_rising`, the fifth rule —
+is `e7193fde` (#1904); **R13** — `jobs.reports.paused` and `jobs.catalog_check.paused` in the
+project layer — is `1ad2d314` (#1858); and **R6** — the two ends of a learning, in `CONTRIBUTING.md`
+and §7 of the working skill's reference — lands with this change. **R5 is the owner's**, at their
+terminal, and has not been run (Check 136, **NOT RUN**). **R7, R10, R11, R12, R8 and R9 are written
+and not built**, and three of them are held rather than unstarted: **R12's Terraform waits on Check
+340**, whose script is in the tree (`scripts/live-checks/check340.sh`, `88c02cdd`, #1866) with two
+aborted attempts and nothing settled, so the job, its account, its grants and its Schedules are
+neither planned nor created; **R9 waits on the designated-repo design item** (E6,
+[implementation-plan.md](implementation-plan.md), Open items); and **R10 is held in one half** — its
+write into `reports/` waits on **Open item 5**, the grant that would make a launcher a second writer
+([implementation-plan.md](implementation-plan.md), `## R10`), the way R9 waits on E6, while its
+`--dir` path, its stored read and its wording wait on nothing. **So nothing of the reports job is in
+force**: no job, no `reports/` prefix, no aggregate, no stored reader and no change to where a report
+is written — what is in force is the shipped loop plus the due signal, the doctor line, the fifth
+rule, the two paused settings, and the two sentences R6 documents.
 
 **Asked by:** the owner, 2026-10-25: "daily, weekly, monthly and yearly run-review reports, each
 committed to the tree; the official skills updated so every Fugaro user does the periodic reviews;
@@ -57,7 +80,7 @@ claim of the request against the tree and settles those.
 | --- | --- |
 | [spec.md](spec.md) | The recorded request (§1), what the periodic review is (§2–§7), what this design adds (§8–§9). The commands are written to the owner's answers of 2026-11-04, **and this run does not rewrite it**: §3, §5 and §6 keep their 2026-11-04 text and are read through [reconciliation.md](reconciliation.md) §5 |
 | [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists (F1–F13), what is missing or conflicts (F14–F24), the decisions **D960–D971** with the owner's answers (§3), what the 2026-11-04 refresh found (§4), **the owner's rulings of 2026-11-05 (§5, E1–E8)**, which amend D321, D322 and G2, and **the 2026-11-07 reconciliation (§6)**, which reads the folder against the failures report's design and holds F25–F34 and the decisions **D1430–D1449**. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | **Part I** — tasks R0–R13 (the reports job's module and grants, its paused setting, the plan and the command, the aggregate, the opt-in commit and the `runs digest` default among them) with the shared-files table, the levels, **Open items** and the release slot. **Part II** — the 0.22.0 release plan over Part I's reports job and `docs/design/failure-classes.md`'s FC1–FC8: the two works' one leveling, the shared-files table over the union, every task with its commit and reviewer tier, the critical path, the release slot with its `### For operators` text, and the owner-run checks **340–342**. **Plan only: nothing is implemented, and every task in both parts is approved (2026-11-07)** |
+| [implementation-plan.md](implementation-plan.md) | **Part I** — tasks R0–R13 (the reports job's module and grants, its paused setting, the plan and the command, the aggregate, the opt-in commit and the `runs digest` default among them) with the shared-files table, the levels, **Open items** and the release slot. **Part II** — the 0.22.0 release plan over Part I's reports job and `docs/design/failure-classes.md`'s FC1–FC8: the two works' one leveling, the shared-files table over the union, every task with its commit and reviewer tier, the critical path, the release slot with its `### For operators` text, and the owner-run checks **340–342**. **Plan only when this was written; not now** — every task in both parts is approved (2026-11-07), and what has landed since is Part I's R0–R4, R6 and R13, named with their commits in the status line above, and Part II's FC3 |
 
 ## The owner's answers, 2026-11-04
 
