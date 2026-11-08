@@ -35,7 +35,7 @@ func TestSummaryIsGeneratedAndCapped(t *testing.T) {
 		s.WorkItems[0].Brief,
 		s.Decisions[0].Question,
 		"wi-2",
-		"repo.primary",
+		"repo-primary",
 		"attempt 1 of 2",
 		"20261107-090000-abcd",
 	} {

@@ -15,8 +15,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -1041,6 +1043,38 @@ func TestGoldenTfvars(t *testing.T) {
 		if !bytes.Equal(got, want) {
 			t.Errorf("%s differs from the generated tfvars; regenerate with -update and review the diff\ngot:\n%s", path, got)
 		}
+	}
+}
+
+// TestWorkflowJobTaskTimeoutFollowsTheTimeoutDefault: the job's Cloud Run task
+// timeout is the workflow's own timeouts.total plus the slack every backend
+// adds, derived here on every `fugaro update` from the config the CLI resolves
+// — it is never stored in the installation. So an installation deployed when
+// the default total was 90 minutes converges to the new one on the next
+// `fugaro update` alone, with no operator step: the api workflow below names no
+// timeouts (the previous default's shape, and the shape a repository written
+// before this release has), and what comes out is the current default plus the
+// slack. The previous default's own number is named so that a change to either
+// half fails here rather than silently leaving deployed jobs on the old clock.
+func TestWorkflowJobTaskTimeoutFollowsTheTimeoutDefault(t *testing.T) {
+	in := webappInputs(t)
+	// webappYAML's api workflow writes no timeouts, so what it resolves to is
+	// the engine default — the shape a repository written before this
+	// release's default change has, with its fugaro.yaml untouched by it.
+	if got := in.Cfg.Workflows["api"].Timeouts.Total.Duration; got != 3*time.Hour {
+		t.Fatalf("the fixture's api workflow resolves total to %s, not the 3h default: this test is about a workflow left at the default", got)
+	}
+	ws, err := Workflow(in, "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int((3*time.Hour + backend.TaskTimeoutSlack) / time.Second)
+	if ws.TaskTimeoutS != want {
+		t.Errorf("task_timeout_s = %d, want %d (the 3h default plus the %s slack): a repository left at the default does not converge with `fugaro update` alone",
+			ws.TaskTimeoutS, want, backend.TaskTimeoutSlack)
+	}
+	if prev := int((90*time.Minute + backend.TaskTimeoutSlack) / time.Second); ws.TaskTimeoutS == prev {
+		t.Errorf("task_timeout_s is still %d, the previous 90-minute default's job timeout: `fugaro update` would leave deployed jobs on the old clock", prev)
 	}
 }
 

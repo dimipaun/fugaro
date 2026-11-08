@@ -484,6 +484,12 @@ var recencyWindows = []recencyWindow{
 	// entry points look alike.
 	{cmd: "stats runs", window: statsDefaultSince, run: []string{"stats", "runs"},
 		mint: []string{"wallRunID", "wallRunIDAt"}, since: true},
+	// seats reads the requesters of the last seatsWindow of runs (seats.go),
+	// listed from the runs bucket and measured back from lsNow, the same clock
+	// runs ls reads its own window from -- and it takes no --since, so no
+	// invocation of it can be exempt.
+	{cmd: "seats", window: seatsWindow.String(), run: []string{"seats"},
+		seam: regexp.MustCompile(`lsNow\s*=`), mint: []string{"recentRunID", "runIDAt"}},
 	// report's own case left with the command: it reads its --since window back
 	// from the budget clock, but the command and its tests are in ee/report/cli
 	// since E2.2b, so no test in this package drives it and the entry here could

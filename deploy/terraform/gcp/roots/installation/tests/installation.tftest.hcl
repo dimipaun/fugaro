@@ -2591,8 +2591,11 @@ run "credentials_service_on" {
   # the process instead of HTTP/1.1, which is the hop the plan's B1.0 is for:
   # it is conditional on the owner's Check 190 failing a large push, and an
   # unnamed port is the HTTP/1 path whose body limit that check exercises.
-  # Nothing here is a measurement of it — the checklist still records Check 190
-  # as not run, and the run further down is the image the gate keeps unnamed.
+  # Nothing here is a measurement of it: the run further down is the image the
+  # gate keeps unnamed, and the check the gate read measured the HTTP/1 path
+  # rather than this one — its record in the checklist is the FAIL of a 33 MiB
+  # pack with a 413 (the run of 2026-10-30), so the refusal is measured and the
+  # hop this name turns on is not.
   # The number is the port the process itself falls back to when the platform's
   # PORT is unset (servePort) and Cloud Run's own default, so the name and the
   # listener cannot point at different ports. The release this run pins and the

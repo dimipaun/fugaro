@@ -178,8 +178,14 @@ const REPORTING_ID = 'reporting-a-vulnerability'
  * number. It is measured against the document's own section — the page adds no words of its
  * own to it — and it is re-derived in the commit that changes the section, the way the
  * README's byte budgets are re-derived in the commit that moves those bytes.
+ *
+ * Re-derived 2026-11-08: #1831's `What is not on by default` bullet, which states that
+ * `fugaro update` deploys the credentials service while a repository's jobs keep their model
+ * credentials until its own root is re-applied, took the section from 220 words to 244. The
+ * ceiling is the section's own count with a few words of room, and the section still renders
+ * as six bullets, which is what the brief's "at most about 8 short bullets" is about.
  */
-const MAX_SUMMARY_WORDS = 220
+const MAX_SUMMARY_WORDS = 250
 
 /**
  * The words the pointer to the document may spend around its link: "The full policy is … in
@@ -2526,7 +2532,7 @@ test('the gate refuses each planted defect', (t) => {
   )
   assert.match(
     verdict(t, scopeUnlinked).join('\n'),
-    /carries 5 links where SECURITY\.md's "In short" section writes 6/,
+    /carries 6 links where SECURITY\.md's "In short" section writes 7/,
     'a cross-reference with its link dropped is not refused',
   )
 

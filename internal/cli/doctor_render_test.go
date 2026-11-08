@@ -597,6 +597,32 @@ func TestDoctorSweepWarningsAreOneLine(t *testing.T) {
 	}
 }
 
+// TestDoctorCatalogImageLineIsItsShortForm: the catalog check's own sentence
+// names the entry and both definitions' sha256s, which is longer than a screen
+// line, so the default view prints the short form of its per-instance prefix —
+// the pair to image-config-'s — and the whole text stays in --all and --json.
+//
+// Mutation (run, restore): drop the image-catalog- entry from
+// doctorShortsByPrefix, and this test fails: the line is the check's own
+// sentence, clipped where the sha256s are.
+func TestDoctorCatalogImageLineIsItsShortForm(t *testing.T) {
+	c := doctorCheck{ID: "image-catalog-app", Severity: "warning",
+		Problem: "workflow app runs the project image catalog's entry go, whose image was built from another definition than the runs bucket holds now (sha256 " +
+			strings.Repeat("a", 12) + ", built from " + strings.Repeat("b", 12) + ")",
+		Fix: "the daily image check rebuilds it; to do it now: fugaro image build go"}
+	got := doctorItemLine(t, c)
+	const want = "warning image-catalog-app: its project image catalog entry has no build, or one built from another definition than the runs bucket holds."
+	if !strings.HasPrefix(got, want) {
+		t.Errorf("the catalog check is not printed in its short form:\n%s", got)
+	}
+	if strings.Contains(got, "sha256") {
+		t.Errorf("the default view prints the clipped sentence:\n%s", got)
+	}
+	if !strings.Contains(got, "fugaro image build go") {
+		t.Errorf("the default view drops the fix:\n%s", got)
+	}
+}
+
 // TestDoctorAccountShortsKeepTheScopeAndTheUnservedForm: the default view
 // prints a check's short form whenever the check's own fix does not fit beside
 // its sentence, and the two account checks' own fixes are long in exactly the

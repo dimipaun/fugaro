@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -43,8 +44,11 @@ const (
 	// RevokePath is revocation (RFC 7009): one delete of a token family
 	// (D930).
 	RevokePath = "/oauth/revoke"
-	// MCPPath is the MCP endpoint itself. M5 mounts the refusal a caller with
-	// no token gets; M7 mounts the resource server behind it.
+	// MCPPath is the MCP endpoint itself: the resource server of M7, which is
+	// every request that is not one of the seven above. M5 mounts the refusal
+	// a caller with no token gets there, and M7 replaces it with the handler
+	// that reads a token, resolves the identity it acts for and answers
+	// JSON-RPC (resource.go).
 	MCPPath = "/mcp"
 )
 
@@ -92,11 +96,21 @@ type Config struct {
 // is written through (D935) and the verifier the authorize endpoint consumes a
 // Firebase ID token with (D923), and nothing else — no signing key, no model
 // credential and no second client to any store.
+//
+// M7 adds two things it serves with rather than from: the tools a client may
+// call (tools), which it answers tools/list and tools/call from, and the
+// installation's member lists (roster), which are what decides who a token
+// acts for at a door that is on the public internet (D933). Its logger is where
+// a refusal at that door is recorded (finding M-e) and is never a store: the
+// refusal is a log line and a body, and nothing else.
 type Server struct {
 	cfg      Config
 	store    Store
 	verifier *Verifier
+	tools    *Registry
+	roster   Roster
 	now      func() time.Time
+	logger   *slog.Logger
 }
 
 // ServerOption configures a Server.
@@ -106,6 +120,31 @@ type ServerOption func(*Server)
 // expiries are read against (tests).
 func WithServerClock(now func() time.Time) ServerOption {
 	return func(s *Server) { s.now = now }
+}
+
+// WithRoster sets the installation's own launcher and operator lists, which
+// are where an identity is resolved (D933) and which this package cannot read
+// for itself: they are the installation's published state, written by an
+// operator, and identity.go's Roster is the interface a later task implements
+// over it.
+//
+// It is an option rather than an argument of NewServer, and the difference is
+// stated rather than left to be read off the signature: NewServer refuses what
+// it cannot work *at all* without, and a server with no roster is a server
+// that admits nobody — the fail-closed default rather than a mistake, which is
+// what lets M5's own tests, the front door's dormancy (D936) and every test
+// that is not about identity build a server without one.
+func WithRoster(roster Roster) ServerOption {
+	return func(s *Server) { s.roster = roster }
+}
+
+// WithLogger sets the logger the refusals of the MCP endpoint are written to
+// (finding M-e: an unauthenticated refusal is logged and never written to the
+// database). The default is slog.Default(), which is where the coordinator's own
+// process logs already go, so an installation that configures nothing still
+// records a stranger's loop; a test passes a logger over its own buffer.
+func WithLogger(logger *slog.Logger) ServerOption {
+	return func(s *Server) { s.logger = logger }
 }
 
 // NewServer returns the authorization server for one project.
@@ -126,7 +165,7 @@ func NewServer(cfg Config, store Store, verifier *Verifier, opts ...ServerOption
 	if err := issuerURL(cfg.Issuer); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: store, verifier: verifier, now: time.Now}
+	s := &Server{cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(), now: time.Now, logger: slog.Default()}
 	for _, o := range opts {
 		o(s)
 	}
@@ -151,12 +190,13 @@ func issuerURL(issuer string) error {
 
 // Mount adds every route of this server to the service M4 creates. It is the
 // whole of what M5 does to that service, and M7 adds the MCP endpoint's own
-// handler the same way.
+// handler the same way: the one route below that is not one of the
+// authorization server's six.
 //
 // The routes are the two metadata documents, the four endpoints and the MCP
-// endpoint's refusal, and they are mounted on the standard library's mux: the
-// patterns below are exact paths and one method each, which is the whole of
-// what is needed here.
+// endpoint, and they are mounted on the standard library's mux: the patterns
+// below are exact paths and one method each, which is the whole of what is
+// needed here.
 func (s *Server) Mount(svc *coordinator.Service) {
 	svc.Handle(ProtectedResourcePath, http.HandlerFunc(s.serveProtectedResource))
 	svc.Handle(AuthorizationServerPath, http.HandlerFunc(s.serveAuthorizationServer))
@@ -166,23 +206,6 @@ func (s *Server) Mount(svc *coordinator.Service) {
 	svc.Handle("POST "+TokenPath, http.HandlerFunc(s.serveToken))
 	svc.Handle("POST "+RevokePath, http.HandlerFunc(s.serveRevoke))
 	svc.Handle(MCPPath, http.HandlerFunc(s.serveMCP))
-}
-
-// serveMCP is what a caller with no bearer token gets, and it is the first step
-// of the flow (spec.md §2, §3): 401 with a WWW-Authenticate header naming the
-// protected-resource metadata document, so a standard MCP client can find the
-// authorization server without being told where it is.
-//
-// M7 replaces this handler with the resource server. What stays is the header,
-// because the header is what the flow starts from and not something a token
-// check adds: a caller that presented a token this server refused is told where
-// to get another one the same way.
-func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+s.cfg.Issuer+ProtectedResourcePath+`"`)
-	writeJSONStatus(w, http.StatusUnauthorized, map[string]string{
-		"error":             "invalid_token",
-		"error_description": "the MCP endpoint needs a bearer token: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in",
-	})
 }
 
 // readForm parses a form body with the server's own bound and returns the

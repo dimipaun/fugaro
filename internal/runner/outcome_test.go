@@ -120,7 +120,7 @@ func TestDecideByMode(t *testing.T) {
 		if tc.verdict != "" {
 			last = &runstore.ReviewSummary{Round: tc.round, Verdict: tc.verdict, Findings: len(tc.findings)}
 		}
-		ready, reason := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings))
+		ready, reason := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings), nil)
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
 		}
@@ -135,7 +135,7 @@ func TestDecideUnscoredFindingBlocksEveryMode(t *testing.T) {
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
 	last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 2}
 	for _, mode := range rigor.Modes {
-		ready, reason := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}))
+		ready, reason := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}), nil)
 		if ready || reason != "review round 2 still has 2 findings" {
 			t.Errorf("%s: an unscored finding was tolerated: Decide = %v %q", mode, ready, reason)
 		}
@@ -164,7 +164,7 @@ func TestDecideToleratesOnlyWhatTheRunCanFile(t *testing.T) {
 		{"a repository that configured critical", optedIn, rigor.Critical, false},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro, false},
 	} {
-		ready, reason := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}))
+		ready, reason := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}), nil)
 		if ready != tc.tolerated {
 			t.Errorf("%s: Decide = %v %q, want tolerated %v", tc.name, ready, reason, tc.tolerated)
 			continue
@@ -192,7 +192,7 @@ func TestDecideBlocksAPolicyItCannotPlace(t *testing.T) {
 		{"a split from another round", findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{tiny})},
 		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, rigor.Startup, 2, nil)},
 	} {
-		ready, reason := Decide([]verify.Record{pass}, "abc", last, tc.pol)
+		ready, reason := Decide([]verify.Record{pass}, "abc", last, tc.pol, nil)
 		if ready || reason != "review round 2 still has 1 finding" {
 			t.Errorf("%s: Decide = %v %q, want false with the count's own reason", tc.name, ready, reason)
 		}
@@ -360,7 +360,7 @@ func raisedRun(t *testing.T, tc raisedCase) *run {
 func decideOf(t *testing.T, r *run) (bool, string) {
 	t.Helper()
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
-	return Decide([]verify.Record{pass}, "abc", seniorReview(r.rec.Reviews), r.findingsPolicy())
+	return Decide([]verify.Record{pass}, "abc", seniorReview(r.rec.Reviews), r.findingsPolicy(), nil)
 }
 
 // TestRaisedModeByAreaKeepsDraft: an area rule raises the run's mode at D22's

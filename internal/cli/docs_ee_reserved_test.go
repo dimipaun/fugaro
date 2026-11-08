@@ -119,10 +119,21 @@ var eeNoticeStylesByName = map[string]eeNoticeStyle{
 func TestDocsEELicensed(t *testing.T) {
 	readme := readRealEE(t, "README.md")
 	flat := strings.ToLower(flattenDoc(readme))
+	// The sentence the folder's two statements share, written once because
+	// both files have to carry it word for word: the README's opening
+	// paragraph says which features are born here, and so does the rule file's
+	// first sentence, so the phrase is one constant read against the two rather
+	// than two literals that can drift apart. D435/T20 puts the central
+	// orchestrators and the hosted MCP server in the folder from the start
+	// (S0.3).
+	const eeBornHere = "the central orchestrators and the hosted mcp server are born here"
 	for _, want := range []string{
 		"business-licensed features",
 		"moved out of the core",
 		"released mit versions stay mit",
+		// The other half of what the folder holds: the features born here,
+		// which the orchestrator work is the first of (S0.3, D435, T20).
+		eeBornHere,
 		"their own licence",
 		"](license)",
 		"not published yet",
@@ -175,6 +186,16 @@ func TestDocsEELicensed(t *testing.T) {
 		if !strings.Contains(rules, want) {
 			t.Errorf("%s lacks %q: the rule the folder is under is the subscriptions plan's R5 as amended by D440, and an agent that writes here reads it as a rule rather than as the README's sentence (S0.6)", eeRulesFile, want)
 		}
+	}
+
+	// What the folder holds is the first thing the rule file's first bullet
+	// says, and it says the half the README's list above pins for a reader:
+	// the features born here as well as the ones that moved. An agent about to
+	// write the orchestrators reads this file rather than the folder's page, so
+	// the same sentence is read against both, and one without the other leaves
+	// the two statements apart (S0.3, D435, T20).
+	if !strings.Contains(rules, eeBornHere) {
+		t.Errorf("%s lacks %q: the sentence the README states for a reader of the folder, stated for the agent whose change touches it, so a change landing the orchestrators here reads the rule that puts them here rather than a folder that only describes what moved (S0.3)", eeRulesFile, eeBornHere)
 	}
 
 	licence := strings.ReplaceAll(readRealEE(t, "LICENSE"), "\r\n", "\n")
