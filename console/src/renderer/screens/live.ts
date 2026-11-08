@@ -846,31 +846,6 @@ function rowOf(run: RunView, rigor: ReadonlyMap<string, RigorView>): LiveRunRow 
   }
 }
 
-/**
- * byStartThenId is `watch`'s own order for a repository's runs (`sortRuns` in
- * `internal/watch/build.go`: `StartedAt`, then the run id), which the live tab
- * follows (D1704).
- *
- * **The age is the start time read backwards.** `JSONRun` carries no start
- * stamp, and every row of one frame is measured against the same `now`, so the
- * run that began first is exactly the run that is older: the comparison is
- * descending on `age`, which is ascending on the start. A row whose age the
- * document does not carry goes **last** -- the console does not know when it
- * began, and a fact it does not have may not push a run to the top of a list --
- * and two runs whose ages agree are told apart by their ids, which is the tie
- * `sortRuns` keeps.
- *
- * `age` is a `Reading` and not a number (`age_seconds` is nullable on this
- * wire), so the value is read off it here rather than sorted as a string.
- */
-function byStartThenId(a: LiveRunRow, b: LiveRunRow): number {
-  const left = a.age.value ?? Number.NEGATIVE_INFINITY
-  const right = b.age.value ?? Number.NEGATIVE_INFINITY
-  if (left !== right) return right - left
-  if (a.run === b.run) return 0
-  return a.run < b.run ? -1 : 1
-}
-
 // ---------------------------------------------------------------------------
 // The pipeline and the run's own state.
 // ---------------------------------------------------------------------------
@@ -1120,14 +1095,17 @@ export function buildLiveModel(
   // a run the console could not place under a repository is in `orphans` and is
   // still a run that is spending.
   //
-  // The rows are ordered here and not in the drawing: the order is `watch`'s
-  // (`sortRuns` in `internal/watch/build.go`: earliest start first, then the run
-  // id) and the live tab follows it (D1704), so a list drawn from this model --
-  // a repository's table, the orphans, a test reading `model.repos[0].runs` --
-  // is in the one order the CLI would print. `sort` is stable in this language
-  // and `sort.SliceStable` is what the Go side uses, so two rows that agree on
-  // both keys keep the order the feed sent them in.
-  const runRows = document.runs.map((run) => rowOf(run, rigor)).sort(byStartThenId)
+  // The rows keep the document's order, which is `watch`'s own (`sortRuns` in
+  // `internal/watch/build.go`: earliest start first, then the run id), and the
+  // live tab follows it (D1704). A list drawn from this model -- a repository's
+  // table, the orphans, a test reading `model.repos[0].runs` -- is a filter of
+  // `document.runs`, so re-sorting here could only move a row away from the
+  // place the CLI gave it: **the start is not recoverable from the row**.
+  // `JSONRun` carries no start stamp, and `age_seconds` is not the start read
+  // backwards -- the CLI leaves it absent for a record with no `StartedAt`,
+  // which `sortRuns` orders first as the smallest start, and it clamps a start
+  // in the future to zero, which `sortRuns` still orders by the real stamp.
+  const runRows = document.runs.map((run) => rowOf(run, rigor))
 
   const repos: LiveRepoRow[] = document.repos.map((repo) => {
     const burn = burnReading(repo.burn)
