@@ -31,7 +31,7 @@ import (
 //
 //   - It changes the LOCAL config's `terraform.operators` /
 //     `terraform.admins` and nothing else. Those lists are what an
-//     operator's `fugaro update` applies to the installation, so the change
+//     admin's `fugaro update` applies to the installation, so the change
 //     takes effect then and not here. Nothing is applied, no IAM grant is
 //     written and no invitation is sent: the command prints the invite for a
 //     person to paste, which is the spec's rule (the CLI sends no email by
@@ -54,15 +54,15 @@ import (
 //     is what lets a member be added here without reading the rest of the
 //     list.
 //   - It refuses a stale local list before it writes. The lists live in each
-//     operator's own local config (the `terraform` block is not in the shared
-//     config), so one operator's list that predates a member another operator
+//     admin's own local config (the `terraform` block is not in the shared
+//     config), so one admin's list that predates a member another admin
 //     added would — on the next `fugaro update` — silently revoke that
 //     member, and an add written from the stale list would do it in the same
 //     breath. The two lists are therefore read back from the installation's
 //     own outputs first, and a config that disagrees with them is refused
 //     with the command that settles it (F42's second trap).
 //   - It refuses in a coding agent's session, the way `fugaro allow-delete`
-//     does: an agent holds the operator's credentials and could write the
+//     does: an agent holds the admin's credentials and could write the
 //     config file itself, so the refusal is a speed bump (SECURITY.md's
 //     Owner/Editor bypass) and not a boundary.
 //
@@ -85,7 +85,7 @@ func newUserCmd() *cobra.Command {
 		Long: `List the installation's operators and admins, and add a person to one of
 the two lists or remove them from it.
 
-The two lists are ` + userListSource + `. They are what the operator's next
+The two lists are ` + userListSource + `. They are what the admin's next
 fugaro update applies to the installation, so a change made here takes effect
 then, and nothing is applied by this command: no IAM grant is written, no
 repository is touched and no invitation is sent.
@@ -105,7 +105,7 @@ machine's next fugaro update, which says so.
 add and rm read the installation's own outputs first and refuse when they
 disagree with this machine's config: a list written here replaces the
 installation's on the next fugaro update, so a config that has not seen the
-members another operator added would drop them.`,
+members another admin added would drop them.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newUserLsCmd(), newUserAddCmd(), newUserRmCmd())
@@ -123,7 +123,7 @@ func newUserLsCmd() *cobra.Command {
 
 It is this machine's own copy of the two lists: no member is fetched from the
 cloud and none is granted, and no Terraform runs. What the installation itself
-holds can differ — a change another operator applied, or one made here and not
+holds can differ — a change another admin applied, or one made here and not
 yet applied by a fugaro update — and only the outputs would tell, which is the
 read add and rm make.
 
@@ -181,7 +181,7 @@ person typing.
 Both subcommands read the installation's own outputs before they write and
 refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
-another operator added would revoke that member. The refusal names the list
+another admin added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
 `
 	if add {
@@ -327,7 +327,7 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	ctx := cmd.Context()
 	// Before anything is read, and before the member is even looked at: the
 	// refusal is about who is running, which allow_delete.go decides the same
-	// way for the same reason — a coding agent's session holds the operator's
+	// way for the same reason — a coding agent's session holds the admin's
 	// credentials and can write the config file directly.
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was written: fugaro user add and rm change the installation's operator and admin lists, which grant the roles a run is launched and a repository onboarded with, so they are run by a person at their own terminal: %s", initflow.AgentRefusal(m))
@@ -393,8 +393,8 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	} else {
 		list = slices.DeleteFunc(list, func(m string) bool { return m == who })
 	}
-	// Removing yourself from the operators is refused, and refused before the
-	// last-operator check below: a caller who is the only operator is told they
+	// Removing yourself from the admins is refused, and refused before the
+	// last-admin check below: a caller who is the only admin is told they
 	// cannot take themselves off the list rather than that the list would be
 	// left empty, because somebody else removing them is the way out of both
 	// and the count is a consequence of whose member this is. meMember turns the
@@ -405,19 +405,19 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	// members IAM hands back is lower-cased. An address's case is not part of
 	// who it is, so both sides are placed with the case folded
 	// (sameUserMemberFold) — a guard that read Person-1@Example.test and
-	// user:person-1@example.test as two people would let an operator remove
+	// user:person-1@example.test as two people would let an admin remove
 	// themselves from the one list that is who can be told to settle the
 	// installation. An identity lc.Me cannot tell is refused below rather than
 	// placed: the empty member it would answer is on no list, so reading its
-	// error as "not the caller" is what let an operator remove themselves.
+	// error as "not the caller" is what let an admin remove themselves.
 	if !add && r == userAdminRole {
 		// An identity that cannot be read is refused rather than treated as
 		// the empty member: the empty member is on no list (meMember), so the
-		// guard below would let the caller's own member go — an operator
+		// guard below would let the caller's own member go — an admin
 		// removing themselves is exactly what this refusal exists to stop.
 		me, err := lc.Me(ctx)
 		if err != nil {
-			return userErr("nothing was written: fugaro user rm cannot tell whether %s is the identity this invocation is running as, because %v (set user in the local config %s, or git config user.email, and rerun this). An operator must not remove themselves from %s — the operators list is who can be told to settle the installation — so with the identity unread the removal is refused rather than compared against a member that is on no list",
+			return userErr("nothing was written: fugaro user rm cannot tell whether %s is the identity this invocation is running as, because %v (set user in the local config %s, or git config user.email, and rerun this). An admin must not remove themselves from %s — the admins list is who can be told to settle the installation — so with the identity unread the removal is refused rather than compared against a member that is on no list",
 				safetext.Field(who), err, safetext.Field(sel.Path), safetext.Field(onDisk.Name))
 		}
 		caller := meMember(me)
@@ -426,13 +426,13 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 				safetext.Field(onDisk.Name), safetext.Field(who))
 		}
 	}
-	// The last operator is refused: the operators list is who can be told to
+	// The last admin is refused: the admins list is who can be told to
 	// settle an installation — run its update, add a member, read its budget —
 	// and a machine's next fugaro update would apply an empty one, dropping
-	// the operator bindings of everyone who was on it. A project Owner can put
+	// the admin bindings of everyone who was on it. A project Owner can put
 	// that right from outside, which is why this is a refusal and not a
-	// break-glass (the launchers list may be emptied: an installation with no
-	// launcher cannot start a run, which its operator can put right here).
+	// break-glass (the operators list may be emptied: an installation with no
+	// operator cannot start a run, which its admin can put right here).
 	if !add && r == userAdminRole && len(list) == 0 {
 		return userErr("removing %s would leave %s with no admin at all: it is the only member of this machine's terraform.admins, and the next fugaro update would apply an empty list and drop every admin binding, so the people it lists would have to be restored by a project Owner from outside. Add the admin who is to take over first, then remove %s: nothing was written",
 			safetext.Field(who), safetext.Field(onDisk.Name), safetext.Field(who))

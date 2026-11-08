@@ -64,15 +64,15 @@ type userRig struct {
 	before []byte // the local config as it was, for the refusals that write nothing
 }
 
-// userRigFor builds the rig with these launchers and operators in BOTH the
+// userRigFor builds the rig with these operators and admins in BOTH the
 // local config and the installation's outputs, which is the state a change is
 // allowed to start from: the two must agree, or the command refuses.
-func userRigFor(t *testing.T, launchers, operators []string) *userRig {
+func userRigFor(t *testing.T, operators, admins []string) *userRig {
 	t.Helper()
 	noAgentSession(t)
 	r := &userRig{initRig: newInitRig(t)}
-	r.appendConfig(t, "terraform:\n  launchers: "+yamlList(launchers)+"\n  operators: "+yamlList(operators)+"\n")
-	r.installationSets(t, launchers, operators)
+	r.appendConfig(t, "terraform:\n  launchers: "+yamlList(operators)+"\n  operators: "+yamlList(admins)+"\n")
+	r.installationSets(t, operators, admins)
 	r.script["show -json"] = map[string]any{"stdout": userStateJSON}
 	r.save(t)
 	r.before = r.configNow(t)
@@ -93,9 +93,9 @@ func yamlList(members []string) string {
 }
 
 // installationSets rewrites what the installation's own outputs list.
-func (r *userRig) installationSets(t *testing.T, launchers, operators []string) {
+func (r *userRig) installationSets(t *testing.T, operators, admins []string) {
 	t.Helper()
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"launchers": launchers, "operators": operators})}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"launchers": operators, "operators": admins})}
 	r.save(t)
 }
 
@@ -119,7 +119,7 @@ func (r *userRig) unchanged(t *testing.T) {
 }
 
 // lists is the two lists the local config holds now.
-func (r *userRig) lists(t *testing.T) (launchers, operators []string) {
+func (r *userRig) lists(t *testing.T) (operators, admins []string) {
 	t.Helper()
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
@@ -163,23 +163,23 @@ func (r *userRig) noCloudWrites(t *testing.T) {
 	}
 }
 
-// TestUserAddWritesLauncher: the whole of a successful add — one member added
+// TestUserAddWritesOperator: the whole of a successful add — one member added
 // to one list, the other list untouched, nothing applied anywhere.
-func TestUserAddWritesLauncher(t *testing.T) {
+func TestUserAddWritesOperator(t *testing.T) {
 	r := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com"})
-	out, _, err := userCommand(t, "add", "user:person-2@example.com", "--role", "launcher")
+	out, _, err := userCommand(t, "add", "user:person-2@example.com", "--role", "operator")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	launchers, operators := r.lists(t)
+	operators, admins := r.lists(t)
 	want := []string{"user:person-1@example.com", "user:person-2@example.com"}
-	if strings.Join(launchers, ",") != strings.Join(want, ",") {
-		t.Errorf("launchers = %v, want %v", launchers, want)
+	if strings.Join(operators, ",") != strings.Join(want, ",") {
+		t.Errorf("operators = %v, want %v", operators, want)
 	}
-	if len(operators) != 1 || operators[0] != "user:person-1@example.com" {
-		t.Errorf("the operators list was changed: %v", operators)
+	if len(admins) != 1 || admins[0] != "user:person-1@example.com" {
+		t.Errorf("the admins list was changed: %v", admins)
 	}
-	if !strings.Contains(out, "user:person-2@example.com") || !strings.Contains(out, "now a launcher") {
+	if !strings.Contains(out, "user:person-2@example.com") || !strings.Contains(out, "now an operator") {
 		t.Errorf("the command does not say what it did:\n%s", out)
 	}
 	// The write is what the read above it allowed: the installation's own
@@ -192,23 +192,23 @@ func TestUserAddWritesLauncher(t *testing.T) {
 	r.noCloudWrites(t)
 }
 
-// TestUserAddWritesOperator: the operator branch of the write, which is the
-// same code path as the launcher's with the other list behind it — and the one
+// TestUserAddWritesAdmin: the admin branch of the write, which is the
+// same code path as the operator's with the other list behind it — and the one
 // that decides who may settle the installation, so it is exercised on its own.
-func TestUserAddWritesOperator(t *testing.T) {
+func TestUserAddWritesAdmin(t *testing.T) {
 	r := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com"})
-	out, _, err := userCommand(t, "add", "user:person-2@example.com", "--role", "operator")
+	out, _, err := userCommand(t, "add", "user:person-2@example.com", "--role", "admin")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	launchers, operators := r.lists(t)
-	if strings.Join(operators, ",") != "user:person-1@example.com,user:person-2@example.com" {
-		t.Errorf("operators = %v, want both members", operators)
+	operators, admins := r.lists(t)
+	if strings.Join(admins, ",") != "user:person-1@example.com,user:person-2@example.com" {
+		t.Errorf("admins = %v, want both members", admins)
 	}
-	if strings.Join(launchers, ",") != "user:person-1@example.com" {
-		t.Errorf("the launchers list was changed: %v", launchers)
+	if strings.Join(operators, ",") != "user:person-1@example.com" {
+		t.Errorf("the operators list was changed: %v", operators)
 	}
-	if !strings.Contains(out, "now an operator") {
+	if !strings.Contains(out, "now an admin") {
 		t.Errorf("the command does not say what it did:\n%s", out)
 	}
 	r.terraformReadsOnly(t)
@@ -223,7 +223,7 @@ func TestUserAddWritesOperator(t *testing.T) {
 // resource of the project.
 func TestUserAddDoesNotPersistRegion(t *testing.T) {
 	r := userRigFor(t, nil, nil)
-	out, _, err := userCommand(t, "add", "user:person-1@example.com", "--role", "launcher", "--region", "europe-west1")
+	out, _, err := userCommand(t, "add", "user:person-1@example.com", "--role", "operator", "--region", "europe-west1")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -245,7 +245,7 @@ func TestUserAddRequiresRole(t *testing.T) {
 	r := userRigFor(t, nil, nil)
 	for _, args := range [][]string{
 		{"add", "user:person-1@example.com"},
-		{"add", "user:person-1@example.com", "--role", "admin"},
+		{"add", "user:person-1@example.com", "--role", "owner"},
 		{"rm", "user:person-1@example.com"},
 		{"rm", "user:person-1@example.com", "--role", ""},
 	} {
@@ -263,9 +263,9 @@ func TestUserAddRequiresRole(t *testing.T) {
 	r.unchanged(t)
 }
 
-// TestUserAddRefusesDomain: the launcher and operator roles carry the token
+// TestUserAddRefusesDomain: the operator and admin roles carry the token
 // signer's own token-minter role (F44), so a domain: member would hand a whole
-// domain the right to mint a launcher's identity — which is what F42 found
+// domain the right to mint an operator's identity — which is what F42 found
 // localcfg's own member rule lets through for these two lists. Everything that
 // is not one person is refused, in any case and with or without surrounding
 // whitespace, and nothing is written.
@@ -292,7 +292,7 @@ func TestUserAddRefusesDomain(t *testing.T) {
 	} {
 		t.Run(member, func(t *testing.T) {
 			r := userRigFor(t, nil, nil)
-			out, _, err := userCommand(t, "add", member, "--role", "launcher")
+			out, _, err := userCommand(t, "add", member, "--role", "operator")
 			if err == nil {
 				t.Fatalf("%q was accepted as a member:\n%s", member, out)
 			}
@@ -309,50 +309,50 @@ func TestUserAddRefusesDomain(t *testing.T) {
 
 // TestUserRefusesStaleLocalList: this machine's lists are what its next
 // `fugaro update` applies, so a change written from a list that predates
-// another operator's member would revoke that member in the same apply — the
+// another admin's member would revoke that member in the same apply — the
 // second trap F42 found. The outputs are read first, and a config that
 // disagrees with them is refused, whichever of the two lists it is.
 func TestUserRefusesStaleLocalList(t *testing.T) {
 	for _, tc := range []struct {
 		name                             string
-		localL, localO, remoteL, remoteO []string
+		localO, localA, remoteO, remoteA []string
 		wantList                         string
 	}{
 		{
 			name:   "a member this machine has never seen",
-			localL: []string{"user:person-1@example.com"}, localO: []string{"user:person-1@example.com"},
-			remoteL: []string{"user:person-1@example.com", "user:person-2@example.com"},
-			remoteO: []string{"user:person-1@example.com"},
-			// Only the launchers differ, so only they may be named.
-			wantList: "launchers",
-		},
-		{
-			name:   "the installation lists no launcher at all",
-			localL: []string{"user:person-1@example.com"}, localO: []string{"user:person-1@example.com"},
-			remoteL: nil, remoteO: []string{"user:person-1@example.com"},
-			wantList: "launchers",
-		},
-		{
-			name:   "only the operators differ",
-			localL: []string{"user:person-1@example.com"}, localO: []string{"user:person-1@example.com"},
-			remoteL:  []string{"user:person-1@example.com"},
-			remoteO:  []string{"user:person-1@example.com", "user:person-2@example.com"},
+			localO: []string{"user:person-1@example.com"}, localA: []string{"user:person-1@example.com"},
+			remoteO: []string{"user:person-1@example.com", "user:person-2@example.com"},
+			remoteA: []string{"user:person-1@example.com"},
+			// Only the operators differ, so only they may be named.
 			wantList: "operators",
+		},
+		{
+			name:   "the installation lists no operator at all",
+			localO: []string{"user:person-1@example.com"}, localA: []string{"user:person-1@example.com"},
+			remoteO: nil, remoteA: []string{"user:person-1@example.com"},
+			wantList: "operators",
+		},
+		{
+			name:   "only the admins differ",
+			localO: []string{"user:person-1@example.com"}, localA: []string{"user:person-1@example.com"},
+			remoteO:  []string{"user:person-1@example.com"},
+			remoteA:  []string{"user:person-1@example.com", "user:person-2@example.com"},
+			wantList: "admins",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := userRigFor(t, tc.localL, tc.localO)
-			r.installationSets(t, tc.remoteL, tc.remoteO)
-			out, _, err := userCommand(t, "add", "user:person-3@example.com", "--role", "launcher")
+			r := userRigFor(t, tc.localO, tc.localA)
+			r.installationSets(t, tc.remoteO, tc.remoteA)
+			out, _, err := userCommand(t, "add", "user:person-3@example.com", "--role", "operator")
 			if err == nil {
 				t.Fatalf("a stale list was edited:\n%s", out)
 			}
 			if !strings.Contains(err.Error(), tc.wantList) {
 				t.Errorf("the refusal does not name the %s list: %v", tc.wantList, err)
 			}
-			other := "launchers"
-			if tc.wantList == "launchers" {
-				other = "operators"
+			other := "operators"
+			if tc.wantList == "operators" {
+				other = "admins"
 			}
 			if strings.Contains(err.Error(), other) {
 				t.Errorf("the refusal names the %s list although only the %s differs: %v", other, tc.wantList, err)
@@ -363,7 +363,7 @@ func TestUserRefusesStaleLocalList(t *testing.T) {
 			r.unchanged(t)
 			// And the same read refuses rm: removing a member from a stale
 			// list drops the members it has never seen just as an add does.
-			if _, _, err := userCommand(t, "rm", "user:person-1@example.com", "--role", "launcher"); err == nil {
+			if _, _, err := userCommand(t, "rm", "user:person-1@example.com", "--role", "operator"); err == nil {
 				t.Error("a stale list was edited by rm")
 			}
 			r.unchanged(t)
@@ -372,17 +372,17 @@ func TestUserRefusesStaleLocalList(t *testing.T) {
 	}
 }
 
-// TestUserRefusesStaleOperators: the operators list is checked too, and it is
+// TestUserRefusesStaleAdmins: the admins list is checked too, and it is
 // the list the refusal names when only it differs.
-func TestUserRefusesStaleOperators(t *testing.T) {
+func TestUserRefusesStaleAdmins(t *testing.T) {
 	r := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com"})
 	r.installationSets(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com", "user:person-2@example.com"})
-	out, _, err := userCommand(t, "add", "user:person-3@example.com", "--role", "operator")
+	out, _, err := userCommand(t, "add", "user:person-3@example.com", "--role", "admin")
 	if err == nil {
-		t.Fatalf("a stale operators list was edited:\n%s", out)
+		t.Fatalf("a stale admins list was edited:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "operators") || strings.Contains(err.Error(), "launchers") {
-		t.Errorf("the refusal does not name the operators list and only it: %v", err)
+	if !strings.Contains(err.Error(), "admins") || strings.Contains(err.Error(), "operators") {
+		t.Errorf("the refusal does not name the admins list and only it: %v", err)
 	}
 	r.unchanged(t)
 }
@@ -393,18 +393,18 @@ func TestUserRmRemoves(t *testing.T) {
 	r := userRigFor(t,
 		[]string{"user:person-1@example.com", "user:person-2@example.com"},
 		[]string{"user:person-1@example.com"})
-	out, _, err := userCommand(t, "rm", "user:person-2@example.com", "--role", "launcher")
+	out, _, err := userCommand(t, "rm", "user:person-2@example.com", "--role", "operator")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	launchers, operators := r.lists(t)
-	if len(launchers) != 1 || launchers[0] != "user:person-1@example.com" {
-		t.Errorf("launchers = %v, want the first member alone", launchers)
-	}
+	operators, admins := r.lists(t)
 	if len(operators) != 1 || operators[0] != "user:person-1@example.com" {
-		t.Errorf("the operators list was changed: %v", operators)
+		t.Errorf("operators = %v, want the first member alone", operators)
 	}
-	if !strings.Contains(out, "no longer a launcher") {
+	if len(admins) != 1 || admins[0] != "user:person-1@example.com" {
+		t.Errorf("the admins list was changed: %v", admins)
+	}
+	if !strings.Contains(out, "no longer an operator") {
 		t.Errorf("the command does not say what it did:\n%s", out)
 	}
 	r.terraformReadsOnly(t)
@@ -415,68 +415,68 @@ func TestUserRmRemoves(t *testing.T) {
 	// member shorter than the installation's — the state the next write
 	// refuses (TestUserRefusesStaleLocalList).
 	absent := userRigFor(t, []string{"user:person-1@example.com"}, nil)
-	out, _, err = userCommand(t, "rm", "user:person-2@example.com", "--role", "launcher")
+	out, _, err = userCommand(t, "rm", "user:person-2@example.com", "--role", "operator")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "not a launcher") || !strings.Contains(out, "nothing was written") {
+	if !strings.Contains(out, "not an operator") || !strings.Contains(out, "nothing was written") {
 		t.Errorf("removing an absent member does not say nothing was written:\n%s", out)
 	}
 	absent.unchanged(t)
 	absent.noCloudWrites(t)
 }
 
-// TestUserRmRemovesOperator: a removal from the operators list, the other half
-// of the pair TestUserAddWritesOperator covers.
-func TestUserRmRemovesOperator(t *testing.T) {
+// TestUserRmRemovesAdmin: a removal from the admins list, the other half
+// of the pair TestUserAddWritesAdmin covers.
+func TestUserRmRemovesAdmin(t *testing.T) {
 	r := userRigFor(t,
 		[]string{"user:person-1@example.com"},
 		[]string{"user:person-1@example.com", "user:person-2@example.com"})
-	out, _, err := userCommand(t, "rm", "user:person-2@example.com", "--role", "operator")
+	out, _, err := userCommand(t, "rm", "user:person-2@example.com", "--role", "admin")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	launchers, operators := r.lists(t)
+	operators, admins := r.lists(t)
+	if strings.Join(admins, ",") != "user:person-1@example.com" {
+		t.Errorf("admins = %v, want the first member alone", admins)
+	}
 	if strings.Join(operators, ",") != "user:person-1@example.com" {
-		t.Errorf("operators = %v, want the first member alone", operators)
+		t.Errorf("the operators list was changed: %v", operators)
 	}
-	if strings.Join(launchers, ",") != "user:person-1@example.com" {
-		t.Errorf("the launchers list was changed: %v", launchers)
-	}
-	if !strings.Contains(out, "no longer an operator") {
+	if !strings.Contains(out, "no longer an admin") {
 		t.Errorf("the command does not say what it did:\n%s", out)
 	}
 	r.terraformReadsOnly(t)
 	r.noCloudWrites(t)
 }
 
-// TestUserRmRefusesTheLastOperator: an installation with no operator at all
+// TestUserRmRefusesTheLastAdmin: an installation with no admin at all
 // has nobody this machine can be told to settle it — an update, an add, a
 // budget — and the next fugaro update would apply the empty list over the one
-// the installation holds, dropping every operator binding. A project Owner can
+// the installation holds, dropping every admin binding. A project Owner can
 // restore it from outside, so this is a refusal with what to do first in it
-// rather than a break-glass. The launchers list may be emptied: a run nobody
+// rather than a break-glass. The operators list may be emptied: a run nobody
 // can start is not the same as an installation nobody can put right here.
-func TestUserRmRefusesTheLastOperator(t *testing.T) {
+func TestUserRmRefusesTheLastAdmin(t *testing.T) {
 	r := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com"})
-	out, _, err := userCommand(t, "rm", "user:person-1@example.com", "--role", "operator")
+	out, _, err := userCommand(t, "rm", "user:person-1@example.com", "--role", "admin")
 	if err == nil {
-		t.Fatalf("the last operator was removed:\n%s", out)
+		t.Fatalf("the last admin was removed:\n%s", out)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 	}
-	if !strings.Contains(err.Error(), "no operator") || !strings.Contains(err.Error(), "nothing was written") {
+	if !strings.Contains(err.Error(), "no admin") || !strings.Contains(err.Error(), "nothing was written") {
 		t.Errorf("the refusal does not say what it would leave and that nothing was written: %v", err)
 	}
 	r.unchanged(t)
 
 	l := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com"})
-	if out, _, err := userCommand(t, "rm", "user:person-1@example.com", "--role", "launcher"); err != nil {
-		t.Errorf("the last launcher was not removable: %v\n%s", err, out)
+	if out, _, err := userCommand(t, "rm", "user:person-1@example.com", "--role", "operator"); err != nil {
+		t.Errorf("the last operator was not removable: %v\n%s", err, out)
 	}
-	if launchers, _ := l.lists(t); len(launchers) != 0 {
-		t.Errorf("launchers = %v, want none", launchers)
+	if operators, _ := l.lists(t); len(operators) != 0 {
+		t.Errorf("operators = %v, want none", operators)
 	}
 }
 
@@ -485,22 +485,22 @@ func TestUserRmRefusesTheLastOperator(t *testing.T) {
 // hold, which is the member roles.go's meMember writes.
 const userRigMe = "user:test@example.com"
 
-// TestUserRmRefusesRemovingYourselfWithTwoOperators: the person running the
-// command cannot take their own member off the operators list, even when the
+// TestUserRmRefusesRemovingYourselfWithTwoAdmins: the person running the
+// command cannot take their own member off the admins list, even when the
 // list holds somebody else and removing them would leave it populated. The
-// operators list is who can be told to settle the installation, and settling
-// it is not a thing a person hands off to themselves: another operator has to
+// admins list is who can be told to settle the installation, and settling
+// it is not a thing a person hands off to themselves: another admin has to
 // remove them, or a project Owner from outside the list.
-func TestUserRmRefusesRemovingYourselfWithTwoOperators(t *testing.T) {
+func TestUserRmRefusesRemovingYourselfWithTwoAdmins(t *testing.T) {
 	r := userRigFor(t, nil, []string{userRigMe, "user:person-2@example.com"})
-	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "admin")
 	if err == nil {
-		t.Fatalf("the caller removed themselves from the operators:\n%s", out)
+		t.Fatalf("the caller removed themselves from the admins:\n%s", out)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 	}
-	for _, want := range []string{"remove yourself", "another operator", "project Owner", "nothing was written"} {
+	for _, want := range []string{"remove yourself", "another admin", "project Owner", "nothing was written"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -508,15 +508,15 @@ func TestUserRmRefusesRemovingYourselfWithTwoOperators(t *testing.T) {
 	r.unchanged(t)
 }
 
-// TestUserRmRefusesRemovingYourselfAsLastOperator: both refusals apply to the
-// only operator removing themselves, and the self-removal is the one shown —
+// TestUserRmRefusesRemovingYourselfAsLastAdmin: both refusals apply to the
+// only admin removing themselves, and the self-removal is the one shown —
 // it is the one with the way out in it (somebody else does it), and the count
-// of operators is a consequence of the member being the caller, not the reason.
-func TestUserRmRefusesRemovingYourselfAsLastOperator(t *testing.T) {
+// of admins is a consequence of the member being the caller, not the reason.
+func TestUserRmRefusesRemovingYourselfAsLastAdmin(t *testing.T) {
 	r := userRigFor(t, nil, []string{userRigMe})
-	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "admin")
 	if err == nil {
-		t.Fatalf("the only operator removed themselves:\n%s", out)
+		t.Fatalf("the only admin removed themselves:\n%s", out)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
@@ -524,24 +524,24 @@ func TestUserRmRefusesRemovingYourselfAsLastOperator(t *testing.T) {
 	if !strings.Contains(err.Error(), "remove yourself") {
 		t.Errorf("the refusal is not the self-removal one: %v", err)
 	}
-	if strings.Contains(err.Error(), "no operator at all") {
-		t.Errorf("the last-operator refusal was the one shown: %v", err)
+	if strings.Contains(err.Error(), "no admin at all") {
+		t.Errorf("the last-admin refusal was the one shown: %v", err)
 	}
 	r.unchanged(t)
 }
 
-// TestUserRmAllowsRemovingAnotherOperator: removing somebody else is what the
+// TestUserRmAllowsRemovingAnotherAdmin: removing somebody else is what the
 // command is for, and the refusal is the caller's own member alone.
-func TestUserRmAllowsRemovingAnotherOperator(t *testing.T) {
+func TestUserRmAllowsRemovingAnotherAdmin(t *testing.T) {
 	r := userRigFor(t, nil, []string{userRigMe, "user:person-2@example.com"})
-	out, _, err := userCommand(t, "rm", "user:person-2@example.com", "--role", "operator")
+	out, _, err := userCommand(t, "rm", "user:person-2@example.com", "--role", "admin")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if _, operators := r.lists(t); strings.Join(operators, ",") != userRigMe {
-		t.Errorf("operators = %v, want the caller alone", operators)
+	if _, admins := r.lists(t); strings.Join(admins, ",") != userRigMe {
+		t.Errorf("admins = %v, want the caller alone", admins)
 	}
-	if !strings.Contains(out, "no longer an operator") {
+	if !strings.Contains(out, "no longer an admin") {
 		t.Errorf("the command does not say what it did:\n%s", out)
 	}
 	r.noCloudWrites(t)
@@ -555,15 +555,15 @@ func TestUserRmSelfMatchIsNormalised(t *testing.T) {
 	if got := meMember("test@example.com"); got != userRigMe {
 		t.Fatalf("meMember(%q) = %q, want %q", "test@example.com", got, userRigMe)
 	}
-	// The same member text is removable from the launchers: the refusal is
-	// the operators list's, and the identity it turns on is placed on both.
+	// The same member text is removable from the operators: the refusal is
+	// the admins list's, and the identity it turns on is placed on both.
 	r := userRigFor(t, []string{userRigMe, "user:person-2@example.com"}, []string{userRigMe, "user:person-2@example.com"})
-	out, _, err := userCommand(t, "rm", userRigMe, "--role", "launcher")
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if launchers, _ := r.lists(t); strings.Join(launchers, ",") != "user:person-2@example.com" {
-		t.Errorf("launchers = %v, want the caller's member gone", launchers)
+	if operators, _ := r.lists(t); strings.Join(operators, ",") != "user:person-2@example.com" {
+		t.Errorf("operators = %v, want the caller's member gone", operators)
 	}
 }
 
@@ -572,13 +572,13 @@ func TestUserRmSelfMatchIsNormalised(t *testing.T) {
 // listed, no cloud call changes anything and Terraform is read, never applied.
 func TestUserRmSelfRefusalWritesNothing(t *testing.T) {
 	r := userRigFor(t, nil, []string{userRigMe, "user:person-2@example.com"})
-	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "admin")
 	if err == nil {
-		t.Fatalf("the caller removed themselves from the operators:\n%s", out)
+		t.Fatalf("the caller removed themselves from the admins:\n%s", out)
 	}
 	r.unchanged(t)
-	if _, operators := r.lists(t); strings.Join(operators, ",") != userRigMe+",user:person-2@example.com" {
-		t.Errorf("operators = %v, want both members", operators)
+	if _, admins := r.lists(t); strings.Join(admins, ",") != userRigMe+",user:person-2@example.com" {
+		t.Errorf("admins = %v, want both members", admins)
 	}
 	r.terraformReadsOnly(t)
 	r.noCloudWrites(t)
@@ -606,15 +606,15 @@ func (r *userRig) setUser(t *testing.T, user string) {
 // is, and the two spellings the guard compares are written by different hands —
 // the config's `user:` (or git config user.email) keeps whatever case its owner
 // typed, while the member read back from the installation's own outputs is
-// lower-cased. So a caller spelled Person-1@Example.test is the operator the
+// lower-cased. So a caller spelled Person-1@Example.test is the admin the
 // list holds as user:person-1@example.test, and removing that member is the
 // self-removal the guard refuses rather than a removal that goes through.
 func TestUserRmSelfMatchIgnoresEmailCase(t *testing.T) {
 	r := userRigFor(t, nil, []string{"user:person-1@example.test", "user:person-2@example.test"})
 	r.setUser(t, "Person-1@Example.test")
-	out, _, err := userCommand(t, "rm", "user:person-1@example.test", "--role", "operator")
+	out, _, err := userCommand(t, "rm", "user:person-1@example.test", "--role", "admin")
 	if err == nil {
-		t.Fatalf("the caller removed themselves from the operators:\n%s", out)
+		t.Fatalf("the caller removed themselves from the admins:\n%s", out)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
@@ -645,7 +645,7 @@ func (r *userRig) dropUser(t *testing.T) {
 // on who is running the command, and a caller the local config cannot tell —
 // no user, git config user.email answering nothing — is refused rather than
 // read as "not the caller". The empty member meMember answers is on no list, so
-// reading lc.Me's error that way is what would let an operator remove
+// reading lc.Me's error that way is what would let an admin remove
 // themselves from the list that is who can be told to settle the installation,
 // which is the one thing the guard exists to stop.
 func TestUserRmRefusesWhenCallerIdentityUnreadable(t *testing.T) {
@@ -656,9 +656,9 @@ func TestUserRmRefusesWhenCallerIdentityUnreadable(t *testing.T) {
 	t.Setenv("GIT_DIR", t.TempDir())
 	r.dropUser(t)
 	before := string(r.configNow(t))
-	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "admin")
 	if err == nil {
-		t.Fatalf("an operator removed themselves with the identity unread:\n%s", out)
+		t.Fatalf("an admin removed themselves with the identity unread:\n%s", out)
 	}
 	for _, want := range []string{"cannot tell whether", "set user in the local config", "git config user.email", "nothing was written"} {
 		if !strings.Contains(err.Error(), want) {
@@ -668,8 +668,8 @@ func TestUserRmRefusesWhenCallerIdentityUnreadable(t *testing.T) {
 	if now := string(r.configNow(t)); now != before {
 		t.Errorf("the refused command wrote the config:\n%s", now)
 	}
-	if _, operators := r.lists(t); strings.Join(operators, ",") != userRigMe+",user:person-2@example.com" {
-		t.Errorf("operators = %v, want both members", operators)
+	if _, admins := r.lists(t); strings.Join(admins, ",") != userRigMe+",user:person-2@example.com" {
+		t.Errorf("admins = %v, want both members", admins)
 	}
 	r.noCloudWrites(t)
 }
@@ -685,13 +685,13 @@ func TestUserLsListsBoth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"user:person-1@example.com", "user:person-2@example.com", "launchers", "operators", initProjectName} {
+	for _, want := range []string{"user:person-1@example.com", "user:person-2@example.com", "operators", "admins", initProjectName} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the listing does not hold %q:\n%s", want, out)
 		}
 	}
 	if p1, p2 := strings.Index(out, "user:person-1@example.com"), strings.Index(out, "user:person-2@example.com"); p1 > p2 {
-		t.Errorf("the listing is not the launchers and then the operators:\n%s", out)
+		t.Errorf("the listing is not the operators and then the admins:\n%s", out)
 	}
 	js, _, err := userCommand(t, "ls", "--json")
 	if err != nil {
@@ -744,8 +744,8 @@ func TestUserRefusedInAgentSession(t *testing.T) {
 	r := userRigFor(t, []string{"user:person-1@example.com"}, nil)
 	t.Setenv("CLAUDECODE", "1")
 	for _, args := range [][]string{
-		{"add", "user:person-2@example.com", "--role", "launcher"},
-		{"rm", "user:person-1@example.com", "--role", "launcher"},
+		{"add", "user:person-2@example.com", "--role", "operator"},
+		{"rm", "user:person-1@example.com", "--role", "operator"},
 	} {
 		out, _, err := userCommand(t, args...)
 		if err == nil {
@@ -770,7 +770,7 @@ func TestUserRefusedInAgentSession(t *testing.T) {
 // minted, read or printed, and no email is sent.
 func TestUserInviteHasNoSecret(t *testing.T) {
 	userRigFor(t, nil, nil)
-	out, _, err := userCommand(t, "add", "user:person-1@example.com", "--role", "launcher")
+	out, _, err := userCommand(t, "add", "user:person-1@example.com", "--role", "operator")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -823,11 +823,11 @@ func TestUserInstallLineMatchesREADME(t *testing.T) {
 // nothing — the list is not reordered and no repeat is written — and says so.
 func TestUserAddIsIdempotent(t *testing.T) {
 	r := userRigFor(t, []string{"user:person-1@example.com", "user:person-2@example.com"}, nil)
-	out, _, err := userCommand(t, "add", "user:person-1@example.com", "--role", "launcher")
+	out, _, err := userCommand(t, "add", "user:person-1@example.com", "--role", "operator")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "already a launcher") || !strings.Contains(out, "nothing was written") {
+	if !strings.Contains(out, "already an operator") || !strings.Contains(out, "nothing was written") {
 		t.Errorf("adding a member who is already listed does not say nothing was written:\n%s", out)
 	}
 	r.unchanged(t)
