@@ -1393,16 +1393,16 @@ type budgetKillOptions struct {
 func newBudgetKillCmd(kill bool) *cobra.Command {
 	var o budgetKillOptions
 	use, short, long := "resume (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]", "Clear a kill switch (budget admins)",
-		"Clear the project's kill switch (--all), one repository's (--repo [owner/name]) or\n"+
-			"one workspace's (--workspace <name>), recording who and when. --repo with no\n"+
-			"value means the repository this checkout belongs to, as it does for set. Asks\n"+
-			"you to type the project's name (or pass --yes): runs start again. A workspace\n"+
-			"is asked for by its name alone and takes neither of the other scopes."
+		"Clear the project's kill switch (--all), one repository's (--repo [owner/name])\n"+
+			"or one workspace's (--workspace <name>), recording who and when. --repo with\n"+
+			"no value means the repository this checkout belongs to, as it does for set.\n"+
+			"Asks you to type the project's name (or pass --yes): runs start again. A\n"+
+			"workspace is asked for by its name alone and takes neither of the other scopes."
 	if kill {
 		use, short, long = "kill (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]", "Halt every run of the project, of one repository or of one workspace (budget admins)",
-			"Set the project's kill switch (--all), one repository's (--repo [owner/name]) or one\n"+
-				"workspace's (--workspace <name>), recording who, when and why. --repo with no\n"+
-				"value means the repository this checkout belongs to, as it does for set. show\n"+
+			"Set the project's kill switch (--all), one repository's (--repo [owner/name]) or\n"+
+				"one workspace's (--workspace <name>), recording who, when and why. --repo with\n"+
+				"no value means the repository this checkout belongs to, as it does for set. show\n"+
 				"takes owner/name (its empty --repo means no repository filter, not a checkout),\n"+
 				"and preview already means this checkout's repository without the flag.\n"+
 				"Runs in flight halt within seconds (a run in its last stage finishes pushing\n"+

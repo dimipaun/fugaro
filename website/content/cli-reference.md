@@ -785,9 +785,9 @@ Subcommands:
 
 Halt every run of the project, of one repository or of one workspace (budget admins)
 
-Set the project's kill switch (--all), one repository's (--repo [owner/name]) or one
-workspace's (--workspace <name>), recording who, when and why. --repo with no
-value means the repository this checkout belongs to, as it does for set. show
+Set the project's kill switch (--all), one repository's (--repo [owner/name]) or
+one workspace's (--workspace <name>), recording who, when and why. --repo with
+no value means the repository this checkout belongs to, as it does for set. show
 takes owner/name (its empty --repo means no repository filter, not a checkout),
 and preview already means this checkout's repository without the flag.
 Runs in flight halt within seconds (a run in its last stage finishes pushing
@@ -927,11 +927,11 @@ This command has no subcommands.
 
 Clear a kill switch (budget admins)
 
-Clear the project's kill switch (--all), one repository's (--repo [owner/name]) or
-one workspace's (--workspace <name>), recording who and when. --repo with no
-value means the repository this checkout belongs to, as it does for set. Asks
-you to type the project's name (or pass --yes): runs start again. A workspace
-is asked for by its name alone and takes neither of the other scopes.
+Clear the project's kill switch (--all), one repository's (--repo [owner/name])
+or one workspace's (--workspace <name>), recording who and when. --repo with
+no value means the repository this checkout belongs to, as it does for set.
+Asks you to type the project's name (or pass --yes): runs start again. A
+workspace is asked for by its name alone and takes neither of the other scopes.
 
 Usage: `fugaro budget resume (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]`
 
