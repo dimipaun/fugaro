@@ -5733,6 +5733,7 @@ Subcommands:
 
 - `fugaro workspace add` -- Join the selected project to a workspace, and pin what it trusts
 - `fugaro workspace cap` -- The workspace's own spend ceiling
+- `fugaro workspace login` -- Print the sign-in this project's pin asks for
 - `fugaro workspace ls` -- List the workspaces this machine's project configs name
 - `fugaro workspace member` -- Declare how the workspace reaches one of its members
 - `fugaro workspace rm` -- Leave a workspace: drop this project's membership key and its pin
@@ -5828,6 +5829,38 @@ Flags:
 | `--monthly` | float64 | `0` | no | the cap in US dollars per month, more than zero |
 | `--workspace` | string | "" | no | the workspace whose cap this is (required: a cap is never spelled globally) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace login`
+
+Print the sign-in this project's pin asks for
+
+Print the sign-in this project's pin asks for, offline.
+
+A project that is a member of a workspace signs in at the WORKSPACE's own
+Firebase: that sign-in is what the workspace's signer endpoint turns into the
+member-bound assertion this project's exchange accepts. This command is the step
+before it — which workspace is this project pinned to, and which Firebase do I
+sign in at — and it reads nothing but this machine's own config.
+
+It refuses when no project config on this machine names the workspace: 'fugaro
+workspace rm' takes the membership key and the pin together, and a project with
+no pin has no key, no project and no issuer to verify an assertion against, so
+there is no sign-in to describe. Nothing here opens a bucket, calls an API or
+holds a credential, and the pin's assertion key is reported as set rather than
+printed.
+
+Usage: `fugaro workspace login <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for login |
+| `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
 
