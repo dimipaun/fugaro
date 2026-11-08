@@ -182,9 +182,10 @@ func (e *Effective) refuseCraftCredentials(names []string) {
 // the value was measured against.
 //
 // It is never "": a record's ignored[].source is the layer of the effective
-// value and a schema pins it to the four layer names (schemas/result.schema.json,
-// internal/runner's policyRecord publishes this string verbatim), so a value
-// with no effective counterpart still names the layer that answers for it.
+// value, and a schema pins it to the four layer names
+// (schemas/result.schema.json; internal/runner's policyRecord publishes this
+// string verbatim), so a value with no effective counterpart still names the
+// layer that answers for it.
 func (e *Effective) craftSource(key string) string {
 	if src := e.Sources[key]; src != "" {
 		return src
