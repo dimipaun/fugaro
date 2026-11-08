@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/backendtest"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -896,6 +897,50 @@ func TestLsShowsHalted(t *testing.T) {
 	}
 }
 
+// TestRunsLsCarriesTheLegacyClass: the listing's row carries the run's class,
+// which is the whole point of putting it on the row — a window holding a
+// record written before failure_class shipped and one written after shows a
+// class on both, and the reader's own sentence for the first is what makes the
+// report about the last seven days possible on the day the field ships (design
+// §5).
+//
+// The new record's reason is deliberately one the reader's table would class
+// otherwise: the field is the class, and a reader that read the reason back
+// over it would be the second opinion design §4.2 refuses.
+func TestRunsLsCarriesTheLegacyClass(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	oldID := runIDAt(0, "090000", "aaaa")
+	e1 := seedRun(t, f, oldID, "", "someone@example.com", true)
+	f.run.SetState(e1, backend.StateSucceeded)
+	// The record a run left before the field existed: the runner's own
+	// sentence, and no class on it at all.
+	writeRecord(t, f, oldID, &runstore.Record{Version: 1, RunID: oldID, Repo: "acme/app", Status: runstore.StatusFailed,
+		Outcome: runstore.OutcomeDraft, Stage: "verify", Reason: "tests failing on the final commit"})
+	newID := runIDAt(0, "091000", "bbbb")
+	e2 := seedRun(t, f, newID, "", "someone@example.com", true)
+	f.run.SetState(e2, backend.StateSucceeded)
+	rec := prRecord(newID, e2, 8, 1)
+	rec.Stage, rec.Reason = "review", "the mode was raised to pro at finalize, after the last review round"
+	rec.FailureClass = failure.NoCommits
+	writeRecord(t, f, newID, rec)
+
+	got, _ := lsJSON(t)
+	if len(got.Runs) != 2 {
+		t.Fatalf("ls = %+v, want the window's two runs", got.Runs)
+	}
+	byID := map[string]runview.Row{}
+	for _, row := range got.Runs {
+		byID[row.RunID] = row
+	}
+	if got := byID[oldID].FailureClass; got != failure.TestsFailed {
+		t.Errorf("the row of a record written before the field shipped reads %q, want %q: without the reading the owner's report is empty of causes until the retention window turns over", got, failure.TestsFailed)
+	}
+	if got := byID[newID].FailureClass; got != failure.NoCommits {
+		t.Errorf("the row reads %q, want the record's own %q: the field is the class, and its reason is not read back to work one out (design §4.2)", got, failure.NoCommits)
+	}
+}
+
 func TestLsShowsDraftInProgress(t *testing.T) {
 	f := newCloudFixture(t)
 	const run, done, stale = "20260927-100000-abcd", "20260927-100100-bbbb", "20260927-100200-cccc"
@@ -1142,6 +1187,73 @@ func TestRunsLsIsTheOldLs(t *testing.T) {
 	out, _, err := execute(t, "runs", "ls", "--json")
 	if err != nil || !strings.Contains(out, id) {
 		t.Fatalf("runs ls = %s, %v", out, err)
+	}
+}
+
+// TestRunsLsJSONKeepsFullID: the machine document is what the console, the
+// paging cursor and --after read, and no short-ID rule touches it: run is
+// still `<slug>/<run-id>` and run_id the full ID (D1705, F8). It passes with
+// the text listing either way, which is what it is for.
+func TestRunsLsJSONKeepsFullID(t *testing.T) {
+	f := newCloudFixture(t)
+	older, newer := "20261107-010101-3bb2", "20261108-115248-3bb2"
+	seedRun(t, f, older, "", "someone@example.com", false)
+	seedRun(t, f, newer, "", "someone@example.com", false)
+
+	got, _ := lsJSON(t, "--since", "0")
+	if len(got.Runs) != 2 {
+		t.Fatalf("runs = %v, want both", runIDs(got.Runs))
+	}
+	for _, r := range got.Runs {
+		if r.RunID != older && r.RunID != newer {
+			t.Errorf("run_id = %q, want a full ID", r.RunID)
+		}
+		if want := appSlug + "/" + r.RunID; r.Run != want {
+			t.Errorf("run = %q, want %q: --json carries the full ID whatever the text listing shows", r.Run, want)
+		}
+	}
+}
+
+// TestRunsLsRUNCellResolves: the RUN cell the text listing prints is a name the
+// CLI resolves to that run, so taking it out of a listing and into a command
+// works -- the working skill tells an agent to run `fugaro logs RUN` with it,
+// and the waiting block under the table names runs the same way. A run is shown
+// by the last four characters of its ID only once a lookup accepts an ending
+// (SR3's resolveRun, wired by SR14), so until that lands the cell is the full
+// name locateRun takes; this test is what fails if the cell is shortened ahead
+// of it.
+func TestRunsLsRUNCellResolves(t *testing.T) {
+	f := newCloudFixture(t)
+	id := recentRunID(t, time.Minute, "abcd")
+	seedRun(t, f, id, "", "someone@example.com", true)
+
+	out, _, err := execute(t, "runs", "ls", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell := ""
+	for _, l := range strings.Split(out, "\n") {
+		if fields := strings.Fields(l); len(fields) > 0 && strings.Contains(fields[0], "abcd") {
+			cell = fields[0]
+		}
+	}
+	if cell == "" {
+		t.Fatalf("the listing has no row for %s:\n%s", id, out)
+	}
+	// logs is the command the skill sends the cell to: it answers with the
+	// run's own lines, so the resolution is proved by its handing the run over
+	// rather than by an error.
+	if _, errOut, err := execute(t, "logs", cell); err != nil {
+		t.Fatalf("fugaro logs %q -- the RUN cell runs ls printed -- = %v (%s): the listing has to print a name a command resolves", cell, err, errOut)
+	}
+	// diagnose names the run it resolved to, so the cell is that run and not
+	// another one the lookup happened to reach.
+	got, errOut, err := execute(t, "diagnose", "--json", cell)
+	if err != nil {
+		t.Fatalf("fugaro diagnose %q = %v (%s)", cell, err, errOut)
+	}
+	if !strings.Contains(got, id) {
+		t.Fatalf("fugaro diagnose %q named no run of %s:\n%s", cell, id, got)
 	}
 }
 
