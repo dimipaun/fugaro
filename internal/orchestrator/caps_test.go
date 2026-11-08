@@ -266,3 +266,51 @@ func TestOversizeStateStopsSpawning(t *testing.T) {
 		t.Fatalf("the same item in a small node plans %+v", a)
 	}
 }
+
+// TestFutureStampCountsInEveryWindow: the stamps are the server's, and a clock
+// that reads behind one of them may not be read as a window that has passed.
+// An intent stamped ahead of the tick counts in the minute, the hour and the
+// day at once — every age is negative and so below every window — which is the
+// direction that keeps an odd stamp from freeing a cap: read the other way, one
+// stamp the clock has not reached would buy a spawn past all three.
+func TestFutureStampCountsInEveryWindow(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	// A failed attempt an hour ahead: it reported, so it is in no run in
+	// flight, and what this test is about is the windows alone.
+	item, ahead := o6FailedItem("wi-1", approvedAt, now.Add(time.Hour))
+	s := o6Node(t, now, item)
+	s.Intents = []orchestrator.Intent{ahead}
+
+	got := orchestrator.CountsOf(s, now)
+	if got.Minute != 1 || got.Hour != 1 || got.Day != 1 {
+		t.Fatalf("an attempt stamped an hour ahead counts %+v, and an age below every window is a stamp in all of them", got)
+	}
+	if got.Running != 0 {
+		t.Errorf("the reported attempt counts as %d run(s) in flight", got.Running)
+	}
+
+	for _, tc := range []struct {
+		name string
+		caps orchestrator.Caps
+	}{
+		{"the minute", withCaps(func(c *orchestrator.Caps) { c.SpawnPerMinute = 1 })},
+		{"the hour", withCaps(func(c *orchestrator.Caps) { c.SpawnPerHour = 1 })},
+		{"the day", withCaps(func(c *orchestrator.Caps) { c.SpawnPerDay = 1 })},
+	} {
+		if got.Room(tc.caps, 0) {
+			t.Errorf("the cycle has room under %s's cap of 1 while a future-stamped attempt counts in it", tc.name)
+		}
+	}
+
+	// What that is worth on the money path: the retry this state is otherwise
+	// ready for is not planned, and the stamp the clock has not reached is why.
+	tight := withCaps(func(c *orchestrator.Caps) { c.SpawnPerMinute = 1 })
+	if plan := orchestrator.Plan(s, orchestrator.RunView{}, tight, now); len(plan) != 0 {
+		t.Fatalf("the cycle plans %+v, and the future-stamped attempt holds the minute", plan)
+	}
+	a := onlyAction(t, orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now))
+	if a.Kind != orchestrator.ActionRetry || a.ItemID != "wi-1" {
+		t.Fatalf("the wide caps plan %+v, and the retry is the one thing this state waits for", a)
+	}
+}
