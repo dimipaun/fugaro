@@ -1917,8 +1917,10 @@ export const PROJECTS_CREDENTIALS_SERVICE_CLASS = 'projects-credentials-service-
 /** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
  * read fills, and the slot the entry's busy mark goes in. Every later section is
  * a `host`/`slot` pair of its own, drawn the same way -- `models` and `settings`
- * from the tab's second and third reads, and the four CM10 added from its
- * fourth, fifth and sixth (the account keys share the settings read). */
+ * from the tab's second and third reads, and `managed`, `accountKeys`,
+ * `retirements` and `credentialsService` from the three CM10 added, two of which
+ * feed two sections apiece (the account keys the settings read, the retirements
+ * the managed state's). */
 export interface DrawnProjectsFrame {
   readonly root: ScreenElement
   readonly body: ScreenElement
