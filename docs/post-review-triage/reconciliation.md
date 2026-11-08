@@ -2,7 +2,7 @@
 
 Where this file disagrees with [spec.md](spec.md), this file wins. Checked against `origin/main` at
 `2232815b0` on 2026-11-08, plus the open pull requests #1999 (BF1m) and #1990 (BF2) read as they stand.
-Decision numbers D1830-D1859 and checks 480-489 are this folder's block (renumbered after round 1:
+Decision numbers D1840-D1869 and checks 490-499 are this folder's block (renumbered after round 1:
 open PR #2046 held D1780-D1809 and checks 470-479; the highest then in use were D1809 and Check 472).
 
 ## What the spec gets right, wrong and silent about
@@ -39,13 +39,13 @@ queue work.
   `docs/rigor-modes/levels-reconciliation.md` LF7 ("no persona layer": the prompt builders are level-blind), LD1
   (personas shape prompts, thresholds decide blocking), LD10 (embedded, one Markdown file per level). No code
   contains a persona. The spec's "guidance in the persona prompt, not hard rules" for blocking contradicts LD1
-  unless the judge sits *inside* the table's floor (D1830). D1830 therefore **amends LD1**: the thresholds no longer alone decide what blocks; the table still decides what may *never* be deferred and what the fallback is.
+  unless the judge sits *inside* the table's floor (D1840). D1840 therefore **amends LD1**: the thresholds no longer alone decide what blocks; the table still decides what may *never* be deferred and what the fallback is.
 - **F3. Rule.** The floors in `rigor.Blocks`: an unscored finding blocks in every mode; class `security` blocks in
   every mode including Hotfix (`overrideSecurity`); `data_loss` and impact 5 block in all modes but Hotfix; a
   `needs_owner` finding stops the loop (`ownerStop`, `pendingOwner` in `Decide`) and is never fixable.
   The spec's Hotfix line ("defer everything else") is wrong for security, and its Critical line ("defer very
   little") is wrong against D7 (Critical tolerates nothing). A judge may only *add* deferrals among findings the
-  table blocks and the floors do not name (D1830, D1845).
+  table blocks and the floors do not name (D1840, D1855).
 - **F4. Gap.** The loop does not behave as acceptance 1 and 2 need. `seniorLoop` (`internal/runner/runner.go`) calls
   `r.fix(...)` after any round whose verdict is not `ship` unless the round cap is reached; `fix` builds
   `FixPrompt(v)`, which lists every `fixableFindings(v.Findings)`. Tolerance acts only in `Decide`, after the
@@ -61,7 +61,7 @@ queue work.
   task store. `task.Spec` (`internal/task/task.go`, `schemas/task.schema.json`, `additionalProperties: false`, `version`
   const 1) carries `PlanTask`, `Batch`, `PreviousRun`, `PR`, `Branch`, `Rigor`, `Paths` and no parent, follow-up-of, label or
   dependency field. So deferrals can only be *recorded* by the run and turned into tasks by the CLI (which can run in a
-  session, as `fugaro run` does, so the command's own guards matter: F24) or by the orchestrator (D1833, D1839).
+  session, as `fugaro run` does, so the command's own guards matter: F24) or by the orchestrator (D1843, D1849).
 - **F7. Exists.** `internal/followup` and `fugaro run --pr N` continue an existing pull request from review
   comments by trusted authors. It is comment-sourced and carries no level of its own; it is not the spec's
   follow-up (a new task from a finding), and cannot be reused for it.
@@ -69,21 +69,21 @@ queue work.
   reads `PRMerged` and `PRClosed`), and `docs/rigor-modes/reconciliation.md` D13 says Fugaro opens pull requests and
   never merges or deploys. "Ready" is `ApplyReady(ctx, number, reviewers, labels)`: the PR leaves draft. A person or
   the coordinator merges. "Tasks waiting on the parent are unblocked" can only mean the orchestrator seeing a merge
-  later (D1832, D1839).
+  later (D1842, D1849).
 - **F9. Gap.** `config.RunStages` (`internal/config/stage_accounts.go`) is `plan, implement, review_first, review,
   adversarial, fix` and validates `stages.<stage>.claude_account` in local config, the published policy node,
   `fugaro validate` and launch. A `triage` stage must be added to it, and `MixedAccountStages` (today `review`,
   `adversarial`) decides whether an API-key account may serve it; the runner records `rec.StageAccounts[stage]`.
   `internal/recipe` step kinds are closed at `Version = 1`, so triage is a runner-internal step like the digest,
-  not a recipe step (D1831). `.fugaro/review.md` already tells reviewers to report blocking findings only, which
+  not a recipe step (D1841). `.fugaro/review.md` already tells reviewers to report blocking findings only, which
   pre-triages at the reviewer.
 - **F10. Rule.** A field never changes meaning (CLAUDE.md). `result.json` (`schemas/result.schema.json`, `version`
   const 1, closed) already has `tolerated`, written by `toleratedRecord` and meaning "the mode's table let it
-  through". The triage verdicts need new names, not a reuse of `tolerated` (D1840).
+  through". The triage verdicts need new names, not a reuse of `tolerated` (D1850).
 - **F11. Gap.** A finding has no identity across rounds: `runner.Finding` carries severity, likelihood, impact,
   fix_cost, class, needs_owner, file and summary, and `VerdictSchema` requires only `summary`. Round summaries keep
   counts only (`runstore.ReviewSummary`). A verdict must reference a finding by its index in that round's list plus
-  a hash of file and summary (D1840). The independent review job has a different artifact
+  a hash of file and summary (D1850). The independent review job has a different artifact
   (`schemas/review.schema.json`, `reviewartifact.go`); review-only runs never change draft state, so triage does
   not apply to them.
 - **F12. Exists.** Caps are built: `rigor.roundDefaults` (POC 1/1, Startup 2/2, Pro 3/3, Critical 3/5, Hotfix 1/1),
@@ -91,39 +91,39 @@ queue work.
   the PR a draft with `failure.ReviewNotConverged`; nothing files the leftovers. Token and money caps are separate
   halts (`internal/runner/halt.go`) and end the run whatever triage says.
 - **F13. Rule.** Review levels are built (`firstLine`, `seniorLoop`, `adversarialLoop`; `Decide` reads a held-back
-  level; `docs/review-levels-ab-jobmax`). Triage has to say which level's findings it judges (D1837).
+  level; `docs/review-levels-ab-jobmax`). Triage has to say which level's findings it judges (D1847).
   `docs/recipes.md` still says readiness is "unchanged and not configurable", already stale against `Decide`; the
   Docs tests pin sentences, so a doc change keeps the pinned fact (CLAUDE.md "Docs are tested").
 - **F14. Rule.** The mode is opt-in and read from the *base* branch (`(*run).baseRigor` in
   `internal/runner/rigor.go` and `readBaseConfig` in `internal/runner/followup.go`, D25): `findingsPolicyOf` returns the zero policy unless `cfg.Configured()`, because a
   branch that could set its own mode could set POC in the pull request it wants merged. An unconfigured repository
-  resolves Pro by default (D19) and tolerates nothing; it must not defer (D1842). The mode can rise mid-run (D22) and
-  never falls, so the persona is chosen from the mode reached at that round (`reachedRigor`), not the starting one. On a first run every key except the mode comes from the checked-out ref (`internal/runner/rigor.go`), so `agent.triage` is read from the base exactly as the mode is (D1844), through that same path.
+  resolves Pro by default (D19) and tolerates nothing; it must not defer (D1852). The mode can rise mid-run (D22) and
+  never falls, so the persona is chosen from the mode reached at that round (`reachedRigor`), not the starting one. On a first run every key except the mode comes from the checked-out ref (`internal/runner/rigor.go`), so `agent.triage` is read from the base exactly as the mode is (D1854), through that same path.
 - **F15. Rule.** Floors are outside every layer (`levels-reconciliation` LF5; security classification D1500-D1519):
   triage runs at the post-floor mode. Reviewer text is untrusted data to the triage agent exactly as `.fugaro/review.md`
-  makes it for reviewers; it may not flip a `needs_owner` finding (D1846).
+  makes it for reviewers; it may not flip a `needs_owner` finding (D1856).
 - **F16. Rule.** CLAUDE.md: "A fix round adds no functionality." `FixPrompt` today says only "Address each one,
   commit, and run `fugaro verify test` again" and has no "touch nothing else" sentence; the new text needs one, and
   a prompt is on `.fugaro/review.md`'s mutation-check list.
 - **F17. Rule.** Config and wire formats decode strictly with schemas in `schemas/`; a project layer may only
   tighten (`internal/policy`). A new `triage` key is tighter when it turns triage *off* (more findings block), so the
-  project layer may disable and a repository may not re-enable above it (D1844). Plugin tests check every command
+  project layer may disable and a repository may not re-enable above it (D1854). Plugin tests check every command
   and flag a skill names, so a new command means a skill change in the same PR.
-- **F18. Open, settled by D1830.** Two judges: the table (deterministic) and the agent (the spec). Settled: the
+- **F18. Open, settled by D1840.** Two judges: the table (deterministic) and the agent (the spec). Settled: the
   agent runs inside the floor and only among table-blocked findings; the table stays the authority and the
-  fallback. A triage call that fails or returns no parseable verdict blocks every finding (D1836, matching D4 and
+  fallback. A triage call that fails or returns no parseable verdict blocks every finding (D1846, matching D4 and
   `Decide`'s `last.Verdict == "none"` rule).
 - **F21. Gap (review levels).** Readiness is decided over levels: `Decide` reads `decidingReview` and a held-back outer level
   (`heldBackLevel` in `internal/runner/outcome.go`). A level-2 round whose findings are all deferred still *records* the verdict
   `changes`; if level 3 then ships, the held-back rule keeps the PR a draft, and if the loop simply ends, level 3 never runs and
-  there is no deciding round. D1837 (all levels) therefore needs: an all-deferred round ends *that level* and the loop moves to
+  there is no deciding round. D1847 (all levels) therefore needs: an all-deferred round ends *that level* and the loop moves to
   the next enabled level; the held-back rule reads the deferred set, not the recorded verdict word.
 - **F22. Gap (`needs_owner` is not in `rigor.Score`).** `rigor.Score` carries likelihood, impact, fix cost and class; the
-  `needs_owner` flag lives on `runner.Finding`. A judge fed only scores cannot honour D1846's "never flips `needs_owner`", and
+  `needs_owner` flag lives on `runner.Finding`. A judge fed only scores cannot honour D1856's "never flips `needs_owner`", and
   such a finding must never become a follow-up task. The triage input type carries it, and `Decide`'s `pendingOwner` gate stays the backstop.
 - **F23. Open (the floor rests on the reviewer's labels).** The floor is the class label plus impact 5. A coder that steers a
   reviewer's wording can therefore get a real correctness finding (up to likelihood 5 x impact 4 = Risk 20) deferred by the
-  judge where today the table blocks it. Needs an owner ruling (Open item 5).
+  judge where today the table blocks it. Ruled by D1857 (the judge may defer any non-floor finding; risk accepted).
 - **F24. Rule (the follow-up command turns job-written data into launches).** `Record.Deferred` is written by the job and
   `fugaro run`'s record reads treat run records as job-writable. `fugaro followups` makes finding text a new task's prompt. It
   therefore: launches only when the parent PR is merged (`gitprov` `PRMerged`, the spec's "after the merge"), caps the number of
@@ -140,10 +140,10 @@ queue work.
 
 - **F28. Wrong (round 2: Hotfix triage cannot change a verdict).** The Hotfix row is `{Override: overrideSecurity}` with Risk 0
   (`internal/rigor/table.go`), so the only findings the table blocks in Hotfix are unscored findings and class `security`, and
-  both are floor. A judge that may only defer non-floor findings can never defer anything there, so D1841's Hotfix leg pays
-  for a model call that cannot change a verdict, and Open item 6 (Hotfix at a cap) is moot. The floor is also narrower in
+  both are floor. A judge that may only defer non-floor findings can never defer anything there, so D1851's Hotfix leg pays
+  for a model call that cannot change a verdict, and "Hotfix at a cap" is moot (the owner dropped Hotfix, D1851). The floor is also narrower in
   Hotfix than elsewhere: `data_loss` and impact 5 are floor in every mode *except* Hotfix (`overrideCatastrophic` is not in
-  its row). D1841 is amended after review (below) and the wording "never deferred in any mode" now reads "outside Hotfix".
+  its row). D1851 is amended after review (below) and the wording "never deferred in any mode" now reads "outside Hotfix".
 - **F29. Gap (round 2: the stage's tools cannot be limited with the files the plan listed).** `agent.Request`
   (`internal/agent/agent.go`) has no tool-restriction field; `SettingSources` is sent only when non-empty, so "no settings
   sources" cannot be expressed; stages run permission-bypassed. The no-tools invariant (F25) therefore needs a change in
@@ -151,8 +151,7 @@ queue work.
   `StrictMCPConfig`, `reviewPosture` and a temporary working directory instead of the checkout), which is a security path.
 - **F30. Gap (round 2: the record's PR number is job-written).** `fugaro followups` gated on "parent PR merged" reads the
   PR number from the run record, which the job writes (`runstore` `pr`). A compromised job could name any merged PR and get up
-  to `--max` tasks launched from its own text. The command finds the pull request on the forge by the run's launcher-written
-  branch (head = the run's branch) and never by a number the record carries (D1833, T-TR10).
+  to `--max` tasks launched from its own text. The command finds the pull request on the forge by the run's own branch (head = the run's branch) and never by a number the record carries. For a fresh run the branch is `fugaro/<run id>`, derived from the argument alone; for a `--pr` continuation it comes from `task.json` in the runs bucket, which `fugaro run --pr` already trusts today (whether a job can rewrite that file is UNVERIFIED, below) (D1843, T-TR10).
 - **F31. Rule (round 2: a finalize raise must void deferrals).** `Decide` already refuses ready when the mode rose after the
   review (`raisedAfterReview` in `internal/runner/outcome.go`); deferrals made at a Startup round must not make the PR ready
   after a raise at finalize (T-TR7b pins it).
@@ -164,7 +163,7 @@ queue work.
   Startup and POC finalize ready at the round cap or a time threshold and keep the draft for Pro and above. It
   edits `internal/rigor/table.go`, `internal/runner/outcome.go`, `runner.go`, `prflow.go`, `report.go`, `budget.go`,
   `internal/config/*`, `schemas/result.schema.json` and `schemas/fugaro.schema.json`. This plan is built **on top
-  of** it (D1843), so every task that shares those files waits for it.
+  of** it (D1853), so every task that shares those files waits for it.
 - **F20. Exists (different layer).** BF2 (#1990) adds a stale-run triage to the stateless orchestrator and states
   that "the rule is code, never a model" (D1244, matching D1221 and D1234). That governs the orchestrator's own
   decisions; this plan's triage is an in-job *stage* (a model call by nature, like review). No conflict, but the
@@ -176,40 +175,43 @@ Answered through `AskUserQuestion` on 2026-11-08 unless marked "resolved" (one d
 
 | ID | Question | Recommendation and cost | Owner's answer |
 | --- | --- | --- | --- |
-| **D1830** | Who decides Block vs Defer? | An agent *within the floor*: it decides among findings the table blocks, never for floor classes, fails safe to Block. Costs one short model call per round. The alternatives: the table only (cheap, cannot tell doc drift by its words) or an agent that may also defer floor findings (contradicts D1-D7). | **2026-11-08: the recommendation.** The table stays the authority and the fallback. |
-| **D1831** | Where does triage live? | Resolved: a runner-internal stage named `triage`, added to `config.RunStages` and `MixedAccountStages`; no recipe step kind (recipes are closed at version 1). | Resolved 2026-11-08 (not asked). |
-| **D1832** | What does "merges right away" mean? | Resolved: the PR is marked **ready** (`ApplyReady`); a person or the coordinator merges (D13: Fugaro never merges). The spec's acceptance 1 reads "is ready after one review". | Resolved 2026-11-08 (not asked). |
-| **D1833** | How does a deferral become a follow-up task? | The run records deferred findings in a new result field; a CLI command turns them into tasks carrying new optional `Task` fields (`follow_up_of`: run id plus finding keys; `debt: true`). No change to what a job may write. Alternative: Markdown backlog files (not tasks, not runnable). | **2026-11-08: the recommendation.** The command finds the merged parent through the run's own branch on the forge, never a PR number the record carries (F30). |
-| **D1834** | Which rigor do follow-ups get? | Resolved: the parent's recorded mode (`RigorRecord.Mode`, post-floor) as `task.Spec.Rigor`, resolved again at launch through the floors; a follow-up never lowers one, and a recorded hotfix is **not** carried (the field stays empty, as `followUpRigor` in `internal/cli/followup.go` does for a follow-up). | Resolved 2026-11-08 (not asked); amended after review (round 1: the hotfix case, and the record field's name). |
-| **D1835** | A review cap is hit with findings left. | Follow BF1m: Startup and POC finalize ready at the cap with the leftovers deferred and recorded; Pro stays draft at the cap but still records non-floor leftovers as deferrals; floor findings always hold the draft. Critical is unchanged (it tolerates nothing, D7). | **2026-11-08: the recommendation, for the Startup/POC/Pro/floor sentence.** The Critical clause and Hotfix at a cap were **added after review and were not answered by the owner**. |
-| **D1836** | What if triage fails, times out or returns nothing parseable? | Resolved: every finding blocks (D4), recorded as `triage_failed`; the run continues as today. | Resolved 2026-11-08 (not asked). |
-| **D1837** | Which review levels does triage apply to? | The recommendation was levels 1 and 2 only (level 3 passes every finding through). | **2026-11-08: all levels, NOT the recommendation; asked again after round 2 with the SC6 note (#1978 escalates level 3 automatically on security-sensitive diffs) and the owner kept it.** Consequence: a run at level 3, asked for or escalated, can finish ready with non-floor adversarial findings deferred. Floors still hold. |
-| **D1838** | Which model and account serve the stage? | The senior reviewer's model and account: independent of the coder, short input. A mixed-account stage like `review`. | **2026-11-08: the recommendation.** `stages.triage.claude_account` overrides it. |
-| **D1839** | Who launches follow-ups after the parent merges? | A new CLI command now, callable by the orchestrator later. Alternatives: orchestrator only (nothing works until that chain lands), or launch at ready (they would run on a base lacking the parent). | **2026-11-08: the recommendation.** |
-| **D1840** | How are verdicts logged? | Resolved: new optional `triage` block in `result.json` (new names, `tolerated` untouched), one entry per finding: round, index, key (hash of file and summary), verdict, one-line reason, group key, source (`agent`, `table`, `fail_safe`, `cap`). | Resolved 2026-11-08 (not asked). |
-| **D1841** | Which modes run the agent? | Startup and Pro. POC and Critical keep today's behaviour and make no triage call (`findingsPolicyOf` returns the zero policy for them), and Hotfix makes none either: its table blocks only security and unscored findings, both floor, so a judge could never defer anything there (F28). | **2026-11-08: first the recommendation (Startup, Pro, Hotfix); then, after round 2 (F28), the owner chose to drop Hotfix, the recommendation of the amended question (2026-11-08).** |
-| **D1842** | What about a repository that never opted in? | Resolved: no triage and no deferral where `cfg.Configured()` is false (D25: the base branch decides). | Resolved 2026-11-08 (not asked). |
-| **D1843** | How does this relate to BF1m (#1999)? | BF1m ships first as the deterministic baseline; this plan builds over it. Tasks sharing its files wait for its merge. | **2026-11-08: the recommendation.** |
-| **D1844** | What is the config surface? | Resolved: the `triage` stage's `claude_account`, and one boolean `agent.triage` (default on in Startup and Pro; Hotfix per Open item 6). **The off switch lives where the other owner-set switches live: the published project policy node (the `ReviewFloor` precedent in `internal/projectpolicy/policy.go`), read from the base the way D25 reads the mode, never from the task-embedded layer a launcher writes or the checked-out ref.** A repository may only turn it off for itself. Persona text is embedded per level (LD10), not configurable. | Resolved 2026-11-08 (not asked); amended after review (round 1: a launcher can embed any layer, so the project layer in the task is not a binding off switch). |
-| **D1845** | The spec's Hotfix and Critical lines. | Resolved: Hotfix defers everything except what the floor keeps (security still blocks); Critical is not triaged (D7). Both spec lines are amended here. | Resolved 2026-11-08 (not asked). |
-| **D1846** | How does triage treat reviewer text? | Resolved: as untrusted data (the same stance as `.fugaro/review.md`); it can never turn a `needs_owner` finding into a deferral, and a verdict that names no known finding is dropped. | Resolved 2026-11-08 (not asked). |
-| **D1847** | How far may the judge defer (F23)? | The recommendation was impact 3 or less: a finding of impact 4 or 5 that is not floor always reaches the fixer, whatever the reviewer's wording. | **2026-11-08: any non-floor finding the table blocks, NOT the recommendation.** Consequence: a coder that steers a reviewer's class or impact label can get a real correctness finding deferred where today the table blocks it. It is accepted; the mitigations are the shadow-first slice (T-TR7a logs every verdict before any steers the loop) and Check 482, and the bound is a parameter of `Apply` that can be set later without a schema change. |
+| **D1840** | Who decides Block vs Defer? | An agent *within the floor*: it decides among findings the table blocks, never for floor classes, fails safe to Block. Costs one short model call per round. The alternatives: the table only (cheap, cannot tell doc drift by its words) or an agent that may also defer floor findings (contradicts D1-D7). | **2026-11-08: the recommendation.** The table stays the authority and the fallback. |
+| **D1841** | Where does triage live? | Resolved: a runner-internal stage named `triage`, added to `config.RunStages` and `MixedAccountStages`; no recipe step kind (recipes are closed at version 1). | Resolved 2026-11-08 (not asked). |
+| **D1842** | What does "merges right away" mean? | Resolved: the PR is marked **ready** (`ApplyReady`); a person or the coordinator merges (D13: Fugaro never merges). The spec's acceptance 1 reads "is ready after one review". | Resolved 2026-11-08 (not asked). |
+| **D1843** | How does a deferral become a follow-up task? | The run records deferred findings in a new result field; a CLI command turns them into tasks carrying new optional `Task` fields (`follow_up_of`: run id plus finding keys; `debt: true`). No change to what a job may write. Alternative: Markdown backlog files (not tasks, not runnable). | **2026-11-08: the recommendation.** The command finds the merged parent through the run's own branch on the forge, never a PR number the record carries (F30). |
+| **D1844** | Which rigor do follow-ups get? | Resolved: the parent's recorded mode (`RigorRecord.Mode`, post-floor) as `task.Spec.Rigor`, resolved again at launch through the floors; a follow-up never lowers one, and a recorded hotfix is **not** carried (the field stays empty, as `followUpRigor` in `internal/cli/followup.go` does for a follow-up). | Resolved 2026-11-08 (not asked); amended after review (round 1: the hotfix case, and the record field's name). |
+| **D1845** | A review cap is hit with findings left. | Follow BF1m: Startup and POC finalize ready at the cap with the leftovers deferred and recorded; Pro stays draft at the cap but still records non-floor leftovers as deferrals; floor findings always hold the draft. Critical is unchanged (it tolerates nothing, D7). | **2026-11-08: the recommendation, for the Startup/POC/Pro/floor sentence.** The Critical clause and Hotfix at a cap were **added after review and were not answered by the owner**. |
+| **D1846** | What if triage fails, times out or returns nothing parseable? | Resolved: every finding blocks (D4), recorded as `triage_failed`; the run continues as today. | Resolved 2026-11-08 (not asked). |
+| **D1847** | Which review levels does triage apply to? | The recommendation was levels 1 and 2 only (level 3 passes every finding through). | **2026-11-08: all levels, NOT the recommendation; asked again after round 2 with the SC6 note (#1978 escalates level 3 automatically on security-sensitive diffs) and the owner kept it.** Consequence: a run at level 3, asked for or escalated, can finish ready with non-floor adversarial findings deferred. Floors still hold. |
+| **D1848** | Which model and account serve the stage? | The senior reviewer's model and account: independent of the coder, short input. A mixed-account stage like `review`. | **2026-11-08: the recommendation.** `stages.triage.claude_account` overrides it. |
+| **D1849** | Who launches follow-ups after the parent merges? | A new CLI command now, callable by the orchestrator later. Alternatives: orchestrator only (nothing works until that chain lands), or launch at ready (they would run on a base lacking the parent). | **2026-11-08: the recommendation.** |
+| **D1850** | How are verdicts logged? | Resolved: new optional `triage` block in `result.json` (new names, `tolerated` untouched), one entry per finding: round, index, key (hash of file and summary), verdict, one-line reason, group key, source (`agent`, `table`, `fail_safe`, `cap`). | Resolved 2026-11-08 (not asked). |
+| **D1851** | Which modes run the agent? | Startup and Pro. POC and Critical keep today's behaviour and make no triage call (`findingsPolicyOf` returns the zero policy for them), and Hotfix makes none either: its table blocks only security and unscored findings, both floor, so a judge could never defer anything there (F28). | **2026-11-08: first the recommendation (Startup, Pro, Hotfix); then, after round 2 (F28), the owner chose to drop Hotfix, the recommendation of the amended question (2026-11-08).** |
+| **D1852** | What about a repository that never opted in? | Resolved: no triage and no deferral where `cfg.Configured()` is false (D25: the base branch decides). | Resolved 2026-11-08 (not asked). |
+| **D1853** | How does this relate to BF1m (#1999)? | BF1m ships first as the deterministic baseline; this plan builds over it. Tasks sharing its files wait for its merge. | **2026-11-08: the recommendation.** |
+| **D1854** | What is the config surface? | Resolved: the `triage` stage's `claude_account`, and one boolean `agent.triage` (default on in Startup and Pro; Hotfix not triaged (D1851)). **The off switch lives where the other owner-set switches live: the published project policy node (the `ReviewFloor` precedent in `internal/projectpolicy/policy.go`), read from the base the way D25 reads the mode, never from the task-embedded layer a launcher writes or the checked-out ref.** A repository may only turn it off for itself. Persona text is embedded per level (LD10), not configurable. | Resolved 2026-11-08 (not asked); amended after review (round 1: a launcher can embed any layer, so the project layer in the task is not a binding off switch). |
+| **D1855** | The spec's Hotfix and Critical lines. | Resolved: Hotfix is not triaged (D1851, F28: its table blocks only security and unscored findings, both floor, so a judge could defer nothing); Critical is not triaged either (D7: it tolerates nothing). Both spec lines are amended here. | Resolved 2026-11-08 (not asked); the Hotfix clause amended after round 2. |
+| **D1856** | How does triage treat reviewer text? | Resolved: as untrusted data (the same stance as `.fugaro/review.md`); it can never turn a `needs_owner` finding into a deferral, and a verdict that names no known finding is dropped. | Resolved 2026-11-08 (not asked). |
+| **D1857** | How far may the judge defer (F23)? | The recommendation was impact 3 or less: a finding of impact 4 or 5 that is not floor always reaches the fixer, whatever the reviewer's wording. | **2026-11-08: any non-floor finding the table blocks, NOT the recommendation.** Consequence: a coder that steers a reviewer's class or impact label can get a real correctness finding deferred where today the table blocks it. It is accepted; the mitigations are the shadow-first slice (T-TR7a logs every verdict before any steers the loop) and Check 492, and a bound can be added later as a change to `Apply` with no schema change. |
+| **D1858** | Do a cap's deferrals need a configured repository and `agent.triage` on? | Resolved (round 3): a cap's deferrals come from BF1m's cap rule, not from the judge, so **`agent.triage` off does not suppress them**; but they are recorded only where the repository opted in (`cfg.Configured()`, D1852), because an unconfigured repository resolves Pro and tolerates nothing. | Resolved 2026-11-08 (not asked). |
 
 ## Open tensions and open items for the owner
 
-Round 2's questions were put to the owner on 2026-11-08 and answered: the deferral bound (D1847, not the recommendation), Hotfix
-(dropped, D1841), level 3 (kept as answered, D1837) and BF1m's ordering (stands, D1843). What remains open:
+Round 2's questions were put to the owner on 2026-11-08 and answered: the deferral bound (D1857, not the recommendation), Hotfix
+(dropped, D1851), level 3 (kept as answered, D1847) and BF1m's ordering (stands, D1853). What remains open:
 
 1. **A fixer that sees only blockers needs the loop to stop early (F4).** That changes today's loop in `Decide` and `seniorLoop`,
-   which BF1m also edits; the plan sequences it after BF1m (D1843, re-confirmed). If BF1m is delayed the six tasks that share its files wait.
-2. **Follow-up wiring to the orchestrator is out of scope.** D1839 gives a CLI command; "tasks waiting on the parent are
+   which BF1m also edits; the plan sequences it after BF1m (D1853, re-confirmed). If BF1m is delayed the six tasks that share its files wait.
+2. **Follow-up wiring to the orchestrator is out of scope.** D1849 gives a CLI command; "tasks waiting on the parent are
    unblocked" needs the orchestrator to call it and set `DependsOn` (planned elsewhere). Say if you want a task for that here once its chain lands.
-3. **Merging.** Acceptance 1 reads "ready" here (D1832). If you want Fugaro to merge, that is a different, larger decision (a
+3. **Merging.** Acceptance 1 reads "ready" here (D1842). If you want Fugaro to merge, that is a different, larger decision (a
    `gitprov` merge call against D13) and not part of this plan.
-4. **D1847's accepted risk (F23).** The floor rests on the reviewer's labels and the judge may defer any non-floor finding the
+4. **D1857's accepted risk (F23).** The floor rests on the reviewer's labels and the judge may defer any non-floor finding the
    table blocks; revisit with the data the shadow slice produces.
 
 ## UNVERIFIED
+
+- Whether a job can rewrite its own `task.json` in the runs bucket, which would let it name another branch for the follow-ups command (F30); `fugaro run --pr` already reads it, so this is an existing trust, not a new one.
 
 - Whether the persona work of `docs/rigor-modes/levels-*` (T1.5 floors, the `--mode` flag) is fully merged: the code
   shows `Decide`, `Split`, `Files` and the round defaults on `main`, but the levels document's own status line says its

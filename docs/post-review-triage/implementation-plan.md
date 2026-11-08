@@ -5,14 +5,14 @@ Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (
 ## Status
 
 **Plan only. Nothing is implemented. No task is approved:** each task needs the owner's explicit go; an answer to a
-decision is not a go. The owner's answers that shaped this plan, all 2026-11-08: D1830 (an agent inside the floor),
-D1833 (record, then a CLI files tasks), D1835 (follow BF1m at a cap), D1837 (**all levels, not the recommendation**),
-D1838 (the senior reviewer's model), D1839 (a CLI command launches follow-ups), D1841 (Startup, Pro, Hotfix: amended after round 2: Hotfix dropped, Startup and Pro only),
-D1843 (BF1m first, triage on top).
+decision is not a go. The owner's answers that shaped this plan, all 2026-11-08: D1840 (an agent inside the floor),
+D1843 (record, then a CLI files tasks), D1845 (follow BF1m at a cap), D1847 (**all levels, not the recommendation**),
+D1848 (the senior reviewer's model), D1849 (a CLI command launches follow-ups), D1851 (Startup, Pro, Hotfix: amended after round 2: Hotfix dropped, Startup and Pro only),
+D1853 (BF1m first, triage on top).
 
 **External prerequisite: BF1m (#1999) merged.** It edits `internal/rigor/table.go`, `internal/runner/outcome.go`,
 `runner.go`, `prflow.go`, `report.go`, `budget.go`, `internal/config/*` and the result and fugaro schemas, so every
-task here that writes one of those files waits for it (D1843). Tasks that touch none of them start at once.
+task here that writes one of those files waits for it (D1853). Tasks that touch none of them start at once.
 
 ## Conventions every task follows
 
@@ -22,7 +22,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
   mutation check run and restored.
 - Targeted tests only, `GOFLAGS=-p=2`; never a whole `internal/cli` or `internal/runner` package. Hermetic: no network,
   no home directory, no real cloud (`internal/testutil`, `runnertest`, `t.TempDir()`). No secret-shaped literal.
-- A field never changes meaning: new names only (D1840). Config and wire formats decode strictly and have schemas.
+- A field never changes meaning: new names only (D1850). Config and wire formats decode strictly and have schemas.
 - Docs are tested: a doc change runs `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`; keep every pinned fact.
 - A fix round adds no functionality; a finding that needs a decision is reported, not fixed.
 - Never edit `.github/workflows/`; stage under `docs/pending-workflows/` if ever needed (none is here).
@@ -37,23 +37,23 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 
 | Constraint (finding or decision) | Pinned by |
 | --- | --- |
-| A judge can only defer among findings the table blocks; floor classes (security and `needs_owner` in every mode; `data_loss` and impact 5 outside Hotfix, where the table already lets them through) are never deferred, including at level 3 (F3, D1830, D1837) | T-TR6, T-TR7b (mutation check: remove the floor and the test fails) |
-| Triage failure, timeout or an unparseable answer blocks every finding (D1836, F18) | T-TR6, T-TR7a |
-| An unconfigured repository never defers; the base branch decides (F14, D1842) | T-TR7b |
-| POC and Critical make no triage call and write no `triage` block; Critical is byte-identical to today; POC differs only by BF1m's and T-TR8's cap rule (D1841) | T-TR7a, T-TR7b, T-TR8 |
+| A judge can only defer among findings the table blocks; floor classes (security and `needs_owner` in every mode; `data_loss` and impact 5 outside Hotfix, where the table already lets them through) are never deferred, including at level 3 (F3, D1840, D1847) | T-TR6, T-TR7b (mutation check: remove the floor and the test fails) |
+| Triage failure, timeout or an unparseable answer blocks every finding (D1846, F18) | T-TR6, T-TR7a |
+| An unconfigured repository never defers; the base branch decides (F14, D1852) | T-TR7b |
+| POC and Critical make no triage call and write no `triage` block; Critical is byte-identical to today; POC differs only by BF1m's and T-TR8's cap rule (D1851) | T-TR7a, T-TR7b, T-TR8 |
 | The persona is chosen from the mode reached at that round, never the starting mode (F14) | T-TR7a |
 | The fixer sees only the blocking findings and is told to touch nothing else (F4, F16, acceptance 2) | T-TR7b |
-| Reviewer text is untrusted data; a verdict naming no known finding is dropped; `needs_owner` is never flipped (D1846, F15) | T-TR2, T-TR6 |
-| `tolerated` keeps its meaning; verdicts live under new names (F10, D1840) | T-TR3 |
-| The project layer may turn triage off, a repository may not turn it back on (D1844, F17) | T-TR5 |
-| A job writes only its result record: follow-ups are created by the CLI, never from inside a job; the command launches only after the parent PR is merged, caps the count, fences the text, and prints the plan unless `--launch` (F6, F24, D1833) | T-TR10 |
+| Reviewer text is untrusted data; a verdict naming no known finding is dropped; `needs_owner` is never flipped (D1856, F15) | T-TR2, T-TR6 |
+| `tolerated` keeps its meaning; verdicts live under new names (F10, D1850) | T-TR3 |
+| The project layer may turn triage off, a repository may not turn it back on (D1854, F17) | T-TR5 |
+| A job writes only its result record: follow-ups are created by the CLI, never from inside a job; the command launches only after the parent PR is merged, caps the count, fences the text, and prints the plan unless `--launch` (F6, F24, D1843) | T-TR10 |
 | The triage stage runs with no tools and no settings sources (F25) | T-TR7a |
-| The off switch is read from the base and the published policy node, never the task-embedded layer (F14, D1844) | T-TR5 |
-| An all-deferred round ends its own level and the next level runs; the held-back rule reads the deferred set (F21, D1837) | T-TR7b |
-| The judge's reach is exactly the non-floor findings the table blocks; no further bound (D1847, owner ruling; risk accepted, F23) | T-TR6, T-TR7a (shadow first) |
-| A follow-up never lowers a floor and carries the parent's mode, except a recorded hotfix, which it does not carry (D1834) | T-TR10 |
-| A cap hit: Startup and POC finalize ready with leftovers deferred; Pro and above stay draft, non-floor leftovers still recorded (D1835) | T-TR8 |
-| "Ready" is never "merged" (F8, D1832) | T-TR9, T-TR12 |
+| The off switch is read from the base and the published policy node, never the task-embedded layer (F14, D1854) | T-TR5 |
+| An all-deferred round ends its own level and the next level runs; the held-back rule reads the deferred set (F21, D1847) | T-TR7b |
+| The judge's reach is exactly the non-floor findings the table blocks; no further bound (D1857, owner ruling; risk accepted, F23) | T-TR6, T-TR7a (shadow first) |
+| A follow-up never lowers a floor and carries the parent's mode, except a recorded hotfix, which it does not carry (D1844) | T-TR10 |
+| A cap hit: Startup and POC finalize ready with leftovers deferred; Pro and above stay draft, non-floor leftovers still recorded (D1845) | T-TR8 |
+| "Ready" is never "merged" (F8, D1842) | T-TR9, T-TR12 |
 
 ## Slice 1: the shapes, inert (nothing reads them yet)
 
@@ -71,7 +71,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 
 ### T-TR2: the triage verdict, its schema, the personas and the prompt
 - **Files:** `internal/triage/verdict.go` (new), `internal/triage/prompt.go` (new), `internal/triage/personas/startup.md`,
-  `internal/triage/personas/pro.md`, `internal/triage/personas/hotfix.md` (new, embedded), `internal/triage/verdict_test.go`
+  `internal/triage/personas/pro.md` (new, embedded), `internal/triage/verdict_test.go`
   (new), `internal/triage/prompt_test.go` (new), `schemas/triage.schema.json` (new). **Interfaces:** consumed nothing from
   the runner; produced `Verdict` (`version`, `findings[]` of `{index, key, verdict: block|defer, reason, group}`),
   `Decode([]byte) (Verdict, error)` strict (unknown fields refused, a verdict other than the two refused, a reason longer
@@ -83,14 +83,12 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
   **Command:** `GOFLAGS=-p=2 go test ./internal/triage/ -run 'TestDecode|TestPrompt|TestPersonas|TestSchema' -count=1`.
 - **Depends on:** none. **Red step:** `TestPromptFencesFindingsAsData` fails: a finding containing a fence and an
   instruction reaches the prompt as an instruction. **Mutation (run, restore):** drop the fence; that test fails. **Reviewer tier:** opus + mandatory independent review (an agent
-  prompt). **OWNER-RUN:** no. **Commit:** `triage: the verdict, its schema, the three personas and the prompt`.
+  prompt). **OWNER-RUN:** no. **Commit:** `triage: the verdict, its schema, the two personas and the prompt`.
 
 ### T-TR3: the result record's triage block
-- **Files:** `internal/runstore/runstore.go`, `internal/runstore/runstore_test.go`, `schemas/result.schema.json`, `schemas/schemas_test.go` (the populated runner record gains a triage block),
-  `internal/runner/testdata/result_triage.json` (new). **Interfaces:** consumed nothing; produced an optional
+- **Files:** `internal/runstore/runstore.go`, `internal/runstore/runstore_test.go`, `schemas/result.schema.json`, `schemas/schemas_test.go` (the populated runner record gains a triage block), **Interfaces:** consumed nothing; produced an optional
   `Record.Triage` (`rounds[]` of `{round, mode, level, account, model, failed bool, entries[]}`; an entry is `{index, key,
-  verdict, reason, group, source}` with `source` in `agent|table|fail_safe|cap`; a failed or unparseable call sets the round's `failed: true`, which is D1836's `triage_failed`) and `Record.Deferred` (the deferred
-  findings with the same keys, ready for a follow-up). **Schema change:** `version` stays 1; the fields are new and
+  verdict, reason, group, source}` with `source` in `agent|table|fail_safe|cap`; a failed or unparseable call sets the round's `failed: true`, which is D1846's `triage_failed`) and `Record.Deferred` (only the findings whose deferral **took effect**: table-tolerated, enforced by T-TR7b, or the cap's, with the same keys, ready for a follow-up; the shadow stage of T-TR7a never writes it). **Schema change:** `version` stays 1; the fields are new and
   optional, `tolerated` is untouched.
 - **Tests:** `TestRecordWithoutTriageIsByteIdentical`, `TestTriageBlockRoundTrips`, `TestResultSchemaAcceptsTriage`,
   `TestToleratedKeepsItsMeaning`. **Command:** `GOFLAGS=-p=2 go test ./internal/runstore/ -run 'Triage|ToleratedKeeps' -count=1`
@@ -100,7 +98,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
   **Reviewer tier:** standard. **OWNER-RUN:** no. **Commit:** `runstore: an optional triage block and the deferred findings`.
 
 ### T-TR4: the task's follow-up fields
-- **Files:** `internal/task/task.go`, `internal/task/task_test.go`, `schemas/task.schema.json`, `schemas/testdata/task/valid/follow_up.json` (new: the corpus `TestTaskSchemaCorpus` reads). **Interfaces:** produced
+- **Files:** `internal/task/task.go`, `internal/task/task_test.go`, `schemas/task.schema.json`, `testdata/task/valid/follow_up_of.json` (new, at the repository root: `TestTaskSchemaCorpus` globs `testdata/task/valid/*.json`). **Interfaces:** produced
   optional `Spec.FollowUpOf` (`{run, keys[]}`) and `Spec.Debt bool` on `task.Spec` (the struct's real name); consumed nothing. **Schema change:** `version` stays 1
   (fields added, none removed or retyped); strict decode keeps refusing unknown fields.
 - **Tests:** `TestTaskWithoutFollowUpIsByteIdentical`, `TestFollowUpOfRoundTrips`, `TestFollowUpOfRefusesAnEmptyRun`,
@@ -120,7 +118,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
   mixed-stage messages), `internal/cli/recipes_skew.go` (a `triageSince` launcher gate). **Interfaces:** consumed `RunStages`,
   `MixedAccountStages`; produced `triage` in both lists, `agent.triage` (bool, default on in Startup and Pro, absent
   elsewhere), and the switch's home: the **published project policy node** (the `ReviewFloor` precedent), read from the base the
-  way `readBaseRigor` reads the mode (D1844), never from the task-embedded layer or the checked-out ref. A repository may turn it
+  way `(*run).baseRigor` (`internal/runner/rigor.go`, with `readBaseConfig` in `followup.go`) reads the mode (D1854), never from the task-embedded layer or the checked-out ref. A repository may turn it
   off for itself and may not turn it back on above a policy that turned it off.
 - **Tests:** `TestTriageIsARunStage`, `TestTriageIsAMixedAccountStage`, `TestAgentTriageOffInPolicyWinsOverARepositoryOn`,
   `TestAgentTriageIsReadFromTheBaseNotTheCheckout`, `TestTaskEmbeddedLayerCannotReenableTriage`,
@@ -137,7 +135,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 ### T-TR6: applying a verdict inside the floor
 - **Files:** `internal/triage/apply.go` (new), `internal/triage/apply_test.go` (new). **Interfaces:** consumed T-TR1's `Floor`,
   `rigor.Split`, T-TR2's `Verdict`; produced `Apply(m rigor.Mode, in []Input, v Verdict, ok bool) Outcome` where
-  `Input` is `{Score rigor.Score, NeedsOwner bool, Key string}` (the flag is not in `rigor.Score`, F22) and the judge's reach is exactly the non-floor findings the table blocks, with no further bound (D1847). `Outcome{Blocking, Deferred
+  `Input` is `{Score rigor.Score, NeedsOwner bool, Key string}` (the flag is not in `rigor.Score`, F22) and the judge's reach is exactly the non-floor findings the table blocks, with no further bound (D1857). `Outcome{Blocking, Deferred
   []Entry}`: table-tolerated findings are `Deferred` with `source: table`; a floor finding and a `needs_owner` finding are `Blocking` whatever the verdict; a `needs_owner` finding is never in `Deferred` and so never a
   follow-up; a verdict naming no known finding is dropped; a verdict whose `index` and `key` disagree, and two verdicts for one finding, both block it; a missing verdict for a table-blocked finding blocks it; `ok == false`
   blocks every table-blocked finding with `source: fail_safe`.
@@ -150,14 +148,13 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 
 ### T-TR7a: the stage runs and is logged, and changes nothing
 - **Files:** `internal/runner/triage_stage.go` (new), `internal/runner/triage_stage_test.go` (new), `internal/runner/runner.go`
-  (one call after each review verdict), `internal/agent/agent.go` and `agent_test.go` (a tools field and its argv; the review posture the review stage uses: `ReviewSettingSources`, `StrictMCPConfig`, `reviewPosture`, a temporary working directory instead of the checkout; **a security path**), `internal/runner/policy.go` (the switch is read from the published node here, "the only place it is read from"), `internal/runner/budget.go` (a stage slice), `internal/runner/accountchoice.go`
+  (one call after each review verdict), `internal/agent/agent.go` and `agent_test.go` (a tools field and its argv; the review posture the review stage uses: `ReviewSettingSources`, `StrictMCPConfig`, `reviewPosture`, a temporary working directory instead of the checkout; **a security path**), `internal/runner/policy.go` (the published node's switch is read here, as `ReviewFloor` is), `internal/runner/budget.go` (a stage slice), `internal/runner/accountchoice.go`
   (`rec.StageAccounts["triage"]`). **Interfaces:** consumed T-TR3, T-TR5, T-TR6, the review verdicts, `reachedRigor`;
-  produced a runner-internal step: when `agent.triage` is on, the mode is Startup or Pro (Hotfix not triaged (D1841)) and the repository opted in,
-  it calls the senior reviewer's model and account (D1838) with `triage.Prompt` (the task's goal included), **with no tools and no settings sources** (F25), applies the verdict and **writes it to the
-  record only** (shadow): the fixer, `Decide` and the PR are untouched. A failed call records `failed: true` and continues.
+  produced a runner-internal step: when `agent.triage` is on, the mode is Startup or Pro (Hotfix not triaged (D1851)) and the repository opted in,
+  it calls the senior reviewer's model and account (D1848) with `triage.Prompt` (the task's goal included), **with no tools and no settings sources** (F25), applies the verdict and **writes it to `Record.Triage` only** (shadow: `Record.Deferred` stays empty, so no shadow verdict can reach a PR section or a follow-up): the fixer, `Decide` and the PR are untouched. A failed call records `failed: true` and continues.
 - **Tests:** `TestTriageRunsAfterEachReviewRound`, `TestTriagePersonaFollowsTheReachedMode`, `TestTriageSkippedInPOCAndCritical`,
   `TestTriageSkippedForAnUnconfiguredRepository`, `TestTriageFailureIsRecordedAndHarmless`,
-  `TestShadowTriageDoesNotChangeTheFixPrompt`, `TestTriageStageAccountIsRecorded`, `TestTriageRequestHasNoToolsAndNoSettingsSources`, `TestAgentRequestToolsFieldReachesArgv`, `TestTriageSwitchIsReadFromThePublishedNode`. **Command:** `GOFLAGS=-p=2 go test
+  `TestShadowTriageDoesNotChangeTheFixPrompt`, `TestTriageStageAccountIsRecorded`, `TestTriageRequestHasNoToolsAndNoSettingsSources`, `TestShadowTriageWritesNoDeferred`, `TestAgentRequestToolsFieldReachesArgv`, `TestTriageSwitchIsReadFromThePublishedNode`. **Command:** `GOFLAGS=-p=2 go test
   ./internal/runner/ -run 'TestTriage|TestShadowTriage' -count=1 -timeout 20m`.
 - **Depends on:** T-TR3, T-TR5, T-TR6, **BF1m (external, edits `runner.go`, `budget.go`)**. **Red step:**
   `TestShadowTriageDoesNotChangeTheFixPrompt` fails if the stage alters what the fixer is given. **Mutation (run, restore):** give the stage the coding tools; `TestTriageRequestHasNoToolsAndNoSettingsSources` fails. **Reviewer tier:** opus +
@@ -169,8 +166,8 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
   blocking subset and says to touch nothing else), `internal/runner/outcome.go` (`Decide` reads the deferred set),
   `internal/runner/triage_stage.go`, `internal/runner/prompts_test.go`, `internal/runner/outcome_test.go`,
   `internal/runner/triage_loop_test.go` (new). **Interfaces:** consumed T-TR7a's outcome; produced: a round whose findings are
-  all deferred ends the review loop and finalizes ready (Startup and Pro; Hotfix not triaged (D1841); D1835's cap rule is T-TR8); **with `agent.triage` off, in POC or Critical, or for an unconfigured repository the loop and the fixer behave exactly as today (after BF1m): a round the table alone tolerates does not end it** (F32); **deferrals made at a Startup round never make the PR ready after a raise at finalize** (`raisedAfterReview`, F31); a mixed round
-  hands the fixer only `Outcome.Blocking`; every level's findings are triaged (D1837), and **an all-deferred round ends that level and the loop moves to the next enabled level** (F21): `heldBackLevel` and `decidingReview` read the deferred set, not the recorded verdict word, so a level-2 round with only deferrals neither holds the PR as a draft after level 3 ships nor leaves level 3 unrun.
+  all deferred ends the review loop and finalizes ready (Startup and Pro; Hotfix not triaged (D1851); D1845's cap rule is T-TR8); **with `agent.triage` off, in POC or Critical, or for an unconfigured repository the loop and the fixer behave exactly as today (after BF1m): a round the table alone tolerates does not end it** (F32); **deferrals made at a Startup round never make the PR ready after a raise at finalize** (`raisedAfterReview`, F31); a mixed round
+  hands the fixer only `Outcome.Blocking`; every level's findings are triaged (D1847), and **an all-deferred round ends that level and the loop moves to the next enabled level** (F21): `heldBackLevel` and `decidingReview` read the deferred set, not the recorded verdict word, so a level-2 round with only deferrals neither holds the PR as a draft after level 3 ships nor leaves level 3 unrun.
 - **Tests:** `TestFixPromptListsOnlyBlockingFindings`, `TestFixPromptSaysTouchNothingElse`, `TestAllDeferredRoundEndsTheLoop`,
   `TestStartupTrivialOnlyFindingsAreReadyAfterOneReview` (acceptance 1), `TestFixerIsNeverGivenADeferredFinding`
   (acceptance 2), `TestLevelThreeFindingsAreTriagedButFloorStillBlocks`, `TestAllDeferredLevelTwoAdvancesToLevelThree`, `TestHeldBackLevelReadsTheDeferredSet`, `TestNeedsOwnerFindingStillStopsTheLoopWhenTriaged`, `TestTriageOffLoopUnchanged`, `TestTriageDeferralsVoidedByFinalizeRaise`, `TestUnconfiguredRepositoryNeverDefers`,
@@ -186,9 +183,9 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 - **Files:** `internal/runner/outcome.go`, `internal/runner/outcome_test.go`, `internal/runner/triage_cap_test.go` (new).
   **Interfaces:** consumed T-TR7b and BF1m's cap rule; produced: at the cap, Startup and POC finalize ready with every
   non-floor leftover recorded under `Record.Deferred` (`source: cap`); Pro stays draft with the same recorded
-  deferrals; Critical is unchanged (it tolerates nothing, D7); Hotfix is not triaged (D1841); a floor finding always holds the draft (D1835).
+  deferrals; Critical is unchanged (it tolerates nothing, D7); Hotfix is not triaged (D1851); a floor finding always holds the draft (D1845); deferrals are recorded only where the repository opted in, and `agent.triage` off does not suppress them (D1858).
 - **Tests:** `TestCapHitStartupFinalizesReadyWithDeferrals`, `TestCapHitProStaysDraftButRecordsDeferrals`,
-  `TestCapHitFloorFindingHoldsTheDraft`, `TestCapHitCriticalUnchanged`. **Command:** `GOFLAGS=-p=2 go test ./internal/runner/ -run
+  `TestCapHitFloorFindingHoldsTheDraft`, `TestCapHitCriticalUnchanged`, `TestCapHitUnconfiguredRecordsNoDeferrals`, `TestCapHitTriageOffStillRecordsTheCapsDeferrals` (D1858). **Command:** `GOFLAGS=-p=2 go test ./internal/runner/ -run
   'TestCapHit' -count=1 -timeout 20m`.
 - **Depends on:** T-TR7b, **BF1m (external)**. **Red step:** `TestCapHitStartupFinalizesReadyWithDeferrals` fails: the PR is a
   draft. **Mutation (run, restore):** let a floor finding through at the cap; `TestCapHitFloorFindingHoldsTheDraft` fails. **Reviewer tier:** opus + mandatory independent review, level 3. **OWNER-RUN:** no. **Commit:** `runner: a cap hit
@@ -198,7 +195,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 - **Files:** `internal/runner/prflow.go`, `internal/runner/report.go`, `internal/runner/prflow_test.go`,
   `internal/runner/report_run_test.go`. **Interfaces:** consumed T-TR3's record; produced a "Deferred (follow-ups)" section in
   the PR status text and `report.md`, one line per deferral with its one-line reason, and the line "run
-  `fugaro followups <run>` after merging" (the command is T-TR10). Finding text and the model's reasons pass through the same escaping the PR body already applies to model text (`inlineText` in `prflow.go`) and the redaction step before they reach the body or the report. Wording says ready, never merged (D1832).
+  `fugaro followups <run>` after merging" (the command is T-TR10). Finding text and the model's reasons pass through the same escaping the PR body already applies to model text (`inlineText` in `prflow.go`) and the redaction step before they reach the body or the report. Wording says ready, never merged (D1842).
 - **Tests:** `TestPRStatusListsDeferralsWithReasons`, `TestReportListsDeferrals`, `TestNoDeferralsLeavesTheBodyUnchanged`, `TestDeferralTextIsEscapedAndRedacted`.
   **Command:** `GOFLAGS=-p=2 go test ./internal/runner/ -run 'TestPRStatusLists|TestReportLists|TestNoDeferrals|TestDeferralText' -count=1`.
 - **Depends on:** T-TR7a, **BF1m (external, edits `prflow.go`, `report.go`)**. **Red step:** `TestPRStatusListsDeferralsWithReasons`
@@ -215,7 +212,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
   [--launch] [--max N] [--json]`: reads the run record, **refuses unless the parent pull request is merged (`PRMerged`), where the pull request is found on the forge by the run's launcher-written branch (head = that branch) and never by a PR number the job-written record carries (F30)**,
   groups deferrals by their `group` key (one task per group, one per finding when ungrouped), **caps the tasks per call
   (`--max`, default 10)**, builds each task with `follow_up_of{run,keys}`, `debt: true`, the parent's recorded mode as
-  `task.Spec.Rigor` re-resolved through the floors at launch (a recorded hotfix is not carried, D1834), and the finding text and the
+  `task.Spec.Rigor` re-resolved through the floors at launch (a recorded hotfix is not carried, D1844), and the finding text and the
   triage reason **fenced as data** in the brief. **By default it prints the plan and writes nothing; `--launch` launches them in
   parallel** through the same path as `fugaro run` (no confirmation question: the project's no-prompt rule). A group whose
   `follow_up_of` already has a run is skipped, found through the run list, so a second call launches nothing new.
@@ -254,13 +251,13 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
   **Reviewer tier:** opus + mandatory independent review (plugin skills are security paths). **OWNER-RUN:** no. **Commit:**
   `docs: post-review triage, the floor and the follow-ups command`.
 
-### T-TR13: Checks 480-482, owner-run
-- **Files:** `scripts/live-checks/check480.sh`, `check481.sh`, `check482.sh` (new, idempotent, each takes `--dry-run`, refuses the
+### T-TR13: Checks 490-492, owner-run
+- **Files:** `scripts/live-checks/check490.sh`, `check491.sh`, `check492.sh` (new, idempotent, each takes `--dry-run`, refuses the
   project named `belong`), their `*_test.sh` with a fake gcloud, `docs/gcp-live-checklist.md` (the three sections and the
   register's rows). **Interfaces:** consumed T-TR7b, T-TR8, T-TR10; produced the checks. **Tests:** the fake-gcloud tests only;
   an agent never runs a check.
 - **Depends on:** T-TR7b, T-TR8, T-TR10. **Reviewer tier:** standard; the scripts are reviewed in the run. **OWNER-RUN: yes** (see
-  Checks). **Commit:** `live-checks: 480-482, triage on a real run`.
+  Checks). **Commit:** `live-checks: 490-492, triage on a real run`.
 
 ## Parallel execution
 
@@ -289,7 +286,7 @@ first, so the verdicts can be read and tuned before they steer the loop; accepta
 | `internal/rigor/floor.go` | T-TR1 (0) |
 | `internal/triage/*` | T-TR2 (0: verdict, prompt, personas, schema); T-TR6 (1: `apply.go`, a separate file) |
 | `internal/runstore/runstore.go`, `schemas/result.schema.json`, `schemas/schemas_test.go` | T-TR3 (1) |
-| `internal/task/task.go`, `schemas/task.schema.json`, `schemas/testdata/task/valid/follow_up.json` | T-TR4 (0) |
+| `internal/task/task.go`, `schemas/task.schema.json`, `testdata/task/valid/follow_up_of.json` | T-TR4 (0) |
 | `internal/config/*`, `internal/projectpolicy/policy.go`, `internal/policy/merge.go`, `internal/settings/registry.go`, `internal/infra/spec.go`, `schemas/fugaro.schema.json`, `schemas/project-layer.schema.json`, `schemas/settings.schema.json` | T-TR5 (1) |
 | `internal/cli/run.go` | T-TR5 (1) |
 | `internal/cli/recipes_skew.go` | T-TR5 (1: `triageSince`), T-TR10 (2: `followUpSince`) |
@@ -313,13 +310,13 @@ A change to any task's Files re-checks this table.
 The cli-reference file has two writers in different levels (T-TR11 at 1, T-TR10 at 2); it is a generated file, so the later task
 regenerates it on top of the earlier one and the drift test pins the result.
 
-## Checks (this folder's block: 480-489; 480-482 taken)
+## Checks (this folder's block: 490-499; 490-492 taken)
 
 | Check | What it measures | Who runs it |
 | --- | --- | --- |
-| **480** | A Startup run on a real project whose reviewer reports only a trivial finding (a doc sentence off by one word) finishes ready after one review round, with the finding in the PR's Deferred section and the triage block in `result.json`. | The owner: `scripts/live-checks/check480.sh` (idempotent; `--dry-run`; refuses `belong`). |
-| **481** | `fugaro followups RUN` after that PR is merged launches one debt task per group, each at the parent's applied mode, and `fugaro runs ls --debt` lists them. | The owner: `check481.sh`. |
-| **482** | A finding of class `security` is never deferred in a real Startup run, and with level 3 requested the same holds (D1837's tension). | The owner: `check482.sh`. |
+| **490** | A Startup run on a real project whose reviewer reports only a trivial finding (a doc sentence off by one word) finishes ready after one review round, with the finding in the PR's Deferred section and the triage block in `result.json`. | The owner: `scripts/live-checks/check490.sh` (idempotent; `--dry-run`; refuses `belong`). |
+| **491** | `fugaro followups RUN` after that PR is merged launches one debt task per group, each at the parent's applied mode, and `fugaro runs ls --debt` lists them. | The owner: `check491.sh`. |
+| **492** | A finding of class `security` is never deferred in a real Startup run, and with level 3 requested the same holds (D1847's tension). | The owner: `check492.sh`. |
 
 ## After the deploy
 
@@ -332,7 +329,7 @@ version converges is part of T-TR5.
 
 - **Reusing `rec.Tolerated` for persona deferrals:** declined; the field means "the mode's table let it through" (F10).
 - **A recipe step kind `triage`:** declined; recipes are closed at version 1 (F9), so triage is a runner-internal step.
-- **Markdown backlog items as the follow-up carrier:** declined by D1833; `internal/backlog` stays as it is.
-- **Fugaro merging the PR:** declined (D13, F8); out of scope (Open tension 4).
+- **Markdown backlog items as the follow-up carrier:** declined by D1843; `internal/backlog` stays as it is.
+- **Fugaro merging the PR:** declined (D13, F8); out of scope (Open item 3).
 - **Re-reviewing only what changed:** the spec's own later item; not planned here.
-- **Wiring follow-ups to the orchestrator's `DependsOn`:** out of scope until that chain lands (Open tension 3).
+- **Wiring follow-ups to the orchestrator's `DependsOn`:** out of scope until that chain lands (Open item 2).
