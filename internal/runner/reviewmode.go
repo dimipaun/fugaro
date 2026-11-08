@@ -1014,7 +1014,12 @@ func (r *run) endReviewFailed(ctx context.Context) {
 		reason = "the review stage ended without a verdict"
 	}
 	reason = r.redact(reason)
-	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, reason)
+	// The class is the one the site that wrote this reason chose, exactly as
+	// finalize's failed case reads it: the reason here *is* r.failure(), so a
+	// class written independently of it would describe a different sentence
+	// (the stage's own result carried stage_error_unexplained or one of its
+	// neighbours, and unclassified would drop it).
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, r.failureClass(), reason)
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 }

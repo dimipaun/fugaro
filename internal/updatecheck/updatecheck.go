@@ -108,6 +108,35 @@ func Newer(latest, current string) bool {
 	return c.less(l)
 }
 
+// CanonicalRelease returns s as a release version, X.Y.Z with an optional
+// "v" prefix dropped; ok is false when s is not strictly X.Y.Z. Callers
+// that need to parse a version without comparing it (the issue reader's
+// milestone title, the installation record) use this rather than their own
+// copy of the shape, so the three cannot drift apart.
+func CanonicalRelease(s string) (string, bool) {
+	v, ok := parseSemver(s)
+	if !ok {
+		return "", false
+	}
+	return v.String(), true
+}
+
+// AtOrBelow reports whether release names a version at or below current.
+// Either side failing to parse strictly as X.Y.Z (a dev build, an empty
+// version, a branch name) makes the answer false: a version that is not
+// known to be installed resolves nothing.
+func AtOrBelow(release, current string) bool {
+	r, ok := parseSemver(release)
+	if !ok {
+		return false
+	}
+	c, ok := parseSemver(current)
+	if !ok {
+		return false
+	}
+	return !c.less(r)
+}
+
 // Entry is the cached state of the daily check, read and written as JSON.
 type Entry struct {
 	// CheckedAt is the last time GitHub was asked, success or failure: it

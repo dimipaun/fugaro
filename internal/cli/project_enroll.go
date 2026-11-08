@@ -15,10 +15,9 @@ package cli
 // runs/ grant a run of a profile can write those prefixes).
 //
 // The interim path 1.6 opened (P4, 12a item 3) is closed here: a new repository
-// needs `repos add` or a confirmed `sync`, no Terraform and no update --repo.
+// needs `repos add` or `sync`, no Terraform and no update --repo.
 
 import (
-	"bufio"
 	"context"
 	"crypto/rsa"
 	"encoding/json"
@@ -781,7 +780,10 @@ type projectSyncOptions struct {
 	// githubAppKey is --github-app-key: it allows the key's Secret Manager
 	// read with the operator's own credentials. Without it nothing is read.
 	githubAppKey bool
-	// yes confirms the batch without the typed project name.
+	// yes is the flag the batch's typed confirmation used to be answered with.
+	// The policy removed that confirmation, so the flag is registered and inert
+	// until the change that removes --yes and --non-interactive together
+	// removes it (see runProjectSync).
 	yes bool
 }
 
@@ -792,7 +794,8 @@ func newProjectSyncCmd() *cobra.Command {
 		Short: "Offer the GitHub App's installed repositories that the allow-list does not admit",
 		Long: "Ask GitHub which repositories the project's GitHub App is installed on (the\n" +
 			"App API, with the App's own credentials) and offer the ones the published\n" +
-			"allow_repos does not admit, as one list confirmed once. The accepted list is\n" +
+			"allow_repos does not admit, as one list written in one batch: nothing is\n" +
+			"asked, and what was written is printed after the write. The accepted list is\n" +
 			"written through the same ETag-guarded write `project repos add` uses; entries\n" +
 			"are only ever added, so a sync never un-enrolls a repository — including one\n" +
 			"the App is not installed on at all (another provider's, or one whose\n" +
@@ -810,19 +813,24 @@ func newProjectSyncCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID (a number, not a secret); default: the one this machine's config holds")
 	f.BoolVar(&o.githubAppKey, "github-app-key", false, "read the project's GitHub App private key from Secret Manager to ask GitHub (your own credentials; refused in a coding agent's session)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the batch without typing the project's name")
+	f.BoolVar(&o.yes, "yes", false, "accepted and does nothing: the batch is written with no confirmation")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
 // runProjectSync lists the App's installed repositories and adds the ones the
-// allow-list does not admit, in one confirmed batch.
+// allow-list does not admit, in one batch.
 //
 // It is a writer of config/policy/shared, so it takes the writer's refusals
 // before it reads anything: every one runProjectReposEdit takes (the shared
 // config, a database that is not this project's, the deployed rules marker).
 // What it never does is remove: the list it writes is the list it read plus
-// what it was told to add.
+// what it was told to add. It asks nothing: the policy removed the typed
+// confirmation this batch used to take, and what it wrote is printed after the
+// write (putAllowRepos). The --yes that answered that confirmation is still
+// registered and now changes nothing: `--yes` and `--non-interactive` are
+// removed together, by T11 of docs/no-prompt-policy/implementation-plan.md,
+// which owns every flag that registers them.
 func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	ctx := cmd.Context()
 	// SD8: sync writes the same allow_repos `repos add` writes, so it carries
@@ -894,10 +902,6 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	before := append([]string{}, nonNil(p.AllowRepos)...)
 	allow := append(nonNil(p.AllowRepos), missing...)
 	slices.Sort(allow)
-	what := fmt.Sprintf("add %d repositories to the allow-list and remove none: %s", len(missing), strings.Join(missing, ", "))
-	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, what); err != nil {
-		return err
-	}
 	return putAllowRepos(ctx, out, configPath, lc, db, etag, raw, before, nonNil(allow))
 }
 

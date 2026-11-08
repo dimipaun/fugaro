@@ -5,7 +5,8 @@ merged on `main`; M5 is built except the paired device M-a asks for, which is M5
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
 plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 and M9 are not started; this folder approves no task.** The owner's spec of
+half and not started; M8 is built except the wiring that would serve its four read tools, which is
+the task M5b gates; M9 is not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -507,7 +508,7 @@ model credentials**. That contradicts D923's own "the coordinator mints nothing"
 `TestTheCoordinatorMintsNoCustomToken`. **So the first slice is the authorization server plus
 `get_task_status`, `stream_logs`, `get_result` and `list_tasks`; `cancel_task` goes with `spawn_task`
 into the later design item rather than into the first slice**, because the marker it writes is an
-object in the runs bucket (`internal/runstore/runstore.go:1315`, `fugaro cancel`'s own write) and so
+object in the runs bucket (`internal/runstore/runstore.go:1581`, `fugaro cancel`'s own write) and so
 needs the same runs-bucket write the coordinator does not hold — "without the launch path" is not a
 condition it can meet. No task in [implementation-plan.md](implementation-plan.md) starts a run.
 **What a later `spawn_task` design item has to answer** is written in
@@ -1109,6 +1110,16 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   binary — the one M5b gates — owes this reading beside the two bounds above**; until it lands, a
   front door wired up without one admits nobody rather than everybody, which is the direction the
   gap fails in ([reconciliation.md](reconciliation.md) §4a, D933's amendment).
+- **The four read tools M8 builds are registered on no binary** (D936): nothing outside this
+  package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`, so
+  `get_task_status`, `stream_logs`, `get_result` and `list_tasks` are reachable by no client while
+  the door is dormant, and `TestNoBinaryLinksTheFrontDoorYet` still holds. **The wiring task that mounts this package on a
+  binary — the one M5b gates — owes this beside the two bounds above and M7's reading of the
+  published state**, and it is where the project's own repository slugs come from: the
+  `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:491`), with a token's own repository
+  filter applied on top of it rather than instead of it.
+  [reconciliation.md](reconciliation.md) §4a carries what M8 still owes.
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.

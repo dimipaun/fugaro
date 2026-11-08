@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // A mode: artifact run succeeded, but nothing about it is like a succeeded
@@ -34,7 +36,7 @@ func TestWatchShowsAnArtifactRunsOutcome(t *testing.T) {
 
 	// The dashboard line, drawn by finishedRow as Render draws it.
 	r := &rend{w: 120, g: glyphsOf(true)}
-	line := r.finishedRow(run, false)
+	line := r.finishedRow(run, false, task.ShortRun(run.Run))
 	if !strings.Contains(line, "artifacts, no PR") {
 		t.Fatalf("the dashboard row does not name the artifact outcome: %q", line)
 	}

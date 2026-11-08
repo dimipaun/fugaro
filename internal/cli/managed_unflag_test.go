@@ -49,16 +49,17 @@ func managedUnflagSaysHalf(out, what string) string {
 }
 
 // TestManagedUnflagRefusesAnAgentSession is the property D1020's answer rests
-// on: the mark is what turns the typed confirmation off, so the command that
-// REMOVES it is the owner's by construction — a session that could remove the
-// mark could remove it mid-command and keep applying ungated. Nothing is
+// on: the mark is what turns the apply-time confirmation off, so the command
+// that REMOVES it is the owner's by construction — a session that could remove
+// the mark could remove it mid-command and keep applying ungated. Nothing is
 // removed from a coding agent's session, under any of the five markers that
 // name one, whatever the arguments. The sixth, the IDE extension's own, is
 // decided by the terminal the way agentenv decides it: with no terminal the
-// same refusal (below), and at a terminal it is the owner's own, who types the
-// ID and removes the mark like any other person at a terminal (the accepted
-// half is TestManagedFlagAcceptsTheIDETerminal's, over the flag: shared
-// confirmTypedGCPProject, and the same classification reaches both).
+// same refusal (below), and at a terminal it is the owner's own, who names the
+// project as the argument and removes the mark like any other person at a
+// terminal (the accepted half is TestManagedFlagAcceptsTheIDETerminal's, over
+// the flag: both commands ask agentMarker the same question, so the same
+// classification reaches both).
 func TestManagedUnflagRefusesAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.AgentMarkers {
 		t.Run(marker, func(t *testing.T) {
@@ -133,7 +134,7 @@ func TestManagedUnflagRefusesARunProcess(t *testing.T) {
 }
 
 // TestManagedUnflagRemovesBothMarks is what the command exists for: one
-// invocation, the exact project ID typed, and BOTH marks a managed project
+// invocation, the exact project ID as the argument, and BOTH marks a managed
 // carries are gone — the object in the runs bucket and the label on the
 // project itself. It is asserted through the managed read the apply gate
 // takes, with its project-number check, because a test that looked only at the
@@ -234,8 +235,9 @@ func TestManagedUnflagKeepsTheProjectsOwnLabels(t *testing.T) {
 
 // TestManagedUnflagSaysTheFenceStays: revocation does not tear down the
 // deployer fence (D75). The seven scoped roles and their conditioned bindings
-// stay in the project, and the command says so BEFORE it writes so the owner
-// typing the project ID knows what it is not agreeing to.
+// stay in the project, and the command says so BEFORE it writes — the argument
+// is the whole of the consent (D1541), so the statement is all the owner gets
+// and it comes before the first removal.
 func TestManagedUnflagSaysTheFenceStays(t *testing.T) {
 	r := managedUnflagRig(t)
 	terminal(t, true)
@@ -250,11 +252,13 @@ func TestManagedUnflagSaysTheFenceStays(t *testing.T) {
 	if !strings.Contains(fence, "does not remove") {
 		t.Errorf("the fence line does not say the fence is left in place: %q", fence)
 	}
-	// Before the confirmation, not after: the owner reads it while deciding.
-	if at := strings.Index(out, "Type "+initProject+" to confirm"); at < 0 {
-		t.Fatalf("the command asked for no confirmation:\n%s", out)
+	// Before the first removal, not after: nothing is asked and nothing is
+	// typed, so the statement is the only thing that tells the owner what they
+	// have just agreed to.
+	if at := strings.Index(out, managed.MarkerObject+": "); at < 0 {
+		t.Fatalf("the command reported no removal:\n%s", out)
 	} else if strings.Index(out, fence) > at {
-		t.Errorf("the fence is said after the confirmation was asked for:\n%s", out)
+		t.Errorf("the fence is said after the removal was made:\n%s", out)
 	}
 	// And the command makes no IAM call at all — the fence is not this
 	// command's to touch, and it does not try.
@@ -265,46 +269,40 @@ func TestManagedUnflagSaysTheFenceStays(t *testing.T) {
 	}
 }
 
-// TestManagedUnflagNeedsTheExactProjectIDTyped: the confirmation is the whole
-// boundary this command has, since it is the command that removes the control.
-// Without a terminal there is no confirmation at all, and anything but the
-// exact GCP project ID typed is not it. Nothing is removed by any of them.
-func TestManagedUnflagNeedsTheExactProjectIDTyped(t *testing.T) {
+// TestUnflagTakesTheProjectIDAsAnArgument: the argument is the whole boundary
+// this command has, and the same rule the flag keeps (D1541): the ID names the
+// one project whose marks come off, nothing stands in for it — and nothing has
+// to stand in for it, so a session with no terminal at all that names the right
+// project removes the marks. An ID that is not this installation's own is
+// refused, at a terminal or not.
+func TestUnflagTakesTheProjectIDAsAnArgument(t *testing.T) {
 	r := managedUnflagRig(t)
-	out, _, err := execute(t, managedUnflagArgs()...)
-	if err == nil {
-		t.Fatalf("the command ran with no terminal:\n%s", out)
+	noTerminal(t)
+	out, _, err := executeStdin(t, "", managedUnflagArgs()...)
+	if err != nil {
+		t.Fatalf("the exact project ID as the argument was refused: %v\n%s", err, out)
 	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	if managedFlagIsManaged(t, r) {
+		t.Error("the managed read still believes a project this command unflagged")
 	}
-	if !strings.Contains(err.Error(), "needs a real terminal") {
-		t.Errorf("the refusal does not say a terminal is needed: %v", err)
-	}
-	assertNamesNoFlagItLacks(t, newManagedUnflagCmd(), err)
-	if !strings.Contains(out, "does not remove") {
-		t.Errorf("the command did not say what it leaves in place before asking:\n%s", out)
-	}
-	terminal(t, true)
-	for name, typed := range map[string]string{
-		"nothing typed":            "\n",
-		"another project":          "proj-9999\n",
-		"a prefix of this project": "proj-123\n",
-		"the same ID uppercased":   "PROJ-1234\n",
-		"the ID with a space":      " proj-1234 extra\n",
+	for name, id := range map[string]string{
+		"another project":          "proj-9999",
+		"a prefix of this project": "proj-123",
 	} {
 		t.Run(name, func(t *testing.T) {
-			out, _, err := executeStdin(t, typed, managedUnflagArgs()...)
+			r := managedUnflagRig(t)
+			noTerminal(t)
+			out, _, err := executeStdin(t, id+"\n", "managed", "unflag", id)
 			if err == nil {
-				t.Fatalf("the command ran with %q typed:\n%s", typed, out)
+				t.Fatalf("the command unflagged with %s as the argument:\n%s", id, out)
 			}
 			if ExitCode(err) != ExitUserError {
 				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 			}
-			if !strings.Contains(err.Error(), "not confirmed") {
-				t.Errorf("the refusal does not say the confirmation was not given: %v", err)
+			if !strings.Contains(err.Error(), id) {
+				t.Errorf("the refusal does not name the project it was given: %v", err)
 			}
-			assertBothMarksStillThere(t, r, "a wrong confirmation")
+			assertBothMarksStillThere(t, r, "a refused argument")
 		})
 	}
 }
@@ -345,15 +343,15 @@ func TestManagedUnflagNamesOneProjectAndNoOther(t *testing.T) {
 	}
 }
 
-// TestManagedUnflagOffersNoWayAroundTheTypedID: the typed project ID is the
-// whole boundary, so nothing stands in for it — no --yes, no
-// --non-interactive, no bulk or wildcard form. This is the assertion a later
-// change that added one would break.
-func TestManagedUnflagOffersNoWayAroundTheTypedID(t *testing.T) {
+// TestUnflagOffersNoWayAroundTheArgument: the argument is the whole boundary,
+// so nothing stands in for it — no --yes, no --non-interactive, no bulk or
+// wildcard form, and no second project. This is the assertion a later change
+// that added one would break.
+func TestUnflagOffersNoWayAroundTheArgument(t *testing.T) {
 	cmd := newManagedUnflagCmd()
 	for _, name := range []string{"yes", "non-interactive", "all", "projects", "force", "prefix", "allow-delete"} {
 		if cmd.Flags().Lookup(name) != nil || cmd.PersistentFlags().Lookup(name) != nil {
-			t.Errorf("fugaro managed unflag defines --%s: the typed GCP project ID is the only confirmation it takes", name)
+			t.Errorf("fugaro managed unflag defines --%s: the GCP project ID as the argument is the only consent it takes", name)
 		}
 	}
 	for _, name := range []string{"project", "config", "gcp-project", "region"} {
@@ -409,8 +407,8 @@ func TestManagedUnflagNeedsTheDefaultRunsBucket(t *testing.T) {
 
 // TestManagedUnflagFailsClosedOnAnUnreadableProjectNumber: the number is what
 // proves the runs bucket is the project's own, and it comes from the cloud. A
-// project the caller cannot read is refused before the confirmation is asked
-// for and before anything is removed.
+// project the caller cannot read is refused before the statement is printed and
+// before anything is removed.
 func TestManagedUnflagFailsClosedOnAnUnreadableProjectNumber(t *testing.T) {
 	r := managedUnflagRig(t)
 	r.crm.DenyGet(initProject)
@@ -419,8 +417,8 @@ func TestManagedUnflagFailsClosedOnAnUnreadableProjectNumber(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the command ran with no project number read:\n%s", out)
 	}
-	if strings.Contains(out, "Type "+initProject) {
-		t.Errorf("the confirmation was asked for with no project number read:\n%s", out)
+	if strings.Contains(out, "unflagging GCP project") {
+		t.Errorf("the command stated what it was about to remove with no project number read:\n%s", out)
 	}
 	assertBothMarksStillThere(t, r, "a refused run")
 }

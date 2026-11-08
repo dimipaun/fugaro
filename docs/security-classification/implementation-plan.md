@@ -225,7 +225,7 @@ the security-pattern floor, the matcher and the union merge`.
   naming both numbers.
 - **Reviewer tier:** standard. **Owner-run:** no. **Depends on:** nothing.
   **Commit:** `docs(security-classification): the folder's pin, and the census moves to 102`.
-- **Note added 2026-11-08:** the move landed as **112 → 113** — the row's own amendment sentence
+- **Note added 2026-11-08:** the move landed as **113 → 114** — the row's own amendment sentence
   records it beside the setup-wizard's Check 111 pin, which took 111 → 112 on the same day — and the
   three census re-check test files named above needed **no edit** — each re-derives the count from the
   row. The **101 → 102** figures in this block, in §1 and in

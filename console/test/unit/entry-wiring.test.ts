@@ -520,10 +520,7 @@ describe('the dashboard the entry mounts', () => {
       'r-4c25cf20/r-f1aa9214',
     ])
     const rows = classed(panel, 'live-run')
-    expect(rows.map((row) => classed(row, 'live-run-id')[0]?.textContent)).toEqual([
-      '20261015-120000-aa01',
-      '20261015-120400-aa03',
-    ])
+    expect(rows.map((row) => classed(row, 'live-run-id')[0]?.textContent)).toEqual(['aa01', 'aa03'])
 
     // The row is a door: clicking it asks for that run, and only that run.
     const first = rows[0] as FakeNode
@@ -572,6 +569,36 @@ describe('the dashboard the entry mounts', () => {
     // And the crumb is bound to the view and to nothing else: the run it left
     // is not read again by going back.
     expect(classed(panel, 'live-run')).not.toEqual([])
+  })
+
+  it('opens the whole run id from a row whose RUN cell draws only its ending', async () => {
+    // **The door reads the cell's `data-run-id` and not its text** (spec part 1,
+    // reconciliation F8, D1707). A colliding pair is the case that makes the
+    // difference visible: neither row's drawn ending is a run id at all, so a
+    // door still reading the text would ask the CLI about a run nobody named.
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const recorded = frame['runs'] as readonly Readonly<Record<string, unknown>>[]
+    const ids = ['20261108-115248-3bb2', '20261107-010101-3bb2']
+    const runs = recorded.map((run, index) => ({ ...run, run: ids[index] ?? run['run'] }))
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply({ ...frame, runs }),
+        // The two reads the Run screen is drawn from answer empty documents:
+        // this case is about which run the row asked about.
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({ ok: true, data: { document: { entries: [], total: 0, refused: 0 } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    const rows = classed(panel, 'live-run')
+    expect(rows.map((row) => classed(row, 'live-run-id')[0]?.textContent)).toEqual(['8-3bb2', '1-3bb2'])
+
+    ;(rows[0] as FakeNode).click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'diagnoseRun').map((call) => call.args)).toEqual([
+      { run: '20261108-115248-3bb2' },
+    ])
   })
 
   it('does not open Run detail from a click on the Reap a lost row draws', async () => {

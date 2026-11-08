@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -136,7 +137,7 @@ func TestWatchShowsClaimedRunAsQueued(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plain, run) || !strings.Contains(plain, "queued") || !strings.Contains(plain, "QUEUED") {
+	if !strings.Contains(plain, task.ShortRun(run)) || !strings.Contains(plain, "queued") || !strings.Contains(plain, "QUEUED") {
 		t.Fatalf("plain output lacks the queued run:\n%s", plain)
 	}
 }
@@ -554,7 +555,7 @@ func TestWatchQueuedTaskFieldsSanitised(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plain, run) || strings.Contains(plain, "PWNED") || strings.ContainsAny(plain, "\x1b\x07\u009b") {
+	if !strings.Contains(plain, task.ShortRun(run)) || strings.Contains(plain, "PWNED") || strings.ContainsAny(plain, "\x1b\x07\u009b") {
 		t.Fatalf("plain: %q", plain)
 	}
 }

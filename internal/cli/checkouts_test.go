@@ -331,6 +331,11 @@ func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
 		// which is the write this test exists to catch.
 		{"managed", "status", "--json"},
 		{"project", "policy", "show", "--json"},
+		// The effective-craft read (the model-crafts plan's MC8): it resolves
+		// this checkout for its narrowest layer -- the file's agent.crafts --
+		// which is the write this test exists to catch, and the reason its
+		// row on §5.1 is a row on consoleReadPaths too.
+		{"craft", "ls", "--json"},
 	} {
 		out, _, err := execute(t, args...)
 		if err != nil {
