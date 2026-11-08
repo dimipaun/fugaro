@@ -48,7 +48,16 @@ func safe(s string) string { return neutralize(cleanText(s, MaxBriefRunes)) }
 // write: a brief or a fact is where a stored prompt injection would live.
 func Summarize(s State) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "goal: %s\n", safe(s.Goal))
+	// A goal nobody has set yet says so rather than printing a colon with
+	// nothing after it: a line ending in ": " is the shape of every prompt this
+	// tree prints, so the summary of a fresh state would be read as one — by a
+	// person and by the closed-stdin policy test that holds every command of
+	// the tree to printing none (internal/cli's no-prompt harness).
+	goal := safe(s.Goal)
+	if goal == "" {
+		goal = "(not set)"
+	}
+	fmt.Fprintf(&b, "goal: %s\n", goal)
 
 	open := 0
 	for _, w := range s.WorkItems {
