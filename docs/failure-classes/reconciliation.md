@@ -1,7 +1,7 @@
 # Reconciliation: the failure-classes design against the code on `main`
 
 **Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); of them, FC1 and FC2 are built on `main` and FC3–FC9 are not
+(owner: "All tasks approved. Jobmax"); of them, FC1–FC3 are built on `main` and FC4–FC9 are not
 started.**
 This file reads
 [spec.md](spec.md) — a verbatim copy of `docs/design/failure-classes.md` — against the tree of `main`
@@ -445,7 +445,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   `plugin/skills_lint_test.go` fails any reference file over `maxReferenceLines` 300 (`:37`) or
   `maxReferenceBytes` 16384 (`:39`, compared at `:348`) — **nine bytes of room**, against a sentence
   that costs far more than nine. The design's §10 puts its one sentence there
-  (`docs/design/failure-classes.md:705`, `spec.md:741`; the design marks it conditional on **O1**'s
+  (`docs/design/failure-classes.md:749`, `spec.md:744`; the design marks it conditional on **O1**'s
   answer), so the sentence is written by **trimming the file as much as
   it adds**: the prose it replaces leaves, or the sentence is shorter than what it displaces, and
   `go test ./plugin/` — which FC8's own gate already runs — is what says so. The precedent is the

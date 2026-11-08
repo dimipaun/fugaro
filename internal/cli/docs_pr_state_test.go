@@ -117,11 +117,11 @@ const fcDoc = "docs/design/failure-classes.md"
 var fcClassRowRE = regexp.MustCompile("^\\| `([a-z][a-z_]+)` \\| ")
 
 // TestDocsFailureClassDesignPinsTheVocabulary: the design says how far its
-// plan has got -- FC1 built, the rest not -- its vocabulary is closed, the
-// count it states is the vocabulary's own, and every claim a reader would act
-// on -- one writer, the source of the table it is built on, the report, the
-// legacy reader, the unchanged version, the census it promises not to move --
-// is in it, in the words this test names.
+// plan has got -- the tasks it names as shipped, the rest not -- its vocabulary
+// is closed, the count it states is the vocabulary's own, and every claim a
+// reader would act on -- one writer, the source of the table it is built on,
+// the report, the legacy reader, the unchanged version, the census it promises
+// not to move -- is in it, in the words this test names.
 //
 // It is pinned because the document's whole value is that a reader can check
 // it: a vocabulary that grew a twentieth value in prose while the table still
@@ -135,17 +135,17 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	// must find the owner's answer, and a reader arriving after a task of §10
 	// must find that what it describes is in the tree -- a status line that
 	// reads as an open question while the code is on `main` is the defect
-	// TestDocsProjectWorkflowSecretsSaysTheBuildLanded fails a document for. FC2
-	// is the second task to move it, so the line names both.
+	// TestDocsProjectWorkflowSecretsSaysTheBuildLanded fails a document for. FC3
+	// is the third task to move it, so the line names all three.
 	for _, want := range []string{
-		"**Status: a design, and its FC1 and FC2 have shipped; the rest of §10 is not built.**",
+		"**Status: a design, and its FC1–FC3 have shipped; the rest of §10 is not built.**",
 		// The design's own decisions stay the owner's: the plan's decisions being
 		// answered is not the design's D1–D9 and O1–O6 being answered, which is
 		// what README.md's and the plan's own notes about this document say.
 		"the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his",
 		// §10's own status, in the shape the coordinator plan's parts use: a
 		// line above the tasks saying how far the plan has got.
-		"**Status: a plan, approved to build on 2026-11-07; FC1 and FC2 are built and FC3–FC8 are not started.**",
+		"**Status: a plan, approved to build on 2026-11-07; FC1–FC3 are built and FC4–FC8 are not started.**",
 		"## 9. Open items (the owner's)",
 		"## 11. What this design does not do",
 	} {
@@ -159,7 +159,7 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	// flip has to fail here rather than read plausibly.
 	for _, gone := range []string{"nothing is built", "no decision below is answered", "no task is approved"} {
 		if strings.Contains(flat, gone) {
-			t.Errorf("%s still says %q: FC1 -- the package, the record's field and the schema's enum -- and FC2 -- the one writer of a terminal status -- are on `main`, and the status lines are where a reader checks the document against the build", fcDoc, gone)
+			t.Errorf("%s still says %q: FC1 -- the package, the record's field and the schema's enum -- FC2 -- the one writer of a terminal status -- and FC3 -- the classes the runner knows from its own state -- are on `main`, and the status lines are where a reader checks the document against the build", fcDoc, gone)
 		}
 	}
 
