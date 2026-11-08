@@ -270,6 +270,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro config publish":         "refuses with no fugaro.yaml to publish",
 	"fugaro config show":            "refuses outside a git checkout, which is what the world is",
 	"fugaro coordinator":            "refuses: the edition is not in this build",
+	"fugaro craft ls":               "prints the four crafts with no project selected, on the default credential",
 	"fugaro credentials serve":      "refuses without FUGARO_PROJECT in its own environment",
 	"fugaro creds":                  "is a name for set and ls: a bare run prints its own usage and returns",
 	"fugaro creds ls":               "prints the no-project-config refusal",
