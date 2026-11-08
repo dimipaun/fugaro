@@ -59,7 +59,8 @@ clock, never about the network: the check is offline, so no outage on Fugaro's s
 - **It never removes cancel or the kill switch** (T12). Both are core and neither is ever touched by
   the licence work (the ee-reorg reconciliation's R4). In the console and the app they are, today, a
   state the product reads and a route this design keeps open (§3.2, §4.2).
-- **It never refuses a read.** Every screen, view and read stays (§3.2, §4.2).
+- **It never refuses a read** — the paid views included, on this document's call rather than a ruling
+  (§3.2, §8 item 6). Every screen, view and read stays (§3.2, §4.2).
 - **It deletes nothing, signs nobody out, and locks no screen.** The key screen in particular is
   never gated: a state a user cannot walk out of is a state that traps them (§5.5).
 
@@ -79,7 +80,7 @@ are writes.
 | writes | **`run.launch`** (`run --task-file - --json`), **`settings.edit`** (`settings`) | the CLI |
 
 `settings.edit` writes one setting of the installation's configuration document at the layer the read
-named ("one key of one document", `console/src/main/ipc.ts:1144`), so it is the console's
+named ("one key of one document", `console/src/main/ipc.ts:1101`), so it is the console's
 configuration change and not its own bookkeeping.
 
 The plan's F20 counted **fifteen read operations, and no launch or cancel**
@@ -101,22 +102,45 @@ has exactly two operations to refuse, and reads that are easy to mistake for pai
 
 **Kept: every read, including the paid ones.** `spend.report` reads `report --json`, whose command
 moves to `ee/` (T11); `coordinator.status`, `coordinator.show` and `coordinator.intents` read the
-coordinator's commands, which move with their library (T10). Those are the paid views, and after a
-lapse they stay readable. Three reasons:
+coordinator's commands, which move with their library (T10). Those are the paid views, and this
+document keeps them readable.
 
-- reading is what T12 keeps, and §9.1's *Read-only use* grants exactly this surface — "to view the
-  Customer's installations, Jobs and their records" — so a state that hid the customer's own records
-  would be narrower than the licence it comes from;
-- the console cannot draw a line between "paid functionality" and "the customer's own data" here:
-  Spend is the installation's spend and the project view is the project's state;
+**That is this document's call, and §8 item 6 hands it to the owner.** T12 keeps the scope of the
+read-only state open: "which views survive (live watch, logs, Spend, the coordinator's project view,
+seats)" is one of its open questions, with choices (a) read-only keeps every current view and the
+app's cancel, (b) it keeps the free core's views (watch, logs) and hides the paid ones, (c) the
+console and the app stop entirely and the Terms say so
+([reconciliation.md](../subscriptions/reconciliation.md)). The corpus points both ways — D436 rules
+that after the grace "paid features are off", while the spec says paid features "go read-only with a
+renewal reminder in the console" ([spec.md](../subscriptions/spec.md)) — so §9.1's grant, whole:
+
+> **Read-only use.** After the grace period, each User may continue to use the desktop console and
+> the mobile app in read-only mode, to view the Customer's installations, Jobs and their records. In
+> read-only mode, the User may not initiate or modify anything through them, except that the User may
+> cancel a Job and use the kill switch, and no paid feature is available.
+
+This document reads the closing clause in the grammar of the sentence it ends: what a User "may not
+initiate or modify", and which features are not available to *do* that with. On that reading "no paid
+feature is available" forbids doing paid things — the launch and the settings write refused below —
+and leaves a view of the customer's own records readable, which is what the grant's first sentence
+names. The strictest reading, where a view is part of the feature so Spend and the project view come
+down, is T12's choice (b): §8 item 6 names it as the alternative, and taking it changes this section
+and §5's copy rather than §3.3's gate.
+
+Three more reasons for the kept reading:
+
+- reading is what the read-only state keeps, and a state that hid the customer's own records would be
+  narrower than the grant above;
+- the console cannot draw a clean line between "paid functionality" and "the customer's own data"
+  here: Spend is the installation's spend and the project view is the project's state;
 - the console already has a mechanism that hides views — `REDUCED_VIEWS` (`spend`, `caps`, `kill`)
   in `console/src/shared/version.ts:392` — and it is the wrong one to borrow: it hides a view because
   the **data is absent** (the CLI is too old to print the field), and a lapse has the data. A lapsed
   view reading "not licensed" where the console knows the figures would be the misreading that
   mechanism exists to prevent.
 
-Seats, when S4.2 builds them, follow the same rule: the panel is a read, it stays, and the estimate is
-warned and never enforced (D439).
+Seats, when S4.2 builds them, go with the same call: the panel is a read, it stays, and the estimate
+is warned and never enforced (D439).
 
 **Refused: the two writes.** After a lapse `run.launch` and `settings.edit` are refused in the
 console's main process. Those are the console's launches and its configuration changes — T12's words
@@ -288,8 +312,8 @@ stopped, and the MIT CLI is unaffected.
   S6.2 has none (F43): 0.112.0 is the last MIT console release and the licence changes at 0.113.0,
   and every release through today ships honour-based with no key check
   ([docs/releases/console/README.md](../releases/console/README.md), and 0.113.0's own notes). A
-  fresh install has none, a free evaluator who never asked for a key has none (F39), and an
-  installation that ran only the MIT CLI before installing the console has none;
+  fresh install has none, a free evaluator who never asked for a key has none, and an installation
+  that ran only the MIT CLI before installing the console has none;
 - **the alternative costs a capability the licence grants.** Reading "no key" as read-only at the
   release that enforces would take the launch and the settings write away from an installation the
   user already has, on an upgrade, before any key was ever asked of them. That is a decision the owner
@@ -350,9 +374,10 @@ the plan says. Nothing else gains a check:
   and a CLI that refused a command after a lapse would gate the work the grace exists to protect.
   When enforcement lands, the entitlement travels in the task as a claim the runner obeys (ee-reorg
   R6) and no key is mounted into a job (D524);
-- **no read is gated**, in either product, at any state;
+- **no read is gated** by the licence state, in either product, at any state — the paid views
+  included, which is §3.2's recommendation and the owner's open call (§8 item 6);
 - the console's reduced-view mechanism is not a third point: it hides a view whose data the CLI is
-  too old to print, and a licence state never hides one (§3.2).
+  too old to print, and no licence state hides one (§3.2, §8 item 6).
 
 ## 7. What measures this
 
@@ -395,6 +420,14 @@ runs them.
    launcher-side core process drains the inbox for the cancel verb; (c) the orchestrator keeps a
    cancel half that is core and is never gated. Recommendation: (a), the smallest thing that makes
    the cancel a core path. The constraint all three share is §4.4's rule.
+6. **The lapse keeps the paid views readable (§3.2).** T12's open question, with its own choices:
+   (a) read-only keeps every current view and the app's cancel; (b) it keeps the free core's views
+   (watch, logs) and hides the paid ones (Spend, the coordinator's project view, seats); (c) the
+   console and the app stop entirely and the Terms say so. The words for (b) are D436's "paid
+   features are off" and §9.1's "and no paid feature is available"; the words for (a) are §9.1's
+   grant "to view the Customer's installations, Jobs and their records" and the spec's "paid
+   features ... go read-only with a renewal reminder in the console". Recommendation: (a), for
+   §3.2's reasons; (b) changes §3.2 and §5's copy and nothing in §3.3's gate or in §4.
 
 ## 9. Out of scope
 
