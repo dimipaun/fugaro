@@ -436,7 +436,7 @@ func TestPairUnplacedCallerRefused(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
 	}
-	for _, want := range []string{"user:person-3@example.com", "terraform.operators", "terraform.launchers"} {
+	for _, want := range []string{"user:person-3@example.com", "terraform.operators", "terraform.admins"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("refusal %q does not name %q", err, want)
 		}
@@ -1357,7 +1357,7 @@ func TestPairMeFailureIsNotUnplaced(t *testing.T) {
 	if len(events) != 1 || events[0].Code != pairRefusedIdentity {
 		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedIdentity)
 	}
-	for _, absent := range []string{"terraform.operators", "terraform.launchers", "neither of this installation's lists"} {
+	for _, absent := range []string{"terraform.operators", "terraform.admins", "neither of this installation's lists"} {
 		if strings.Contains(events[0].Reason, absent) {
 			t.Fatalf("an identity failure reads as a list failure: %q", events[0].Reason)
 		}

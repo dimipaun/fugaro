@@ -156,7 +156,7 @@ func TestDoctorRunsBucketIAMProjectEditorWarns(t *testing.T) {
 	}
 }
 
-// When the project's own policy can't be read, a launcher who bypasses the
+// When the project's own policy can't be read, a member who bypasses the
 // bucket's policy entirely through a project-level role would otherwise go
 // undetected: that must be a warning, not a silent OK.
 func TestDoctorRunsBucketIAMProjectPolicyUncheckedWarns(t *testing.T) {
@@ -166,7 +166,7 @@ func TestDoctorRunsBucketIAMProjectPolicyUncheckedWarns(t *testing.T) {
 	o := r.runDoctorJSON(t)
 	var warned bool
 	for _, c := range o.Checks {
-		if strings.HasPrefix(c.ID, "runs-bucket-iam") && c.Severity == "warning" && strings.Contains(c.Problem, "could not check which launchers hold project-level storage roles") {
+		if strings.HasPrefix(c.ID, "runs-bucket-iam") && c.Severity == "warning" && strings.Contains(c.Problem, "could not check which of this installation's members hold project-level storage roles") {
 			warned = true
 		}
 	}

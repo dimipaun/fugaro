@@ -27,7 +27,7 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 	unchecked := func(err error) []doctorCheck {
 		return []doctorCheck{{ID: "runs-bucket-iam", Severity: "warning",
 			Problem: "could not check who can write gs://" + bucket + ": " + oneLineCLI(err.Error()),
-			Fix:     "rerun fugaro doctor with access to the project, or as an operator"}, tokenGrantUnchecked(bucket)}
+			Fix:     "rerun fugaro doctor with access to the project, or as an admin"}, tokenGrantUnchecked(bucket)}
 	}
 	svc, err := storage.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Storage)...)
 	if err != nil {
@@ -45,12 +45,12 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 			case perr == nil:
 				fs = append(fs, infra.ProjectStorageWriters(pp, operators, admins)...)
 			default:
-				// A launcher's project-level role (roles/editor, say) bypasses
+				// A member's project-level role (roles/editor, say) bypasses
 				// the bucket's own policy entirely: failing to read it must
 				// not silently leave the summary OK, as if nothing bypasses it.
 				fs = append(fs, infra.BucketFinding{Severity: "warning",
-					Problem: "could not check which launchers hold project-level storage roles (which bypass the bucket's own policy): " + oneLineCLI(perr.Error()),
-					Fix:     "rerun fugaro doctor with access to the project, or as an operator"})
+					Problem: "could not check which of this installation's members hold project-level storage roles (which bypass the bucket's own policy): " + oneLineCLI(perr.Error()),
+					Fix:     "rerun fugaro doctor with access to the project, or as an admin"})
 			}
 		}
 		return append(findingChecks(fs), tokenGrantChecks(infra.JobTokenGrantFindings(p, bucket, lc.GCPProject))...)
@@ -68,7 +68,8 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 // selfCheck places the caller (only by the local config's self-asserted
 // user) and says what its unconditioned write access means. Which list
 // places it is read off the same two predicates every other command that
-// asks "is this identity an operator of the installation" reads (roles.go).
+// asks which of the installation's member lists holds an identity reads
+// (roles.go).
 func selfCheck(bucket string, held bool, user string, operators, admins []string) doctorCheck {
 	if !held {
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
@@ -80,19 +81,19 @@ func selfCheck(bucket string, held bool, user string, operators, admins []string
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
 	case operatorMember(m, operators):
 		return doctorCheck{ID: "runs-bucket-iam", Severity: "warning", Problem: fmt.Sprintf(text, bucket),
-			Fix: "ask an operator to run fugaro setup (0.7.0 or later)"}
+			Fix: "ask an admin to run fugaro setup (0.7.0 or later)"}
 	default:
-		return doctorCheck{ID: "runs-bucket-iam", Severity: "info", Problem: "expected for an operator; otherwise " + fmt.Sprintf(text, bucket),
-			Fix: "if you only launch runs, ask an operator to run fugaro setup (0.7.0 or later)"}
+		return doctorCheck{ID: "runs-bucket-iam", Severity: "info", Problem: "expected for an admin; otherwise " + fmt.Sprintf(text, bucket),
+			Fix: "if you only launch runs, ask an admin to run fugaro setup (0.7.0 or later)"}
 	}
 }
 
 // tokenGrantUnchecked is job-token-grant when the bucket's policy cannot be
-// read (a launcher's usual case): never a silent pass, never a failure.
+// read (an operator's usual case): never a silent pass, never a failure.
 func tokenGrantUnchecked(bucket string) doctorCheck {
 	return doctorCheck{ID: "job-token-grant", Severity: "info", unread: true,
 		Problem: "unchecked: cannot read the bucket policy of gs://" + bucket + ", so whether each repository's job account can read its budget token objects under tokens/ is not known",
-		Fix:     "an operator runs fugaro doctor, which can read it"}
+		Fix:     "an admin runs fugaro doctor, which can read it"}
 }
 
 // tokenGrantChecks are JobTokenGrantFindings as doctor checks: the
@@ -103,7 +104,7 @@ func tokenGrantChecks(fs []infra.BucketFinding) []doctorCheck {
 	if len(fs) > 0 {
 		sum.OK, sum.Severity = false, "info"
 		sum.Problem = "a repository's job account could not be checked for its read grant on tokens/ (see the job-token-grant-N lines)"
-		sum.Fix = "an operator runs fugaro update --repo in each repository named"
+		sum.Fix = "an admin runs fugaro update --repo in each repository named"
 		for _, f := range fs {
 			if f.Severity == "warning" {
 				sum.Severity = "warning"
@@ -127,7 +128,7 @@ func findingChecks(fs []infra.BucketFinding) []doctorCheck {
 	var out []doctorCheck
 	for i, f := range fs {
 		if f.Severity == "warning" {
-			sum.OK, sum.Severity, sum.Problem = false, "warning", "someone other than the operators can write fugaro/ (see the runs-bucket-iam-N lines)"
+			sum.OK, sum.Severity, sum.Problem = false, "warning", "someone other than the admins can write fugaro/ (see the runs-bucket-iam-N lines)"
 		}
 		out = append(out, doctorCheck{ID: fmt.Sprintf("runs-bucket-iam-%d", i+1), Severity: f.Severity,
 			// Fix carries the raw member (via shellword.Quote) so the

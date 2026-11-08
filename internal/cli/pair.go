@@ -194,7 +194,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	role, ok := pairInheritedRole(lc, me)
 	if !ok {
 		return pairRefuse(ev, o, pairRefusedUnplaced,
-			fmt.Errorf("%s is on neither of this installation's lists (terraform.operators, terraform.launchers), so a device it paired would have no role to inherit; ask an operator of %s to add you",
+			fmt.Errorf("%s is on neither of this installation's lists (terraform.operators, terraform.admins), so a device it paired would have no role to inherit; ask an admin of %s to add you",
 				meMember(me), lc.Name))
 	}
 	if o.role != "" {
@@ -793,10 +793,10 @@ func pairTimeoutRefusal(timeout time.Duration) string {
 }
 
 // pairInheritedRole is the role a paired device inherits (plan §4.1, decision
-// 13): the pairing user's own, read from the installation's lists. Launchers
-// and operators both map to the device word operator, and the lists hold no
-// viewer and no admin — so a viewer device is reached only by lowering with
-// --role, and no device is admin until the roles design places an admin.
+// 13): the pairing user's own, read from the installation's two member lists.
+// Membership of either list maps to the device word operator -- neither list
+// holds a viewer, so a viewer device is reached only by lowering with --role,
+// and no device is paired as an admin.
 func pairInheritedRole(lc *localcfg.Config, me string) (mobileauth.Role, bool) {
 	member := meMember(me)
 	if adminMember(member, lc.Terraform.Admins) || operatorMember(member, lc.Terraform.Operators) {
