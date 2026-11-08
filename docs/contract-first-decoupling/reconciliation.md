@@ -76,7 +76,7 @@ as a pattern (`gitAuthorSince`, `noneModelSince` in `internal/cli/recipes_skew.g
 `fugaro update --repo` gate, `gateGitAuthor` in `internal/cli/init.go`). CLAUDE.md's hard rule applies:
 a release must not ship an operator step, so `fugaro update` must learn the gate in the same release and
 a test must show an installation at the previous version converges. Whether an older runner also refuses
-an unknown `defaults.*` key in the project layer is UNVERIFIED (U2); the plan assumes it does.
+an unknown `defaults.*` key in the project layer is closed: it does (U2).
 
 **F8 (Gap): no automatic way to tell a running task its contract changed.** The runner has no rebase
 path from outside, and `fugaro run --pr N` continues a PR's branch; its instructions are trusted text and
@@ -149,7 +149,7 @@ command is not planned. Whether `fugaro settings` reads work inside an agent ses
 `TestDocsDesktopConsoleContractNamesTheOtherShapesFields` needs every json tag of the graph types named in
 `console/docs/json-contract.md`. Bumping the constant and adding tags therefore edits those files in the
 task that changes the types (CD2, CD3), not in a later one. `Normalize` also compares against the
-constant in two places (the stream rule, the version shape); they are pinned to the literal 2.
+constant in two places (the stream rule, the version shape); they are written against the literal 2 (`< 2` for the stream rule, `>= 2` for the version shape, so a v3 graph's node versions are still checked).
 
 **F17 (Rule): release notes.** CLAUDE.md requires `### For operators` in the release notes for any step
 after a deploy. The only step here is the one `fugaro update` performs (the plugin pin, the new setting's
