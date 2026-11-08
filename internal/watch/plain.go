@@ -32,7 +32,10 @@ type PlainOptions struct {
 //
 // Every run it names is named by its short form (tableOf), the same ending the
 // interactive table shows, so the text frame says a run the way every other
-// surface does and the commands take that ending (spec.md §1).
+// surface does (spec.md §1). The ending is a name to read, not one to look a
+// run up by: `logs`, `diagnose` and `artifacts get` take a whole id through
+// runstore.Locate, so the whole id stays `--json`'s, and `runs ls` prints
+// `<slug>/<full id>` (design generic-tool §10.3).
 //
 // ready is ReadyRowsOf the view before the finished-run filter hid anything
 // (design generic-tool §10.1): a ready PR stays listed past --keep and

@@ -630,7 +630,8 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 	}
 	// The row is gone from the ready list only: its finished row is untouched,
 	// and that row's RUN cell is the same short form as every table row's
-	// (shortRun; owner request 2026-10-24).
+	// (task.ShortRun, the rule every row of both renderers reads; owner request
+	// 2026-10-24).
 	if !strings.Contains(s, task.ShortRun("r-merged")+" Already merged") {
 		t.Fatalf("the finished row itself must stay:\n%s", s)
 	}

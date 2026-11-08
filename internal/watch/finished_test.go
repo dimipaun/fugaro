@@ -113,9 +113,10 @@ func TestCleanURLRefusesNonHTTPSAndOverlongURL(t *testing.T) {
 // A finished run's whole id is on neither human surface: its row names the
 // run in the short form every other row shows (owner request 2026-10-24), a
 // finished row is a one-liner that cannot be expanded, and the plain frame
-// prints the same form (spec.md §1). The commands take that form, and the
-// whole id — which the branch, the PR and the run record carry — is `--json`'s
-// (design generic-tool §10.3). A short fixture id would pass either way, so
+// prints the same form (spec.md §1). The commands that take a run argument
+// still take a whole id, so the whole id — which the branch, the PR and the run
+// record carry — stays reachable in `--json` and in `runs ls`'s
+// `<slug>/<full id>`, never on this screen (design generic-tool §10.3). A short fixture id would pass either way, so
 // this pins a real one, where task.ShortRun drops the stamp.
 func TestFinishedWholeRunIDIsOnlyInJSON(t *testing.T) {
 	const full = "20261023-021512-abcd"

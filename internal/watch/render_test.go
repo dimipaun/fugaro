@@ -454,10 +454,10 @@ func TestDetailCarriesVerifyAndModels(t *testing.T) {
 	}
 }
 
-// A finished row's RUN cell is the table's short form (shortRun), the same
-// one every other row shows, not the whole id (owner request 2026-10-24). The
-// whole id stays in the run's detail and in --json, which is the form
-// `fugaro logs RUN` wants.
+// A finished row's RUN cell is the table's short form (task.ShortRun), the
+// same one every other row shows, not the whole id (owner request 2026-10-24).
+// The whole id stays in the run's detail and in --json, the surface the
+// commands that take a whole id read it from.
 func TestFinishedRowShowsTheShortRunID(t *testing.T) {
 	v := fixture()
 	full := "20261023-021512-abcd"

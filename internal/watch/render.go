@@ -776,9 +776,9 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 // block's rows, owner request 2026-10-24): the id's leading characters are the
 // launch stamp, so a whole id here read unlike every row above it. Unlike an
 // active run, a finished row cannot be expanded — repo draws the detail for
-// b.Runs alone — so the whole id, which `--json` carries, is not on this
-// screen for a finished run at all, and the commands take the ending the row
-// shows in its place (design generic-tool §10.3, spec.md §2).
+// b.Runs alone — so the whole id is not on this screen for a finished run at
+// all: it is `--json`'s, and `runs ls` prints `<slug>/<full id>` (design
+// generic-tool §10.3).
 func (r *rend) finishedRow(run RunRow, selected bool, ending string) string {
 	cur := " "
 	if selected {

@@ -134,9 +134,9 @@ func TestPlainCollisionAcrossRepos(t *testing.T) {
 
 // One run id can exist in two repositories (runstore's Locate reports that as
 // ambiguous), and no ending tells those two rows apart — the ids are equal. The
-// rule answers with the repository in front of the ending (F15), the same
-// `<slug>/<ending>` form the commands' lookup takes, so the plain frame names
-// each row the way Locate resolves it.
+// rule answers with the repository in front of the ending (F15), so the cell
+// names the row's repository as well as its ending, and the frame's two rows
+// never read the same.
 func TestPlainSameRunIDTwoRepos(t *testing.T) {
 	const id = "20261108-115248-3bb2"
 	v := View{Now: t0, Repos: []RepoBlock{
