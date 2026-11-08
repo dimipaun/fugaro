@@ -168,12 +168,13 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 		// A widening is the owner's own step, and the owner's own terminal
 		// asks nothing for it (D1552, D1555): a coding agent's session was
 		// refused above, whatever --yes said, and what is left here is the
-		// sentence saying what this write widens, before the diff's own
-		// values are written. The typed name this branch used to ask for was
-		// the last prompt of a raise form, and it is gone with D1540: no
+		// sentence saying what this write widens and the sentence saying what
+		// it writes — the whole of what the typed name's confirmation showed
+		// minus the prompt itself. The typed name this branch used to ask for
+		// was the last prompt of a raise form, and it is gone with D1540: no
 		// command waits on stdin, and a question a session can answer is not a
 		// fence.
-		fmt.Fprintf(out, "%s\n", e.TypedWhy)
+		fmt.Fprintf(out, "%s\n%s\n", e.TypedWhy, e.What)
 	} else if err := confirmSettingsWrite(cmd, lc, e.Path, e.Yes, e.What); err != nil {
 		return err
 	}
