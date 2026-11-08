@@ -318,10 +318,11 @@ unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
-adding a name to a followup.* list or turning one of those keys on, is
-confirmed by the project's name typed at a terminal, or by --yes. Writing
-outside a repository is refused in a coding agent's session, --yes included,
-and so is the typed form at any layer: --yes never lifts that fence.
+adding a name to a followup.* list or turning one of those keys on, is a
+widening, and a widening is the owner's own step: nothing is asked for it at
+your own terminal, and a coding agent's session is refused it with the command
+to run yourself (D1552). Writing outside a repository is refused in a coding
+agent's session, --yes included: --yes never lifts that fence.
 
 --dry-run says what the edit would do — the key, the layer, the file, the old
 and the new value, and whether it raises a limit — and writes nothing: no
@@ -342,7 +343,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this write would otherwise get (the y/N, or the typed project name for a widening direction) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
 	f.StringVar(&o.add, "add", "", "add an item to a string-list key")
 	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
 	f.StringArrayVar(&o.addEntry, "add-entry", nil, "add one entry to a map or an object list (field=value, once per member the entry has)")
@@ -367,8 +368,9 @@ indistinguishable from a deliberate pin and silently wrong the day the built-in
 changes. Nothing to remove is a no-op with a sentence and exit 0, so an
 idempotent script does not fail.
 
-Removing a ceiling key is confirmed by the project's name typed at a terminal,
-or by --yes outside a coding agent's session.
+Removing a ceiling key is the owner's own step: nothing is asked for it at your
+own terminal, and a coding agent's session is refused it, with the command to
+run yourself (D1552).
 
 --dry-run says what the removal would do — the key, the layer, the file, the
 value it takes away, and whether it raises a limit — and writes nothing: no
@@ -1087,11 +1089,12 @@ func settingsEntryRemove(old []byte, keyPath []string, block settingsEntryBlock,
 // reaches budget.* and governance.*, and these two are ceilings of the same
 // kind under a third name: agent.max_budget_usd is one stage's spend cap and
 // agent.max_run_tokens a whole run's token cap, so raising either crosses the
-// boundary the typed name guards exactly as raising budget.per_run_usd does.
+// boundary the widening fence guards exactly as raising budget.per_run_usd
+// does.
 var settingsCeilingAgentKeys = []string{"agent.max_budget_usd", "agent.max_run_tokens"}
 
 // settingsCeilingKey is the test D846 names: budget.* and governance.* are the
-// keys whose loosening crosses the boundary the typed name guards, and the
+// keys whose loosening crosses the boundary that fence guards, and the
 // agent block's caps are the same boundary under their own names.
 //
 // The project layer's own block is the same setting under the `layer.` prefix
@@ -1201,7 +1204,7 @@ func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) stri
 // repository that writes no budget of its own starts under
 // config.DefaultMaxBudgetUSD, which applyDefaults applies and the registry's row
 // for the key reads. A base of "" read a write over that default as a first
-// write and skipped the typed name a raise asks for, so an agent session could
+// write and skipped the fence a raise meets, so an agent session could
 // name its own spend cap far above the one it started under, from a file it may
 // edit anyway (F2).
 //
@@ -1313,19 +1316,22 @@ func settingsListSubset(a, b string) bool {
 }
 
 // settingsTypedWrite reports whether this write is one D846 reserves for the
-// project's own hand, and the sentence saying why. mode is the edit being made:
-// set, unset, add or remove. `remove` takes one member out of a list, which
-// narrows it, so it is never the typed form and has no case below; `unset`
-// always is, for a ceiling, because it hands the decision to a looser layer.
+// owner's own hand, and the sentence saying what it widens: the write prints it
+// and the dry run carries it as `why`, and it no longer ends by naming a
+// confirmation, because a widening asks for none (settings_write.go, D1552).
+// mode is the edit being made: set, unset, add or remove. `remove` takes one
+// member out of a list, which narrows it, so it is never the typed form and has
+// no case below; `unset` always is, for a ceiling, because it hands the
+// decision to a looser layer.
 func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool, string) {
 	key := row.Key
-	ceilingWhy := "this raises a limit: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, or --yes outside a coding agent's session"
-	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
-	followupAddWhy := "this widens who is trusted: a run then acts on comments from an account it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	ceilingWhy := "this raises a limit: the file it would edit decides the ceiling of every run this branch starts"
+	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before"
+	followupAddWhy := "this widens who is trusted: a run then acts on comments from an account it did not act on before"
 	if settingsCeilingKey(key) {
 		switch mode {
 		case "unset":
-			return true, "removing a ceiling hands the decision back to a looser layer, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+			return true, "removing a ceiling hands the decision back to a looser layer"
 		case "add":
 			return true, ceilingWhy
 		case "set":
@@ -1364,7 +1370,7 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 	// none.
 	if mode == "add-entry" {
 		if block, ok := settingsEntryBlockOf(key); ok && block.widens {
-			return true, "this hands a run a credential it did not reach before: a workflow's secret is mounted into the job's environment, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+			return true, "this hands a run a credential it did not reach before: a workflow's secret is mounted into the job's environment"
 		}
 	}
 	return false, ""

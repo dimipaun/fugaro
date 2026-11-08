@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -340,44 +341,130 @@ func TestSetRepoAndDefaultsUseTheirOwnKeys(t *testing.T) {
 	}
 }
 
-func TestSetRaiseNeedsConfirmation(t *testing.T) {
+// TestBudgetRaiseNeedsNoPromptAtATerminal: D1542 replaced the typed name with a
+// fence on the session (TestBudgetRaiseRefusesInAnAgentSession), so a raise
+// asks nothing at the owner's own terminal — and nothing without one either,
+// because it is the markers that fence it and not the tty. --ask is the one way
+// to put the question back, and the answer to it is read by the one sanctioned
+// reader (managed_ask.go).
+func TestBudgetRaiseNeedsNoPromptAtATerminal(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedCaps(f, 100, 20)
-	// No terminal, no --yes: refused, nothing written.
-	_, _, err := execute(t, "budget", "set", "--global", "--daily", "150")
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "needs a real terminal: "+initflow.NoTerminalAdvice) {
-		t.Fatalf("err = %v", err)
-	}
-	if v := f.db.Value(nodeCG).(map[string]any)["dailyMicros"].(json.Number).String(); v != "100000000" {
-		t.Fatalf("the cap moved without a confirmation: %s", v)
-	}
-	// A wrong name typed at a terminal: refused.
+	daily := func() string { return f.db.Value(nodeCG).(map[string]any)["dailyMicros"].(json.Number).String() }
+	// A terminal with nothing typed on it: the raise lands, and the command
+	// reads no input at all.
 	typed(t)
-	if _, _, err := executeStdin(t, "birch\n", "budget", "set", "--global", "--daily", "150"); err == nil {
-		t.Fatal("a wrong project name confirmed the raise")
+	if _, _, err := executeStdin(t, "", "budget", "set", "--global", "--daily", "150"); err != nil {
+		t.Fatalf("a raise at a terminal asked for an answer: %v", err)
 	}
-	// The project's name: applied.
-	if _, _, err := executeStdin(t, "aurora\n", "budget", "set", "--global", "--daily", "150"); err != nil {
-		t.Fatal(err)
-	}
-	if v := f.db.Value(nodeCG).(map[string]any)["dailyMicros"].(json.Number).String(); v != "150000000" {
+	if v := daily(); v != "150000000" {
 		t.Fatalf("daily = %s", v)
 	}
-	// --yes needs no terminal.
+	// No terminal at all is the same answer: a script that raises a cap is not
+	// a coding agent's session, and nothing waits on a person who is not there.
 	stdinIsTerminal = func(io.Reader) bool { return false }
-	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "200", "--yes"); err != nil {
-		t.Fatal(err)
+	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "180"); err != nil {
+		t.Fatalf("a raise with no terminal was refused: %v", err)
+	}
+	// --ask asks, and a "no" writes nothing.
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	if _, _, err := executeStdin(t, "n\n", "budget", "set", "--global", "--daily", "190", "--ask"); err == nil {
+		t.Fatal("--ask asked nothing and raised the cap unconfirmed")
+	}
+	if v := daily(); v != "180000000" {
+		t.Fatalf("a declined --ask wrote %s", v)
+	}
+	// A "yes" is the raise, and --yes beside --ask is refused as the
+	// contradiction it is (initflow.AskAndYes).
+	if _, _, err := executeStdin(t, "y\n", "budget", "set", "--global", "--daily", "190", "--ask"); err != nil {
+		t.Fatalf("--ask answered yes: %v", err)
+	}
+	if v := daily(); v != "190000000" {
+		t.Fatalf("daily = %s", v)
+	}
+	if _, _, err := executeStdin(t, "y\n", "budget", "set", "--global", "--daily", "200", "--ask", "--yes"); err == nil || !strings.Contains(err.Error(), initflow.AskAndYes()) {
+		t.Fatalf("--ask and --yes together: err = %v", err)
+	}
+	if v := daily(); v != "190000000" {
+		t.Fatalf("--ask --yes wrote %s", v)
+	}
+}
+
+// TestBudgetRaiseRefusesInAnAgentSession: D1542's fence. A cap that the session
+// it bounds can lift is not a limit, so the one form a coding agent's session
+// cannot make is the raise — and what it reads is the owner's own command, not a
+// prompt it could answer (the same accident F20 is about: the fence is a
+// courtesy, as strong as the markers and no stronger). Each form is asked twice,
+// with --yes and without: --yes is accepted and ignored (it answered a prompt
+// that no longer exists), and a fence a flag lifts is not a fence.
+func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	agentSession(t)
+	// A checkout of the fixture's own repository, so the bare --repo row below
+	// resolves to acme/app and not to whatever checkout this test runs in.
+	testutil.IsolateGit(t)
+	t.Chdir(repoArgCheckout(t, filepath.Join(t.TempDir(), "app"), githubOrigin))
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+	for _, c := range []struct {
+		args    []string
+		command string
+	}{
+		{[]string{"budget", "set", "--global", "--daily", "150"}, "fugaro budget set --daily=150 --global --project=aurora"},
+		{[]string{"budget", "set", "--global", "--daily", "150", "--yes"}, "fugaro budget set --daily=150 --global --yes --project=aurora"},
+		{[]string{"budget", "set", "--global", "--per-run", "30"}, "fugaro budget set --global --per-run=30 --project=aurora"},
+		{[]string{"budget", "set", "--global", "--per-run", "30", "--yes"}, "fugaro budget set --global --per-run=30 --yes --project=aurora"},
+		{[]string{"budget", "set", "--defaults", "--daily", "500"}, "fugaro budget set --daily=500 --defaults --project=aurora"},
+		{[]string{"budget", "set", "--defaults", "--daily", "500", "--yes"}, "fugaro budget set --daily=500 --defaults --yes --project=aurora"},
+		// Every command handed back names the project this run acted on and, for
+		// the repository scope, the repository it resolved: a project the owner's
+		// own defaults answer, an empty --repo or a path would each land on
+		// another project's or checkout's caps than the one this run was about,
+		// and the typed project name that used to catch that is gone.
+		{[]string{"budget", "set", "--repo", "--daily", "150"}, "fugaro budget set --daily=150 --repo=acme/app --project=aurora"},
+	} {
+		_, _, err := execute(t, c.args...)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("%v: err = %v, want a refusal", c.args, err)
+		}
+		for _, want := range []string{"CLAUDECODE", "owner's own step", c.command, "nothing was changed"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v: the refusal does not say %q: %v", c.args, want, err)
+			}
+		}
+	}
+	// A raise that is not one stays open to the session: the caps it lowers are
+	// not the ones a cap bounds it by.
+	if v := f.db.Value(nodeCG).(map[string]any)["dailyMicros"].(json.Number).String(); v != "100000000" {
+		t.Fatalf("a refused raise moved the cap: %s", v)
+	}
+	if d := f.db.Value(budget.PathCapsDefaults); d != nil {
+		t.Fatalf("a refused raise wrote the defaults: %v", d)
+	}
+	if r := f.db.Value(budget.PathCapsRepo(appSlug)); r != nil {
+		t.Fatalf("a refused --repo raise wrote acme/app's caps: %v", r)
+	}
+	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "50"); err != nil {
+		t.Fatalf("a tightening was refused in an agent session: %v", err)
+	}
+	if v := f.db.Value(nodeCG).(map[string]any)["dailyMicros"].(json.Number).String(); v != "50000000" {
+		t.Fatalf("daily = %s", v)
 	}
 }
 
 func TestSetFromNothingCountsAsRaise(t *testing.T) {
 	f := newBudgetFixture(t, "")
+	// Setting a cap where there was none is the raise D1542 fences: what the
+	// project spent unbounded before is bounded now, from above.
+	agentSession(t)
 	_, _, err := execute(t, "budget", "set", "--global", "--daily", "50")
-	if err == nil || !strings.Contains(err.Error(), "confirmation") {
+	if err == nil || !strings.Contains(err.Error(), "owner's own step") {
 		t.Fatalf("err = %v", err)
 	}
 	if f.db.Value(nodeCG) != nil {
-		t.Fatal("a cap was written without a confirmation")
+		t.Fatal("a cap was written by a coding agent's session")
 	}
 }
 
@@ -400,9 +487,11 @@ func TestSetLowerNoConfirmation(t *testing.T) {
 	if f.db.Value(nodeCG) != nil {
 		t.Fatalf("--clear left %v", f.db.Value(nodeCG))
 	}
-	// enforce to observe loosens every cap check: that one confirms.
-	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe"); err == nil {
-		t.Fatal("loosening the mode needed no confirmation")
+	// enforce to observe loosens every cap check: that one is a raise, and an
+	// agent's session cannot make one.
+	agentSession(t)
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe"); err == nil || !strings.Contains(err.Error(), "owner's own step") {
+		t.Fatalf("loosening the mode was open to a coding agent's session: %v", err)
 	}
 }
 
@@ -527,21 +616,24 @@ func TestSetWithoutAdminExplains(t *testing.T) {
 	}
 }
 
-func TestKillAllTypesProjectName(t *testing.T) {
+// TestKillAllAsksNothing: a kill halts every run and spends nothing, so it is
+// not one of the raise forms D1542 fences — and with the typed name gone (no
+// command waits on stdin) there is nothing left for it to ask, with a terminal
+// or without one.
+func TestKillAllAsksNothing(t *testing.T) {
 	f := newBudgetFixture(t, "")
-	_, _, err := execute(t, "budget", "kill", "--all")
-	if err == nil || f.db.Value(budget.PathKillGlobal) != nil {
-		t.Fatalf("kill --all without a confirmation: %v", err)
-	}
-	typed(t)
-	if _, _, err := executeStdin(t, "yes\n", "budget", "kill", "--all"); err == nil || f.db.Value(budget.PathKillGlobal) != nil {
-		t.Fatalf("kill --all accepted something other than the project's name: %v", err)
-	}
-	if _, _, err := executeStdin(t, "aurora\n", "budget", "kill", "--all", "--reason", "runaway spend"); err != nil {
+	if _, _, err := execute(t, "budget", "kill", "--all", "--reason", "runaway spend"); err != nil {
 		t.Fatal(err)
 	}
 	if k, _ := f.db.Value(budget.PathKillGlobal).(map[string]any); k["on"] != true {
 		t.Fatalf("switch = %v", k)
+	}
+	// A terminal with nothing typed on it reads nothing, and a second kill is
+	// the no-op it always was.
+	typed(t)
+	out, _, err := executeStdin(t, "", "budget", "kill", "--all")
+	if err != nil || !strings.Contains(out, "already") {
+		t.Fatalf("err = %v, out = %q", err, out)
 	}
 }
 
@@ -576,23 +668,68 @@ func TestKillRecordsBy(t *testing.T) {
 	}
 }
 
-func TestResumeConfirms(t *testing.T) {
+// TestBudgetResumeRefusesInAnAgentSession: a resume lets runs start spending
+// again, so it is a raise by another name and carries the same fence (D1542) —
+// while the kill beside it, which halts them, asks nothing in either session.
+func TestBudgetResumeRefusesInAnAgentSession(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
-	if _, _, err := execute(t, "budget", "resume", "--all"); err == nil {
-		t.Fatal("resume needed no confirmation")
+	agentSession(t)
+	// A checkout of the fixture's own repository, so the bare --repo row below
+	// resolves to acme/app and not to whatever checkout this test runs in.
+	testutil.IsolateGit(t)
+	t.Chdir(repoArgCheckout(t, filepath.Join(t.TempDir(), "app"), githubOrigin))
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+	// The kill first, in the same session: halting a repository spends nothing,
+	// so it is not a raise and the fence does not reach it.
+	if _, _, err := execute(t, "budget", "kill", "--repo", "acme/app", "--reason", "looping"); err != nil {
+		t.Fatalf("a kill was refused in an agent session: %v", err)
+	}
+	// Both spellings of the resume are refused: --yes is accepted and ignored
+	// here, and a fence a flag lifts is not a fence.
+	for _, c := range []struct {
+		args    []string
+		command string
+	}{
+		{[]string{"budget", "resume", "--all"}, "fugaro budget resume --all --project=aurora"},
+		{[]string{"budget", "resume", "--all", "--yes"}, "fugaro budget resume --all --yes --project=aurora"},
+		// acme/app is killed above, so this resume is a real one, and the
+		// command handed back names the project and the repository this run
+		// resolved: the bare --repo it was typed with would point at the owner's
+		// own checkout, and with no --project the defaults would pick the
+		// project, either one clearing another switch than this run's.
+		{[]string{"budget", "resume", "--repo"}, "fugaro budget resume --repo=acme/app --project=aurora"},
+	} {
+		_, _, err := execute(t, c.args...)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("%v: err = %v, want a refusal", c.args, err)
+		}
+		for _, want := range []string{"CLAUDECODE", "owner's own step", c.command, "nothing was changed"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v: the refusal does not say %q: %v", c.args, want, err)
+			}
+		}
 	}
 	if k := f.db.Value(budget.PathKillGlobal).(map[string]any); k["on"] != true {
 		t.Fatalf("the switch moved: %v", k)
 	}
-	if _, _, err := execute(t, "budget", "resume", "--all", "--yes"); err != nil {
-		t.Fatal(err)
+	if k := f.db.Value(budget.PathKillRepo(appSlug)).(map[string]any); k["on"] != true {
+		t.Fatalf("a refused resume cleared acme/app's switch: %v", k)
+	}
+	// The owner's own terminal asks nothing for the resume either: the fence is
+	// the session, not the terminal.
+	noAgentSession(t)
+	typed(t)
+	if _, _, err := executeStdin(t, "", "budget", "resume", "--all"); err != nil {
+		t.Fatalf("a resume at a terminal asked for an answer: %v", err)
 	}
 	k := f.db.Value(budget.PathKillGlobal).(map[string]any)
 	if k["on"] != false || k["by"] != "someone@example.com" {
 		t.Fatalf("switch after resume = %v", k)
 	}
-	if out, _, err := execute(t, "budget", "resume", "--all", "--yes"); err != nil || !strings.Contains(out, "not killed") {
+	if out, _, err := executeStdin(t, "", "budget", "resume", "--all"); err != nil || !strings.Contains(out, "not killed") {
 		t.Fatalf("err = %v, out = %q", err, out)
 	}
 }
@@ -752,21 +889,33 @@ func TestBudgetRefusesWithoutFirebaseConfig(t *testing.T) {
 	}
 }
 
-func TestSetClearRepoFallingBackToHigherDefaultConfirms(t *testing.T) {
+func TestSetClearRepoFallingBackToHigherDefaultIsARaise(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"dailyMicros": 5 * usd1, "repo": "acme/app"})
 	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 60 * usd1})
-	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--clear"); err == nil || !strings.Contains(err.Error(), "confirmation") {
+	// Clearing hands the repository to a higher default: that is a raise, and a
+	// coding agent's session cannot make one (D1542).
+	agentSession(t)
+	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--clear"); err == nil || !strings.Contains(err.Error(), "owner's own step") {
 		t.Fatalf("err = %v", err)
 	}
 	if f.db.Value(budget.PathCapsRepo(appSlug)) == nil {
-		t.Fatal("the cap was removed unconfirmed")
+		t.Fatal("the cap was removed by a coding agent's session")
 	}
-	// No default at all is confirmed too; a default that is lower is not.
+	// The owner's own terminal asks nothing for it, and a fallback to no cap at
+	// all is the same raise.
+	noAgentSession(t)
+	typed(t)
 	f.db.Set(budget.PathCapsDefaults, nil)
-	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--clear"); err == nil {
-		t.Fatal("clearing to no cap needed no confirmation")
+	if _, _, err := executeStdin(t, "", "budget", "set", "--repo", "acme/app", "--clear"); err != nil {
+		t.Fatalf("clearing to no cap asked for an answer: %v", err)
 	}
+	if f.db.Value(budget.PathCapsRepo(appSlug)) != nil {
+		t.Fatal("not cleared")
+	}
+	// A default that is lower tightens, and nothing is asked for a tightening
+	// in either session.
+	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"dailyMicros": 5 * usd1, "repo": "acme/app"})
 	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 2 * usd1})
 	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--clear"); err != nil {
 		t.Fatal(err)
@@ -776,20 +925,23 @@ func TestSetClearRepoFallingBackToHigherDefaultConfirms(t *testing.T) {
 	}
 }
 
-func TestSetClearDefaultsPerRunFallingBackToGlobalConfirms(t *testing.T) {
+func TestSetClearDefaultsPerRunFallingBackToGlobalIsARaise(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set(budget.PathCapsGlobal, map[string]any{"perRunMicros": 20 * usd1})
 	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 5 * usd1})
 	// Clearing the defaults hands every repository without a node of its
-	// own to the $20 global cap: $5 -> $20 is a raise to confirm.
-	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err == nil || !strings.Contains(err.Error(), "confirmation") {
+	// own to the $20 global cap: $5 -> $20 is a raise, and an agent's
+	// session cannot make one.
+	agentSession(t)
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err == nil || !strings.Contains(err.Error(), "owner's own step") {
 		t.Fatalf("err = %v", err)
 	}
 	if f.db.Value(budget.PathCapsDefaults) == nil {
-		t.Fatal("the defaults were removed unconfirmed")
+		t.Fatal("the defaults were removed by a coding agent's session")
 	}
 	// A default above the global cap changes nothing effective ($20
-	// before and after): no confirmation.
+	// before and after): it is not the raise the fence is about, and the
+	// session clears it.
 	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 50 * usd1})
 	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err != nil {
 		t.Fatal(err)
@@ -804,15 +956,14 @@ func TestSetClearDefaultsPerRunFallingBackToGlobalConfirms(t *testing.T) {
 		t.Fatal(err)
 	}
 	// With no global cap the default is the only per-run cap there is:
-	// clearing it leaves every repository without one, which is confirmed
+	// clearing it leaves every repository without one, which is a raise
 	// too (as clearing a repository's own cap is).
+	noAgentSession(t)
+	typed(t)
 	f.db.Set(budget.PathCapsGlobal, nil)
 	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 5 * usd1})
-	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err == nil || !strings.Contains(err.Error(), "confirmation") {
-		t.Fatalf("clearing to no cap needed no confirmation: err = %v", err)
-	}
-	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear", "--yes"); err != nil {
-		t.Fatal(err)
+	if _, _, err := executeStdin(t, "", "budget", "set", "--defaults", "--clear"); err != nil {
+		t.Fatalf("clearing to no cap asked for an answer: %v", err)
 	}
 	if f.db.Value(budget.PathCapsDefaults) != nil {
 		t.Fatal("not cleared")
