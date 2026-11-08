@@ -740,6 +740,40 @@ const authorSince = "0.14.0"
 // docs/release.md ("Before you tag") has the checklist verify both.
 const gitAuthorSince = "0.14.0"
 
+// securitySince is the first fugaro release whose config reader knows
+// fugaro.yaml's security: block (SC7 of
+// docs/security-classification/implementation-plan.md: the repository's own
+// list of what its runs treat as security-sensitive). The file is decoded with
+// KnownFields, so a runner built from an older base image refuses the key at
+// bootstrap, before the agent starts and after the launch was paid for — and it
+// refuses the key rather than the rows: an empty block (`security: {}`) and an
+// explicit null are lines that decoder refuses exactly like a full list, which
+// is why every gate below judges RepoSecuritySet (the key being written) and
+// never the resolved block.
+//
+// Like rigorSince the judge is the image that runs the run: the installation's
+// base image for a checkout: clone workflow (its job runs no derived image of
+// its own), the base a workflow's build record was built FROM for a derived
+// one. The gate is fugaro update --repo's (refuseSecuritySkew, judged on the
+// installation's base image before any cloud effect), the launch's
+// (checkSecurityImage, checkCloneSecurityImage), which runs only where the file
+// the run will read can be read here at all (launchFileConfig), and validate's
+// warning (securityImageWarnings) — the three halves rigorSince has.
+//
+// It is the repository's half of the key alone. D1501 gives security: to the
+// project layer as well, and that half arrives with SC8, the task that lets a
+// layer write it at all (config's layerTopKeys does not carry the key yet, so a
+// layer that writes it is refused as an unknown key before any gate could see
+// it). The task that lands it extends these gates the way rigorSince's carry
+// both halves, and this constant's release is the one both halves ship in.
+//
+// It names 0.22.0, the release this work is slotted for (the release jobsSince
+// names too), which is not tagged yet: the release that tags it holds this
+// number to the tag it cuts, as it does for sharedSince's 0.14.0 and
+// reviewJobSince's 0.20.0. docs/release.md ("Before you tag") has the checklist
+// verify it.
+const securitySince = "0.22.0"
+
 // asksForRigor reports whether a launch asks for a rigor mode or declares a
 // path: the two task fields a runner older than rigorRequestSince refuses
 // outright, and so the condition the launch's own gate is written on. A
@@ -2145,6 +2179,113 @@ func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, wa
 	}
 	subject, alt := jobsSubject(spec.Repo)
 	return checkCloneImageSince(env.lc, spec, jobsSince, subject, jobsKnows, "; or "+alt, warn)
+}
+
+// securitySet reports whether the configuration the run will read writes the
+// security: block at all, at any value: RepoSecuritySet's question, and its
+// reason — a runner older than securitySince decodes the file with KnownFields
+// and refuses the key whatever it holds, so an empty block (`security: {}`) and
+// a full list are the same line to it, and judging the rows would launch the
+// first to die at bootstrap on a run already paid for.
+//
+// The configuration is launchFileConfig's, so the launch gates fire where the
+// sibling gates' do: from a checkout of the repository, where the file the run
+// will read can be read here at all (checkoutConfig, or the ref's file resolved
+// over the layer the task carries, cascadeRefConfig). Outside one it is nil and
+// nothing is gated, which is the shape rigorSince's gates have: there only
+// fugaro update --repo checks, and the run's own bootstrap is what meets the
+// key then.
+func securitySet(cfg *config.Config) bool {
+	return cfg != nil && cfg.RepoSecuritySet
+}
+
+// securitySubject names, for the gates' messages, the block a repository wrote
+// and the way out its author has. security.patterns is InProject | InRepo
+// (config.Scopes), but the project layer's half cannot be written in this build
+// — the layer refuses the key as unknown until SC8 lands it — so the subject is
+// the repository's, and the layer's half joins it the way rigorSubject names
+// both of rigor's.
+func securitySubject(repo string) (subject, alt string) {
+	return "fugaro.yaml's security: block of " + repo,
+		"remove the security: block from fugaro.yaml to run under the engine's floor until every job image is current"
+}
+
+// securityKnows names, for the image gates' messages, the key the job image's
+// runner has to know: the refusal reads "needs a job image whose runner knows
+// <this>", and the block is one key of the file whatever it holds.
+const securityKnows = "the security: block"
+
+// securityImageWarnings warns, once, that a configuration which writes the
+// security: block needs every job image on securitySince. It is validate's half
+// of checkSecurityImage, and a warning rather than a Problem for
+// rigorImageWarnings' reason: the file is valid, and what has to move is the
+// installation (the base image, or a workflow's derived one), which is why both
+// ways to move an image are named.
+func securityImageWarnings(c *config.Config) []config.Problem {
+	if !securitySet(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "security", Message: "this file's security: block needs fugaro " + securitySince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseSecuritySkew refuses fugaro update --repo, before any cloud effect,
+// when the repository's fugaro.yaml writes the security: block and the
+// installation's base image predates securitySince — a runner built from it
+// decodes the file with KnownFields and refuses the run at bootstrap on a key
+// it does not know. The states of ref are read as refuseRigorSkew reads them:
+// no base image passes, one that is not a release only warns.
+//
+// fromRepo is the key being written (RepoSecuritySet) and not the rows it
+// holds: security: {} and an explicit null are the same line to an older
+// runner's decoder as a full list, so judging the rows would deploy a job that
+// dies at bootstrap on a line the operator did write.
+func refuseSecuritySkew(repo string, fromRepo bool, ref string, warn io.Writer) error {
+	if !fromRepo {
+		return nil
+	}
+	subject, alt := securitySubject(repo)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, securitySince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, securitySince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkSecurityImage and checkCloneSecurityImage are the launch's own
+// securitySince gate, for a workflow whose job image is a derived one and for a
+// checkout: clone workflow respectively: the pair every other config-key image
+// gate has (checkRigorImage and checkCloneRigorImage), judged on the key the
+// configuration the run will read writes (securitySet). The refusal names the
+// fix that kind of image has — fugaro image refresh for a built image, fugaro
+// update --base base for the installation's own — and the way out the file's
+// author has, from securitySubject.
+//
+// The image is the judge because that is where the reader is: a runner older
+// than securitySince decodes fugaro.yaml with KnownFields, so the key alone
+// kills the run at bootstrap, before the agent starts and after the launch was
+// paid for.
+func checkSecurityImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !securitySet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := securitySubject(spec.Repo)
+	return checkImageSince(ctx, env, slug, spec, kind, securitySince, subject, securityKnows, "; or "+alt, warn)
+}
+
+// checkCloneSecurityImage is checkSecurityImage for a checkout: clone workflow:
+// see checkCloneImageSince.
+func checkCloneSecurityImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	if !securitySet(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := securitySubject(spec.Repo)
+	return checkCloneImageSince(env.lc, spec, securitySince, subject, securityKnows, "; or "+alt, warn)
 }
 
 // warnCoreJobImage warns when the build record of slug's workflow reports a

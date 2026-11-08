@@ -116,6 +116,15 @@ type Config struct {
 	// itself. Like the fields above it is never part of the file or of
 	// SHA256.
 	RepoGitAuthorSet bool `yaml:"-" json:"-"`
+	// RepoSecuritySet is whether the repository's own file wrote the
+	// security: block at all, at any value: the question RepoRigorSet answers
+	// for rigor:, and Security cannot answer it — the key written empty
+	// (`security: {}`) decodes to a block with no rows and an explicit null
+	// (`security:`) decodes to a nil block, both of which are the same line to
+	// a runner older than securitySince, which decodes the file with
+	// KnownFields and refuses the key alone. Like the fields above it is never
+	// part of the file or of SHA256.
+	RepoSecuritySet bool `yaml:"-" json:"-"`
 	// RepoLevelsNoneModelSet is whether the repository's own file names a
 	// review level's model with the literal none (NoneModel), which is the
 	// level's own switch written the other way. The question the fields above
