@@ -583,6 +583,28 @@ func TestConfigInitRefusesWithoutALayer(t *testing.T) {
 // Mutation (run, restore): change the 0o644 argument to
 // os.OpenFile in writeMinimalFugaroYAML (config_init.go) to 0o600, and
 // this test fails: the written file is rw------- instead of rw-r--r--.
+// TestConfigInitAsksNothing: the command is non-interactive by design, so it
+// writes with no terminal and asks nothing — the run without --yes is a refusal
+// that names the flag (exit 1, the file printed), which is not a question a
+// person answers (D1540).
+func TestConfigInitAsksNothing(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	dir := layerCheckout(t, f, minimalAnchored)
+	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	if err != nil {
+		t.Fatalf("config init: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if _, err := os.Stat(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Errorf("the file was not written: %v", err)
+	}
+}
+
 func TestConfigInitWritesFileMode0644(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
