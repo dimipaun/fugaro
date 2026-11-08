@@ -115,6 +115,66 @@ func TestRetriesOnceOnAPreByteTransportError(t *testing.T) {
 	}
 }
 
+// firstDialFails is an upstream whose first trip never leaves the client -- a
+// dial failure, not one byte of the request written anywhere -- and whose
+// second is answered as usual: a retry after an attempt the upstream cannot
+// have received.
+type firstDialFails struct {
+	tries atomic.Int32
+}
+
+func (d *firstDialFails) RoundTrip(r *http.Request) (*http.Response, error) {
+	if d.tries.Add(1) == 1 {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// An attempt that never left the client is not a lost one: nothing of it was
+// written, so the upstream cannot have generated for it, and the call owes only
+// what the attempt that answered cost. Charging the whole reservation instead
+// -- the rule for an attempt the upstream may have received -- would bill every
+// call whose first dial failed at its worst case, eating `granted` under
+// `enforce` and halting runs the retry had already rescued.
+func TestAnAttemptThatNeverLeftTheClientIsNotALostAttempt(t *testing.T) {
+	fastRetry(t)
+	u := pricing.Usage{Input: 11, Output: 13}
+	up := &firstDialFails{}
+	h := newHarnessWith(t, func(o *Options) { o.Client = &http.Client{Transport: up} }, anthropicfake.StreamOK(sonnet, u))
+	body := msg(sonnet, 100, `"stream":true`)
+	resp, got := h.post(body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(got, "message_stop") {
+		t.Fatalf("the call answered %d %q, want the retry's stream", resp.StatusCode, got)
+	}
+	if n := up.tries.Load(); n != 2 {
+		t.Fatalf("the gateway made %d requests, want 2: the call and its one retry", n)
+	}
+	if n := h.fake.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1: the first attempt never left the client", n)
+	}
+	line := onlyRetryLine(t, h.logs)
+	if line["reason"] != "transport" || num(line["status"]) != 0 {
+		t.Errorf("retry line reason/status = %v/%v, want transport/0", line["reason"], line["status"])
+	}
+	want := cost(t, sonnet, u)
+	if w := worst(t, sonnet, body, 100, ""); w <= want {
+		t.Fatalf("the reservation %d does not exceed the retry's cost %d: this test could not tell the two apart", w, want)
+	}
+	rep := h.gw.EndStage()
+	if rep.Calls != 1 || rep.Used != want || rep.Unreconciled != 0 {
+		t.Errorf("the stage recorded %d calls using %d (%d unreconciled), want 1 call at the retry's own cost %d", rep.Calls, rep.Used, rep.Unreconciled, want)
+	}
+	if toks := int64(u.Input + u.Output); rep.Tokens != toks {
+		t.Errorf("the stage counted %d tokens, want %d: the usage of the attempt that answered is read", rep.Tokens, toks)
+	}
+	if l := h.gw.Ledger(); l.Used != want || l.Reserved != 0 {
+		t.Errorf("ledger %+v, want the retry's own cost %d charged and nothing left reserved", l, want)
+	}
+	if call := h.logs.lastCall(t); call["settled"] != "usage" {
+		t.Errorf("the call settled %v, want settled usage: nothing was written before the retry", call["settled"])
+	}
+}
+
 // A first attempt dropped after its request had been written, and a retry the
 // upstream answered with a failure status. The 503 is the agent's answer --
 // nothing else of an answer exists -- but it is not what the call cost: the
