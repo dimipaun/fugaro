@@ -11347,8 +11347,9 @@ opens are the runs' own, and they are left for a person to look at. What a perso
 is what the check exists to make: the one extra sandbox repository created in step 7, the merged pull request of
 step 6 (which cannot be unmerged), the rotated and revoked token pair of step 8 (the new version is
 the live one from then on), and the project-wide secret, which
-`fugaro secrets delete bitbucket-token --project-wide` removes once no repository needs it. **Never
-run any step against `belong`**, and **no agent runs any step of it**.
+`fugaro secrets rm bitbucket-token` removes — the container with every version in it and the
+`project_secrets` entry that made it reachable, in the same run — once no repository needs it.
+**Never run any step against `belong`**, and **no agent runs any step of it**.
 
 ## Check 190: git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy (installation `fugaro` only, sandbox repository only, never `belong`; run by you; NOT RUN)
 
