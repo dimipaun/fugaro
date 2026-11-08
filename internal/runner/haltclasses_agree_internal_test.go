@@ -103,29 +103,37 @@ func TestStageErrorClassesAgreeWithTheReadersTable(t *testing.T) {
 	// The one stop the reader may not reach through the table at all: the
 	// OAuth account's spent allowance. stageErrorReason writes that stop as a
 	// sentence of its own with the model's own text after it and no error
-	// envelope in front of it, so a table read as a plain substring over the
-	// whole reason would let the model choose the class — the message below
-	// says "is invalid: ", and a reader that scanned the table would count a
-	// stopped allowance as a configuration refusal. The runner answers the
-	// allowance before its own tables (stageFailureClass), so the reader has to
-	// answer it in the same place.
-	res := agent.Result{Subtype: "success", Text: `API Error: 400 {"type":"error","error":{"type":"rate_limit_error","message":"your request is invalid: messages.0.content"}}`}
+	// envelope in front of it, so a reader that scans the whole reason can be
+	// steered by that text either way. The two messages below are the two
+	// halves of it: the first says "is invalid: ", which a reader scanning the
+	// table would count as a configuration refusal — and the second says the
+	// envelope's own words and then a refusal phrase, which a reader looking
+	// for that envelope anywhere in the reason would count as a refused
+	// credential. The runner answers the allowance before its own tables and
+	// reads the envelope only as its own opening sentence (stageFailureClass,
+	// stageErrorReason), so the reader has to answer it in the same place.
 	oauth := &run{cfg: &config.Config{Agent: config.Agent{Auth: "oauth"}}}
-	rec := &runstore.Record{Status: runstore.StatusFailed, Reason: oauth.stageErrorReason("implement", res)}
-	want := oauth.stageFailureClass("oauth", res)
-	if got := runview.ClassOf(rec); got != want {
-		t.Errorf("a legacy record whose reason is %q reads %q, and the classifier the same message gives is %q: the reason carries the model's own text after the runner's sentence, and a class read out of that text is the model choosing what the run is counted under", rec.Reason, got, want)
-	}
-	if want != failure.StageErrorUnexplained {
-		t.Errorf("the classifier answers %q for a spent allowance, want %q: this case reads the writer's answer, so the writer moving would make it agree with a reader that is wrong", want, failure.StageErrorUnexplained)
+	for _, text := range []string{
+		`API Error: 400 {"type":"error","error":{"type":"rate_limit_error","message":"your request is invalid: messages.0.content"}}`,
+		"Claude AI usage limit reached; the agent reported an error: the provider answered with status 403",
+	} {
+		res := agent.Result{Subtype: "success", Text: text}
+		rec := &runstore.Record{Status: runstore.StatusFailed, Reason: oauth.stageErrorReason("implement", res)}
+		want := oauth.stageFailureClass("oauth", res)
+		if got := runview.ClassOf(rec); got != want {
+			t.Errorf("a legacy record whose reason is %q reads %q, and the classifier the same message gives is %q: the reason carries the model's own text after the runner's sentence, and a class read out of that text is the model choosing what the run is counted under", rec.Reason, got, want)
+		}
+		if want != failure.StageErrorUnexplained {
+			t.Errorf("the classifier answers %q for a spent allowance, want %q: this case reads the writer's answer, so the writer moving would make it agree with a reader that is wrong", want, failure.StageErrorUnexplained)
+		}
 	}
 
 	// The other direction: a message no phrase names is the class the
 	// classifier answers with when nothing matches, so a phrase dropped from
 	// both lists does not become a class of its own.
-	res = agent.Result{Subtype: "success", Text: "the stage gave up for a reason of its own"}
-	rec = &runstore.Record{Status: runstore.StatusFailed, Reason: r.stageErrorReason("review", res)}
-	want = r.stageFailureClass("", res)
+	res := agent.Result{Subtype: "success", Text: "the stage gave up for a reason of its own"}
+	rec := &runstore.Record{Status: runstore.StatusFailed, Reason: r.stageErrorReason("review", res)}
+	want := r.stageFailureClass("", res)
 	if got := runview.ClassOf(rec); got != want {
 		t.Errorf("an unmatched message reads %q, want %q: a cause nothing names is counted rather than guessed at", got, want)
 	}

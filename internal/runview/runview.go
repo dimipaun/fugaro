@@ -414,8 +414,23 @@ func legacyClass(reason string) failure.Class {
 	// provider refused the credential is a cause this table may name, while
 	// the same words in a sentence the runner wrote about something else are
 	// not (design §5's ordering rule).
-	if strings.Contains(lower, agentErrorPrefix) {
-		return stageErrorClass(lower)
+	//
+	// The envelope is the runner's own opening sentence, so it is read where
+	// the runner writes it and nowhere else: every version of stageErrorReason
+	// opens a stage error's reason with "stage <name>: the agent reported an
+	// error (…)", and everything after those words is the agent's message. A
+	// substring over the whole reason would let that message open this branch
+	// and choose the class, and the stop whose reason carries model text after
+	// the runner's own words is not an envelope at all: a spent OAuth
+	// allowance, whose message reading "the agent reported an error: the
+	// provider answered with status 403" read as a refused credential where
+	// the runner wrote stage_error_unexplained. The record carries no auth, so
+	// the reader cannot ask the allowance the way the writer does
+	// (stageFailureClass); where the envelope sits is what it can read.
+	if rest, onStage := strings.CutPrefix(lower, "stage "); onStage {
+		if _, text, cut := strings.Cut(rest, ": "); cut && strings.HasPrefix(text, agentErrorPrefix) {
+			return stageErrorClass(lower)
+		}
 	}
 	for _, row := range legacyReasons {
 		if strings.Contains(lower, row.reason) {
@@ -427,7 +442,10 @@ func legacyClass(reason string) failure.Class {
 
 // agentErrorPrefix is the runner's own words for a stage whose result reported
 // an error (stageErrorReason, internal/runner): the one envelope a reason
-// carrying model output arrives in.
+// carrying model output arrives in. The words open the runner's own sentence
+// for the stage — "stage <name>: the agent reported an error (…)" — and
+// legacyClass reads them there, never anywhere in the reason: the model's
+// message comes after the runner's words, and it may say them too.
 const agentErrorPrefix = "the agent reported an error"
 
 // authRefusedPhrases and transportFailedPhrases are this reader's copy of the
