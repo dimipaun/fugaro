@@ -85,14 +85,28 @@ import (
 // one that does not is the failure this file is about.
 const closedStdinDeadline = 10 * time.Second
 
-// closedStdinQuestion matches the two shapes a run prints when it asks a person
-// something: the ⚠ CONFIRM banner every typed step shows before it reads the
-// project's name (confirmTyped, confirmTypedStrict, confirmBuild, confirmRemoval,
-// the initflow steps, managed apply), and the prompt line itself. A value's
-// prompt — readValue's "Type the billing account ID: " — is the same shape and
-// is matched too, which is deliberate: it is only printed at a terminal, so a
-// leaf that reaches it here has found a way to ask where nobody can answer.
-var closedStdinQuestion = regexp.MustCompile(`⚠ CONFIRM|Type [^\n]*: $`)
+// closedStdinQuestion matches the three shapes a run prints when it asks a
+// person something: the ⚠ CONFIRM banner every typed step shows before it reads
+// the project's name (confirmTyped, confirmTypedStrict, confirmBuild,
+// confirmRemoval, the initflow steps, managed apply), the typed prompt line
+// itself, and the y/N question the other half of the same family prints with no
+// banner at all (askConfirm, confirmSettingsWrite, the two "Write this to …?"
+// steps, restore). A value's prompt — readValue's "Type the billing account
+// ID: " — is the same shape as the typed one and is matched too, which is
+// deliberate: it is only printed at a terminal, so a leaf that reaches it here
+// has found a way to ask where nobody can answer.
+//
+// Each one reads the whole run, not its end, because a run goes on after it
+// asks: the refusal an ended stdin earns, the error cobra prints, whatever
+// comes next. The banner is matched anywhere. The typed prompt is a line that
+// ends in its own colon, and `(?m)` is what makes that `$` the end of a line
+// rather than the end of the run — without it the same prompt was caught when
+// it was the last thing a run printed and missed when one line followed it.
+// The y/N shape is not anchored even to a line, because the print-then-refuse
+// ordering it guards against puts the refusal on the prompt's own line, and
+// the five prints above are the only writers of the bracketed form, so it is a
+// question wherever it appears.
+var closedStdinQuestion = regexp.MustCompile(`(?m)⚠ CONFIRM|Type [^\n]*: $|\[y/N\]:`)
 
 // closedStdinFixture is one leaf's run: the arguments that put it on the path
 // where it would ask somebody something, and the sentence the run must still
@@ -219,8 +233,17 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 // arguments for. Nothing here is claimed to be quiet either — the question
 // check and the deadline hold every leaf in this list exactly as they hold a
 // fixtured one, which is what makes the list safe to keep.
+//
+// The commands that carry subcommands and a body of their own are here too,
+// and for the same reason there is no fixture for them: a parent's own body is
+// what runs when no subcommand matches, `fugaro settings` bare is the whole of
+// that command's read, and the four that print their usage have no argument
+// that would do more. `fugaro review` and `fugaro pair` refuse from inside
+// their bodies, in sentences of their own, which the run's own error carries.
 var closedStdinNoFixture = map[string]string{
+	"fugaro accounts":               "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts ls":            "selects no project and names the two ways to (--repo, an origin remote)",
+	"fugaro backends":               "is a name for its one subcommand: a bare run prints its own usage and returns",
 	"fugaro backends ls":            "lists every backend a project may name, which needs no project",
 	"fugaro backlog add":            "stops at its own D27 field checks, which this world has no values for",
 	"fugaro backlog index":          "reads docs/backlog, which this world has no checkout to hold",
@@ -235,6 +258,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro config show":            "refuses outside a git checkout, which is what the world is",
 	"fugaro coordinator":            "refuses: the edition is not in this build",
 	"fugaro credentials serve":      "refuses without FUGARO_PROJECT in its own environment",
+	"fugaro creds":                  "is a name for set and ls: a bare run prints its own usage and returns",
 	"fugaro creds ls":               "prints the no-project-config refusal",
 	"fugaro doctor":                 "runs its whole check and reports what this world lacks",
 	"fugaro graph":                  "refuses: the edition is not in this build",
@@ -247,6 +271,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image status":           "prints the no-project-config refusal",
 	"fugaro managed status":         "prints the no-project-config refusal",
 	"fugaro models ls":              "prints the built-in list with no project selected",
+	"fugaro pair":                   "refuses from inside its body: the world's project has no budget.firebase_api_key for the phone to exchange the token with",
 	"fugaro pair ls":                "prints the no-project-config refusal",
 	"fugaro plan graph":             "refuses with no graph artifact under docs/plans",
 	"fugaro plan status":            "reads the repository's plan and stream files and reports what is missing",
@@ -258,11 +283,14 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro reaper":                 "prints the no-project-config refusal",
 	"fugaro recipes ls":             "prints the no-project-config refusal",
 	"fugaro report":                 "refuses: the edition is not in this build",
+	"fugaro review":                 "refuses from inside its body: --pr is required, and a bare run names it rather than launching a review",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
+	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
+	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro setup":                  "refuses on this world's runs bucket name before the wizard's first step",
 	"fugaro update":                 "refuses on this world's runs bucket name before its first stage",
 	"fugaro update-skills":          "reports that a development build has no release to pin the plugin to",
@@ -644,10 +672,19 @@ func closedStdinLeaf(root *cobra.Command, path string) *cobra.Command {
 	return nil
 }
 
-// closedStdinLeaves is every command of the released tree with no subcommand:
-// the commands a run can end on. Cobra's own `help` and `completion` are not in
-// the tree NewRootCmd builds — cobra adds them when a tree is executed — so a
-// leaf here is always a command fugaro ships.
+// closedStdinLeaves is every command of the released tree a run can end on:
+// the commands with no subcommand, and the commands that carry a subcommand
+// tree and a body of their own. The second kind is here because the policy is
+// about every command and not only the ones nothing hangs from: cobra runs a
+// parent's body when no subcommand matches the arguments, so `fugaro settings`
+// bare prints every setting and `fugaro review` bare refuses its missing --pr
+// from inside that body — both of them a closed stdin away from the same
+// question the leaves are held to. A parent with subcommands and no body of its
+// own is a name for its children and runs nothing, so it is not one of these.
+//
+// Cobra's own `help` and `completion` are not in the tree NewRootCmd builds —
+// cobra adds them when a tree is executed — so a leaf here is always a command
+// fugaro ships.
 func closedStdinLeaves(t *testing.T) []*cobra.Command {
 	t.Helper()
 	return closedStdinLeavesOf(NewRootCmd())
@@ -657,9 +694,8 @@ func closedStdinLeavesOf(root *cobra.Command) []*cobra.Command {
 	var leaves []*cobra.Command
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if len(c.Commands()) == 0 {
+		if len(c.Commands()) == 0 || c.Run != nil || c.RunE != nil {
 			leaves = append(leaves, c)
-			return
 		}
 		for _, child := range c.Commands() {
 			walk(child)
@@ -716,6 +752,30 @@ func TestClosedStdinHarnessSeesAQuestion(t *testing.T) {
 		{
 			name: "a value's prompt",
 			out:  "Type the billing account ID: ",
+			want: true,
+		},
+		{
+			// The one the anchoring is for: a prompt is a line, and the run
+			// goes on after it — with the refusal an ended stdin earns, with a
+			// cobra error, with anything. A run was caught when the prompt was
+			// the last thing it printed and missed when one line followed it,
+			// so this is the case that has to stay green.
+			name: "a prompt with the run's refusal below it",
+			out:  "Type aurora to confirm: \nthe typed confirmation of this step needs a real terminal: run it in your own terminal window, not through a coding agent or a pipe\n",
+			want: true,
+		},
+		{
+			// No banner anywhere in it: the y/N family prints the question and
+			// nothing else, so this is the shape that matches on its own.
+			name: "the y/N prompt, which prints no banner",
+			out:  "Write this to /tmp/x/fugaro.yaml? [y/N]: ",
+			want: true,
+		},
+		{
+			// The same ordering hazard for the y/N family: the prompt is on the
+			// line the run continues on.
+			name: "a y/N prompt the run continues past",
+			out:  "Write this to /tmp/x/fugaro.yaml? [y/N]: the confirmation of this write needs a real terminal\n",
 			want: true,
 		},
 		{
