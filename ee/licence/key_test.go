@@ -130,6 +130,52 @@ func ringOf(f fixtureKey) Keyring {
 	return Keyring{f.id: f.pub}
 }
 
+// base64Alphabet is the unpadded base64url alphabet, which the re-spelling below
+// indexes into.
+const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+// respellFinalCharacter answers the same bytes spelled with the final base64url
+// character's spare bits set. One key has one spelling, and the vector built
+// with this is what carries that rule to the console's and the app's verifiers
+// as well as to this one: a decoder that is not strict reads this text as the
+// same bytes, so a key's signature would verify over a second spelling of its
+// own claim set.
+//
+// The re-spelling is checked here, in the generator, because a vector that
+// turned out to be canonical would prove nothing: the spare bits are what the
+// final one or two bytes leave over, and a part whose length is a multiple of
+// three has none.
+func respellFinalCharacter(t *testing.T, part string) string {
+	t.Helper()
+	decoded, err := base64.RawURLEncoding.DecodeString(part)
+	if err != nil {
+		t.Fatalf("%q is not base64url: %v", part, err)
+	}
+	spare := 0
+	switch len(decoded) % 3 {
+	case 1:
+		spare = 4
+	case 2:
+		spare = 2
+	}
+	if spare == 0 || part == "" {
+		t.Fatalf("a part of %d bytes leaves no spare bit in its final character, so it has one spelling and nothing to re-spell here", len(decoded))
+	}
+	index := strings.IndexByte(base64Alphabet, part[len(part)-1])
+	if index < 0 {
+		t.Fatalf("%q does not end in a base64url character", part)
+	}
+	respelled := part[:len(part)-1] + string(base64Alphabet[index|((1<<spare)-1)])
+	if _, err := base64.RawURLEncoding.Strict().DecodeString(respelled); err == nil {
+		t.Fatalf("%q is the canonical spelling after all, so the vector built from it would prove nothing", respelled)
+	}
+	same, err := base64.RawURLEncoding.DecodeString(respelled)
+	if err != nil || !bytes.Equal(same, decoded) {
+		t.Fatalf("the re-spelling of %q is not the same bytes (%v), so it is not a second spelling of one part", part, err)
+	}
+	return respelled
+}
+
 func TestVerifyRefusesBeforeParsing(t *testing.T) {
 	fixture := newFixtureKey(t, fixtureKeyID)
 	now := time.Now()
@@ -167,6 +213,49 @@ func TestVerifyUnknownKeyID(t *testing.T) {
 	claims, state, err := verify([]byte(raw), time.Now(), ringOf(fixture))
 	if !errors.Is(err, ErrUnknownKeyID) {
 		t.Fatalf("a key signed by an id outside the keyring answered %v (%s, %s), want ErrUnknownKeyID", err, claims.Organisation, state)
+	}
+}
+
+// TestTheKeyIDIsHeldToTheBase64urlAlphabet holds the id's spelling, which is the
+// one part of a key text nothing decodes. An id outside the alphabet is refused
+// with the shape rather than answered as an id this build does not hold, and its
+// own characters are not written into the refusal: a refusal is a line a
+// terminal prints and a log keeps.
+func TestTheKeyIDIsHeldToTheBase64urlAlphabet(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureKeyID)
+	// A space, a terminal escape, and the two characters standard base64 has and
+	// base64url does not.
+	for _, id := range []string{"a key id with spaces", "licence-\x1b[31mred", "licence+plus", "licence/id"} {
+		raw := encodeKey(id, []byte("{}"), make([]byte, ed25519.SignatureSize))
+		_, _, err := verify([]byte(raw), time.Now(), ringOf(fixture))
+		if !errors.Is(err, ErrMalformed) {
+			t.Errorf("the key id %q answered %v, want ErrMalformed: a key text is three base64url parts, and the id is one of them", id, err)
+		} else if strings.Contains(err.Error(), "\x1b") {
+			t.Errorf("the refusal for %q carries the id's own characters, so whatever an id holds reaches the terminal it is printed at", id)
+		}
+	}
+
+	// The fixture's own id is base64url, so this is a rule about the alphabet
+	// rather than a refusal of every key.
+	valid := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: 1, Expires: 100})
+	if _, _, err := verify([]byte(valid), time.Unix(2, 0), ringOf(fixture)); err != nil {
+		t.Fatalf("a key whose id is %q was refused: %v", fixtureKeyID, err)
+	}
+}
+
+// TestAClaimSetWithNoOrganisationIsRefused holds the one claim the format itself
+// requires: a key binds to an organisation, and a claim set with none is not one
+// this verifier can place. It is also the only refusal made by reading a claim,
+// so the payload's signature has already verified by the time it is made.
+func TestAClaimSetWithNoOrganisationIsRefused(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureKeyID)
+	raw := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "", Issued: 1, Expires: 100})
+	claims, state, err := verify([]byte(raw), time.Unix(2, 0), ringOf(fixture))
+	if !errors.Is(err, ErrClaims) {
+		t.Fatalf("a claim set with no organisation answered %v, want ErrClaims", err)
+	}
+	if !reflect.DeepEqual(claims, Claims{}) || state != "" {
+		t.Fatalf("a refused key answered %+v (%s), want no claims and no state", claims, state)
 	}
 }
 
@@ -915,6 +1004,19 @@ func generateVectors(t *testing.T) vectorFile {
 	refuse("a truncated claim set",
 		fixture.signRaw(t, []byte(`{"tier":"team","features":[],"seats":1,"organisation"`)),
 		"claims")
+	// The claim set binds to an organisation: a key issued to nobody is one this
+	// verifier cannot place, and it is refused as the claim set it is rather than
+	// read as a key that happens to carry no organisation.
+	refuse("a claim set with no organisation to bind it to",
+		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "", Issued: days(-10), Expires: days(355)}),
+		"claims")
+	// And nothing is read out of a claim set with bytes behind it: the decode
+	// runs to the end of the payload, so a second object after the first is a
+	// claim set the verifier does not know rather than one it reads and ignores
+	// the rest of.
+	refuse("a claim set with bytes after it",
+		fixture.signRaw(t, []byte(fmt.Sprintf(`{"tier":"team","features":[],"seats":1,"organisation":"example.com","issued":%d,"expires":%d}{}`, days(-10), days(355)))),
+		"claims")
 
 	// Not three parts, and a part that is not base64url: the shape of the key
 	// text is refused before any keyring is consulted.
@@ -923,6 +1025,23 @@ func generateVectors(t *testing.T) vectorFile {
 		"malformed")
 	refuse("a part that is not base64url",
 		fixture.id+".%%%.%%%",
+		"malformed")
+	// Every part is base64url, and that is a rule about one spelling rather than
+	// about bytes: this payload is a claim set spelled with its final character's
+	// padding bits set, which a decoder that is not strict reads as the same
+	// bytes. One key has one spelling.
+	spelled := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-10), Expires: days(355)})
+	parts := strings.Split(spelled, ".")
+	refuse("a payload spelled with its padding bits set",
+		parts[0]+"."+respellFinalCharacter(t, parts[1])+"."+parts[2],
+		"malformed")
+	// The id is base64url like the other two parts, and it is the one nothing
+	// decodes: an id carrying characters outside the alphabet is refused with the
+	// shape, before any keyring is consulted and before the id is written into a
+	// refusal. Its payload and signature are good, so a verifier that skipped the
+	// rule would answer unknown-key-id here.
+	refuse("a key id that is not base64url",
+		"a key id with spaces."+base64.RawURLEncoding.EncodeToString(foreignPayload)+"."+base64.RawURLEncoding.EncodeToString(ed25519.Sign(fixture.priv, foreignPayload)),
 		"malformed")
 
 	// The overlap (T26): two keys installed at once, and the one with the later

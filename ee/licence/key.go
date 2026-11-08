@@ -12,7 +12,10 @@
 //     all three base64url, and an id the keyring does not hold is refused
 //     before either other part is decoded. That is what makes a compiled-in
 //     public key rotate, and it is what makes a staging key refused rather than
-//     half-accepted.
+//     half-accepted. The id is the one part nothing decodes, so its spelling is
+//     held to the alphabet with the shape rather than left to the keyring: it is
+//     compared and echoed as the text it is, and a text the design says is
+//     base64url is not an id this build simply does not hold.
 //   - **The signature is checked over the payload's raw bytes, before any JSON
 //     is parsed** (docs/licensing/licence-key.md, "Raw bytes before claims"), so
 //     a re-spelled claim set fails the signature instead of verifying as the
@@ -214,12 +217,32 @@ func verify(raw []byte, now time.Time, ring Keyring) (Claims, State, error) {
 //
 // The outer whitespace is trimmed because a key arrives by paste as often as by
 // file: a trailing newline is a newline and not a malformed key.
+//
+// The id's own characters are checked here with the shape. The payload and the
+// signature are spelled in the same alphabet and their decoder holds them to it;
+// nothing decodes the id, so it is the one part that would otherwise reach the
+// keyring and the refusal as the text it is written as -- spaces, control
+// characters and all.
 func splitKey(raw []byte) (id, payload, signature string, err error) {
 	parts := strings.Split(strings.TrimSpace(string(raw)), ".")
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" || !isBase64url(parts[0]) {
 		return "", "", "", ErrMalformed
 	}
 	return parts[0], parts[1], parts[2], nil
+}
+
+// isBase64url answers whether text is spelled in the unpadded base64url
+// alphabet of RFC 4648 section 5, which is the alphabet all three parts of a key
+// text are written in.
+func isBase64url(text string) bool {
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; {
+		case 'A' <= c && c <= 'Z', 'a' <= c && c <= 'z', '0' <= c && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // decodePart decodes one of a key's base64url parts. RawURLEncoding refuses the
