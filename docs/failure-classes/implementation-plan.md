@@ -1,7 +1,7 @@
 # A closed failure class on every run record, and a failures report: implementation plan
 
 **Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); of them, FC1–FC4 are built on `main` and FC5–FC9 are not
+(owner: "All tasks approved. Jobmax"); of them, FC1–FC5 are built on `main` and FC6–FC9 are not
 started.**
 Nine tasks, **FC1–FC9** — the design's own FC1–FC8 (its §10, kept by name, by order and by edge — its
 **task** names, that is: one
@@ -24,8 +24,8 @@ reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the 
 
 **Every task here is approved, and what each one's gate named is settled.** The design stays a design
 and this stays a plan (§10 of the design and [README.md](README.md) say so); each task's gate is in
-§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Four of
-the nine are built** — FC1–FC4 — and **FC5–FC9 are not started**: an approved task is still built on
+§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Five of
+the nine are built** — FC1–FC5 — and **FC6–FC9 are not started**: an approved task is still built on
 its own, in its own run, in the order §1 fixes.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
@@ -652,11 +652,11 @@ and FC3–FC9 start when it lands.
 
 **FC1's, FC2's and FC3's rows are answered in full.** The plan was approved; **D1453** is answered as
 recommended (`internal/failure`), **D1452** and **D1456** for FC2, and **D1455** for FC3 — FC4 names
-no decision of its own — and all four tasks are merged, so FC4's first gate (FC2 merged) and FC5's
+no decision of its own — and all five tasks are merged, so FC4's first gate (FC2 merged) and FC5's
 (FC1 and FC3 merged) are met as well. Every other row waits on its own run, in the order §1 fixes.
 
 **And the plan's own status:** a plan, **every task of it approved on 2026-11-07** (owner: "All
 tasks approved. Jobmax"); the dated answer this plan's decisions share is in
-[reconciliation.md](reconciliation.md) §6; **FC1–FC4 are built and FC5–FC9 are not started**. The
+[reconciliation.md](reconciliation.md) §6; **FC1–FC5 are built and FC6–FC9 are not started**. The
 design's §10 status records the same fact and answers none of the design's own decisions, which are
 D1–D9 and O1–O6 of that document and not this folder's.
