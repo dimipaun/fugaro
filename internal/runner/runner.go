@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
@@ -284,11 +285,15 @@ type run struct {
 	// for this run (accountchoice.go, D874): off unless the owner's published
 	// policy turns it on, and the account each stage has reached.
 	accounts accountChoice
-	// mu guards halt, cancelled, failReason, tokens, gatewayTokens and
-	// haltStage: the cancel watcher and, with the gateway, its halt
+	// mu guards halt, cancelled, failReason, failClass, tokens, gatewayTokens
+	// and haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
 	// and a cancel is recorded first wins (see haltNow and markCancelled).
-	mu         sync.Mutex
+	mu sync.Mutex
+	// failClass is the class of the reason in failReason, when the site that
+	// recorded the failure could name one: the two are one fact, so they are
+	// written together by failWithClass and the first failure keeps both.
+	failClass  failure.Class
 	failReason string
 	cancelled  bool
 	halt       *runstore.Halt
@@ -462,6 +467,16 @@ type run struct {
 	// returns, which is the only one readiness reads: level 3's where it ran,
 	// level 2's otherwise, and level 1's where no outer level ran at all.
 	lastSenior seniorRound
+	// seniorLevelLast is the senior level's own last round, kept beside
+	// lastSenior because level 3 overwrites that one. Readiness is decided on
+	// the highest enabled level, but the decisions the run owes the owner are
+	// what the last round of every enabled OUTER level left (OD1,
+	// decidingOwnerDecisions): without this, a senior round that shipped while
+	// carrying one — or that ran out of rounds with one beside a fixable
+	// finding — would be forgotten the moment the adversarial review ran, and
+	// the run would go ready, or end a draft with the question recorded
+	// nowhere and the follow-up that answers it launched blind.
+	seniorLevelLast seniorRound
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
@@ -583,7 +598,13 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			// already be recorded; only fall back to infra_error when the
 			// run never got far enough to decide anything else.
 			if r.rec.Status == runstore.StatusRunning {
-				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
+				// The status is here for every error of this shape — the
+				// machinery stopped the run — while the class is the error's
+				// own where its site named one (endClass): a configuration the
+				// runner refused and a forge call it could not make are causes
+				// this fallback can read off the error itself, and every other
+				// error is the one infra_error means.
+				r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, endClassOf(err), reason)
 			}
 			d.Log.Error("run failed", "stage", r.rec.Stage, "err", reason)
 		}
@@ -647,13 +668,13 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		case errors.As(err, &halt):
 			// A policy halt before anything was locked, pushed or opened:
 			// an outcome, not a failure, so there is no error to return.
-			r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, &halt.Halt
-			r.rec.Reason = halt.Error()
+			r.rec.Halt = &halt.Halt
+			r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(halt.Halt.Reason), halt.Error())
 			d.Log.Warn("run halted at bootstrap", "reason", string(halt.Halt.Reason), "detail", halt.Halt.Detail)
 			return r.rec, nil
 		case errors.Is(err, ErrCancelled) || errors.Is(context.Cause(runCtx), ErrCancelled):
 			if r.markCancelled() {
-				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, "cancelled during bootstrap"
+				r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, "cancelled during bootstrap")
 			}
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
@@ -1550,11 +1571,69 @@ func (r *run) fail(reason string) {
 	r.failLocked(reason)
 }
 
+// failWithClass is fail for a site that can also name the class the cause is
+// in: the two answer one question, so they are written together and the first
+// failure keeps both, and a class can never describe a sentence the record
+// does not carry. finalize's failed case is what reads the pair back
+// (failureClass), and a site that knows only the reason leaves the class to
+// whichever task reads that cause from the run's own state.
+func (r *run) failWithClass(class failure.Class, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failReason != "" {
+		return
+	}
+	r.failReason, r.failClass = reason, class
+}
+
 // failLocked is fail for a caller holding r.mu.
 func (r *run) failLocked(reason string) {
 	if r.failReason == "" {
 		r.failReason = reason
 	}
+}
+
+// failureClass is the class of the reason the run failed for, and
+// unclassified when no site named one: a failure the vocabulary does not hold
+// is counted rather than dropped, and its count is the signal to name it.
+// Every site that chooses a class of its own writes the record's ending
+// itself, so this is only what finalize's failed case reads.
+func (r *run) failureClass() failure.Class {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failClass == "" {
+		return failure.Unclassified
+	}
+	return r.failClass
+}
+
+// endClass is an error that carries the class of the ending it will cause. The
+// errors that end a run without going through r.fail still know their cause
+// where they are raised — a configuration the runner refuses before any work
+// starts, a forge call finalize could not make — and the ending itself is
+// written far from there, by Run's deferred fallback, which has only the error
+// left. It wraps, so errors.Is and errors.As keep answering what they answered
+// before this existed (the shadow arm's own refusal among them), and the
+// fallback reads the class back with endClassOf.
+type endClass struct {
+	class failure.Class
+	err   error
+}
+
+func (e endClass) Error() string { return e.err.Error() }
+
+func (e endClass) Unwrap() error { return e.err }
+
+// endClassOf is the class the ending of err is written with: the class an
+// endClass carries, and infra_error for every other error — the run never got
+// far enough to name anything else, which is what the fallback wrote for all
+// of them before this existed (design §3).
+func endClassOf(err error) failure.Class {
+	var ec endClass
+	if errors.As(err, &ec) {
+		return ec.class
+	}
+	return failure.InfraError
 }
 
 // stateDirOutsideCheckout validates that stateDir is non-empty, resolvable,
@@ -1678,6 +1757,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	// The owner's ruling this launch was given (OD1), onto the record with the
+	// rest of what the task says the run is: it is the answer the brief below
+	// works from, and a reader of the record has to find the same text the
+	// agent was given. A follow-up launched without one refines this with the
+	// ruling the run before it worked from, once that record has been read
+	// (recordRuling, owner.go).
+	r.rec.OwnerRuled = spec.OwnerRuled
 	// The task's arm, before anything else the task's text can reach: an
 	// arm refuses the run further down the very path an unsampled run
 	// takes (shadow.go, readArm).
@@ -1861,7 +1947,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
 	if err != nil {
-		return fmt.Errorf("selecting workflow: %w", err)
+		// The file is what is refused here: a workflow the task does not name
+		// and the configuration defines more than one of is a fugaro.yaml the
+		// runner cannot run as it stands, which is config_invalid's own case.
+		return endClass{failure.ConfigInvalid, fmt.Errorf("selecting workflow: %w", err)}
 	}
 	if err := spec.Apply(cfg, &wf); err != nil {
 		return fmt.Errorf("applying task overrides: %w", err)
@@ -1880,8 +1969,19 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.checkProjectJobAccount(ctx, cfg.Agent.Auth); err != nil {
 		return err
 	}
+	// The shared job's own task timeout is the run's ceiling (clampTotalToJob):
+	// applied here, to the workflow every later reader takes its timeouts from
+	// and after the overrides above, so a run launched onto a job shorter than
+	// its total still finalizes and opens its pull request instead of being
+	// killed with neither.
+	if err := r.clampTotalToJob(ctx, &wf); err != nil {
+		return err
+	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
 	if err != nil {
+		// The refusals about the recipe itself carry config_invalid already
+		// (recipe.go, which raises them); a read that failed leaves it to the
+		// deferred fallback, the way every other machinery error does.
 		return err
 	}
 	// The digest step is the runner's own work (T3.2): it writes the run
@@ -2081,15 +2181,25 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// (applyChallenger), so the policy refusing *that* pin is the arm's
 		// own refusal and is recorded as one (D556) rather than as
 		// infrastructure that failed. Only the coder pin is the arm's: the
-		// pins both arms share, and everything else these checks can fail
-		// over — a Vertex budget, a settings directory, a price table — fails
-		// a challenger exactly as it fails a run carrying no arm, and is left
-		// to end the run infra_error (modelRefusal, gateway.go). A halt is
-		// not a refusal either: a cap the run has reached stops a shadow
-		// exactly as it stops any other run.
+		// pins both arms share fail a challenger exactly as they fail a run
+		// carrying no arm, and what refuses them is the run's configuration —
+		// the same cause, and so the same class, the arm's own refusal is
+		// recorded under (refuseArm, shadow.go). What these checks raise with
+		// no refusal in it — a Vertex budget, a settings directory — keeps the
+		// fallback's infra_error. A halt is not a refusal either: a cap the run
+		// has reached stops a shadow exactly as it stops any other run.
 		var refused *modelRefusal
 		if r.shadow && errors.As(err, &refused) && refused.coderPin {
 			return r.refuseArm(err.Error())
+		}
+		if errors.As(err, &refused) {
+			// A model this run may not run, or a pin no price covers: the
+			// configuration the run resolved was refused before any stage
+			// could start, which is config_invalid's own case — the pins are
+			// the resolved file's, and the remedy is to change them. Every
+			// other error these checks raise is machinery under the run and
+			// keeps the fallback's infra_error.
+			return endClass{failure.ConfigInvalid, err}
 		}
 		return err
 	}
@@ -2320,6 +2430,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := r.prepareFollowUp(ctx); err != nil {
 			return err
 		}
+		// The ruling this run works from, with the decisions it answers (OD1):
+		// its launch's own, or the pair the run before it worked from, which it
+		// inherits. Written here and not with the task's other text above
+		// because only now has the previous record been read.
+		r.recordRuling()
 	}
 	// A kill switch or the grace may have halted the run while bootstrap
 	// was busy: nothing is pushed yet, so it ends as a bootstrap halt.
@@ -2422,7 +2537,7 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 			// run's layer for ls and diagnose (design §8, task 17), even
 			// though it never resolved anything.
 			r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation}
-			return nil, out.LayerErr
+			return nil, endClass{failure.ConfigInvalid, out.LayerErr}
 		}
 		r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation, Applied: out.Applied}
 		if !out.Applied {
@@ -2439,7 +2554,7 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		r.noteIgnoredAB()
 	}
 	if len(out.Problems) > 0 {
-		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
+		return nil, endClass{failure.ConfigInvalid, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))}
 	}
 	// The layer's claims are merged here, before anything reads a route:
 	// bootstrap reaches this at runner.go's own first step, and the plan that
@@ -2465,7 +2580,7 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 	if out.Applied {
 		merged, ps := config.ApplyClaudeClaims(r.d.Providers, config.ClaimsOnRoutes(r.d.Providers, out.Layer.ClaudeModels))
 		if len(ps) > 0 {
-			return nil, fmt.Errorf("the project layer's claude_models: %s", problemsText(ps))
+			return nil, endClass{failure.ConfigInvalid, fmt.Errorf("the project layer's claude_models: %s", problemsText(ps))}
 		}
 		r.providers = merged
 	}
@@ -2686,6 +2801,21 @@ func (r *run) agentLoop(ctx context.Context) {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
 		}
+		// The ruling the run was launched with (OD1) reaches the reviewer here
+		// and not only the implement brief: the review stages read in sessions
+		// of their own, and a reviewer that does not know the run was answered
+		// marks the same finding needs_owner again — the run stops where it
+		// stopped and the next follow-up is refused, which is the loop the
+		// ruling exists to end. Every ruling the run works from goes in, each
+		// with the decisions it answers listed beside it, so a ruling settles
+		// those and not whatever else it names — including the rulings behind
+		// the newest one, whose questions are as settled as its own: the
+		// reviewer that re-raises one of those stops the run on a question the
+		// owner answered two rulings ago. All three levels are handed this one
+		// brief (reviewPromptWithFocus, AdversarialPrompt), so they all read it.
+		if add := followup.RulingAddendum(r.ownerRulings(), f.nonce, r.redactor()); add != "" {
+			reviewPrompt += "\n\n" + add
+		}
 	}
 	tier := ""
 	for _, st := range r.plan {
@@ -2751,6 +2881,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		if !parsed {
 			r.lastSenior = seniorRound{Round: round}
+			r.seniorLevelLast = r.lastSenior
 			model, effort := r.reviewFacts("review")
 			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort})
 			r.save(ctx)
@@ -2759,12 +2890,25 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		// The round is kept whole as well as counted: the mode's threshold
 		// table reads the findings' scores, which the summary does not carry
-		// (outcome.go, T3.1).
+		// (outcome.go, T3.1). The senior level's own copy of it is kept too, so
+		// the owner decisions it left survive level 3's round overwriting this
+		// one (seniorLevelLast).
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
+		r.seniorLevelLast = r.lastSenior
 		model, effort := r.reviewFacts("review")
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
+			return false
+		}
+		// OD1: a round that asks for changes and names nothing but decisions
+		// only the owner can make is where the loop stops. No fix round is
+		// dispatched — there is nothing a coder could change — and no further
+		// round is bought, because the reviewer would be asked the same
+		// question about the same unchanged code. The decisions are recorded
+		// and the run ends waiting for them (ownerStop).
+		if v.Verdict != "ship" && allOwner(v.Findings) {
+			r.ownerStop(ctx, v.Findings)
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
@@ -2827,6 +2971,14 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
+			return false
+		}
+		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
+		// run whose mode enabled it, so a round that names only the owner's
+		// decisions stops the run here rather than buying a fix round and a
+		// further adversarial review of code that cannot change.
+		if v.Verdict != "ship" && allOwner(v.Findings) {
+			r.ownerStop(ctx, v.Findings)
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
@@ -3096,6 +3248,19 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return sessionID, false
 		}
 		if sum.Verdict != "changes" {
+			return sessionID, true
+		}
+		if allOwner(v.Findings) {
+			// OD1: the round names nothing but decisions only the owner can
+			// make, so the cheap loop fixes nothing here. Where it decides
+			// readiness — a run whose level 2 and level 3 are both off (POC) —
+			// that is the run's stop; where an outer level does, the round is
+			// handed on and that level's review is what decides, the first line
+			// advising it and never overruling it (seniorReview).
+			if decides {
+				r.ownerStop(ctx, v.Findings)
+				return sessionID, false
+			}
 			return sessionID, true
 		}
 		r.afterStage(ctx, "review_first")
@@ -3832,9 +3997,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// result event's text, and its subtype says nothing: Claude Code reports
 	// a refused API call as subtype "success". The reason therefore quotes
 	// that text, and one stop gets a name of its own (stageErrorReason): the
-	// OAuth account's subscription usage limit.
+	// OAuth account's subscription usage limit. The same text, folded the
+	// same way, is what the record's class is read from (stageFailureClass),
+	// so the reason and the class are written together and the class
+	// describes the sentence the record carries.
 	case res.IsError:
-		r.fail(r.stageErrorReason(name, res))
+		r.failWithClass(r.stageFailureClass(r.cfg.Agent.Auth, res), r.stageErrorReason(name, res))
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, nil
 	}
@@ -3921,6 +4089,66 @@ func subscriptionUsageLimit(auth, text string) bool {
 		}
 	}
 	return false
+}
+
+// authRefusedPhrases are what a provider or a gateway that refused the run's
+// credential is reported as, each matched as the shape it is rather than as
+// English, the way oauthLimitPhrases is: the gateway's own sentence for a
+// refusal it relayed from the provider (internal/gateway, providerError), and
+// the API error type a failed authentication arrives under -- read inside the
+// envelope that carries it, so that a type merely named in a result text (an
+// echoed snippet, a "previous_error_type" field) is not taken for the refusal
+// itself.
+var authRefusedPhrases = []string{"the provider answered with status 403", `"error":{"type":"authentication_error"`}
+
+// transportFailedPhrases are what a model stream or connection that ended
+// before its response finished is reported as: Claude Code's own sentence
+// (issue #1827), which is the phrase transientStagePhrases matches too.
+//
+// The two lists are separate lists on purpose, though today they hold one
+// phrase in common: they answer different questions -- whether a stage may be
+// run again, and which family the run's failure is counted in -- so a member
+// added to one of them is not silently a member of the other.
+var transportFailedPhrases = []string{"stream closed before completion"}
+
+// stageFailureClass names the cause inside an is_error result. The text is
+// model output, and it is read for one thing only: to pick a value of the
+// closed vocabulary. The class is a value of the runner's own words, so no
+// byte of the message reaches the record through it, and nothing in the runner
+// branches on it -- it is written and reported, never acted on. The reason
+// already quotes the text, redacted and on one line (stageErrorReason); the
+// class adds no second copy for a secret to travel in.
+//
+// It reads the folded text the reason carries and for that reason: what the
+// reason may hold is what may be matched, so a phrase cannot be recognised in
+// a byte the run would not otherwise publish. A phrase table is the rule
+// subscriptionUsageLimit already follows (oauthLimitPhrases): shapes are
+// matched rather than English, and a text the table does not know is
+// stage_error_unexplained -- counted rather than guessed at, which is the
+// class the runs that ended this way after writing a normal final message
+// take.
+//
+// The subtype is deliberately not read: Claude Code reports a refused API call
+// as subtype "success". The OAuth account's spent subscription allowance stays
+// stage_error_unexplained whatever its text says, because the class that stop
+// deserves is O6's to answer and subscriptionUsageLimit is unchanged until it
+// is; the auth is asked here so that the two answers cannot drift apart.
+func (r *run) stageFailureClass(auth string, res agent.Result) failure.Class {
+	text := strings.ToLower(r.stageErrorText(res.Text))
+	if text == "" || subscriptionUsageLimit(auth, res.Text) {
+		return failure.StageErrorUnexplained
+	}
+	for _, p := range authRefusedPhrases {
+		if strings.Contains(text, p) {
+			return failure.ProviderAuthRefused
+		}
+	}
+	for _, p := range transportFailedPhrases {
+		if strings.Contains(text, p) {
+			return failure.TransportFailed
+		}
+	}
+	return failure.StageErrorUnexplained
 }
 
 // transientStagePhrases are what a model stream closed before its response
@@ -4193,7 +4421,10 @@ func (r *run) finalize(ctx context.Context) error {
 			return fmt.Errorf("counting the run's own commits: %w", err)
 		}
 		if ahead == 0 {
-			r.fail("the agent made no commits")
+			// The count is the runner's own — it read the branch — so the
+			// class is known here and no other site can name it later
+			// (design §3's no_commits, which cites this count).
+			r.failWithClass(failure.NoCommits, "the agent made no commits")
 			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failure()); err != nil {
 				return fmt.Errorf("recording an empty commit: %w", err)
 			}
@@ -4237,18 +4468,43 @@ func (r *run) finalize(ctx context.Context) error {
 	// challenger's is the diff it holds back.
 	r.uploadPatch(ctx, sha)
 
+	// The decisions the deciding round left go into the record before Decide
+	// reads it: the loop stops on an all-owner round (ownerStop), and a round
+	// that shipped with one or left it beside a fixable finding ends a draft
+	// that waits on it just the same (OD1). A run that stopped for its own
+	// reason records none (recordOwnerDecisions).
+	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
-	ready, reason := Decide(records, decided, r.decidingReview(), pol)
+	ready, reason, class := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
+	// The class follows the reason, and it is chosen by this same three-way
+	// choice in the same place by the same lines (design §4.2): the run's own
+	// first failure outranks what Decide read, a halt outranks both, and each
+	// override hands over the class of the sentence it just wrote. That is
+	// what keeps the field describing the status the record carries —
+	// unverified_final_commit under a halt's reason would name a cause the
+	// record no longer holds.
 	if fr := r.failure(); fr != "" {
-		ready, reason = false, fr
+		ready, reason, class = false, fr, r.failureClass()
 	}
 	if halt != nil {
-		// Never ready, and the reason is the halt's, whatever failed first.
-		ready, reason = false, (&HaltError{*halt}).Error()
+		// Never ready, and the reason is the halt's, whatever failed first. The
+		// owner-decision stop is the one halt that is not a limit the run
+		// passed but a question it cannot answer, so its reason is the plain
+		// sentence the record, the pull request's status block and the
+		// launcher's refusal all print, and not the halt's own
+		// "halted: <reason>: <detail>" spelling of it (OD1). The class is the
+		// halt's own family either way: the sentence a reader sees changes with
+		// the reason, and what the run stopped for does not.
+		ready, class = false, haltClass(halt.Reason)
+		if halt.Reason == runstore.HaltOwnerDecision {
+			reason = halt.Detail
+		} else {
+			reason = (&HaltError{*halt}).Error()
+		}
 	}
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.
@@ -4333,7 +4589,7 @@ func (r *run) finalize(ctx context.Context) error {
 			// outcome must never be reported unless the PR really is
 			// ready, so this is recorded as a draft with a reason
 			// naming the failure.
-			ready, reason = false, r.redact(err.Error())
+			ready, reason, class = false, r.redact(err.Error()), failure.GitProviderError
 		}
 	case err != nil:
 		if pr.Number != 0 && r.giveUpNoteAllowed(ctx) {
@@ -4359,7 +4615,7 @@ func (r *run) finalize(ctx context.Context) error {
 				r.d.Log.Warn("updating the pull request status failed", "err", r.redact(serr.Error()))
 			}
 		}
-		err = fmt.Errorf("opening pull request: %w", err)
+		err = providerRefusal(fmt.Errorf("opening pull request: %w", err))
 		if r.follow != nil {
 			// The branch was pushed: the next follow-up quotes this run's
 			// answer, and diagnose shows its report.
@@ -4367,16 +4623,20 @@ func (r *run) finalize(ctx context.Context) error {
 		}
 		return err
 	}
-	r.rec.Reason = reason
+	// The class is never empty in the failed case: every way of reaching it
+	// above hands one over — Decide names its own refusal, r.failure() names
+	// the class written with the run's first reason (unclassified where its
+	// site named none), and the forge's own failure names git_provider_error.
 	switch {
 	case ready:
-		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeReady
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReady, "", reason)
 	case halt != nil:
-		r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeDraft, halt
+		r.rec.Halt = halt
+		r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), reason)
 	case r.isCancelled():
-		r.rec.Status, r.rec.Outcome = runstore.StatusCancelled, runstore.OutcomeDraft
+		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeDraft, failure.Cancelled, reason)
 	default:
-		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
+		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)

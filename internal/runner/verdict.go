@@ -23,7 +23,15 @@ import (
 // A finding's score is three anchored 1–5 axes and a class (D1, D3). All four
 // are optional, so a verdict written before them still validates and still
 // parses, and severity stays the free-form label it is (D2).
-const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"file":{"type":"string"},"summary":{"type":"string"}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
+//
+// A summary is the one thing a finding must carry, and it is a sentence: the
+// key is required and it may not be empty. The model is constrained by this
+// schema as it decodes, so minLength is what keeps a finding the owner must
+// settle (needs_owner) from arriving with nothing for them to read — the
+// reader does not enforce the schema (decodeVerdict), so the runner stores a
+// decision with a sentence of its own when a verdict reaches it without one
+// (ownerDecision).
+const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"likelihood":{"type":"integer","minimum":1,"maximum":5},"impact":{"type":"integer","minimum":1,"maximum":5},"fix_cost":{"type":"integer","minimum":1,"maximum":5},"class":{"type":"string","enum":["correctness","performance","security","data_loss","maintainability","cosmetic"]},"needs_owner":{"type":"boolean"},"file":{"type":"string"},"summary":{"type":"string","minLength":1}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
 
 // Finding is one issue a review asks to fix.
 type Finding struct {
@@ -36,8 +44,59 @@ type Finding struct {
 	Impact     int    `json:"impact,omitempty"`
 	FixCost    int    `json:"fix_cost,omitempty"`
 	Class      string `json:"class,omitempty"`
+	// NeedsOwner marks a finding whose ONLY remedies are a decision that is
+	// not this run's to make (OD1): a licence or legal clearance, a product or
+	// policy choice, an owner-run step, or a spec that says the pull request
+	// must not merge until the owner answers. The reviewer sets it and the
+	// code never does, so it is a claim about who can settle the finding and
+	// never a second score: the axes beside it are still read by the mode's
+	// table, and a needs_owner finding at fix cost 1 is still the owner's.
+	//
+	// It is additive and false in every verdict written before it existed. A
+	// run that leaves one stops its review loop rather than buying fix rounds
+	// no code change can settle, and ends waiting for the owner (ownerStop,
+	// outcome.go).
+	NeedsOwner bool   `json:"needs_owner,omitempty"`
 	File       string `json:"file"`
 	Summary    string `json:"summary"`
+}
+
+// Owner reports whether this finding is one only the owner can settle.
+func (f Finding) Owner() bool { return f.NeedsOwner }
+
+// ownerFindings is the findings of a round that only the owner can settle, in
+// the reviewer's order.
+func ownerFindings(findings []Finding) []Finding {
+	var out []Finding
+	for _, f := range findings {
+		if f.NeedsOwner {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// fixableFindings is the findings of a round the run's own fix round may
+// address: every finding a reviewer did not mark as the owner's. It is what
+// a fix round's brief is built from (FixPrompt), so a finding no code change
+// can settle never spends a round on itself.
+func fixableFindings(findings []Finding) []Finding {
+	out := make([]Finding, 0, len(findings))
+	for _, f := range findings {
+		if !f.NeedsOwner {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// allOwner reports whether a round asked for changes with every finding the
+// owner's to settle. It is false for a round with no findings: a `changes`
+// verdict that names nothing is a review which failed to say what it wanted,
+// and it is not an owner decision (D4's rule is about a round that names what
+// it wants).
+func allOwner(findings []Finding) bool {
+	return len(findings) > 0 && len(ownerFindings(findings)) == len(findings)
 }
 
 // Verdict is a review stage's structured result.

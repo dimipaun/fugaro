@@ -551,8 +551,11 @@ func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retire
 	// other change in the same plan is judged by the cover an ordinary step
 	// is, and one it does not admit asks the typed confirmation: a plan that
 	// happens to carry a retirement must not carry a loosening in with it.
+	// "Every other change" includes what a change at one of those addresses
+	// CREATES: a replace is a removal and a create at once, and the cover never
+	// looks inside a change it refuses for its delete (tf.WithoutRemovals).
 	if pl != nil {
-		if why := r.notCovered(withoutDeletes(pl, retireAllowDelete(pl, rets, nil)), imports); why != "" {
+		if why := r.notCovered(tf.WithoutRemovals(pl, retireAllowDelete(pl, rets, nil)), imports); why != "" {
 			fmt.Fprintf(r.w, "  %s\n", why)
 			return r.retireConfirm(rets, spec, undone)
 		}
@@ -568,7 +571,7 @@ func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retire
 	if err != nil {
 		// A plan nobody can read is a document no rule judged (D1012), which
 		// is the shape gateStep reads as gateUnreadable: nothing is applied.
-		return &initflow.GatedError{Reason: gateUnreadable, Err: err}
+		return &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	conv := managedmode.ConvergeAdmitted(doc, gateClass(), retireAdmittedRules)
 	m, err := g.g.admit(ctx, gateClass(), conv)
@@ -1209,24 +1212,6 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
-}
-
-// withoutDeletes is the plan with the changes at addrs left out: the
-// retirement's own deletes, which the cover refuses by design (it admits no
-// delete) and which retireStop and the guard have already judged.
-func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
-	skip := make(map[string]bool, len(addrs))
-	for _, a := range addrs {
-		skip[a] = true
-	}
-	out := *p
-	out.ResourceChanges = nil
-	for _, rc := range p.ResourceChanges {
-		if !skip[rc.Address] {
-			out.ResourceChanges = append(out.ResourceChanges, rc)
-		}
-	}
-	return &out
 }
 
 // recordUpdate writes this run's retirement into the machine's own record of

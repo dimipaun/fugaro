@@ -1007,7 +1007,7 @@ func bloatedState(t *testing.T, now time.Time) orchestrator.State {
 
 func intentItemID(i int) string { return "wi-old-" + twoDigits(i) }
 func decisionID(i int) string   { return "ask-" + twoDigits(i) }
-func factKey(i int) string      { return "fact." + twoDigits(i) }
+func factKey(i int) string      { return "fact-" + twoDigits(i) }
 func twoDigits(i int) string    { return string(rune('a'+i/10)) + string(rune('a'+i%10)) }
 
 func intentIDs(s orchestrator.State) []string {

@@ -739,10 +739,13 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 		l.needsYou(name, ag.Error(), s.Left())
 		return false, nil
 	case errors.As(err, &ge):
-		// The gate's sentence is the detail, and the stage's own Left is where
-		// the user is told to run it: the step is theirs to confirm, at their
-		// own terminal, and the gate says nothing a session could act on.
-		l.needsYou(name, ge.Error(), s.Left())
+		// The gate's sentence is the detail, and what stands beside it is the
+		// refusal's own answer about who this step is for: the stage's Left
+		// only when the step IS the owner's (the class refusal, D1026), and a
+		// commandless refusal otherwise — a plan the cover would not admit is
+		// nobody's to type past (CV1), and the stage's own prompt asks this
+		// reader to do the one thing the gate exists to make impossible.
+		l.needsYou(name, ge.Error(), ge.Left(s.Left()))
 		return false, nil
 	case errors.As(err, &ny):
 		l.needsYou(name, "", ny.Left)

@@ -337,13 +337,15 @@ func TestDocsSecretsBrokeringReadmeReleaseTable(t *testing.T) {
 // TestDocsCheck190IsRegistered: Check 190 — this work's one owner-run check, and
 // the one number of its block that is registered — has both halves of its
 // registration in the register: a `| 190 |` row in the summary table and a
-// `## Check 190:` section below it, and the section says it has not been run and
+// `## Check 190:` section below it, and the section says the owner has run it and
 // that no agent runs any step of it. The pairing is the convention every work's
 // own docs tests carry (docs_checks_145_149_test.go for 145–149): a row without
 // its section is a promise of steps that are not written, and a section without
 // its row is a check nothing points at, so either half alone is a number a
-// reader cannot use. B0.6 records the owner's run in that section, so this pin
-// holds the registration and never the words of the result.
+// reader cannot use. B0.6 recorded the owner's run of 2026-10-30 in that
+// section, so this pin holds the registration and the STATEMENT that the check
+// has been run, never the words of the result: the facts are the owner's paste,
+// and a rerun rewrites them.
 func TestDocsCheck190IsRegistered(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
 	if !regexp.MustCompile(`(?m)^\|\s*190\s*\|`).MatchString(register) {
@@ -362,13 +364,16 @@ func TestDocsCheck190IsRegistered(t *testing.T) {
 	}
 	flat := strings.ToLower(flattenDoc(section))
 	for _, want := range []string{
-		"**not run.**",
+		// The owner ran the check on 2026-10-30 (task B0.5, recorded by B0.6):
+		// the section states the run rather than the NOT RUN banner it carried
+		// before.
+		"**run 2026-10-30",
 		// The register's own rule for an owner-run check: no agent runs any step
 		// of it, and the text has to say so.
 		"no agent runs any step of it",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("Check 190's section does not say %q: the check is owner-run and has not been run, and a section that leaves either half out reads as something an agent did", want)
+			t.Errorf("Check 190's section does not say %q: the check is owner-run and its run is recorded, and a section that leaves either half out reads as something an agent did", want)
 		}
 	}
 }

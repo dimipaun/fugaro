@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -159,9 +160,21 @@ var errNoReadOnlyToken = errors.New("no read-only installation token")
 // a refused review with). It is the run's own trace and nothing else: at
 // every point this is called from, nothing has been cloned, pushed, opened
 // or commented on.
+//
+// The class is config_invalid: what is refused is the run's resolved
+// configuration — the task's arm, the layers it is read against, or the
+// provider this repository runs on — before any stage could start, which is
+// that class's own case (design §3). The coder pin the run's model policy
+// will not serve is the same cause read from the other side: bootstrap's
+// checkBudget branch sends the pin only this arm carries here, and the pin
+// both arms share is refused by the fallback's own carrier with the same class
+// (endClass, runner.go) — one cause, one remedy, whether the run carries an
+// arm or not. And the design's §4.2 counts a challenger arm among the runs
+// that must carry a class rather than none, which is why this is not left
+// unclassified.
 func (r *run) refuseArm(reason string) error {
 	reason = r.redact(reason)
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.ConfigInvalid, reason)
 	r.d.Log.Warn("the challenger arm was refused", "reason", reason)
 	return errors.New(reason)
 }
@@ -340,7 +353,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 			return fmt.Errorf("counting the run's own commits: %w", err)
 		}
 		if ahead == 0 {
-			r.fail("the agent made no commits")
+			r.failWithClass(failure.NoCommits, "the agent made no commits")
 			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failure()); err != nil {
 				return fmt.Errorf("recording an empty commit: %w", err)
 			}
@@ -361,28 +374,33 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	r.uploadVerifyRecords(ctx, records)
 	r.uploadPatch(ctx, sha)
 
+	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
-	ready, reason := Decide(records, sha, r.decidingReview(), pol)
+	// The arm's ending is chosen the way the champion's is chosen (finalize,
+	// runner.go): the reason and the class that describes it are handed over by
+	// the same three-way choice, so an arm that was refused and then halted is
+	// classed as a halt and one the agent left empty-handed is `no_commits`.
+	ready, reason, class := Decide(records, sha, r.decidingReview(), pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
 	if fr := r.failure(); fr != "" {
-		ready, reason = false, fr
+		ready, reason, class = false, fr, r.failureClass()
 	}
 	if halt != nil {
-		ready, reason = false, (&HaltError{*halt}).Error()
+		ready, reason, class = false, (&HaltError{*halt}).Error(), haltClass(halt.Reason)
 	}
-	r.rec.Reason = reason
 	switch {
 	case halt != nil:
-		r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, halt
+		r.rec.Halt = halt
+		r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(halt.Reason), reason)
 	case r.isCancelled():
-		r.rec.Status, r.rec.Outcome = runstore.StatusCancelled, runstore.OutcomeNone
+		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, reason)
 	case ready:
-		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeNone
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeNone, "", reason)
 	default:
-		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeNone
+		r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, class, reason)
 	}
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)

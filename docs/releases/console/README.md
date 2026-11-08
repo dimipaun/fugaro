@@ -83,4 +83,16 @@ up to and including `0.112.0` stays under the MIT licence it was released under.
 `0.113.0` say it in their summary line or first bullet, in a user's words: the release is the first
 under the new licence, production use needs a subscription, and the earlier releases stay MIT.
 The licence text is counsel's, and it names Subscription Terms that are not published yet: the release waits until the owner has published those terms or replaced that
-sentence, because until then a production user has no way to comply.
+sentence, because until then a production user has no way to comply — and that wait was not kept
+either: the Terms are still not in force —
+[`docs/licensing/subscription-terms.md`](../../licensing/subscription-terms.md) says the text "is in
+force only once the owner publishes it", and [`LICENSING.md`](../../../LICENSING.md) still says the
+page is not published yet — so `0.113.0` went out with them unpublished too. **`0.113.0` shipped
+before counsel's sign-off.** D448 and T17 put the first licensed release of each stream behind
+counsel signing off D432, D433 and D436 — S8.4's round — and console `0.113.0` went out on
+2026-10-27, the tag `console-v0.113.0`, ahead of that sign-off; every release through `0.120.0` has
+followed it, and S8.4's list does not record that sign-off. The gate still holds the **mobile app's
+first release**, which has not shipped, so `0.113.0` is an exception to both rather than an
+instance of either; whether the owner records it as an exception is the owner's ruling and is not
+recorded here. Every licensed release is **honour-based**: it states what the licence requires and
+checks no key, and key enforcement arrives with the key service in a later release.

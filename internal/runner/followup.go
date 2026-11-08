@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -39,6 +40,17 @@ type followState struct {
 	sel      followup.Selection // the comments the agent gets
 	nonce    string             // the comments block's delimiter nonce
 	restored restored           // the session to resume, or why not
+	// prevOwner is the previous run's own owner_decisions block, bounded as a
+	// reader may show it: the decisions the ruling this launch carries answers
+	// (OD1), listed in the review briefs so a reviewer can tell a finding that
+	// ruling settles from one it does not (ownerRuling).
+	prevOwner *runstore.OwnerDecisions
+	// prevRulings are the rulings the previous run worked from, newest first,
+	// each with the decisions it answered, as that run recorded them: what this
+	// one inherits when its own launch carries no ruling, and what it carries
+	// behind a ruling of its own, so a question the owner has settled stays
+	// settled however many rulings ago it was answered (workingRulings).
+	prevRulings []runstore.OwnerRuling
 	// prevAnswer is the previous follow-up's followup.md, as stored.
 	prevAnswer string
 	// rootTask and diffStat are a fresh session's context.
@@ -228,6 +240,33 @@ func (r *run) prepareFollowUp(ctx context.Context) error {
 		r.d.Log.Warn("reading the previous run's record failed", "previous_run", prevID, "err", r.redact(err.Error()))
 		return fmt.Errorf("previous run %s has no readable record", prevID)
 	}
+	// What that run left the repository's owner (OD1), bounded as the launcher
+	// bounded it before it accepted the ruling this launch carries: the review
+	// briefs list these beside the ruling (ownerRuling).
+	r.follow.prevOwner = prevRec.OwnerDecisions.Bounded()
+	// And the rulings that run itself worked from, each with the decisions it
+	// answered: this follow-up inherits them when its own launch carries no
+	// ruling, and carries them behind its own otherwise, so a question the
+	// owner has already settled is not raised and halted on again however many
+	// rulings ago it was answered (workingRulings). The record's own pair comes
+	// first, then the pairs it held behind it, and the whole chain is bounded
+	// and validated again on read (runstore.BoundedRulings): a record is an
+	// object the job's service account writes, so text a brief cannot carry — a
+	// control character, a length no task may state — is no ruling at all, and
+	// a ruling with nothing to answer, or answers no ruling settles, is dropped
+	// the way it is everywhere else. What is dropped is logged: the chain is
+	// what keeps an answered question answered, and losing an entry to a
+	// hand-edited record is worth a line in the run's log.
+	chain := make([]runstore.OwnerRuling, 0, 1+len(prevRec.OwnerRuledEarlier))
+	if prevRec.OwnerRuled != "" {
+		chain = append(chain, runstore.OwnerRuling{Ruling: prevRec.OwnerRuled, Decisions: prevRec.OwnerRuledDecisions})
+	}
+	chain = append(chain, prevRec.OwnerRuledEarlier...)
+	r.follow.prevRulings = runstore.BoundedRulings(chain)
+	if n := len(chain) - len(r.follow.prevRulings); n > 0 {
+		r.d.Log.Warn("the record of the run before this one holds rulings this run does not inherit: no brief may hold them, or the chain is longer than a record carries; this run works from the rest",
+			"previous_run", prevID, "dropped", n, "of", len(chain))
+	}
 	prevTask, err := prev.ReadTask(ctx)
 	if err != nil {
 		prevTask = nil
@@ -371,6 +410,13 @@ func (r *run) promptData() followup.PromptData {
 		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.diffBase(), StateDir: r.d.StateDir,
 		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: f.restored.Moved,
 		RootTask: f.rootTask, DiffStat: f.diffStat, PreviousAnswer: f.prevAnswer, Nonce: f.nonce, Redact: r.redactor(),
+		// The ruling this run works from, which is the launch's own or the one
+		// it inherits from the run before it (workingRulings): the implement
+		// stage is told the owner's answer either way, or it would set about
+		// changing what the owner settled. It is the newest one of the chain,
+		// which is the answer this run's work is held to; the rulings behind it
+		// answered questions this run is not asked to touch.
+		OwnerRuled: r.rulingText(),
 	}
 }
 
@@ -518,8 +564,11 @@ func (r *run) readPRRetrying(ctx context.Context) (gitprov.PRInfo, error) {
 // before updating its pull request, as the infra_error Run then records,
 // so diagnose still shows what the agent did. Nothing is posted.
 func (r *run) storeUnposted(ctx context.Context, err error, records []verify.Record) {
-	rec := *r.rec
-	rec.Status, rec.Outcome, rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, r.redact(err.Error())
+	// The copy carries the class the ending itself is written with, read off
+	// the error the same way Run's fallback reads it (endClassOf): a stored
+	// report that named a different family from the record beside it would be
+	// two readings of one run's cause.
+	rec := reportCopy(r.rec, runstore.StatusInfraError, runstore.OutcomeNone, endClassOf(err), r.redact(err.Error()))
 	fu := r.followUpSection()
 	report := agent.Redact(FollowUpReport(&rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secretList())
 	r.storeReport(ctx, report, fu)
@@ -555,17 +604,20 @@ func (r *run) giveUpNoteAllowed(ctx context.Context) bool {
 // updates: failed, with outcome none. Its report is stored, not posted,
 // so diagnose still shows what the run did.
 func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.Record) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	// Every reason this is called with is the pull request or the branch
+	// changing under the run, which is the class branch_moved names; the two
+	// branches below are the ways that fact is recorded instead.
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.BranchMoved, reason)
 	if r.follow == nil && r.isCancelled() {
 		// A cancelled run stays cancelled (design 4.2a, E10); the PR note
 		// is its reason.
-		r.rec.Status, r.rec.Reason = runstore.StatusCancelled, "cancelled; "+reason
+		r.recordEnd(runstore.StatusCancelled, r.rec.Outcome, failure.Cancelled, "cancelled; "+reason)
 	}
 	if h := r.haltValue(); h != nil {
 		// A halt stays a halt: the run stopped for its limit, and the
 		// pull request was left as it was for the reason given too.
-		r.rec.Status, r.rec.Halt = runstore.StatusHalted, h
-		r.rec.Reason = (&HaltError{*h}).Error() + "; " + reason
+		r.rec.Halt = h
+		r.recordEnd(runstore.StatusHalted, r.rec.Outcome, haltClass(h.Reason), (&HaltError{*h}).Error()+"; "+reason)
 	}
 	r.d.Log.Warn("the pull request was not updated", "reason", reason)
 	r.storeEnded(ctx, records)

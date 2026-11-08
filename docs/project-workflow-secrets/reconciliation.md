@@ -295,7 +295,7 @@ repository's own application secret, and a name with a project-wide meaning cann
 a workflow's block"*); `docs/design/project-secrets.md` §3 step 4 (*"Else: refused — never a
 workflow's own secret, which has no project-wide meaning"*); `internal/cli/secrets.go:308` (the help
 text the issue quotes) and `:859` (the store-time note); and
-`plugin/skills/setup/SKILL.md:130` (*"Setup's prompts (step 9) have no `--repo` to pass: they store a
+`plugin/skills/setup/SKILL.md:128` (*"Setup's prompts (step 9) have no `--repo` to pass: they store a
 name project-wide, except a per-repository one"*).
 
 **Consequence.** Every one of them is a sentence a person uses to decide whether storing a shared
@@ -890,7 +890,7 @@ rather than an open question.
 reach sentence for a workflow secret (D1273). Concretely — `SECURITY.md:28`, `SECURITY.md:38`,
 `docs/project-layer.md:244`, `docs/design/project-secrets.md` §3 step 4 (a pointer to this folder,
 not a rewrite), `internal/cli/secrets.go`'s `set` help (`:308`) and store-time note (`:859`),
-`plugin/skills/setup/SKILL.md:130`, and this folder's own status lines. `internal/cli/docs_*_test.go`
+`plugin/skills/setup/SKILL.md:128`, and this folder's own status lines. `internal/cli/docs_*_test.go`
 pins each.
 
 **Cost of the alternatives.**

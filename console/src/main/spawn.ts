@@ -1146,9 +1146,14 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // The command prints `{project, policy}` and nothing else, which is why the
     // row is this one and not `project show --json`: the latter also carries the
     // installation's caps, and those are the Spend screen's subject (D1481). The
-    // published node's own `budget` block is the project's own ceiling and is
-    // drawn as the policy it is, which is the Project tab's business rather than
-    // this row's -- and a ceiling is what the reduced mode withholds, so the
+    // published node's own `budget` block is the project's own ceiling and **no
+    // screen draws it**: the policy notes read the node, drop the block and draw
+    // no figure of it, because a configured ceiling is drawn where the `caps`
+    // panel draws one and nowhere else (the managed screens' reconciliation, §6
+    // rule 3 -- this comment said the block "is drawn as the policy it is" until
+    // CM7's review of 2026-11-07, which no screen of that work does). A ceiling
+    // is what the reduced mode withholds all the same, and for a reason about the
+    // read rather than about a drawing: it travels in the **document**, so the
     // operation is on that view's list (`REDUCED_VIEW_OPERATIONS`'s `caps`,
     // `src/main/ipc.ts`) and not exempt from it.
     //

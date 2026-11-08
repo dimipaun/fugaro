@@ -207,6 +207,41 @@ func Listable(p *Plan, allowDelete []string) []string {
 	return out
 }
 
+// WithoutRemovals is the plan with the removal half of each change at addrs
+// taken out: what a delete takes away, and what a replace takes away before it
+// makes another. What the same change CREATES stays in, as the create it is,
+// and that is the whole reason this exists — the cover refuses a change that
+// carries a delete as one fact ("actions delete, create") and never reads the
+// half that creates (tf.Cover.NotCovered), so a caller asking whether
+// everything a plan does BESIDES the removals a list approves is judged has to
+// ask about that create itself.
+//
+// addrs are the addresses a delete approval reaches (tf.Listable for a
+// session's --allow-delete, infra.RetireAllowDelete for a retirement's own
+// set), and a change at any other address is kept as the plan carries it. The
+// result is a question asked of a plan a caller already holds and never a
+// document to digest: it shares the changes it keeps.
+func WithoutRemovals(p *Plan, addrs []string) *Plan {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.ResourceChanges = nil
+	for _, rc := range p.ResourceChanges {
+		if !slices.Contains(addrs, rc.Address) {
+			out.ResourceChanges = append(out.ResourceChanges, rc)
+			continue
+		}
+		if !slices.Contains(rc.Change.Actions, "create") {
+			continue
+		}
+		rc.Change = Change{Actions: []string{"create"}, After: rc.Change.After,
+			AfterUnknown: rc.Change.AfterUnknown, Importing: rc.Change.Importing}
+		out.ResourceChanges = append(out.ResourceChanges, rc)
+	}
+	return &out
+}
+
 // ListableEntries is Listable for the owner's delete list: the addresses the
 // guard refused that a new entry would admit — one naming the address AND the
 // identity of the object this plan removes (Approves). An entry that names the
